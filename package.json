@@ -1,0 +1,32 @@
+{
+  "name": "js-redis-server",
+  "version": "0.0.1",
+  "description": "In-memory mini redis server, useful for client agnostic mocks",
+  "main": "index.js",
+  "dependencies": {
+    "ioredis-mock": "^8.9.0",
+    "respjs": "^4.2.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fatal10110/js-redis-server.git"
+  },
+  "keywords": [
+    "redis",
+    "resp",
+    "server",
+    "mock",
+    "ioredis",
+    "node-redis"
+  ],
+  "author": "fatal10110",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/fatal10110/js-redis-server/issues"
+  },
+  "homepage": "https://github.com/fatal10110/js-redis-server#readme"
+}
