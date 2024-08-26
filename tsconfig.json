@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "outDir": "./dist",
+    "sourceMap": true,
+    "typeRoots": ["./@types"]
+  },
+  "exclude": ["node_modules"],
+  "extends": "@tsconfig/node22/tsconfig.json"
+}

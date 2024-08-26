@@ -4,12 +4,16 @@
   "description": "In-memory mini redis server, useful for client agnostic mocks",
   "main": "index.js",
   "dependencies": {
+    "@types/node": "^22.5.0",
     "ioredis-mock": "^8.9.0",
-    "respjs": "^4.2.0"
+    "respjs": "^4.2.0",
+    "wasmoon": "^1.16.0"
   },
-  "devDependencies": {},
   "scripts": {
-    "test": "test"
+    "build": "rm -rf ./dist && tsc",
+    "start": "npm run build && node ./dist/index.js",
+    "lint": "eslint --ignore-path .eslintignore --ext .js,.ts",
+    "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\""
   },
   "repository": {
     "type": "git",
@@ -28,5 +32,14 @@
   "bugs": {
     "url": "https://github.com/fatal10110/js-redis-server/issues"
   },
-  "homepage": "https://github.com/fatal10110/js-redis-server#readme"
+  "homepage": "https://github.com/fatal10110/js-redis-server#readme",
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.2.0",
+    "@typescript-eslint/parser": "^8.2.0",
+    "eslint": "^9.9.1",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "3.3.3",
+    "typescript": "^5.5.4"
+  }
 }
