@@ -1,20 +1,29 @@
+import { DataCommand } from '.'
 import { DB } from '../db'
-import { WrongNumberOfArguments, WrongType } from '../errors'
+import { WrongNumberOfArguments } from '../errors'
 
-export default function get(db: DB, keys: Buffer[]): number {
-  if (!keys.length) {
-    throw new WrongNumberOfArguments('del')
+export class DelCommand implements DataCommand {
+  getKeys(args: Buffer[]): Buffer[] {
+    return args
   }
 
-  let counter = 0
-
-  for (const key of keys) {
-    if (db.data.delete(key)) {
-      counter++
+  run(db: DB, args: Buffer[]): number {
+    if (!args.length) {
+      throw new WrongNumberOfArguments('del')
     }
 
-    db.timings.delete(key)
-  }
+    let counter = 0
 
-  return counter
+    for (const key of args) {
+      if (db.data.delete(key)) {
+        counter++
+      }
+
+      db.timings.delete(key)
+    }
+
+    return counter
+  }
 }
+
+export default new DelCommand()

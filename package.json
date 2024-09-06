@@ -5,6 +5,7 @@
   "main": "index.js",
   "dependencies": {
     "@types/node": "^22.5.0",
+    "cluster-key-slot": "^1.1.2",
     "ioredis-mock": "^8.9.0",
     "respjs": "^4.2.0",
     "wasmoon": "^1.16.0"
