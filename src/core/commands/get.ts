@@ -1,19 +1,32 @@
+import { DataCommand } from '.'
 import { StringDataType } from '../../data-structures/string'
 import { DB } from '../db'
 import { WrongNumberOfArguments, WrongType } from '../errors'
 
-export default function get(db: DB, [key]: Buffer[]): null | Buffer {
-  if (!key) {
-    throw new WrongNumberOfArguments('get')
+export class GetCommand implements DataCommand {
+  getKeys(args: Buffer[]): Buffer[] {
+    if (!args.length || args.length > 1) {
+      throw new WrongNumberOfArguments('get')
+    }
+
+    return args
   }
 
-  const val = db.get(key)
+  run(db: DB, args: Buffer[]): unknown {
+    if (!args.length || args.length > 1) {
+      throw new WrongNumberOfArguments('get')
+    }
 
-  if (!val) return null
+    const val = db.get(args[0])
 
-  if (!(val instanceof StringDataType)) {
-    throw new WrongType(key.toString())
+    if (!val) return null
+
+    if (!(val instanceof StringDataType)) {
+      throw new WrongType(args[0].toString())
+    }
+
+    return val.data
   }
-
-  return val.data
 }
+
+export default new GetCommand()

@@ -1,6 +1,16 @@
-import { createServer } from './src/network/server'
+import { ClusterNetwork } from './src/core/cluster/network'
 
-const server = createServer()
-server.listen(7001, () => {
-  console.log('opened server on', server.address())
-})
+async function run() {
+  const cluster = new ClusterNetwork(console)
+
+  process.on('SIGINT', async () => {
+    await cluster.shutdown()
+  })
+  process.on('SIGABRT', async () => {
+    await cluster.shutdown()
+  })
+
+  await cluster.init({ masters: 3, slaves: 2 })
+}
+
+run().catch(console.error)
