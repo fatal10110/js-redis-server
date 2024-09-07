@@ -1,10 +1,13 @@
-import { DiscoveryService } from '../cluster/network'
-import { DB } from '../db'
-import { Node } from '../node'
-import clusterNodes from './clusterNodes'
-import del from './del'
-import get from './get'
-import set from './set'
+import { DiscoveryService } from '../../cluster/network'
+import { DB } from '../../db'
+import { Node } from '../../node'
+import clusterNodes from './cluster/clusterNodes'
+import clusterInfo from './cluster/clusterInfo'
+import clusterSlots from './cluster/clusterSlots'
+import clusterShards from './cluster/clusterShards'
+import del from './data/del'
+import get from './data/get'
+import set from './data/set'
 
 export interface DataCommand {
   getKeys(args: Buffer[]): Buffer[]
@@ -16,7 +19,7 @@ export interface NodeCommand {
     discoveryService: DiscoveryService,
     node: Node,
     args: unknown[],
-  ): string | Buffer
+  ): string | Buffer | Iterable<unknown>
 }
 
 export type CommandResult = number | null | Buffer | Iterable<unknown> | string
@@ -34,6 +37,9 @@ const dataCommands: Record<string, DataCommand> = {
 
 const clusterCommands = {
   nodes: clusterNodes,
+  info: clusterInfo,
+  slots: clusterSlots,
+  shards: clusterShards,
 }
 
 export default {

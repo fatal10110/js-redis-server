@@ -1,7 +1,7 @@
-import { DataCommand } from '.'
-import { StringDataType } from '../../data-structures/string'
-import { DB } from '../db'
-import { WrongNumberOfArguments, WrongType } from '../errors'
+import { DataCommand } from '..'
+import { StringDataType } from '../../../../data-structures/string'
+import { DB } from '../../../db'
+import { WrongNumberOfArguments, WrongType } from '../../../errors'
 
 export class GetCommand implements DataCommand {
   getKeys(args: Buffer[]): Buffer[] {

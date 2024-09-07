@@ -1,9 +1,10 @@
 import { DB } from './db'
-import { DataCommand, NodeCommand } from './commands'
+import { DataCommand, NodeCommand } from './commands/redis'
 import {
   CorssSlot,
   MovedError,
   UnknownCommand,
+  UnknwonSubCommand,
   WrongNumberOfArguments,
 } from './errors'
 import clusterKeySlot from 'cluster-key-slot'
@@ -53,14 +54,18 @@ export class Node {
     switch (cmd) {
       case 'cluster':
         // Move to cluster commands handler
-        const subCommands = args.shift()?.toString()
+        const subCommand = args.shift()?.toString().toLowerCase()
 
-        if (!subCommands) {
+        if (!subCommand) {
           throw new WrongNumberOfArguments('cluster')
         }
 
-        if (subCommands) {
-          return this.commands.cluster[subCommands].handle(
+        if (!(subCommand in this.commands.cluster)) {
+          throw new UnknwonSubCommand(subCommand)
+        }
+
+        if (subCommand) {
+          return this.commands.cluster[subCommand].handle(
             this.discoveryService!,
             this,
             args,

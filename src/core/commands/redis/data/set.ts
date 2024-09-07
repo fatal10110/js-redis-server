@@ -1,11 +1,11 @@
-import { DataCommand } from '.'
-import { StringDataType } from '../../data-structures/string'
-import { DB } from '../db'
+import { DataCommand } from '..'
+import { StringDataType } from '../../../../data-structures/string'
+import { DB } from '../../../db'
 import {
   ExpectedInteger,
   RedisSyntaxError,
   WrongNumberOfArguments,
-} from '../errors'
+} from '../../../errors'
 import del from './del'
 
 export class SetCommand implements DataCommand {

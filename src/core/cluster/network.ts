@@ -2,7 +2,7 @@ import { Server } from 'net'
 import { Node, SlotRange } from '../node'
 import { Logger, ServerNetwork } from '../server'
 import { DB } from '../db'
-import commands from '../commands'
+import commands from '../commands/redis'
 
 export type Discovery = { node: Node; port: number; host: string }
 

@@ -22,7 +22,7 @@ export class ServerNetwork implements NetworkInterface {
     } else if (Number.isInteger(jsResponse)) {
       return Resp.encodeInteger(jsResponse as number)
     } else if (Array.isArray(jsResponse)) {
-      return Resp.encodeArray(jsResponse)
+      return Resp.encodeArray(jsResponse.map(this.prepareResponse.bind(this)))
     } else if (Buffer.isBuffer(jsResponse)) {
       return Resp.encodeBufBulk(jsResponse)
     } else if (typeof jsResponse === 'string') {
