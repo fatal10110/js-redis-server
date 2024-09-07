@@ -1,18 +1,25 @@
 import { DB } from './db'
-import { DataCommand, NodeCommand } from './commands/redis'
+import { DataCommand, NodeClientCommand, NodeCommand } from './commands/redis'
 import {
   CorssSlot,
   MovedError,
   UnknownCommand,
-  UnknwonSubCommand,
+  UnknwonClientSubCommand,
+  UnknwonClusterSubCommand,
   WrongNumberOfArguments,
 } from './errors'
 import clusterKeySlot from 'cluster-key-slot'
 import { DiscoveryService } from './cluster/network'
+import { Socket } from 'node:net'
 
 export type SlotRange = {
   max: number
   min: number
+}
+
+export type HandlingResult = {
+  close?: boolean
+  response: unknown
 }
 
 export class Node {
@@ -25,6 +32,8 @@ export class Node {
     private readonly commands: {
       data: Record<string, DataCommand>
       cluster: Record<string, NodeCommand>
+      client: Record<string, NodeClientCommand>
+      node: Record<string, NodeClientCommand>
     },
     public slotRange?: SlotRange,
     private readonly discoveryService?: DiscoveryService,
@@ -48,7 +57,7 @@ export class Node {
     return replica
   }
 
-  request(rawCmd: Buffer, args: Buffer[]) {
+  request(rawCmd: Buffer, args: Buffer[]): HandlingResult {
     const cmd = rawCmd.toString().toLowerCase()
 
     switch (cmd) {
@@ -61,24 +70,47 @@ export class Node {
         }
 
         if (!(subCommand in this.commands.cluster)) {
-          throw new UnknwonSubCommand(subCommand)
+          throw new UnknwonClusterSubCommand(subCommand)
         }
 
         if (subCommand) {
-          return this.commands.cluster[subCommand].handle(
+          const response = this.commands.cluster[subCommand].handle(
             this.discoveryService!,
             this,
             args,
           )
+
+          return { response }
         }
+      case 'client':
+        // Move to cluitn commands handler
+        const subClientCommand = args.shift()?.toString().toLowerCase()
+
+        if (!subClientCommand) {
+          throw new WrongNumberOfArguments('client')
+        }
+
+        if (!(subClientCommand in this.commands.client)) {
+          throw new UnknwonClientSubCommand(subClientCommand)
+        }
+
+        if (subClientCommand) {
+          const response = this.commands.client[subClientCommand].handle(
+            this,
+            args,
+          )
+          return { response }
+        }
+      case 'quit':
+        return this.commands.node.quit.handle(this, args)
       case 'command':
         // TODO implement real command docs
-        return 'mock command'
+        return { response: 'mock command' }
       case 'info':
         // TODO implement real command info
-        return 'mock info'
+        return { response: 'mock info' }
       case 'ping':
-        return 'PONG'
+        return { response: 'PONG' }
     }
 
     if (!(cmd in this.commands.data)) {
@@ -86,7 +118,8 @@ export class Node {
     }
 
     if (!this.slotRange) {
-      return this.commands.data[cmd].run(this.db, args)
+      const response = this.commands.data[cmd].run(this.db, args)
+      return { response }
     }
 
     const keys = this.commands.data[cmd].getKeys(args)
@@ -98,7 +131,8 @@ export class Node {
     }
 
     if (slot >= this.slotRange.min && slot <= this.slotRange.max) {
-      return this.commands.data[cmd].run(this.db, args)
+      const response = this.commands.data[cmd].run(this.db, args)
+      return { response }
     }
 
     if (this.discoveryService) {

@@ -66,7 +66,7 @@ export class SetCommand implements DataCommand {
       throw new RedisSyntaxError()
     }
 
-    const existingData = db.data.get(key)
+    const existingData = db.get(key)
 
     if (!(existingData instanceof StringDataType)) {
       del.run(db, [key])

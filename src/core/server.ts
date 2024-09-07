@@ -56,20 +56,32 @@ export class ServerNetwork implements NetworkInterface {
       })
       .on('data', (data: Buffer[]) => {
         const [cmd, ...args] = data
+
+        let { response: requestReponse, close } = node.request(cmd, args)
+
         let responseData: Buffer
 
         try {
-          responseData = this.prepareResponse(node.request(cmd, args))
+          responseData = this.prepareResponse(requestReponse)
         } catch (err) {
           if (err instanceof UserFacedError) {
             responseData = Resp.encodeError(err)
           } else {
             this.logger.error(`Error on processing incoming data`, { err })
             responseData = Resp.encodeError(new UserFacedError(`ERR Error!`))
+            close = true
           }
         }
 
-        socket.write(responseData)
+        socket.write(responseData, err => {
+          if (err) {
+            socket.destroySoon()
+          }
+        })
+
+        if (close) {
+          socket.destroySoon()
+        }
       })
   }
 
