@@ -39,6 +39,13 @@ export class UnknownCommand extends UserFacedError {
   }
 }
 
+export class UnknwonSubCommand extends UserFacedError {
+  constructor(subCommand: string | Buffer) {
+    super(`unknown subcommand '${subCommand}'. Try CLUSTER HELP.`)
+    this.name = 'ERR'
+  }
+}
+
 export class ReadOnlyNode extends UserFacedError {
   constructor() {
     super(`The node suppory only read commands`)

@@ -1,6 +1,6 @@
-import { DataCommand } from '.'
-import { DB } from '../db'
-import { WrongNumberOfArguments } from '../errors'
+import { DataCommand } from '..'
+import { DB } from '../../../db'
+import { WrongNumberOfArguments } from '../../../errors'
 
 export class DelCommand implements DataCommand {
   getKeys(args: Buffer[]): Buffer[] {

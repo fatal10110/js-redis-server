@@ -1,6 +1,6 @@
 import { NodeCommand } from '.'
-import { DiscoveryService } from '../cluster/network'
-import { Node } from '../node'
+import { DiscoveryService } from '../../cluster/network'
+import { Node } from '../../node'
 
 export class Ping implements NodeCommand {
   handle(

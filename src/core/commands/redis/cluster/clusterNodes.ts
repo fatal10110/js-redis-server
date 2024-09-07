@@ -1,6 +1,6 @@
-import { NodeCommand } from '.'
-import { Discovery, DiscoveryService } from '../cluster/network'
-import { Node } from '../node'
+import { NodeCommand } from '..'
+import { Discovery, DiscoveryService } from '../../../cluster/network'
+import { Node } from '../../../node'
 
 export class ClusterNodes implements NodeCommand {
   handle(

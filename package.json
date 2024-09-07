@@ -11,8 +11,9 @@
     "wasmoon": "^1.16.0"
   },
   "scripts": {
+    "test": "glob -c \"node --import tsx --no-warnings --test\" \"./tests/**/*.test.ts\"",
     "build": "rm -rf ./dist && tsc",
-    "start": "npm run build && node ./dist/index.js",
+    "start": "npm run build && node --enable-source-maps ./dist/index.js",
     "lint": "eslint --ignore-path .eslintignore --ext .js,.ts",
     "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\""
   },
@@ -40,7 +41,10 @@
     "@typescript-eslint/parser": "^8.2.0",
     "eslint": "^9.9.1",
     "eslint-config-prettier": "^9.1.0",
+    "glob": "^11.0.0",
+    "ioredis": "^5.4.1",
     "prettier": "3.3.3",
+    "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }
 }
