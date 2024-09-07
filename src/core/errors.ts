@@ -39,9 +39,16 @@ export class UnknownCommand extends UserFacedError {
   }
 }
 
-export class UnknwonSubCommand extends UserFacedError {
+export class UnknwonClusterSubCommand extends UserFacedError {
   constructor(subCommand: string | Buffer) {
     super(`unknown subcommand '${subCommand}'. Try CLUSTER HELP.`)
+    this.name = 'ERR'
+  }
+}
+
+export class UnknwonClientSubCommand extends UserFacedError {
+  constructor(subCommand: string | Buffer) {
+    super(`unknown subcommand '${subCommand}'. Try CLIENT HELP.`)
     this.name = 'ERR'
   }
 }
