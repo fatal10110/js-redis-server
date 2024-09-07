@@ -73,7 +73,7 @@ export class SetCommand implements DataCommand {
     }
 
     // TODO handle flags
-    db.set(key, val)
+    db.set(key, new StringDataType(val))
     return 'OK'
   }
 }

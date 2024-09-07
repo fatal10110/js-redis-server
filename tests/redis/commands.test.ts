@@ -7,7 +7,7 @@ import assert from 'node:assert'
 describe('Redis commands', () => {
   const redisCluster = new ClusterNetwork(console)
   const redisClient = new Redis.Cluster([{ host: '127.0.0.1', port: 8010 }], {
-    lazyConnect: false,
+    lazyConnect: true,
   })
 
   before(async () => {
@@ -25,7 +25,8 @@ describe('Redis commands', () => {
       const key = randomKey()
       await redisClient.set(key, 1)
 
-      assert.strictEqual(await redisClient.get(key), '1')
+      const val = await redisClient.get(key)
+      assert.strictEqual(val, '1')
     })
   })
 })
