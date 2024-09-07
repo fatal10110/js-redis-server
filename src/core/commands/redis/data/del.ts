@@ -15,11 +15,9 @@ export class DelCommand implements DataCommand {
     let counter = 0
 
     for (const key of args) {
-      if (db.data.delete(key)) {
+      if (db.del(key)) {
         counter++
       }
-
-      db.timings.delete(key)
     }
 
     return counter

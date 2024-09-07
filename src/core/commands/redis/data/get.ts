@@ -19,7 +19,7 @@ export class GetCommand implements DataCommand {
 
     const val = db.get(args[0])
 
-    if (!val) return null
+    if (val === null) return null
 
     if (!(val instanceof StringDataType)) {
       throw new WrongType(args[0].toString())
