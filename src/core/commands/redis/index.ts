@@ -2,15 +2,17 @@ import { DiscoveryService } from '../../cluster/network'
 import { DB } from '../../db'
 import { HandlingResult, Node } from '../../node'
 import quitCommand from './quit'
+
 import clientSetName from './client/clientSetName'
 import clusterNodes from './cluster/clusterNodes'
 import clusterInfo from './cluster/clusterInfo'
 import clusterSlots from './cluster/clusterSlots'
+import ping from './ping'
+import mget from './data/mget'
 import clusterShards from './cluster/clusterShards'
 import del from './data/del'
 import get from './data/get'
 import set from './data/set'
-import { Socket } from 'node:net'
 
 export interface DataCommand {
   getKeys(args: Buffer[]): Buffer[]
@@ -39,6 +41,7 @@ const stringCommands = {
 const dataCommands: Record<string, DataCommand> = {
   del,
   set,
+  mget,
   ...stringCommands,
 }
 
@@ -55,6 +58,7 @@ const clientCommands = {
 
 const nodeCommands = {
   quit: quitCommand,
+  ping,
 }
 
 export default {

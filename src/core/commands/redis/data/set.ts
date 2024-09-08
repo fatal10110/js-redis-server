@@ -69,7 +69,7 @@ export class SetCommand implements DataCommand {
     const existingData = db.get(key)
 
     if (!(existingData instanceof StringDataType)) {
-      del.run(db, [key])
+      db.del(key)
     }
 
     // TODO handle flags

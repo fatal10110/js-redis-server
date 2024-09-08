@@ -57,12 +57,13 @@ export class ServerNetwork implements NetworkInterface {
       .on('data', (data: Buffer[]) => {
         const [cmd, ...args] = data
 
-        let { response: requestReponse, close } = node.request(cmd, args)
-
         let responseData: Buffer
+        let close = false
 
         try {
-          responseData = this.prepareResponse(requestReponse)
+          const result = node.request(cmd, args)
+          responseData = this.prepareResponse(result.response)
+          close = !!result.close
         } catch (err) {
           if (err instanceof UserFacedError) {
             responseData = Resp.encodeError(err)
@@ -75,6 +76,7 @@ export class ServerNetwork implements NetworkInterface {
 
         socket.write(responseData, err => {
           if (err) {
+            this.logger.error(err)
             socket.destroySoon()
           }
         })

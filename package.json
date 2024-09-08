@@ -15,7 +15,8 @@
     "build": "rm -rf ./dist && tsc",
     "start": "npm run build && node --enable-source-maps ./dist/index.js",
     "lint": "eslint --ignore-path .eslintignore --ext .js,.ts",
-    "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\""
+    "format": "prettier --ignore-path .gitignore --write \"**/*.+(js|ts|json)\"",
+    "prepare": "husky"
   },
   "repository": {
     "type": "git",
@@ -42,7 +43,9 @@
     "eslint": "^9.9.1",
     "eslint-config-prettier": "^9.1.0",
     "glob": "^11.0.0",
+    "husky": "^9.1.5",
     "ioredis": "^5.4.1",
+    "lint-staged": "^15.2.10",
     "prettier": "3.3.3",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
