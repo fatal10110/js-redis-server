@@ -10,7 +10,6 @@ import {
 } from './errors'
 import clusterKeySlot from 'cluster-key-slot'
 import { DiscoveryService } from './cluster/network'
-import { Socket } from 'node:net'
 
 export type SlotRange = {
   max: number
@@ -110,7 +109,7 @@ export class Node {
         // TODO implement real command info
         return { response: 'mock info' }
       case 'ping':
-        return { response: 'PONG' }
+        return this.commands.node.ping.handle(this, args)
     }
 
     if (!(cmd in this.commands.data)) {

@@ -1,14 +1,9 @@
-import { NodeCommand } from '.'
-import { DiscoveryService } from '../../cluster/network'
-import { Node } from '../../node'
+import { NodeClientCommand } from '.'
+import { HandlingResult, Node } from '../../node'
 
-export class Ping implements NodeCommand {
-  handle(
-    discoveryService: DiscoveryService,
-    node: Node,
-    args: unknown[],
-  ): string | Buffer {
-    return 'PONG'
+export class Ping implements NodeClientCommand {
+  handle(node: Node, args: unknown[]): HandlingResult {
+    return { response: 'PONG' }
   }
 }
 
