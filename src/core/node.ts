@@ -21,19 +21,21 @@ export type HandlingResult = {
   response: unknown
 }
 
+export type CommandsInput = {
+  data: Record<string, DataCommand>
+  cluster: Record<string, NodeCommand>
+  client: Record<string, NodeClientCommand>
+  node: Record<string, NodeClientCommand>
+}
+
 export class Node {
   // TODO move to utility
   public readonly id = Math.random().toString(36).substring(2, 10)
   private readonly replicas: Node[] = []
 
   constructor(
-    private readonly db: DB,
-    private readonly commands: {
-      data: Record<string, DataCommand>
-      cluster: Record<string, NodeCommand>
-      client: Record<string, NodeClientCommand>
-      node: Record<string, NodeClientCommand>
-    },
+    public readonly db: DB,
+    private readonly commands: CommandsInput,
     public slotRange?: SlotRange,
     private readonly discoveryService?: DiscoveryService,
     public readonly master?: Node,
@@ -56,7 +58,7 @@ export class Node {
     return replica
   }
 
-  request(rawCmd: Buffer, args: Buffer[]): HandlingResult {
+  async request(rawCmd: Buffer, args: Buffer[]): Promise<HandlingResult> {
     const cmd = rawCmd.toString().toLowerCase()
 
     switch (cmd) {
@@ -98,6 +100,7 @@ export class Node {
             this,
             args,
           )
+
           return { response }
         }
       case 'quit':
@@ -117,11 +120,16 @@ export class Node {
     }
 
     if (!this.slotRange) {
-      const response = this.commands.data[cmd].run(this.db, args)
+      const response = await this.commands.data[cmd].run(this, args)
       return { response }
     }
 
     const keys = this.commands.data[cmd].getKeys(args)
+
+    if (!keys.length) {
+      const response = await this.commands.data[cmd].run(this, args)
+      return { response }
+    }
 
     const slot = clusterKeySlot.generateMulti(keys)
 
@@ -130,7 +138,7 @@ export class Node {
     }
 
     if (slot >= this.slotRange.min && slot <= this.slotRange.max) {
-      const response = this.commands.data[cmd].run(this.db, args)
+      const response = await this.commands.data[cmd].run(this, args)
       return { response }
     }
 

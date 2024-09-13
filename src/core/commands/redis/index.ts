@@ -1,6 +1,5 @@
 import { DiscoveryService } from '../../cluster/network'
-import { DB } from '../../db'
-import { HandlingResult, Node } from '../../node'
+import { CommandsInput, HandlingResult, Node } from '../../node'
 import quitCommand from './quit'
 
 import clientSetName from './client/clientSetName'
@@ -13,10 +12,11 @@ import clusterShards from './cluster/clusterShards'
 import del from './data/del'
 import get from './data/get'
 import set from './data/set'
+import evalCommand from './eval'
 
 export interface DataCommand {
   getKeys(args: Buffer[]): Buffer[]
-  run(db: DB, args: Buffer[]): unknown
+  run(node: Node, args: Buffer[]): unknown
 }
 
 export interface NodeCommand {
@@ -32,7 +32,7 @@ export interface NodeClientCommand {
 }
 
 export type CommandResult = number | null | Buffer | Iterable<unknown> | string
-export type Command = (db: DB, args: Buffer[]) => CommandResult
+export type Command = (node: Node, args: Buffer[]) => CommandResult
 
 const stringCommands = {
   get,
@@ -42,6 +42,7 @@ const dataCommands: Record<string, DataCommand> = {
   del,
   set,
   mget,
+  eval: evalCommand,
   ...stringCommands,
 }
 
@@ -61,9 +62,11 @@ const nodeCommands = {
   ping,
 }
 
-export default {
+const commands: CommandsInput = {
   data: dataCommands,
   cluster: clusterCommands,
   client: clientCommands,
   node: nodeCommands,
 }
+
+export default commands

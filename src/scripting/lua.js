@@ -1,4 +1,6 @@
 const RedisMock = require('ioredis-mock')
+const fs = require('fs')
+const nodeBuff = require('node:buffer')
 
 const redis = new RedisMock()
 
@@ -14,26 +16,54 @@ async function run() {
 
   try {
     // Set a JS function to be a global lua function
-    lua.global.set('redis', async (cmd, ...args) => {
-      const res = await redis[cmd](...args)
 
-      return res
+    const buff = fs.readFileSync('./1px.png')
+    //h = buff.toString('hex')
+    //let s = '\\xd1\\x84\\xd0\\xb2\\xd1\\x84\\xd0\\xb2'
+    //let s = ''
+
+    // for (let i = 0; i < h.length; i += 2) {
+    //   s += '\\' + 'x' + h[i] + h[i + 1]
+    // }
+
+    lua.global.set('cjson', {
+      encode: JSON.stringify,
+      decode: JSON.parse,
     })
+    lua.global.set('ARGV', [buff.toString('base64'), Buffer.from('фвфв')])
+    lua.global.set('test', arg => console.log(Array.isArray(arg)))
+    const b = fs.readFileSync('./base64.lua').toString()
+
+    const str = `${b}
+    
+    local decoded = base64.decode(ARGV[1])
+
+    function string.tohex(str)
+      return (str:gsub('.', function (c)
+          return string.format('%02X', string.byte(c))
+      end))
+    end
+
+    print(cjson.decode("[1]")[1])
+    --decoded:tohex()
+
+    return cjson.decode("[1]")
+    `
 
     // Run a lua string
-    const res = await lua.doString(`
-    redis = {}
+    const res = await lua.doString(str)
+    //fs.writeFileSync('test.png', Buffer.from(buff.toString('hex'), 'hex'))
 
-    redis.call = function (...)
-      return redisCall(...):await()
-    end
-    print(redis.call("lpush", "x", "x"))
-    print(redis.call("lpush", "x", "y"))
-    return redis.call("get", "X")
+    // let z = ''
 
-      
-    `)
+    // for (let i = 2; i < res.length; i += 4) {
+    //   z += res[i] + res[i + 1]
+    // }
+
+    //fs.writeFileSync('test.png', Buffer.from(res, 'hex'))
+    console.log(res.length)
     console.log(res)
+    console.log(Array.isArray(res))
   } finally {
     // Close the lua environment, so it can be freed
     lua.global.close()

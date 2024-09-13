@@ -78,7 +78,7 @@ export class ClusterNetwork implements DiscoveryService {
               resolve()
             }
           })
-          .listen(8010 - i++)
+          .listen()
       }
     })
   }

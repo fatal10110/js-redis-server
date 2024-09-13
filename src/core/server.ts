@@ -19,6 +19,8 @@ export class ServerNetwork implements NetworkInterface {
   private prepareResponse(jsResponse: unknown): Buffer {
     if (jsResponse === null) {
       return Resp.encodeNull()
+    } else if (jsResponse instanceof Error) {
+      return Resp.encodeError(jsResponse)
     } else if (Number.isInteger(jsResponse)) {
       return Resp.encodeInteger(jsResponse as number)
     } else if (Array.isArray(jsResponse)) {
@@ -49,6 +51,23 @@ export class ServerNetwork implements NetworkInterface {
     }
   }
 
+  private handleResponse(
+    socket: Socket,
+    responseData: unknown,
+    close: boolean,
+  ) {
+    socket.write(this.prepareResponse(responseData), err => {
+      if (err) {
+        this.logger.error(err)
+        socket.destroySoon()
+      }
+    })
+
+    if (close) {
+      socket.destroySoon()
+    }
+  }
+
   private createResp(socket: Socket, node: Node) {
     return new Resp({ bufBulk: true })
       .on('error', function (error: unknown) {
@@ -57,33 +76,23 @@ export class ServerNetwork implements NetworkInterface {
       .on('data', (data: Buffer[]) => {
         const [cmd, ...args] = data
 
-        let responseData: Buffer
-        let close = false
-
-        try {
-          const result = node.request(cmd, args)
-          responseData = this.prepareResponse(result.response)
-          close = !!result.close
-        } catch (err) {
-          if (err instanceof UserFacedError) {
-            responseData = Resp.encodeError(err)
-          } else {
-            this.logger.error(`Error on processing incoming data`, { err })
-            responseData = Resp.encodeError(new UserFacedError(`ERR Error!`))
-            close = true
-          }
-        }
-
-        socket.write(responseData, err => {
-          if (err) {
-            this.logger.error(err)
-            socket.destroySoon()
-          }
-        })
-
-        if (close) {
-          socket.destroySoon()
-        }
+        node
+          .request(cmd, args)
+          .then(result => {
+            this.handleResponse(socket, result.response, !!result.close)
+          })
+          .catch((err: unknown) => {
+            if (err instanceof UserFacedError) {
+              this.handleResponse(socket, err, false)
+            } else {
+              this.logger.error(`Error on processing incoming data`, { err })
+              this.handleResponse(
+                socket,
+                new UserFacedError(`ERR Error!`),
+                true,
+              )
+            }
+          })
       })
   }
 

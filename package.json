@@ -11,7 +11,7 @@
     "wasmoon": "^1.16.0"
   },
   "scripts": {
-    "test": "glob -c \"node --import tsx --no-warnings --test\" \"./tests/**/*.test.ts\"",
+    "test": "glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests/**/*.test.ts\"",
     "build": "rm -rf ./dist && tsc",
     "start": "npm run build && node --enable-source-maps ./dist/index.js",
     "lint": "eslint --ignore-path .eslintignore --ext .js,.ts",

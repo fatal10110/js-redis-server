@@ -1,13 +1,13 @@
 import { DataCommand } from '..'
-import { DB } from '../../../db'
 import { WrongNumberOfArguments } from '../../../errors'
+import { Node } from '../../../node'
 
 export class DelCommand implements DataCommand {
   getKeys(args: Buffer[]): Buffer[] {
     return args
   }
 
-  run(db: DB, args: Buffer[]): number {
+  run(node: Node, args: Buffer[]): number {
     if (!args.length) {
       throw new WrongNumberOfArguments('del')
     }
@@ -15,7 +15,7 @@ export class DelCommand implements DataCommand {
     let counter = 0
 
     for (const key of args) {
-      if (db.del(key)) {
+      if (node.db.del(key)) {
         counter++
       }
     }
