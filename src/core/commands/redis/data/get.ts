@@ -1,7 +1,7 @@
 import { DataCommand } from '..'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../db'
 import { WrongNumberOfArguments, WrongType } from '../../../errors'
+import { Node } from '../../../node'
 
 export class GetCommand implements DataCommand {
   getKeys(args: Buffer[]): Buffer[] {
@@ -12,12 +12,12 @@ export class GetCommand implements DataCommand {
     return args
   }
 
-  run(db: DB, args: Buffer[]): unknown {
+  run(node: Node, args: Buffer[]): unknown {
     if (!args.length || args.length > 1) {
       throw new WrongNumberOfArguments('get')
     }
 
-    const val = db.get(args[0])
+    const val = node.db.get(args[0])
 
     if (val === null) return null
 

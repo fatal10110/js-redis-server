@@ -73,3 +73,10 @@ export class MovedError extends UserFacedError {
     this.name = 'MOVED'
   }
 }
+
+export class WrongNumberOfKeys extends UserFacedError {
+  constructor() {
+    super(`Number of keys can't be greater than number of args`)
+    this.name = 'ERR'
+  }
+}

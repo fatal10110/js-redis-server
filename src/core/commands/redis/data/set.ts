@@ -1,11 +1,11 @@
 import { DataCommand } from '..'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../db'
 import {
   ExpectedInteger,
   RedisSyntaxError,
   WrongNumberOfArguments,
 } from '../../../errors'
+import { Node } from '../../../node'
 import del from './del'
 
 export class SetCommand implements DataCommand {
@@ -16,7 +16,7 @@ export class SetCommand implements DataCommand {
 
     return [args[0]]
   }
-  run(db: DB, args: Buffer[]): unknown {
+  run(node: Node, args: Buffer[]): unknown {
     const [key, val, ...cmdArgs] = args
 
     if (!key || !val) {
@@ -66,14 +66,14 @@ export class SetCommand implements DataCommand {
       throw new RedisSyntaxError()
     }
 
-    const existingData = db.get(key)
+    const existingData = node.db.get(key)
 
     if (!(existingData instanceof StringDataType)) {
-      db.del(key)
+      node.db.del(key)
     }
 
     // TODO handle flags
-    db.set(key, new StringDataType(val))
+    node.db.set(key, new StringDataType(val))
     return 'OK'
   }
 }
