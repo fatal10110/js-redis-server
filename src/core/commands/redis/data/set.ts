@@ -1,22 +1,22 @@
-import { DataCommand } from '..'
+import { Command, CommandResult, Node } from '../../../../types'
 import { StringDataType } from '../../../../data-structures/string'
 import {
   ExpectedInteger,
   RedisSyntaxError,
   WrongNumberOfArguments,
 } from '../../../errors'
-import { Node } from '../../../node'
-import del from './del'
 
-export class SetCommand implements DataCommand {
-  getKeys(args: Buffer[]): Buffer[] {
+export class SetCommand implements Command {
+  constructor(private readonly node: Node) {}
+
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (!args.length) {
       throw new WrongNumberOfArguments('set')
     }
 
     return [args[0]]
   }
-  run(node: Node, args: Buffer[]): unknown {
+  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
     const [key, val, ...cmdArgs] = args
 
     if (!key || !val) {
@@ -66,16 +66,20 @@ export class SetCommand implements DataCommand {
       throw new RedisSyntaxError()
     }
 
-    const existingData = node.db.get(key)
+    const existingData = this.node.db.get(key)
 
     if (!(existingData instanceof StringDataType)) {
-      node.db.del(key)
+      this.node.db.del(key)
     }
 
     // TODO handle flags
-    node.db.set(key, new StringDataType(val))
-    return 'OK'
+    this.node.db.set(key, new StringDataType(val))
+    return { response: 'OK' }
   }
 }
 
-export default new SetCommand()
+export default function (node: Node) {
+  return function () {
+    return new SetCommand(node)
+  }
+}

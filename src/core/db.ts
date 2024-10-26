@@ -4,7 +4,6 @@ import { SetDataType } from '../data-structures/set'
 import { StreamDataType } from '../data-structures/stream'
 import { StringDataType } from '../data-structures/string'
 import { SortedSetDataType } from '../data-structures/zset'
-import { ReadOnlyNode } from './errors'
 
 export type DataTypes =
   | HashDataType

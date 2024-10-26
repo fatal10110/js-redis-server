@@ -1,13 +1,14 @@
-import { DataCommand } from '..'
+import { Command, CommandResult, Node } from '../../../../types'
 import { StringDataType } from '../../../../data-structures/string'
 import { WrongNumberOfArguments } from '../../../errors'
-import { Node } from '../../../node'
 
-export class MgetCommand implements DataCommand {
-  getKeys(args: Buffer[]): Buffer[] {
+export class MgetCommand implements Command {
+  constructor(private readonly node: Node) {}
+
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     return args
   }
-  run(node: Node, args: Buffer[]): unknown {
+  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
     if (args.length === 0) {
       throw new WrongNumberOfArguments('mget')
     }
@@ -15,7 +16,7 @@ export class MgetCommand implements DataCommand {
     const res: (Buffer | null)[] = []
 
     for (const key of args) {
-      const val = node.db.get(key)
+      const val = this.node.db.get(key)
 
       if (val instanceof StringDataType) {
         res.push(val.data)
@@ -24,8 +25,12 @@ export class MgetCommand implements DataCommand {
       }
     }
 
-    return res
+    return { response: res }
   }
 }
 
-export default new MgetCommand()
+export default function (node: Node) {
+  return function () {
+    return new MgetCommand(node)
+  }
+}

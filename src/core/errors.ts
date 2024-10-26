@@ -1,4 +1,4 @@
-import { Discovery } from './cluster/network'
+import { ClusterNode } from './cluster/clusterNode'
 
 export class UserFacedError extends Error {}
 
@@ -68,8 +68,10 @@ export class CorssSlot extends UserFacedError {
 }
 
 export class MovedError extends UserFacedError {
-  constructor(destination: Discovery, slot: number) {
-    super(`${slot} ${destination.host}:${destination.port}`, {})
+  constructor(clusterNode: ClusterNode, slot: number) {
+    const address = clusterNode.getAddress()
+
+    super(`${slot} ${address.host}:${address.port}`, {})
     this.name = 'MOVED'
   }
 }
@@ -77,6 +79,34 @@ export class MovedError extends UserFacedError {
 export class WrongNumberOfKeys extends UserFacedError {
   constructor() {
     super(`Number of keys can't be greater than number of args`)
+    this.name = 'ERR'
+  }
+}
+
+export class NestedMulti extends UserFacedError {
+  constructor() {
+    super(`MULTI calls can not be nested`)
+    this.name = 'ERR'
+  }
+}
+
+export class TransactionDiscardedWithReson extends UserFacedError {
+  constructor(reason: string) {
+    super(`Transaction discarded because of: ${reason}`)
+    this.name = 'EXECABORT'
+  }
+}
+
+export class TransactionDiscardedWithError extends UserFacedError {
+  constructor() {
+    super(`Transaction discarded because of previous errors.`)
+    this.name = 'EXECABORT'
+  }
+}
+
+export class NoMulti extends UserFacedError {
+  constructor() {
+    super(`EXEC without MULTI`)
     this.name = 'ERR'
   }
 }

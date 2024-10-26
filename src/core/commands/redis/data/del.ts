@@ -1,13 +1,13 @@
-import { DataCommand } from '..'
+import { Command, CommandBuilder, CommandResult, Node } from '../../../../types'
 import { WrongNumberOfArguments } from '../../../errors'
-import { Node } from '../../../node'
 
-export class DelCommand implements DataCommand {
-  getKeys(args: Buffer[]): Buffer[] {
+export class DelCommand implements Command {
+  constructor(private readonly node: Node) {}
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     return args
   }
 
-  run(node: Node, args: Buffer[]): number {
+  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
     if (!args.length) {
       throw new WrongNumberOfArguments('del')
     }
@@ -15,13 +15,17 @@ export class DelCommand implements DataCommand {
     let counter = 0
 
     for (const key of args) {
-      if (node.db.del(key)) {
+      if (this.node.db.del(key)) {
         counter++
       }
     }
 
-    return counter
+    return { response: counter }
   }
 }
 
-export default new DelCommand()
+export default function (node: Node): CommandBuilder {
+  return function (): Command {
+    return new DelCommand(node)
+  }
+}

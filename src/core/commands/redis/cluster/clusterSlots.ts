@@ -1,31 +1,36 @@
-import { NodeCommand } from '..'
-import { DiscoveryService } from '../../../cluster/network'
-import { Node } from '../../../node'
+import { Command, CommandResult } from '../../../../types'
+import { ClusterNode } from '../../../cluster/clusterNode'
 
-export class ClusterSlots implements NodeCommand {
-  handle(
-    discoveryService: DiscoveryService,
-    node: Node,
-    args: unknown[],
-  ): Iterable<unknown> {
+export const commandName = 'slots'
+
+export class ClusterSlotsCommand implements Command {
+  constructor(private readonly node: ClusterNode) {}
+
+  getKeys(): Buffer[] {
+    return []
+  }
+
+  run(rawCommand: Buffer, args: Buffer[]): CommandResult {
     const slots: unknown[] = []
 
-    for (const {
-      node,
-      host,
-      port,
-    } of discoveryService.getNodesAndAddresses()) {
+    for (const clusterNode of this.node.getClusterNodes()) {
+      if (clusterNode.masterNodeId) continue
+
+      const address = clusterNode.getAddress()
+
       const nodeInfo: (string | number | Iterable<void>)[] = [
-        host,
-        port,
-        node.id,
+        address.host,
+        address.port,
+        clusterNode.id,
         [],
       ]
-      slots.push([node.slotRange?.min, node.slotRange?.max, nodeInfo])
+      slots.push([
+        clusterNode.slotRange?.min,
+        clusterNode.slotRange?.max,
+        nodeInfo,
+      ])
     }
 
-    return slots
+    return { response: slots }
   }
 }
-
-export default new ClusterSlots()
