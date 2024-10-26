@@ -1,21 +1,24 @@
-import { NodeCommand } from '..'
-import { Discovery, DiscoveryService } from '../../../cluster/network'
-import { Node } from '../../../node'
+import { Command, CommandResult } from '../../../../types'
+import { ClusterNode } from '../../../cluster/clusterNode'
 
-export class ClusterNodes implements NodeCommand {
-  handle(
-    discoveryService: DiscoveryService,
-    node: Node,
-    args: unknown[],
-  ): string | Buffer {
-    const master: Discovery[] = []
-    const slave: Discovery[] = []
+export const commandName = 'nodes'
 
-    for (const discovery of discoveryService.getNodesAndAddresses()) {
-      if (discovery.node.master) {
-        slave.push(discovery)
+export class ClusterNodesCommand implements Command {
+  constructor(private readonly node: ClusterNode) {}
+
+  getKeys(): Buffer[] {
+    return []
+  }
+
+  run(rawCommand: Buffer, args: Buffer[]): CommandResult {
+    const master: ClusterNode[] = []
+    const replicas: ClusterNode[] = []
+
+    for (const clusterNode of this.node.getClusterNodes()) {
+      if (clusterNode.masterNodeId) {
+        replicas.push(clusterNode)
       } else {
-        master.push(discovery)
+        master.push(clusterNode)
       }
     }
 
@@ -23,50 +26,46 @@ export class ClusterNodes implements NodeCommand {
     const mapping: Record<string, number> = {}
 
     for (let i = 0; i < master.length; i++) {
-      const discovery = master[i]
+      const clusterNode = master[i]
       const configEpoch = i + 1
-      mapping[discovery.node.id] = configEpoch
+      mapping[clusterNode.id] = configEpoch
 
-      res.push(this.generateClusterNodeInfo(discovery, node, configEpoch))
+      res.push(this.generateClusterNodeInfo(clusterNode, configEpoch))
     }
 
-    for (const discovery of slave) {
+    for (const clusterNode of replicas) {
       res.push(
         this.generateClusterNodeInfo(
-          discovery,
-          node,
-          mapping[discovery.node.master!.id],
+          clusterNode,
+          mapping[clusterNode.masterNodeId!],
         ),
       )
     }
 
-    return Buffer.from(res.join(''))
+    return { response: Buffer.from(res.join('')) }
   }
 
   private generateClusterNodeInfo(
-    discovery: Discovery,
-    currentNode: Node,
+    clusterNode: ClusterNode,
     configEpoch: number,
   ) {
-    const connectionDetails = `${discovery.host}:${discovery.port}@${discovery.port}`
-    const myselfDefinition =
-      currentNode.id === discovery.node.id ? 'myself,' : ''
-    const masterSlave = discovery.node.master
-      ? `slave ${discovery.node.master.id}`
+    const nodeAddpress = clusterNode.getAddress()
+    const connectionDetails = `${nodeAddpress.host}:${nodeAddpress.port}@${nodeAddpress.port}`
+    const myselfDefinition = this.node.id === clusterNode.id ? 'myself,' : ''
+    const masterSlave = clusterNode.masterNodeId
+      ? `slave ${clusterNode.masterNodeId}`
       : `master -`
     // TODO handle ping information
     const pingPong = `0 ${Date.now()}`
 
-    if (!discovery.node.slotRange) {
-      throw new Error(`unknonw slot range for node ${discovery.node.id}`)
+    if (!clusterNode.slotRange) {
+      throw new Error(`unknonw slot range for node ${clusterNode.id}`)
     }
 
-    const slots = discovery.node.master
+    const slots = clusterNode.masterNodeId
       ? ''
-      : ` ${discovery.node.slotRange.min}-${discovery.node.slotRange.max}`
+      : ` ${clusterNode.slotRange.min}-${clusterNode.slotRange.max}`
 
-    return `${discovery.node.id} ${connectionDetails} ${myselfDefinition}${masterSlave} ${pingPong} ${configEpoch} connected${slots}\n`
+    return `${clusterNode.id} ${connectionDetails} ${myselfDefinition}${masterSlave} ${pingPong} ${configEpoch} connected${slots}\n`
   }
 }
-
-export default new ClusterNodes()

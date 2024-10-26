@@ -1,10 +1,11 @@
-import { DataCommand } from '..'
+import { Command, CommandResult, Node } from '../../../../types'
 import { StringDataType } from '../../../../data-structures/string'
 import { WrongNumberOfArguments, WrongType } from '../../../errors'
-import { Node } from '../../../node'
 
-export class GetCommand implements DataCommand {
-  getKeys(args: Buffer[]): Buffer[] {
+export class GetCommand implements Command {
+  constructor(private readonly node: Node) {}
+
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (!args.length || args.length > 1) {
       throw new WrongNumberOfArguments('get')
     }
@@ -12,21 +13,25 @@ export class GetCommand implements DataCommand {
     return args
   }
 
-  run(node: Node, args: Buffer[]): unknown {
+  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
     if (!args.length || args.length > 1) {
       throw new WrongNumberOfArguments('get')
     }
 
-    const val = node.db.get(args[0])
+    const val = this.node.db.get(args[0])
 
-    if (val === null) return null
+    if (val === null) return { response: null }
 
     if (!(val instanceof StringDataType)) {
       throw new WrongType(args[0].toString())
     }
 
-    return val.data
+    return { response: val.data }
   }
 }
 
-export default new GetCommand()
+export default function (node: Node) {
+  return function () {
+    return new GetCommand(node)
+  }
+}

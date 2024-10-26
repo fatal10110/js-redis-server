@@ -1,153 +1,135 @@
+import { Server, Socket, createServer } from 'net'
+import Resp from 'respjs'
+import { UserFacedError } from './errors'
 import { DB } from './db'
-import { DataCommand, NodeClientCommand, NodeCommand } from './commands/redis'
-import {
-  CorssSlot,
-  MovedError,
-  UnknownCommand,
-  UnknwonClientSubCommand,
-  UnknwonClusterSubCommand,
-  WrongNumberOfArguments,
-} from './errors'
-import clusterKeySlot from 'cluster-key-slot'
-import { DiscoveryService } from './cluster/network'
+import { CommandProvider, Logger, Node } from '../types'
 
-export type SlotRange = {
-  max: number
-  min: number
-}
-
-export type HandlingResult = {
-  close?: boolean
-  response: unknown
-}
-
-export type CommandsInput = {
-  data: Record<string, DataCommand>
-  cluster: Record<string, NodeCommand>
-  client: Record<string, NodeClientCommand>
-  node: Record<string, NodeClientCommand>
-}
-
-export class Node {
-  // TODO move to utility
-  public readonly id = Math.random().toString(36).substring(2, 10)
-  private readonly replicas: Node[] = []
+export class RedisNode implements Node {
+  public readonly server: Server
 
   constructor(
+    private readonly logger: Logger,
     public readonly db: DB,
-    private readonly commands: CommandsInput,
-    public slotRange?: SlotRange,
-    private readonly discoveryService?: DiscoveryService,
-    public readonly master?: Node,
-  ) {}
-
-  createReplica(): Node {
-    if (this.master) {
-      throw new Error(`Can not create replica from replica`)
-    }
-
-    // TODO pass replica commands
-    const replica = new Node(
-      this.db,
-      this.commands,
-      this.slotRange,
-      this.discoveryService,
-      this,
-    )
-    this.replicas.push(replica)
-    return replica
+    public commandExecutor: CommandProvider,
+  ) {
+    this.server = createServer({ keepAlive: true })
+      .on('error', err => {
+        // Handle errors here.
+        logger.error(err)
+      })
+      .on('close', () => {
+        logger.info('Connection closed')
+      })
+      .on('connection', socket => {
+        socket.pipe(this.handleConnection(socket))
+      })
   }
 
-  async request(rawCmd: Buffer, args: Buffer[]): Promise<HandlingResult> {
-    const cmd = rawCmd.toString().toLowerCase()
+  replaceExecutor(commandExecutor: CommandProvider): CommandProvider {
+    const old = this.commandExecutor
+    this.commandExecutor = commandExecutor
+    return old
+  }
 
-    switch (cmd) {
-      case 'cluster':
-        // Move to cluster commands handler
-        const subCommand = args.shift()?.toString().toLowerCase()
+  private prepareResponse(jsResponse: unknown): Buffer {
+    if (jsResponse === null) {
+      return Resp.encodeNull()
+    } else if (jsResponse instanceof Error) {
+      return Resp.encodeError(jsResponse)
+    } else if (Number.isInteger(jsResponse)) {
+      return Resp.encodeInteger(jsResponse as number)
+    } else if (Array.isArray(jsResponse)) {
+      return Resp.encodeArray(jsResponse.map(this.prepareResponse.bind(this)))
+    } else if (Buffer.isBuffer(jsResponse)) {
+      return Resp.encodeBufBulk(jsResponse)
+    } else if (typeof jsResponse === 'string') {
+      return Resp.encodeString(jsResponse)
+    } else if (typeof jsResponse === 'object') {
+      const keys = Object.keys(jsResponse)
 
-        if (!subCommand) {
-          throw new WrongNumberOfArguments('cluster')
+      if (keys.length === 0) {
+        return Resp.encodeNullArray()
+      } else {
+        const arr = []
+
+        for (const k of keys) {
+          arr.push(Resp.encodeString(k))
+          arr.push(
+            this.prepareResponse((jsResponse as Record<string, unknown>)[k]),
+          )
         }
 
-        if (!(subCommand in this.commands.cluster)) {
-          throw new UnknwonClusterSubCommand(subCommand)
-        }
+        return Resp.encodeArray(arr)
+      }
+    } else {
+      throw new Error(`Unknown response of type ${typeof jsResponse}`)
+    }
+  }
 
-        if (subCommand) {
-          const response = this.commands.cluster[subCommand].handle(
-            this.discoveryService!,
-            this,
+  write(socket: Socket, responseData: unknown, close?: boolean) {
+    socket.write(this.prepareResponse(responseData), err => {
+      if (err) {
+        this.logger.error(err)
+        socket.destroySoon()
+      }
+    })
+
+    if (close) {
+      socket.destroySoon()
+    }
+  }
+
+  private handleError(socket: Socket, err: unknown) {
+    if (err instanceof UserFacedError) {
+      this.write(socket, err, false)
+    } else {
+      this.logger.error(`Error on processing incoming data`, { err })
+      this.write(socket, new UserFacedError(`ERR Error!`), true)
+    }
+  }
+
+  private handleConnection(socket: Socket) {
+    return new Resp({ bufBulk: true })
+      .on('error', (err: unknown) => {
+        this.handleError(socket, err)
+      })
+      .on('data', (data: Buffer[]) => {
+        const [cmdName, ...args] = data
+
+        try {
+          const cmd = this.commandExecutor.getOrCreateCommand(
+            socket,
+            cmdName,
             args,
           )
 
-          return { response }
+          const { response, close } = cmd.run(cmdName, args)
+          this.write(socket, response, close)
+        } catch (err) {
+          this.handleError(socket, err)
         }
-      case 'client':
-        // Move to cluitn commands handler
-        const subClientCommand = args.shift()?.toString().toLowerCase()
+      })
+  }
 
-        if (!subClientCommand) {
-          throw new WrongNumberOfArguments('client')
-        }
+  listen(port?: number): Promise<void> {
+    const promise = new Promise<void>((resolve, reject) => {
+      this.server.once('error', reject)
+      this.server.once('listening', () => {
+        this.server.removeListener('error', reject)
+        resolve()
+      })
+    })
 
-        if (!(subClientCommand in this.commands.client)) {
-          throw new UnknwonClientSubCommand(subClientCommand)
-        }
+    this.server.listen(port)
 
-        if (subClientCommand) {
-          const response = this.commands.client[subClientCommand].handle(
-            this,
-            args,
-          )
+    return promise
+  }
 
-          return { response }
-        }
-      case 'quit':
-        return this.commands.node.quit.handle(this, args)
-      case 'command':
-        // TODO implement real command docs
-        return { response: 'mock command' }
-      case 'info':
-        // TODO implement real command info
-        return { response: 'mock info' }
-      case 'ping':
-        return this.commands.node.ping.handle(this, args)
-    }
-
-    if (!(cmd in this.commands.data)) {
-      throw new UnknownCommand(rawCmd, args)
-    }
-
-    if (!this.slotRange) {
-      const response = await this.commands.data[cmd].run(this, args)
-      return { response }
-    }
-
-    const keys = this.commands.data[cmd].getKeys(args)
-
-    if (!keys.length) {
-      const response = await this.commands.data[cmd].run(this, args)
-      return { response }
-    }
-
-    const slot = clusterKeySlot.generateMulti(keys)
-
-    if (slot === -1) {
-      throw new CorssSlot()
-    }
-
-    if (slot >= this.slotRange.min && slot <= this.slotRange.max) {
-      const response = await this.commands.data[cmd].run(this, args)
-      return { response }
-    }
-
-    if (this.discoveryService) {
-      const destination = this.discoveryService.getNodeAndAdressBySlot(slot)
-
-      throw new MovedError(destination, slot)
-    }
-
-    throw new Error(`unknown slot ${slot}`)
+  close(): Promise<void> {
+    return new Promise((resolve, reject) =>
+      this.server.close(err => {
+        err ? reject(err) : resolve()
+      }),
+    )
   }
 }

@@ -1,18 +1,14 @@
 import { Command, CommandResult } from '../../../types'
 
-export class QuitCommand implements Command {
+export class InfoCommand implements Command {
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     return []
   }
-
   run(rawCmd: Buffer, args: Buffer[]): CommandResult {
-    return {
-      close: true,
-      response: 'OK',
-    }
+    return { response: 'mock info' }
   }
 }
 
 export default function () {
-  return new QuitCommand()
+  return new InfoCommand()
 }

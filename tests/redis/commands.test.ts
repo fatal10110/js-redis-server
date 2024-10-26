@@ -14,7 +14,7 @@ describe('Redis commands', () => {
       [
         {
           host: '127.0.0.1',
-          port: redisCluster.getNodesAndAddresses()[0].port,
+          port: Array.from(redisCluster.getAll())[0].getAddress().port,
         },
       ],
       {

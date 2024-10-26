@@ -13,7 +13,7 @@ describe('Redis commands', () => {
       [
         {
           host: '127.0.0.1',
-          port: redisCluster.getNodesAndAddresses()[0].port,
+          port: Array.from(redisCluster.getAll())[0].getAddress().port,
         },
       ],
       {
@@ -33,7 +33,7 @@ describe('Redis commands', () => {
       const script = `
       if ARGV[1] == "фвфв" then
         return 'yes'
-      else 
+      else
         return 'no'
       end
       `
@@ -47,7 +47,7 @@ describe('Redis commands', () => {
       const script = `
       if KEYS[1] == "фвфв" then
         return 'yes'
-      else 
+      else
         return 'no'
       end
       `
@@ -60,13 +60,14 @@ describe('Redis commands', () => {
     it('gets utf8 value correctly', async () => {
       redisClient?.set('myKey', 'фвфв')
       const script = `
-      val = redis.call("get", KEYS[1])
-      if val == "фвфв" then
-        return 'yes'
-      else 
-        return 'no'
-      end
-      `
+        val = redis.call("get", KEYS[1])
+
+        if val == "фвфв" then
+          return 'yes'
+        else
+          return 'no'
+        end
+        `
 
       const res = await redisClient?.eval(script, 1, 'myKey')
 
@@ -75,9 +76,9 @@ describe('Redis commands', () => {
 
     it('sets utf8 value from args', async () => {
       const script = `
-      val = redis.call("set", KEYS[1], ARGV[1])
-      return ''
-      `
+        val = redis.call("set", KEYS[1], ARGV[1])
+        return ''
+        `
 
       await redisClient?.eval(script, 1, 'myKey', 'фвфв')
       const res = await redisClient?.get('myKey')
@@ -93,8 +94,8 @@ describe('Redis commands', () => {
       await redisClient?.set('myKey', buff)
 
       const script = `
-      return redis.call("get", KEYS[1])
-      `
+        return redis.call("get", KEYS[1])
+        `
 
       // @ts-ignore
       const res = await redisClient?.evalBuffer(script, 1, 'myKey')

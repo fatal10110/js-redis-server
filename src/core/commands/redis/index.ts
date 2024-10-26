@@ -1,72 +1,43 @@
-import { DiscoveryService } from '../../cluster/network'
-import { CommandsInput, HandlingResult, Node } from '../../node'
+import { LuaFactory } from 'wasmoon'
+import { ClusterNode } from '../../cluster/clusterNode'
+import { CommandsInput } from '../../../types'
+import createEval from './eval'
+import createMulti from './multi'
+import pingCommand from './ping'
 import quitCommand from './quit'
+import createClient from './client'
+import createCluster from './cluster'
+import createGet from './data/get'
+import createSet from './data/set'
+import createMget from './data/mget'
+import createDel from './data/del'
+import createCommandInfo from './command'
+import createInfo from './info'
 
-import clientSetName from './client/clientSetName'
-import clusterNodes from './cluster/clusterNodes'
-import clusterInfo from './cluster/clusterInfo'
-import clusterSlots from './cluster/clusterSlots'
-import ping from './ping'
-import mget from './data/mget'
-import clusterShards from './cluster/clusterShards'
-import del from './data/del'
-import get from './data/get'
-import set from './data/set'
-import evalCommand from './eval'
+export async function createClusterCommandsInputBuilder(): Promise<
+  [() => void, (node: ClusterNode) => CommandsInput]
+> {
+  const factory = new LuaFactory()
+  const lua = await factory.createEngine({ injectObjects: true })
 
-export interface DataCommand {
-  getKeys(args: Buffer[]): Buffer[]
-  run(node: Node, args: Buffer[]): unknown
+  // TODO use better solution, maybe convert to class
+  return [
+    lua.global.close.bind(lua.global),
+    function createClusterCommands(node: ClusterNode): CommandsInput {
+      return {
+        eval: createEval(node, lua),
+        multi: createMulti(node),
+        ping: pingCommand,
+        quit: quitCommand,
+        client: createClient(node),
+        cluster: createCluster(node),
+        get: createGet(node),
+        set: createSet(node),
+        mget: createMget(node),
+        del: createDel(node),
+        command: createCommandInfo,
+        info: createInfo,
+      }
+    },
+  ]
 }
-
-export interface NodeCommand {
-  handle(
-    discoveryService: DiscoveryService,
-    node: Node,
-    args: unknown[],
-  ): string | Buffer | Iterable<unknown> | void
-}
-
-export interface NodeClientCommand {
-  handle(node: Node, args: unknown[]): HandlingResult
-}
-
-export type CommandResult = number | null | Buffer | Iterable<unknown> | string
-export type Command = (node: Node, args: Buffer[]) => CommandResult
-
-const stringCommands = {
-  get,
-}
-
-const dataCommands: Record<string, DataCommand> = {
-  del,
-  set,
-  mget,
-  eval: evalCommand,
-  ...stringCommands,
-}
-
-const clusterCommands = {
-  nodes: clusterNodes,
-  info: clusterInfo,
-  slots: clusterSlots,
-  shards: clusterShards,
-}
-
-const clientCommands = {
-  setname: clientSetName,
-}
-
-const nodeCommands = {
-  quit: quitCommand,
-  ping,
-}
-
-const commands: CommandsInput = {
-  data: dataCommands,
-  cluster: clusterCommands,
-  client: clientCommands,
-  node: nodeCommands,
-}
-
-export default commands

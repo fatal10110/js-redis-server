@@ -1,20 +1,20 @@
-import { DataCommand } from '.'
+import { Socket } from 'net'
+import { Command, CommandBuilder, CommandResult, Node } from '../../../types'
 import {
   ExpectedInteger,
   WrongNumberOfArguments,
   WrongNumberOfKeys,
 } from '../../errors'
-import { LuaFactory } from 'wasmoon'
-import { Node } from '../../node'
+import { LuaEngine } from 'wasmoon'
 
-export class EvalCommand implements DataCommand {
-  private readonly factory: LuaFactory
+export class EvalCommand implements Command {
+  constructor(
+    private readonly node: Node,
+    private readonly socket: Socket,
+    private readonly lua: LuaEngine,
+  ) {}
 
-  constructor() {
-    this.factory = new LuaFactory()
-  }
-
-  getKeys(args: Buffer[]): Buffer[] {
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length < 2) {
       throw new WrongNumberOfArguments('eval')
     }
@@ -38,10 +38,10 @@ export class EvalCommand implements DataCommand {
     return keys
   }
 
-  async run(node: Node, args: Buffer[]): Promise<Buffer> {
+  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
     const keys = []
 
-    for (const key of this.getKeys(args)) {
+    for (const key of this.getKeys(rawCmd, args)) {
       keys.push(`("${key.toString('hex')}"):fromhex()`)
     }
 
@@ -51,82 +51,89 @@ export class EvalCommand implements DataCommand {
       scriptArgs.push(`("${args[i].toString('hex')}"):fromhex()`)
     }
 
-    const lua = await this.factory.createEngine({ injectObjects: true })
+    // Set a JS function to be a global lua function
+    // TODO args not only strings
+    // TODO there is race condition here
+    this.lua.global.set('redisCall', (cmdName: string, args: string[]) => {
+      const rawCmd = Buffer.from(cmdName)
+      const argsBuffer = args.map(arg => Buffer.from(arg, 'hex'))
 
-    try {
-      // Set a JS function to be a global lua function
-      // TODO args not only strings
-      lua.global.set('redisCall', async (cmd: string, args: string[]) => {
-        let { response: res } = await node.request(
-          Buffer.from(cmd),
-          args.map(arg => Buffer.from(arg, 'hex')),
-        )
+      const cmd = this.node.commandExecutor.getOrCreateCommand(
+        this.socket,
+        rawCmd,
+        argsBuffer,
+      )
 
-        if (res instanceof Promise) {
-          res = await res
-        }
+      const { response } = cmd.run(rawCmd, argsBuffer)
 
-        let bufferRes
+      let bufferRes
 
-        if (res instanceof Buffer) {
-          bufferRes = res
-        } else if (res instanceof Object && Object.hasOwn(res, 'toString')) {
-          // TODO res can be any supported resp value, e.g list
-          bufferRes = Buffer.from(res.toString())
-        } else if (typeof res === 'string') {
-          bufferRes = Buffer.from(res)
-        } else {
-          throw new Error(`Unsupported input of type ${typeof res}`)
-        }
+      if (response instanceof Buffer) {
+        bufferRes = response
+      } else if (
+        response instanceof Object &&
+        Object.hasOwn(response, 'toString')
+      ) {
+        // TODO res can be any supported resp value, e.g list
+        bufferRes = Buffer.from(response.toString())
+      } else if (typeof response === 'string') {
+        bufferRes = Buffer.from(response)
+      } else {
+        throw new Error(`Unsupported input of type ${typeof response}`)
+      }
 
-        return bufferRes.toString('hex')
-      })
+      return bufferRes.toString('hex')
+    })
 
-      // TODO add json support and msgpack
-      const res = await lua.doString(`
-        function string.fromhex(str)
-            return (str:gsub('..', function (cc)
-                return string.char(tonumber(cc, 16))
-            end))
-        end
-        
-        function string.tohex(str)
-            return (str:gsub('.', function (c)
-                return string.format('%02X', string.byte(c))
-            end))
-        end
+    // TODO add json support and msgpack
+    const res = this.lua.doStringSync(`
+      function string.fromhex(str)
+          return (str:gsub('..', function (cc)
+              return string.char(tonumber(cc, 16))
+          end))
+      end
+      
+      function string.tohex(str)
+          return (str:gsub('.', function (c)
+              return string.format('%02X', string.byte(c))
+          end))
+      end
 
-        redisInstance = {}
-    
-        redisInstance.call = function (cmd, ...)
-          local args = {...}
+      redisInstance = {}
+  
+      redisInstance.call = function (cmd, ...)
+        local args = {...}
 
-          for i, v in ipairs(args) do
-            args[i] = v:tohex()
-          end
-
-          local res = redisCall(cmd, args):await()
-          -- TODO res not always hex string
-          return res:fromhex()
+        for i, v in ipairs(args) do
+          args[i] = v:tohex()
         end
 
-        function run(ARGV, KEYS, redis)
-          ${args[0].toString()}
-        end
+        local res = redisCall(cmd, args)
 
-        local args = { ${scriptArgs.join(',')} }
-        local keys = { ${keys.join(',')} }
+        -- TODO res not always hex string
+        return res:fromhex()
+      end
 
-        res = run(args, keys, redisInstance)
-        -- TODO not always hexable
-        return res:tohex()
-      `)
-      return Buffer.from(res, 'hex')
-    } finally {
-      // Close the lua environment, so it can be freed
-      lua.global.close()
-    }
+      function run(ARGV, KEYS, redis)
+        ${args[0].toString()}
+      end
+
+      -- TODO hex
+      local args = { ${scriptArgs.join(',')} }
+      -- TODO hex
+      local keys = { ${keys.join(',')} }
+
+      res = run(args, keys, redisInstance)
+      -- TODO not always hexable
+      return res:tohex()
+    `)
+
+    return { response: Buffer.from(res, 'hex') }
   }
 }
 
-export default new EvalCommand()
+export default function (node: Node, lua: LuaEngine): CommandBuilder {
+  return function (socket: Socket): Command {
+    return new EvalCommand(node, socket, lua)
+  }
+}

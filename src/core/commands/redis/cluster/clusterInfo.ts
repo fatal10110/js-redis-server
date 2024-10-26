@@ -1,27 +1,29 @@
-import { NodeCommand } from '..'
-import { DiscoveryService } from '../../../cluster/network'
-import { Node } from '../../../node'
+import { Command, CommandResult } from '../../../../types'
+import { ClusterNode } from '../../../cluster/clusterNode'
 
-export class ClusterInfo implements NodeCommand {
-  handle(
-    discoveryService: DiscoveryService,
-    node: Node,
-    args: unknown[],
-  ): string | Buffer {
+export const commandName = 'info'
+
+export class ClusterInfoCommand implements Command {
+  constructor(private readonly node: ClusterNode) {}
+  getKeys(): Buffer[] {
+    return []
+  }
+
+  run(rawCommand: Buffer, args: Buffer[]): CommandResult {
     let nodesCount = 0
     let masters = 0
     let myEpoch = 0
 
-    for (const discovery of discoveryService.getNodesAndAddresses()) {
+    for (const clusterNode of this.node.getClusterNodes()) {
       nodesCount++
 
-      if (!discovery.node.master) {
+      if (!clusterNode.masterNodeId) {
         masters++
       }
 
       if (
-        node.id === discovery.node.id ||
-        node.master?.id === discovery.node.id
+        this.node.id === clusterNode.id ||
+        this.node.masterNodeId === clusterNode.id
       ) {
         // Unify epoch
         myEpoch = masters
@@ -49,8 +51,6 @@ export class ClusterInfo implements NodeCommand {
     ]
 
     // TODO handle with proper data
-    return Buffer.from(`${values.join('\n')}\n`)
+    return { response: Buffer.from(`${values.join('\n')}\n`) }
   }
 }
-
-export default new ClusterInfo()

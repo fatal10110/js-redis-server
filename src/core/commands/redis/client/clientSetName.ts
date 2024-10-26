@@ -1,12 +1,17 @@
-import { NodeClientCommand } from '..'
-import { HandlingResult, Node } from '../../../node'
+import { Command, CommandResult, Node } from '../../../../types'
 
-export class ClientSetName implements NodeClientCommand {
-  handle(node: Node, args: unknown[]): HandlingResult {
+export const commandName = 'setname'
+
+export class ClientSetNameCommand implements Command {
+  constructor(private readonly node: Node) {}
+
+  getKeys(): Buffer[] {
+    return []
+  }
+
+  run(): CommandResult {
     return {
       response: 'OK',
     }
   }
 }
-
-export default new ClientSetName()

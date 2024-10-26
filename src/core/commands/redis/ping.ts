@@ -1,10 +1,14 @@
-import { NodeClientCommand } from '.'
-import { HandlingResult, Node } from '../../node'
+import { Command, CommandResult } from '../../../types'
 
-export class Ping implements NodeClientCommand {
-  handle(node: Node, args: unknown[]): HandlingResult {
+export class Ping implements Command {
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    return []
+  }
+  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
     return { response: 'PONG' }
   }
 }
 
-export default new Ping()
+export default function () {
+  return new Ping()
+}
