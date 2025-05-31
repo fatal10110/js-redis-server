@@ -1,5 +1,3 @@
-import { ClusterNode } from './cluster/clusterNode'
-
 export class UserFacedError extends Error {}
 
 export class WrongNumberOfArguments extends UserFacedError {
@@ -39,9 +37,25 @@ export class UnknownCommand extends UserFacedError {
   }
 }
 
+export class UnknownScriptCommand extends UserFacedError {
+  constructor(sha: string) {
+    super(
+      `Unknown Redis command called from script script: ${sha}, on @user_script:1.`,
+    )
+    this.name = 'ERR'
+  }
+}
+
 export class UnknwonClusterSubCommand extends UserFacedError {
   constructor(subCommand: string | Buffer) {
     super(`unknown subcommand '${subCommand}'. Try CLUSTER HELP.`)
+    this.name = 'ERR'
+  }
+}
+
+export class UnknowScriptSubCommand extends UserFacedError {
+  constructor(subCommand: string | Buffer) {
+    super(`unknown subcommand '${subCommand}'. Try SCRIPT HELP.`)
     this.name = 'ERR'
   }
 }
@@ -68,10 +82,8 @@ export class CorssSlot extends UserFacedError {
 }
 
 export class MovedError extends UserFacedError {
-  constructor(clusterNode: ClusterNode, slot: number) {
-    const address = clusterNode.getAddress()
-
-    super(`${slot} ${address.host}:${address.port}`, {})
+  constructor(host: string, port: number, slot: number) {
+    super(`${slot} ${host}:${port}`, {})
     this.name = 'MOVED'
   }
 }
