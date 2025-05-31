@@ -12,12 +12,7 @@ async function run() {
 
   await cluster.init({ masters: 3, slaves: 2 })
 
-  console.log(
-    Array.from(cluster.getAll()).map(n => ({
-      port: n.getAddress().port,
-      slots: n.slotRange,
-    })),
-  )
+  console.log(Array.from(cluster.getAll()).map(n => n.getAddress()))
 }
 
 run().catch(console.error)
