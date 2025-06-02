@@ -16,6 +16,12 @@ import createIncr from './commands/redis/data/incr'
 import createDecr from './commands/redis/data/decr'
 import createAppend from './commands/redis/data/append'
 import createStrlen from './commands/redis/data/strlen'
+import createMset from './commands/redis/data/mset'
+import createMsetnx from './commands/redis/data/msetnx'
+import createGetset from './commands/redis/data/getset'
+import createIncrby from './commands/redis/data/incrby'
+import createDecrby from './commands/redis/data/decrby'
+import createIncrbyfloat from './commands/redis/data/incrbyfloat'
 // Key commands
 import createExists from './commands/redis/data/exists'
 import createType from './commands/redis/data/type'
@@ -24,6 +30,14 @@ import createHset from './commands/redis/data/hset'
 import createHget from './commands/redis/data/hget'
 import createHdel from './commands/redis/data/hdel'
 import createHgetall from './commands/redis/data/hgetall'
+import createHmget from './commands/redis/data/hmget'
+import createHmset from './commands/redis/data/hmset'
+import createHkeys from './commands/redis/data/hkeys'
+import createHvals from './commands/redis/data/hvals'
+import createHlen from './commands/redis/data/hlen'
+import createHexists from './commands/redis/data/hexists'
+import createHincrby from './commands/redis/data/hincrby'
+import createHincrbyfloat from './commands/redis/data/hincrbyfloat'
 // List commands
 import createLpush from './commands/redis/data/lpush'
 import createRpush from './commands/redis/data/rpush'
@@ -31,11 +45,22 @@ import createLpop from './commands/redis/data/lpop'
 import createRpop from './commands/redis/data/rpop'
 import createLlen from './commands/redis/data/llen'
 import createLrange from './commands/redis/data/lrange'
+import createLindex from './commands/redis/data/lindex'
+import createLset from './commands/redis/data/lset'
+import createLrem from './commands/redis/data/lrem'
+import createLtrim from './commands/redis/data/ltrim'
 // Set commands
 import createSadd from './commands/redis/data/sadd'
 import createSrem from './commands/redis/data/srem'
 import createScard from './commands/redis/data/scard'
 import createSmembers from './commands/redis/data/smembers'
+import createSismember from './commands/redis/data/sismember'
+import createSpop from './commands/redis/data/spop'
+import createSrandmember from './commands/redis/data/srandmember'
+import createSdiff from './commands/redis/data/sdiff'
+import createSinter from './commands/redis/data/sinter'
+import createSunion from './commands/redis/data/sunion'
+import createSmove from './commands/redis/data/smove'
 // Sorted set commands
 import createZadd from './commands/redis/data/zadd'
 import createZrem from './commands/redis/data/zrem'
@@ -43,6 +68,9 @@ import createZrange from './commands/redis/data/zrange'
 import createZscore from './commands/redis/data/zscore'
 import createZcard from './commands/redis/data/zcard'
 import createZincrby from './commands/redis/data/zincrby'
+import createZrevrange from './commands/redis/data/zrevrange'
+import createZrank from './commands/redis/data/zrank'
+import createZrevrank from './commands/redis/data/zrevrank'
 import { DB } from './db'
 import { TransactionCommand } from './transaction'
 
@@ -65,6 +93,12 @@ export function createCommands(
     decr: createDecr(db),
     append: createAppend(db),
     strlen: createStrlen(db),
+    mset: createMset(db),
+    msetnx: createMsetnx(db),
+    getset: createGetset(db),
+    incrby: createIncrby(db),
+    decrby: createDecrby(db),
+    incrbyfloat: createIncrbyfloat(db),
     // Key commands
     exists: createExists(db),
     type: createType(db),
@@ -73,6 +107,14 @@ export function createCommands(
     hget: createHget(db),
     hdel: createHdel(db),
     hgetall: createHgetall(db),
+    hmget: createHmget(db),
+    hmset: createHmset(db),
+    hkeys: createHkeys(db),
+    hvals: createHvals(db),
+    hlen: createHlen(db),
+    hexists: createHexists(db),
+    hincrby: createHincrby(db),
+    hincrbyfloat: createHincrbyfloat(db),
     // List commands
     lpush: createLpush(db),
     rpush: createRpush(db),
@@ -80,11 +122,22 @@ export function createCommands(
     rpop: createRpop(db),
     llen: createLlen(db),
     lrange: createLrange(db),
+    lindex: createLindex(db),
+    lset: createLset(db),
+    lrem: createLrem(db),
+    ltrim: createLtrim(db),
     // Set commands
     sadd: createSadd(db),
     srem: createSrem(db),
     scard: createScard(db),
     smembers: createSmembers(db),
+    sismember: createSismember(db),
+    spop: createSpop(db),
+    srandmember: createSrandmember(db),
+    sdiff: createSdiff(db),
+    sinter: createSinter(db),
+    sunion: createSunion(db),
+    smove: createSmove(db),
     // Sorted set commands
     zadd: createZadd(db),
     zrem: createZrem(db),
@@ -92,6 +145,9 @@ export function createCommands(
     zscore: createZscore(db),
     zcard: createZcard(db),
     zincrby: createZincrby(db),
+    zrevrange: createZrevrange(db),
+    zrank: createZrank(db),
+    zrevrank: createZrevrank(db),
   }
 
   commands = {

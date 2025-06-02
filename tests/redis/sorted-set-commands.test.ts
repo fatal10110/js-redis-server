@@ -2,6 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
 import { StringDataType } from '../../src/commanders/custom/data-structures/string'
+import { createCustomCommander } from '../../src/commanders/custom/commander'
 
 // Sorted set commands
 import { ZaddCommand } from '../../src/commanders/custom/commands/redis/data/zadd'
@@ -258,18 +259,18 @@ describe('Sorted Set Commands', () => {
   })
 
   describe('ZCARD command', () => {
-    test('ZCARD returns cardinality of sorted set', async () => {
+    test('ZCARD returns number of members in sorted set', async () => {
       const db = new DB()
       const zaddCommand = new ZaddCommand(db)
       const zcardCommand = new ZcardCommand(db)
 
-      // Empty set
+      // Test on non-existent sorted set
       let result = await zcardCommand.run(Buffer.from('ZCARD'), [
         Buffer.from('zset'),
       ])
       assert.strictEqual(result.response, 0)
 
-      // Add members
+      // Add members and test count
       await zaddCommand.run(Buffer.from('ZADD'), [
         Buffer.from('zset'),
         Buffer.from('1.0'),
@@ -290,30 +291,39 @@ describe('Sorted Set Commands', () => {
       const db = new DB()
       const zaddCommand = new ZaddCommand(db)
       const zincrbyCommand = new ZincrbyCommand(db)
+      const zscoreCommand = new ZscoreCommand(db)
 
-      // Add member
-      await zaddCommand.run(Buffer.from('ZADD'), [
-        Buffer.from('zset'),
-        Buffer.from('1.0'),
-        Buffer.from('member1'),
-      ])
-
-      // Increment score
+      // Increment non-existent member
       let result = await zincrbyCommand.run(Buffer.from('ZINCRBY'), [
         Buffer.from('zset'),
-        Buffer.from('2.5'),
+        Buffer.from('5.5'),
         Buffer.from('member1'),
       ])
       assert.ok(result.response instanceof Buffer)
-      assert.strictEqual((result.response as Buffer).toString(), '3.5')
+      assert.strictEqual((result.response as Buffer).toString(), '5.5')
 
-      // Increment non-existent member (should create with score = increment)
-      result = await zincrbyCommand.run(Buffer.from('ZINCRBY'), [
+      // Increment existing member
+      await zaddCommand.run(Buffer.from('ZADD'), [
         Buffer.from('zset'),
-        Buffer.from('5.0'),
+        Buffer.from('2.0'),
         Buffer.from('member2'),
       ])
+
+      result = await zincrbyCommand.run(Buffer.from('ZINCRBY'), [
+        Buffer.from('zset'),
+        Buffer.from('3.0'),
+        Buffer.from('member2'),
+      ])
+      assert.ok(result.response instanceof Buffer)
       assert.strictEqual((result.response as Buffer).toString(), '5')
+
+      // Verify score was updated
+      const scoreResult = await zscoreCommand.run(Buffer.from('ZSCORE'), [
+        Buffer.from('zset'),
+        Buffer.from('member2'),
+      ])
+      assert.ok(scoreResult.response instanceof Buffer)
+      assert.strictEqual((scoreResult.response as Buffer).toString(), '5')
     })
   })
 
@@ -370,6 +380,128 @@ describe('Sorted Set Commands', () => {
           )
         }
       }
+    })
+  })
+
+  describe('New Sorted Set Commands (with commander)', () => {
+    test('ZREVRANGE command', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('1'),
+        Buffer.from('one'),
+      ])
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('2'),
+        Buffer.from('two'),
+      ])
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('3'),
+        Buffer.from('three'),
+      ])
+
+      const range = await commander.execute(Buffer.from('zrevrange'), [
+        Buffer.from('zset'),
+        Buffer.from('0'),
+        Buffer.from('-1'),
+      ])
+      const result = range.response as Buffer[]
+      assert.deepStrictEqual(result, [
+        Buffer.from('three'),
+        Buffer.from('two'),
+        Buffer.from('one'),
+      ])
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
+    test('ZRANK command', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('1'),
+        Buffer.from('one'),
+      ])
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('2'),
+        Buffer.from('two'),
+      ])
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('3'),
+        Buffer.from('three'),
+      ])
+
+      const rank1 = await commander.execute(Buffer.from('zrank'), [
+        Buffer.from('zset'),
+        Buffer.from('one'),
+      ])
+      assert.strictEqual(rank1.response, 0)
+
+      const rank2 = await commander.execute(Buffer.from('zrank'), [
+        Buffer.from('zset'),
+        Buffer.from('two'),
+      ])
+      assert.strictEqual(rank2.response, 1)
+
+      const rank3 = await commander.execute(Buffer.from('zrank'), [
+        Buffer.from('zset'),
+        Buffer.from('three'),
+      ])
+      assert.strictEqual(rank3.response, 2)
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
+    test('ZREVRANK command', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('1'),
+        Buffer.from('one'),
+      ])
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('2'),
+        Buffer.from('two'),
+      ])
+      await commander.execute(Buffer.from('zadd'), [
+        Buffer.from('zset'),
+        Buffer.from('3'),
+        Buffer.from('three'),
+      ])
+
+      const rank1 = await commander.execute(Buffer.from('zrevrank'), [
+        Buffer.from('zset'),
+        Buffer.from('one'),
+      ])
+      assert.strictEqual(rank1.response, 2)
+
+      const rank2 = await commander.execute(Buffer.from('zrevrank'), [
+        Buffer.from('zset'),
+        Buffer.from('two'),
+      ])
+      assert.strictEqual(rank2.response, 1)
+
+      const rank3 = await commander.execute(Buffer.from('zrevrank'), [
+        Buffer.from('zset'),
+        Buffer.from('three'),
+      ])
+      assert.strictEqual(rank3.response, 0)
+
+      await commander.shutdown()
+      await factory.shutdown()
     })
   })
 })
