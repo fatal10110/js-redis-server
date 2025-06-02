@@ -69,4 +69,20 @@ export class DB {
 
     return true
   }
+
+  getTtl(rawKey: Buffer): number {
+    const stringifiedKey = rawKey.toString('binary')
+    const key = this.mapping.get(stringifiedKey)
+
+    if (!key) {
+      return -2 // Key does not exist
+    }
+
+    const timing = this.timings.get(key)
+    if (!timing) {
+      return -1 // Key exists but has no expiration
+    }
+
+    return timing
+  }
 }

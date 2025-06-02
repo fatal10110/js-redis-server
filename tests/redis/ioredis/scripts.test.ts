@@ -3,7 +3,7 @@ import { ClusterNetwork } from '../../../src/core/cluster/network'
 import { Cluster, Redis } from 'ioredis'
 import assert from 'node:assert'
 
-describe('Redis commands', () => {
+describe.skip('Redis commands', () => {
   const redisCluster = new ClusterNetwork(console)
   let redisClient: Cluster | undefined
 

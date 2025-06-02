@@ -127,30 +127,30 @@ describe('Set Commands Integration', () => {
   })
 
   test('SDIFF command', async () => {
-    await redisClient?.sadd('setA', 'a', 'b', 'c', 'd')
-    await redisClient?.sadd('setB', 'b', 'd', 'e')
+    await redisClient?.sadd('{test}setA', 'a', 'b', 'c', 'd')
+    await redisClient?.sadd('{test}setB', 'b', 'd', 'e')
 
-    const diff = await redisClient?.sdiff('setA', 'setB')
+    const diff = await redisClient?.sdiff('{test}setA', '{test}setB')
     assert.strictEqual(diff?.length, 2)
     assert.ok(diff?.includes('a'))
     assert.ok(diff?.includes('c'))
   })
 
   test('SINTER command', async () => {
-    await redisClient?.sadd('setX', 'a', 'b', 'c', 'd')
-    await redisClient?.sadd('setY', 'b', 'c', 'e', 'f')
+    await redisClient?.sadd('{test}setX', 'a', 'b', 'c', 'd')
+    await redisClient?.sadd('{test}setY', 'b', 'c', 'e', 'f')
 
-    const inter = await redisClient?.sinter('setX', 'setY')
+    const inter = await redisClient?.sinter('{test}setX', '{test}setY')
     assert.strictEqual(inter?.length, 2)
     assert.ok(inter?.includes('b'))
     assert.ok(inter?.includes('c'))
   })
 
   test('SUNION command', async () => {
-    await redisClient?.sadd('setP', 'a', 'b')
-    await redisClient?.sadd('setQ', 'b', 'c', 'd')
+    await redisClient?.sadd('{test}setP', 'a', 'b')
+    await redisClient?.sadd('{test}setQ', 'b', 'c', 'd')
 
-    const union = await redisClient?.sunion('setP', 'setQ')
+    const union = await redisClient?.sunion('{test}setP', '{test}setQ')
     assert.strictEqual(union?.length, 4)
     assert.ok(union?.includes('a'))
     assert.ok(union?.includes('b'))
@@ -159,29 +159,33 @@ describe('Set Commands Integration', () => {
   })
 
   test('SMOVE command', async () => {
-    await redisClient?.sadd('source', 'a', 'b', 'c')
-    await redisClient?.sadd('dest', 'x', 'y')
+    await redisClient?.sadd('{test}source', 'a', 'b', 'c')
+    await redisClient?.sadd('{test}dest', 'x', 'y')
 
     // Move existing member
-    const move1 = await redisClient?.smove('source', 'dest', 'a')
+    const move1 = await redisClient?.smove('{test}source', '{test}dest', 'a')
     assert.strictEqual(move1, 1)
 
     // Check source doesn't have member
-    const sourceHas = await redisClient?.sismember('source', 'a')
+    const sourceHas = await redisClient?.sismember('{test}source', 'a')
     assert.strictEqual(sourceHas, 0)
 
     // Check dest has member
-    const destHas = await redisClient?.sismember('dest', 'a')
+    const destHas = await redisClient?.sismember('{test}dest', 'a')
     assert.strictEqual(destHas, 1)
 
     // Move non-existent member
-    const move2 = await redisClient?.smove('source', 'dest', 'nonexistent')
+    const move2 = await redisClient?.smove(
+      '{test}source',
+      '{test}dest',
+      'nonexistent',
+    )
     assert.strictEqual(move2, 0)
   })
 
   test('Set commands workflow - User Tags System', async () => {
-    const user1Tags = 'user:1001:tags'
-    const user2Tags = 'user:1002:tags'
+    const user1Tags = '{user}user:1001:tags'
+    const user2Tags = '{user}user:1002:tags'
 
     // Add tags for users
     await redisClient?.sadd(
@@ -231,8 +235,8 @@ describe('Set Commands Integration', () => {
   })
 
   test('Set commands workflow - Online Users', async () => {
-    const onlineUsers = 'online:users'
-    const premiumUsers = 'premium:users'
+    const onlineUsers = '{users}online:users'
+    const premiumUsers = '{users}premium:users'
 
     // Users come online
     await redisClient?.sadd(onlineUsers, 'user1', 'user2', 'user3', 'user4')
@@ -275,9 +279,9 @@ describe('Set Commands Integration', () => {
   })
 
   test('Set commands workflow - Content Categories', async () => {
-    const techArticles = 'category:tech'
-    const jsArticles = 'category:javascript'
-    const tutorialArticles = 'category:tutorial'
+    const techArticles = '{category}category:tech'
+    const jsArticles = '{category}category:javascript'
+    const tutorialArticles = '{category}category:tutorial'
 
     // Categorize articles
     await redisClient?.sadd(
@@ -322,9 +326,14 @@ describe('Set Commands Integration', () => {
     assert.strictEqual(isTech, 0)
     assert.strictEqual(isJs, 1)
 
-    // Get random article from JavaScript category
-    const randomJs = await redisClient?.srandmember(jsArticles)
-    const jsMembers = await redisClient?.smembers(jsArticles)
-    assert.ok(jsMembers?.includes(randomJs!))
+    // Check final counts
+    const techCount = await redisClient?.scard(techArticles)
+    const jsCount = await redisClient?.scard(jsArticles)
+    assert.strictEqual(techCount, 3) // Lost 1 article
+    assert.strictEqual(jsCount, 4) // Gained 1 article
+
+    // Random article selection for feature highlighting
+    const randomTechArticle = await redisClient?.srandmember(techArticles)
+    assert.ok(['article2', 'article3', 'article4'].includes(randomTechArticle!))
   })
 })

@@ -1,3 +1,4 @@
+import { createCustomClusterCommander } from '../../commanders/custom/clusterCommander'
 import { IORedisMockClusterCommanderFactory } from '../../commanders/ioredis-mock'
 import {
   ClusterCommanderFactory,
@@ -68,10 +69,7 @@ export class ClusterNetwork implements DiscoveryService {
   }
 
   async init(params: { masters: number; slaves: number }) {
-    this.commanderFactory = new IORedisMockClusterCommanderFactory(
-      this.logger,
-      this,
-    )
+    this.commanderFactory = await createCustomClusterCommander(console, this)
 
     for (let i = 0; i < params.masters; i++) {
       const slotRange: SlotRange = [

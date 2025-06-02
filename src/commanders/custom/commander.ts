@@ -25,6 +25,8 @@ import createIncrbyfloat from './commands/redis/data/incrbyfloat'
 // Key commands
 import createExists from './commands/redis/data/exists'
 import createType from './commands/redis/data/type'
+import createTtl from './commands/redis/data/ttl'
+import createPttl from './commands/redis/data/pttl'
 // Hash commands
 import createHset from './commands/redis/data/hset'
 import createHget from './commands/redis/data/hget'
@@ -71,6 +73,8 @@ import createZincrby from './commands/redis/data/zincrby'
 import createZrevrange from './commands/redis/data/zrevrange'
 import createZrank from './commands/redis/data/zrank'
 import createZrevrank from './commands/redis/data/zrevrank'
+import createZrangebyscore from './commands/redis/data/zrangebyscore'
+import createZremrangebyscore from './commands/redis/data/zremrangebyscore'
 import { DB } from './db'
 import { TransactionCommand } from './transaction'
 
@@ -102,6 +106,8 @@ export function createCommands(
     // Key commands
     exists: createExists(db),
     type: createType(db),
+    ttl: createTtl(db),
+    pttl: createPttl(db),
     // Hash commands
     hset: createHset(db),
     hget: createHget(db),
@@ -148,6 +154,8 @@ export function createCommands(
     zrevrange: createZrevrange(db),
     zrank: createZrank(db),
     zrevrank: createZrevrank(db),
+    zrangebyscore: createZrangebyscore(db),
+    zremrangebyscore: createZremrangebyscore(db),
   }
 
   commands = {

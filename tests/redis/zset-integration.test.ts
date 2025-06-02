@@ -381,9 +381,11 @@ describe('Sorted Set Commands Integration', () => {
     assert.ok(highQualityResults?.includes('react_getting_started'))
     assert.ok(highQualityResults?.includes('node_js_guide'))
 
-    // Remove low-quality results
+    // Remove low-quality results (score <= 0.8)
     await redisClient?.zremrangebyscore(searchResults, 0, 0.8)
+
     const qualityCount = await redisClient?.zcard(searchResults)
+
     assert.ok(qualityCount! >= 4) // Should have removed js_basics_beginner
 
     // Get final ranking

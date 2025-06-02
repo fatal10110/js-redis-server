@@ -156,6 +156,56 @@ export class SortedSetDataType {
     return sortedMembers.indexOf(memberStr)
   }
 
+  zrangebyscore(min: number, max: number): Buffer[] {
+    const result: Buffer[] = []
+
+    for (const [member, score] of this.memberToScore.entries()) {
+      if (score >= min && score <= max) {
+        result.push(Buffer.from(member))
+      }
+    }
+
+    // Sort results by score (ascending order)
+    result.sort((a, b) => {
+      const scoreA = this.memberToScore.get(a.toString())!
+      const scoreB = this.memberToScore.get(b.toString())!
+      if (scoreA !== scoreB) {
+        return scoreA - scoreB
+      }
+      return a.toString().localeCompare(b.toString())
+    })
+
+    return result
+  }
+
+  zremrangebyscore(min: number, max: number): number {
+    let removedCount = 0
+    const membersToRemove: string[] = []
+
+    // Find all members within the score range
+    for (const [member, score] of this.memberToScore.entries()) {
+      if (score >= min && score <= max) {
+        membersToRemove.push(member)
+      }
+    }
+
+    // Remove all found members
+    for (const member of membersToRemove) {
+      const score = this.memberToScore.get(member)!
+      this.memberToScore.delete(member)
+
+      const scoreSet = this.scoreToMembers.get(score)!
+      scoreSet.delete(member)
+      if (scoreSet.size === 0) {
+        this.scoreToMembers.delete(score)
+      }
+
+      removedCount++
+    }
+
+    return removedCount
+  }
+
   private getSortedMembers(): string[] {
     const allMembers: Array<{ member: string; score: number }> = []
 

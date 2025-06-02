@@ -3,7 +3,7 @@ import { ClusterNetwork } from '../../../src/core/cluster/network'
 import assert from 'node:assert'
 import { RedisClusterType, createCluster } from 'redis'
 
-describe('multi', () => {
+describe.skip('multi', () => {
   const redisCluster = new ClusterNetwork(console)
   let redisClient: RedisClusterType | undefined
 

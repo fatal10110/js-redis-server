@@ -40,12 +40,43 @@ export class SetDataType {
     return Buffer.from(member)
   }
 
-  srandmember(): Buffer | null {
-    if (this.data.size === 0) return null
+  srandmember(count?: number): Buffer | Buffer[] | null {
+    if (this.data.size === 0) {
+      return count !== undefined ? [] : null
+    }
 
     const members = Array.from(this.data)
-    const randomIndex = Math.floor(Math.random() * members.length)
-    return Buffer.from(members[randomIndex])
+
+    if (count === undefined) {
+      // Single random member
+      const randomIndex = Math.floor(Math.random() * members.length)
+      return Buffer.from(members[randomIndex])
+    }
+
+    // Multiple random members
+    const result: Buffer[] = []
+    const absoluteCount = Math.abs(count)
+    const actualCount = Math.min(absoluteCount, members.length)
+
+    if (count < 0) {
+      // Allow duplicates when count is negative
+      for (let i = 0; i < absoluteCount; i++) {
+        const randomIndex = Math.floor(Math.random() * members.length)
+        result.push(Buffer.from(members[randomIndex]))
+      }
+    } else {
+      // No duplicates when count is positive
+      const indices = new Set<number>()
+      while (indices.size < actualCount) {
+        const randomIndex = Math.floor(Math.random() * members.length)
+        indices.add(randomIndex)
+      }
+      for (const index of indices) {
+        result.push(Buffer.from(members[index]))
+      }
+    }
+
+    return result
   }
 
   sdiff(otherSets: SetDataType[]): Buffer[] {
