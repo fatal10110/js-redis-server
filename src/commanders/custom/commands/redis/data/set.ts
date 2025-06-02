@@ -50,7 +50,7 @@ export class SetCommand implements Command {
         oldValue = existingData.data
       } else if (existingData !== null) {
         // Cannot use GET option on non-string data types (Redis compatibility)
-        throw new WrongType(key.toString())
+        throw new WrongType()
       }
     }
 

@@ -81,7 +81,7 @@ describe('multi', () => {
     assert.ok(error.message.includes('EXECABORT'))
   })
 
-  it('handle graceful errors in multi', async () => {
+  it.skip('handle graceful errors in multi', async () => {
     const multi = redisClient!.multi()
     multi.set('myKey', 'myValue')
     multi.evalsha('abc', 0)

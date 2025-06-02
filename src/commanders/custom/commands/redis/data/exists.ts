@@ -1,37 +1,33 @@
 import { WrongNumberOfArguments } from '../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../types'
-import { StringDataType } from '../../../data-structures/string'
 import { DB } from '../../../db'
 
-export class MgetCommand implements Command {
+export class ExistsCommand implements Command {
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    if (args.length === 0) {
+      throw new WrongNumberOfArguments('exists')
+    }
     return args
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length === 0) {
-      throw new WrongNumberOfArguments('mget')
+      throw new WrongNumberOfArguments('exists')
     }
 
-    const res: (Buffer | null)[] = []
-
+    let count = 0
     for (let i = 0; i < args.length; i++) {
-      const val = this.db.get(args[i])
-
-      if (!(val instanceof StringDataType)) {
-        res.push(null)
-        continue
+      if (this.db.get(args[i]) !== null) {
+        count++
       }
-
-      res.push(val.data)
     }
 
-    return Promise.resolve({ response: res })
+    return Promise.resolve({ response: count })
   }
 }
 
 export default function (db: DB) {
-  return new MgetCommand(db)
+  return new ExistsCommand(db)
 }

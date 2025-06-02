@@ -7,9 +7,9 @@ export class WrongNumberOfArguments extends UserFacedError {
   }
 }
 
-export class WrongType extends Error {
-  constructor(keyName: string) {
-    super(`Operation against ${keyName} key holding the wrong kind of value`)
+export class WrongType extends UserFacedError {
+  constructor() {
+    super(`Operation against a key holding the wrong kind of value`)
     this.name = 'WRONGTYPE'
   }
 }
@@ -126,6 +126,20 @@ export class TransactionDiscardedWithError extends UserFacedError {
 export class NoMulti extends UserFacedError {
   constructor() {
     super(`EXEC without MULTI`)
+    this.name = 'ERR'
+  }
+}
+
+export class HashValueNotInteger extends UserFacedError {
+  constructor() {
+    super('hash value is not an integer')
+    this.name = 'ERR'
+  }
+}
+
+export class HashValueNotFloat extends UserFacedError {
+  constructor() {
+    super('hash value is not a float')
     this.name = 'ERR'
   }
 }
