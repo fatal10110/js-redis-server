@@ -14,6 +14,13 @@ export class WrongType extends Error {
   }
 }
 
+export class InvalidExpireTime extends UserFacedError {
+  constructor(cmdName: string) {
+    super(`invalid expire time in ${cmdName} command`)
+    this.name = 'ERR'
+  }
+}
+
 export class ExpectedInteger extends UserFacedError {
   constructor() {
     super('value is not an integer or out of range')
