@@ -85,4 +85,22 @@ export class DB {
 
     return timing
   }
+
+  setExpiration(rawKey: Buffer, expiration: number): boolean {
+    const stringifiedKey = rawKey.toString('binary')
+    const key = this.mapping.get(stringifiedKey)
+
+    if (!key) {
+      return false // Key does not exist
+    }
+
+    // Check if key still exists (hasn't expired)
+    const existing = this.get(rawKey)
+    if (existing === null) {
+      return false // Key has expired or doesn't exist
+    }
+
+    this.timings.set(key, expiration)
+    return true // Successfully set expiration
+  }
 }

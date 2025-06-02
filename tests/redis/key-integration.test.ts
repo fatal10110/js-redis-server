@@ -264,4 +264,143 @@ describe('Key Commands Integration', () => {
     const tenant2Users = await redisClient?.hgetall('{tenant2}users')
     assert.strictEqual(tenant2Users?.user1, 'charlie')
   })
+
+  test('EXPIRE and EXPIREAT commands', async () => {
+    // Test EXPIRE command
+    await redisClient?.set('{test}expire_key', 'value')
+
+    const expireResult = await redisClient?.expire('{test}expire_key', 10)
+    assert.strictEqual(expireResult, 1)
+
+    const ttlResult = await redisClient?.ttl('{test}expire_key')
+    assert.ok(ttlResult !== undefined && ttlResult <= 10 && ttlResult > 0)
+
+    // Test EXPIRE on non-existent key
+    const expireNonExistent = await redisClient?.expire('{test}nonexistent', 10)
+    assert.strictEqual(expireNonExistent, 0)
+
+    // Test EXPIREAT command
+    await redisClient?.set('{test}expireat_key', 'value')
+
+    const futureTimestamp = Math.floor(Date.now() / 1000) + 10
+    const expireatResult = await redisClient?.expireat(
+      '{test}expireat_key',
+      futureTimestamp,
+    )
+    assert.strictEqual(expireatResult, 1)
+
+    const ttlResult2 = await redisClient?.ttl('{test}expireat_key')
+    assert.ok(ttlResult2 !== undefined && ttlResult2 <= 10 && ttlResult2 > 0)
+
+    // Test EXPIREAT on non-existent key
+    const expireatNonExistent = await redisClient?.expireat(
+      '{test}nonexistent',
+      futureTimestamp,
+    )
+    assert.strictEqual(expireatNonExistent, 0)
+  })
+
+  test('TTL integration with EXPIRE and EXPIREAT', async () => {
+    // Set up keys with different expiration methods
+    await redisClient?.set('{test}ttl1', 'value1')
+    await redisClient?.set('{test}ttl2', 'value2')
+    await redisClient?.set('{test}ttl3', 'value3')
+
+    // Set expiration using EXPIRE
+    await redisClient?.expire('{test}ttl1', 20)
+
+    // Set expiration using EXPIREAT
+    const futureTimestamp = Math.floor(Date.now() / 1000) + 30
+    await redisClient?.expireat('{test}ttl2', futureTimestamp)
+
+    // Check TTL values
+    const ttl1 = await redisClient?.ttl('{test}ttl1')
+    assert.ok(ttl1 !== undefined && ttl1 <= 20 && ttl1 > 0)
+
+    const ttl2 = await redisClient?.ttl('{test}ttl2')
+    assert.ok(ttl2 !== undefined && ttl2 <= 30 && ttl2 > 0)
+
+    // Key without expiration should have TTL -1
+    const ttl3 = await redisClient?.ttl('{test}ttl3')
+    assert.strictEqual(ttl3, -1)
+
+    // Non-existent key should have TTL -2
+    const ttlNonExistent = await redisClient?.ttl('{test}nonexistent')
+    assert.strictEqual(ttlNonExistent, -2)
+  })
+
+  test('Expiration workflow - Session Management', async () => {
+    // Simulate session management with expiration
+    const sessionId = '{session}user123'
+    const sessionData = JSON.stringify({
+      userId: 123,
+      loginTime: Date.now(),
+      permissions: ['read', 'write'],
+    })
+
+    // Create session with 1 hour expiration
+    await redisClient?.set(sessionId, sessionData)
+    await redisClient?.expire(sessionId, 3600) // 1 hour
+
+    // Verify session exists and has correct TTL
+    const sessionExists = await redisClient?.exists(sessionId)
+    assert.strictEqual(sessionExists, 1)
+
+    const sessionTtl = await redisClient?.ttl(sessionId)
+    assert.ok(sessionTtl !== undefined && sessionTtl <= 3600 && sessionTtl > 0)
+
+    // Extend session expiration
+    await redisClient?.expire(sessionId, 7200) // 2 hours
+
+    const extendedTtl = await redisClient?.ttl(sessionId)
+    assert.ok(
+      extendedTtl !== undefined && extendedTtl <= 7200 && extendedTtl > 3600,
+    )
+
+    // Clean up session
+    await redisClient?.del(sessionId)
+  })
+
+  test('Expiration workflow - Cache with Scheduled Invalidation', async () => {
+    // Simulate cache that should expire at specific time
+    const cacheKeys = [
+      '{cache}daily_report',
+      '{cache}hourly_stats',
+      '{cache}temp_data',
+    ]
+
+    // Set cache data
+    for (const key of cacheKeys) {
+      await redisClient?.set(key, `data for ${key}`)
+    }
+
+    // Schedule expiration at different times
+    const now = Math.floor(Date.now() / 1000)
+
+    // Daily report expires at midnight (simulate with +5 seconds)
+    await redisClient?.expireat(cacheKeys[0], now + 5)
+
+    // Hourly stats expire in 1 hour (3600 seconds)
+    await redisClient?.expire(cacheKeys[1], 3600)
+
+    // Temp data expires in 10 seconds
+    await redisClient?.expire(cacheKeys[2], 10)
+
+    // Check all keys exist initially
+    const existingCount = await redisClient?.exists(...cacheKeys)
+    assert.strictEqual(existingCount, 3)
+
+    // Verify TTL values are set correctly
+    const ttl1 = await redisClient?.ttl(cacheKeys[0])
+    assert.ok(ttl1 !== undefined && ttl1 <= 5 && ttl1 > 0)
+
+    const ttl2 = await redisClient?.ttl(cacheKeys[1])
+    assert.ok(ttl2 !== undefined && ttl2 <= 3600 && ttl2 > 0)
+
+    const ttl3 = await redisClient?.ttl(cacheKeys[2])
+    assert.ok(ttl3 !== undefined && ttl3 <= 10 && ttl3 > 0)
+
+    // Clean up
+    await redisClient?.del(...cacheKeys)
+  })
 })

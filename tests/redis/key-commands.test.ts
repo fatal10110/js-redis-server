@@ -9,9 +9,16 @@ import { SetDataType } from '../../src/commanders/custom/data-structures/set'
 // Key commands
 import { ExistsCommand } from '../../src/commanders/custom/commands/redis/data/exists'
 import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/type'
+import { TtlCommand } from '../../src/commanders/custom/commands/redis/data/ttl'
+import { ExpireCommand } from '../../src/commanders/custom/commands/redis/data/expire'
+import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data/expireat'
 
 // Error imports
-import { WrongNumberOfArguments } from '../../src/core/errors'
+import {
+  WrongNumberOfArguments,
+  ExpectedInteger,
+  InvalidExpireTime,
+} from '../../src/core/errors'
 
 describe('Key Commands', () => {
   describe('EXISTS command', () => {
@@ -129,6 +136,246 @@ describe('Key Commands', () => {
         Buffer.from('set'),
       ])
       assert.strictEqual(result.response, 'set')
+    })
+  })
+
+  describe('TTL command', () => {
+    test('TTL on non-existent key', async () => {
+      const db = new DB()
+      const ttlCommand = new TtlCommand(db)
+
+      const result = await ttlCommand.run(Buffer.from('TTL'), [
+        Buffer.from('key'),
+      ])
+      assert.strictEqual(result.response, -2)
+    })
+
+    test('TTL on key without expiration', async () => {
+      const db = new DB()
+      const ttlCommand = new TtlCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+      const result = await ttlCommand.run(Buffer.from('TTL'), [
+        Buffer.from('key'),
+      ])
+      assert.strictEqual(result.response, -1)
+    })
+
+    test('TTL on key with expiration', async () => {
+      const db = new DB()
+      const ttlCommand = new TtlCommand(db)
+
+      const expirationTime = Date.now() + 10000 // 10 seconds from now
+      db.set(
+        Buffer.from('key'),
+        new StringDataType(Buffer.from('value')),
+        expirationTime,
+      )
+      const result = await ttlCommand.run(Buffer.from('TTL'), [
+        Buffer.from('key'),
+      ])
+      assert.strictEqual(result.response, 10)
+    })
+  })
+
+  describe('EXPIRE command', () => {
+    test('EXPIRE on existing key', async () => {
+      const db = new DB()
+      const expireCommand = new ExpireCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+      const result = await expireCommand.run(Buffer.from('EXPIRE'), [
+        Buffer.from('key'),
+        Buffer.from('10'),
+      ])
+      assert.strictEqual(result.response, 1)
+    })
+
+    test('EXPIRE on non-existent key', async () => {
+      const db = new DB()
+      const expireCommand = new ExpireCommand(db)
+
+      const result = await expireCommand.run(Buffer.from('EXPIRE'), [
+        Buffer.from('nonexistent'),
+        Buffer.from('10'),
+      ])
+      assert.strictEqual(result.response, 0)
+    })
+
+    test('EXPIRE with 0 seconds deletes key', async () => {
+      const db = new DB()
+      const expireCommand = new ExpireCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+      const result = await expireCommand.run(Buffer.from('EXPIRE'), [
+        Buffer.from('key'),
+        Buffer.from('0'),
+      ])
+      assert.strictEqual(result.response, 1)
+
+      // Key should be deleted
+      const existing = db.get(Buffer.from('key'))
+      assert.strictEqual(existing, null)
+    })
+
+    test('EXPIRE with negative seconds throws error', async () => {
+      const db = new DB()
+      const expireCommand = new ExpireCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+
+      try {
+        await expireCommand.run(Buffer.from('EXPIRE'), [
+          Buffer.from('key'),
+          Buffer.from('-1'),
+        ])
+        assert.fail('Should have thrown InvalidExpireTime error')
+      } catch (error) {
+        assert.ok(error instanceof InvalidExpireTime)
+        assert.strictEqual(
+          error.message,
+          'invalid expire time in expire command',
+        )
+      }
+    })
+
+    test('EXPIRE with non-integer throws error', async () => {
+      const db = new DB()
+      const expireCommand = new ExpireCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+
+      try {
+        await expireCommand.run(Buffer.from('EXPIRE'), [
+          Buffer.from('key'),
+          Buffer.from('abc'),
+        ])
+        assert.fail('Should have thrown ExpectedInteger error')
+      } catch (error) {
+        assert.ok(error instanceof ExpectedInteger)
+        assert.strictEqual(
+          error.message,
+          'value is not an integer or out of range',
+        )
+      }
+    })
+
+    test('EXPIRE with wrong number of arguments throws error', async () => {
+      const db = new DB()
+      const expireCommand = new ExpireCommand(db)
+
+      try {
+        await expireCommand.run(Buffer.from('EXPIRE'), [Buffer.from('key')])
+        assert.fail('Should have thrown WrongNumberOfArguments error')
+      } catch (error) {
+        assert.ok(error instanceof WrongNumberOfArguments)
+        assert.strictEqual(
+          error.message,
+          "wrong number of arguments for 'expire' command",
+        )
+      }
+    })
+  })
+
+  describe('EXPIREAT command', () => {
+    test('EXPIREAT on existing key', async () => {
+      const db = new DB()
+      const expireatCommand = new ExpireatCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+      const futureTimestamp = Math.floor(Date.now() / 1000) + 10
+      const result = await expireatCommand.run(Buffer.from('EXPIREAT'), [
+        Buffer.from('key'),
+        Buffer.from(futureTimestamp.toString()),
+      ])
+      assert.strictEqual(result.response, 1)
+    })
+
+    test('EXPIREAT on non-existent key', async () => {
+      const db = new DB()
+      const expireatCommand = new ExpireatCommand(db)
+
+      const futureTimestamp = Math.floor(Date.now() / 1000) + 10
+      const result = await expireatCommand.run(Buffer.from('EXPIREAT'), [
+        Buffer.from('nonexistent'),
+        Buffer.from(futureTimestamp.toString()),
+      ])
+      assert.strictEqual(result.response, 0)
+    })
+
+    test('EXPIREAT with past timestamp deletes key', async () => {
+      const db = new DB()
+      const expireatCommand = new ExpireatCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+      const pastTimestamp = Math.floor(Date.now() / 1000) - 1
+      const result = await expireatCommand.run(Buffer.from('EXPIREAT'), [
+        Buffer.from('key'),
+        Buffer.from(pastTimestamp.toString()),
+      ])
+      assert.strictEqual(result.response, 1)
+
+      // Key should be deleted
+      const existing = db.get(Buffer.from('key'))
+      assert.strictEqual(existing, null)
+    })
+
+    test('EXPIREAT with negative timestamp throws error', async () => {
+      const db = new DB()
+      const expireatCommand = new ExpireatCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+
+      try {
+        await expireatCommand.run(Buffer.from('EXPIREAT'), [
+          Buffer.from('key'),
+          Buffer.from('-1'),
+        ])
+        assert.fail('Should have thrown InvalidExpireTime error')
+      } catch (error) {
+        assert.ok(error instanceof InvalidExpireTime)
+        assert.strictEqual(
+          error.message,
+          'invalid expire time in expireat command',
+        )
+      }
+    })
+
+    test('EXPIREAT with non-integer throws error', async () => {
+      const db = new DB()
+      const expireatCommand = new ExpireatCommand(db)
+
+      db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
+
+      try {
+        await expireatCommand.run(Buffer.from('EXPIREAT'), [
+          Buffer.from('key'),
+          Buffer.from('abc'),
+        ])
+        assert.fail('Should have thrown ExpectedInteger error')
+      } catch (error) {
+        assert.ok(error instanceof ExpectedInteger)
+        assert.strictEqual(
+          error.message,
+          'value is not an integer or out of range',
+        )
+      }
+    })
+
+    test('EXPIREAT with wrong number of arguments throws error', async () => {
+      const db = new DB()
+      const expireatCommand = new ExpireatCommand(db)
+
+      try {
+        await expireatCommand.run(Buffer.from('EXPIREAT'), [Buffer.from('key')])
+        assert.fail('Should have thrown WrongNumberOfArguments error')
+      } catch (error) {
+        assert.ok(error instanceof WrongNumberOfArguments)
+        assert.strictEqual(
+          error.message,
+          "wrong number of arguments for 'expireat' command",
+        )
+      }
     })
   })
 

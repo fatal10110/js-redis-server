@@ -27,6 +27,8 @@ import createExists from './commands/redis/data/exists'
 import createType from './commands/redis/data/type'
 import createTtl from './commands/redis/data/ttl'
 import createPttl from './commands/redis/data/pttl'
+import createExpire from './commands/redis/data/expire'
+import createExpireat from './commands/redis/data/expireat'
 // Hash commands
 import createHset from './commands/redis/data/hset'
 import createHget from './commands/redis/data/hget'
@@ -108,6 +110,8 @@ export function createCommands(
     type: createType(db),
     ttl: createTtl(db),
     pttl: createPttl(db),
+    expire: createExpire(db),
+    expireat: createExpireat(db),
     // Hash commands
     hset: createHset(db),
     hget: createHget(db),
