@@ -11,6 +11,31 @@ import createCommandInfo from './commands/redis/command'
 import createInfo from './commands/redis/info'
 import createPing from './commands/redis/ping'
 import createQuit from './commands/redis/quit'
+// String commands
+import createIncr from './commands/redis/data/incr'
+import createDecr from './commands/redis/data/decr'
+import createAppend from './commands/redis/data/append'
+import createStrlen from './commands/redis/data/strlen'
+// Key commands
+import createExists from './commands/redis/data/exists'
+import createType from './commands/redis/data/type'
+// Hash commands
+import createHset from './commands/redis/data/hset'
+import createHget from './commands/redis/data/hget'
+import createHdel from './commands/redis/data/hdel'
+import createHgetall from './commands/redis/data/hgetall'
+// List commands
+import createLpush from './commands/redis/data/lpush'
+import createRpush from './commands/redis/data/rpush'
+import createLpop from './commands/redis/data/lpop'
+import createRpop from './commands/redis/data/rpop'
+import createLlen from './commands/redis/data/llen'
+import createLrange from './commands/redis/data/lrange'
+// Set commands
+import createSadd from './commands/redis/data/sadd'
+import createSrem from './commands/redis/data/srem'
+import createScard from './commands/redis/data/scard'
+import createSmembers from './commands/redis/data/smembers'
 import { DB } from './db'
 import { TransactionCommand } from './transaction'
 
@@ -28,6 +53,31 @@ export function createCommands(
     del: createDel(db),
     command: createCommandInfo(),
     info: createInfo(),
+    // String commands
+    incr: createIncr(db),
+    decr: createDecr(db),
+    append: createAppend(db),
+    strlen: createStrlen(db),
+    // Key commands
+    exists: createExists(db),
+    type: createType(db),
+    // Hash commands
+    hset: createHset(db),
+    hget: createHget(db),
+    hdel: createHdel(db),
+    hgetall: createHgetall(db),
+    // List commands
+    lpush: createLpush(db),
+    rpush: createRpush(db),
+    lpop: createLpop(db),
+    rpop: createRpop(db),
+    llen: createLlen(db),
+    lrange: createLrange(db),
+    // Set commands
+    sadd: createSadd(db),
+    srem: createSrem(db),
+    scard: createScard(db),
+    smembers: createSmembers(db),
   }
 
   commands = {
