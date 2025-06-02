@@ -2,12 +2,7 @@ import {
   UnknwonClusterSubCommand,
   WrongNumberOfArguments,
 } from '../../../../../core/errors'
-import {
-  Command,
-  CommandResult,
-  DiscoveryNode,
-  DiscoveryService,
-} from '../../../../../types'
+import { Command, CommandResult, DiscoveryService } from '../../../../../types'
 import {
   ClusterInfoCommand,
   commandName as clusterInfoCommandName,

@@ -2,7 +2,6 @@ import { LuaEngine, LuaFactory } from 'wasmoon'
 import { UnknownCommand } from '../../core/errors'
 import { Command, CommandResult, DBCommandExecutor, Logger } from '../../types'
 import createEval from './commands/redis/eval'
-import createMulti, { TransactionalCommander } from './commands/redis/multi'
 import createClient from './commands/redis/client'
 import createGet from './commands/redis/data/get'
 import createSet from './commands/redis/data/set'
@@ -13,11 +12,11 @@ import createInfo from './commands/redis/info'
 import createPing from './commands/redis/ping'
 import createQuit from './commands/redis/quit'
 import { DB } from './db'
+import { TransactionCommand } from './transaction'
 
 export function createCommands(
   luaEngine: LuaEngine,
   db: DB,
-  transactionalCommander: TransactionalCommander,
 ): Record<string, Command> {
   let commands: Record<string, Command> = {
     ping: createPing(),
@@ -38,7 +37,6 @@ export function createCommands(
 
   return {
     ...commands,
-    multi: createMulti(commands, transactionalCommander),
   }
 }
 
@@ -70,27 +68,54 @@ export class CustomCommanderFactory {
   }
 }
 
-class Commander implements DBCommandExecutor, TransactionalCommander {
-  private transaction: DBCommandExecutor | null = null
+class Commander implements DBCommandExecutor {
+  private transactionCommand: TransactionCommand | null = null
   private readonly commands: Record<string, Command>
 
   constructor(luaEngine: LuaEngine, db: DB) {
-    this.commands = createCommands(luaEngine, db, this)
+    this.commands = createCommands(luaEngine, db)
   }
 
   async shutdown(): Promise<void> {
     return Promise.resolve()
   }
 
-  setTransaction(transaction: DBCommandExecutor | null) {
-    this.transaction = transaction
+  async executeTransactionCommand(
+    cmdName: string,
+    rawCmd: Buffer,
+    args: Buffer[],
+  ): Promise<CommandResult> {
+    if (cmdName === 'discard') {
+      this.transactionCommand = null
+      return { response: 'OK' }
+    }
+
+    let res
+
+    try {
+      res = await this.transactionCommand!.run(rawCmd, args)
+    } catch (err) {
+      this.transactionCommand = null
+      throw err
+    }
+
+    if (cmdName === 'exec') {
+      this.transactionCommand = null
+    }
+
+    return res
   }
 
   execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     const cmdName = rawCmd.toString().toLowerCase()
 
-    if (this.transaction) {
-      return this.transaction.execute(rawCmd, args)
+    if (cmdName === 'multi') {
+      this.transactionCommand = new TransactionCommand(this.commands)
+      return Promise.resolve({ response: 'OK' })
+    }
+
+    if (this.transactionCommand) {
+      return this.executeTransactionCommand(cmdName, rawCmd, args)
     }
 
     if (!this.commands[cmdName]) {

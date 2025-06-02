@@ -1,14 +1,17 @@
-import { Command, CommandResult } from '../../../../types'
-import { UnknowScriptSubCommand, WrongNumberOfArguments } from '../../../errors'
+import {
+  UnknowScriptSubCommand,
+  WrongNumberOfArguments,
+} from '../../../../../core/errors'
+import { Command, CommandResult } from '../../../../../types'
 import { ScriptLoadCommand } from './load'
 
 export class ScriptCommand implements Command {
   constructor(private readonly subCommands: Record<string, Command>) {}
 
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
+  getKeys(): Buffer[] {
     return []
   }
-  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
+  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     const subCommandName = args.pop()
 
     if (!subCommandName) {

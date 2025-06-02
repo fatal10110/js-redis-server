@@ -1,4 +1,9 @@
 import {
+  UnknwonClientSubCommand,
+  WrongNumberOfArguments,
+} from '../../../../../core/errors'
+import { Command, CommandResult } from '../../../../../types'
+import {
   ClientSetNameCommand,
   commandName as setNameCommandName,
 } from './clientSetName'
@@ -12,7 +17,7 @@ export class ClientCommand implements Command {
     return []
   }
 
-  run(rawCommand: Buffer, args: Buffer[]): CommandResult {
+  run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
     const subCommandName = args.shift()
 
     if (!subCommandName) {
