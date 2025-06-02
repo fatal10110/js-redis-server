@@ -1,6 +1,6 @@
 import Redis, { Cluster } from 'ioredis'
 import { after, before, describe, it } from 'node:test'
-import { ClusterNetwork } from '../../src/core/cluster/network'
+import { ClusterNetwork } from '../../../src/core/cluster/network'
 import assert from 'node:assert'
 
 describe('multi', () => {
@@ -8,15 +8,16 @@ describe('multi', () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    await redisCluster.init({ masters: 3, slaves: 2 })
+    await redisCluster.init({ masters: 3, slaves: 0 })
     redisClient = new Redis.Cluster(
       [
         {
           host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].getAddress().port,
+          port: Array.from(redisCluster.getAll())[0].port,
         },
       ],
       {
+        slotsRefreshTimeout: 100000000,
         lazyConnect: true,
       },
     )
@@ -33,7 +34,7 @@ describe('multi', () => {
       [
         {
           host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].getAddress().port,
+          port: Array.from(redisCluster.getAll())[0].port,
         },
       ],
       {
@@ -61,5 +62,34 @@ describe('multi', () => {
     } finally {
       await anotherRedisClient.quit()
     }
+  })
+
+  it('handle errors in multi', async () => {
+    const multi = redisClient!.multi()
+    multi.set('myKey', 'myValue')
+    multi.evalsha('abc')
+
+    let error: any
+
+    try {
+      await multi.exec()
+    } catch (err) {
+      error = err
+    }
+
+    assert.ok(error)
+    assert.ok(error.message.includes('EXECABORT'))
+  })
+
+  it('handle graceful errors in multi', async () => {
+    const multi = redisClient!.multi()
+    multi.set('myKey', 'myValue')
+    multi.evalsha('abc', 0)
+
+    const res = await multi.exec()
+
+    assert.ok(res)
+    assert.strictEqual(res[0][1], 'OK')
+    assert.strictEqual(res[1][0], null)
   })
 })

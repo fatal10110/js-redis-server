@@ -18,7 +18,7 @@ export class ClusterShardsCommand implements Command {
     return []
   }
 
-  run(rawCommand: Buffer, args: Buffer[]): Prmise<CommandResult> {
+  run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length > 0) {
       throw new WrongNumberOfArguments(`cluster|${commandName}`)
     }
@@ -67,17 +67,15 @@ export class ClusterShardsCommand implements Command {
         slots,
         'nodes',
         clusterNodes.map(clusterNode => {
-          const [host, port] = clusterNode.host.split(':')
-
           return [
             'id',
             clusterNode.id,
             'port',
-            Number(port),
+            clusterNode.port,
             'ip',
-            host,
+            clusterNode.host,
             'endpoint',
-            host,
+            clusterNode.host,
             'role',
             master.id === clusterNode.id ? 'master' : 'replica',
             'replication-offset',

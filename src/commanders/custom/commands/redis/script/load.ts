@@ -1,15 +1,15 @@
 import crypto from 'crypto'
-import { Command, CommandResult } from '../../../../types'
-import { WrongNumberOfArguments } from '../../../errors'
+import { WrongNumberOfArguments } from '../../../../../core/errors'
+import { Command, CommandResult } from '../../../../../types'
 
 export class ScriptLoadCommand implements Command {
   constructor(private readonly scriptStore: Record<string, Buffer>) {}
 
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
+  getKeys(): Buffer[] {
     return []
   }
 
-  run(rawCmd: Buffer, args: Buffer[]): CommandResult {
+  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (!args.length) {
       throw new WrongNumberOfArguments(`script|load`)
     }
@@ -22,6 +22,6 @@ export class ScriptLoadCommand implements Command {
       this.scriptStore[hash] = args[0]
     }
 
-    return { response: hash }
+    return Promise.resolve({ response: hash })
   }
 }

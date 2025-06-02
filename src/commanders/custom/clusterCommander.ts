@@ -1,4 +1,9 @@
-import { CorssSlot, MovedError, UnknownCommand } from '../../core/errors'
+import {
+  CorssSlot,
+  MovedError,
+  TransactionDiscardedWithError,
+  UnknownCommand,
+} from '../../core/errors'
 import clusterKeySlot from 'cluster-key-slot'
 import {
   ClusterCommanderFactory,
@@ -11,19 +16,18 @@ import {
 } from '../../types'
 import { createCommands } from './commander'
 import { LuaEngine, LuaFactory } from 'wasmoon'
-import { createCluster } from './commands/redis'
+import createCluster from './commands/redis/cluster'
 import { DB } from './db'
-import { TransactionalCommander } from './commands/redis/multi'
+import { TransactionCommand } from './transaction'
 
 export function createClusterCommands(
   db: DB,
   luaEngine: LuaEngine,
-  transactionalCommander: TransactionalCommander,
   discoveryService: DiscoveryService,
   mySelfId: string,
 ): Record<string, Command> {
   return {
-    ...createCommands(luaEngine, db, transactionalCommander),
+    ...createCommands(luaEngine, db),
     cluster: createCluster(discoveryService, mySelfId),
   }
 }
@@ -72,10 +76,8 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   }
 }
 
-export class ClusterCommander
-  implements DBCommandExecutor, TransactionalCommander
-{
-  private transaction: DBCommandExecutor | null = null
+export class ClusterCommander implements DBCommandExecutor {
+  private transactionCommand: TransactionCommand | null = null
 
   constructor(
     private readonly me: DiscoveryNode,
@@ -83,18 +85,11 @@ export class ClusterCommander
     private readonly commands: Record<string, Command>,
   ) {}
 
-  setTransaction(transaction: DBCommandExecutor | null): void {
-    this.transaction = transaction
-  }
-
-  execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    const cmdName = rawCmd.toString().toLowerCase()
-    const cmd = this.commands[cmdName]
-
-    if (!cmd) {
-      throw new UnknownCommand(cmdName, args)
-    }
-
+  private executeCommand(
+    cmd: Command,
+    rawCmd: Buffer,
+    args: Buffer[],
+  ): Promise<CommandResult> {
     const keys = cmd.getKeys(rawCmd, args)
 
     if (!keys.length) {
@@ -116,6 +111,56 @@ export class ClusterCommander
     const clusterNode = this.discoveryService.getBySlot(slot)
 
     throw new MovedError(clusterNode.host, clusterNode.port, slot)
+  }
+
+  async executeTransactionCommand(
+    cmdName: string,
+    rawCmd: Buffer,
+    args: Buffer[],
+  ): Promise<CommandResult> {
+    if (cmdName === 'discard') {
+      this.transactionCommand = null
+      return { response: 'OK' }
+    }
+
+    let res
+
+    try {
+      res = await this.executeCommand(this.transactionCommand!, rawCmd, args)
+    } catch (err) {
+      if (err instanceof MovedError) {
+        this.transactionCommand = null
+      }
+
+      throw err
+    }
+
+    if (cmdName === 'exec') {
+      this.transactionCommand = null
+    }
+
+    return res
+  }
+
+  async execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+    const cmdName = rawCmd.toString().toLowerCase()
+
+    if (this.transactionCommand) {
+      return this.executeTransactionCommand(cmdName, rawCmd, args)
+    }
+
+    if (cmdName === 'multi') {
+      this.transactionCommand = new TransactionCommand(this.commands)
+      return { response: 'OK' }
+    }
+
+    const cmd = this.commands[cmdName]
+
+    if (!cmd) {
+      throw new UnknownCommand(cmdName, args)
+    }
+
+    return this.executeCommand(cmd, rawCmd, args)
   }
 
   async shutdown(): Promise<void> {

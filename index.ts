@@ -10,9 +10,9 @@ async function run() {
     await cluster.shutdown()
   })
 
-  await cluster.init({ masters: 3, slaves: 2 })
+  await cluster.init({ masters: 3, slaves: 0 })
 
-  console.log(Array.from(cluster.getAll()).map(n => n.getAddress()))
+  console.log(Array.from(cluster.getAll()).map(n => `${n.host}:${n.port}`))
 }
 
 run().catch(console.error)

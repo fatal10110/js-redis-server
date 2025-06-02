@@ -9,9 +9,16 @@ import {
   CommandResult,
   DiscoveryNode,
 } from '../../types'
-import { createCluster } from '../custom/commands/redis'
+import createCluster from '../custom/commands/redis/cluster'
+import createClient from '../custom/commands/redis/client'
+import createQuit from '../custom/commands/redis/quit'
 import clusterKeySlot from 'cluster-key-slot'
-import { CorssSlot, MovedError } from '../../core/errors'
+import {
+  CorssSlot,
+  MovedError,
+  TransactionDiscardedWithError,
+  WrongNumberOfArguments,
+} from '../../core/errors'
 
 /**
  * Transforms replies back to their original Redis format by reversing ioredis built-in transformers.
@@ -78,7 +85,8 @@ function transformReplyToOriginalFormat(
 }
 
 class IORredisMockCommander implements DBCommandExecutor {
-  private transaction: undefined | ChainableCommander
+  protected transaction: undefined | ChainableCommander
+  protected transactionWithErrors: boolean = false
 
   constructor(
     private readonly logger: Logger,
@@ -99,25 +107,44 @@ class IORredisMockCommander implements DBCommandExecutor {
       throw new Error('Transaction already started')
     } else if (cmdStr === 'multi') {
       this.transaction = (commander as unknown as RedisType).multi()
+      return {
+        close: false,
+        response: 'OK',
+      }
     }
 
     if (cmdStr === 'exec' && !this.transaction) {
       throw new Error('Transaction not started')
-    } else if (cmdStr === 'exec' || cmdStr === 'discard') {
+    } else if (cmdStr === 'discard') {
       this.transaction = undefined
+      this.transactionWithErrors = false
+    } else if (cmdStr === 'exec') {
+      this.transaction = undefined
+      const hadErrors = this.transactionWithErrors
+      this.transactionWithErrors = false
+
+      if (hadErrors) {
+        throw new TransactionDiscardedWithError()
+      }
     }
 
-    const command =
-      this.commandOverrides?.[cmdStr] || (commander as any)[cmdStr]
-
     try {
+      let command = this.commandOverrides?.[cmdStr]
+
+      if (command) {
+        return command.run(rawCmd, args)
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      command = (commander as any)[cmdStr].bind(commander)
+
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       let response = await command(...args.map(arg => arg.toString()))
 
       if (cmdStr === 'multi') {
         response = 'OK'
-      } else if (this.transaction) {
+      } else if (response?.constructor.name === 'Pipeline') {
         response = 'QUEUED'
       }
 
@@ -126,6 +153,10 @@ class IORredisMockCommander implements DBCommandExecutor {
         response: transformReplyToOriginalFormat(cmdStr, response),
       }
     } catch (err) {
+      if (this.transaction) {
+        this.transactionWithErrors = true
+      }
+
       return {
         close: false,
         response: err,
@@ -134,27 +165,34 @@ class IORredisMockCommander implements DBCommandExecutor {
   }
 
   shutdown(): Promise<void> {
-    this.logger.info('Shutting down IORredisMockCommander')
+    //this.logger.info('Shutting down IORredisMockCommander')
     return Promise.resolve()
   }
 }
 
-class IORredisMockClusterCommander implements DBCommandExecutor {
-  private readonly db: DBCommandExecutor
+class IORredisMockClusterCommander extends IORredisMockCommander {
   private readonly me: DiscoveryNode
+  private readonly clusterCommandsOverrides: Record<string, Command>
+  private readonly discoveryService: DiscoveryService
 
   constructor(
     logger: Logger,
     redis: RedisType,
     private readonly mySelfId: string,
-    private readonly discoveryService: DiscoveryService,
+    discoveryService: DiscoveryService,
   ) {
-    this.me = this.discoveryService.getById(this.mySelfId)
-    const clusterCommandsOverrides: Record<string, Command> = {
+    const clusterCommandsOverrides = {
       ...commadsOverrides,
-      cluster: createCluster(this.me, this.discoveryService),
+      client: createClient(),
+      cluster: createCluster(discoveryService, mySelfId),
+      quit: createQuit(),
     }
-    this.db = new IORredisMockCommander(logger, redis, clusterCommandsOverrides)
+
+    super(logger, redis, clusterCommandsOverrides)
+
+    this.discoveryService = discoveryService
+    this.me = this.discoveryService.getById(this.mySelfId)
+    this.clusterCommandsOverrides = clusterCommandsOverrides
   }
 
   private getKeys(cmdStr: string, args: Buffer[]): Buffer[] {
@@ -186,6 +224,10 @@ class IORredisMockClusterCommander implements DBCommandExecutor {
         return [] // These commands operate on key patterns or entire DB, not specific keys
       case 'eval':
       case 'evalsha': {
+        if (args.length < 2) {
+          throw new WrongNumberOfArguments('evalsha')
+        }
+
         const numKeys = parseInt(args[1].toString())
         return args.slice(2, 2 + numKeys) // Keys start after script and numkeys
       }
@@ -204,10 +246,27 @@ class IORredisMockClusterCommander implements DBCommandExecutor {
   }
 
   execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    const keys = this.getKeys(rawCmd.toString().toLowerCase(), args)
+    const cmdName = rawCmd.toString().toLowerCase()
+    const cmd = this.clusterCommandsOverrides?.[cmdName]
+
+    let keys: Buffer[] = []
+
+    try {
+      if (cmd) {
+        keys = cmd.getKeys(rawCmd, args)
+      } else {
+        keys = this.getKeys(cmdName, args)
+      }
+    } catch (err) {
+      if (this.transaction) {
+        this.transactionWithErrors = true
+      }
+
+      throw err
+    }
 
     if (!keys.length) {
-      return this.db.execute(rawCmd, args)
+      return super.execute(rawCmd, args)
     }
 
     const slot = clusterKeySlot.generateMulti(keys)
@@ -218,7 +277,7 @@ class IORredisMockClusterCommander implements DBCommandExecutor {
 
     for (const [min, max] of this.me.slots) {
       if (slot >= min && slot <= max) {
-        return this.db.execute(rawCmd, args)
+        return super.execute(rawCmd, args)
       }
     }
 
@@ -228,7 +287,7 @@ class IORredisMockClusterCommander implements DBCommandExecutor {
   }
 
   shutdown(): Promise<void> {
-    return this.db.shutdown()
+    return super.shutdown()
   }
 }
 
@@ -236,6 +295,14 @@ const commadsOverrides: Record<string, Command> = {
   command: {
     getKeys: () => [],
     run: () => Promise.resolve({ close: false, response: 'mock response' }),
+  },
+  info: {
+    getKeys(): Buffer[] {
+      return []
+    },
+    run(): Promise<CommandResult> {
+      return Promise.resolve({ response: 'mock info' })
+    },
   },
 }
 
@@ -245,7 +312,7 @@ export class IORedisMockCommanderFactory {
   constructor(private readonly logger: Logger) {}
 
   shutdown(): Promise<void> {
-    this.logger.info('Shutting down IORedisMockCommanderFactory')
+    //this.logger.info('Shutting down IORedisMockCommanderFactory')
     return Promise.resolve()
   }
 
@@ -281,7 +348,7 @@ export class IORedisMockClusterCommanderFactory
   }
 
   shutdown(): Promise<void> {
-    this.logger.info('Shutting down IORedisMockClusterCommanderFactory')
+    //this.logger.info('Shutting down IORedisMockClusterCommanderFactory')
     return Promise.resolve()
   }
 }
