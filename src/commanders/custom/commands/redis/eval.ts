@@ -95,7 +95,7 @@ export class EvalCommand implements Command {
     )
 
     // TODO add json support and msgpack
-    const res = this.lua.doStringSync(`
+    const res = await this.lua.doString(`
       function string.fromhex(str)
           return (str:gsub('..', function (cc)
               return string.char(tonumber(cc, 16))
