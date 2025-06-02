@@ -4,6 +4,7 @@ import { StringDataType } from '../../../data-structures/string'
 import { HashDataType } from '../../../data-structures/hash'
 import { ListDataType } from '../../../data-structures/list'
 import { SetDataType } from '../../../data-structures/set'
+import { SortedSetDataType } from '../../../data-structures/zset'
 import { DB } from '../../../db'
 
 export class TypeCommand implements Command {
@@ -36,6 +37,8 @@ export class TypeCommand implements Command {
       return Promise.resolve({ response: 'list' })
     } else if (existing instanceof SetDataType) {
       return Promise.resolve({ response: 'set' })
+    } else if (existing instanceof SortedSetDataType) {
+      return Promise.resolve({ response: 'zset' })
     }
 
     return Promise.resolve({ response: 'unknown' })

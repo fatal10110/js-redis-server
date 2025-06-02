@@ -36,6 +36,13 @@ import createSadd from './commands/redis/data/sadd'
 import createSrem from './commands/redis/data/srem'
 import createScard from './commands/redis/data/scard'
 import createSmembers from './commands/redis/data/smembers'
+// Sorted set commands
+import createZadd from './commands/redis/data/zadd'
+import createZrem from './commands/redis/data/zrem'
+import createZrange from './commands/redis/data/zrange'
+import createZscore from './commands/redis/data/zscore'
+import createZcard from './commands/redis/data/zcard'
+import createZincrby from './commands/redis/data/zincrby'
 import { DB } from './db'
 import { TransactionCommand } from './transaction'
 
@@ -78,6 +85,13 @@ export function createCommands(
     srem: createSrem(db),
     scard: createScard(db),
     smembers: createSmembers(db),
+    // Sorted set commands
+    zadd: createZadd(db),
+    zrem: createZrem(db),
+    zrange: createZrange(db),
+    zscore: createZscore(db),
+    zcard: createZcard(db),
+    zincrby: createZincrby(db),
   }
 
   commands = {
