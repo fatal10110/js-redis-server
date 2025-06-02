@@ -1,4 +1,4 @@
-import { test, describe, before, after } from 'node:test'
+import { test, describe, before, after, afterEach } from 'node:test'
 import assert from 'node:assert'
 import { ClusterNetwork } from '../../src/core/cluster/network'
 import { Redis, Cluster } from 'ioredis'
@@ -27,6 +27,18 @@ describe('String Commands Integration', () => {
   after(async () => {
     await redisClient?.quit()
     await redisCluster.shutdown()
+  })
+
+  afterEach(async () => {
+    // Clean up database after each test
+    const masterNodes = redisClient?.nodes('master') || []
+    if (masterNodes.length > 0) {
+      await Promise.all(
+        masterNodes.map(async node => {
+          return await node.flushdb()
+        }),
+      )
+    }
   })
 
   test('INCR and DECR commands', async () => {
