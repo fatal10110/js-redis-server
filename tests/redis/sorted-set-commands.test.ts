@@ -5,15 +5,15 @@ import { StringDataType } from '../../src/commanders/custom/data-structures/stri
 import { createCustomCommander } from '../../src/commanders/custom/commander'
 
 // Sorted set commands
-import { ZaddCommand } from '../../src/commanders/custom/commands/redis/data/zadd'
-import { ZremCommand } from '../../src/commanders/custom/commands/redis/data/zrem'
-import { ZrangeCommand } from '../../src/commanders/custom/commands/redis/data/zrange'
-import { ZscoreCommand } from '../../src/commanders/custom/commands/redis/data/zscore'
-import { ZcardCommand } from '../../src/commanders/custom/commands/redis/data/zcard'
-import { ZincrbyCommand } from '../../src/commanders/custom/commands/redis/data/zincrby'
+import { ZaddCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zadd'
+import { ZremCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zrem'
+import { ZrangeCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zrange'
+import { ZscoreCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zscore'
+import { ZcardCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zcard'
+import { ZincrbyCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zincrby'
 
 // Type command
-import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/type'
+import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/keys/type'
 
 // Error imports
 import {

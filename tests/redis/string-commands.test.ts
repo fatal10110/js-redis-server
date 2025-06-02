@@ -4,14 +4,15 @@ import { DB } from '../../src/commanders/custom/db'
 import { StringDataType } from '../../src/commanders/custom/data-structures/string'
 import { ListDataType } from '../../src/commanders/custom/data-structures/list'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
+import { Buffer } from 'buffer'
 
 // String commands
-import { IncrCommand } from '../../src/commanders/custom/commands/redis/data/incr'
-import { DecrCommand } from '../../src/commanders/custom/commands/redis/data/decr'
-import { AppendCommand } from '../../src/commanders/custom/commands/redis/data/append'
-import { StrlenCommand } from '../../src/commanders/custom/commands/redis/data/strlen'
-import { MgetCommand } from '../../src/commanders/custom/commands/redis/data/mget'
-import { SetCommand } from '../../src/commanders/custom/commands/redis/data/set'
+import { IncrCommand } from '../../src/commanders/custom/commands/redis/data/strings/incr'
+import { DecrCommand } from '../../src/commanders/custom/commands/redis/data/strings/decr'
+import { AppendCommand } from '../../src/commanders/custom/commands/redis/data/strings/append'
+import { StrlenCommand } from '../../src/commanders/custom/commands/redis/data/strings/strlen'
+import { MgetCommand } from '../../src/commanders/custom/commands/redis/data/strings/mget'
+import { SetCommand } from '../../src/commanders/custom/commands/redis/data/strings/set'
 
 // Error imports
 import {

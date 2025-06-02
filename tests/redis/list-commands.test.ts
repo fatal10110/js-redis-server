@@ -4,12 +4,12 @@ import { DB } from '../../src/commanders/custom/db'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
 
 // List commands
-import { LpushCommand } from '../../src/commanders/custom/commands/redis/data/lpush'
-import { RpushCommand } from '../../src/commanders/custom/commands/redis/data/rpush'
-import { LpopCommand } from '../../src/commanders/custom/commands/redis/data/lpop'
-import { RpopCommand } from '../../src/commanders/custom/commands/redis/data/rpop'
-import { LlenCommand } from '../../src/commanders/custom/commands/redis/data/llen'
-import { LrangeCommand } from '../../src/commanders/custom/commands/redis/data/lrange'
+import { LpushCommand } from '../../src/commanders/custom/commands/redis/data/lists/lpush'
+import { RpushCommand } from '../../src/commanders/custom/commands/redis/data/lists/rpush'
+import { LpopCommand } from '../../src/commanders/custom/commands/redis/data/lists/lpop'
+import { RpopCommand } from '../../src/commanders/custom/commands/redis/data/lists/rpop'
+import { LlenCommand } from '../../src/commanders/custom/commands/redis/data/lists/llen'
+import { LrangeCommand } from '../../src/commanders/custom/commands/redis/data/lists/lrange'
 
 // Error imports
 import { WrongNumberOfArguments, ExpectedInteger } from '../../src/core/errors'

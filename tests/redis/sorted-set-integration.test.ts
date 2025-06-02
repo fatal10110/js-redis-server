@@ -1,15 +1,13 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
-
-// Import all sorted set commands
-import { ZaddCommand } from '../../src/commanders/custom/commands/redis/data/zadd'
-import { ZremCommand } from '../../src/commanders/custom/commands/redis/data/zrem'
-import { ZrangeCommand } from '../../src/commanders/custom/commands/redis/data/zrange'
-import { ZscoreCommand } from '../../src/commanders/custom/commands/redis/data/zscore'
-import { ZcardCommand } from '../../src/commanders/custom/commands/redis/data/zcard'
-import { ZincrbyCommand } from '../../src/commanders/custom/commands/redis/data/zincrby'
-import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/type'
+import { ZaddCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zadd'
+import { ZremCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zrem'
+import { ZrangeCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zrange'
+import { ZscoreCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zscore'
+import { ZcardCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zcard'
+import { ZincrbyCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zincrby'
+import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/keys/type'
 
 describe('Sorted Set Integration Tests', () => {
   test('Complete sorted set workflow', async () => {

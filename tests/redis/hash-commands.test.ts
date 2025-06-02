@@ -5,10 +5,10 @@ import { HashDataType } from '../../src/commanders/custom/data-structures/hash'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
 
 // Hash commands
-import { HsetCommand } from '../../src/commanders/custom/commands/redis/data/hset'
-import { HgetCommand } from '../../src/commanders/custom/commands/redis/data/hget'
-import { HdelCommand } from '../../src/commanders/custom/commands/redis/data/hdel'
-import { HgetallCommand } from '../../src/commanders/custom/commands/redis/data/hgetall'
+import { HsetCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hset'
+import { HgetCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hget'
+import { HdelCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hdel'
+import { HgetallCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hgetall'
 
 // Error imports
 import {

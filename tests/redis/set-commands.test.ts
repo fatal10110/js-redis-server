@@ -4,10 +4,10 @@ import { DB } from '../../src/commanders/custom/db'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
 
 // Set commands
-import { SaddCommand } from '../../src/commanders/custom/commands/redis/data/sadd'
-import { SremCommand } from '../../src/commanders/custom/commands/redis/data/srem'
-import { ScardCommand } from '../../src/commanders/custom/commands/redis/data/scard'
-import { SmembersCommand } from '../../src/commanders/custom/commands/redis/data/smembers'
+import { SaddCommand } from '../../src/commanders/custom/commands/redis/data/sets/sadd'
+import { SremCommand } from '../../src/commanders/custom/commands/redis/data/sets/srem'
+import { ScardCommand } from '../../src/commanders/custom/commands/redis/data/sets/scard'
+import { SmembersCommand } from '../../src/commanders/custom/commands/redis/data/sets/smembers'
 
 // Error imports
 import { WrongNumberOfArguments } from '../../src/core/errors'
