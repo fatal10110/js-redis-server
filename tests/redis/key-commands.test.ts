@@ -7,11 +7,11 @@ import { ListDataType } from '../../src/commanders/custom/data-structures/list'
 import { SetDataType } from '../../src/commanders/custom/data-structures/set'
 
 // Key commands
-import { ExistsCommand } from '../../src/commanders/custom/commands/redis/data/exists'
-import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/type'
-import { TtlCommand } from '../../src/commanders/custom/commands/redis/data/ttl'
-import { ExpireCommand } from '../../src/commanders/custom/commands/redis/data/expire'
-import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data/expireat'
+import { ExistsCommand } from '../../src/commanders/custom/commands/redis/data/keys/exists'
+import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/keys/type'
+import { TtlCommand } from '../../src/commanders/custom/commands/redis/data/keys/ttl'
+import { ExpireCommand } from '../../src/commanders/custom/commands/redis/data/keys/expire'
+import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data/keys/expireat'
 
 // Error imports
 import {
