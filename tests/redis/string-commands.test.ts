@@ -417,6 +417,146 @@ describe('String Commands', () => {
   })
 
   describe('New String Commands (with commander)', () => {
+    test('INCR and DECR commands', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      const incr1 = await commander.execute(Buffer.from('incr'), [
+        Buffer.from('counter'),
+      ])
+      assert.strictEqual(incr1.response, 1)
+
+      const incr2 = await commander.execute(Buffer.from('incr'), [
+        Buffer.from('counter'),
+      ])
+      assert.strictEqual(incr2.response, 2)
+
+      const decr1 = await commander.execute(Buffer.from('decr'), [
+        Buffer.from('counter'),
+      ])
+      assert.strictEqual(decr1.response, 1)
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
+    test('APPEND command', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      const append1 = await commander.execute(Buffer.from('append'), [
+        Buffer.from('mykey'),
+        Buffer.from('hello'),
+      ])
+      assert.strictEqual(append1.response, 5)
+
+      const append2 = await commander.execute(Buffer.from('append'), [
+        Buffer.from('mykey'),
+        Buffer.from(' world'),
+      ])
+      assert.strictEqual(append2.response, 11)
+
+      const get = await commander.execute(Buffer.from('get'), [
+        Buffer.from('mykey'),
+      ])
+      assert.deepStrictEqual(get.response, Buffer.from('hello world'))
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
+    test('STRLEN command', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      const strlen1 = await commander.execute(Buffer.from('strlen'), [
+        Buffer.from('nonexistent'),
+      ])
+      assert.strictEqual(strlen1.response, 0)
+
+      await commander.execute(Buffer.from('set'), [
+        Buffer.from('mykey'),
+        Buffer.from('hello'),
+      ])
+
+      const strlen2 = await commander.execute(Buffer.from('strlen'), [
+        Buffer.from('mykey'),
+      ])
+      assert.strictEqual(strlen2.response, 5)
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
+    test('MGET command', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      await commander.execute(Buffer.from('set'), [
+        Buffer.from('key1'),
+        Buffer.from('value1'),
+      ])
+      await commander.execute(Buffer.from('set'), [
+        Buffer.from('key2'),
+        Buffer.from('value2'),
+      ])
+
+      const mget = await commander.execute(Buffer.from('mget'), [
+        Buffer.from('key1'),
+        Buffer.from('key2'),
+        Buffer.from('nonexistent'),
+      ])
+
+      assert.ok(Array.isArray(mget.response))
+      const values = mget.response as (Buffer | null)[]
+      assert.strictEqual(values.length, 3)
+      assert.deepStrictEqual(values[0], Buffer.from('value1'))
+      assert.deepStrictEqual(values[1], Buffer.from('value2'))
+      assert.strictEqual(values[2], null)
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
+    test('SET command with options', async () => {
+      const factory = await createCustomCommander(console)
+      const commander = factory.createCommander()
+
+      // Basic SET
+      const set1 = await commander.execute(Buffer.from('set'), [
+        Buffer.from('mykey'),
+        Buffer.from('myvalue'),
+      ])
+      assert.strictEqual(set1.response, 'OK')
+
+      // SET with NX (should fail since key exists)
+      const set2 = await commander.execute(Buffer.from('set'), [
+        Buffer.from('mykey'),
+        Buffer.from('newvalue'),
+        Buffer.from('NX'),
+      ])
+      assert.strictEqual(set2.response, null)
+
+      // SET with XX (should succeed since key exists)
+      const set3 = await commander.execute(Buffer.from('set'), [
+        Buffer.from('mykey'),
+        Buffer.from('newvalue'),
+        Buffer.from('XX'),
+      ])
+      assert.strictEqual(set3.response, 'OK')
+
+      // SET with GET option
+      const set4 = await commander.execute(Buffer.from('set'), [
+        Buffer.from('mykey'),
+        Buffer.from('finalvalue'),
+        Buffer.from('GET'),
+      ])
+      assert.deepStrictEqual(set4.response, Buffer.from('newvalue'))
+
+      await commander.shutdown()
+      await factory.shutdown()
+    })
+
     test('MSET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()

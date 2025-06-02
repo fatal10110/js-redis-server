@@ -81,7 +81,7 @@ describe('Sorted Set Integration Tests', () => {
     ])
     assert.strictEqual((result.response as Buffer).toString(), '100')
 
-    // Increment alice's score
+    // Incrfement alice's score
     result = await zincrby.run(Buffer.from('ZINCRBY'), [
       Buffer.from('leaderboard'),
       Buffer.from('25'),
