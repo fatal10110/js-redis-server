@@ -28,6 +28,13 @@ export class ExpectedInteger extends UserFacedError {
   }
 }
 
+export class ExpectedFloat extends UserFacedError {
+  constructor() {
+    super('value is not a valid float')
+    this.name = 'ERR'
+  }
+}
+
 export class RedisSyntaxError extends UserFacedError {
   constructor() {
     super('syntax error')
