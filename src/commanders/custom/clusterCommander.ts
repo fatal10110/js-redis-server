@@ -1,9 +1,4 @@
-import {
-  CorssSlot,
-  MovedError,
-  TransactionDiscardedWithError,
-  UnknownCommand,
-} from '../../core/errors'
+import { CorssSlot, MovedError, UnknownCommand } from '../../core/errors'
 import clusterKeySlot from 'cluster-key-slot'
 import {
   ClusterCommanderFactory,
@@ -14,23 +9,10 @@ import {
   DiscoveryService,
   Logger,
 } from '../../types'
-import { createCommands } from './commander'
+import { createClusterCommands } from './commands/redis'
 import { LuaEngine, LuaFactory } from 'wasmoon'
-import createCluster from './commands/redis/cluster'
 import { DB } from './db'
 import { TransactionCommand } from './transaction'
-
-export function createClusterCommands(
-  db: DB,
-  luaEngine: LuaEngine,
-  discoveryService: DiscoveryService,
-  mySelfId: string,
-): Record<string, Command> {
-  return {
-    ...createCommands(luaEngine, db),
-    cluster: createCluster(discoveryService, mySelfId),
-  }
-}
 
 export async function createCustomClusterCommander(
   logger: Logger,
