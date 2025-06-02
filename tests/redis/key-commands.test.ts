@@ -12,6 +12,8 @@ import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/key
 import { TtlCommand } from '../../src/commanders/custom/commands/redis/data/keys/ttl'
 import { ExpireCommand } from '../../src/commanders/custom/commands/redis/data/keys/expire'
 import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data/keys/expireat'
+import { FlushdbCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushdb'
+import { FlushallCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushall'
 
 // Error imports
 import {
@@ -376,6 +378,177 @@ describe('Key Commands', () => {
           "wrong number of arguments for 'expireat' command",
         )
       }
+    })
+  })
+
+  describe('FLUSHDB command', () => {
+    test('FLUSHDB on empty database', async () => {
+      const db = new DB()
+      const flushdbCommand = new FlushdbCommand(db)
+
+      const result = await flushdbCommand.run()
+      assert.strictEqual(result.response, 'OK')
+    })
+
+    test('FLUSHDB removes all keys', async () => {
+      const db = new DB()
+      const flushdbCommand = new FlushdbCommand(db)
+
+      // Add various data types
+      db.set(
+        Buffer.from('string_key'),
+        new StringDataType(Buffer.from('value')),
+      )
+      db.set(Buffer.from('hash_key'), new HashDataType())
+      db.set(Buffer.from('list_key'), new ListDataType())
+      db.set(Buffer.from('set_key'), new SetDataType())
+
+      // Verify keys exist
+      assert.ok(db.get(Buffer.from('string_key')) !== null)
+      assert.ok(db.get(Buffer.from('hash_key')) !== null)
+      assert.ok(db.get(Buffer.from('list_key')) !== null)
+      assert.ok(db.get(Buffer.from('set_key')) !== null)
+
+      // Execute FLUSHDB
+      const result = await flushdbCommand.run()
+      assert.strictEqual(result.response, 'OK')
+
+      // Verify all keys are removed
+      assert.strictEqual(db.get(Buffer.from('string_key')), null)
+      assert.strictEqual(db.get(Buffer.from('hash_key')), null)
+      assert.strictEqual(db.get(Buffer.from('list_key')), null)
+      assert.strictEqual(db.get(Buffer.from('set_key')), null)
+    })
+
+    test('FLUSHDB removes keys with expiration', async () => {
+      const db = new DB()
+      const flushdbCommand = new FlushdbCommand(db)
+
+      // Add keys with expiration
+      const expirationTime = Date.now() + 10000
+      db.set(
+        Buffer.from('key1'),
+        new StringDataType(Buffer.from('value')),
+        expirationTime,
+      )
+      db.set(
+        Buffer.from('key2'),
+        new StringDataType(Buffer.from('value')),
+        expirationTime,
+      )
+
+      // Verify keys exist
+      assert.ok(db.get(Buffer.from('key1')) !== null)
+      assert.ok(db.get(Buffer.from('key2')) !== null)
+
+      // Execute FLUSHDB
+      const result = await flushdbCommand.run()
+      assert.strictEqual(result.response, 'OK')
+
+      // Verify all keys and their expiration data are removed
+      assert.strictEqual(db.get(Buffer.from('key1')), null)
+      assert.strictEqual(db.get(Buffer.from('key2')), null)
+      assert.strictEqual(db.getTtl(Buffer.from('key1')), -2) // Key does not exist
+      assert.strictEqual(db.getTtl(Buffer.from('key2')), -2) // Key does not exist
+    })
+  })
+
+  describe('FLUSHALL command', () => {
+    test('FLUSHALL on empty database', async () => {
+      const db = new DB()
+      const flushallCommand = new FlushallCommand(db)
+
+      const result = await flushallCommand.run()
+      assert.strictEqual(result.response, 'OK')
+    })
+
+    test('FLUSHALL removes all keys', async () => {
+      const db = new DB()
+      const flushallCommand = new FlushallCommand(db)
+
+      // Add various data types
+      db.set(
+        Buffer.from('string_key'),
+        new StringDataType(Buffer.from('value')),
+      )
+      db.set(Buffer.from('hash_key'), new HashDataType())
+      db.set(Buffer.from('list_key'), new ListDataType())
+      db.set(Buffer.from('set_key'), new SetDataType())
+
+      // Verify keys exist
+      assert.ok(db.get(Buffer.from('string_key')) !== null)
+      assert.ok(db.get(Buffer.from('hash_key')) !== null)
+      assert.ok(db.get(Buffer.from('list_key')) !== null)
+      assert.ok(db.get(Buffer.from('set_key')) !== null)
+
+      // Execute FLUSHALL
+      const result = await flushallCommand.run()
+      assert.strictEqual(result.response, 'OK')
+
+      // Verify all keys are removed
+      assert.strictEqual(db.get(Buffer.from('string_key')), null)
+      assert.strictEqual(db.get(Buffer.from('hash_key')), null)
+      assert.strictEqual(db.get(Buffer.from('list_key')), null)
+      assert.strictEqual(db.get(Buffer.from('set_key')), null)
+    })
+
+    test('FLUSHALL removes keys with expiration', async () => {
+      const db = new DB()
+      const flushallCommand = new FlushallCommand(db)
+
+      // Add keys with expiration
+      const expirationTime = Date.now() + 10000
+      db.set(
+        Buffer.from('key1'),
+        new StringDataType(Buffer.from('value')),
+        expirationTime,
+      )
+      db.set(
+        Buffer.from('key2'),
+        new StringDataType(Buffer.from('value')),
+        expirationTime,
+      )
+
+      // Verify keys exist
+      assert.ok(db.get(Buffer.from('key1')) !== null)
+      assert.ok(db.get(Buffer.from('key2')) !== null)
+
+      // Execute FLUSHALL
+      const result = await flushallCommand.run()
+      assert.strictEqual(result.response, 'OK')
+
+      // Verify all keys and their expiration data are removed
+      assert.strictEqual(db.get(Buffer.from('key1')), null)
+      assert.strictEqual(db.get(Buffer.from('key2')), null)
+      assert.strictEqual(db.getTtl(Buffer.from('key1')), -2) // Key does not exist
+      assert.strictEqual(db.getTtl(Buffer.from('key2')), -2) // Key does not exist
+    })
+
+    test('FLUSHALL and FLUSHDB have same behavior in single-database implementation', async () => {
+      const db1 = new DB()
+      const db2 = new DB()
+      const flushdbCommand = new FlushdbCommand(db1)
+      const flushallCommand = new FlushallCommand(db2)
+
+      // Add same data to both databases
+      db1.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
+      db1.set(Buffer.from('key2'), new HashDataType())
+      db2.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
+      db2.set(Buffer.from('key2'), new HashDataType())
+
+      // Execute both commands
+      const result1 = await flushdbCommand.run()
+      const result2 = await flushallCommand.run()
+
+      // Both should return OK
+      assert.strictEqual(result1.response, 'OK')
+      assert.strictEqual(result2.response, 'OK')
+
+      // Both should clear all data
+      assert.strictEqual(db1.get(Buffer.from('key1')), null)
+      assert.strictEqual(db1.get(Buffer.from('key2')), null)
+      assert.strictEqual(db2.get(Buffer.from('key1')), null)
+      assert.strictEqual(db2.get(Buffer.from('key2')), null)
     })
   })
 

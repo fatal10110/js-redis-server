@@ -46,6 +46,8 @@ import {
   createPttl,
   createExpire,
   createExpireat,
+  createFlushdb,
+  createFlushall,
   // Hash commands
   createHset,
   createHget,
@@ -128,6 +130,8 @@ export function createCommands(
     pttl: createPttl(db),
     expire: createExpire(db),
     expireat: createExpireat(db),
+    flushdb: createFlushdb(db),
+    flushall: createFlushall(db),
     // Hash commands
     hset: createHset(db),
     hget: createHget(db),
@@ -198,4 +202,267 @@ export function createClusterCommands(
     ...createCommands(luaEngine, db),
     cluster: createCluster(discoveryService, mySelfId),
   }
+}
+
+/**
+ * Create a filtered set of readonly commands safe for replicas
+ * These commands don't modify data and are safe for read-only operations
+ */
+export function createReadonlyCommands(
+  luaEngine: LuaEngine,
+  db: DB,
+): Record<string, Command> {
+  const allCommands = createCommands(luaEngine, db)
+  const readonlyCommandNames = new Set([
+    // String readonly commands
+    'get',
+    'mget',
+    'strlen',
+
+    // Key readonly commands
+    'exists',
+    'type',
+    'ttl',
+    'pttl',
+
+    // Hash readonly commands
+    'hget',
+    'hgetall',
+    'hmget',
+    'hkeys',
+    'hvals',
+    'hlen',
+    'hexists',
+
+    // List readonly commands
+    'llen',
+    'lrange',
+    'lindex',
+
+    // Set readonly commands
+    'scard',
+    'smembers',
+    'sismember',
+    'srandmember',
+    'sdiff',
+    'sinter',
+    'sunion',
+
+    // Sorted set readonly commands
+    'zrange',
+    'zrevrange',
+    'zrank',
+    'zrevrank',
+    'zscore',
+    'zcard',
+    'zrangebyscore',
+
+    // Server info commands
+    'ping',
+    'info',
+    'command',
+    'client',
+  ])
+
+  const readonlyCommands: Record<string, Command> = {}
+  for (const [name, command] of Object.entries(allCommands)) {
+    if (readonlyCommandNames.has(name)) {
+      readonlyCommands[name] = command
+    }
+  }
+
+  return readonlyCommands
+}
+
+/**
+ * Create a filtered set of commands allowed within MULTI/EXEC transactions
+ * Excludes connection-level commands and certain server commands
+ */
+export function createMultiCommands(
+  luaEngine: LuaEngine,
+  db: DB,
+): Record<string, Command> {
+  const allCommands = createCommands(luaEngine, db)
+  const multiCommandNames = new Set([
+    // String commands
+    'get',
+    'set',
+    'mget',
+    'mset',
+    'msetnx',
+    'getset',
+    'append',
+    'strlen',
+    'incr',
+    'decr',
+    'incrby',
+    'decrby',
+    'incrbyfloat',
+
+    // Key commands
+    'del',
+    'exists',
+    'type',
+    'ttl',
+    'pttl',
+    'expire',
+    'expireat',
+    'flushdb',
+    'flushall',
+
+    // Hash commands
+    'hset',
+    'hget',
+    'hdel',
+    'hgetall',
+    'hmget',
+    'hmset',
+    'hkeys',
+    'hvals',
+    'hlen',
+    'hexists',
+    'hincrby',
+    'hincrbyfloat',
+
+    // List commands
+    'lpush',
+    'rpush',
+    'lpop',
+    'rpop',
+    'llen',
+    'lrange',
+    'lindex',
+    'lset',
+    'lrem',
+    'ltrim',
+
+    // Set commands
+    'sadd',
+    'srem',
+    'scard',
+    'smembers',
+    'sismember',
+    'spop',
+    'srandmember',
+    'sdiff',
+    'sinter',
+    'sunion',
+    'smove',
+
+    // Sorted set commands
+    'zadd',
+    'zrem',
+    'zrange',
+    'zrevrange',
+    'zrank',
+    'zrevrank',
+    'zscore',
+    'zcard',
+    'zincrby',
+    'zrangebyscore',
+    'zremrangebyscore',
+  ])
+
+  const multiCommands: Record<string, Command> = {}
+  for (const [name, command] of Object.entries(allCommands)) {
+    if (multiCommandNames.has(name)) {
+      multiCommands[name] = command
+    }
+  }
+
+  return multiCommands
+}
+
+/**
+ * Create a filtered set of commands allowed within Lua scripts
+ * Excludes non-deterministic commands and connection-level commands
+ */
+export function createLuaCommands(
+  luaEngine: LuaEngine,
+  db: DB,
+): Record<string, Command> {
+  const allCommands = createCommands(luaEngine, db)
+  const luaCommandNames = new Set([
+    // String commands (deterministic only)
+    'get',
+    'set',
+    'mget',
+    'mset',
+    'getset',
+    'append',
+    'strlen',
+    'incr',
+    'decr',
+    'incrby',
+    'decrby',
+    'incrbyfloat',
+
+    // Key commands
+    'del',
+    'exists',
+    'type',
+    'ttl',
+    'pttl',
+    'expire',
+    'expireat',
+
+    // Hash commands
+    'hset',
+    'hget',
+    'hdel',
+    'hgetall',
+    'hmget',
+    'hmset',
+    'hkeys',
+    'hvals',
+    'hlen',
+    'hexists',
+    'hincrby',
+    'hincrbyfloat',
+
+    // List commands
+    'lpush',
+    'rpush',
+    'lpop',
+    'rpop',
+    'llen',
+    'lrange',
+    'lindex',
+    'lset',
+    'lrem',
+    'ltrim',
+
+    // Set commands (excluding non-deterministic ones like spop, srandmember)
+    'sadd',
+    'srem',
+    'scard',
+    'smembers',
+    'sismember',
+    'sdiff',
+    'sinter',
+    'sunion',
+    'smove',
+
+    // Sorted set commands
+    'zadd',
+    'zrem',
+    'zrange',
+    'zrevrange',
+    'zrank',
+    'zrevrank',
+    'zscore',
+    'zcard',
+    'zincrby',
+    'zrangebyscore',
+    'zremrangebyscore',
+  ])
+
+  const luaCommands: Record<string, Command> = {}
+  for (const [name, command] of Object.entries(allCommands)) {
+    if (luaCommandNames.has(name)) {
+      luaCommands[name] = command
+    }
+  }
+
+  return luaCommands
 }

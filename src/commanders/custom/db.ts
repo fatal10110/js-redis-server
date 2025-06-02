@@ -103,4 +103,20 @@ export class DB {
     this.timings.set(key, expiration)
     return true // Successfully set expiration
   }
+
+  /**
+   * Remove all keys from the current database
+   */
+  flushdb(): void {
+    this.mapping.clear()
+    this.timings.clear()
+    this.data.clear()
+  }
+
+  /**
+   * Remove all keys from all databases (same as flushdb in single-database implementation)
+   */
+  flushall(): void {
+    this.flushdb()
+  }
 }
