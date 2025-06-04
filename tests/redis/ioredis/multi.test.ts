@@ -3,7 +3,7 @@ import { after, before, describe, it } from 'node:test'
 import { ClusterNetwork } from '../../../src/core/cluster/network'
 import assert from 'node:assert'
 
-describe.skip('multi', () => {
+describe('multi', () => {
   const redisCluster = new ClusterNetwork(console)
   let redisClient: Cluster | undefined
 
@@ -25,8 +25,8 @@ describe.skip('multi', () => {
   })
 
   after(async () => {
-    await redisClient?.quit()
-    await redisCluster.shutdown()
+    await redisClient?.disconnect()
+    await await redisCluster.shutdown()
   })
 
   it('Queue commands before execution without piplining', async () => {
@@ -67,7 +67,7 @@ describe.skip('multi', () => {
   it('handle errors in multi', async () => {
     const multi = redisClient!.multi()
     multi.set('myKey', 'myValue')
-    multi.evalsha('abc', 0)
+    multi.evalsha('abc')
 
     let error: any
 
@@ -85,16 +85,11 @@ describe.skip('multi', () => {
     const multi = redisClient!.multi()
     multi.set('myKey', 'myValue')
     multi.evalsha('abc', 0)
-    let res: any
 
-    try {
-      res = await multi.exec()
-    } catch (err) {
-      throw err
-    }
+    const res = await multi.exec()
 
     assert.ok(res)
     assert.strictEqual(res[0][1], 'OK')
-    assert.strictEqual(res[1][0], null)
+    assert.ok(res[1][0]?.message.includes('NOSCRIPT'))
   })
 })

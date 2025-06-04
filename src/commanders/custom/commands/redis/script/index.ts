@@ -4,6 +4,11 @@ import {
 } from '../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../types'
 import { ScriptLoadCommand } from './load'
+import { ScriptExistsCommand } from './exists'
+import { ScriptFlushCommand } from './flush'
+import { ScriptKillCommand } from './kill'
+import { ScriptDebugCommand } from './debug'
+import { ScriptHelpCommand } from './help'
 
 export class ScriptCommand implements Command {
   constructor(private readonly subCommands: Record<string, Command>) {}
@@ -31,9 +36,12 @@ export class ScriptCommand implements Command {
 export default function (scriptsStore: Record<string, Buffer>) {
   const subCommands = {
     load: new ScriptLoadCommand(scriptsStore),
+    exists: new ScriptExistsCommand(scriptsStore),
+    flush: new ScriptFlushCommand(scriptsStore),
+    kill: new ScriptKillCommand(),
+    debug: new ScriptDebugCommand(),
+    help: new ScriptHelpCommand(),
   }
 
-  return function () {
-    return new ScriptCommand(subCommands)
-  }
+  return new ScriptCommand(subCommands)
 }
