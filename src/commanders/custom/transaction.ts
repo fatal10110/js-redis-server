@@ -83,8 +83,8 @@ export class TransactionCommand implements Command {
 
   async execBuffer(): Promise<CommandResult> {
     const results = []
-    try {
-      for (const buff of this.bufferedCommands) {
+    for (const buff of this.bufferedCommands) {
+      try {
         if (buff instanceof UserFacedError) {
           throw buff
         }
@@ -96,14 +96,14 @@ export class TransactionCommand implements Command {
         }
 
         results.push(result.response)
-      }
-    } catch (err) {
-      // TODO do not repeat this logic
-      if (err instanceof UserFacedError) {
+      } catch (err) {
+        // TODO do not repeat this logic
+        if (!(err instanceof UserFacedError)) {
+          throw err
+        }
+
         results.push(err)
       }
-
-      throw err
     }
 
     return { response: results }

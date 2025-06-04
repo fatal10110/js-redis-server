@@ -109,6 +109,13 @@ export class WrongNumberOfKeys extends UserFacedError {
   }
 }
 
+export class NoScript extends UserFacedError {
+  constructor() {
+    super(`No matching script. Please use EVAL.`)
+    this.name = 'NOSCRIPT'
+  }
+}
+
 export class NestedMulti extends UserFacedError {
   constructor() {
     super(`MULTI calls can not be nested`)

@@ -101,7 +101,11 @@ export class ClusterNetwork implements DiscoveryService {
   }
 
   async shutdown() {
-    await Promise.all(Object.values(this.transports).map(t => t.close()))
-    await this.commanderFactory?.shutdown()
+    try {
+      await Promise.all(Object.values(this.transports).map(t => t.close()))
+      await this.commanderFactory?.shutdown()
+    } catch (err) {
+      this.logger.error('Error shutting down cluster network', err)
+    }
   }
 }

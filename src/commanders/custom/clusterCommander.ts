@@ -114,11 +114,11 @@ export class ClusterCommander implements DBCommandExecutor {
         this.transactionCommand = null
       }
 
-      throw err
-    }
+      if (cmdName === 'exec') {
+        this.transactionCommand = null
+      }
 
-    if (cmdName === 'exec') {
-      this.transactionCommand = null
+      throw err
     }
 
     return res
