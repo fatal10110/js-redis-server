@@ -2,6 +2,7 @@ import {
   TransactionDiscardedWithError,
   UnknownCommand,
   UserFacedError,
+  WrongNumberOfArguments,
 } from '../../core/errors'
 import { Command, CommandResult } from '../../types'
 
@@ -18,6 +19,12 @@ export class TransactionCommand implements Command {
   constructor(private readonly commands: Record<string, Command>) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    const cmdName = rawCmd.toString().toLowerCase()
+
+    if (cmdName === 'exec') {
+      return []
+    }
+
     try {
       const cmdName = rawCmd.toString().toLowerCase()
       const cmd = this.commands[cmdName]
@@ -30,7 +37,12 @@ export class TransactionCommand implements Command {
 
       return cmd.getKeys(rawCmd, args)
     } catch (err) {
-      this.shouldDiscard = true
+      if (
+        err instanceof WrongNumberOfArguments ||
+        err instanceof UnknownCommand
+      ) {
+        this.shouldDiscard = true
+      }
 
       throw err
     }
