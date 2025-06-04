@@ -48,6 +48,7 @@ import {
   createExpireat,
   createFlushdb,
   createFlushall,
+  createDbsize,
   // Hash commands
   createHset,
   createHget,
@@ -132,6 +133,7 @@ export function createCommands(
     expireat: createExpireat(db),
     flushdb: createFlushdb(db),
     flushall: createFlushall(db),
+    dbsize: createDbsize(db),
     // Hash commands
     hset: createHset(db),
     hget: createHget(db),
@@ -224,6 +226,7 @@ export function createReadonlyCommands(
     'type',
     'ttl',
     'pttl',
+    'dbsize',
 
     // Hash readonly commands
     'hget',
@@ -309,6 +312,7 @@ export function createMultiCommands(
     'expireat',
     'flushdb',
     'flushall',
+    'dbsize',
 
     // Hash commands
     'hset',
@@ -405,6 +409,7 @@ export function createLuaCommands(
     'pttl',
     'expire',
     'expireat',
+    'dbsize',
 
     // Hash commands
     'hset',

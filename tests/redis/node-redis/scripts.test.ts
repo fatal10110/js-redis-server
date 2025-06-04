@@ -3,7 +3,7 @@ import { ClusterNetwork } from '../../../src/core/cluster/network'
 import { Cluster, Redis } from 'ioredis'
 import assert from 'node:assert'
 
-describe.skip('Redis commands', () => {
+describe('Redis commands', () => {
   const redisCluster = new ClusterNetwork(console)
   let redisClient: Cluster | undefined
 
@@ -86,7 +86,7 @@ describe.skip('Redis commands', () => {
       assert.strictEqual(res, 'фвфв')
     })
 
-    it.skip('returns binary data without loosing bytes', async () => {
+    it('returns binary data without loosing bytes', async () => {
       const dataHex =
         '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489000000017352474200aece1ce90000000d49444154185763f8bf94e13f0006ef02a42609d4340000000049454e44ae426082'
       const buff = Buffer.from(dataHex, 'hex')

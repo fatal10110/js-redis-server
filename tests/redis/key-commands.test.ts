@@ -14,6 +14,7 @@ import { ExpireCommand } from '../../src/commanders/custom/commands/redis/data/k
 import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data/keys/expireat'
 import { FlushdbCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushdb'
 import { FlushallCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushall'
+import { DbSizeCommand } from '../../src/commanders/custom/commands/redis/data/keys/dbsize'
 
 // Error imports
 import {
@@ -549,6 +550,109 @@ describe('Key Commands', () => {
       assert.strictEqual(db1.get(Buffer.from('key2')), null)
       assert.strictEqual(db2.get(Buffer.from('key1')), null)
       assert.strictEqual(db2.get(Buffer.from('key2')), null)
+    })
+  })
+
+  describe('DBSIZE command', () => {
+    test('should return 0 for empty database', async () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      const result = await dbsizeCommand.run(Buffer.from('DBSIZE'), [])
+
+      assert.strictEqual(result.response, 0)
+    })
+
+    test('should return correct count after adding keys', async () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      // Add some keys
+      db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
+      db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
+      db.set(Buffer.from('key3'), new StringDataType(Buffer.from('value3')))
+
+      const result = await dbsizeCommand.run(Buffer.from('DBSIZE'), [])
+
+      assert.strictEqual(result.response, 3)
+    })
+
+    test('should exclude expired keys from count', async () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      // Add keys with different expiration times
+      const now = Date.now()
+      db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1'))) // no expiration
+      db.set(
+        Buffer.from('key2'),
+        new StringDataType(Buffer.from('value2')),
+        now + 10000,
+      ) // expires in future
+      db.set(
+        Buffer.from('key3'),
+        new StringDataType(Buffer.from('value3')),
+        now - 1000,
+      ) // already expired
+
+      const result = await dbsizeCommand.run(Buffer.from('DBSIZE'), [])
+
+      assert.strictEqual(result.response, 2) // Only non-expired keys
+    })
+
+    test('should return 0 after flushing database', async () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      // Add some keys
+      db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
+      db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
+
+      let result = await dbsizeCommand.run(Buffer.from('DBSIZE'), [])
+      assert.strictEqual(result.response, 2)
+
+      // Flush database
+      db.flushdb()
+
+      result = await dbsizeCommand.run(Buffer.from('DBSIZE'), [])
+      assert.strictEqual(result.response, 0)
+    })
+
+    test('should throw error if arguments are provided', async () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      await assert.rejects(
+        async () => {
+          await dbsizeCommand.run(Buffer.from('DBSIZE'), [Buffer.from('arg1')])
+        },
+        error => {
+          return error instanceof WrongNumberOfArguments
+        },
+      )
+    })
+
+    test('should return empty array for getKeys when no arguments', () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      const keys = dbsizeCommand.getKeys(Buffer.from('DBSIZE'), [])
+
+      assert.deepStrictEqual(keys, [])
+    })
+
+    test('should throw error in getKeys if arguments are provided', () => {
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
+
+      assert.throws(
+        () => {
+          dbsizeCommand.getKeys(Buffer.from('DBSIZE'), [Buffer.from('arg1')])
+        },
+        error => {
+          return error instanceof WrongNumberOfArguments
+        },
+      )
     })
   })
 

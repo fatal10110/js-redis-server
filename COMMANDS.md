@@ -50,7 +50,7 @@ This document provides a detailed overview of Redis commands and their implement
 
 #### DBSIZE
 
-- [ ] `DBSIZE` - Return the number of keys in the selected database
+- [x] `DBSIZE` - Return the number of keys in the selected database
 
 #### FLUSHDB
 

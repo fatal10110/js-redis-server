@@ -1,6 +1,6 @@
 import { test, describe, before, after, afterEach } from 'node:test'
 import assert from 'node:assert'
-import { ClusterNetwork } from '../../src/core/cluster/network'
+import { ClusterNetwork } from '../../../src/core/cluster/network'
 import { Redis, Cluster } from 'ioredis'
 
 describe('Sorted Set Commands Integration', () => {

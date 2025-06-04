@@ -119,4 +119,20 @@ export class DB {
   flushall(): void {
     this.flushdb()
   }
+
+  /**
+   * Get the number of keys in the current database
+   * This excludes expired keys
+   */
+  size(): number {
+    let count = 0
+
+    for (const [, keyBuffer] of this.mapping) {
+      if (this.get(keyBuffer) !== null) {
+        count++
+      }
+    }
+
+    return count
+  }
 }
