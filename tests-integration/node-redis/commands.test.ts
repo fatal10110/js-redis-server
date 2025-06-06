@@ -1,32 +1,24 @@
-import { after, before, describe, it } from 'node:test'
-import { ClusterNetwork } from '../../../src/core/cluster/network'
-import { RedisClusterType, createCluster } from 'redis'
-import { randomKey } from '../../utils'
+import { after, before, describe, test } from 'node:test'
+import { RedisClusterType } from 'redis'
+import { randomKey } from '../utils'
 import assert from 'node:assert'
+import { TestRunner } from '../test-config'
 
-describe('Redis commands', () => {
-  const redisCluster = new ClusterNetwork(console)
+const testRunner = new TestRunner()
+
+describe(`Redis commands with node-redis (${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType | undefined
 
   before(async () => {
-    await redisCluster.init({ masters: 3, slaves: 0 })
-    redisClient = await createCluster({
-      rootNodes: redisCluster.getAll().map(n => {
-        return {
-          url: `redis://127.0.0.1:${n.port}`,
-        }
-      }),
-    })
-    await redisClient?.connect()
+    redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
   })
 
   after(async () => {
-    await redisClient?.close()
-    await redisCluster.shutdown()
+    await testRunner.cleanup()
   })
 
   describe('set', () => {
-    it('sets data on key and gets value', async () => {
+    test('sets data on key and gets value', async () => {
       const key = randomKey()
       await redisClient?.set(key, 1)
 
@@ -36,7 +28,7 @@ describe('Redis commands', () => {
   })
 
   describe('mget', () => {
-    it('returns multiple key values', async () => {
+    test('returns multiple key values', async () => {
       const key1 = randomKey()
       const key2 = `another:{${key1}}`
       await redisClient?.set(key1, 1)
@@ -48,7 +40,7 @@ describe('Redis commands', () => {
       assert.strictEqual(val[1], '2')
     })
 
-    it('cross slot error', async () => {
+    test('cross slot error', async () => {
       const key1 = randomKey()
       const key2 = randomKey()
       await redisClient?.set(key1, 1)

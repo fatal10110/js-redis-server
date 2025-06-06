@@ -1,31 +1,19 @@
 import { after, before, describe, it } from 'node:test'
-import { ClusterNetwork } from '../../../src/core/cluster/network'
-import { Cluster, Redis } from 'ioredis'
+import { Cluster } from 'ioredis'
 import assert from 'node:assert'
+import { TestRunner } from '../test-config'
 
-describe('Redis commands', () => {
-  const redisCluster = new ClusterNetwork(console)
+const testRunner = new TestRunner()
+
+describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    await redisCluster.init({ masters: 3, slaves: 2 })
-    redisClient = new Redis.Cluster(
-      [
-        {
-          host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].port,
-        },
-      ],
-      {
-        lazyConnect: true,
-      },
-    )
-    await redisClient?.connect()
+    redisClient = await testRunner.setupIoredisCluster()
   })
 
   after(async () => {
-    await redisClient?.quit()
-    await redisCluster.shutdown()
+    await testRunner.cleanup()
   })
 
   describe('eval', () => {
@@ -60,7 +48,7 @@ describe('Redis commands', () => {
     it('gets utf8 value correctly', async () => {
       redisClient?.set('myKey', 'фвфв')
       const script = `
-        val = redis.call("get", KEYS[1])
+        local val = redis.call("get", KEYS[1])
 
         if val == "фвфв" then
           return 'yes'
@@ -76,7 +64,7 @@ describe('Redis commands', () => {
 
     it('sets utf8 value from args', async () => {
       const script = `
-        val = redis.call("set", KEYS[1], ARGV[1])
+       local val = redis.call("set", KEYS[1], ARGV[1])
         return ''
         `
 

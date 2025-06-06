@@ -21,6 +21,20 @@ export class DB {
 
   constructor() {}
 
+  tryEvict(key: Buffer) {
+    const now = Date.now()
+    const timing = this.timings.get(key)
+
+    if (timing && timing <= now) {
+      this.timings.delete(key)
+      this.data.delete(key)
+      this.mapping.delete(key.toString('binary'))
+      return true
+    }
+
+    return false
+  }
+
   get(rawKey: Buffer) {
     const key = this.mapping.get(rawKey.toString('binary'))
 
@@ -28,14 +42,7 @@ export class DB {
       return null
     }
 
-    const now = Date.now()
-    const timing = this.timings.get(key)
-
-    if (timing && timing <= now) {
-      this.timings.delete(key)
-      this.data.delete(key)
-      return null
-    }
+    this.tryEvict(key)
 
     return this.data.get(key) || null
   }
@@ -48,6 +55,8 @@ export class DB {
       key = rawKey
       this.mapping.set(stringifiedKey, rawKey)
     }
+
+    this.tryEvict(key)
 
     this.data.set(key, val)
 
@@ -64,8 +73,13 @@ export class DB {
       return false
     }
 
+    if (this.tryEvict(existingRef)) {
+      return false
+    }
+
     this.timings.delete(existingRef)
     this.data.delete(existingRef)
+    this.mapping.delete(stringifiedKey)
 
     return true
   }
@@ -74,7 +88,7 @@ export class DB {
     const stringifiedKey = rawKey.toString('binary')
     const key = this.mapping.get(stringifiedKey)
 
-    if (!key) {
+    if (!key || this.tryEvict(key)) {
       return -2 // Key does not exist
     }
 
@@ -128,7 +142,7 @@ export class DB {
     let count = 0
 
     for (const [, keyBuffer] of this.mapping) {
-      if (this.get(keyBuffer) !== null) {
+      if (!this.tryEvict(keyBuffer)) {
         count++
       }
     }
