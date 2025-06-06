@@ -1,44 +1,21 @@
 import { test, describe, before, after, afterEach } from 'node:test'
 import assert from 'node:assert'
-import { ClusterNetwork } from '../../../src/core/cluster/network'
-import { Redis, Cluster } from 'ioredis'
+import { Cluster } from 'ioredis'
+import { TestRunner } from '../test-config'
 
-describe('Set Commands Integration', () => {
-  const redisCluster = new ClusterNetwork(console)
+const testRunner = new TestRunner()
+
+describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    await redisCluster.init({ masters: 3, slaves: 0 })
-    redisClient = new Redis.Cluster(
-      [
-        {
-          host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].port,
-        },
-      ],
-      {
-        slotsRefreshTimeout: 10000000,
-        lazyConnect: true,
-      },
+    redisClient = await testRunner.setupIoredisCluster(
+      'set-commands-integration',
     )
-    await redisClient?.connect()
   })
 
   after(async () => {
-    await redisClient?.quit()
-    await redisCluster.shutdown()
-  })
-
-  afterEach(async () => {
-    // Clean up database after each test
-    const masterNodes = redisClient?.nodes('master') || []
-    if (masterNodes.length > 0) {
-      await Promise.all(
-        masterNodes.map(async node => {
-          return await node.flushdb()
-        }),
-      )
-    }
+    await testRunner.cleanup()
   })
 
   test('SADD and SCARD commands', async () => {

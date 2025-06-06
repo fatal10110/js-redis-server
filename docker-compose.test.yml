@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  # Redis Cluster using grokzen/redis-cluster
+  redis-cluster:
+    image: grokzen/redis-cluster:7.0.14
+    ports:
+      - '30000-30005:30000-30005'
+    environment:
+      # Configure cluster to start at port 8000 instead of default 7000
+      INITIAL_PORT: 30000
+      # 3 masters with 1 slave each (default, but explicit)
+      MASTERS: 3
+      SLAVES_PER_MASTER: 1
+      # For Mac compatibility
+      IP: 0.0.0.0
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-c', '-p', '30000', 'get a']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

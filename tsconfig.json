@@ -3,6 +3,6 @@
     "outDir": "./dist",
     "sourceMap": true
   },
-  "exclude": ["node_modules", "tests"],
+  "exclude": ["node_modules", "tests", "tests-integration"],
   "extends": "@tsconfig/node22/tsconfig.json"
 }

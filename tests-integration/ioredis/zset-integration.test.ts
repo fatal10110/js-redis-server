@@ -1,63 +1,32 @@
-import { test, describe, before, after, afterEach } from 'node:test'
+import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
-import { ClusterNetwork } from '../../../src/core/cluster/network'
-import { Redis, Cluster } from 'ioredis'
+import { Cluster } from 'ioredis'
+import { TestRunner } from '../test-config'
 
-describe('Sorted Set Commands Integration', () => {
-  const redisCluster = new ClusterNetwork(console)
+const testRunner = new TestRunner()
+
+describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    await redisCluster.init({ masters: 3, slaves: 0 })
-    redisClient = new Redis.Cluster(
-      [
-        {
-          host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].port,
-        },
-      ],
-      {
-        slotsRefreshTimeout: 10000000,
-        lazyConnect: true,
-      },
-    )
-    await redisClient?.connect()
+    redisClient = await testRunner.setupIoredisCluster('zset-integration')
   })
 
   after(async () => {
-    await redisClient?.quit()
-    await redisCluster.shutdown()
-  })
-
-  afterEach(async () => {
-    // Clean up database after each test
-    const masterNodes = redisClient?.nodes('master') || []
-    if (masterNodes.length > 0) {
-      await Promise.all(
-        masterNodes.map(async node => {
-          return await node.flushdb()
-        }),
-      )
-    }
+    await testRunner.cleanup()
   })
 
   test('ZADD and ZCARD commands', async () => {
     // ZADD single member
-    const add1 = await redisClient?.zadd('zset1', 1.0, 'member1')
+    const add1 = await redisClient?.zadd('zset1', 10, 'member1')
     assert.strictEqual(add1, 1)
 
     // ZADD multiple members
-    const add2 = await redisClient?.zadd(
-      'zset1',
-      2.0,
-      'member2',
-      3.0,
-      'member3',
-    )
+    const add2 = await redisClient?.zadd('zset1', 20, 'member2', 30, 'member3')
     assert.strictEqual(add2, 2)
 
     // Update existing member score
-    const add3 = await redisClient?.zadd('zset1', 1.5, 'member1')
+    const add3 = await redisClient?.zadd('zset1', 15, 'member1')
     assert.strictEqual(add3, 0) // No new members added
 
     // Check cardinality
@@ -66,10 +35,10 @@ describe('Sorted Set Commands Integration', () => {
   })
 
   test('ZSCORE command', async () => {
-    await redisClient?.zadd('zset2', 1.5, 'member1', 2.5, 'member2')
+    await redisClient?.zadd('zset2', 15, 'member1', 25, 'member2')
 
     const score1 = await redisClient?.zscore('zset2', 'member1')
-    assert.strictEqual(score1, '1.5')
+    assert.strictEqual(score1, '15')
 
     const score2 = await redisClient?.zscore('zset2', 'nonexistent')
     assert.strictEqual(score2, null)
@@ -139,21 +108,21 @@ describe('Sorted Set Commands Integration', () => {
   })
 
   test('ZINCRBY command', async () => {
-    await redisClient?.zadd('zset6', 1.0, 'member1')
+    await redisClient?.zadd('zset6', 10, 'member1')
 
     // Increment existing member
-    const incr1 = await redisClient?.zincrby('zset6', 2.5, 'member1')
-    assert.strictEqual(incr1, '3.5')
+    const incr1 = await redisClient?.zincrby('zset6', 25, 'member1')
+    assert.strictEqual(incr1, '35')
 
     // Increment non-existent member
-    const incr2 = await redisClient?.zincrby('zset6', 5.0, 'member2')
-    assert.strictEqual(incr2, '5')
+    const incr2 = await redisClient?.zincrby('zset6', 50, 'member2')
+    assert.strictEqual(incr2, '50')
 
     // Verify scores
     const score1 = await redisClient?.zscore('zset6', 'member1')
     const score2 = await redisClient?.zscore('zset6', 'member2')
-    assert.strictEqual(score1, '3.5')
-    assert.strictEqual(score2, '5')
+    assert.strictEqual(score1, '35')
+    assert.strictEqual(score2, '50')
   })
 
   test('ZREM command', async () => {
@@ -237,7 +206,7 @@ describe('Sorted Set Commands Integration', () => {
       priorityQueue,
       1,
       'critical_bug',
-      3,
+      4,
       'feature_request',
       2,
       'urgent_fix',
@@ -246,9 +215,9 @@ describe('Sorted Set Commands Integration', () => {
     // Add more tasks
     await redisClient?.zadd(
       priorityQueue,
-      5,
+      6,
       'documentation',
-      1.5,
+      3,
       'security_patch',
     )
 
@@ -261,19 +230,19 @@ describe('Sorted Set Commands Integration', () => {
 
     // Get next highest priority
     const nextAfterProcessing = await redisClient?.zrange(priorityQueue, 0, 0)
-    assert.strictEqual(nextAfterProcessing?.[0], 'security_patch')
+    assert.strictEqual(nextAfterProcessing?.[0], 'urgent_fix')
 
     // Escalate a task (decrease its score for higher priority)
-    await redisClient?.zincrby(priorityQueue, -1, 'feature_request')
+    await redisClient?.zincrby(priorityQueue, -3, 'feature_request')
     const newPriority = await redisClient?.zscore(
       priorityQueue,
       'feature_request',
     )
-    assert.strictEqual(newPriority, '2')
+    assert.strictEqual(newPriority, '1')
 
     // Check task ranking after escalation
     const taskRank = await redisClient?.zrank(priorityQueue, 'feature_request')
-    assert.strictEqual(taskRank, 1) // Should be 2nd priority now
+    assert.strictEqual(taskRank, 0) // Should be highest priority now
 
     // Get all tasks in priority order
     const allTasks = await redisClient?.zrange(
@@ -282,9 +251,12 @@ describe('Sorted Set Commands Integration', () => {
       -1,
       'WITHSCORES',
     )
-    assert.strictEqual(allTasks?.[0], 'security_patch') // Priority 1.5
-    assert.strictEqual(allTasks?.[2], 'feature_request') // Priority 2
-    assert.strictEqual(allTasks?.[4], 'urgent_fix') // Priority 2
+    assert.strictEqual(allTasks?.[0], 'feature_request') // Priority 1
+    assert.strictEqual(allTasks?.[1], '1')
+    assert.strictEqual(allTasks?.[2], 'urgent_fix') // Priority 2
+    assert.strictEqual(allTasks?.[3], '2')
+    assert.strictEqual(allTasks?.[4], 'security_patch') // Priority 3
+    assert.strictEqual(allTasks?.[5], '3')
   })
 
   test('Sorted Set commands workflow - Time Series Events', async () => {
@@ -343,18 +315,18 @@ describe('Sorted Set Commands Integration', () => {
   test('Sorted Set commands workflow - Search Results Ranking', async () => {
     const searchResults = 'search:javascript'
 
-    // Add search results with relevance scores
+    // Add search results with relevance scores (using integers 0-100 scale)
     await redisClient?.zadd(
       searchResults,
-      0.95,
+      95,
       'js_tutorial_comprehensive',
-      0.87,
+      87,
       'react_getting_started',
-      0.92,
+      92,
       'node_js_guide',
-      0.78,
+      78,
       'js_basics_beginner',
-      0.89,
+      89,
       'advanced_js_patterns',
     )
 
@@ -366,15 +338,15 @@ describe('Sorted Set Commands Integration', () => {
       'WITHSCORES',
     )
     assert.strictEqual(topResults?.[0], 'js_tutorial_comprehensive')
-    assert.strictEqual(topResults?.[1], '0.95')
+    assert.strictEqual(topResults?.[1], '95')
 
     // Boost a result based on user interaction
-    await redisClient?.zincrby(searchResults, 0.1, 'react_getting_started')
+    await redisClient?.zincrby(searchResults, 10, 'react_getting_started')
     const boostedScore = await redisClient?.zscore(
       searchResults,
       'react_getting_started',
     )
-    assert.strictEqual(boostedScore, '0.97')
+    assert.strictEqual(boostedScore, '97')
 
     // Check new ranking
     const newRank = await redisClient?.zrevrank(
@@ -386,15 +358,15 @@ describe('Sorted Set Commands Integration', () => {
     // Get results above certain relevance threshold
     const highQualityResults = await redisClient?.zrangebyscore(
       searchResults,
-      0.9,
-      1.0,
+      90,
+      100,
     )
     assert.ok(highQualityResults?.includes('js_tutorial_comprehensive'))
     assert.ok(highQualityResults?.includes('react_getting_started'))
     assert.ok(highQualityResults?.includes('node_js_guide'))
 
-    // Remove low-quality results (score <= 0.8)
-    await redisClient?.zremrangebyscore(searchResults, 0, 0.8)
+    // Remove low-quality results (score <= 80)
+    await redisClient?.zremrangebyscore(searchResults, 0, 80)
 
     const qualityCount = await redisClient?.zcard(searchResults)
 
@@ -407,13 +379,13 @@ describe('Sorted Set Commands Integration', () => {
       -1,
       'WITHSCORES',
     )
-    // Verify all remaining results have score > 0.8
+    // Verify all remaining results have score > 80
     assert.ok(finalRanking)
     assert.ok(finalRanking.length > 0)
 
     for (let i = 1; i < finalRanking.length; i += 2) {
-      const score = parseFloat(finalRanking[i])
-      assert.ok(score > 0.8, `Score ${score} should be > 0.8`)
+      const score = parseInt(finalRanking[i])
+      assert.ok(score > 80, `Score ${score} should be > 80`)
     }
   })
 })

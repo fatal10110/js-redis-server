@@ -1,48 +1,23 @@
-import Redis, { Cluster } from 'ioredis'
+import { Cluster } from 'ioredis'
 import { after, before, describe, it } from 'node:test'
-import { ClusterNetwork } from '../../../src/core/cluster/network'
 import assert from 'node:assert'
+import { TestRunner } from '../test-config'
+
+const testRunner = new TestRunner()
 
 describe('multi', () => {
-  const redisCluster = new ClusterNetwork(console)
   let redisClient: Cluster | undefined
 
   before(async () => {
-    await redisCluster.init({ masters: 3, slaves: 0 })
-    redisClient = new Redis.Cluster(
-      [
-        {
-          host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].port,
-        },
-      ],
-      {
-        slotsRefreshTimeout: 100000000,
-        lazyConnect: true,
-      },
-    )
-    await redisClient?.connect()
+    redisClient = await testRunner.setupIoredisCluster()
   })
 
   after(async () => {
-    await redisClient?.disconnect()
-    await await redisCluster.shutdown()
+    await testRunner.cleanup()
   })
 
   it('Queue commands before execution without piplining', async () => {
-    const anotherRedisClient = new Redis.Cluster(
-      [
-        {
-          host: '127.0.0.1',
-          port: Array.from(redisCluster.getAll())[0].port,
-        },
-      ],
-      {
-        lazyConnect: true,
-      },
-    )
-
-    await anotherRedisClient.connect()
+    const anotherRedisClient = await testRunner.setupIoredisCluster()
 
     try {
       const multi = redisClient!.multi()
@@ -53,6 +28,7 @@ describe('multi', () => {
       const res = await multi.exec()
 
       assert.notEqual(res, null)
+      assert.ok(Array.isArray(res))
 
       const [[, first], [, second]] = res
 
@@ -69,12 +45,12 @@ describe('multi', () => {
     multi.set('myKey', 'myValue')
     multi.evalsha('abc')
 
-    let error: any
+    let error: Error | undefined
 
     try {
       await multi.exec()
     } catch (err) {
-      error = err
+      error = err instanceof Error ? err : new Error(String(err))
     }
 
     assert.ok(error)

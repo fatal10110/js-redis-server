@@ -1,6 +1,16 @@
+.vscode
 .cursor
 dump.rdb
 .DS_Store
 dist
 package-lock.json
 node_modules
+
+# Test artifacts
+*.log
+coverage/
+.nyc_output/
+
+# Docker volumes and test data
+docker-data/
+redis-data/
