@@ -100,6 +100,10 @@ export class Resp2Transport {
         })
       })
 
+    socket.on('end', () => {
+      console.log('end')
+    })
+
     return new Resp({ bufBulk: true })
       .on('error', (err: unknown) => {
         this.handleError(socket, err)

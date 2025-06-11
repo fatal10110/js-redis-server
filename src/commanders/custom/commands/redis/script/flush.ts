@@ -1,17 +1,15 @@
 import { Command, CommandResult } from '../../../../../types'
+import { DB } from '../../../db'
 
 export class ScriptFlushCommand implements Command {
-  constructor(private readonly scriptStore: Record<string, Buffer>) {}
+  constructor(private readonly db: DB) {}
 
   getKeys(): Buffer[] {
     return []
   }
 
-  run(_rawCmd: Buffer, _args: Buffer[]): Promise<CommandResult> {
-    // Clear all scripts from cache
-    for (const key of Object.keys(this.scriptStore)) {
-      delete this.scriptStore[key]
-    }
+  run(): Promise<CommandResult> {
+    this.db.flushScripts()
 
     return Promise.resolve({ response: 'OK' })
   }

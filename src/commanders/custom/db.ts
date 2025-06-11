@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { HashDataType } from './data-structures/hash'
 import { ListDataType } from './data-structures/list'
 import { SetDataType } from './data-structures/set'
@@ -18,6 +19,7 @@ export class DB {
   private readonly mapping = new Map<string, Buffer>()
   private readonly timings = new Map<Buffer, number>()
   private readonly data = new Map<Buffer, DataTypes>()
+  private readonly scriptsStore = new Map<string, Buffer>()
 
   constructor() {}
 
@@ -84,6 +86,20 @@ export class DB {
     return true
   }
 
+  addScript(script: Buffer): string {
+    const sha = crypto.createHash('sha1').update(script).digest('hex')
+    this.scriptsStore.set(sha, script)
+    return sha
+  }
+
+  getScript(sha: string) {
+    return this.scriptsStore.get(sha)
+  }
+
+  flushScripts() {
+    return this.scriptsStore.clear()
+  }
+
   getTtl(rawKey: Buffer): number {
     const stringifiedKey = rawKey.toString('binary')
     const key = this.mapping.get(stringifiedKey)
@@ -125,6 +141,7 @@ export class DB {
     this.mapping.clear()
     this.timings.clear()
     this.data.clear()
+    this.flushScripts()
   }
 
   /**

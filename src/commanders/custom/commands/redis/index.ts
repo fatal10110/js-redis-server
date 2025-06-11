@@ -24,6 +24,7 @@ import createQuit from './quit'
 import createCluster from './cluster'
 import createScript from './script'
 import createEvalSha from './evalsha'
+import createMonitor from './monitor'
 
 import {
   // String commands
@@ -105,8 +106,6 @@ export function createCommands(
   luaEngine: LuaEngine,
   db: DB,
 ): Record<string, Command> {
-  const scriptsStore: Record<string, Buffer> = {}
-
   let commands: Record<string, Command> = {
     ping: createPing(),
     quit: createQuit(),
@@ -186,7 +185,9 @@ export function createCommands(
     zrevrank: createZrevrank(db),
     zrangebyscore: createZrangebyscore(db),
     zremrangebyscore: createZremrangebyscore(db),
-    script: createScript(scriptsStore),
+    script: createScript(db),
+
+    monitor: createMonitor(),
   }
 
   const evalCmd = createEval(luaEngine, commands)
