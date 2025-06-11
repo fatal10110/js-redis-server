@@ -9,6 +9,7 @@ import { ScriptFlushCommand } from './flush'
 import { ScriptKillCommand } from './kill'
 import { ScriptDebugCommand } from './debug'
 import { ScriptHelpCommand } from './help'
+import { DB } from '../../../db'
 
 export class ScriptCommand implements Command {
   constructor(private readonly subCommands: Record<string, Command>) {}
@@ -33,11 +34,11 @@ export class ScriptCommand implements Command {
   }
 }
 
-export default function (scriptsStore: Record<string, Buffer>) {
+export default function (db: DB) {
   const subCommands = {
-    load: new ScriptLoadCommand(scriptsStore),
-    exists: new ScriptExistsCommand(scriptsStore),
-    flush: new ScriptFlushCommand(scriptsStore),
+    load: new ScriptLoadCommand(db),
+    exists: new ScriptExistsCommand(db),
+    flush: new ScriptFlushCommand(db),
     kill: new ScriptKillCommand(),
     debug: new ScriptDebugCommand(),
     help: new ScriptHelpCommand(),

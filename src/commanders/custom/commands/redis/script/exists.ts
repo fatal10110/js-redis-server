@@ -1,8 +1,9 @@
 import { WrongNumberOfArguments } from '../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../types'
+import { DB } from '../../../db'
 
 export class ScriptExistsCommand implements Command {
-  constructor(private readonly scriptStore: Record<string, Buffer>) {}
+  constructor(private readonly db: DB) {}
 
   getKeys(): Buffer[] {
     return []
@@ -17,7 +18,7 @@ export class ScriptExistsCommand implements Command {
 
     for (const arg of args) {
       const hash = arg.toString()
-      results.push(hash in this.scriptStore ? 1 : 0)
+      results.push(this.db.getScript(hash) ? 1 : 0)
     }
 
     return Promise.resolve({ response: results })

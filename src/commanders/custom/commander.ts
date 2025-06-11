@@ -48,7 +48,7 @@ class Commander implements DBCommandExecutor {
     return Promise.resolve()
   }
 
-  async executeTransactionCommand(
+  private async executeTransactionCommand(
     cmdName: string,
     rawCmd: Buffer,
     args: Buffer[],
