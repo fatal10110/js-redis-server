@@ -1,11 +1,11 @@
 export interface DBCommandExecutor {
-  execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult>
+  execute(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<void>
   shutdown(): Promise<void>
-}
-
-export interface Logger {
-  info(msg: unknown, metadata?: Record<string, unknown>): void
-  error(msg: unknown, metadata?: Record<string, unknown>): void
 }
 
 export type CommandResult = {
@@ -13,9 +13,18 @@ export type CommandResult = {
   response: unknown
 }
 
+export interface Logger {
+  info(msg: unknown, metadata?: Record<string, unknown>): void
+  error(msg: unknown, metadata?: Record<string, unknown>): void
+}
+
 export interface Command {
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[]
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult>
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult>
 }
 
 export type SlotRange = [number, number]
@@ -38,4 +47,7 @@ export interface DiscoveryService {
   getMaster(id: string): DiscoveryNode
   getById(id: string): DiscoveryNode
   getBySlot(slot: number): DiscoveryNode
+}
+export interface Transport {
+  write(responseData: unknown, close?: boolean): void
 }

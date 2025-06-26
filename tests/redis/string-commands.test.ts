@@ -21,6 +21,7 @@ import {
   ExpectedInteger,
   RedisSyntaxError,
 } from '../../src/core/errors'
+import { createMockTransport } from '../mock-transport'
 
 describe('String Commands', () => {
   describe('INCR command', () => {
@@ -421,21 +422,32 @@ describe('String Commands', () => {
     test('INCR and DECR commands', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const incr1 = await commander.execute(Buffer.from('incr'), [
-        Buffer.from('counter'),
-      ])
-      assert.strictEqual(incr1.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('incr'),
+        [Buffer.from('counter')],
+        new AbortController().signal,
+      )
 
-      const incr2 = await commander.execute(Buffer.from('incr'), [
-        Buffer.from('counter'),
-      ])
-      assert.strictEqual(incr2.response, 2)
+      assert.strictEqual(transport.getLastResponse(), 1)
 
-      const decr1 = await commander.execute(Buffer.from('decr'), [
-        Buffer.from('counter'),
-      ])
-      assert.strictEqual(decr1.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('incr'),
+        [Buffer.from('counter')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
+
+      await commander.execute(
+        transport,
+        Buffer.from('decr'),
+        [Buffer.from('counter')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -444,23 +456,33 @@ describe('String Commands', () => {
     test('APPEND command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
+      await commander.execute(
+        transport,
+        Buffer.from('append'),
+        [Buffer.from('mykey'), Buffer.from('hello')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 5)
 
-      const append1 = await commander.execute(Buffer.from('append'), [
-        Buffer.from('mykey'),
-        Buffer.from('hello'),
-      ])
-      assert.strictEqual(append1.response, 5)
+      await commander.execute(
+        transport,
+        Buffer.from('append'),
+        [Buffer.from('mykey'), Buffer.from(' world')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 11)
 
-      const append2 = await commander.execute(Buffer.from('append'), [
-        Buffer.from('mykey'),
-        Buffer.from(' world'),
-      ])
-      assert.strictEqual(append2.response, 11)
-
-      const get = await commander.execute(Buffer.from('get'), [
-        Buffer.from('mykey'),
-      ])
-      assert.deepStrictEqual(get.response, Buffer.from('hello world'))
+      await commander.execute(
+        transport,
+        Buffer.from('get'),
+        [Buffer.from('mykey')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(
+        transport.getLastResponse(),
+        Buffer.from('hello world'),
+      )
 
       await commander.shutdown()
       await factory.shutdown()
@@ -469,21 +491,30 @@ describe('String Commands', () => {
     test('STRLEN command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const strlen1 = await commander.execute(Buffer.from('strlen'), [
-        Buffer.from('nonexistent'),
-      ])
-      assert.strictEqual(strlen1.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('strlen'),
+        [Buffer.from('nonexistent')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
-      await commander.execute(Buffer.from('set'), [
-        Buffer.from('mykey'),
-        Buffer.from('hello'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('mykey'), Buffer.from('hello')],
+        new AbortController().signal,
+      )
 
-      const strlen2 = await commander.execute(Buffer.from('strlen'), [
-        Buffer.from('mykey'),
-      ])
-      assert.strictEqual(strlen2.response, 5)
+      await commander.execute(
+        transport,
+        Buffer.from('strlen'),
+        [Buffer.from('mykey')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 5)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -492,24 +523,30 @@ describe('String Commands', () => {
     test('MGET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('set'), [
-        Buffer.from('key1'),
-        Buffer.from('value1'),
-      ])
-      await commander.execute(Buffer.from('set'), [
-        Buffer.from('key2'),
-        Buffer.from('value2'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('key1'), Buffer.from('value1')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('key2'), Buffer.from('value2')],
+        new AbortController().signal,
+      )
 
-      const mget = await commander.execute(Buffer.from('mget'), [
-        Buffer.from('key1'),
-        Buffer.from('key2'),
-        Buffer.from('nonexistent'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('mget'),
+        [Buffer.from('key1'), Buffer.from('key2'), Buffer.from('nonexistent')],
+        new AbortController().signal,
+      )
 
-      assert.ok(Array.isArray(mget.response))
-      const values = mget.response as (Buffer | null)[]
+      assert.ok(Array.isArray(transport.getLastResponse()))
+      const values = transport.getLastResponse() as (Buffer | null)[]
       assert.strictEqual(values.length, 3)
       assert.deepStrictEqual(values[0], Buffer.from('value1'))
       assert.deepStrictEqual(values[1], Buffer.from('value2'))
@@ -522,37 +559,45 @@ describe('String Commands', () => {
     test('SET command with options', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
-
+      const transport = createMockTransport()
       // Basic SET
-      const set1 = await commander.execute(Buffer.from('set'), [
-        Buffer.from('mykey'),
-        Buffer.from('myvalue'),
-      ])
-      assert.strictEqual(set1.response, 'OK')
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('mykey'), Buffer.from('myvalue')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'OK')
 
       // SET with NX (should fail since key exists)
-      const set2 = await commander.execute(Buffer.from('set'), [
-        Buffer.from('mykey'),
-        Buffer.from('newvalue'),
-        Buffer.from('NX'),
-      ])
-      assert.strictEqual(set2.response, null)
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('mykey'), Buffer.from('newvalue'), Buffer.from('NX')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), null)
 
       // SET with XX (should succeed since key exists)
-      const set3 = await commander.execute(Buffer.from('set'), [
-        Buffer.from('mykey'),
-        Buffer.from('newvalue'),
-        Buffer.from('XX'),
-      ])
-      assert.strictEqual(set3.response, 'OK')
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('mykey'), Buffer.from('newvalue'), Buffer.from('XX')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'OK')
 
       // SET with GET option
-      const set4 = await commander.execute(Buffer.from('set'), [
-        Buffer.from('mykey'),
-        Buffer.from('finalvalue'),
-        Buffer.from('GET'),
-      ])
-      assert.deepStrictEqual(set4.response, Buffer.from('newvalue'))
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('mykey'), Buffer.from('finalvalue'), Buffer.from('GET')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(
+        transport.getLastResponse(),
+        Buffer.from('newvalue'),
+      )
 
       await commander.shutdown()
       await factory.shutdown()
@@ -561,26 +606,38 @@ describe('String Commands', () => {
     test('MSET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const result = await commander.execute(Buffer.from('mset'), [
-        Buffer.from('key1'),
-        Buffer.from('value1'),
-        Buffer.from('key2'),
-        Buffer.from('value2'),
-        Buffer.from('key3'),
-        Buffer.from('value3'),
-      ])
-      assert.strictEqual(result.response, 'OK')
+      await commander.execute(
+        transport,
+        Buffer.from('mset'),
+        [
+          Buffer.from('key1'),
+          Buffer.from('value1'),
+          Buffer.from('key2'),
+          Buffer.from('value2'),
+          Buffer.from('key3'),
+          Buffer.from('value3'),
+        ],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'OK')
 
-      const get1 = await commander.execute(Buffer.from('get'), [
-        Buffer.from('key1'),
-      ])
-      assert.deepStrictEqual(get1.response, Buffer.from('value1'))
+      await commander.execute(
+        transport,
+        Buffer.from('get'),
+        [Buffer.from('key1')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('value1'))
 
-      const get2 = await commander.execute(Buffer.from('get'), [
-        Buffer.from('key2'),
-      ])
-      assert.deepStrictEqual(get2.response, Buffer.from('value2'))
+      await commander.execute(
+        transport,
+        Buffer.from('get'),
+        [Buffer.from('key2')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('value2'))
 
       await commander.shutdown()
       await factory.shutdown()
@@ -589,14 +646,20 @@ describe('String Commands', () => {
     test('MSETNX command - all keys new', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const result = await commander.execute(Buffer.from('msetnx'), [
-        Buffer.from('newkey1'),
-        Buffer.from('value1'),
-        Buffer.from('newkey2'),
-        Buffer.from('value2'),
-      ])
-      assert.strictEqual(result.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('msetnx'),
+        [
+          Buffer.from('newkey1'),
+          Buffer.from('value1'),
+          Buffer.from('newkey2'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -605,19 +668,27 @@ describe('String Commands', () => {
     test('MSETNX command - some keys exist', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('set'), [
-        Buffer.from('existingkey'),
-        Buffer.from('value'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('existingkey'), Buffer.from('value')],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('msetnx'), [
-        Buffer.from('existingkey'),
-        Buffer.from('newvalue'),
-        Buffer.from('newkey'),
-        Buffer.from('value2'),
-      ])
-      assert.strictEqual(result.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('msetnx'),
+        [
+          Buffer.from('existingkey'),
+          Buffer.from('newvalue'),
+          Buffer.from('newkey'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -626,22 +697,36 @@ describe('String Commands', () => {
     test('GETSET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('set'), [
-        Buffer.from('key'),
+      await commander.execute(
+        transport,
+        Buffer.from('set'),
+        [Buffer.from('key'), Buffer.from('oldvalue')],
+        new AbortController().signal,
+      )
+
+      await commander.execute(
+        transport,
+        Buffer.from('getset'),
+        [Buffer.from('key'), Buffer.from('newvalue')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(
+        transport.getLastResponse(),
         Buffer.from('oldvalue'),
-      ])
+      )
 
-      const result = await commander.execute(Buffer.from('getset'), [
-        Buffer.from('key'),
+      await commander.execute(
+        transport,
+        Buffer.from('get'),
+        [Buffer.from('key')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(
+        transport.getLastResponse(),
         Buffer.from('newvalue'),
-      ])
-      assert.deepStrictEqual(result.response, Buffer.from('oldvalue'))
-
-      const get = await commander.execute(Buffer.from('get'), [
-        Buffer.from('key'),
-      ])
-      assert.deepStrictEqual(get.response, Buffer.from('newvalue'))
+      )
 
       await commander.shutdown()
       await factory.shutdown()
@@ -650,24 +735,31 @@ describe('String Commands', () => {
     test('INCRBY and DECRBY commands', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const incr1 = await commander.execute(Buffer.from('incrby'), [
-        Buffer.from('counter'),
-        Buffer.from('5'),
-      ])
-      assert.strictEqual(incr1.response, 5)
+      await commander.execute(
+        transport,
+        Buffer.from('incrby'),
+        [Buffer.from('counter'), Buffer.from('5')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 5)
 
-      const incr2 = await commander.execute(Buffer.from('incrby'), [
-        Buffer.from('counter'),
-        Buffer.from('3'),
-      ])
-      assert.strictEqual(incr2.response, 8)
+      await commander.execute(
+        transport,
+        Buffer.from('incrby'),
+        [Buffer.from('counter'), Buffer.from('3')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 8)
 
-      const decr1 = await commander.execute(Buffer.from('decrby'), [
-        Buffer.from('counter'),
-        Buffer.from('2'),
-      ])
-      assert.strictEqual(decr1.response, 6)
+      await commander.execute(
+        transport,
+        Buffer.from('decrby'),
+        [Buffer.from('counter'), Buffer.from('2')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 6)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -676,18 +768,23 @@ describe('String Commands', () => {
     test('INCRBYFLOAT command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const incr1 = await commander.execute(Buffer.from('incrbyfloat'), [
-        Buffer.from('float'),
-        Buffer.from('1.5'),
-      ])
-      assert.deepStrictEqual(incr1.response, Buffer.from('1.5'))
+      await commander.execute(
+        transport,
+        Buffer.from('incrbyfloat'),
+        [Buffer.from('float'), Buffer.from('1.5')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('1.5'))
 
-      const incr2 = await commander.execute(Buffer.from('incrbyfloat'), [
-        Buffer.from('float'),
-        Buffer.from('2.3'),
-      ])
-      assert.deepStrictEqual(incr2.response, Buffer.from('3.8'))
+      await commander.execute(
+        transport,
+        Buffer.from('incrbyfloat'),
+        [Buffer.from('float'), Buffer.from('2.3')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('3.8'))
 
       await commander.shutdown()
       await factory.shutdown()

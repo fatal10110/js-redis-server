@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
 import { HashDataType } from '../../src/commanders/custom/data-structures/hash'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
+import { createMockTransport } from '../mock-transport'
 
 // Hash commands
 import { HsetCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hset'
@@ -155,24 +156,30 @@ describe('Hash Commands', () => {
     test('HEXISTS command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('hset'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hset'),
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
+        new AbortController().signal,
+      )
 
-      const exists1 = await commander.execute(Buffer.from('hexists'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-      ])
-      assert.strictEqual(exists1.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('hexists'),
+        [Buffer.from('hash'), Buffer.from('field1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
 
-      const exists2 = await commander.execute(Buffer.from('hexists'), [
-        Buffer.from('hash'),
-        Buffer.from('field2'),
-      ])
-      assert.strictEqual(exists2.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('hexists'),
+        [Buffer.from('hash'), Buffer.from('field2')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -181,20 +188,23 @@ describe('Hash Commands', () => {
     test('HINCRBY command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const incr1 = await commander.execute(Buffer.from('hincrby'), [
-        Buffer.from('hash'),
-        Buffer.from('counter'),
-        Buffer.from('5'),
-      ])
-      assert.strictEqual(incr1.response, 5)
+      await commander.execute(
+        transport,
+        Buffer.from('hincrby'),
+        [Buffer.from('hash'), Buffer.from('counter'), Buffer.from('5')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 5)
 
-      const incr2 = await commander.execute(Buffer.from('hincrby'), [
-        Buffer.from('hash'),
-        Buffer.from('counter'),
-        Buffer.from('3'),
-      ])
-      assert.strictEqual(incr2.response, 8)
+      await commander.execute(
+        transport,
+        Buffer.from('hincrby'),
+        [Buffer.from('hash'), Buffer.from('counter'), Buffer.from('3')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 8)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -203,20 +213,23 @@ describe('Hash Commands', () => {
     test('HINCRBYFLOAT command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const incr1 = await commander.execute(Buffer.from('hincrbyfloat'), [
-        Buffer.from('hash'),
-        Buffer.from('float'),
-        Buffer.from('1.5'),
-      ])
-      assert.deepStrictEqual(incr1.response, Buffer.from('1.5'))
+      await commander.execute(
+        transport,
+        Buffer.from('hincrbyfloat'),
+        [Buffer.from('hash'), Buffer.from('float'), Buffer.from('1.5')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('1.5'))
 
-      const incr2 = await commander.execute(Buffer.from('hincrbyfloat'), [
-        Buffer.from('hash'),
-        Buffer.from('float'),
-        Buffer.from('2.3'),
-      ])
-      assert.deepStrictEqual(incr2.response, Buffer.from('3.8'))
+      await commander.execute(
+        transport,
+        Buffer.from('hincrbyfloat'),
+        [Buffer.from('hash'), Buffer.from('float'), Buffer.from('2.3')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('3.8'))
 
       await commander.shutdown()
       await factory.shutdown()
@@ -225,24 +238,35 @@ describe('Hash Commands', () => {
     test('HMGET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('hset'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hset'),
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('hmget'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('field2'),
-        Buffer.from('nonexistent'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hmget'),
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('field2'),
+          Buffer.from('nonexistent'),
+        ],
+        new AbortController().signal,
+      )
 
-      assert.ok(Array.isArray(result.response))
-      const values = result.response as (Buffer | null)[]
+      assert.ok(Array.isArray(transport.getLastResponse()))
+      const values = transport.getLastResponse() as (Buffer | null)[]
       assert.strictEqual(values.length, 3)
       assert.deepStrictEqual(values[0], Buffer.from('value1'))
       assert.deepStrictEqual(values[1], Buffer.from('value2'))
@@ -255,27 +279,37 @@ describe('Hash Commands', () => {
     test('HMSET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const result = await commander.execute(Buffer.from('hmset'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
-      assert.strictEqual(result.response, 'OK')
+      await commander.execute(
+        transport,
+        Buffer.from('hmset'),
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'OK')
 
-      const get1 = await commander.execute(Buffer.from('hget'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-      ])
-      assert.deepStrictEqual(get1.response, Buffer.from('value1'))
+      await commander.execute(
+        transport,
+        Buffer.from('hget'),
+        [Buffer.from('hash'), Buffer.from('field1')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('value1'))
 
-      const get2 = await commander.execute(Buffer.from('hget'), [
-        Buffer.from('hash'),
-        Buffer.from('field2'),
-      ])
-      assert.deepStrictEqual(get2.response, Buffer.from('value2'))
+      await commander.execute(
+        transport,
+        Buffer.from('hget'),
+        [Buffer.from('hash'), Buffer.from('field2')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('value2'))
 
       await commander.shutdown()
       await factory.shutdown()
@@ -284,21 +318,30 @@ describe('Hash Commands', () => {
     test('HKEYS command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('hset'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hset'),
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('hkeys'), [
-        Buffer.from('hash'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hkeys'),
+        [Buffer.from('hash')],
+        new AbortController().signal,
+      )
 
-      assert.ok(Array.isArray(result.response))
-      const keys = result.response as Buffer[]
+      assert.ok(Array.isArray(transport.getLastResponse()))
+      const keys = transport.getLastResponse() as Buffer[]
       assert.strictEqual(keys.length, 2)
       const keyStrings = keys.map(k => k.toString()).sort()
       assert.deepStrictEqual(keyStrings, ['field1', 'field2'])
@@ -310,21 +353,30 @@ describe('Hash Commands', () => {
     test('HVALS command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('hset'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hset'),
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('hvals'), [
-        Buffer.from('hash'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hvals'),
+        [Buffer.from('hash')],
+        new AbortController().signal,
+      )
 
-      assert.ok(Array.isArray(result.response))
-      const values = result.response as Buffer[]
+      assert.ok(Array.isArray(transport.getLastResponse()))
+      const values = transport.getLastResponse() as Buffer[]
       assert.strictEqual(values.length, 2)
       const valueStrings = values.map(v => v.toString()).sort()
       assert.deepStrictEqual(valueStrings, ['value1', 'value2'])
@@ -336,24 +388,36 @@ describe('Hash Commands', () => {
     test('HLEN command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      const len1 = await commander.execute(Buffer.from('hlen'), [
-        Buffer.from('hash'),
-      ])
-      assert.strictEqual(len1.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('hlen'),
+        [Buffer.from('hash')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
-      await commander.execute(Buffer.from('hset'), [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('hset'),
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        new AbortController().signal,
+      )
 
-      const len2 = await commander.execute(Buffer.from('hlen'), [
-        Buffer.from('hash'),
-      ])
-      assert.strictEqual(len2.response, 2)
+      await commander.execute(
+        transport,
+        Buffer.from('hlen'),
+        [Buffer.from('hash')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
 
       await commander.shutdown()
       await factory.shutdown()

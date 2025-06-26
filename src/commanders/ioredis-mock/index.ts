@@ -8,6 +8,7 @@ import {
   Logger,
   CommandResult,
   DiscoveryNode,
+  Transport,
 } from '../../types'
 import createCluster from '../custom/commands/redis/cluster'
 import createClient from '../custom/commands/redis/client'
@@ -94,7 +95,12 @@ class IORredisMockCommander implements DBCommandExecutor {
     private readonly commandOverrides?: Record<string, Command>,
   ) {}
 
-  async execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  async execute(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<void> {
     const cmdStr = rawCmd.toString().toLowerCase()
     const commander: RedisType | ChainableCommander =
       this.transaction || this.redis
@@ -107,10 +113,8 @@ class IORredisMockCommander implements DBCommandExecutor {
       throw new Error('Transaction already started')
     } else if (cmdStr === 'multi') {
       this.transaction = (commander as unknown as RedisType).multi()
-      return {
-        close: false,
-        response: 'OK',
-      }
+      transport.write(Buffer.from('OK'))
+      return
     }
 
     if (cmdStr === 'exec' && !this.transaction) {
@@ -132,7 +136,9 @@ class IORredisMockCommander implements DBCommandExecutor {
       let command = this.commandOverrides?.[cmdStr]
 
       if (command) {
-        return command.run(rawCmd, args)
+        const res = await command.run(rawCmd, args, signal)
+        transport.write(res.response)
+        return
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -148,19 +154,16 @@ class IORredisMockCommander implements DBCommandExecutor {
         response = 'QUEUED'
       }
 
-      return {
-        close: false,
-        response: transformReplyToOriginalFormat(cmdStr, response),
-      }
+      transport.write(transformReplyToOriginalFormat(cmdStr, response))
+
+      return
     } catch (err) {
       if (this.transaction) {
         this.transactionWithErrors = true
       }
 
-      return {
-        close: false,
-        response: err,
-      }
+      transport.write(err)
+      return
     }
   }
 
@@ -245,7 +248,12 @@ class IORredisMockClusterCommander extends IORredisMockCommander {
     }
   }
 
-  execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  execute(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<void> {
     const cmdName = rawCmd.toString().toLowerCase()
     const cmd = this.clusterCommandsOverrides?.[cmdName]
 
@@ -266,7 +274,7 @@ class IORredisMockClusterCommander extends IORredisMockCommander {
     }
 
     if (!keys.length) {
-      return super.execute(rawCmd, args)
+      return super.execute(transport, rawCmd, args, signal)
     }
 
     const slot = clusterKeySlot.generateMulti(keys)
@@ -277,7 +285,7 @@ class IORredisMockClusterCommander extends IORredisMockCommander {
 
     for (const [min, max] of this.me.slots) {
       if (slot >= min && slot <= max) {
-        return super.execute(rawCmd, args)
+        return super.execute(transport, rawCmd, args, signal)
       }
     }
 

@@ -2,6 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
+import { createMockTransport } from '../mock-transport'
 
 // Set commands
 import { SaddCommand } from '../../src/commanders/custom/commands/redis/data/sets/sadd'
@@ -163,23 +164,30 @@ describe('Set Commands', () => {
     test('SISMEMBER command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set'),
-        Buffer.from('member1'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set'), Buffer.from('member1')],
+        new AbortController().signal,
+      )
 
-      const exists1 = await commander.execute(Buffer.from('sismember'), [
-        Buffer.from('set'),
-        Buffer.from('member1'),
-      ])
-      assert.strictEqual(exists1.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('sismember'),
+        [Buffer.from('set'), Buffer.from('member1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
 
-      const exists2 = await commander.execute(Buffer.from('sismember'), [
-        Buffer.from('set'),
-        Buffer.from('member2'),
-      ])
-      assert.strictEqual(exists2.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('sismember'),
+        [Buffer.from('set'), Buffer.from('member2')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -188,22 +196,34 @@ describe('Set Commands', () => {
     test('SPOP command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set'),
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set'), Buffer.from('member1')],
+        new AbortController().signal,
+      )
+
+      await commander.execute(
+        transport,
+        Buffer.from('spop'),
+        [Buffer.from('set')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(
+        transport.getLastResponse(),
         Buffer.from('member1'),
-      ])
-
-      const result = await commander.execute(Buffer.from('spop'), [
-        Buffer.from('set'),
-      ])
-      assert.deepStrictEqual(result.response, Buffer.from('member1'))
+      )
 
       // Set should be empty now
-      const card = await commander.execute(Buffer.from('scard'), [
-        Buffer.from('set'),
-      ])
-      assert.strictEqual(card.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('scard'),
+        [Buffer.from('set')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -212,27 +232,38 @@ describe('Set Commands', () => {
     test('SRANDMEMBER command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set'),
-        Buffer.from('member1'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set'),
-        Buffer.from('member2'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set'), Buffer.from('member1')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set'), Buffer.from('member2')],
+        new AbortController().signal,
+      )
 
-      const member = await commander.execute(Buffer.from('srandmember'), [
-        Buffer.from('set'),
-      ])
-      const memberStr = (member.response as Buffer).toString()
+      await commander.execute(
+        transport,
+        Buffer.from('srandmember'),
+        [Buffer.from('set')],
+        new AbortController().signal,
+      )
+      const memberStr = (transport.getLastResponse() as Buffer).toString()
       assert(memberStr === 'member1' || memberStr === 'member2')
 
       // Verify set still has both members
-      const card = await commander.execute(Buffer.from('scard'), [
-        Buffer.from('set'),
-      ])
-      assert.strictEqual(card.response, 2)
+      await commander.execute(
+        transport,
+        Buffer.from('scard'),
+        [Buffer.from('set')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -241,34 +272,47 @@ describe('Set Commands', () => {
     test('SDIFF command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('a'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('b'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('c'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('a')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('b')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('c')],
+        new AbortController().signal,
+      )
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('b'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('d'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('b')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('d')],
+        new AbortController().signal,
+      )
 
-      const diff = await commander.execute(Buffer.from('sdiff'), [
-        Buffer.from('set1'),
-        Buffer.from('set2'),
-      ])
-      const result = diff.response as Buffer[]
+      await commander.execute(
+        transport,
+        Buffer.from('sdiff'),
+        [Buffer.from('set1'), Buffer.from('set2')],
+        new AbortController().signal,
+      )
+      const result = transport.getLastResponse() as Buffer[]
       const members = result.map(b => b.toString()).sort()
       assert.deepStrictEqual(members, ['a', 'c'])
 
@@ -279,38 +323,53 @@ describe('Set Commands', () => {
     test('SINTER command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('a'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('b'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('c'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('a')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('b')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('c')],
+        new AbortController().signal,
+      )
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('b'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('c'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('d'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('b')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('c')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('d')],
+        new AbortController().signal,
+      )
 
-      const inter = await commander.execute(Buffer.from('sinter'), [
-        Buffer.from('set1'),
-        Buffer.from('set2'),
-      ])
-      const result = inter.response as Buffer[]
+      await commander.execute(
+        transport,
+        Buffer.from('sinter'),
+        [Buffer.from('set1'), Buffer.from('set2')],
+        new AbortController().signal,
+      )
+      const result = transport.getLastResponse() as Buffer[]
       const members = result.map(b => b.toString()).sort()
       assert.deepStrictEqual(members, ['b', 'c'])
 
@@ -321,30 +380,41 @@ describe('Set Commands', () => {
     test('SUNION command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('a'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set1'),
-        Buffer.from('b'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('a')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set1'), Buffer.from('b')],
+        new AbortController().signal,
+      )
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('b'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('set2'),
-        Buffer.from('c'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('b')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('set2'), Buffer.from('c')],
+        new AbortController().signal,
+      )
 
-      const union = await commander.execute(Buffer.from('sunion'), [
-        Buffer.from('set1'),
-        Buffer.from('set2'),
-      ])
-      const result = union.response as Buffer[]
+      await commander.execute(
+        transport,
+        Buffer.from('sunion'),
+        [Buffer.from('set1'), Buffer.from('set2')],
+        new AbortController().signal,
+      )
+      const result = transport.getLastResponse() as Buffer[]
       const members = result.map(b => b.toString()).sort()
       assert.deepStrictEqual(members, ['a', 'b', 'c'])
 
@@ -355,33 +425,49 @@ describe('Set Commands', () => {
     test('SMOVE command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('source'),
-        Buffer.from('member1'),
-      ])
-      await commander.execute(Buffer.from('sadd'), [
-        Buffer.from('source'),
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('source'), Buffer.from('member1')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('sadd'),
+        [Buffer.from('source'), Buffer.from('member2')],
+        new AbortController().signal,
+      )
+
+      await commander.execute(
+        transport,
+        Buffer.from('smove'),
+        [Buffer.from('source'), Buffer.from('dest'), Buffer.from('member1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
+
+      // Verify member was moved
+      await commander.execute(
+        transport,
+        Buffer.from('smembers'),
+        [Buffer.from('source')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), [
         Buffer.from('member2'),
       ])
 
-      const move = await commander.execute(Buffer.from('smove'), [
-        Buffer.from('source'),
-        Buffer.from('dest'),
+      await commander.execute(
+        transport,
+        Buffer.from('smembers'),
+        [Buffer.from('dest')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), [
         Buffer.from('member1'),
       ])
-      assert.strictEqual(move.response, 1)
-
-      // Verify member was moved
-      const sourceMembers = await commander.execute(Buffer.from('smembers'), [
-        Buffer.from('source'),
-      ])
-      assert.deepStrictEqual(sourceMembers.response, [Buffer.from('member2')])
-
-      const destMembers = await commander.execute(Buffer.from('smembers'), [
-        Buffer.from('dest'),
-      ])
-      assert.deepStrictEqual(destMembers.response, [Buffer.from('member1')])
 
       await commander.shutdown()
       await factory.shutdown()

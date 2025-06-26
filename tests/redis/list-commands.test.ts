@@ -2,6 +2,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
+import { createMockTransport } from '../mock-transport'
 
 // List commands
 import { LpushCommand } from '../../src/commanders/custom/commands/redis/data/lists/lpush'
@@ -199,31 +200,43 @@ describe('List Commands', () => {
     test('LINDEX command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('lpush'), [
-        Buffer.from('list'),
-        Buffer.from('item1'),
-        Buffer.from('item2'),
-        Buffer.from('item3'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('lpush'),
+        [
+          Buffer.from('list'),
+          Buffer.from('item1'),
+          Buffer.from('item2'),
+          Buffer.from('item3'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result1 = await commander.execute(Buffer.from('lindex'), [
-        Buffer.from('list'),
-        Buffer.from('0'),
-      ])
-      assert.deepStrictEqual(result1.response, Buffer.from('item3'))
+      await commander.execute(
+        transport,
+        Buffer.from('lindex'),
+        [Buffer.from('list'), Buffer.from('0')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('item3'))
 
-      const result2 = await commander.execute(Buffer.from('lindex'), [
-        Buffer.from('list'),
-        Buffer.from('-1'),
-      ])
-      assert.deepStrictEqual(result2.response, Buffer.from('item1'))
+      await commander.execute(
+        transport,
+        Buffer.from('lindex'),
+        [Buffer.from('list'), Buffer.from('-1')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('item1'))
 
-      const result3 = await commander.execute(Buffer.from('lindex'), [
-        Buffer.from('list'),
-        Buffer.from('10'),
-      ])
-      assert.strictEqual(result3.response, null)
+      await commander.execute(
+        transport,
+        Buffer.from('lindex'),
+        [Buffer.from('list'), Buffer.from('10')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), null)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -232,26 +245,38 @@ describe('List Commands', () => {
     test('LSET command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('lpush'), [
-        Buffer.from('list'),
-        Buffer.from('item1'),
-        Buffer.from('item2'),
-        Buffer.from('item3'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('lpush'),
+        [
+          Buffer.from('list'),
+          Buffer.from('item1'),
+          Buffer.from('item2'),
+          Buffer.from('item3'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('lset'), [
-        Buffer.from('list'),
-        Buffer.from('1'),
+      await commander.execute(
+        transport,
+        Buffer.from('lset'),
+        [Buffer.from('list'), Buffer.from('1'), Buffer.from('newitem')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'OK')
+
+      await commander.execute(
+        transport,
+        Buffer.from('lindex'),
+        [Buffer.from('list'), Buffer.from('1')],
+        new AbortController().signal,
+      )
+      assert.deepStrictEqual(
+        transport.getLastResponse(),
         Buffer.from('newitem'),
-      ])
-      assert.strictEqual(result.response, 'OK')
-
-      const check = await commander.execute(Buffer.from('lindex'), [
-        Buffer.from('list'),
-        Buffer.from('1'),
-      ])
-      assert.deepStrictEqual(check.response, Buffer.from('newitem'))
+      )
 
       await commander.shutdown()
       await factory.shutdown()
@@ -260,26 +285,36 @@ describe('List Commands', () => {
     test('LREM command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('lpush'), [
-        Buffer.from('list'),
-        Buffer.from('item1'),
-        Buffer.from('item2'),
-        Buffer.from('item1'),
-        Buffer.from('item3'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('lpush'),
+        [
+          Buffer.from('list'),
+          Buffer.from('item1'),
+          Buffer.from('item2'),
+          Buffer.from('item1'),
+          Buffer.from('item3'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('lrem'), [
-        Buffer.from('list'),
-        Buffer.from('2'),
-        Buffer.from('item1'),
-      ])
-      assert.strictEqual(result.response, 2)
+      await commander.execute(
+        transport,
+        Buffer.from('lrem'),
+        [Buffer.from('list'), Buffer.from('2'), Buffer.from('item1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
 
-      const len = await commander.execute(Buffer.from('llen'), [
-        Buffer.from('list'),
-      ])
-      assert.strictEqual(len.response, 2)
+      await commander.execute(
+        transport,
+        Buffer.from('llen'),
+        [Buffer.from('list')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -288,27 +323,37 @@ describe('List Commands', () => {
     test('LTRIM command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('lpush'), [
-        Buffer.from('list'),
-        Buffer.from('item1'),
-        Buffer.from('item2'),
-        Buffer.from('item3'),
-        Buffer.from('item4'),
-        Buffer.from('item5'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('lpush'),
+        [
+          Buffer.from('list'),
+          Buffer.from('item1'),
+          Buffer.from('item2'),
+          Buffer.from('item3'),
+          Buffer.from('item4'),
+          Buffer.from('item5'),
+        ],
+        new AbortController().signal,
+      )
 
-      const result = await commander.execute(Buffer.from('ltrim'), [
-        Buffer.from('list'),
-        Buffer.from('1'),
-        Buffer.from('3'),
-      ])
-      assert.strictEqual(result.response, 'OK')
+      await commander.execute(
+        transport,
+        Buffer.from('ltrim'),
+        [Buffer.from('list'), Buffer.from('1'), Buffer.from('3')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'OK')
 
-      const len = await commander.execute(Buffer.from('llen'), [
-        Buffer.from('list'),
-      ])
-      assert.strictEqual(len.response, 3)
+      await commander.execute(
+        transport,
+        Buffer.from('llen'),
+        [Buffer.from('list')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 3)
 
       await commander.shutdown()
       await factory.shutdown()

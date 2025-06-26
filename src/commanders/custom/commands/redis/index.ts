@@ -191,7 +191,7 @@ export function createCommands(
   }
 
   const evalCmd = createEval(luaEngine, commands)
-  const evalsha = createEvalSha(scriptsStore, evalCmd)
+  const evalsha = createEvalSha(evalCmd, db)
 
   commands = {
     ...commands,

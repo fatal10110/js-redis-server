@@ -5,7 +5,7 @@ import { ClusterNetwork } from '../src/core/cluster/network'
 export type TestBackend = 'mock' | 'real'
 
 export class TestRunner {
-  readonly backend = (process.env.TEST_BACKEND as TestBackend) || 'real'
+  readonly backend = (process.env.TEST_BACKEND as TestBackend) || 'mock'
   private mockCluster: ClusterNetwork | null = null
   private ioredisCluster: Cluster[] = []
   private nodeRedisCluster: RedisClusterType[] = []
