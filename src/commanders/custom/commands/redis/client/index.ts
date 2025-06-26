@@ -17,7 +17,11 @@ export class ClientCommand implements Command {
     return []
   }
 
-  run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
+  run(
+    rawCommand: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult> {
     const subCommandName = args.shift()
 
     if (!subCommandName) {
@@ -30,7 +34,7 @@ export class ClientCommand implements Command {
       throw new UnknwonClientSubCommand(subCommandName.toString())
     }
 
-    return subComamnd.run(subCommandName, args)
+    return subComamnd.run(subCommandName, args, signal)
   }
 }
 

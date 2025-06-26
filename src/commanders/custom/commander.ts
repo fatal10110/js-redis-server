@@ -1,6 +1,6 @@
 import { LuaEngine, LuaFactory } from 'wasmoon'
-import { UnknownCommand } from '../../core/errors'
-import { Command, CommandResult, DBCommandExecutor, Logger } from '../../types'
+import { UnknownCommand, UserFacedError } from '../../core/errors'
+import { Command, DBCommandExecutor, Logger, Transport } from '../../types'
 
 import { DB } from './db'
 import { TransactionCommand } from './transaction'
@@ -49,21 +49,30 @@ class Commander implements DBCommandExecutor {
   }
 
   private async executeTransactionCommand(
+    transport: Transport,
     cmdName: string,
     rawCmd: Buffer,
     args: Buffer[],
-  ): Promise<CommandResult> {
+    signal: AbortSignal,
+  ): Promise<void> {
     if (cmdName === 'discard') {
       this.transactionCommand = null
-      return { response: 'OK' }
+      transport.write('OK')
+      return
     }
 
     let res
 
     try {
-      res = await this.transactionCommand!.run(rawCmd, args)
+      res = await this.transactionCommand!.run(rawCmd, args, signal)
     } catch (err) {
       this.transactionCommand = null
+
+      if (err instanceof UserFacedError) {
+        transport.write(err)
+        return
+      }
+
       throw err
     }
 
@@ -71,25 +80,42 @@ class Commander implements DBCommandExecutor {
       this.transactionCommand = null
     }
 
-    return res
+    transport.write(res.response, res.close)
+    return
   }
 
-  execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  async execute(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<void> {
     const cmdName = rawCmd.toString().toLowerCase()
 
     if (cmdName === 'multi') {
       this.transactionCommand = new TransactionCommand(this.commands)
-      return Promise.resolve({ response: 'OK' })
+      transport.write('OK')
+      return Promise.resolve()
     }
 
     if (this.transactionCommand) {
-      return this.executeTransactionCommand(cmdName, rawCmd, args)
+      await this.executeTransactionCommand(
+        transport,
+        cmdName,
+        rawCmd,
+        args,
+        signal,
+      )
+      return
     }
 
     if (!this.commands[cmdName]) {
-      throw new UnknownCommand(cmdName, args)
+      transport.write(new UnknownCommand(cmdName, args))
+      return
     }
 
-    return Promise.resolve(this.commands[cmdName].run(rawCmd, args))
+    const res = await this.commands[cmdName].run(rawCmd, args, signal)
+    transport.write(res.response, res.close)
+    return Promise.resolve()
   }
 }

@@ -38,7 +38,11 @@ export class EvalCommand implements Command {
     return keys
   }
 
-  async run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  async run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult> {
     if (args.length < 2) {
       throw new WrongNumberOfArguments('eval')
     }
@@ -72,7 +76,7 @@ export class EvalCommand implements Command {
           throw new UnknownScriptCommand(sha)
         }
 
-        const { response } = await cmd.run(rawCmd, argsBuffer)
+        const { response } = await cmd.run(rawCmd, argsBuffer, signal)
 
         let bufferRes
 

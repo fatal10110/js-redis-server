@@ -1,5 +1,4 @@
 import { createCustomClusterCommander } from '../../commanders/custom/clusterCommander'
-import { IORedisMockClusterCommanderFactory } from '../../commanders/ioredis-mock'
 import {
   ClusterCommanderFactory,
   DiscoveryNode,
@@ -80,7 +79,8 @@ export class ClusterNetwork implements DiscoveryService {
       const id = this.createMasterId(i)
       this.transports[id] = new Resp2Transport(
         this.logger,
-        (() => this.commanderFactory!.createCommander(id)).bind(this),
+        // TODO
+        this.commanderFactory!.createCommander(id),
       )
       this.slotMapping[id] = [slotRange]
 
@@ -88,10 +88,8 @@ export class ClusterNetwork implements DiscoveryService {
         const replicaId = this.createReplicaId(id, j)
         this.transports[replicaId] = new Resp2Transport(
           this.logger,
-          (() =>
-            this.commanderFactory!.createReadOnlyCommander(replicaId)).bind(
-            this,
-          ),
+          // TODO
+          this.commanderFactory!.createReadOnlyCommander(replicaId),
         )
         this.slotMapping[replicaId] = [slotRange]
       }

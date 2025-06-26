@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
 import { StringDataType } from '../../src/commanders/custom/data-structures/string'
 import { createCustomCommander } from '../../src/commanders/custom/commander'
+import { createMockTransport } from '../mock-transport'
 
 // Sorted set commands
 import { ZaddCommand } from '../../src/commanders/custom/commands/redis/data/zsets/zadd'
@@ -387,29 +388,34 @@ describe('Sorted Set Commands', () => {
     test('ZREVRANGE command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('1'),
-        Buffer.from('one'),
-      ])
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('2'),
-        Buffer.from('two'),
-      ])
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('3'),
-        Buffer.from('three'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('1'), Buffer.from('one')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('2'), Buffer.from('two')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('3'), Buffer.from('three')],
+        new AbortController().signal,
+      )
 
-      const range = await commander.execute(Buffer.from('zrevrange'), [
-        Buffer.from('zset'),
-        Buffer.from('0'),
-        Buffer.from('-1'),
-      ])
-      const result = range.response as Buffer[]
+      await commander.execute(
+        transport,
+        Buffer.from('zrevrange'),
+        [Buffer.from('zset'), Buffer.from('0'), Buffer.from('-1')],
+        new AbortController().signal,
+      )
+      const result = transport.getLastResponse() as Buffer[]
       assert.deepStrictEqual(result, [
         Buffer.from('three'),
         Buffer.from('two'),
@@ -423,40 +429,50 @@ describe('Sorted Set Commands', () => {
     test('ZRANK command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('1'),
-        Buffer.from('one'),
-      ])
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('2'),
-        Buffer.from('two'),
-      ])
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('3'),
-        Buffer.from('three'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('1'), Buffer.from('one')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('2'), Buffer.from('two')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('3'), Buffer.from('three')],
+        new AbortController().signal,
+      )
 
-      const rank1 = await commander.execute(Buffer.from('zrank'), [
-        Buffer.from('zset'),
-        Buffer.from('one'),
-      ])
-      assert.strictEqual(rank1.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('zrank'),
+        [Buffer.from('zset'), Buffer.from('one')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
-      const rank2 = await commander.execute(Buffer.from('zrank'), [
-        Buffer.from('zset'),
-        Buffer.from('two'),
-      ])
-      assert.strictEqual(rank2.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('zrank'),
+        [Buffer.from('zset'), Buffer.from('two')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
 
-      const rank3 = await commander.execute(Buffer.from('zrank'), [
-        Buffer.from('zset'),
-        Buffer.from('three'),
-      ])
-      assert.strictEqual(rank3.response, 2)
+      await commander.execute(
+        transport,
+        Buffer.from('zrank'),
+        [Buffer.from('zset'), Buffer.from('three')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
 
       await commander.shutdown()
       await factory.shutdown()
@@ -465,40 +481,50 @@ describe('Sorted Set Commands', () => {
     test('ZREVRANK command', async () => {
       const factory = await createCustomCommander(console)
       const commander = factory.createCommander()
+      const transport = createMockTransport()
 
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('1'),
-        Buffer.from('one'),
-      ])
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('2'),
-        Buffer.from('two'),
-      ])
-      await commander.execute(Buffer.from('zadd'), [
-        Buffer.from('zset'),
-        Buffer.from('3'),
-        Buffer.from('three'),
-      ])
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('1'), Buffer.from('one')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('2'), Buffer.from('two')],
+        new AbortController().signal,
+      )
+      await commander.execute(
+        transport,
+        Buffer.from('zadd'),
+        [Buffer.from('zset'), Buffer.from('3'), Buffer.from('three')],
+        new AbortController().signal,
+      )
 
-      const rank1 = await commander.execute(Buffer.from('zrevrank'), [
-        Buffer.from('zset'),
-        Buffer.from('one'),
-      ])
-      assert.strictEqual(rank1.response, 2)
+      await commander.execute(
+        transport,
+        Buffer.from('zrevrank'),
+        [Buffer.from('zset'), Buffer.from('one')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 2)
 
-      const rank2 = await commander.execute(Buffer.from('zrevrank'), [
-        Buffer.from('zset'),
-        Buffer.from('two'),
-      ])
-      assert.strictEqual(rank2.response, 1)
+      await commander.execute(
+        transport,
+        Buffer.from('zrevrank'),
+        [Buffer.from('zset'), Buffer.from('two')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
 
-      const rank3 = await commander.execute(Buffer.from('zrevrank'), [
-        Buffer.from('zset'),
-        Buffer.from('three'),
-      ])
-      assert.strictEqual(rank3.response, 0)
+      await commander.execute(
+        transport,
+        Buffer.from('zrevrank'),
+        [Buffer.from('zset'), Buffer.from('three')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
 
       await commander.shutdown()
       await factory.shutdown()

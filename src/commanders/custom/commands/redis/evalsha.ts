@@ -5,11 +5,12 @@ import {
   WrongNumberOfKeys,
 } from '../../../../core/errors'
 import { Command, CommandResult } from '../../../../types'
+import { DB } from '../../db'
 
 export class EvalShaCommand implements Command {
   constructor(
-    private readonly scriptsStore: Record<string, Buffer>,
     private readonly evalCommand: Command,
+    private readonly db: DB,
   ) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
@@ -36,26 +37,31 @@ export class EvalShaCommand implements Command {
     return keys
   }
 
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult> {
     const [bufSha, ...restArgs] = args
 
     if (!bufSha) {
       throw new WrongNumberOfArguments('evalsha')
     }
 
-    const script = this.scriptsStore[bufSha.toString()]
+    const script = this.db.getScript(bufSha.toString())
 
     if (!script) {
       throw new NoScript()
     }
 
-    return this.evalCommand.run(Buffer.from('eval'), [script, ...restArgs])
+    return this.evalCommand.run(
+      Buffer.from('eval'),
+      [script, ...restArgs],
+      signal,
+    )
   }
 }
 
-export default function (
-  scriptsStore: Record<string, Buffer>,
-  evalCmd: Command,
-) {
-  return new EvalShaCommand(scriptsStore, evalCmd)
+export default function (evalCmd: Command, db: DB) {
+  return new EvalShaCommand(evalCmd, db)
 }

@@ -48,7 +48,11 @@ export class TransactionCommand implements Command {
     }
   }
 
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult> {
     const cmdName = rawCmd.toString().toLowerCase()
 
     if (cmdName === 'exec') {
@@ -56,7 +60,7 @@ export class TransactionCommand implements Command {
         throw new TransactionDiscardedWithError()
       }
 
-      return this.execBuffer()
+      return this.execBuffer(signal)
     }
 
     const cmd = this.commands[cmdName]
@@ -81,7 +85,7 @@ export class TransactionCommand implements Command {
     throw new Error('Method not implemented.')
   }
 
-  async execBuffer(): Promise<CommandResult> {
+  async execBuffer(signal: AbortSignal): Promise<CommandResult> {
     const results = []
     for (const buff of this.bufferedCommands) {
       try {
@@ -89,7 +93,7 @@ export class TransactionCommand implements Command {
           throw buff
         }
 
-        const result = await buff.cmd.run(buff.rawCmd, buff.args)
+        const result = await buff.cmd.run(buff.rawCmd, buff.args, signal)
 
         if (result.close) {
           return result

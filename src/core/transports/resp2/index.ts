@@ -1,26 +1,32 @@
 import { AddressInfo, Server, Socket, createServer } from 'net'
 import Resp from 'respjs'
-import { DBCommandExecutor, Logger } from '../../../types'
+import { DBCommandExecutor, Logger, Transport } from '../../../types'
 import { UserFacedError } from '../../errors'
 
-export class Resp2Transport {
-  public readonly server: Server
-
+class RespTransport implements Transport {
   constructor(
     private readonly logger: Logger,
-    private readonly dbProvider: () => DBCommandExecutor,
-  ) {
-    this.server = createServer({ keepAlive: true })
-      .on('error', err => {
-        // Handle errors here.
-        logger.error(err)
-      })
-      .on('close', () => {
-        //logger.info('Connection closed')
-      })
-      .on('connection', socket => {
-        socket.pipe(this.handleConnection(socket))
-      })
+    private readonly socket: Socket,
+  ) {}
+
+  write(responseData: unknown, close?: boolean) {
+    if (
+      responseData instanceof Error &&
+      !(responseData instanceof UserFacedError)
+    ) {
+      close = true
+    }
+
+    this.socket.write(this.prepareResponse(responseData), err => {
+      if (err) {
+        this.logger.error(err)
+        this.socket.destroySoon()
+      }
+    })
+
+    if (close) {
+      this.socket.destroySoon()
+    }
   }
 
   private prepareResponse(jsResponse: unknown): Buffer {
@@ -57,78 +63,64 @@ export class Resp2Transport {
       throw new Error(`Unknown response of type ${typeof jsResponse}`)
     }
   }
+}
 
-  write(socket: Socket, responseData: unknown, close?: boolean) {
-    socket.write(this.prepareResponse(responseData), err => {
-      if (err) {
-        this.logger.error(err)
-        socket.destroySoon()
-      }
-    })
+export class Resp2Transport {
+  public readonly server: Server
 
-    if (close) {
-      socket.destroySoon()
-    }
-  }
-
-  private handleError(socket: Socket, err: unknown) {
-    if (err instanceof UserFacedError) {
-      this.write(socket, err, false)
-    } else {
-      this.logger.error(`Error on processing incoming data`, { err })
-      this.write(socket, new UserFacedError(`ERR Error!`), true)
-    }
+  constructor(
+    private readonly logger: Logger,
+    private readonly commandExecutor: DBCommandExecutor,
+  ) {
+    this.server = createServer({ keepAlive: true })
+      .on('error', err => {
+        // Handle errors here.
+        logger.error(err)
+      })
+      .on('close', () => {
+        //logger.info('Connection closed')
+      })
+      .on('connection', socket => {
+        socket.pipe(this.handleConnection(socket))
+      })
   }
 
   private handleConnection(socket: Socket) {
-    const commandExecutor = this.dbProvider()
+    const controller = new AbortController()
 
     socket
       .on('close', () => {
-        commandExecutor.shutdown().catch(err => {
-          this.logger.error(`Error on shutting down command executor`, { err })
-        })
+        controller.abort()
       })
       .on('error', () => {
-        commandExecutor.shutdown().catch(err => {
-          this.logger.error(`Error on shutting down command executor`, { err })
-        })
+        controller.abort()
       })
       .on('timeout', () => {
-        commandExecutor.shutdown().catch(err => {
-          this.logger.error(`Error on shutting down command executor`, { err })
-        })
+        controller.abort()
+      })
+      .on('end', () => {
+        console.log('end')
+        controller.abort()
       })
 
-    socket.on('end', () => {
-      console.log('end')
-    })
+    const transport = new RespTransport(this.logger, socket)
 
     return new Resp({ bufBulk: true })
       .on('error', (err: unknown) => {
-        this.handleError(socket, err)
+        transport.write(err)
       })
       .on('data', (data: Buffer[]) => {
         const [cmdName, ...args] = data
 
-        try {
-          socket.pause()
+        console.log('cmdName', cmdName.toString())
+        console.log(
+          'args',
+          args.map(arg => arg.toString()),
+        )
 
-          commandExecutor
-            .execute(cmdName, args)
-            .then(({ response, close }) => {
-              this.write(socket, response, close)
-            })
-            .catch(err => {
-              this.handleError(socket, err)
-            })
-            .finally(() => {
-              socket.resume()
-            })
-        } catch (err) {
-          this.handleError(socket, err)
-          socket.resume()
-        }
+        this.commandExecutor
+          .execute(transport, cmdName, args, controller.signal)
+          .catch(transport.write)
       })
   }
 
@@ -161,6 +153,7 @@ export class Resp2Transport {
       throw new Error(`Could not fetch address from ${address}`)
     }
 
+    // TODO
     return `127.0.0.1:${(address as AddressInfo).port}`
   }
 }

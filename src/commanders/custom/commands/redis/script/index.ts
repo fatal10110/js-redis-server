@@ -17,7 +17,11 @@ export class ScriptCommand implements Command {
   getKeys(): Buffer[] {
     return []
   }
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult> {
     const subCommandName = args.pop()
 
     if (!subCommandName) {
@@ -30,7 +34,7 @@ export class ScriptCommand implements Command {
       throw new UnknowScriptSubCommand(subCommandName.toString())
     }
 
-    return subComamnd.run(subCommandName, args)
+    return subComamnd.run(subCommandName, args, signal)
   }
 }
 

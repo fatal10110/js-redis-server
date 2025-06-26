@@ -27,7 +27,11 @@ export class ClusterCommand implements Command {
     return []
   }
 
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult> {
     const subCommandName = args.pop()
 
     if (!subCommandName) {
@@ -40,7 +44,7 @@ export class ClusterCommand implements Command {
       throw new UnknwonClusterSubCommand(subCommandName.toString())
     }
 
-    return subComamnd.run(subCommandName, args)
+    return subComamnd.run(subCommandName, args, signal)
   }
 }
 

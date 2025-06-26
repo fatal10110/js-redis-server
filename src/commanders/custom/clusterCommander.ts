@@ -8,6 +8,7 @@ import {
   DiscoveryNode,
   DiscoveryService,
   Logger,
+  Transport,
 } from '../../types'
 import { createClusterCommands } from './commands/redis'
 import { LuaEngine, LuaFactory } from 'wasmoon'
@@ -71,11 +72,12 @@ export class ClusterCommander implements DBCommandExecutor {
     cmd: Command,
     rawCmd: Buffer,
     args: Buffer[],
+    signal: AbortSignal,
   ): Promise<CommandResult> {
     const keys = cmd.getKeys(rawCmd, args)
 
     if (!keys.length) {
-      return cmd.run(rawCmd, args)
+      return cmd.run(rawCmd, args, signal)
     }
 
     const slot = clusterKeySlot.generateMulti(keys)
@@ -86,7 +88,7 @@ export class ClusterCommander implements DBCommandExecutor {
 
     for (const [min, max] of this.me.slots) {
       if (slot >= min && slot <= max) {
-        return cmd.run(rawCmd, args)
+        return cmd.run(rawCmd, args, signal)
       }
     }
 
@@ -96,19 +98,27 @@ export class ClusterCommander implements DBCommandExecutor {
   }
 
   async executeTransactionCommand(
+    transport: Transport,
     cmdName: string,
     rawCmd: Buffer,
     args: Buffer[],
-  ): Promise<CommandResult> {
+    signal: AbortSignal,
+  ): Promise<void> {
     if (cmdName === 'discard') {
       this.transactionCommand = null
-      return { response: 'OK' }
+      transport.write(Buffer.from('OK'))
+      return
     }
 
     let res
 
     try {
-      res = await this.executeCommand(this.transactionCommand!, rawCmd, args)
+      res = await this.executeCommand(
+        this.transactionCommand!,
+        rawCmd,
+        args,
+        signal,
+      )
     } catch (err) {
       if (err instanceof MovedError) {
         this.transactionCommand = null
@@ -121,19 +131,28 @@ export class ClusterCommander implements DBCommandExecutor {
       throw err
     }
 
-    return res
+    transport.write(res)
+
+    return
   }
 
-  async execute(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+  async execute(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<void> {
     const cmdName = rawCmd.toString().toLowerCase()
 
     if (this.transactionCommand) {
-      return this.executeTransactionCommand(cmdName, rawCmd, args)
+      this.executeTransactionCommand(transport, cmdName, rawCmd, args, signal)
+      return
     }
 
     if (cmdName === 'multi') {
       this.transactionCommand = new TransactionCommand(this.commands)
-      return { response: 'OK' }
+      transport.write(Buffer.from('OK'))
+      return
     }
 
     const cmd = this.commands[cmdName]
@@ -142,7 +161,11 @@ export class ClusterCommander implements DBCommandExecutor {
       throw new UnknownCommand(cmdName, args)
     }
 
-    return this.executeCommand(cmd, rawCmd, args)
+    const res = await this.executeCommand(cmd, rawCmd, args, signal)
+
+    transport.write(res)
+
+    return
   }
 
   async shutdown(): Promise<void> {

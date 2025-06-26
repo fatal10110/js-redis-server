@@ -7,12 +7,13 @@ import { ScriptKillCommand } from '../../src/commanders/custom/commands/redis/sc
 import { ScriptDebugCommand } from '../../src/commanders/custom/commands/redis/script/debug'
 import { ScriptHelpCommand } from '../../src/commanders/custom/commands/redis/script/help'
 import { WrongNumberOfArguments } from '../../src/core/errors'
+import { DB } from '../../src/commanders/custom/db'
 
 describe('Script Commands', () => {
   describe('SCRIPT LOAD command', () => {
     test('loads a script and returns SHA1 hash', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const command = new ScriptLoadCommand(scriptStore)
+      const db = new DB()
+      const command = new ScriptLoadCommand(db)
 
       const script = Buffer.from('return "hello"')
       const result = await command.run(Buffer.from('SCRIPT'), [script])
@@ -21,13 +22,12 @@ describe('Script Commands', () => {
       assert.strictEqual((result.response as string).length, 40) // SHA1 is 40 chars
 
       // Verify script was stored
-      assert.strictEqual(Object.keys(scriptStore).length, 1)
-      assert.ok(scriptStore[result.response as string])
+      assert.ok(db.getScript(result.response as string))
     })
 
     test('throws error when no script provided', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const command = new ScriptLoadCommand(scriptStore)
+      const db = new DB()
+      const command = new ScriptLoadCommand(db)
 
       try {
         await command.run(Buffer.from('SCRIPT'), [])
@@ -38,23 +38,22 @@ describe('Script Commands', () => {
     })
 
     test('does not duplicate scripts with same content', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const command = new ScriptLoadCommand(scriptStore)
+      const db = new DB()
+      const command = new ScriptLoadCommand(db)
 
       const script = Buffer.from('return "hello"')
       const result1 = await command.run(Buffer.from('SCRIPT'), [script])
       const result2 = await command.run(Buffer.from('SCRIPT'), [script])
 
       assert.strictEqual(result1.response, result2.response)
-      assert.strictEqual(Object.keys(scriptStore).length, 1)
     })
   })
 
   describe('SCRIPT EXISTS command', () => {
     test('checks if scripts exist', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const loadCommand = new ScriptLoadCommand(scriptStore)
-      const existsCommand = new ScriptExistsCommand(scriptStore)
+      const db = new DB()
+      const loadCommand = new ScriptLoadCommand(db)
+      const existsCommand = new ScriptExistsCommand(db)
 
       // Load a script first
       const script = Buffer.from('return "test"')
@@ -70,8 +69,8 @@ describe('Script Commands', () => {
     })
 
     test('returns 0 for non-existent scripts', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const command = new ScriptExistsCommand(scriptStore)
+      const db = new DB()
+      const command = new ScriptExistsCommand(db)
 
       const fakeHash = Buffer.from('nonexistent_hash')
       const result = await command.run(Buffer.from('SCRIPT'), [fakeHash])
@@ -80,9 +79,9 @@ describe('Script Commands', () => {
     })
 
     test('checks multiple scripts at once', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const loadCommand = new ScriptLoadCommand(scriptStore)
-      const existsCommand = new ScriptExistsCommand(scriptStore)
+      const db = new DB()
+      const loadCommand = new ScriptLoadCommand(db)
+      const existsCommand = new ScriptExistsCommand(db)
 
       // Load one script
       const script1 = Buffer.from('return "test1"')
@@ -100,8 +99,8 @@ describe('Script Commands', () => {
     })
 
     test('throws error when no hashes provided', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const command = new ScriptExistsCommand(scriptStore)
+      const db = new DB()
+      const command = new ScriptExistsCommand(db)
 
       try {
         await command.run(Buffer.from('SCRIPT'), [])
@@ -114,35 +113,36 @@ describe('Script Commands', () => {
 
   describe('SCRIPT FLUSH command', () => {
     test('flushes all scripts from cache', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const loadCommand = new ScriptLoadCommand(scriptStore)
-      const flushCommand = new ScriptFlushCommand(scriptStore)
+      const db = new DB()
+      const loadCommand = new ScriptLoadCommand(db)
+      const flushCommand = new ScriptFlushCommand(db)
 
       // Load some scripts
-      await loadCommand.run(Buffer.from('SCRIPT'), [
+      const result1 = await loadCommand.run(Buffer.from('SCRIPT'), [
         Buffer.from('return "test1"'),
       ])
-      await loadCommand.run(Buffer.from('SCRIPT'), [
+      const result2 = await loadCommand.run(Buffer.from('SCRIPT'), [
         Buffer.from('return "test2"'),
       ])
 
-      assert.strictEqual(Object.keys(scriptStore).length, 2)
+      assert.ok(db.getScript(result1.response as string))
+      assert.ok(db.getScript(result2.response as string))
 
       // Flush all scripts
-      const result = await flushCommand.run(Buffer.from('SCRIPT'), [])
+      const result = await flushCommand.run()
 
       assert.strictEqual(result.response, 'OK')
-      assert.strictEqual(Object.keys(scriptStore).length, 0)
+      assert.ok(db.getScript(result1.response as string) === undefined)
+      assert.ok(db.getScript(result2.response as string) === undefined)
     })
 
     test('works when cache is already empty', async () => {
-      const scriptStore: Record<string, Buffer> = {}
-      const command = new ScriptFlushCommand(scriptStore)
+      const db = new DB()
+      const command = new ScriptFlushCommand(db)
 
-      const result = await command.run(Buffer.from('SCRIPT'), [])
+      const result = await command.run()
 
       assert.strictEqual(result.response, 'OK')
-      assert.strictEqual(Object.keys(scriptStore).length, 0)
     })
   })
 
