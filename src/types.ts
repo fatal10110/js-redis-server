@@ -8,6 +8,16 @@ export interface DBCommandExecutor {
   shutdown(): Promise<void>
 }
 
+export interface ExecutionContext {
+  execute(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<ExecutionContext>
+  shutdown(): Promise<void>
+}
+
 export type CommandResult = {
   close?: boolean
   response: unknown

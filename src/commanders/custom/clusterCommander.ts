@@ -13,7 +13,6 @@ import {
 import { createClusterCommands } from './commands/redis'
 import { LuaEngine, LuaFactory } from 'wasmoon'
 import { DB } from './db'
-import { TransactionCommand } from './transaction'
 
 export async function createCustomClusterCommander(
   logger: Logger,

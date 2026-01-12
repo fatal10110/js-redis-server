@@ -3,7 +3,6 @@ import { UnknownCommand, UserFacedError } from '../../core/errors'
 import { Command, DBCommandExecutor, Logger, Transport } from '../../types'
 
 import { DB } from './db'
-import { TransactionCommand } from './transaction'
 
 // Import createCommands function from Redis index
 import { createCommands } from './commands/redis'
