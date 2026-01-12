@@ -5,6 +5,7 @@ import { SetDataType } from './data-structures/set'
 import { StreamDataType } from './data-structures/stream'
 import { StringDataType } from './data-structures/string'
 import { SortedSetDataType } from './data-structures/zset'
+import { Mutex } from 'async-mutex'
 
 export type DataTypes =
   | HashDataType
@@ -20,6 +21,7 @@ export class DB {
   private readonly timings = new Map<Buffer, number>()
   private readonly data = new Map<Buffer, DataTypes>()
   private readonly scriptsStore = new Map<string, Buffer>()
+  readonly lock = new Mutex()
 
   constructor() {}
 
