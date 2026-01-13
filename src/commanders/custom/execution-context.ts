@@ -28,7 +28,11 @@ export class CommandExecutionContext implements ExecutionContext {
 
     if (cmdName === 'multi') {
       transport.write('OK')
-      return new TransactionExecutionContext(this, this.transactionCommands)
+      return new TransactionExecutionContext(
+        this.db,
+        this,
+        this.transactionCommands,
+      )
     }
 
     const cmd = this.commands[cmdName]

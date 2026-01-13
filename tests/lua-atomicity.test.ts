@@ -4,7 +4,8 @@ import { LuaFactory } from 'wasmoon'
 import { DB } from '../src/commanders/custom/db'
 import { CommandExecutionContext } from '../src/commanders/custom/execution-context'
 import { createCommands } from '../src/commanders/custom/commands/redis'
-import { MockTransport } from './helpers'
+import { MockTransport } from './mock-transport'
+
 import { StringDataType } from '../src/commanders/custom/data-structures/string'
 
 describe('Lua Script Atomicity', () => {
@@ -62,7 +63,7 @@ describe('Lua Script Atomicity', () => {
     )
 
     // Verify result
-    const result = transport.lastResponse
+    const result = transport.getLastResponse()
     assert.ok(result instanceof Buffer)
     assert.strictEqual(result.toString(), '11')
 
@@ -79,7 +80,7 @@ describe('Lua Script Atomicity', () => {
     const context = new CommandExecutionContext(db, {}, transactionCommands)
 
     // Create commands with execution context reference
-    const commands = createCommands(lua, db, context)
+    const commands = createCommands(lua, db, { executionContext: context })
 
     // Update context with actual commands
     const contextWithCommands = new CommandExecutionContext(

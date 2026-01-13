@@ -387,7 +387,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const flushdbCommand = new FlushdbCommand(db)
 
-      const result = await flushdbCommand.run()
+      const result = await flushdbCommand.run(Buffer.from(''), [])
       assert.strictEqual(result.response, 'OK')
     })
 
@@ -411,7 +411,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('set_key')) !== null)
 
       // Execute FLUSHDB
-      const result = await flushdbCommand.run()
+      const result = await flushdbCommand.run(Buffer.from(''), [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys are removed
@@ -443,7 +443,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('key2')) !== null)
 
       // Execute FLUSHDB
-      const result = await flushdbCommand.run()
+      const result = await flushdbCommand.run(Buffer.from(''), [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys and their expiration data are removed
@@ -459,7 +459,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const flushallCommand = new FlushallCommand(db)
 
-      const result = await flushallCommand.run()
+      const result = await flushallCommand.run(Buffer.from(''), [])
       assert.strictEqual(result.response, 'OK')
     })
 
@@ -483,7 +483,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('set_key')) !== null)
 
       // Execute FLUSHALL
-      const result = await flushallCommand.run()
+      const result = await flushallCommand.run(Buffer.from(''), [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys are removed
@@ -515,7 +515,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('key2')) !== null)
 
       // Execute FLUSHALL
-      const result = await flushallCommand.run()
+      const result = await flushallCommand.run(Buffer.from(''), [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys and their expiration data are removed
@@ -538,8 +538,8 @@ describe('Key Commands', () => {
       db2.set(Buffer.from('key2'), new HashDataType())
 
       // Execute both commands
-      const result1 = await flushdbCommand.run()
-      const result2 = await flushallCommand.run()
+      const result1 = await flushdbCommand.run(Buffer.from(''), [])
+      const result2 = await flushallCommand.run(Buffer.from(''), [])
 
       // Both should return OK
       assert.strictEqual(result1.response, 'OK')

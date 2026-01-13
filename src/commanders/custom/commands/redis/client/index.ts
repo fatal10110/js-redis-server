@@ -16,6 +16,7 @@ export const ClientCommandDefinition: CommandDefinition = {
   metadata: defineCommand(commandName, {
     arity: -2, // CLIENT <subcommand> [args...]
     flags: {
+      readonly: true,
       admin: true,
     },
     firstKey: -1,

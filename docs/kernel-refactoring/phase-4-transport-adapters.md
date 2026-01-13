@@ -26,22 +26,26 @@ This adapter uses the existing `respjs` parser but changes the output target.
 
 ```typescript
 class RespAdapter {
+  private session: Session
+
   constructor(
     private kernel: RedisKernel,
     socket: Socket,
   ) {
+    this.session = new Session(kernel) // Starts in NormalState
     const parser = new Resp()
 
-    parser.on('data', (args: Buffer[]) => {
-      // 1. Create Job
-      const job: CommandJob = {
-        request: { command: args[0].toString(), args: args.slice(1) },
-        resolve: res => this.sendResp(res),
-        reject: err => this.sendError(err),
-      }
+    parser.on('data', async (args: Buffer[]) => {
+      const command = args[0].toString()
+      const cmdArgs = args.slice(1)
 
-      // 2. Submit to Kernel
-      this.kernel.submit(job)
+      try {
+        // Delegate to Session (handles MULTI/EXEC buffering internally)
+        const result = await this.session.handle(command, cmdArgs)
+        this.sendResp(result)
+      } catch (err) {
+        this.sendError(err)
+      }
     })
   }
 }

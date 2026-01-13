@@ -1,11 +1,16 @@
 import { LuaEngine, LuaFactory } from 'wasmoon'
-import { UnknownCommand, UserFacedError } from '../../core/errors'
-import { Command, DBCommandExecutor, Logger, Transport } from '../../types'
+import {
+  DBCommandExecutor,
+  ExecutionContext,
+  Logger,
+  Transport,
+} from '../../types'
 
 import { DB } from './db'
 
 // Import createCommands function from Redis index
-import { createCommands } from './commands/redis'
+import { createCommands, createMultiCommands } from './commands/redis'
+import { CommandExecutionContext } from './execution-context'
 
 export async function createCustomCommander(
   logger: Logger,
@@ -36,51 +41,22 @@ export class CustomCommanderFactory {
 }
 
 class Commander implements DBCommandExecutor {
-  private transactionCommand: TransactionCommand | null = null
-  private readonly commands: Record<string, Command>
+  private readonly baseContext: CommandExecutionContext
+  private currentContext: ExecutionContext
 
   constructor(luaEngine: LuaEngine, db: DB) {
-    this.commands = createCommands(luaEngine, db)
+    const commands = createCommands(luaEngine, db)
+    const transactionCommands = createMultiCommands(luaEngine, db)
+    this.baseContext = new CommandExecutionContext(
+      db,
+      commands,
+      transactionCommands,
+    )
+    this.currentContext = this.baseContext
   }
 
   async shutdown(): Promise<void> {
     return Promise.resolve()
-  }
-
-  private async executeTransactionCommand(
-    transport: Transport,
-    cmdName: string,
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<void> {
-    if (cmdName === 'discard') {
-      this.transactionCommand = null
-      transport.write('OK')
-      return
-    }
-
-    let res
-
-    try {
-      res = await this.transactionCommand!.run(rawCmd, args, signal)
-    } catch (err) {
-      this.transactionCommand = null
-
-      if (err instanceof UserFacedError) {
-        transport.write(err)
-        return
-      }
-
-      throw err
-    }
-
-    if (cmdName === 'exec') {
-      this.transactionCommand = null
-    }
-
-    transport.write(res.response, res.close)
-    return
   }
 
   async execute(
@@ -89,32 +65,11 @@ class Commander implements DBCommandExecutor {
     args: Buffer[],
     signal: AbortSignal,
   ): Promise<void> {
-    const cmdName = rawCmd.toString().toLowerCase()
-
-    if (cmdName === 'multi') {
-      this.transactionCommand = new TransactionCommand(this.commands)
-      transport.write('OK')
-      return Promise.resolve()
-    }
-
-    if (this.transactionCommand) {
-      await this.executeTransactionCommand(
-        transport,
-        cmdName,
-        rawCmd,
-        args,
-        signal,
-      )
-      return
-    }
-
-    if (!this.commands[cmdName]) {
-      transport.write(new UnknownCommand(cmdName, args))
-      return
-    }
-
-    const res = await this.commands[cmdName].run(rawCmd, args, signal)
-    transport.write(res.response, res.close)
-    return Promise.resolve()
+    this.currentContext = await this.currentContext.execute(
+      transport,
+      rawCmd,
+      args,
+      signal,
+    )
   }
 }
