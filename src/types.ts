@@ -29,7 +29,18 @@ export interface Logger {
 }
 
 export interface Command {
+  /** Command metadata (arity, flags, key positions) */
+  readonly metadata: import('./commanders/custom/commands/metadata').CommandMetadata
+
+  /**
+   * Extract keys from command arguments
+   * Used for cluster slot routing and WATCH tracking
+   */
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[]
+
+  /**
+   * Execute command
+   */
   run(
     rawCmd: Buffer,
     args: Buffer[],

@@ -481,3 +481,26 @@ export function createLuaCommands(
 
   return luaCommands
 }
+
+/**
+ * Create and populate command registry
+ * Note: This is Phase 1 - only GET command uses the registry pattern so far.
+ * As more commands are migrated, they will be added to this registry.
+ */
+import { CommandRegistry } from '../registry'
+import type { CommandDependencies } from '../registry'
+import { GetCommandDefinition } from './data/strings/get'
+
+export function createCommandRegistry(
+  deps: CommandDependencies,
+): CommandRegistry {
+  const registry = new CommandRegistry()
+
+  // Register commands that have been migrated to the new metadata system
+  registry.registerAll([
+    GetCommandDefinition,
+    // More commands will be added here as they are migrated
+  ])
+
+  return registry
+}
