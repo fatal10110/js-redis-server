@@ -3,6 +3,8 @@ import {
   WrongNumberOfArguments,
 } from '../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../types'
+import { defineCommand, CommandCategory } from '../../metadata'
+import type { CommandDefinition } from '../../registry'
 import { ScriptLoadCommand } from './load'
 import { ScriptExistsCommand } from './exists'
 import { ScriptFlushCommand } from './flush'
@@ -11,10 +13,27 @@ import { ScriptDebugCommand } from './debug'
 import { ScriptHelpCommand } from './help'
 import { DB } from '../../../db'
 
+export const ScriptCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('script', {
+    arity: -2, // SCRIPT subcommand [args...]
+    flags: {
+      admin: true,
+      noscript: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.SCRIPT],
+  }),
+  factory: deps => new ScriptCommand(createSubCommands(deps.db)),
+}
+
 export class ScriptCommand implements Command {
+  readonly metadata = ScriptCommandDefinition.metadata
+
   constructor(private readonly subCommands: Record<string, Command>) {}
 
-  getKeys(): Buffer[] {
+  getKeys(_rawCmd: Buffer, _args: Buffer[]): Buffer[] {
     return []
   }
   run(
@@ -22,10 +41,10 @@ export class ScriptCommand implements Command {
     args: Buffer[],
     signal: AbortSignal,
   ): Promise<CommandResult> {
-    const subCommandName = args.pop()
+    const subCommandName = args.shift()
 
     if (!subCommandName) {
-      throw new WrongNumberOfArguments(rawCmd.toString())
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const subComamnd = this.subCommands[subCommandName.toString().toLowerCase()]
@@ -39,7 +58,11 @@ export class ScriptCommand implements Command {
 }
 
 export default function (db: DB) {
-  const subCommands = {
+  return new ScriptCommand(createSubCommands(db))
+}
+
+function createSubCommands(db: DB): Record<string, Command> {
+  return {
     load: new ScriptLoadCommand(db),
     exists: new ScriptExistsCommand(db),
     flush: new ScriptFlushCommand(db),
@@ -47,6 +70,4 @@ export default function (db: DB) {
     debug: new ScriptDebugCommand(),
     help: new ScriptHelpCommand(),
   }
-
-  return new ScriptCommand(subCommands)
 }

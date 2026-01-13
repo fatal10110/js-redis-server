@@ -1,5 +1,5 @@
 import { UnknownCommand, UserFacedError } from '../../core/errors'
-import { Command, ExecutionContext, Transport } from '../../types'
+import { Command, ExecutionContext, LockContext, Transport } from '../../types'
 import { DB } from './db'
 import { Validator } from './slot-validation'
 import { TransactionExecutionContext } from './transaction-execution-context'
@@ -22,6 +22,7 @@ export class CommandExecutionContext implements ExecutionContext {
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
+    lockContext?: LockContext,
   ): Promise<ExecutionContext> {
     const cmdName = rawCmd.toString().toLowerCase()
 
@@ -48,6 +49,27 @@ export class CommandExecutionContext implements ExecutionContext {
       throw err
     }
 
+    // Check if lock is already held (e.g., from Lua script)
+    const lockAlreadyHeld = lockContext?.lockHeld ?? false
+
+    if (lockAlreadyHeld) {
+      // Lock already held - execute without re-acquiring
+      try {
+        const res = await cmd.run(rawCmd, args, signal)
+        transport.write(res.response, res.close)
+      } catch (err) {
+        if (err instanceof UserFacedError) {
+          transport.write(err)
+          return this
+        }
+
+        throw err
+      }
+
+      return this
+    }
+
+    // Normal execution - acquire lock
     const release = await this.db.lock.acquire()
 
     try {

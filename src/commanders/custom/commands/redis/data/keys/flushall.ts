@@ -2,6 +2,7 @@ import { Command, CommandResult } from '../../../../../../types'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import type { CommandDefinition } from '../../../registry'
+import { WrongNumberOfArguments } from '../../../../../../core/errors'
 
 // Command definition with metadata
 export const FlushallCommandDefinition: CommandDefinition = {
@@ -23,11 +24,19 @@ export class FlushallCommand implements Command {
 
   constructor(private readonly db: DB) {}
 
-  getKeys(): Buffer[] {
+  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    if (args.length !== 0) {
+      throw new WrongNumberOfArguments(this.metadata.name)
+    }
+
     return []
   }
 
-  run(): Promise<CommandResult> {
+  run(_rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
+    if (args.length !== 0) {
+      throw new WrongNumberOfArguments(this.metadata.name)
+    }
+
     this.db.flushall()
     return Promise.resolve({ response: 'OK' })
   }
