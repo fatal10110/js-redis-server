@@ -5,20 +5,40 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { SetDataType } from '../../../../data-structures/set'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const SmoveCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('smove', {
+    arity: 4, // SMOVE source destination member
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 1,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  }),
+  factory: deps => new SmoveCommand(deps.db),
+}
 
 export class SmoveCommand implements Command {
+  readonly metadata = SmoveCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 3) {
-      throw new WrongNumberOfArguments('smove')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0], args[1]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 3) {
-      throw new WrongNumberOfArguments('smove')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const sourceKey = args[0]

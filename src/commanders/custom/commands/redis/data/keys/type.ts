@@ -6,20 +6,40 @@ import { ListDataType } from '../../../../data-structures/list'
 import { SetDataType } from '../../../../data-structures/set'
 import { SortedSetDataType } from '../../../../data-structures/zset'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const TypeCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('type', {
+    arity: 2, // TYPE key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.GENERIC],
+  }),
+  factory: deps => new TypeCommand(deps.db),
+}
 
 export class TypeCommand implements Command {
+  readonly metadata = TypeCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('type')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return args
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('type')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]

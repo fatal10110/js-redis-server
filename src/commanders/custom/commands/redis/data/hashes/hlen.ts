@@ -5,20 +5,40 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const HlenCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('hlen', {
+    arity: 2, // HLEN key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  }),
+  factory: deps => new HlenCommand(deps.db),
+}
 
 export class HlenCommand implements Command {
+  readonly metadata = HlenCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('hlen')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('hlen')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]

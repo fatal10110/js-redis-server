@@ -2,13 +2,33 @@ import { WrongNumberOfArguments } from '../../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../../types'
 import { StringDataType } from '../../../../data-structures/string'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const MsetnxCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('msetnx', {
+    arity: -3, // MSETNX key value [key value ...]
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: -1,
+    keyStep: 2,
+    categories: [CommandCategory.STRING],
+  }),
+  factory: deps => new MsetnxCommand(deps.db),
+}
 
 export class MsetnxCommand implements Command {
+  readonly metadata = MsetnxCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length < 2 || args.length % 2 !== 0) {
-      throw new WrongNumberOfArguments('msetnx')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const keys: Buffer[] = []
@@ -20,7 +40,7 @@ export class MsetnxCommand implements Command {
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length < 2 || args.length % 2 !== 0) {
-      throw new WrongNumberOfArguments('msetnx')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     // Check if any key already exists

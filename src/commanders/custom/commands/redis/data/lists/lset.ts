@@ -6,6 +6,8 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { ListDataType } from '../../../../data-structures/list'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
 
 // Create custom error for index out of range
 class IndexOutOfRange extends Error {
@@ -15,19 +17,36 @@ class IndexOutOfRange extends Error {
   }
 }
 
+// Command definition with metadata
+export const LsetCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('lset', {
+    arity: 4, // LSET key index element
+    flags: {
+      write: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  }),
+  factory: deps => new LsetCommand(deps.db),
+}
+
 export class LsetCommand implements Command {
+  readonly metadata = LsetCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 3) {
-      throw new WrongNumberOfArguments('lset')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 3) {
-      throw new WrongNumberOfArguments('lset')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]

@@ -5,20 +5,40 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const HvalsCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('hvals', {
+    arity: 2, // HVALS key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  }),
+  factory: deps => new HvalsCommand(deps.db),
+}
 
 export class HvalsCommand implements Command {
+  readonly metadata = HvalsCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('hvals')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('hvals')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]

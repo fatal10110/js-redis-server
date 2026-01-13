@@ -6,20 +6,39 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { ListDataType } from '../../../../data-structures/list'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const LremCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('lrem', {
+    arity: 4, // LREM key count element
+    flags: {
+      write: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  }),
+  factory: deps => new LremCommand(deps.db),
+}
 
 export class LremCommand implements Command {
+  readonly metadata = LremCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 3) {
-      throw new WrongNumberOfArguments('lrem')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 3) {
-      throw new WrongNumberOfArguments('lrem')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]
