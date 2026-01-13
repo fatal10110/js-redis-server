@@ -10,17 +10,12 @@ export interface DBCommandExecutor {
   shutdown(): Promise<void>
 }
 
-export interface LockContext {
-  lockHeld: boolean
-}
-
 export interface ExecutionContext {
   execute(
     transport: Transport,
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
-    lockContext?: LockContext,
   ): Promise<ExecutionContext>
   shutdown(): Promise<void>
 }

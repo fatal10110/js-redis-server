@@ -12,6 +12,7 @@ import { LuaEngine, LuaFactory } from 'wasmoon'
 import { DB } from './db'
 import { CommandExecutionContext } from './execution-context'
 import { SlotValidator } from './slot-validation'
+import { CommandJob, RedisKernel } from './redis-kernel'
 
 export async function createCustomClusterCommander(
   logger: Logger,
@@ -64,7 +65,14 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
 
 export class ClusterCommander implements DBCommandExecutor {
   private readonly baseContext: CommandExecutionContext
-  private currentContext: ExecutionContext
+  private readonly connectionContexts = new WeakMap<
+    Transport,
+    ExecutionContext
+  >()
+  private readonly connectionIds = new WeakMap<Transport, string>()
+  private readonly kernel: RedisKernel
+  private connectionCounter = 0
+  private jobCounter = 0
 
   constructor(
     private readonly db: DB,
@@ -81,7 +89,7 @@ export class ClusterCommander implements DBCommandExecutor {
       this.transactionCommands,
       validator,
     )
-    this.currentContext = this.baseContext
+    this.kernel = new RedisKernel(this.handleJob.bind(this))
   }
 
   async execute(
@@ -90,15 +98,44 @@ export class ClusterCommander implements DBCommandExecutor {
     args: Buffer[],
     signal: AbortSignal,
   ): Promise<void> {
-    this.currentContext = await this.currentContext.execute(
-      transport,
-      rawCmd,
-      args,
-      signal,
-    )
+    const connectionId = this.getConnectionId(transport)
+    const jobId = `job-${++this.jobCounter}`
+
+    return new Promise((resolve, reject) => {
+      const job: CommandJob = {
+        id: jobId,
+        connectionId,
+        request: {
+          command: rawCmd,
+          args,
+          transport,
+          signal,
+        },
+        resolve,
+        reject,
+      }
+
+      this.kernel.submit(job)
+    })
   }
 
   async shutdown(): Promise<void> {
     return Promise.resolve()
+  }
+
+  private getConnectionId(transport: Transport): string {
+    const existing = this.connectionIds.get(transport)
+    if (existing) return existing
+
+    const id = `conn-${++this.connectionCounter}`
+    this.connectionIds.set(transport, id)
+    return id
+  }
+
+  private async handleJob(job: CommandJob): Promise<void> {
+    const { transport, command, args, signal } = job.request
+    const context = this.connectionContexts.get(transport) ?? this.baseContext
+    const nextContext = await context.execute(transport, command, args, signal)
+    this.connectionContexts.set(transport, nextContext)
   }
 }

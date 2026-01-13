@@ -1,11 +1,6 @@
 import { LuaEngine } from 'wasmoon'
 import crypto from 'crypto'
-import {
-  Command,
-  CommandResult,
-  ExecutionContext,
-  LockContext,
-} from '../../../../types'
+import { Command, CommandResult, ExecutionContext } from '../../../../types'
 import {
   ExpectedInteger,
   UnknownScriptCommand,
@@ -99,49 +94,40 @@ export class EvalCommand implements Command {
     sha: string,
     signal: AbortSignal,
   ): Promise<CommandResult> {
-    // CRITICAL: Acquire lock ONCE for entire script
-    const release = await this.db.lock.acquire()
+    // Create special transport for Lua
+    const luaTransport = new LuaTransport()
 
-    try {
-      // Create special transport for Lua
-      const luaTransport = new LuaTransport()
+    this.lua.global.set(
+      'redisCall',
+      async (cmdName: string, luaArgs: string[]) => {
+        const cmd = this.commands[cmdName.toLowerCase()]
 
-      // Set up redis.call to execute without re-acquiring lock
-      this.lua.global.set(
-        'redisCall',
-        async (cmdName: string, luaArgs: string[]) => {
-          const cmd = this.commands[cmdName.toLowerCase()]
+        if (!cmd) {
+          throw new UnknownScriptCommand(sha)
+        }
 
-          if (!cmd) {
-            throw new UnknownScriptCommand(sha)
-          }
+        const argsBuffer = luaArgs.map(arg => Buffer.from(arg, 'hex'))
 
-          const argsBuffer = luaArgs.map(arg => Buffer.from(arg, 'hex'))
+        // Reset transport for this command
+        luaTransport.reset()
 
-          // Reset transport for this command
-          luaTransport.reset()
+        await this.executionContext!.execute(
+          luaTransport,
+          Buffer.from(cmdName),
+          argsBuffer,
+          signal,
+        )
 
-          // CRITICAL: Pass lockContext to indicate lock is already held
-          const lockContext: LockContext = { lockHeld: true }
+        // Get response from transport
+        const response = luaTransport.getResponse()
 
-          await this.executionContext!.execute(
-            luaTransport,
-            Buffer.from(cmdName),
-            argsBuffer,
-            signal,
-            lockContext,
-          )
+        // Convert Redis response to Lua format
+        return this.convertResponseToHex(response)
+      },
+    )
 
-          // Get response from transport
-          const response = luaTransport.getResponse()
-
-          // Convert Redis response to Lua format
-          return this.convertResponseToHex(response)
-        },
-      )
-
-      // Execute script
-      const luaScript = `
+    // Execute script
+    const luaScript = `
         function string.fromhex(str)
             return (str:gsub('..', function (cc)
                 return string.char(tonumber(cc, 16))
@@ -183,13 +169,9 @@ export class EvalCommand implements Command {
         return res:tohex()
       `
 
-      const result = await this.lua.doString(luaScript)
+    const result = await this.lua.doString(luaScript)
 
-      return { response: Buffer.from(result, 'hex') }
-    } finally {
-      // RELEASE lock ONCE after script completes
-      release()
-    }
+    return { response: Buffer.from(result, 'hex') }
   }
 
   private async runLegacy(
