@@ -3,6 +3,8 @@ import {
   WrongNumberOfArguments,
 } from '../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../types'
+import { defineCommand, CommandCategory } from '../../metadata'
+import type { CommandDefinition } from '../../registry'
 import {
   ClientSetNameCommand,
   commandName as setNameCommandName,
@@ -10,10 +12,30 @@ import {
 
 export const commandName = 'client'
 
+export const ClientCommandDefinition: CommandDefinition = {
+  metadata: defineCommand(commandName, {
+    arity: -2, // CLIENT <subcommand> [args...]
+    flags: {
+      admin: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.CONNECTION],
+  }),
+  factory: () => new ClientCommand(createSubCommands()),
+}
+
 export class ClientCommand implements Command {
+  readonly metadata = ClientCommandDefinition.metadata
+
   constructor(private readonly subCommands: Record<string, Command>) {}
 
-  getKeys(): Buffer[] {
+  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    if (!args.length) {
+      throw new WrongNumberOfArguments(this.metadata.name)
+    }
+
     return []
   }
 
@@ -25,7 +47,7 @@ export class ClientCommand implements Command {
     const subCommandName = args.shift()
 
     if (!subCommandName) {
-      throw new WrongNumberOfArguments(commandName)
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const subComamnd = this.subCommands[subCommandName.toString().toLowerCase()]
@@ -38,10 +60,12 @@ export class ClientCommand implements Command {
   }
 }
 
-export default function () {
-  const subCommands = {
+function createSubCommands(): Record<string, Command> {
+  return {
     [setNameCommandName]: new ClientSetNameCommand(),
   }
+}
 
-  return new ClientCommand(subCommands)
+export default function () {
+  return new ClientCommand(createSubCommands())
 }

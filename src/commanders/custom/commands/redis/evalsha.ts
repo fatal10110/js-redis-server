@@ -6,8 +6,20 @@ import {
 } from '../../../../core/errors'
 import { Command, CommandResult } from '../../../../types'
 import { DB } from '../../db'
+import type { CommandMetadata } from '../../commands/metadata'
+import { CommandCategory } from '../../commands/metadata'
 
 export class EvalShaCommand implements Command {
+  readonly metadata: CommandMetadata = {
+    name: 'evalsha',
+    arity: -3,
+    flags: { write: true, noscript: true, movablekeys: true },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: [CommandCategory.SCRIPT],
+  }
+
   constructor(
     private readonly evalCommand: Command,
     private readonly db: DB,

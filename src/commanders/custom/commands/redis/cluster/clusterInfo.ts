@@ -5,20 +5,50 @@ import {
   DiscoveryNode,
   DiscoveryService,
 } from '../../../../../types'
+import { defineCommand, CommandCategory } from '../../metadata'
+import type { CommandDefinition } from '../../registry'
 
 export const commandName = 'info'
 
+export const ClusterInfoCommandDefinition: CommandDefinition = {
+  metadata: defineCommand(`cluster|${commandName}`, {
+    arity: 1, // CLUSTER INFO
+    flags: {
+      admin: true,
+      readonly: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.CLUSTER],
+  }),
+  factory: deps => {
+    if (!deps.discoveryService || !deps.mySelfId) {
+      throw new Error('Cluster info requires discoveryService and mySelfId')
+    }
+
+    const me = deps.discoveryService.getById(deps.mySelfId)
+    return new ClusterInfoCommand(me, deps.discoveryService)
+  },
+}
+
 export class ClusterInfoCommand implements Command {
+  readonly metadata = ClusterInfoCommandDefinition.metadata
+
   constructor(
     private readonly me: DiscoveryNode,
     private readonly disconveryService: DiscoveryService,
   ) {}
-  getKeys(): Buffer[] {
+  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    if (args.length > 0) {
+      throw new WrongNumberOfArguments(this.metadata.name)
+    }
+
     return []
   }
   run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length > 0) {
-      throw new WrongNumberOfArguments(`cluster|${commandName}`)
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     let nodesCount = 0

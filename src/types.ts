@@ -1,3 +1,5 @@
+import { CommandMetadata } from './commanders/custom/commands/metadata'
+
 export interface DBCommandExecutor {
   execute(
     transport: Transport,
@@ -8,12 +10,17 @@ export interface DBCommandExecutor {
   shutdown(): Promise<void>
 }
 
+export interface LockContext {
+  lockHeld: boolean
+}
+
 export interface ExecutionContext {
   execute(
     transport: Transport,
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
+    lockContext?: LockContext,
   ): Promise<ExecutionContext>
   shutdown(): Promise<void>
 }
@@ -30,7 +37,7 @@ export interface Logger {
 
 export interface Command {
   /** Command metadata (arity, flags, key positions) */
-  readonly metadata: import('./commanders/custom/commands/metadata').CommandMetadata
+  readonly metadata: CommandMetadata
 
   /**
    * Extract keys from command arguments

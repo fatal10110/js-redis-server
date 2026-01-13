@@ -1,5 +1,5 @@
 import { LuaEngine } from 'wasmoon'
-import { Command } from '../../../../types'
+import { Command, ExecutionContext } from '../../../../types'
 import { DB } from '../../db'
 import type { DiscoveryService } from '../../../../types'
 
@@ -105,6 +105,7 @@ import {
 export function createCommands(
   luaEngine: LuaEngine,
   db: DB,
+  executionContext?: ExecutionContext,
 ): Record<string, Command> {
   let commands: Record<string, Command> = {
     ping: createPing(),
@@ -190,7 +191,7 @@ export function createCommands(
     monitor: createMonitor(),
   }
 
-  const evalCmd = createEval(luaEngine, commands)
+  const evalCmd = createEval(luaEngine, commands, db, executionContext)
   const evalsha = createEvalSha(evalCmd, db)
 
   commands = {
@@ -566,6 +567,25 @@ import { ZcardCommandDefinition } from './data/zsets/zcard'
 import { ZincrbyCommandDefinition } from './data/zsets/zincrby'
 import { ZrangebyscoreCommandDefinition } from './data/zsets/zrangebyscore'
 import { ZremrangebyscoreCommandDefinition } from './data/zsets/zremrangebyscore'
+import { PingCommandDefinition } from './ping'
+import { InfoCommandDefinition } from './info'
+import { QuitCommandDefinition } from './quit'
+import { MonitorCommandDefinition } from './monitor'
+import { CommandInfoDefinition } from './command'
+import { ClientCommandDefinition } from './client'
+import { ClientSetNameCommandDefinition } from './client/clientSetName'
+import { ScriptCommandDefinition } from './script'
+import { ScriptLoadCommandDefinition } from './script/load'
+import { ScriptExistsCommandDefinition } from './script/exists'
+import { ScriptFlushCommandDefinition } from './script/flush'
+import { ScriptKillCommandDefinition } from './script/kill'
+import { ScriptDebugCommandDefinition } from './script/debug'
+import { ScriptHelpCommandDefinition } from './script/help'
+import { ClusterCommandDefinition } from './cluster'
+import { ClusterInfoCommandDefinition } from './cluster/clusterInfo'
+import { ClusterNodesCommandDefinition } from './cluster/clusterNodes'
+import { ClusterSlotsCommandDefinition } from './cluster/clusterSlots'
+import { ClusterShardsCommandDefinition } from './cluster/clusterShards'
 
 export function createCommandRegistry(
   deps: CommandDependencies,
@@ -652,7 +672,35 @@ export function createCommandRegistry(
     ZincrbyCommandDefinition,
     ZrangebyscoreCommandDefinition,
     ZremrangebyscoreCommandDefinition,
+
+    // Server/connection commands
+    PingCommandDefinition,
+    InfoCommandDefinition,
+    QuitCommandDefinition,
+    MonitorCommandDefinition,
+    CommandInfoDefinition,
+    ClientCommandDefinition,
+    ClientSetNameCommandDefinition,
+
+    // Script commands
+    ScriptCommandDefinition,
+    ScriptLoadCommandDefinition,
+    ScriptExistsCommandDefinition,
+    ScriptFlushCommandDefinition,
+    ScriptKillCommandDefinition,
+    ScriptDebugCommandDefinition,
+    ScriptHelpCommandDefinition,
   ])
+
+  if (deps.discoveryService && deps.mySelfId) {
+    registry.registerAll([
+      ClusterCommandDefinition,
+      ClusterInfoCommandDefinition,
+      ClusterNodesCommandDefinition,
+      ClusterSlotsCommandDefinition,
+      ClusterShardsCommandDefinition,
+    ])
+  }
 
   return registry
 }

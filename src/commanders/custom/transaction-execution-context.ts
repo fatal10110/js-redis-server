@@ -5,7 +5,7 @@ import {
   UserFacedError,
   WrongNumberOfArguments,
 } from '../../core/errors'
-import { Command, ExecutionContext, Transport } from '../../types'
+import { Command, ExecutionContext, LockContext, Transport } from '../../types'
 import { DB } from './db'
 import { Validator } from './slot-validation'
 
@@ -31,6 +31,7 @@ export class TransactionExecutionContext implements ExecutionContext {
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
+    lockContext?: LockContext,
   ): Promise<ExecutionContext> {
     const cmdName = rawCmd.toString().toLowerCase()
 
