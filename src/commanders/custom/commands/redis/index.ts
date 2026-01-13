@@ -484,22 +484,174 @@ export function createLuaCommands(
 
 /**
  * Create and populate command registry
- * Note: This is Phase 1 - only GET command uses the registry pattern so far.
- * As more commands are migrated, they will be added to this registry.
  */
 import { CommandRegistry } from '../registry'
 import type { CommandDependencies } from '../registry'
+
+// String commands
 import { GetCommandDefinition } from './data/strings/get'
+import { SetCommandDefinition } from './data/strings/set'
+import { MgetCommandDefinition } from './data/strings/mget'
+import { MsetCommandDefinition } from './data/strings/mset'
+import { MsetnxCommandDefinition } from './data/strings/msetnx'
+import { GetsetCommandDefinition } from './data/strings/getset'
+import { AppendCommandDefinition } from './data/strings/append'
+import { StrlenCommandDefinition } from './data/strings/strlen'
+import { IncrCommandDefinition } from './data/strings/incr'
+import { DecrCommandDefinition } from './data/strings/decr'
+import { IncrbyCommandDefinition } from './data/strings/incrby'
+import { DecrbyCommandDefinition } from './data/strings/decrby'
+import { IncrbyfloatCommandDefinition } from './data/strings/incrbyfloat'
+
+// Key commands
+import { DelCommandDefinition } from './data/keys/del'
+import { ExistsCommandDefinition } from './data/keys/exists'
+import { TypeCommandDefinition } from './data/keys/type'
+import { TtlCommandDefinition } from './data/keys/ttl'
+import { PttlCommandDefinition } from './data/keys/pttl'
+import { ExpireCommandDefinition } from './data/keys/expire'
+import { ExpireatCommandDefinition } from './data/keys/expireat'
+import { FlushdbCommandDefinition } from './data/keys/flushdb'
+import { FlushallCommandDefinition } from './data/keys/flushall'
+import { DbSizeCommandDefinition } from './data/keys/dbsize'
+
+// Hash commands
+import { HsetCommandDefinition } from './data/hashes/hset'
+import { HgetCommandDefinition } from './data/hashes/hget'
+import { HdelCommandDefinition } from './data/hashes/hdel'
+import { HgetallCommandDefinition } from './data/hashes/hgetall'
+import { HmgetCommandDefinition } from './data/hashes/hmget'
+import { HmsetCommandDefinition } from './data/hashes/hmset'
+import { HkeysCommandDefinition } from './data/hashes/hkeys'
+import { HvalsCommandDefinition } from './data/hashes/hvals'
+import { HlenCommandDefinition } from './data/hashes/hlen'
+import { HexistsCommandDefinition } from './data/hashes/hexists'
+import { HincrbyCommandDefinition } from './data/hashes/hincrby'
+import { HincrbyfloatCommandDefinition } from './data/hashes/hincrbyfloat'
+
+// List commands
+import { LpushCommandDefinition } from './data/lists/lpush'
+import { RpushCommandDefinition } from './data/lists/rpush'
+import { LpopCommandDefinition } from './data/lists/lpop'
+import { RpopCommandDefinition } from './data/lists/rpop'
+import { LlenCommandDefinition } from './data/lists/llen'
+import { LrangeCommandDefinition } from './data/lists/lrange'
+import { LindexCommandDefinition } from './data/lists/lindex'
+import { LsetCommandDefinition } from './data/lists/lset'
+import { LremCommandDefinition } from './data/lists/lrem'
+import { LtrimCommandDefinition } from './data/lists/ltrim'
+
+// Set commands
+import { SaddCommandDefinition } from './data/sets/sadd'
+import { SremCommandDefinition } from './data/sets/srem'
+import { ScardCommandDefinition } from './data/sets/scard'
+import { SmembersCommandDefinition } from './data/sets/smembers'
+import { SismemberCommandDefinition } from './data/sets/sismember'
+import { SpopCommandDefinition } from './data/sets/spop'
+import { SrandmemberCommandDefinition } from './data/sets/srandmember'
+import { SdiffCommandDefinition } from './data/sets/sdiff'
+import { SinterCommandDefinition } from './data/sets/sinter'
+import { SunionCommandDefinition } from './data/sets/sunion'
+import { SmoveCommandDefinition } from './data/sets/smove'
+
+// Sorted set commands
+import { ZaddCommandDefinition } from './data/zsets/zadd'
+import { ZremCommandDefinition } from './data/zsets/zrem'
+import { ZrangeCommandDefinition } from './data/zsets/zrange'
+import { ZrevrangeCommandDefinition } from './data/zsets/zrevrange'
+import { ZrankCommandDefinition } from './data/zsets/zrank'
+import { ZrevrankCommandDefinition } from './data/zsets/zrevrank'
+import { ZscoreCommandDefinition } from './data/zsets/zscore'
+import { ZcardCommandDefinition } from './data/zsets/zcard'
+import { ZincrbyCommandDefinition } from './data/zsets/zincrby'
+import { ZrangebyscoreCommandDefinition } from './data/zsets/zrangebyscore'
+import { ZremrangebyscoreCommandDefinition } from './data/zsets/zremrangebyscore'
 
 export function createCommandRegistry(
   deps: CommandDependencies,
 ): CommandRegistry {
   const registry = new CommandRegistry()
 
+  // String commands (13 commands)
   // Register commands that have been migrated to the new metadata system
   registry.registerAll([
     GetCommandDefinition,
-    // More commands will be added here as they are migrated
+    SetCommandDefinition,
+    MgetCommandDefinition,
+    MsetCommandDefinition,
+    MsetnxCommandDefinition,
+    GetsetCommandDefinition,
+    AppendCommandDefinition,
+    StrlenCommandDefinition,
+    IncrCommandDefinition,
+    DecrCommandDefinition,
+    IncrbyCommandDefinition,
+    DecrbyCommandDefinition,
+    IncrbyfloatCommandDefinition,
+
+    // Key commands (10 commands)
+    DelCommandDefinition,
+    ExistsCommandDefinition,
+    TypeCommandDefinition,
+    TtlCommandDefinition,
+    PttlCommandDefinition,
+    ExpireCommandDefinition,
+    ExpireatCommandDefinition,
+    FlushdbCommandDefinition,
+    FlushallCommandDefinition,
+    DbSizeCommandDefinition,
+
+    // Hash commands (12 commands)
+    HsetCommandDefinition,
+    HgetCommandDefinition,
+    HdelCommandDefinition,
+    HgetallCommandDefinition,
+    HmgetCommandDefinition,
+    HmsetCommandDefinition,
+    HkeysCommandDefinition,
+    HvalsCommandDefinition,
+    HlenCommandDefinition,
+    HexistsCommandDefinition,
+    HincrbyCommandDefinition,
+    HincrbyfloatCommandDefinition,
+
+    // List commands (10 commands)
+    LpushCommandDefinition,
+    RpushCommandDefinition,
+    LpopCommandDefinition,
+    RpopCommandDefinition,
+    LlenCommandDefinition,
+    LrangeCommandDefinition,
+    LindexCommandDefinition,
+    LsetCommandDefinition,
+    LremCommandDefinition,
+    LtrimCommandDefinition,
+
+    // Set commands (11 commands)
+    SaddCommandDefinition,
+    SremCommandDefinition,
+    ScardCommandDefinition,
+    SmembersCommandDefinition,
+    SismemberCommandDefinition,
+    SpopCommandDefinition,
+    SrandmemberCommandDefinition,
+    SdiffCommandDefinition,
+    SinterCommandDefinition,
+    SunionCommandDefinition,
+    SmoveCommandDefinition,
+
+    // Sorted set commands (11 commands)
+    ZaddCommandDefinition,
+    ZremCommandDefinition,
+    ZrangeCommandDefinition,
+    ZrevrangeCommandDefinition,
+    ZrankCommandDefinition,
+    ZrevrankCommandDefinition,
+    ZscoreCommandDefinition,
+    ZcardCommandDefinition,
+    ZincrbyCommandDefinition,
+    ZrangebyscoreCommandDefinition,
+    ZremrangebyscoreCommandDefinition,
   ])
 
   return registry

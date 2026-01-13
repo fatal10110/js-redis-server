@@ -1,20 +1,40 @@
 import { WrongNumberOfArguments } from '../../../../../../core/errors'
 import { Command, CommandResult } from '../../../../../../types'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const PttlCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('pttl', {
+    arity: 2, // PTTL key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.GENERIC],
+  }),
+  factory: deps => new PttlCommand(deps.db),
+}
 
 export class PttlCommand implements Command {
+  readonly metadata = PttlCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('pttl')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length !== 1) {
-      throw new WrongNumberOfArguments('pttl')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]

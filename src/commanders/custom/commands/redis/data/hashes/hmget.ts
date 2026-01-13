@@ -5,20 +5,40 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
+
+// Command definition with metadata
+export const HmgetCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('hmget', {
+    arity: -3, // HMGET key field [field ...]
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  }),
+  factory: deps => new HmgetCommand(deps.db),
+}
 
 export class HmgetCommand implements Command {
+  readonly metadata = HmgetCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length < 2) {
-      throw new WrongNumberOfArguments('hmget')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
     return [args[0]]
   }
 
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length < 2) {
-      throw new WrongNumberOfArguments('hmget')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const key = args[0]

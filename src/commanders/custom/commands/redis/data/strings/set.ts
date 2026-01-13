@@ -8,6 +8,8 @@ import {
 import { Command, CommandResult } from '../../../../../../types'
 import { StringDataType } from '../../../../data-structures/string'
 import { DB } from '../../../../db'
+import { defineCommand, CommandCategory } from '../../../metadata'
+import type { CommandDefinition } from '../../../registry'
 
 interface SetOptions {
   expiration?: number
@@ -17,13 +19,31 @@ interface SetOptions {
   get?: boolean
 }
 
+// Command definition with metadata
+export const SetCommandDefinition: CommandDefinition = {
+  metadata: defineCommand('set', {
+    arity: -3, // SET key value [options...]
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  }),
+  factory: deps => new SetCommand(deps.db),
+}
+
 export class SetCommand implements Command {
+  readonly metadata = SetCommandDefinition.metadata
+
   constructor(private readonly db: DB) {}
 
   getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
     if (args.length < 2) {
       // SET command requires at least 2 arguments: key and value
-      throw new WrongNumberOfArguments('set')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     return [args[0]]
@@ -32,7 +52,7 @@ export class SetCommand implements Command {
   run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
     if (args.length < 2) {
       // SET command requires at least 2 arguments: key and value
-      throw new WrongNumberOfArguments('set')
+      throw new WrongNumberOfArguments(this.metadata.name)
     }
 
     const [key, value] = args
