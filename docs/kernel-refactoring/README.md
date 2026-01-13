@@ -45,6 +45,14 @@ This architectural plan proposes a fundamental shift from the current "Mutex-per
 - Implement `RespAdapter`.
 - Implement `ConnectionState` management.
 
+### Phase 5: Transactions & Atomicity
+
+**Goal:** Implement `MULTI`, `EXEC`, `DISCARD`, and `WATCH` using the Kernel's sequential execution model.
+
+- Implement `Session` state pattern (Normal vs Transaction).
+- Implement `TransactionJob` for atomic batch execution.
+- Implement `WATCH` validation logic in the Kernel.
+
 ## Benefits vs Current Architecture
 
 | Feature         | Current (Refactoring Plan)    | Kernel Architecture       |

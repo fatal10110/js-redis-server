@@ -129,7 +129,7 @@ describe('Script Commands', () => {
       assert.ok(db.getScript(result2.response as string))
 
       // Flush all scripts
-      const result = await flushCommand.run()
+      const result = await flushCommand.run(Buffer.from(''), [])
 
       assert.strictEqual(result.response, 'OK')
       assert.ok(db.getScript(result1.response as string) === undefined)
@@ -140,7 +140,7 @@ describe('Script Commands', () => {
       const db = new DB()
       const command = new ScriptFlushCommand(db)
 
-      const result = await command.run()
+      const result = await command.run(Buffer.from(''), [])
 
       assert.strictEqual(result.response, 'OK')
     })
