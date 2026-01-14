@@ -1,5 +1,5 @@
 import { CorssSlot, MovedError } from '../../core/errors'
-import { Command, DiscoveryNode, DiscoveryService } from '../../types'
+import { Command, DiscoveryService } from '../../types'
 import { SlotValidator } from '../../core/transports/session-state'
 import clusterKeySlot from 'cluster-key-slot'
 
@@ -20,12 +20,14 @@ import clusterKeySlot from 'cluster-key-slot'
 export class ClusterRouter implements SlotValidator {
   constructor(
     private readonly discoveryService: DiscoveryService,
-    private readonly myself: DiscoveryNode,
+    private readonly mySelfId: string,
     private readonly commands: Record<string, Command>,
   ) {}
 
   private isLocalSlot(slot: number): boolean {
-    for (const [min, max] of this.myself.slots) {
+    const myself = this.discoveryService.getById(this.mySelfId)
+
+    for (const [min, max] of myself.slots) {
       if (slot >= min && slot <= max) {
         return true
       }

@@ -55,6 +55,11 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   }
 
   createReadOnlyCommander(mySelfId: string): DBCommandExecutor {
+    const masterId = this.getMasterIdFromReplica(mySelfId)
+    if (masterId) {
+      return this.createCommander(masterId) // TODO readonly commander
+    }
+
     const { id } = this.discoveryService.getMaster(mySelfId)
     return this.createCommander(id) // TODO readonly commander
   }
@@ -62,6 +67,19 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   shutdown(): Promise<void> {
     this.luaEngine.global.close()
     return Promise.resolve()
+  }
+
+  private getMasterIdFromReplica(replicaId: string): string | null {
+    if (!replicaId.startsWith('replica-')) {
+      return null
+    }
+
+    const parts = replicaId.split('-')
+    if (parts.length < 3) {
+      return null
+    }
+
+    return parts.slice(2).join('-')
   }
 }
 
@@ -80,10 +98,9 @@ export class ClusterCommander implements DBCommandExecutor {
   ) {
     this.kernel = new RedisKernel(this.handleJob.bind(this))
     this.baseValidator = new RegistryCommandValidator(this.commands)
-    const myself = this.discoveryService.getById(this.mySelfId)
     this.router = new ClusterRouter(
       this.discoveryService,
-      myself,
+      this.mySelfId,
       this.commands,
     )
   }

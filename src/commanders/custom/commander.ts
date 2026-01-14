@@ -71,16 +71,6 @@ class Commander implements DBCommandExecutor {
   }
 
   /**
-   * Execute method is not used in Phase 4 architecture.
-   * Use createAdapter() instead for real connections.
-   */
-  async execute(): Promise<void> {
-    throw new Error(
-      'Direct execute() is not supported in Phase 4 architecture. Use createAdapter() for connection-based execution.',
-    )
-  }
-
-  /**
    * Creates a new RespAdapter for an incoming connection.
    * This is called by Resp2Transport when a new client connects.
    */
