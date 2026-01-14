@@ -13,6 +13,8 @@ export interface CommandJob {
   request: CommandRequest
   resolve: () => void
   reject: (error: Error) => void
+  /** Optional batch of commands to execute atomically (for EXEC) */
+  batch?: CommandRequest[]
 }
 
 type CommandJobHandler = (job: CommandJob) => Promise<void>
