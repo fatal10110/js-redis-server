@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { HashDataType } from './data-structures/hash'
 import { ListDataType } from './data-structures/list'
 import { SetDataType } from './data-structures/set'
@@ -14,14 +15,36 @@ export type DataTypes =
   | StringDataType
   | SortedSetDataType
 
-export class DB {
+/**
+ * Store event types emitted by the reactive data store
+ */
+export type StoreEvent =
+  | { type: 'set'; key: Buffer; value: DataTypes }
+  | { type: 'del'; key: Buffer }
+  | { type: 'expire'; key: Buffer; expiration: number }
+  | { type: 'evict'; key: Buffer }
+  | { type: 'flush' }
+
+/**
+ * Event names emitted by the store:
+ * - 'change': Emitted on every mutation with StoreEvent payload
+ * - 'key:<keyString>': Emitted for key-specific changes (for WATCH)
+ */
+export interface StoreEvents {
+  change: [event: StoreEvent]
+  [key: `key:${string}`]: [event: StoreEvent]
+}
+
+export class DB extends EventEmitter<StoreEvents> {
   // TODO solve this, storing more than twice the size of the key
   private readonly mapping = new Map<string, Buffer>()
   private readonly timings = new Map<Buffer, number>()
   private readonly data = new Map<Buffer, DataTypes>()
   private readonly scriptsStore = new Map<string, Buffer>()
 
-  constructor() {}
+  constructor() {
+    super()
+  }
 
   tryEvict(key: Buffer) {
     const now = Date.now()
@@ -31,6 +54,11 @@ export class DB {
       this.timings.delete(key)
       this.data.delete(key)
       this.mapping.delete(key.toString('binary'))
+
+      const event: StoreEvent = { type: 'evict', key }
+      this.emit('change', event)
+      this.emit(`key:${key.toString('binary')}`, event)
+
       return true
     }
 
@@ -65,6 +93,10 @@ export class DB {
     if (expiration) {
       this.timings.set(key, expiration)
     }
+
+    const event: StoreEvent = { type: 'set', key, value: val }
+    this.emit('change', event)
+    this.emit(`key:${stringifiedKey}`, event)
   }
 
   del(rawKey: Buffer) {
@@ -82,6 +114,10 @@ export class DB {
     this.timings.delete(existingRef)
     this.data.delete(existingRef)
     this.mapping.delete(stringifiedKey)
+
+    const event: StoreEvent = { type: 'del', key: existingRef }
+    this.emit('change', event)
+    this.emit(`key:${stringifiedKey}`, event)
 
     return true
   }
@@ -131,6 +167,11 @@ export class DB {
     }
 
     this.timings.set(key, expiration)
+
+    const event: StoreEvent = { type: 'expire', key, expiration }
+    this.emit('change', event)
+    this.emit(`key:${stringifiedKey}`, event)
+
     return true // Successfully set expiration
   }
 
@@ -142,6 +183,9 @@ export class DB {
     this.timings.clear()
     this.data.clear()
     this.flushScripts()
+
+    const event: StoreEvent = { type: 'flush' }
+    this.emit('change', event)
   }
 
   /**

@@ -72,10 +72,20 @@ class RespTransport implements Transport {
 /**
  * RespAdapter manages a single client connection using the RESP protocol.
  * It uses a Session to track execution state and delegates command handling.
+ *
+ * Commands from the same connection are processed sequentially using a queue.
+ * This ensures that blocking commands (like BLPOP) don't allow subsequent
+ * commands to be processed out of order.
  */
 export class RespAdapter {
   private controller: AbortController
   private transport: RespTransport
+  /** Queue of pending commands for this connection */
+  private commandQueue: Array<{ cmdName: Buffer; args: Buffer[] }> = []
+  /** Whether we're currently processing commands from the queue */
+  private isProcessing = false
+  /** Whether processing is paused due to backpressure */
+  private isPaused = false
 
   constructor(
     private readonly logger: Logger,
@@ -100,34 +110,62 @@ export class RespAdapter {
         this.controller.abort()
       })
 
+    // Handle backpressure
+    socket.on('drain', () => {
+      this.isPaused = false
+      this.processQueue()
+    })
+
     // Set up RESP parser
     const parser = new Resp({ bufBulk: true })
       .on('error', (err: unknown) => {
         this.transport.write(err)
       })
-      .on('data', async (data: Buffer[]) => {
+      .on('data', (data: Buffer[]) => {
         const [cmdName, ...args] = data
 
-        console.log('cmdName', cmdName.toString())
-        console.log(
-          'args',
-          args.map(arg => arg.toString()),
-        )
-
-        try {
-          // Delegate to Session, which handles MULTI/EXEC buffering internally
-          await this.session.handle(
-            this.transport,
-            cmdName,
-            args,
-            this.controller.signal,
-          )
-        } catch (err) {
-          this.transport.write(err)
-        }
+        // Queue the command and process sequentially
+        this.commandQueue.push({ cmdName, args })
+        this.processQueue()
       })
 
     // Pipe socket through parser
     socket.pipe(parser)
+  }
+
+  /**
+   * Process commands from the queue sequentially.
+   * Ensures commands from this connection complete in order,
+   * even when some commands are suspended (e.g., BLPOP).
+   */
+  private async processQueue(): Promise<void> {
+    if (this.isProcessing || this.isPaused) return
+    this.isProcessing = true
+
+    while (this.commandQueue.length > 0) {
+      // Check for backpressure
+      if (this.socket.writableNeedDrain) {
+        this.isPaused = true
+        this.isProcessing = false
+        return
+      }
+
+      const cmd = this.commandQueue.shift()!
+
+      try {
+        // Delegate to Session, which handles MULTI/EXEC buffering internally
+        // This await blocks until the command completes, including suspended commands
+        await this.session.handle(
+          this.transport,
+          cmd.cmdName,
+          cmd.args,
+          this.controller.signal,
+        )
+      } catch (err) {
+        this.transport.write(err)
+      }
+    }
+
+    this.isProcessing = false
   }
 }
