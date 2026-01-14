@@ -1,15 +1,14 @@
 import { UnknownCommand, UserFacedError } from '../../core/errors'
 import { Command, ExecutionContext, Transport } from '../../types'
-import { DB } from './db'
 import { Validator } from './slot-validation'
-import { TransactionExecutionContext } from './transaction-execution-context'
 
+/**
+ * CommandExecutionContext handles single command execution.
+ * Transaction state (MULTI/EXEC) is now managed by Session's state machine.
+ */
 export class CommandExecutionContext implements ExecutionContext {
   constructor(
-    private readonly db: DB,
     private readonly commands: Record<string, Command>,
-    // TODO find a better way to pass commands to transaction execution context
-    private readonly transactionCommands: Record<string, Command>,
     private readonly validator?: Validator,
   ) {}
 
@@ -24,15 +23,6 @@ export class CommandExecutionContext implements ExecutionContext {
     signal: AbortSignal,
   ): Promise<ExecutionContext> {
     const cmdName = rawCmd.toString().toLowerCase()
-
-    if (cmdName === 'multi') {
-      transport.write('OK')
-      return new TransactionExecutionContext(
-        this.db,
-        this,
-        this.transactionCommands,
-      )
-    }
 
     const cmd = this.commands[cmdName]
 

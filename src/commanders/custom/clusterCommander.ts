@@ -14,6 +14,7 @@ import { SlotValidator } from './slot-validation'
 import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
+import { RegistryCommandValidator } from '../../core/transports/command-validator'
 
 export async function createCustomClusterCommander(
   logger: Logger,
@@ -87,12 +88,8 @@ export class ClusterCommander implements DBCommandExecutor {
     if (!this.baseContext) {
       const me = this.discoveryService.getById(this.mySelfId)
       const validator = new SlotValidator(this.discoveryService, me)
-      this.baseContext = new CommandExecutionContext(
-        this.db,
-        this.commands,
-        this.transactionCommands,
-        validator,
-      )
+      // Transaction state is now managed by Session, so no transactionCommands needed here
+      this.baseContext = new CommandExecutionContext(this.commands, validator)
     }
     return this.baseContext
   }
@@ -121,8 +118,12 @@ export class ClusterCommander implements DBCommandExecutor {
    * This is called by Resp2Transport when a new client connects.
    */
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
+    // Create validator for ALL commands (not just transaction-safe ones)
+    // The validator only checks syntax/arity, not whether commands are allowed
+    const validator = new RegistryCommandValidator(this.commands)
+
     // Create session and register it
-    const session = new Session(this.getBaseContext(), this.kernel)
+    const session = new Session(this.getBaseContext(), this.kernel, validator)
     const connectionId = session.getConnectionId()
     this.sessions.set(connectionId, session)
 
