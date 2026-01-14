@@ -1,10 +1,6 @@
+import { Socket } from 'net'
 import { LuaEngine, LuaFactory } from 'wasmoon'
-import {
-  DBCommandExecutor,
-  ExecutionContext,
-  Logger,
-  Transport,
-} from '../../types'
+import { DBCommandExecutor, Logger } from '../../types'
 
 import { DB } from './db'
 
@@ -12,6 +8,8 @@ import { DB } from './db'
 import { createCommands, createMultiCommands } from './commands/redis'
 import { CommandExecutionContext } from './execution-context'
 import { CommandJob, RedisKernel } from './redis-kernel'
+import { RespAdapter } from '../../core/transports/resp2/adapter'
+import { Session } from '../../core/transports/session'
 
 export async function createCustomCommander(
   logger: Logger,
@@ -43,14 +41,8 @@ export class CustomCommanderFactory {
 
 class Commander implements DBCommandExecutor {
   private readonly baseContext: CommandExecutionContext
-  private readonly connectionContexts = new WeakMap<
-    Transport,
-    ExecutionContext
-  >()
-  private readonly connectionIds = new WeakMap<Transport, string>()
   private readonly kernel: RedisKernel
-  private connectionCounter = 0
-  private jobCounter = 0
+  private readonly sessions = new Map<string, Session>()
 
   constructor(luaEngine: LuaEngine, db: DB) {
     const commands = createCommands(luaEngine, db)
@@ -64,49 +56,56 @@ class Commander implements DBCommandExecutor {
   }
 
   async shutdown(): Promise<void> {
-    return Promise.resolve()
+    // Shutdown all sessions
+    const shutdownPromises = Array.from(this.sessions.values()).map(session =>
+      session.shutdown(),
+    )
+    await Promise.all(shutdownPromises)
+    this.sessions.clear()
   }
 
-  async execute(
-    transport: Transport,
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<void> {
-    const connectionId = this.getConnectionId(transport)
-    const jobId = `job-${++this.jobCounter}`
+  /**
+   * Execute method is not used in Phase 4 architecture.
+   * Use createAdapter() instead for real connections.
+   */
+  async execute(): Promise<void> {
+    throw new Error(
+      'Direct execute() is not supported in Phase 4 architecture. Use createAdapter() for connection-based execution.',
+    )
+  }
 
-    return new Promise((resolve, reject) => {
-      const job: CommandJob = {
-        id: jobId,
-        connectionId,
-        request: {
-          command: rawCmd,
-          args,
-          transport,
-          signal,
-        },
-        resolve,
-        reject,
-      }
+  /**
+   * Creates a new RespAdapter for an incoming connection.
+   * This is called by Resp2Transport when a new client connects.
+   */
+  createAdapter(logger: Logger, socket: Socket): RespAdapter {
+    // Create session and register it
+    const session = new Session(this.baseContext, this.kernel)
+    const connectionId = session.getConnectionId()
+    this.sessions.set(connectionId, session)
 
-      this.kernel.submit(job)
+    // Clean up session when socket closes
+    socket.on('close', () => {
+      this.sessions.delete(connectionId)
+      session.shutdown().catch(err => logger.error(err))
     })
+
+    const adapter = new RespAdapter(logger, socket, session)
+    return adapter
   }
 
-  private getConnectionId(transport: Transport): string {
-    const existing = this.connectionIds.get(transport)
-    if (existing) return existing
-
-    const id = `conn-${++this.connectionCounter}`
-    this.connectionIds.set(transport, id)
-    return id
-  }
-
+  /**
+   * Handle a job from the kernel by routing it to the appropriate session.
+   */
   private async handleJob(job: CommandJob): Promise<void> {
-    const { transport, command, args, signal } = job.request
-    const context = this.connectionContexts.get(transport) ?? this.baseContext
-    const nextContext = await context.execute(transport, command, args, signal)
-    this.connectionContexts.set(transport, nextContext)
+    const session = this.sessions.get(job.connectionId)
+
+    if (!session) {
+      // Session not found - this shouldn't happen in normal operation
+      // The session should be registered when the adapter is created
+      throw new Error(`Session not found for connection ${job.connectionId}`)
+    }
+
+    await session.executeJob(job)
   }
 }
