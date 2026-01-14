@@ -1,40 +1,28 @@
-import { WrongNumberOfArguments } from '../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../types'
+import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
 
-export const ScriptKillCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('script|kill', {
-    arity: 1, // SCRIPT KILL
-    flags: {
-      admin: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.SCRIPT],
-  }),
-  factory: () => new ScriptKillCommand(),
+const metadata = defineCommand('script|kill', {
+  arity: 1, // SCRIPT KILL
+  flags: {
+    admin: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.SCRIPT],
+})
+
+export const ScriptKillCommandDefinition: SchemaCommandRegistration<[]> = {
+  metadata,
+  schema: t.tuple([]),
+  handler: async () => ({ response: 'OK' }),
 }
 
-export class ScriptKillCommand implements Command {
-  readonly metadata = ScriptKillCommandDefinition.metadata
-
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
-  }
-
-  run(_rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    // In a real implementation, this would kill currently running scripts
-    // For now, we'll just return OK since we don't have script execution tracking
-    return Promise.resolve({ response: 'OK' })
-  }
+export default function (db: DB) {
+  return createSchemaCommand(ScriptKillCommandDefinition, { db })
 }

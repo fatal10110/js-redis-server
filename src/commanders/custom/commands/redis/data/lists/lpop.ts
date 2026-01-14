@@ -1,51 +1,33 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const LpopCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('lpop', {
-    arity: 2, // LPOP key
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.LIST],
-  }),
-  factory: deps => new LpopCommand(deps.db),
-}
+const metadata = defineCommand('lpop', {
+  arity: 2, // LPOP key
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.LIST],
+})
 
-export class LpopCommand implements Command {
-  readonly metadata = LpopCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return args
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const LpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
+  metadata,
+  schema: t.tuple([t.key()]),
+  handler: async ([key], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: null })
+      return { response: null }
     }
 
     if (!(existing instanceof ListDataType)) {
@@ -54,15 +36,14 @@ export class LpopCommand implements Command {
 
     const value = existing.lpop()
 
-    // Remove empty list from database
     if (existing.llen() === 0) {
-      this.db.del(key)
+      db.del(key)
     }
 
-    return Promise.resolve({ response: value })
-  }
+    return { response: value }
+  },
 }
 
 export default function (db: DB) {
-  return new LpopCommand(db)
+  return createSchemaCommand(LpopCommandDefinition, { db })
 }

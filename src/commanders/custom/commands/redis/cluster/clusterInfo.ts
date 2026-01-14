@@ -1,71 +1,50 @@
-import { WrongNumberOfArguments } from '../../../../../core/errors'
-import {
-  Command,
-  CommandResult,
-  DiscoveryNode,
-  DiscoveryService,
-} from '../../../../../types'
+import { DiscoveryService } from '../../../../../types'
+import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
 
 export const commandName = 'info'
 
-export const ClusterInfoCommandDefinition: CommandDefinition = {
-  metadata: defineCommand(`cluster|${commandName}`, {
-    arity: 1, // CLUSTER INFO
-    flags: {
-      admin: true,
-      readonly: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.CLUSTER],
-  }),
-  factory: deps => {
-    if (!deps.discoveryService || !deps.mySelfId) {
+const metadata = defineCommand(`cluster|${commandName}`, {
+  arity: 1, // CLUSTER INFO
+  flags: {
+    admin: true,
+    readonly: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.CLUSTER],
+})
+
+export const ClusterInfoCommandDefinition: SchemaCommandRegistration<[]> = {
+  metadata,
+  schema: t.tuple([]),
+  handler: async (_args, { discoveryService, mySelfId }) => {
+    const service = discoveryService as DiscoveryService | undefined
+    if (!service || !mySelfId) {
       throw new Error('Cluster info requires discoveryService and mySelfId')
     }
 
-    const me = deps.discoveryService.getById(deps.mySelfId)
-    return new ClusterInfoCommand(me, deps.discoveryService)
-  },
-}
-
-export class ClusterInfoCommand implements Command {
-  readonly metadata = ClusterInfoCommandDefinition.metadata
-
-  constructor(
-    private readonly me: DiscoveryNode,
-    private readonly disconveryService: DiscoveryService,
-  ) {}
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length > 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
-  }
-  run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length > 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
+    const me = service.getById(mySelfId)
     let nodesCount = 0
     let masters = 0
     let myEpoch = 0
 
-    const myMaster = this.disconveryService.getMaster(this.me.id)
+    const myMaster = service.getMaster(me.id)
 
-    for (const clusterNode of this.disconveryService.getAll()) {
-      nodesCount++
+    for (const clusterNode of service.getAll()) {
+      nodesCount += 1
 
-      if (this.disconveryService.isMaster(clusterNode.id)) {
-        masters++
+      if (service.isMaster(clusterNode.id)) {
+        masters += 1
       }
 
-      if (this.me.id === clusterNode.id || myMaster.id === clusterNode.id) {
-        // Unify epoch
+      if (me.id === clusterNode.id || myMaster.id === clusterNode.id) {
         myEpoch = masters
       }
     }
@@ -90,7 +69,18 @@ export class ClusterInfoCommand implements Command {
       'total_cluster_links_buffer_limit_exceeded:0',
     ]
 
-    // TODO handle with proper data
-    return Promise.resolve({ response: Buffer.from(`${values.join('\n')}\n`) })
-  }
+    return { response: Buffer.from(`${values.join('\n')}\n`) }
+  },
+}
+
+export default function (
+  db: DB,
+  discoveryService: DiscoveryService,
+  mySelfId: string,
+) {
+  return createSchemaCommand(ClusterInfoCommandDefinition, {
+    db,
+    discoveryService,
+    mySelfId,
+  })
 }

@@ -1,75 +1,54 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-  ExpectedFloat,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const HincrbyfloatCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('hincrbyfloat', {
-    arity: 4, // HINCRBYFLOAT key field increment
-    flags: {
-      write: true,
-      denyoom: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.HASH],
-  }),
-  factory: deps => new HincrbyfloatCommand(deps.db),
-}
+const metadata = defineCommand('hincrbyfloat', {
+  arity: 4, // HINCRBYFLOAT key field increment
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.HASH],
+})
 
-export class HincrbyfloatCommand implements Command {
-  readonly metadata = HincrbyfloatCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const field = args[1]
-    const incrementStr = args[2].toString()
-
+export const HincrbyfloatCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, string]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.key(), t.string()]),
+  handler: async ([key, field, incrementStr], { db }) => {
     const increment = parseFloat(incrementStr)
-    if (isNaN(increment)) {
+    if (Number.isNaN(increment)) {
       throw new ExpectedFloat()
     }
 
-    const existing = this.db.get(key)
-    let hash: HashDataType
+    const existing = db.get(key)
 
-    if (existing === null) {
-      hash = new HashDataType()
-      this.db.set(key, hash)
-    } else {
-      if (!(existing instanceof HashDataType)) {
-        throw new WrongType()
-      }
-      hash = existing
+    if (existing !== null && !(existing instanceof HashDataType)) {
+      throw new WrongType()
     }
 
-    const newValue = hash.hincrbyfloat(field, increment)
-    return Promise.resolve({ response: Buffer.from(newValue.toString()) })
-  }
+    const hash =
+      existing instanceof HashDataType ? existing : new HashDataType()
+
+    if (!(existing instanceof HashDataType)) {
+      db.set(key, hash)
+    }
+
+    const result = hash.hincrbyfloat(field, increment)
+    return { response: Buffer.from(result.toString()) }
+  },
 }
 
 export default function (db: DB) {
-  return new HincrbyfloatCommand(db)
+  return createSchemaCommand(HincrbyfloatCommandDefinition, { db })
 }

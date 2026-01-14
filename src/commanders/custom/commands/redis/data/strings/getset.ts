@@ -1,51 +1,33 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const GetsetCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('getset', {
-    arity: 3, // GETSET key value
-    flags: {
-      write: true,
-      denyoom: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.STRING],
-  }),
-  factory: deps => new GetsetCommand(deps.db),
-}
+const metadata = defineCommand('getset', {
+  arity: 3, // GETSET key value
+  flags: {
+    write: true,
+    denyoom: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.STRING],
+})
 
-export class GetsetCommand implements Command {
-  readonly metadata = GetsetCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const newValue = args[1]
-    const existing = this.db.get(key)
-
+export const GetsetCommandDefinition: SchemaCommandRegistration<
+  [Buffer, string]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.string()]),
+  handler: async ([key, value], { db }) => {
+    const existing = db.get(key)
     let oldValue: Buffer | null = null
 
     if (existing !== null) {
@@ -55,11 +37,11 @@ export class GetsetCommand implements Command {
       oldValue = existing.data
     }
 
-    this.db.set(key, new StringDataType(newValue))
-    return Promise.resolve({ response: oldValue })
-  }
+    db.set(key, new StringDataType(Buffer.from(value)))
+    return { response: oldValue }
+  },
 }
 
 export default function (db: DB) {
-  return new GetsetCommand(db)
+  return createSchemaCommand(GetsetCommandDefinition, { db })
 }

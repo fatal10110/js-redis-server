@@ -1,84 +1,68 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const SmoveCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('smove', {
-    arity: 4, // SMOVE source destination member
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 1,
-    keyStep: 1,
-    categories: [CommandCategory.SET],
-  }),
-  factory: deps => new SmoveCommand(deps.db),
-}
+const metadata = defineCommand('smove', {
+  arity: 4, // SMOVE source destination member
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 1,
+  keyStep: 1,
+  categories: [CommandCategory.SET],
+})
 
-export class SmoveCommand implements Command {
-  readonly metadata = SmoveCommandDefinition.metadata
+export const SmoveCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, Buffer]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.key(), t.key()]),
+  handler: async ([sourceKey, destinationKey, member], { db }) => {
+    const sourceExisting = db.get(sourceKey)
 
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0], args[1]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
+    if (sourceExisting === null) {
+      return { response: 0 }
     }
 
-    const sourceKey = args[0]
-    const destKey = args[1]
-    const member = args[2]
-
-    const sourceSet = this.db.get(sourceKey)
-
-    if (sourceSet === null) {
-      return Promise.resolve({ response: 0 })
-    }
-
-    if (!(sourceSet instanceof SetDataType)) {
+    if (!(sourceExisting instanceof SetDataType)) {
       throw new WrongType()
     }
 
-    const destSet = this.db.get(destKey)
-    let destination: SetDataType
-
-    if (destSet === null) {
-      destination = new SetDataType()
-      this.db.set(destKey, destination)
-    } else {
-      if (!(destSet instanceof SetDataType)) {
-        throw new WrongType()
-      }
-      destination = destSet
+    const destinationExisting = db.get(destinationKey)
+    if (
+      destinationExisting !== null &&
+      !(destinationExisting instanceof SetDataType)
+    ) {
+      throw new WrongType()
     }
 
-    const moved = sourceSet.smove(destination, member)
+    const destinationSet =
+      destinationExisting instanceof SetDataType
+        ? destinationExisting
+        : new SetDataType()
 
-    // Remove source key if set is empty
-    if (sourceSet.scard() === 0) {
-      this.db.del(sourceKey)
+    if (!(destinationExisting instanceof SetDataType)) {
+      db.set(destinationKey, destinationSet)
     }
 
-    return Promise.resolve({ response: moved ? 1 : 0 })
-  }
+    const moved = sourceExisting.smove(destinationSet, member)
+
+    if (sourceExisting.scard() === 0) {
+      db.del(sourceKey)
+    }
+
+    return { response: moved ? 1 : 0 }
+  },
 }
 
 export default function (db: DB) {
-  return new SmoveCommand(db)
+  return createSchemaCommand(SmoveCommandDefinition, { db })
 }

@@ -1,73 +1,66 @@
-import {
-  UnknowScriptSubCommand,
-  WrongNumberOfArguments,
-} from '../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../types'
+import { UnknowScriptSubCommand } from '../../../../../core/errors'
+import { Command } from '../../../../../types'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
-import { ScriptLoadCommand } from './load'
-import { ScriptExistsCommand } from './exists'
-import { ScriptFlushCommand } from './flush'
-import { ScriptKillCommand } from './kill'
-import { ScriptDebugCommand } from './debug'
-import { ScriptHelpCommand } from './help'
-import { DB } from '../../../db'
+import {
+  createSchemaCommand,
+  SchemaCommandContext,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
+import { ScriptLoadCommandDefinition } from './load'
+import { ScriptExistsCommandDefinition } from './exists'
+import { ScriptFlushCommandDefinition } from './flush'
+import { ScriptKillCommandDefinition } from './kill'
+import { ScriptDebugCommandDefinition } from './debug'
+import { ScriptHelpCommandDefinition } from './help'
 
-export const ScriptCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('script', {
-    arity: -2, // SCRIPT subcommand [args...]
-    flags: {
-      admin: true,
-      noscript: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.SCRIPT],
-  }),
-  factory: deps => new ScriptCommand(createSubCommands(deps.db)),
-}
+const metadata = defineCommand('script', {
+  arity: -2, // SCRIPT subcommand [args...]
+  flags: {
+    admin: true,
+    noscript: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.SCRIPT],
+})
 
-export class ScriptCommand implements Command {
-  readonly metadata = ScriptCommandDefinition.metadata
+export const ScriptCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer[]]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.variadic(t.key())]),
+  handler: async ([subCommandName, rest], ctx) => {
+    const subCommands = createSubCommands(ctx)
+    const subCommand = subCommands[subCommandName.toString().toLowerCase()]
 
-  constructor(private readonly subCommands: Record<string, Command>) {}
-
-  getKeys(_rawCmd: Buffer, _args: Buffer[]): Buffer[] {
-    return []
-  }
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    const subCommandName = args.shift()
-
-    if (!subCommandName) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const subComamnd = this.subCommands[subCommandName.toString().toLowerCase()]
-
-    if (!subComamnd) {
+    if (!subCommand) {
       throw new UnknowScriptSubCommand(subCommandName.toString())
     }
 
-    return subComamnd.run(subCommandName, args, signal)
+    return subCommand.run(subCommandName, rest, ctx.signal)
+  },
+}
+
+function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
+  const baseCtx = {
+    db: ctx.db,
+    luaEngine: ctx.luaEngine,
+    discoveryService: ctx.discoveryService,
+    mySelfId: ctx.mySelfId,
   }
-}
 
-export default function (db: DB) {
-  return new ScriptCommand(createSubCommands(db))
-}
-
-function createSubCommands(db: DB): Record<string, Command> {
   return {
-    load: new ScriptLoadCommand(db),
-    exists: new ScriptExistsCommand(db),
-    flush: new ScriptFlushCommand(db),
-    kill: new ScriptKillCommand(),
-    debug: new ScriptDebugCommand(),
-    help: new ScriptHelpCommand(),
+    load: createSchemaCommand(ScriptLoadCommandDefinition, baseCtx),
+    exists: createSchemaCommand(ScriptExistsCommandDefinition, baseCtx),
+    flush: createSchemaCommand(ScriptFlushCommandDefinition, baseCtx),
+    kill: createSchemaCommand(ScriptKillCommandDefinition, baseCtx),
+    debug: createSchemaCommand(ScriptDebugCommandDefinition, baseCtx),
+    help: createSchemaCommand(ScriptHelpCommandDefinition, baseCtx),
   }
+}
+
+export default function (db: SchemaCommandContext['db']) {
+  return createSchemaCommand(ScriptCommandDefinition, { db })
 }

@@ -1,64 +1,42 @@
-import { WrongNumberOfArguments } from '../../../../../core/errors'
-import {
-  Command,
-  CommandResult,
-  DiscoveryNode,
-  DiscoveryService,
-} from '../../../../../types'
+import { DiscoveryNode, DiscoveryService } from '../../../../../types'
+import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
 
 export const commandName = 'shards'
 
-export const ClusterShardsCommandDefinition: CommandDefinition = {
-  metadata: defineCommand(`cluster|${commandName}`, {
-    arity: 1, // CLUSTER SHARDS
-    flags: {
-      admin: true,
-      readonly: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.CLUSTER],
-  }),
-  factory: deps => {
-    if (!deps.discoveryService || !deps.mySelfId) {
+const metadata = defineCommand(`cluster|${commandName}`, {
+  arity: 1, // CLUSTER SHARDS
+  flags: {
+    admin: true,
+    readonly: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.CLUSTER],
+})
+
+export const ClusterShardsCommandDefinition: SchemaCommandRegistration<[]> = {
+  metadata,
+  schema: t.tuple([]),
+  handler: async (_args, { discoveryService, mySelfId }) => {
+    const service = discoveryService as DiscoveryService | undefined
+    if (!service || !mySelfId) {
       throw new Error('Cluster shards requires discoveryService and mySelfId')
     }
 
-    const me = deps.discoveryService.getById(deps.mySelfId)
-    return new ClusterShardsCommand(me, deps.discoveryService)
-  },
-}
-
-export class ClusterShardsCommand implements Command {
-  readonly metadata = ClusterShardsCommandDefinition.metadata
-
-  constructor(
-    private readonly me: DiscoveryNode,
-    private readonly discoveryService: DiscoveryService,
-  ) {}
-
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length > 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
-  }
-
-  run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length > 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
+    const me = service.getById(mySelfId)
     const mapping: Record<number, DiscoveryNode[]> = {}
 
-    for (const clusterNode of this.discoveryService.getAll()) {
+    for (const clusterNode of service.getAll()) {
       const arr = (mapping[clusterNode.slots[0][0]] ??= [])
 
-      if (this.discoveryService.isMaster(this.me.id)) arr.unshift(clusterNode)
+      if (service.isMaster(me.id)) arr.unshift(clusterNode)
       else arr.push(clusterNode)
     }
 
@@ -117,6 +95,18 @@ export class ClusterShardsCommand implements Command {
       ])
     }
 
-    return Promise.resolve({ response: shards })
-  }
+    return { response: shards }
+  },
+}
+
+export default function (
+  db: DB,
+  discoveryService: DiscoveryService,
+  mySelfId: string,
+) {
+  return createSchemaCommand(ClusterShardsCommandDefinition, {
+    db,
+    discoveryService,
+    mySelfId,
+  })
 }

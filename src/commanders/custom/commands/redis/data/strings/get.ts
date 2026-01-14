@@ -1,59 +1,43 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const GetCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('get', {
-    arity: 2, // GET key
-    flags: {
-      readonly: true,
-      fast: true,
-    },
-    firstKey: 0, // First arg is the key
-    lastKey: 0, // Last arg is the key
-    keyStep: 1, // Single key
-    categories: [CommandCategory.STRING, CommandCategory.GENERIC],
-  }),
-  factory: deps => new GetCommand(deps.db),
-}
+const metadata = defineCommand('get', {
+  arity: 2, // GET key
+  flags: {
+    readonly: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.STRING, CommandCategory.GENERIC],
+})
 
-export class GetCommand implements Command {
-  readonly metadata = GetCommandDefinition.metadata
+export const GetCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
+  metadata,
+  schema: t.tuple([t.key()]),
+  handler: async ([key], { db }) => {
+    const val = db.get(key)
 
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (!args.length || args.length > 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
+    if (val === null) {
+      return { response: null }
     }
-
-    return args
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (!args.length || args.length > 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const val = this.db.get(args[0])
-
-    if (val === null) return Promise.resolve({ response: null })
 
     if (!(val instanceof StringDataType)) {
       throw new WrongType()
     }
 
-    return Promise.resolve({ response: val.data })
-  }
+    return { response: val.data }
+  },
 }
 
 export default function (db: DB) {
-  return new GetCommand(db)
+  return createSchemaCommand(GetCommandDefinition, { db })
 }

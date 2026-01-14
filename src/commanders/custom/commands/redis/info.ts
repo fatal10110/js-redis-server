@@ -1,42 +1,26 @@
-import { WrongNumberOfArguments } from '../../../../core/errors'
-import { Command, CommandResult } from '../../../../types'
+import { DB } from '../../db'
 import { defineCommand, CommandCategory } from '../metadata'
-import type { CommandDefinition } from '../registry'
+import { createSchemaCommand, SchemaCommandRegistration, t } from '../../schema'
 
-export const InfoCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('info', {
-    arity: -1, // INFO [section]
-    flags: {
-      readonly: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.SERVER],
-  }),
-  factory: () => new InfoCommand(),
+const metadata = defineCommand('info', {
+  arity: -1, // INFO [section]
+  flags: {
+    readonly: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.SERVER],
+})
+
+export const InfoCommandDefinition: SchemaCommandRegistration<
+  [string | undefined]
+> = {
+  metadata,
+  schema: t.tuple([t.optional(t.string())]),
+  handler: async () => ({ response: 'mock info' }),
 }
 
-export class InfoCommand implements Command {
-  readonly metadata = InfoCommandDefinition.metadata
-
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length > 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
-  }
-
-  run(_rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length > 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return Promise.resolve({ response: 'mock info' })
-  }
-}
-
-export default function () {
-  return new InfoCommand()
+export default function (db: DB) {
+  return createSchemaCommand(InfoCommandDefinition, { db })
 }

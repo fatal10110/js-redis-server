@@ -1,73 +1,48 @@
-import {
-  WrongNumberOfArguments,
-  ExpectedInteger,
-  InvalidExpireTime,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { InvalidExpireTime } from '../../../../../../core/errors'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const ExpireatCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('expireat', {
-    arity: 3, // EXPIREAT key timestamp
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.GENERIC],
-  }),
-  factory: deps => new ExpireatCommand(deps.db),
-}
+const metadata = defineCommand('expireat', {
+  arity: 3, // EXPIREAT key timestamp
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.GENERIC],
+})
 
-export class ExpireatCommand implements Command {
-  readonly metadata = ExpireatCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const timestampStr = args[1].toString()
-
-    const timestamp = parseInt(timestampStr)
-    if (isNaN(timestamp)) {
-      throw new ExpectedInteger()
-    }
-
+export const ExpireatCommandDefinition: SchemaCommandRegistration<
+  [Buffer, number]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.integer()]),
+  handler: async ([key, timestamp], { db }) => {
     if (timestamp < 0) {
-      throw new InvalidExpireTime(this.metadata.name)
+      throw new InvalidExpireTime(metadata.name)
     }
 
-    const expiration = timestamp * 1000 // Convert seconds to milliseconds
+    const expiration = timestamp * 1000
     const now = Date.now()
 
-    // If the timestamp is in the past, delete the key immediately
     if (expiration <= now) {
-      const deleted = this.db.del(key)
-      return Promise.resolve({ response: deleted ? 1 : 0 })
+      const deleted = db.del(key)
+      return { response: deleted ? 1 : 0 }
     }
 
-    const success = this.db.setExpiration(key, expiration)
+    const success = db.setExpiration(key, expiration)
 
-    return Promise.resolve({ response: success ? 1 : 0 })
-  }
+    return { response: success ? 1 : 0 }
+  },
 }
 
 export default function (db: DB) {
-  return new ExpireatCommand(db)
+  return createSchemaCommand(ExpireatCommandDefinition, { db })
 }

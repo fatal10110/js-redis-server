@@ -1,73 +1,61 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const HsetCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('hset', {
-    arity: -4, // HSET key field value [field value ...]
-    flags: {
-      write: true,
-      denyoom: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.HASH],
-  }),
-  factory: deps => new HsetCommand(deps.db),
-}
+const metadata = defineCommand('hset', {
+  arity: -4, // HSET key field value [field value ...]
+  flags: {
+    write: true,
+    denyoom: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.HASH],
+})
 
-export class HsetCommand implements Command {
-  readonly metadata = HsetCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 3 || args.length % 2 === 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 3 || args.length % 2 === 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const HsetCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, Buffer, Array<[Buffer, Buffer]>]
+> = {
+  metadata,
+  schema: t.tuple([
+    t.key(),
+    t.key(),
+    t.key(),
+    t.variadic(t.tuple([t.key(), t.key()])),
+  ]),
+  handler: async ([key, firstField, firstValue, restPairs], { db }) => {
+    const existing = db.get(key)
 
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
 
-    let hash: HashDataType
-    if (existing instanceof HashDataType) {
-      hash = existing
-    } else {
-      hash = new HashDataType()
-      this.db.set(key, hash)
+    const hash =
+      existing instanceof HashDataType ? existing : new HashDataType()
+
+    if (!(existing instanceof HashDataType)) {
+      db.set(key, hash)
     }
 
     let fieldsSet = 0
-    for (let i = 1; i < args.length; i += 2) {
-      const field = args[i]
-      const value = args[i + 1]
+    fieldsSet += hash.hset(firstField, firstValue)
+
+    for (const [field, value] of restPairs) {
       fieldsSet += hash.hset(field, value)
     }
 
-    return Promise.resolve({ response: fieldsSet })
-  }
+    return { response: fieldsSet }
+  },
 }
 
 export default function (db: DB) {
-  return new HsetCommand(db)
+  return createSchemaCommand(HsetCommandDefinition, { db })
 }

@@ -25,6 +25,8 @@ export type SchemaType =
   | { type: 'union'; options: SchemaType[] }
   | { type: 'tuple'; items: SchemaType[] }
   | { type: 'variadic'; item: SchemaType }
+  | { type: 'options'; props: Record<string, SchemaType> } // For named flags/options
+  | { type: 'xor'; items: SchemaType[] } // For mutually exclusive options
 
 export interface CommandDefinition {
   name: string
@@ -42,20 +44,17 @@ export const SetCommand = cmd('SET', {
   schema: t.tuple([
     t.key(), // Arg 0
     t.string(), // Arg 1
-    t.optional(
-      t.union([
-        // Arg 2 (Options)
-        t.sequence('EX', t.integer()),
-        t.sequence('PX', t.integer()),
-        t.literal('NX'),
-        t.literal('XX'),
-      ]),
-    ),
+    // "Options" handles parsing the remaining arguments as a bag of flags
+    t.options({
+      ttl: t.xor([t.named('EX', t.integer()), t.named('PX', t.integer())]),
+      condition: t.xor([t.flag('NX'), t.flag('XX')]),
+    }),
   ]),
-  handler: async ([key, value, options], { db }) => {
+  handler: async ([key, value, opts], { db }) => {
     // Types are inferred automatically
-    // options is { type: 'EX', value: number } | 'NX' | ...
-    await db.set(key, value, options)
+    // opts.ttl is { type: 'EX', value: 10 } | undefined
+    // opts.condition is 'NX' | 'XX' | undefined
+    await db.set(key, value, opts)
   },
 })
 ```

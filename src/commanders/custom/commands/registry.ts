@@ -1,6 +1,8 @@
-import type { Command } from '../../../types'
+import type { Command, ExecutionContext } from '../../../types'
 import type { CommandMetadata, CommandCategory } from './metadata'
 import type { DB } from '../db'
+import type { InputMapper } from '../schema'
+import { createSchemaCommand, SchemaCommandRegistration } from '../schema'
 import { LuaEngine } from 'wasmoon'
 
 /**
@@ -11,47 +13,53 @@ export interface CommandDependencies {
   luaEngine?: LuaEngine
   discoveryService?: any // For cluster commands
   mySelfId?: string
-}
-
-/**
- * Command definition combining metadata and factory
- */
-export interface CommandDefinition {
-  metadata: CommandMetadata
-  factory: (deps: CommandDependencies) => Command
+  executionContext?: ExecutionContext
+  commands?: Record<string, Command>
 }
 
 /**
  * Central command registry
  */
 export class CommandRegistry {
-  private commands = new Map<string, CommandDefinition>()
+  private commands = new Map<
+    string,
+    {
+      definition: SchemaCommandRegistration<any>
+      mapper?: InputMapper<Buffer[]>
+    }
+  >()
 
   /**
    * Register a command
    */
-  register(definition: CommandDefinition): void {
+  register(
+    definition: SchemaCommandRegistration<any>,
+    mapper?: InputMapper<Buffer[]>,
+  ): void {
     const name = definition.metadata.name.toLowerCase()
 
     if (this.commands.has(name)) {
       throw new Error(`Command '${name}' is already registered`)
     }
 
-    this.commands.set(name, definition)
+    this.commands.set(name, { definition, mapper })
   }
 
   /**
    * Register multiple commands at once
    */
-  registerAll(definitions: CommandDefinition[]): void {
-    definitions.forEach(def => this.register(def))
+  registerAll(
+    definitions: Array<SchemaCommandRegistration<any>>,
+    mapper?: InputMapper<Buffer[]>,
+  ): void {
+    definitions.forEach(def => this.register(def, mapper))
   }
 
   /**
    * Get command definition by name
    */
-  get(name: string): CommandDefinition | undefined {
-    return this.commands.get(name.toLowerCase())
+  get(name: string): SchemaCommandRegistration<any> | undefined {
+    return this.commands.get(name.toLowerCase())?.definition
   }
 
   /**
@@ -64,8 +72,8 @@ export class CommandRegistry {
   /**
    * Get all registered commands
    */
-  getAll(): CommandDefinition[] {
-    return Array.from(this.commands.values())
+  getAll(): SchemaCommandRegistration<any>[] {
+    return Array.from(this.commands.values()).map(entry => entry.definition)
   }
 
   /**
@@ -78,7 +86,7 @@ export class CommandRegistry {
   /**
    * Get readonly commands (safe for replicas)
    */
-  getReadonlyCommands(): CommandDefinition[] {
+  getReadonlyCommands(): SchemaCommandRegistration<any>[] {
     return this.getAll().filter(def => def.metadata.flags.readonly === true)
   }
 
@@ -86,7 +94,7 @@ export class CommandRegistry {
    * Get commands allowed in MULTI/EXEC transactions
    * (excludes blocking, transaction control, etc.)
    */
-  getMultiCommands(): CommandDefinition[] {
+  getMultiCommands(): SchemaCommandRegistration<any>[] {
     return this.getAll().filter(def => {
       const { flags } = def.metadata
       return !flags.blocking && !flags.transaction && !flags.noscript
@@ -97,7 +105,7 @@ export class CommandRegistry {
    * Get commands allowed in Lua scripts
    * (excludes random, blocking, noscript, admin)
    */
-  getLuaCommands(): CommandDefinition[] {
+  getLuaCommands(): SchemaCommandRegistration<any>[] {
     return this.getAll().filter(def => {
       const { flags } = def.metadata
       return !flags.random && !flags.blocking && !flags.noscript && !flags.admin
@@ -107,7 +115,7 @@ export class CommandRegistry {
   /**
    * Filter commands by category
    */
-  getByCategory(category: CommandCategory): CommandDefinition[] {
+  getByCategory(category: CommandCategory): SchemaCommandRegistration<any>[] {
     return this.getAll().filter(def =>
       def.metadata.categories.includes(category),
     )
@@ -116,7 +124,9 @@ export class CommandRegistry {
   /**
    * Filter commands by custom predicate
    */
-  filter(predicate: (def: CommandDefinition) => boolean): CommandDefinition[] {
+  filter(
+    predicate: (def: SchemaCommandRegistration<any>) => boolean,
+  ): SchemaCommandRegistration<any>[] {
     return this.getAll().filter(predicate)
   }
 
@@ -127,8 +137,12 @@ export class CommandRegistry {
   createCommands(deps: CommandDependencies): Record<string, Command> {
     const commands: Record<string, Command> = {}
 
-    this.getAll().forEach(def => {
-      commands[def.metadata.name] = def.factory(deps)
+    this.commands.forEach(({ definition, mapper }) => {
+      commands[definition.metadata.name] = createSchemaCommand(
+        definition,
+        deps,
+        mapper,
+      )
     })
 
     return commands
