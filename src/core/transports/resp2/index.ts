@@ -1,69 +1,5 @@
 import { AddressInfo, Server, Socket, createServer } from 'net'
-import Resp from 'respjs'
-import { DBCommandExecutor, Logger, Transport } from '../../../types'
-import { UserFacedError } from '../../errors'
-
-class RespTransport implements Transport {
-  constructor(
-    private readonly logger: Logger,
-    private readonly socket: Socket,
-  ) {}
-
-  write(responseData: unknown, close?: boolean) {
-    if (
-      responseData instanceof Error &&
-      !(responseData instanceof UserFacedError)
-    ) {
-      close = true
-    }
-
-    this.socket.write(this.prepareResponse(responseData), err => {
-      if (err) {
-        this.logger.error(err)
-        this.socket.destroySoon()
-      }
-    })
-
-    if (close) {
-      this.socket.destroySoon()
-    }
-  }
-
-  private prepareResponse(jsResponse: unknown): Buffer {
-    if (jsResponse === null) {
-      return Resp.encodeNull()
-    } else if (jsResponse instanceof Error) {
-      return Resp.encodeError(jsResponse)
-    } else if (Number.isInteger(jsResponse)) {
-      return Resp.encodeInteger(jsResponse as number)
-    } else if (Array.isArray(jsResponse)) {
-      return Resp.encodeArray(jsResponse.map(this.prepareResponse.bind(this)))
-    } else if (Buffer.isBuffer(jsResponse)) {
-      return Resp.encodeBufBulk(jsResponse)
-    } else if (typeof jsResponse === 'string') {
-      return Resp.encodeString(jsResponse)
-    } else if (typeof jsResponse === 'object') {
-      const keys = Object.keys(jsResponse)
-
-      if (keys.length === 0) {
-        return Resp.encodeNullArray()
-      } else {
-        const arr = []
-
-        for (const k of keys) {
-          arr.push(Resp.encodeString(k))
-          arr.push(
-            this.prepareResponse((jsResponse as Record<string, unknown>)[k]),
-          )
-        }
-
-        return Resp.encodeArray(arr)
-      }
-    } else {
-      throw new Error(`Unknown response of type ${typeof jsResponse}`)
-    }
-  }
-}
+import { DBCommandExecutor, Logger } from '../../../types'
 
 export class Resp2Transport {
   public readonly server: Server
@@ -81,47 +17,22 @@ export class Resp2Transport {
         //logger.info('Connection closed')
       })
       .on('connection', socket => {
-        socket.pipe(this.handleConnection(socket))
+        this.handleConnection(socket)
       })
   }
 
   private handleConnection(socket: Socket) {
-    const controller = new AbortController()
-
-    socket
-      .on('close', () => {
-        controller.abort()
-      })
-      .on('error', () => {
-        controller.abort()
-      })
-      .on('timeout', () => {
-        controller.abort()
-      })
-      .on('end', () => {
-        console.log('end')
-        controller.abort()
-      })
-
-    const transport = new RespTransport(this.logger, socket)
-
-    return new Resp({ bufBulk: true })
-      .on('error', (err: unknown) => {
-        transport.write(err)
-      })
-      .on('data', (data: Buffer[]) => {
-        const [cmdName, ...args] = data
-
-        console.log('cmdName', cmdName.toString())
-        console.log(
-          'args',
-          args.map(arg => arg.toString()),
-        )
-
-        this.commandExecutor
-          .execute(transport, cmdName, args, controller.signal)
-          .catch(transport.write)
-      })
+    // Phase 4: Delegate to adapter pattern
+    if ('createAdapter' in this.commandExecutor) {
+      const createAdapter = (this.commandExecutor as any).createAdapter.bind(
+        this.commandExecutor,
+      )
+      createAdapter(this.logger, socket)
+    } else {
+      throw new Error(
+        'CommandExecutor must implement createAdapter method for Phase 4 architecture',
+      )
+    }
   }
 
   listen(port?: number): Promise<void> {
