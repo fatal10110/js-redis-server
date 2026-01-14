@@ -17,6 +17,20 @@ export class ClusterNetwork implements DiscoveryService {
 
   constructor(private readonly logger: Logger) {}
 
+  private resolveAddress(id: string): { host: string; port: number } {
+    const transport = this.transports[id]
+    if (!transport) {
+      throw new Error(`Transport not found for ${id}`)
+    }
+
+    const address = transport.server.address()
+    if (!address || typeof address === 'string') {
+      throw new Error(`Transport address not ready for ${id}`)
+    }
+
+    return { host: '127.0.0.1', port: address.port }
+  }
+
   private createMasterId(index: number) {
     return `master-${index}`
   }
@@ -36,23 +50,21 @@ export class ClusterNetwork implements DiscoveryService {
   }
 
   getById(id: string): DiscoveryNode {
-    const [host, port] = this.transports[id].getAddress().split(':')
+    const { host, port } = this.resolveAddress(id)
 
     return {
       id,
       host,
-      port: Number(port),
+      port,
       slots: this.slotMapping[id],
     }
   }
 
   getAll(): DiscoveryNode[] {
-    return Object.entries(this.transports).map<DiscoveryNode>(
-      ([id, transport]) => {
-        const [host, port] = transport.getAddress().split(':')
-        return { host, port: Number(port), slots: this.slotMapping[id], id }
-      },
-    )
+    return Object.entries(this.transports).map<DiscoveryNode>(([id]) => {
+      const { host, port } = this.resolveAddress(id)
+      return { host, port, slots: this.slotMapping[id], id }
+    })
   }
 
   getBySlot(slot: number): DiscoveryNode {

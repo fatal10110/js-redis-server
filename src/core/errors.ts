@@ -164,3 +164,17 @@ export class HashValueNotFloat extends UserFacedError {
     this.name = 'ERR'
   }
 }
+
+export class UnknownCommandSubCommand extends UserFacedError {
+  constructor(subCommand: string | Buffer) {
+    super(`unknown subcommand '${subCommand}'. Try COMMAND HELP.`)
+    this.name = 'ERR'
+  }
+}
+
+export class InvalidCommandArgs extends UserFacedError {
+  constructor(cmdName: string) {
+    super(`Invalid arguments for '${cmdName}'`)
+    this.name = 'ERR'
+  }
+}
