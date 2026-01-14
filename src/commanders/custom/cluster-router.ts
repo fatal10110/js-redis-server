@@ -1,51 +1,7 @@
 import { CorssSlot, MovedError } from '../../core/errors'
 import { Command, DiscoveryNode, DiscoveryService } from '../../types'
+import { SlotValidator } from '../../core/transports/session-state'
 import clusterKeySlot from 'cluster-key-slot'
-
-/**
- * ClusterState interface for topology management.
- * Wraps DiscoveryService to provide a cleaner API for the router.
- */
-export interface ClusterState {
-  /** Check if the given slot is owned by this node */
-  isLocal(slot: number): boolean
-  /** Get the owner node for a slot */
-  getOwner(slot: number): { ip: string; port: number }
-}
-
-/**
- * Creates a ClusterState from DiscoveryService and the current node.
- */
-export function createClusterState(
-  discoveryService: DiscoveryService,
-  myself: DiscoveryNode,
-): ClusterState {
-  return {
-    isLocal(slot: number): boolean {
-      for (const [min, max] of myself.slots) {
-        if (slot >= min && slot <= max) {
-          return true
-        }
-      }
-      return false
-    },
-
-    getOwner(slot: number): { ip: string; port: number } {
-      const node = discoveryService.getBySlot(slot)
-      return { ip: node.host, port: node.port }
-    },
-  }
-}
-
-/**
- * SlotValidationResult contains slot information for a command.
- */
-export interface SlotValidationResult {
-  /** The computed slot number, or null if the command has no keys */
-  slot: number | null
-  /** The keys extracted from the command */
-  keys: Buffer[]
-}
 
 /**
  * ClusterRouter implements schema-driven routing for Redis Cluster.
@@ -61,8 +17,21 @@ export interface SlotValidationResult {
  * - Centralized logic: MOVED/ASK/CROSSSLOT logic exists in one place
  * - Performance: Non-cluster mode simply bypasses the slot check steps
  */
-export class ClusterRouter {
-  constructor(private readonly clusterState: ClusterState) {}
+export class ClusterRouter implements SlotValidator {
+  constructor(
+    private readonly discoveryService: DiscoveryService,
+    private readonly myself: DiscoveryNode,
+    private readonly commands: Record<string, Command>,
+  ) {}
+
+  private isLocalSlot(slot: number): boolean {
+    for (const [min, max] of this.myself.slots) {
+      if (slot >= min && slot <= max) {
+        return true
+      }
+    }
+    return false
+  }
 
   /**
    * Extract keys from a command using its metadata or custom getKeys function.
@@ -80,6 +49,34 @@ export class ClusterRouter {
   }
 
   /**
+   * Validate a command's slot by name (implements SlotValidator interface).
+   * Looks up the command and delegates to validateCommandSlot.
+   *
+   * @param commandName The command name (case-insensitive)
+   * @param args The command arguments
+   * @param pinnedSlot Optional slot constraint (for transactions)
+   * @returns The slot number, or null if the command has no keys
+   * @throws CorssSlot if keys hash to different slots
+   * @throws MovedError if the slot is not owned by this node
+   */
+  validateSlot(
+    commandName: string,
+    args: Buffer[],
+    pinnedSlot?: number,
+  ): number | null {
+    const command = this.commands[commandName.toLowerCase()]
+    if (!command) {
+      return null
+    }
+    return this.validateCommandSlot(
+      command,
+      Buffer.from(commandName),
+      args,
+      pinnedSlot,
+    )
+  }
+
+  /**
    * Validate a command's keys against cluster slot requirements.
    * Returns the slot if valid, null if the command has no keys.
    *
@@ -90,7 +87,7 @@ export class ClusterRouter {
    * @throws CorssSlot if keys hash to different slots
    * @throws MovedError if the slot is not owned by this node
    */
-  validateSlot(
+  validateCommandSlot(
     command: Command,
     rawCmd: Buffer,
     args: Buffer[],
@@ -116,9 +113,9 @@ export class ClusterRouter {
     }
 
     // Check topology: is this slot owned by our node?
-    if (!this.clusterState.isLocal(slot)) {
-      const owner = this.clusterState.getOwner(slot)
-      throw new MovedError(owner.ip, owner.port, slot)
+    if (!this.isLocalSlot(slot)) {
+      const owner = this.discoveryService.getBySlot(slot)
+      throw new MovedError(owner.host, owner.port, slot)
     }
 
     return slot

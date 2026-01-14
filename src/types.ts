@@ -1,12 +1,6 @@
 import { CommandMetadata } from './commanders/custom/commands/metadata'
 
 export interface DBCommandExecutor {
-  execute(
-    transport: Transport,
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<void>
   shutdown(): Promise<void>
 }
 
