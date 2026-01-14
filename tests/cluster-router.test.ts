@@ -5,7 +5,6 @@ import {
   ClusterState,
   createClusterState,
 } from '../src/commanders/custom/cluster-router'
-import { SlotValidator } from '../src/commanders/custom/slot-validation'
 import {
   ClusterNormalState,
   ClusterTransactionState,
@@ -111,7 +110,7 @@ describe('ClusterRouter', () => {
       const myself = discoveryService.getById('local-node')
 
       const clusterState = createClusterState(discoveryService, myself)
-      const router = new ClusterRouter(null as any, clusterState)
+      const router = new ClusterRouter(clusterState)
 
       const pingCommand = new MockCommand(
         {
@@ -139,7 +138,7 @@ describe('ClusterRouter', () => {
       const myself = discoveryService.getById('local-node')
 
       const clusterState = createClusterState(discoveryService, myself)
-      const router = new ClusterRouter(null as any, clusterState)
+      const router = new ClusterRouter(clusterState)
 
       const getCommand = new MockCommand(
         {
@@ -170,7 +169,7 @@ describe('ClusterRouter', () => {
       const myself = discoveryService.getById('local-node')
 
       const clusterState = createClusterState(discoveryService, myself)
-      const router = new ClusterRouter(null as any, clusterState)
+      const router = new ClusterRouter(clusterState)
 
       const mgetCommand = new MockCommand(
         {
@@ -204,7 +203,7 @@ describe('ClusterRouter', () => {
       const myself = discoveryService.getById('local-node')
 
       const clusterState = createClusterState(discoveryService, myself)
-      const router = new ClusterRouter(null as any, clusterState)
+      const router = new ClusterRouter(clusterState)
 
       const mgetCommand = new MockCommand(
         {
@@ -239,7 +238,7 @@ describe('ClusterRouter', () => {
       const myself = discoveryService.getById('local-node')
 
       const clusterState = createClusterState(discoveryService, myself)
-      const router = new ClusterRouter(null as any, clusterState)
+      const router = new ClusterRouter(clusterState)
 
       const getCommand = new MockCommand(
         {
@@ -272,7 +271,7 @@ describe('ClusterRouter', () => {
       const myself = discoveryService.getById('local-node')
 
       const clusterState = createClusterState(discoveryService, myself)
-      const router = new ClusterRouter(null as any, clusterState)
+      const router = new ClusterRouter(clusterState)
 
       const getCommand = new MockCommand(
         {
@@ -315,65 +314,6 @@ describe('ClusterRouter', () => {
         CorssSlot,
       )
     })
-  })
-})
-
-describe('SlotValidator', () => {
-  test('should validate command using underlying router', () => {
-    const localSlots: Array<[number, number]> = [[0, 16383]]
-    const nodeMap = new Map<number, { host: string; port: number }>()
-    const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-    const myself = discoveryService.getById('local-node')
-
-    const validator = new SlotValidator(discoveryService, myself)
-
-    const getCommand = new MockCommand(
-      {
-        name: 'get',
-        arity: 2,
-        flags: {},
-        firstKey: 0,
-        lastKey: 0,
-        keyStep: 1,
-        categories: [],
-      },
-      [0],
-    )
-
-    // Should not throw for local slot
-    assert.doesNotThrow(() =>
-      validator.validate(getCommand, Buffer.from('GET'), [
-        Buffer.from('mykey'),
-      ]),
-    )
-  })
-
-  test('should expose validateSlot method for transactions', () => {
-    const localSlots: Array<[number, number]> = [[0, 16383]]
-    const nodeMap = new Map<number, { host: string; port: number }>()
-    const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-    const myself = discoveryService.getById('local-node')
-
-    const validator = new SlotValidator(discoveryService, myself)
-
-    const getCommand = new MockCommand(
-      {
-        name: 'get',
-        arity: 2,
-        flags: {},
-        firstKey: 0,
-        lastKey: 0,
-        keyStep: 1,
-        categories: [],
-      },
-      [0],
-    )
-
-    const slot = validator.validateSlot(getCommand, Buffer.from('GET'), [
-      Buffer.from('mykey'),
-    ])
-
-    assert.strictEqual(typeof slot, 'number')
   })
 })
 
@@ -442,11 +382,12 @@ describe('ClusterTransactionState', () => {
     }
 
     const baseValidator = new RegistryCommandValidator(commands)
-    const slotValidator = new SlotValidator(discoveryService, myself)
+    const clusterState = createClusterState(discoveryService, myself)
+    const router = new ClusterRouter(clusterState)
     const clusterValidator = new ClusterCommandValidator(
       baseValidator,
       commands,
-      slotValidator,
+      router,
     )
 
     const normalState = new ClusterNormalState(baseValidator, clusterValidator)
@@ -717,11 +658,12 @@ describe('ClusterNormalState', () => {
     }
 
     const baseValidator = new RegistryCommandValidator(commands)
-    const slotValidator = new SlotValidator(discoveryService, myself)
+    const clusterState = createClusterState(discoveryService, myself)
+    const router = new ClusterRouter(clusterState)
     const clusterValidator = new ClusterCommandValidator(
       baseValidator,
       commands,
-      slotValidator,
+      router,
     )
 
     const normalState = new ClusterNormalState(baseValidator, clusterValidator)

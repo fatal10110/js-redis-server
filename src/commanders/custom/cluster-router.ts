@@ -1,7 +1,6 @@
 import { CorssSlot, MovedError } from '../../core/errors'
 import { Command, DiscoveryNode, DiscoveryService } from '../../types'
 import clusterKeySlot from 'cluster-key-slot'
-import { CommandRegistry } from './commands/registry'
 
 /**
  * ClusterState interface for topology management.
@@ -63,10 +62,7 @@ export interface SlotValidationResult {
  * - Performance: Non-cluster mode simply bypasses the slot check steps
  */
 export class ClusterRouter {
-  constructor(
-    private readonly registry: CommandRegistry,
-    private readonly clusterState: ClusterState,
-  ) {}
+  constructor(private readonly clusterState: ClusterState) {}
 
   /**
    * Extract keys from a command using its metadata or custom getKeys function.
@@ -126,36 +122,5 @@ export class ClusterRouter {
     }
 
     return slot
-  }
-
-  /**
-   * Validate a command by name using the registry.
-   * Convenience method that looks up the command in the registry first.
-   *
-   * @param commandName The command name (case-insensitive)
-   * @param args The command arguments
-   * @param requiredSlot Optional slot constraint (for transactions)
-   * @returns The slot number, or null if the command has no keys
-   * @throws Error if command is not found
-   * @throws CorssSlot if keys hash to different slots
-   * @throws MovedError if the slot is not owned by this node
-   */
-  validateCommandSlot(
-    commands: Record<string, Command>,
-    commandName: string,
-    rawCmd: Buffer,
-    args: Buffer[],
-    requiredSlot?: number,
-  ): number | null {
-    const cmdName = commandName.toLowerCase()
-    const command = commands[cmdName]
-
-    if (!command) {
-      // If command not found in registry, we can't validate keys
-      // Let the execution context handle the unknown command error
-      return null
-    }
-
-    return this.validateSlot(command, rawCmd, args, requiredSlot)
   }
 }

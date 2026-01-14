@@ -9,7 +9,7 @@ import {
 import { createClusterCommands, createMultiCommands } from './commands/redis'
 import { LuaEngine, LuaFactory } from 'wasmoon'
 import { DB } from './db'
-import { SlotValidator } from './slot-validation'
+import { ClusterRouter, createClusterState } from './cluster-router'
 import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
@@ -113,16 +113,17 @@ export class ClusterCommander implements DBCommandExecutor {
    * - MOVED/CROSSSLOT error generation
    */
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
-    // Create slot validator for cluster routing
+    // Create cluster router for slot validation
     const me = this.discoveryService.getById(this.mySelfId)
-    const slotValidator = new SlotValidator(this.discoveryService, me)
+    const clusterState = createClusterState(this.discoveryService, me)
+    const router = new ClusterRouter(clusterState)
 
     // Create cluster-aware command validator that combines
     // syntax validation with slot validation for transactions
     const clusterValidator = new ClusterCommandValidator(
       this.baseValidator,
       this.commands,
-      slotValidator,
+      router,
     )
 
     // Create cluster-aware initial state with slot pinning support
