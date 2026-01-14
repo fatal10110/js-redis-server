@@ -9,200 +9,188 @@ import {
 } from '../../../../core/errors'
 import { LuaTransport } from '../../lua-transport'
 import { DB } from '../../db'
-import type { CommandMetadata } from '../../commands/metadata'
-import { CommandCategory } from '../../commands/metadata'
+import { defineCommand, CommandCategory } from '../metadata'
+import { createSchemaCommand, SchemaCommandRegistration, t } from '../../schema'
 
-export class EvalCommand implements Command {
-  readonly metadata: CommandMetadata = {
-    name: 'eval',
-    arity: -3,
-    flags: { write: true, noscript: true, movablekeys: true },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
-    categories: [CommandCategory.SCRIPT],
+const metadata = defineCommand('eval', {
+  arity: -3,
+  flags: { write: true, noscript: true, movablekeys: true },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 0,
+  categories: [CommandCategory.SCRIPT],
+})
+
+type EvalArgs = [string, number, Buffer[]]
+
+export const EvalCommandDefinition: SchemaCommandRegistration<EvalArgs> = {
+  metadata,
+  schema: t.tuple([t.string(), t.integer(), t.variadic(t.key())]),
+  getKeys: (_rawCmd, args) => extractEvalKeys('eval', args),
+  handler: async ([script, keyCount, rest], ctx) => {
+    const { keys, args } = splitEvalArguments(keyCount, rest)
+    const luaEngine = ctx.luaEngine
+    const commands = ctx.commands
+
+    if (!luaEngine) {
+      throw new Error('Lua engine is not available for EVAL')
+    }
+
+    if (!commands) {
+      throw new Error('Command registry is not available for EVAL')
+    }
+
+    return executeEvalScript(script, keys, args, {
+      luaEngine,
+      commands,
+      executionContext: ctx.executionContext,
+      signal: ctx.signal,
+    })
+  },
+}
+
+export function extractEvalKeys(commandName: string, args: Buffer[]): Buffer[] {
+  if (args.length < 2) {
+    throw new WrongNumberOfArguments(commandName)
   }
 
-  constructor(
-    private readonly lua: LuaEngine,
-    private readonly commands: Record<string, Command>,
-    private readonly db: DB,
-    private readonly executionContext?: ExecutionContext,
-  ) {}
+  const keysNum = Number(args[1].toString())
 
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments('eval')
-    }
-
-    const keysNum = Number(args[1].toString())
-
-    if (isNaN(keysNum)) {
-      throw new ExpectedInteger()
-    }
-
-    if (args.length - 2 < keysNum) {
-      throw new WrongNumberOfKeys()
-    }
-
-    const keys: Buffer[] = []
-
-    for (let i = 0; i < keysNum; i++) {
-      keys.push(args[2 + i])
-    }
-
-    return keys
+  if (isNaN(keysNum)) {
+    throw new ExpectedInteger()
   }
 
-  async run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments('eval')
-    }
-
-    const script = args[0].toString()
-    const sha = crypto.createHash('sha1').update(script).digest('hex')
-
-    const keys = []
-
-    for (const key of this.getKeys(rawCmd, args)) {
-      keys.push(`("${key.toString('hex')}"):fromhex()`)
-    }
-
-    const scriptArgs: string[] = []
-
-    for (let i = 2 + keys.length; i < args.length; i++) {
-      scriptArgs.push(`("${args[i].toString('hex')}"):fromhex()`)
-    }
-
-    // If execution context is available, use it for atomic execution
-    if (this.executionContext) {
-      return this.runWithContext(script, keys, scriptArgs, sha, signal)
-    }
-
-    // Fallback to old implementation (for backward compatibility)
-    return this.runLegacy(script, keys, scriptArgs, sha, signal)
+  if (args.length - 2 < keysNum) {
+    throw new WrongNumberOfKeys()
   }
 
-  private async runWithContext(
-    script: string,
-    keys: string[],
-    scriptArgs: string[],
-    sha: string,
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    // Create special transport for Lua
-    const luaTransport = new LuaTransport()
+  const keys: Buffer[] = []
 
-    this.lua.global.set(
-      'redisCall',
-      async (cmdName: string, luaArgs: string[]) => {
-        const cmd = this.commands[cmdName.toLowerCase()]
+  for (let i = 0; i < keysNum; i++) {
+    keys.push(args[2 + i])
+  }
 
-        if (!cmd) {
-          throw new UnknownScriptCommand(sha)
-        }
+  return keys
+}
 
-        const argsBuffer = luaArgs.map(arg => Buffer.from(arg, 'hex'))
+type EvalExecutionContext = {
+  luaEngine: LuaEngine
+  commands: Record<string, Command>
+  executionContext?: ExecutionContext
+  signal: AbortSignal
+}
 
-        // Reset transport for this command
-        luaTransport.reset()
+export async function executeEvalScript(
+  script: string,
+  keys: Buffer[],
+  args: Buffer[],
+  ctx: EvalExecutionContext,
+): Promise<CommandResult> {
+  const sha = crypto.createHash('sha1').update(script).digest('hex')
+  const keyArgs = keys.map(key => `("${key.toString('hex')}"):fromhex()`)
+  const scriptArgs = args.map(arg => `("${arg.toString('hex')}"):fromhex()`)
+  const luaScript = buildLuaScript(script, keyArgs, scriptArgs)
 
-        await this.executionContext!.execute(
-          luaTransport,
-          Buffer.from(cmdName),
-          argsBuffer,
-          signal,
-        )
+  if (ctx.executionContext) {
+    return runWithContext(
+      luaScript,
+      sha,
+      ctx.luaEngine,
+      ctx.commands,
+      ctx.executionContext,
+      ctx.signal,
+    )
+  }
 
-        // Get response from transport
-        const response = luaTransport.getResponse()
+  return runLegacy(luaScript, sha, ctx.luaEngine, ctx.commands, ctx.signal)
+}
 
-        // Convert Redis response to Lua format
-        return this.convertResponseToHex(response)
-      },
+export function splitEvalArguments(
+  keyCount: number,
+  rest: Buffer[],
+): { keys: Buffer[]; args: Buffer[] } {
+  const resolvedKeyCount = keyCount > 0 ? keyCount : 0
+
+  if (rest.length < resolvedKeyCount) {
+    throw new WrongNumberOfKeys()
+  }
+
+  return {
+    keys: rest.slice(0, resolvedKeyCount),
+    args: rest.slice(resolvedKeyCount),
+  }
+}
+
+async function runWithContext(
+  luaScript: string,
+  sha: string,
+  lua: LuaEngine,
+  commands: Record<string, Command>,
+  executionContext: ExecutionContext,
+  signal: AbortSignal,
+): Promise<CommandResult> {
+  const luaTransport = new LuaTransport()
+
+  lua.global.set('redisCall', async (cmdName: string, luaArgs: string[]) => {
+    const cmd = commands[cmdName.toLowerCase()]
+
+    if (!cmd) {
+      throw new UnknownScriptCommand(sha)
+    }
+
+    const argsBuffer = luaArgs.map(arg => Buffer.from(arg, 'hex'))
+
+    luaTransport.reset()
+
+    await executionContext.execute(
+      luaTransport,
+      Buffer.from(cmdName),
+      argsBuffer,
+      signal,
     )
 
-    // Execute script
-    const luaScript = `
-        function string.fromhex(str)
-            return (str:gsub('..', function (cc)
-                return string.char(tonumber(cc, 16))
-            end))
-        end
+    const response = luaTransport.getResponse()
 
-        function string.tohex(str)
-            return (str:gsub('.', function (c)
-                return string.format('%02X', string.byte(c))
-            end))
-        end
+    return convertResponseToHex(response)
+  })
 
-        redisInstance = {}
+  const result = await lua.doString(luaScript)
 
-        redisInstance.call = function (cmd, ...)
-          local args = {...}
+  return { response: Buffer.from(result, 'hex') }
+}
 
-          for i, v in ipairs(args) do
-            args[i] = v:tohex()
-          end
+async function runLegacy(
+  luaScript: string,
+  sha: string,
+  lua: LuaEngine,
+  commands: Record<string, Command>,
+  signal: AbortSignal,
+): Promise<CommandResult> {
+  lua.global.set('redisCall', async (cmdName: string, args: string[]) => {
+    const rawCmd = Buffer.from(cmdName)
+    const argsBuffer = args.map(arg => Buffer.from(arg, 'hex'))
+    const cmd = commands[cmdName]
 
-          local res = redisCall(cmd, args):await()
+    if (!cmd) {
+      throw new UnknownScriptCommand(sha)
+    }
 
-          -- TODO res not always hex string
-          return res:fromhex()
-        end
+    const { response } = await cmd.run(rawCmd, argsBuffer, signal)
 
-        function run(ARGV, KEYS, redis)
-          ${script}
-        end
+    return convertResponseToHex(response)
+  })
 
-        -- TODO hex
-        local args = { ${scriptArgs.join(',')} }
-        -- TODO hex
-        local keys = { ${keys.join(',')} }
+  const res = await lua.doString(luaScript)
 
-        res = run(args, keys, redisInstance)
-        -- TODO not always hexable
-        return res:tohex()
-      `
+  return { response: Buffer.from(res, 'hex') }
+}
 
-    const result = await this.lua.doString(luaScript)
-
-    return { response: Buffer.from(result, 'hex') }
-  }
-
-  private async runLegacy(
-    script: string,
-    keys: string[],
-    scriptArgs: string[],
-    sha: string,
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    // Set a JS function to be a global lua function
-    // TODO args not only strings
-    // TODO there is race condition here
-    this.lua.global.set(
-      'redisCall',
-      async (cmdName: string, args: string[]) => {
-        const rawCmd = Buffer.from(cmdName)
-        const argsBuffer = args.map(arg => Buffer.from(arg, 'hex'))
-        const cmd = this.commands[cmdName]
-
-        if (!cmd) {
-          throw new UnknownScriptCommand(sha)
-        }
-
-        const { response } = await cmd.run(rawCmd, argsBuffer, signal)
-
-        return this.convertResponseToHex(response)
-      },
-    )
-
-    // TODO add json support and msgpack
-    const res = await this.lua.doString(`
+function buildLuaScript(
+  script: string,
+  keys: string[],
+  scriptArgs: string[],
+): string {
+  return `
       function string.fromhex(str)
           return (str:gsub('..', function (cc)
               return string.char(tonumber(cc, 16))
@@ -242,30 +230,26 @@ export class EvalCommand implements Command {
       res = run(args, keys, redisInstance)
       -- TODO not always hexable
       return res:tohex()
-    `)
+    `
+}
 
-    return { response: Buffer.from(res, 'hex') }
+function convertResponseToHex(response: unknown): string {
+  let bufferRes: Buffer
+
+  if (response instanceof Buffer) {
+    bufferRes = response
+  } else if (
+    response instanceof Object &&
+    Object.hasOwn(response, 'toString')
+  ) {
+    bufferRes = Buffer.from(response.toString())
+  } else if (typeof response === 'string') {
+    bufferRes = Buffer.from(response)
+  } else {
+    throw new Error(`Unsupported input of type ${typeof response}`)
   }
 
-  private convertResponseToHex(response: unknown): string {
-    let bufferRes: Buffer
-
-    if (response instanceof Buffer) {
-      bufferRes = response
-    } else if (
-      response instanceof Object &&
-      Object.hasOwn(response, 'toString')
-    ) {
-      // TODO res can be any supported resp value, e.g list
-      bufferRes = Buffer.from(response.toString())
-    } else if (typeof response === 'string') {
-      bufferRes = Buffer.from(response)
-    } else {
-      throw new Error(`Unsupported input of type ${typeof response}`)
-    }
-
-    return bufferRes.toString('hex')
-  }
+  return bufferRes.toString('hex')
 }
 
 export default function (
@@ -274,5 +258,14 @@ export default function (
   db?: DB,
   executionContext?: ExecutionContext,
 ): Command {
-  return new EvalCommand(lua, commands, db!, executionContext)
+  if (!db) {
+    throw new Error('DB is required for EVAL')
+  }
+
+  return createSchemaCommand(EvalCommandDefinition, {
+    db,
+    luaEngine: lua,
+    commands,
+    executionContext,
+  })
 }

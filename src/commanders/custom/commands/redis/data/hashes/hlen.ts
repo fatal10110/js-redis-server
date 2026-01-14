@@ -1,62 +1,43 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const HlenCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('hlen', {
-    arity: 2, // HLEN key
-    flags: {
-      readonly: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.HASH],
-  }),
-  factory: deps => new HlenCommand(deps.db),
-}
+const metadata = defineCommand('hlen', {
+  arity: 2, // HLEN key
+  flags: {
+    readonly: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.HASH],
+})
 
-export class HlenCommand implements Command {
-  readonly metadata = HlenCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 1) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const HlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
+  metadata,
+  schema: t.tuple([t.key()]),
+  handler: async ([key], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: 0 })
+      return { response: 0 }
     }
 
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
 
-    const result = existing.hlen()
-    return Promise.resolve({ response: result })
-  }
+    return { response: existing.hlen() }
+  },
 }
 
 export default function (db: DB) {
-  return new HlenCommand(db)
+  return createSchemaCommand(HlenCommandDefinition, { db })
 }

@@ -1,71 +1,55 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const SremCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('srem', {
-    arity: -3, // SREM key member [member ...]
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.SET],
-  }),
-  factory: deps => new SremCommand(deps.db),
-}
+const metadata = defineCommand('srem', {
+  arity: -3, // SREM key member [member ...]
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.SET],
+})
 
-export class SremCommand implements Command {
-  readonly metadata = SremCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const SremCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, Buffer[]]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.key(), t.variadic(t.key())]),
+  handler: async ([key, firstMember, restMembers], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: 0 })
+      return { response: 0 }
     }
 
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
 
-    let removedCount = 0
-    for (let i = 1; i < args.length; i++) {
-      removedCount += existing.srem(args[i])
+    let removed = 0
+    removed += existing.srem(firstMember)
+    for (const member of restMembers) {
+      removed += existing.srem(member)
     }
 
-    // Remove empty set from database
     if (existing.scard() === 0) {
-      this.db.del(key)
+      db.del(key)
     }
 
-    return Promise.resolve({ response: removedCount })
-  }
+    return { response: removed }
+  },
 }
 
 export default function (db: DB) {
-  return new SremCommand(db)
+  return createSchemaCommand(SremCommandDefinition, { db })
 }

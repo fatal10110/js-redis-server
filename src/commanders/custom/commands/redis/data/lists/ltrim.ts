@@ -1,60 +1,34 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-  ExpectedInteger,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const LtrimCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('ltrim', {
-    arity: 4, // LTRIM key start stop
-    flags: {
-      write: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.LIST],
-  }),
-  factory: deps => new LtrimCommand(deps.db),
-}
+const metadata = defineCommand('ltrim', {
+  arity: 4, // LTRIM key start stop
+  flags: {
+    write: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.LIST],
+})
 
-export class LtrimCommand implements Command {
-  readonly metadata = LtrimCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const startStr = args[1].toString()
-    const stopStr = args[2].toString()
-
-    const start = parseInt(startStr)
-    const stop = parseInt(stopStr)
-    if (isNaN(start) || isNaN(stop)) {
-      throw new ExpectedInteger()
-    }
-
-    const existing = this.db.get(key)
+export const LtrimCommandDefinition: SchemaCommandRegistration<
+  [Buffer, number, number]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.integer(), t.integer()]),
+  handler: async ([key, start, stop], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: 'OK' })
+      return { response: 'OK' }
     }
 
     if (!(existing instanceof ListDataType)) {
@@ -63,15 +37,14 @@ export class LtrimCommand implements Command {
 
     existing.ltrim(start, stop)
 
-    // Remove key if list is empty
     if (existing.llen() === 0) {
-      this.db.del(key)
+      db.del(key)
     }
 
-    return Promise.resolve({ response: 'OK' })
-  }
+    return { response: 'OK' }
+  },
 }
 
 export default function (db: DB) {
-  return new LtrimCommand(db)
+  return createSchemaCommand(LtrimCommandDefinition, { db })
 }

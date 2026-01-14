@@ -1,78 +1,52 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-  ExpectedFloat,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const ZremrangebyscoreCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('zremrangebyscore', {
-    arity: 4, // ZREMRANGEBYSCORE key min max
-    flags: {
-      write: true,
-    },
-    firstKey: 0, // First arg is the key
-    lastKey: 0, // Last arg is the key
-    keyStep: 1, // Single key
-    categories: [CommandCategory.ZSET],
-  }),
-  factory: deps => new ZremrangebyscoreCommand(deps.db),
-}
+const metadata = defineCommand('zremrangebyscore', {
+  arity: 4, // ZREMRANGEBYSCORE key min max
+  flags: {
+    write: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.ZSET],
+})
 
-export class ZremrangebyscoreCommand implements Command {
-  readonly metadata = ZremrangebyscoreCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const minStr = args[1].toString()
-    const maxStr = args[2].toString()
-
+export const ZremrangebyscoreCommandDefinition: SchemaCommandRegistration<
+  [Buffer, string, string]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.string(), t.string()]),
+  handler: async ([key, minStr, maxStr], { db }) => {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
 
-    if (isNaN(min) || isNaN(max)) {
+    if (Number.isNaN(min) || Number.isNaN(max)) {
       throw new ExpectedFloat()
     }
 
-    const existing = this.db.get(key)
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: 0 })
+      return { response: 0 }
     }
 
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
 
-    const removedCount = existing.zremrangebyscore(min, max)
-
-    // Remove the key if the sorted set is empty
-    if (existing.zcard() === 0) {
-      this.db.del(key)
-    }
-
-    return Promise.resolve({ response: removedCount })
-  }
+    const removed = existing.zremrangebyscore(min, max)
+    return { response: removed }
+  },
 }
 
-export default function createZremrangebyscore(db: DB): Command {
-  return new ZremrangebyscoreCommand(db)
+export default function (db: DB) {
+  return createSchemaCommand(ZremrangebyscoreCommandDefinition, { db })
 }

@@ -1,91 +1,70 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-  ExpectedFloat,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const ZaddCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('zadd', {
-    arity: -4, // ZADD key score member [score member ...]
-    flags: {
-      write: true,
-      denyoom: true,
-      fast: true,
-    },
-    firstKey: 0, // First arg is the key
-    lastKey: 0, // Last arg is the key
-    keyStep: 1, // Single key
-    categories: [CommandCategory.ZSET],
-  }),
-  factory: deps => new ZaddCommand(deps.db),
-}
+const metadata = defineCommand('zadd', {
+  arity: -4, // ZADD key score member [score member ...]
+  flags: {
+    write: true,
+    denyoom: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.ZSET],
+})
 
-export class ZaddCommand implements Command {
-  readonly metadata = ZaddCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 3) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    if (args.length % 2 === 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
+export const ZaddCommandDefinition: SchemaCommandRegistration<
+  [Buffer, string, Buffer, Array<[string, Buffer]>]
+> = {
+  metadata,
+  schema: t.tuple([
+    t.key(),
+    t.string(),
+    t.key(),
+    t.variadic(t.tuple([t.string(), t.key()])),
+  ]),
+  handler: async ([key, firstScoreStr, firstMember, restPairs], { db }) => {
+    const firstScore = parseFloat(firstScoreStr)
+    if (Number.isNaN(firstScore)) {
+      throw new ExpectedFloat()
     }
 
-    const key = args[0]
-    const scoreMemberPairs: Array<{ score: number; member: Buffer }> = []
-
-    // Parse score-member pairs
-    for (let i = 1; i < args.length; i += 2) {
-      const scoreStr = args[i].toString()
-      const member = args[i + 1]
-
-      const score = parseFloat(scoreStr)
-      if (isNaN(score)) {
-        throw new ExpectedFloat()
-      }
-
-      scoreMemberPairs.push({ score, member })
-    }
-
-    const existing = this.db.get(key)
+    const existing = db.get(key)
 
     if (existing !== null && !(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
 
-    let zset: SortedSetDataType
-    if (existing instanceof SortedSetDataType) {
-      zset = existing
-    } else {
-      zset = new SortedSetDataType()
-      this.db.set(key, zset)
+    const zset =
+      existing instanceof SortedSetDataType ? existing : new SortedSetDataType()
+
+    if (!(existing instanceof SortedSetDataType)) {
+      db.set(key, zset)
     }
 
     let addedCount = 0
-    for (const { score, member } of scoreMemberPairs) {
+    addedCount += zset.zadd(firstScore, firstMember)
+
+    for (const [scoreStr, member] of restPairs) {
+      const score = parseFloat(scoreStr)
+      if (Number.isNaN(score)) {
+        throw new ExpectedFloat()
+      }
       addedCount += zset.zadd(score, member)
     }
 
-    return Promise.resolve({ response: addedCount })
-  }
+    return { response: addedCount }
+  },
 }
 
 export default function (db: DB) {
-  return new ZaddCommand(db)
+  return createSchemaCommand(ZaddCommandDefinition, { db })
 }

@@ -1,38 +1,26 @@
-import { WrongNumberOfArguments } from '../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../types'
+import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
 
-export const ScriptHelpCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('script|help', {
-    arity: 1, // SCRIPT HELP
-    flags: {
-      readonly: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.SCRIPT],
-  }),
-  factory: () => new ScriptHelpCommand(),
-}
+const metadata = defineCommand('script|help', {
+  arity: 1, // SCRIPT HELP
+  flags: {
+    readonly: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.SCRIPT],
+})
 
-export class ScriptHelpCommand implements Command {
-  readonly metadata = ScriptHelpCommandDefinition.metadata
-
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
-  }
-
-  run(_rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
+export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
+  metadata,
+  schema: t.tuple([]),
+  handler: async () => {
     const helpText = [
       'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
       'DEBUG <YES|SYNC|NO>',
@@ -49,6 +37,10 @@ export class ScriptHelpCommand implements Command {
       '    Load a script into the scripts cache without executing it.',
     ]
 
-    return Promise.resolve({ response: helpText })
-  }
+    return { response: helpText }
+  },
+}
+
+export default function (db: DB) {
+  return createSchemaCommand(ScriptHelpCommandDefinition, { db })
 }

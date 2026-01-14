@@ -1,71 +1,54 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const RpushCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('rpush', {
-    arity: -3, // RPUSH key element [element ...]
-    flags: {
-      write: true,
-      denyoom: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.LIST],
-  }),
-  factory: deps => new RpushCommand(deps.db),
-}
+const metadata = defineCommand('rpush', {
+  arity: -3, // RPUSH key element [element ...]
+  flags: {
+    write: true,
+    denyoom: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.LIST],
+})
 
-export class RpushCommand implements Command {
-  readonly metadata = RpushCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const RpushCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, Buffer[]]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.key(), t.variadic(t.key())]),
+  handler: async ([key, firstValue, restValues], { db }) => {
+    const existing = db.get(key)
 
     if (existing !== null && !(existing instanceof ListDataType)) {
       throw new WrongType()
     }
 
-    let list: ListDataType
-    if (existing instanceof ListDataType) {
-      list = existing
-    } else {
-      list = new ListDataType()
-      this.db.set(key, list)
+    const list =
+      existing instanceof ListDataType ? existing : new ListDataType()
+
+    if (!(existing instanceof ListDataType)) {
+      db.set(key, list)
     }
 
-    // Push all values in order
-    for (let i = 1; i < args.length; i++) {
-      list.rpush(args[i])
+    list.rpush(firstValue)
+    for (const value of restValues) {
+      list.rpush(value)
     }
 
-    return Promise.resolve({ response: list.llen() })
-  }
+    return { response: list.llen() }
+  },
 }
 
 export default function (db: DB) {
-  return new RpushCommand(db)
+  return createSchemaCommand(RpushCommandDefinition, { db })
 }

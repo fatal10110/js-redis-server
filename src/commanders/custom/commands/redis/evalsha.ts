@@ -1,79 +1,70 @@
-import {
-  ExpectedInteger,
-  NoScript,
-  WrongNumberOfArguments,
-  WrongNumberOfKeys,
-} from '../../../../core/errors'
-import { Command, CommandResult } from '../../../../types'
+import { NoScript } from '../../../../core/errors'
+import { Command, ExecutionContext } from '../../../../types'
+import { LuaEngine } from 'wasmoon'
 import { DB } from '../../db'
-import type { CommandMetadata } from '../../commands/metadata'
-import { CommandCategory } from '../../commands/metadata'
+import { defineCommand, CommandCategory } from '../metadata'
+import { createSchemaCommand, SchemaCommandRegistration, t } from '../../schema'
+import { executeEvalScript, extractEvalKeys, splitEvalArguments } from './eval'
 
-export class EvalShaCommand implements Command {
-  readonly metadata: CommandMetadata = {
-    name: 'evalsha',
-    arity: -3,
-    flags: { write: true, noscript: true, movablekeys: true },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
-    categories: [CommandCategory.SCRIPT],
+const metadata = defineCommand('evalsha', {
+  arity: -3,
+  flags: { write: true, noscript: true, movablekeys: true },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 0,
+  categories: [CommandCategory.SCRIPT],
+})
+
+type EvalShaArgs = [string, number, Buffer[]]
+
+export const EvalShaCommandDefinition: SchemaCommandRegistration<EvalShaArgs> =
+  {
+    metadata,
+    schema: t.tuple([t.string(), t.integer(), t.variadic(t.key())]),
+    getKeys: (_rawCmd, args) => extractEvalKeys('evalsha', args),
+    handler: async ([sha, keyCount, rest], ctx) => {
+      const script = ctx.db.getScript(sha)
+
+      if (!script) {
+        throw new NoScript()
+      }
+
+      const { keys, args } = splitEvalArguments(keyCount, rest)
+
+      const luaEngine = ctx.luaEngine
+      const commands = ctx.commands
+
+      if (!luaEngine) {
+        throw new Error('Lua engine is not available for EVALSHA')
+      }
+
+      if (!commands) {
+        throw new Error('Command registry is not available for EVALSHA')
+      }
+
+      return executeEvalScript(script.toString(), keys, args, {
+        luaEngine,
+        commands,
+        executionContext: ctx.executionContext,
+        signal: ctx.signal,
+      })
+    },
   }
 
-  constructor(
-    private readonly evalCommand: Command,
-    private readonly db: DB,
-  ) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments('evalsha')
-    }
-
-    const keysNum = Number(args[1].toString())
-
-    if (isNaN(keysNum)) {
-      throw new ExpectedInteger()
-    }
-
-    if (args.length - 2 < keysNum) {
-      throw new WrongNumberOfKeys()
-    }
-
-    const keys: Buffer[] = []
-
-    for (let i = 0; i < keysNum; i++) {
-      keys.push(args[2 + i])
-    }
-
-    return keys
+export default function (
+  lua: LuaEngine,
+  commands: Record<string, Command>,
+  db?: DB,
+  executionContext?: ExecutionContext,
+): Command {
+  if (!db) {
+    throw new Error('DB is required for EVALSHA')
   }
 
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    const [bufSha, ...restArgs] = args
-
-    if (!bufSha) {
-      throw new WrongNumberOfArguments('evalsha')
-    }
-
-    const script = this.db.getScript(bufSha.toString())
-
-    if (!script) {
-      throw new NoScript()
-    }
-
-    return this.evalCommand.run(
-      Buffer.from('eval'),
-      [script, ...restArgs],
-      signal,
-    )
-  }
-}
-
-export default function (evalCmd: Command, db: DB) {
-  return new EvalShaCommand(evalCmd, db)
+  return createSchemaCommand(EvalShaCommandDefinition, {
+    db,
+    luaEngine: lua,
+    commands,
+    executionContext,
+  })
 }

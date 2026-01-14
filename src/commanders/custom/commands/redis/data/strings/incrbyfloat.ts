@@ -1,56 +1,37 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-  ExpectedFloat,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType, ExpectedFloat } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const IncrbyfloatCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('incrbyfloat', {
-    arity: 3, // INCRBYFLOAT key increment
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.STRING],
-  }),
-  factory: deps => new IncrbyfloatCommand(deps.db),
-}
+const metadata = defineCommand('incrbyfloat', {
+  arity: 3, // INCRBYFLOAT key increment
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.STRING],
+})
 
-export class IncrbyfloatCommand implements Command {
-  readonly metadata = IncrbyfloatCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length !== 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length !== 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const incrementStr = args[1].toString()
-
+export const IncrbyfloatCommandDefinition: SchemaCommandRegistration<
+  [Buffer, string]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.string()]),
+  handler: async ([key, incrementStr], { db }) => {
     const increment = parseFloat(incrementStr)
     if (isNaN(increment)) {
       throw new ExpectedFloat()
     }
 
-    const existing = this.db.get(key)
+    const existing = db.get(key)
     let currentValue = 0
 
     if (existing !== null) {
@@ -65,12 +46,12 @@ export class IncrbyfloatCommand implements Command {
     }
 
     const newValue = currentValue + increment
-    this.db.set(key, new StringDataType(Buffer.from(newValue.toString())))
+    db.set(key, new StringDataType(Buffer.from(newValue.toString())))
 
-    return Promise.resolve({ response: Buffer.from(newValue.toString()) })
-  }
+    return { response: Buffer.from(newValue.toString()) }
+  },
 }
 
 export default function (db: DB) {
-  return new IncrbyfloatCommand(db)
+  return createSchemaCommand(IncrbyfloatCommandDefinition, { db })
 }

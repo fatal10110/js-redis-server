@@ -1,33 +1,28 @@
-import { Command, CommandResult } from '../../../../../types'
+import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
 
-export const CommandInfoDefinition: CommandDefinition = {
-  metadata: defineCommand('command', {
-    arity: -1, // COMMAND [subcommand]
-    flags: {
-      readonly: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.SERVER],
-  }),
-  factory: () => new CommandsInfo(),
+const metadata = defineCommand('command', {
+  arity: -1, // COMMAND [subcommand]
+  flags: {
+    readonly: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.SERVER],
+})
+
+export const CommandInfoDefinition: SchemaCommandRegistration<[string[]]> = {
+  metadata,
+  schema: t.tuple([t.variadic(t.string())]),
+  handler: async () => ({ response: 'mock response' }),
 }
 
-export class CommandsInfo implements Command {
-  readonly metadata = CommandInfoDefinition.metadata
-
-  getKeys(_rawCmd: Buffer, _args: Buffer[]): Buffer[] {
-    return []
-  }
-
-  run(): Promise<CommandResult> {
-    return Promise.resolve({ response: 'mock response' }) // TODO
-  }
-}
-
-export default function () {
-  return new CommandsInfo()
+export default function (db: DB) {
+  return createSchemaCommand(CommandInfoDefinition, { db })
 }

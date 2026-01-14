@@ -137,6 +137,13 @@ export class TransactionDiscardedWithError extends UserFacedError {
   }
 }
 
+export class OutOfRangeIndex extends UserFacedError {
+  constructor() {
+    super('index out of range')
+    this.name = 'ERR'
+  }
+}
+
 export class NoMulti extends UserFacedError {
   constructor() {
     super(`EXEC without MULTI`)

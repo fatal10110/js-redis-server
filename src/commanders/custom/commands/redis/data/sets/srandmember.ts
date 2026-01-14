@@ -1,80 +1,55 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-  ExpectedInteger,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const SrandmemberCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('srandmember', {
-    arity: -2, // SRANDMEMBER key [count]
-    flags: {
-      readonly: true,
-      random: true,
-      noscript: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.SET],
-  }),
-  factory: deps => new SrandmemberCommand(deps.db),
-}
+const metadata = defineCommand('srandmember', {
+  arity: -2, // SRANDMEMBER key [count]
+  flags: {
+    readonly: true,
+    random: true,
+    noscript: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.SET],
+})
 
-export class SrandmemberCommand implements Command {
-  readonly metadata = SrandmemberCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 1 || args.length > 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 1 || args.length > 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const SrandmemberCommandDefinition: SchemaCommandRegistration<
+  [Buffer, number | undefined]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.optional(t.integer())]),
+  handler: async ([key, count], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      if (args.length === 2) {
-        return Promise.resolve({ response: [] })
+      if (count !== undefined) {
+        return { response: [] }
       }
-      return Promise.resolve({ response: null })
+      return { response: null }
     }
 
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
 
-    if (args.length === 1) {
-      // Single random member
+    if (count === undefined) {
       const member = existing.srandmember()
-      return Promise.resolve({ response: member })
-    }
-
-    // Multiple random members with count
-    const countStr = args[1].toString()
-    const count = parseInt(countStr)
-    if (isNaN(count)) {
-      throw new ExpectedInteger()
+      return { response: member }
     }
 
     const members = existing.srandmember(count)
-    return Promise.resolve({ response: members })
-  }
+    return { response: members }
+  },
 }
 
 export default function (db: DB) {
-  return new SrandmemberCommand(db)
+  return createSchemaCommand(SrandmemberCommandDefinition, { db })
 }

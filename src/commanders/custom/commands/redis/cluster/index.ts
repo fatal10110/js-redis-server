@@ -1,97 +1,92 @@
-import {
-  UnknwonClusterSubCommand,
-  WrongNumberOfArguments,
-} from '../../../../../core/errors'
-import { Command, CommandResult, DiscoveryService } from '../../../../../types'
+import { UnknwonClusterSubCommand } from '../../../../../core/errors'
+import { Command } from '../../../../../types'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
 import {
-  ClusterInfoCommand,
+  createSchemaCommand,
+  SchemaCommandContext,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
+import {
+  ClusterInfoCommandDefinition,
   commandName as clusterInfoCommandName,
 } from './clusterInfo'
 import {
-  ClusterNodesCommand,
+  ClusterNodesCommandDefinition,
   commandName as clusterNodesCommandName,
 } from './clusterNodes'
 import {
-  ClusterShardsCommand,
+  ClusterShardsCommandDefinition,
   commandName as clusterShardsCommandName,
 } from './clusterShards'
 import {
-  ClusterSlotsCommand,
+  ClusterSlotsCommandDefinition,
   commandName as clusterSlotsCommandName,
 } from './clusterSlots'
 
-export const ClusterCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('cluster', {
-    arity: -2, // CLUSTER <subcommand> [args...]
-    flags: {
-      admin: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.CLUSTER],
-  }),
-  factory: deps => {
-    if (!deps.discoveryService || !deps.mySelfId) {
-      throw new Error('Cluster command requires discoveryService and mySelfId')
+const metadata = defineCommand('cluster', {
+  arity: -2, // CLUSTER <subcommand> [args...]
+  flags: {
+    admin: true,
+  },
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.CLUSTER],
+})
+
+export const ClusterCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer[]]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.variadic(t.key())]),
+  handler: async ([subCommandName, rest], ctx) => {
+    const subCommands = createSubCommands(ctx)
+    const args = [subCommandName, ...rest]
+    const subCommand = args.pop()
+
+    if (!subCommand) {
+      throw new UnknwonClusterSubCommand('')
     }
 
-    return new ClusterCommand(
-      createSubCommands(deps.discoveryService, deps.mySelfId),
-    )
+    const sub = subCommands[subCommand.toString().toLowerCase()]
+
+    if (!sub) {
+      throw new UnknwonClusterSubCommand(subCommand.toString())
+    }
+
+    return sub.run(subCommand, args, ctx.signal)
   },
 }
 
-export class ClusterCommand implements Command {
-  readonly metadata = ClusterCommandDefinition.metadata
-
-  constructor(private readonly subCommands: Record<string, Command>) {}
-
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (!args.length) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
+function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
+  const baseCtx = {
+    db: ctx.db,
+    luaEngine: ctx.luaEngine,
+    discoveryService: ctx.discoveryService,
+    mySelfId: ctx.mySelfId,
   }
-
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    const subCommandName = args.pop()
-
-    if (!subCommandName) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const subComamnd = this.subCommands[subCommandName.toString().toLowerCase()]
-
-    if (!subComamnd) {
-      throw new UnknwonClusterSubCommand(subCommandName.toString())
-    }
-
-    return subComamnd.run(subCommandName, args, signal)
-  }
-}
-
-export default function (discoveryService: DiscoveryService, mySelfId: string) {
-  return new ClusterCommand(createSubCommands(discoveryService, mySelfId))
-}
-
-function createSubCommands(
-  discoveryService: DiscoveryService,
-  mySelfId: string,
-): Record<string, Command> {
-  const me = discoveryService.getById(mySelfId)
 
   return {
-    [clusterInfoCommandName]: new ClusterInfoCommand(me, discoveryService),
-    [clusterNodesCommandName]: new ClusterNodesCommand(me, discoveryService),
-    [clusterShardsCommandName]: new ClusterShardsCommand(me, discoveryService),
-    [clusterSlotsCommandName]: new ClusterSlotsCommand(me, discoveryService),
+    [clusterInfoCommandName]: createSchemaCommand(
+      ClusterInfoCommandDefinition,
+      baseCtx,
+    ),
+    [clusterNodesCommandName]: createSchemaCommand(
+      ClusterNodesCommandDefinition,
+      baseCtx,
+    ),
+    [clusterShardsCommandName]: createSchemaCommand(
+      ClusterShardsCommandDefinition,
+      baseCtx,
+    ),
+    [clusterSlotsCommandName]: createSchemaCommand(
+      ClusterSlotsCommandDefinition,
+      baseCtx,
+    ),
   }
+}
+
+export default function (db: SchemaCommandContext['db']) {
+  return createSchemaCommand(ClusterCommandDefinition, { db })
 }

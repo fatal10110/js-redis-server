@@ -1,71 +1,51 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const ZremCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('zrem', {
-    arity: -3, // ZREM key member [member ...]
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0, // First arg is the key
-    lastKey: 0, // Last arg is the key
-    keyStep: 1, // Single key
-    categories: [CommandCategory.ZSET],
-  }),
-  factory: deps => new ZremCommand(deps.db),
-}
+const metadata = defineCommand('zrem', {
+  arity: -3, // ZREM key member [member ...]
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.ZSET],
+})
 
-export class ZremCommand implements Command {
-  readonly metadata = ZremCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const ZremCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, Buffer[]]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.key(), t.variadic(t.key())]),
+  handler: async ([key, firstMember, restMembers], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: 0 })
+      return { response: 0 }
     }
 
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
 
-    let removedCount = 0
-    for (let i = 1; i < args.length; i++) {
-      removedCount += existing.zrem(args[i])
+    let removed = 0
+    removed += existing.zrem(firstMember)
+    for (const member of restMembers) {
+      removed += existing.zrem(member)
     }
 
-    // Remove the key if the sorted set is empty
-    if (existing.zcard() === 0) {
-      this.db.del(key)
-    }
-
-    return Promise.resolve({ response: removedCount })
-  }
+    return { response: removed }
+  },
 }
 
 export default function (db: DB) {
-  return new ZremCommand(db)
+  return createSchemaCommand(ZremCommandDefinition, { db })
 }

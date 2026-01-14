@@ -1,15 +1,16 @@
 import {
-  WrongNumberOfArguments,
+  InvalidExpireTime,
   RedisSyntaxError,
   WrongType,
-  ExpectedInteger,
-  InvalidExpireTime,
 } from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
 import { StringDataType } from '../../../../data-structures/string'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
 interface SetOptions {
   expiration?: number
@@ -19,263 +20,159 @@ interface SetOptions {
   get?: boolean
 }
 
-// Command definition with metadata
-export const SetCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('set', {
-    arity: -3, // SET key value [options...]
-    flags: {
-      write: true,
-      denyoom: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.STRING],
-  }),
-  factory: deps => new SetCommand(deps.db),
-}
+type SetTtlToken =
+  | { type: 'EX'; value: number }
+  | { type: 'PX'; value: number }
+  | { type: 'EXAT'; value: number }
+  | { type: 'PXAT'; value: number }
 
-export class SetCommand implements Command {
-  readonly metadata = SetCommandDefinition.metadata
+type SetSchemaOptions = Partial<{
+  ttl: SetTtlToken
+  condition: 'NX' | 'XX'
+  keepTtl: 'KEEPTTL'
+  get: 'GET'
+}>
 
-  constructor(private readonly db: DB) {}
+const metadata = defineCommand('set', {
+  arity: -3, // SET key value [options...]
+  flags: {
+    write: true,
+    denyoom: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.STRING],
+})
 
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      // SET command requires at least 2 arguments: key and value
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
+export const SetCommandDefinition: SchemaCommandRegistration<
+  [Buffer, string, SetSchemaOptions]
+> = {
+  metadata,
+  schema: t.tuple([
+    t.key(),
+    t.string(),
+    t.options({
+      ttl: t.xor([
+        t.named('EX', t.integer({ min: 1 })),
+        t.named('PX', t.integer({ min: 1 })),
+        t.named('EXAT', t.integer({ min: 1 })),
+        t.named('PXAT', t.integer({ min: 1 })),
+      ]),
+      condition: t.xor([t.flag('NX'), t.flag('XX')]),
+      keepTtl: t.flag('KEEPTTL'),
+      get: t.flag('GET'),
+    }),
+  ]),
+  handler: async ([key, value, schemaOptions], { db }) => {
+    const options = parseOptions(schemaOptions ?? {})
 
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 2) {
-      // SET command requires at least 2 arguments: key and value
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const [key, value] = args
-
-    // Parse options from remaining arguments
-    const options = this.parseOptions(args.slice(2))
-
-    // Get existing value and type
-    const existingData = this.db.get(key)
+    const existingData = db.get(key)
     let oldValue: Buffer | null = null
 
-    // Handle GET option - return old value if it exists and is a string
     if (options.get) {
       if (existingData instanceof StringDataType) {
         oldValue = existingData.data
       } else if (existingData !== null) {
-        // Cannot use GET option on non-string data types (Redis compatibility)
         throw new WrongType()
       }
     }
 
-    // Handle NX/XX conditions
     if (options.nx && existingData !== null) {
-      // NX: only set if key doesn't exist, but key exists
       if (options.get) {
-        return Promise.resolve({ response: oldValue })
+        return { response: oldValue }
       }
-      return Promise.resolve({ response: null })
+      return { response: null }
     }
 
     if (options.xx && existingData === null) {
-      // XX: only set if key exists, but key doesn't exist
       if (options.get) {
-        return Promise.resolve({ response: null })
+        return { response: null }
       }
-      return Promise.resolve({ response: null })
+      return { response: null }
     }
 
-    // If key exists and is not a string type, delete it first
     if (existingData !== null && !(existingData instanceof StringDataType)) {
-      this.db.del(key)
+      db.del(key)
     }
 
-    // Calculate expiration
     let expiration: number | undefined
 
     if (options.keepTtl && existingData instanceof StringDataType) {
-      // Keep existing TTL - we need to get the current TTL
-      // This is a limitation of the current DB implementation
-      // In a real Redis implementation, we would preserve the exact TTL
-      expiration = undefined // Current DB doesn't expose TTL getter
+      expiration = undefined
     } else if (options.expiration !== undefined) {
       expiration = options.expiration
     }
 
-    // Set the new value
-    this.db.set(key, new StringDataType(value), expiration)
+    const valueBuffer = Buffer.from(value)
+    db.set(key, new StringDataType(valueBuffer), expiration)
 
-    // Return appropriate response
     if (options.get) {
-      return Promise.resolve({ response: oldValue })
+      return { response: oldValue }
     }
 
-    return Promise.resolve({ response: 'OK' })
+    return { response: 'OK' }
+  },
+}
+
+function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
+  const options: SetOptions = {}
+
+  if (schemaOptions.condition === 'NX') {
+    options.nx = true
+  } else if (schemaOptions.condition === 'XX') {
+    options.xx = true
   }
 
-  private parseOptions(args: Buffer[]): SetOptions {
-    const options: SetOptions = {}
-    let i = 0
+  if (schemaOptions.keepTtl) {
+    options.keepTtl = true
+  }
 
-    while (i < args.length) {
-      const option = args[i].toString().toUpperCase()
+  if (schemaOptions.get) {
+    options.get = true
+  }
 
-      switch (option) {
-        // EX seconds - Set expiration time in seconds (relative to current time)
-        case 'EX': {
-          if (i + 1 >= args.length) {
-            // EX option requires a value argument (number of seconds)
-            throw new RedisSyntaxError()
-          }
-          if (options.expiration !== undefined) {
-            // Cannot specify multiple expiration options (EX, PX, EXAT, PXAT)
-            throw new RedisSyntaxError()
-          }
-          const seconds = parseInt(args[i + 1].toString())
-          if (isNaN(seconds)) {
-            // EX value must be an integer
-            throw new ExpectedInteger()
-          }
-          if (seconds <= 0) {
-            // EX value must be positive (cannot set negative expire time)
-            throw new InvalidExpireTime('set')
-          }
-          options.expiration = Date.now() + seconds * 1000
-          i += 2
-          break
-        }
-
-        // PX milliseconds - Set expiration time in milliseconds (relative to current time)
-        case 'PX': {
-          if (i + 1 >= args.length) {
-            // PX option requires a value argument (number of milliseconds)
-            throw new RedisSyntaxError()
-          }
-          if (options.expiration !== undefined) {
-            // Cannot specify multiple expiration options (EX, PX, EXAT, PXAT)
-            throw new RedisSyntaxError()
-          }
-          const milliseconds = parseInt(args[i + 1].toString())
-          if (isNaN(milliseconds)) {
-            // PX value must be an integer
-            throw new ExpectedInteger()
-          }
-          if (milliseconds <= 0) {
-            // PX value must be positive (cannot set negative expire time)
-            throw new InvalidExpireTime('set')
-          }
-          options.expiration = Date.now() + milliseconds
-          i += 2
-          break
-        }
-
-        // EXAT timestamp-seconds - Set expiration time as Unix timestamp in seconds
-        case 'EXAT': {
-          if (i + 1 >= args.length) {
-            // EXAT option requires a value argument (Unix timestamp in seconds)
-            throw new RedisSyntaxError()
-          }
-          if (options.expiration !== undefined) {
-            // Cannot specify multiple expiration options (EX, PX, EXAT, PXAT)
-            throw new RedisSyntaxError()
-          }
-          const timestampSeconds = parseInt(args[i + 1].toString())
-          if (isNaN(timestampSeconds)) {
-            // EXAT value must be an integer
-            throw new ExpectedInteger()
-          }
-          if (timestampSeconds <= 0) {
-            // EXAT value must be positive (cannot set negative expire time)
-            throw new InvalidExpireTime('set')
-          }
-          options.expiration = timestampSeconds * 1000
-          i += 2
-          break
-        }
-
-        // PXAT timestamp-milliseconds - Set expiration time as Unix timestamp in milliseconds
-        case 'PXAT': {
-          if (i + 1 >= args.length) {
-            // PXAT option requires a value argument (Unix timestamp in milliseconds)
-            throw new RedisSyntaxError()
-          }
-          if (options.expiration !== undefined) {
-            // Cannot specify multiple expiration options (EX, PX, EXAT, PXAT)
-            throw new RedisSyntaxError()
-          }
-          const timestampMilliseconds = parseInt(args[i + 1].toString())
-          if (isNaN(timestampMilliseconds)) {
-            // PXAT value must be an integer
-            throw new ExpectedInteger()
-          }
-          if (timestampMilliseconds <= 0) {
-            // PXAT value must be positive (cannot set negative expire time)
-            throw new InvalidExpireTime('set')
-          }
-          options.expiration = timestampMilliseconds
-          i += 2
-          break
-        }
-
-        // NX - Only set the key if it does NOT exist (create new key only)
-        case 'NX':
-          if (options.xx) {
-            // Cannot use both NX and XX options together (they are mutually exclusive)
-            throw new RedisSyntaxError()
-          }
-          options.nx = true
-          i += 1
-          break
-
-        // XX - Only set the key if it already EXISTS (update existing key only)
-        case 'XX':
-          if (options.nx) {
-            // Cannot use both NX and XX options together (they are mutually exclusive)
-            throw new RedisSyntaxError()
-          }
-          options.xx = true
-          i += 1
-          break
-
-        // KEEPTTL - Retain the existing time to live (TTL) of the key
-        case 'KEEPTTL':
-          if (options.expiration !== undefined) {
-            // Cannot use KEEPTTL with expiration options (EX, PX, EXAT, PXAT)
-            throw new RedisSyntaxError()
-          }
-          options.keepTtl = true
-          i += 1
-          break
-
-        // GET - Return the previous value of the key before setting the new value
-        case 'GET':
-          options.get = true
-          i += 1
-          break
-
-        // Unknown option - throw syntax error for any unrecognized option
-        default:
-          // Unrecognized option provided - Redis only supports specific SET options
-          throw new RedisSyntaxError()
-      }
-    }
-
-    // Validate incompatible options
-    if (options.keepTtl && options.expiration !== undefined) {
-      // KEEPTTL and expiration options are mutually exclusive (double-check validation)
+  const ttl = schemaOptions.ttl
+  if (ttl) {
+    if (options.keepTtl) {
       throw new RedisSyntaxError()
     }
-
-    return options
+    if (ttl.type === 'EX') {
+      if (ttl.value <= 0) {
+        throw new InvalidExpireTime('set')
+      }
+      options.expiration = Date.now() + ttl.value * 1000
+    } else if (ttl.type === 'PX') {
+      if (ttl.value <= 0) {
+        throw new InvalidExpireTime('set')
+      }
+      options.expiration = Date.now() + ttl.value
+    } else if (ttl.type === 'EXAT') {
+      if (ttl.value <= 0) {
+        throw new InvalidExpireTime('set')
+      }
+      options.expiration = ttl.value * 1000
+    } else if (ttl.type === 'PXAT') {
+      if (ttl.value <= 0) {
+        throw new InvalidExpireTime('set')
+      }
+      options.expiration = ttl.value
+    } else {
+      throw new RedisSyntaxError()
+    }
   }
+
+  if (options.nx && options.xx) {
+    throw new RedisSyntaxError()
+  }
+
+  if (options.keepTtl && options.expiration !== undefined) {
+    throw new RedisSyntaxError()
+  }
+
+  return options
 }
 
 export default function (db: DB) {
-  return new SetCommand(db)
+  return createSchemaCommand(SetCommandDefinition, { db })
 }

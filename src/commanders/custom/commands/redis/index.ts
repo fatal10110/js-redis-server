@@ -14,9 +14,6 @@ export { default as createQuit } from './quit'
 // All data commands (strings, keys, hashes, lists, sets, zsets)
 export * from './data'
 
-import createEval from './eval'
-import createEvalSha from './evalsha'
-
 export function createCommands(
   luaEngine: LuaEngine,
   db: DB,
@@ -31,17 +28,14 @@ export function createCommands(
     luaEngine,
     discoveryService: options?.discoveryService,
     mySelfId: options?.mySelfId,
+    executionContext: options?.executionContext,
   }
   const registry = createCommandRegistry(deps)
   const commands = stripSubCommands(registry.createCommands(deps))
-
-  const evalCmd = createEval(luaEngine, commands, db, options?.executionContext)
-  const evalsha = createEvalSha(evalCmd, db)
+  deps.commands = commands
 
   return {
     ...commands,
-    eval: evalCmd,
-    evalsha,
   }
 }
 
@@ -65,6 +59,7 @@ export function createReadonlyCommands(
   const deps: CommandDependencies = { db, luaEngine }
   const registry = createCommandRegistry(deps)
   const allCommands = stripSubCommands(registry.createCommands(deps))
+  deps.commands = allCommands
   const readonlyDefinitions = registry.getReadonlyCommands()
   const readonlyNames = new Set(
     readonlyDefinitions.map(def => def.metadata.name),
@@ -84,6 +79,7 @@ export function createMultiCommands(
   const deps: CommandDependencies = { db, luaEngine }
   const registry = createCommandRegistry(deps)
   const allCommands = stripSubCommands(registry.createCommands(deps))
+  deps.commands = allCommands
   const multiDefinitions = registry.getMultiCommands()
   const multiNames = new Set(multiDefinitions.map(def => def.metadata.name))
 
@@ -101,6 +97,7 @@ export function createLuaCommands(
   const deps: CommandDependencies = { db, luaEngine }
   const registry = createCommandRegistry(deps)
   const allCommands = stripSubCommands(registry.createCommands(deps))
+  deps.commands = allCommands
   const luaDefinitions = registry.getLuaCommands()
   const luaNames = new Set(luaDefinitions.map(def => def.metadata.name))
 
@@ -233,6 +230,8 @@ import { ScriptFlushCommandDefinition } from './script/flush'
 import { ScriptKillCommandDefinition } from './script/kill'
 import { ScriptDebugCommandDefinition } from './script/debug'
 import { ScriptHelpCommandDefinition } from './script/help'
+import { EvalCommandDefinition } from './eval'
+import { EvalShaCommandDefinition } from './evalsha'
 import { ClusterCommandDefinition } from './cluster'
 import { ClusterInfoCommandDefinition } from './cluster/clusterInfo'
 import { ClusterNodesCommandDefinition } from './cluster/clusterNodes'
@@ -245,7 +244,6 @@ export function createCommandRegistry(
   const registry = new CommandRegistry()
 
   // String commands (13 commands)
-  // Register commands that have been migrated to the new metadata system
   registry.registerAll([
     GetCommandDefinition,
     SetCommandDefinition,
@@ -260,7 +258,10 @@ export function createCommandRegistry(
     IncrbyCommandDefinition,
     DecrbyCommandDefinition,
     IncrbyfloatCommandDefinition,
+  ])
 
+  // Register commands that have been migrated to the new metadata system
+  registry.registerAll([
     // Key commands (10 commands)
     DelCommandDefinition,
     ExistsCommandDefinition,
@@ -272,21 +273,9 @@ export function createCommandRegistry(
     FlushdbCommandDefinition,
     FlushallCommandDefinition,
     DbSizeCommandDefinition,
+  ])
 
-    // Hash commands (12 commands)
-    HsetCommandDefinition,
-    HgetCommandDefinition,
-    HdelCommandDefinition,
-    HgetallCommandDefinition,
-    HmgetCommandDefinition,
-    HmsetCommandDefinition,
-    HkeysCommandDefinition,
-    HvalsCommandDefinition,
-    HlenCommandDefinition,
-    HexistsCommandDefinition,
-    HincrbyCommandDefinition,
-    HincrbyfloatCommandDefinition,
-
+  registry.registerAll([
     // List commands (10 commands)
     LpushCommandDefinition,
     RpushCommandDefinition,
@@ -325,6 +314,20 @@ export function createCommandRegistry(
     ZrangebyscoreCommandDefinition,
     ZremrangebyscoreCommandDefinition,
 
+    // Hash commands (12 commands)
+    HsetCommandDefinition,
+    HgetCommandDefinition,
+    HdelCommandDefinition,
+    HgetallCommandDefinition,
+    HmgetCommandDefinition,
+    HmsetCommandDefinition,
+    HkeysCommandDefinition,
+    HvalsCommandDefinition,
+    HlenCommandDefinition,
+    HexistsCommandDefinition,
+    HincrbyCommandDefinition,
+    HincrbyfloatCommandDefinition,
+
     // Server/connection commands
     PingCommandDefinition,
     InfoCommandDefinition,
@@ -335,6 +338,8 @@ export function createCommandRegistry(
     ClientSetNameCommandDefinition,
 
     // Script commands
+    EvalCommandDefinition,
+    EvalShaCommandDefinition,
     ScriptCommandDefinition,
     ScriptLoadCommandDefinition,
     ScriptExistsCommandDefinition,

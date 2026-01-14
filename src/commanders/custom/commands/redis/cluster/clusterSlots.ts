@@ -1,62 +1,39 @@
-import { WrongNumberOfArguments } from '../../../../../core/errors'
-import {
-  Command,
-  CommandResult,
-  DiscoveryNode,
-  DiscoveryService,
-} from '../../../../../types'
+import { DiscoveryService } from '../../../../../types'
+import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import type { CommandDefinition } from '../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../schema'
 
 export const commandName = 'slots'
 
-export const ClusterSlotsCommandDefinition: CommandDefinition = {
-  metadata: defineCommand(`cluster|${commandName}`, {
-    arity: 1, // CLUSTER SLOTS
-    flags: {
-      admin: true,
-      readonly: true,
-    },
-    firstKey: -1,
-    lastKey: -1,
-    keyStep: 1,
-    categories: [CommandCategory.CLUSTER],
-  }),
-  factory: deps => {
-    if (!deps.discoveryService || !deps.mySelfId) {
-      throw new Error('Cluster slots requires discoveryService and mySelfId')
-    }
-
-    const me = deps.discoveryService.getById(deps.mySelfId)
-    return new ClusterSlotsCommand(me, deps.discoveryService)
+const metadata = defineCommand(`cluster|${commandName}`, {
+  arity: 1, // CLUSTER SLOTS
+  flags: {
+    admin: true,
+    readonly: true,
   },
-}
+  firstKey: -1,
+  lastKey: -1,
+  keyStep: 1,
+  categories: [CommandCategory.CLUSTER],
+})
 
-export class ClusterSlotsCommand implements Command {
-  readonly metadata = ClusterSlotsCommandDefinition.metadata
-
-  constructor(
-    private readonly me: DiscoveryNode,
-    private readonly discoveryService: DiscoveryService,
-  ) {}
-
-  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length > 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    return []
-  }
-
-  run(rawCommand: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length > 0) {
-      throw new WrongNumberOfArguments(this.metadata.name)
+export const ClusterSlotsCommandDefinition: SchemaCommandRegistration<[]> = {
+  metadata,
+  schema: t.tuple([]),
+  handler: async (_args, { discoveryService, mySelfId }) => {
+    const service = discoveryService as DiscoveryService | undefined
+    if (!service || !mySelfId) {
+      throw new Error('Cluster slots requires discoveryService and mySelfId')
     }
 
     const slots: unknown[] = []
 
-    for (const clusterNode of this.discoveryService.getAll()) {
-      if (!this.discoveryService.isMaster(clusterNode.id)) continue
+    for (const clusterNode of service.getAll()) {
+      if (!service.isMaster(clusterNode.id)) continue
 
       const nodeInfo: (string | number | Iterable<void>)[] = [
         clusterNode.host,
@@ -70,6 +47,18 @@ export class ClusterSlotsCommand implements Command {
       }
     }
 
-    return Promise.resolve({ response: slots })
-  }
+    return { response: slots }
+  },
+}
+
+export default function (
+  db: DB,
+  discoveryService: DiscoveryService,
+  mySelfId: string,
+) {
+  return createSchemaCommand(ClusterSlotsCommandDefinition, {
+    db,
+    discoveryService,
+    mySelfId,
+  })
 }

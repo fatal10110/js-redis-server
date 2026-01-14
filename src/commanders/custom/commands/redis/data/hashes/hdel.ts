@@ -1,51 +1,35 @@
-import {
-  WrongNumberOfArguments,
-  WrongType,
-} from '../../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../../types'
+import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
 import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
-import type { CommandDefinition } from '../../../registry'
+import {
+  createSchemaCommand,
+  SchemaCommandRegistration,
+  t,
+} from '../../../../schema'
 
-// Command definition with metadata
-export const HdelCommandDefinition: CommandDefinition = {
-  metadata: defineCommand('hdel', {
-    arity: -3, // HDEL key field [field ...]
-    flags: {
-      write: true,
-      fast: true,
-    },
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 1,
-    categories: [CommandCategory.HASH],
-  }),
-  factory: deps => new HdelCommand(deps.db),
-}
+const metadata = defineCommand('hdel', {
+  arity: -3, // HDEL key field [field ...]
+  flags: {
+    write: true,
+    fast: true,
+  },
+  firstKey: 0,
+  lastKey: 0,
+  keyStep: 1,
+  categories: [CommandCategory.HASH],
+})
 
-export class HdelCommand implements Command {
-  readonly metadata = HdelCommandDefinition.metadata
-
-  constructor(private readonly db: DB) {}
-
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-    return [args[0]]
-  }
-
-  run(rawCmd: Buffer, args: Buffer[]): Promise<CommandResult> {
-    if (args.length < 2) {
-      throw new WrongNumberOfArguments(this.metadata.name)
-    }
-
-    const key = args[0]
-    const existing = this.db.get(key)
+export const HdelCommandDefinition: SchemaCommandRegistration<
+  [Buffer, Buffer, Buffer[]]
+> = {
+  metadata,
+  schema: t.tuple([t.key(), t.key(), t.variadic(t.key())]),
+  handler: async ([key, firstField, restFields], { db }) => {
+    const existing = db.get(key)
 
     if (existing === null) {
-      return Promise.resolve({ response: 0 })
+      return { response: 0 }
     }
 
     if (!(existing instanceof HashDataType)) {
@@ -53,19 +37,20 @@ export class HdelCommand implements Command {
     }
 
     let deletedCount = 0
-    for (let i = 1; i < args.length; i++) {
-      deletedCount += existing.hdel(args[i])
+    deletedCount += existing.hdel(firstField)
+
+    for (const field of restFields) {
+      deletedCount += existing.hdel(field)
     }
 
-    // Remove empty hash from database
     if (existing.hlen() === 0) {
-      this.db.del(key)
+      db.del(key)
     }
 
-    return Promise.resolve({ response: deletedCount })
-  }
+    return { response: deletedCount }
+  },
 }
 
 export default function (db: DB) {
-  return new HdelCommand(db)
+  return createSchemaCommand(HdelCommandDefinition, { db })
 }
