@@ -9,12 +9,15 @@ import {
 import { createClusterCommands, createMultiCommands } from './commands/redis'
 import { LuaEngine, LuaFactory } from 'wasmoon'
 import { DB } from './db'
-import { CommandExecutionContext } from './execution-context'
 import { SlotValidator } from './slot-validation'
 import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
+import {
+  ClusterNormalState,
+  ClusterCommandValidator,
+} from '../../core/transports/cluster-session-state'
 
 export async function createCustomClusterCommander(
   logger: Logger,
@@ -66,9 +69,9 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
 }
 
 export class ClusterCommander implements DBCommandExecutor {
-  private baseContext: CommandExecutionContext | null = null
   private readonly kernel: RedisKernel
   private readonly sessions = new Map<string, Session>()
+  private readonly baseValidator: RegistryCommandValidator
 
   constructor(
     private readonly db: DB,
@@ -78,20 +81,7 @@ export class ClusterCommander implements DBCommandExecutor {
     private readonly transactionCommands: Record<string, Command>,
   ) {
     this.kernel = new RedisKernel(this.handleJob.bind(this))
-  }
-
-  /**
-   * Lazy initialization of base context to avoid circular dependency.
-   * The validator needs discovery service which needs transports to be initialized.
-   */
-  private getBaseContext(): CommandExecutionContext {
-    if (!this.baseContext) {
-      const me = this.discoveryService.getById(this.mySelfId)
-      const validator = new SlotValidator(this.discoveryService, me)
-      // Transaction state is now managed by Session, so no transactionCommands needed here
-      this.baseContext = new CommandExecutionContext(this.commands, validator)
-    }
-    return this.baseContext
+    this.baseValidator = new RegistryCommandValidator(this.commands)
   }
 
   /**
@@ -116,14 +106,33 @@ export class ClusterCommander implements DBCommandExecutor {
   /**
    * Creates a new RespAdapter for an incoming connection.
    * This is called by Resp2Transport when a new client connects.
+   *
+   * In Phase 6, we use ClusterNormalState which provides:
+   * - Schema-driven slot validation via ClusterRouter
+   * - Slot pinning for transactions (all keys must hash to same slot)
+   * - MOVED/CROSSSLOT error generation
    */
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
-    // Create validator for ALL commands (not just transaction-safe ones)
-    // The validator only checks syntax/arity, not whether commands are allowed
-    const validator = new RegistryCommandValidator(this.commands)
+    // Create slot validator for cluster routing
+    const me = this.discoveryService.getById(this.mySelfId)
+    const slotValidator = new SlotValidator(this.discoveryService, me)
 
-    // Create session and register it
-    const session = new Session(this.getBaseContext(), this.kernel, validator)
+    // Create cluster-aware command validator that combines
+    // syntax validation with slot validation for transactions
+    const clusterValidator = new ClusterCommandValidator(
+      this.baseValidator,
+      this.commands,
+      slotValidator,
+    )
+
+    // Create cluster-aware initial state with slot pinning support
+    const initialState = new ClusterNormalState(
+      this.baseValidator,
+      clusterValidator,
+    )
+
+    // Create session with cluster-aware state machine
+    const session = new Session(this.commands, this.kernel, initialState)
     const connectionId = session.getConnectionId()
     this.sessions.set(connectionId, session)
 

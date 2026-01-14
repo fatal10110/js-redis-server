@@ -1,16 +1,24 @@
 import { Socket } from 'net'
 import { LuaEngine, LuaFactory } from 'wasmoon'
 import { Command, DBCommandExecutor, Logger } from '../../types'
+import { UnknownCommand, UserFacedError } from '../../core/errors'
+import {
+  Command,
+  DBCommandExecutor,
+  ExecutionContext,
+  Logger,
+  Transport,
+} from '../../types'
 
 import { DB } from './db'
 
 // Import createCommands function from Redis index
 import { createCommands, createMultiCommands } from './commands/redis'
-import { CommandExecutionContext } from './execution-context'
 import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
+import { NormalState } from '../../core/transports/session-state'
 
 export async function createCustomCommander(
   logger: Logger,
@@ -41,7 +49,6 @@ export class CustomCommanderFactory {
 }
 
 class Commander implements DBCommandExecutor {
-  private readonly baseContext: CommandExecutionContext
   private readonly kernel: RedisKernel
   private readonly sessions = new Map<string, Session>()
   private readonly commands: Record<string, Command>
@@ -51,7 +58,6 @@ class Commander implements DBCommandExecutor {
     this.commands = createCommands(luaEngine, db)
     this.transactionCommands = createMultiCommands(luaEngine, db)
     // Transaction state is now managed by Session, so no transactionCommands needed here
-    this.baseContext = new CommandExecutionContext(this.commands)
     this.kernel = new RedisKernel(this.handleJob.bind(this))
   }
 
@@ -84,7 +90,11 @@ class Commander implements DBCommandExecutor {
     const validator = new RegistryCommandValidator(this.commands)
 
     // Create session and register it
-    const session = new Session(this.baseContext, this.kernel, validator)
+    const session = new Session(
+      this.commands,
+      this.kernel,
+      new NormalState(validator),
+    )
     const connectionId = session.getConnectionId()
     this.sessions.set(connectionId, session)
 

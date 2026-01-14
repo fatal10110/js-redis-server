@@ -1,16 +1,12 @@
 import { UnknownCommand, UserFacedError } from '../../core/errors'
 import { Command, ExecutionContext, Transport } from '../../types'
-import { Validator } from './slot-validation'
 
 /**
  * CommandExecutionContext handles single command execution.
  * Transaction state (MULTI/EXEC) is now managed by Session's state machine.
  */
 export class CommandExecutionContext implements ExecutionContext {
-  constructor(
-    private readonly commands: Record<string, Command>,
-    private readonly validator?: Validator,
-  ) {}
+  constructor(private readonly commands: Record<string, Command>) {}
 
   shutdown(): Promise<void> {
     return Promise.resolve()
@@ -29,17 +25,6 @@ export class CommandExecutionContext implements ExecutionContext {
     if (!cmd) {
       transport.write(new UnknownCommand(cmdName, args))
       return this
-    }
-
-    try {
-      this.validator?.validate(cmd, rawCmd, args)
-    } catch (err) {
-      if (err instanceof UserFacedError) {
-        transport.write(err)
-        return this
-      }
-
-      throw err
     }
 
     try {

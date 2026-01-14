@@ -1,7 +1,8 @@
-import { ExecutionContext, Transport } from '../../types'
+import { Command, Transport } from '../../types'
 import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
-import { SessionState, NormalState, CommandValidator } from './session-state'
+import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
+import { CommandExecutionContext } from '../../commanders/custom/execution-context'
 
 /**
  * Session represents a single client connection's execution state.
@@ -13,13 +14,15 @@ export class Session {
   private static connectionCounter = 0
   private jobCounter = 0
   private readonly connectionId: string
+  private readonly context: CommandExecutionContext
 
   constructor(
-    private readonly context: ExecutionContext,
+    commands: Record<string, Command>,
     private readonly kernel: RedisKernel,
-    validator: CommandValidator,
+    initialState: SessionState,
   ) {
-    this.currentState = new NormalState(validator)
+    this.context = new CommandExecutionContext(commands)
+    this.currentState = initialState
     this.connectionId = `conn-${++Session.connectionCounter}`
   }
 
@@ -91,8 +94,8 @@ export class Session {
     }
 
     // Handle single command execution
-    const { transport, command, args, signal } = job.request
-    await this.context.execute(transport, command, args, signal)
+    const req = job.request
+    await this.executeCommand(req.transport, req.command, req.args, req.signal)
   }
 
   /**
@@ -110,7 +113,7 @@ export class Session {
       const capturingTransport = new CapturingTransport()
 
       try {
-        await this.context.execute(
+        await this.executeCommand(
           capturingTransport,
           req.command,
           req.args,
@@ -145,7 +148,16 @@ export class Session {
     return this.connectionId
   }
 
+  private async executeCommand(
+    transport: Transport,
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.context.execute(transport, rawCmd, args, signal)
+  }
+
   async shutdown(): Promise<void> {
-    await this.context.shutdown()
+    // No specific shutdown logic needed for commands map
   }
 }
