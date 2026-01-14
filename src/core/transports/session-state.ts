@@ -39,11 +39,34 @@ export interface CommandValidator {
 }
 
 /**
+ * Interface for slot validation in cluster mode.
+ * Optional - when provided, TransactionState will validate slot constraints.
+ */
+export interface SlotValidator {
+  /**
+   * Validate the command's slot against a pinned slot.
+   * Returns the computed slot, or null if the command has no keys.
+   * @throws CorssSlot if keys hash to different slots
+   * @throws MovedError if the slot is not owned by this node
+   */
+  validateSlot(
+    command: string,
+    args: Buffer[],
+    pinnedSlot?: number,
+  ): number | null
+}
+
+/**
  * NormalState: Commands are executed immediately.
  * MULTI transitions to TransactionState.
+ *
+ * Supports optional slot validation for cluster mode.
  */
 export class NormalState implements SessionState {
-  constructor(private readonly transactionCommandValidator: CommandValidator) {}
+  constructor(
+    private readonly commandValidator: CommandValidator,
+    private readonly slotValidator?: SlotValidator,
+  ) {}
 
   handle(
     transport: Transport,
@@ -55,7 +78,11 @@ export class NormalState implements SessionState {
     if (cmdName === 'multi') {
       transport.write('OK')
       return {
-        nextState: new TransactionState(this, this.transactionCommandValidator),
+        nextState: new TransactionState(
+          this,
+          this.commandValidator,
+          this.slotValidator,
+        ),
       }
     }
 
@@ -76,14 +103,20 @@ export class NormalState implements SessionState {
  * TransactionState: Commands are buffered until EXEC or DISCARD.
  * EXEC executes the entire buffer atomically.
  * DISCARD returns to NormalState without executing.
+ *
+ * In cluster mode (when slotValidator is provided), implements slot pinning:
+ * 1. The first command with keys "pins" the transaction to a specific slot.
+ * 2. Every subsequent command must hash to the same slot.
  */
 export class TransactionState implements SessionState {
   private readonly buffer: CommandRequest[] = []
   private shouldDiscard = false
+  private pinnedSlot: number | undefined
 
   constructor(
     private readonly normalState: SessionState,
     private readonly validator: CommandValidator,
+    private readonly slotValidator?: SlotValidator,
   ) {}
 
   handle(
@@ -126,7 +159,7 @@ export class TransactionState implements SessionState {
       }
     }
 
-    // Validate the command
+    // Validate the command (arity, syntax)
     try {
       this.validator.validate(cmdName, args)
     } catch (err) {
@@ -138,6 +171,31 @@ export class TransactionState implements SessionState {
         }
       }
       throw err
+    }
+
+    // Validate slot constraints in cluster mode
+    if (this.slotValidator) {
+      try {
+        const slot = this.slotValidator.validateSlot(
+          cmdName,
+          args,
+          this.pinnedSlot,
+        )
+
+        // Pin the slot on first command with keys
+        if (this.pinnedSlot === undefined && slot !== null) {
+          this.pinnedSlot = slot
+        }
+      } catch (err) {
+        if (err instanceof UserFacedError) {
+          transport.write(err)
+          this.shouldDiscard = true
+          return {
+            nextState: this,
+          }
+        }
+        throw err
+      }
     }
 
     // Buffer the command

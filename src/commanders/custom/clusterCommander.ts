@@ -9,15 +9,12 @@ import {
 import { createClusterCommands, createMultiCommands } from './commands/redis'
 import { LuaEngine, LuaFactory } from 'wasmoon'
 import { DB } from './db'
-import { ClusterRouter, createClusterState } from './cluster-router'
+import { ClusterRouter } from './cluster-router'
 import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
-import {
-  ClusterNormalState,
-  ClusterCommandValidator,
-} from '../../core/transports/cluster-session-state'
+import { NormalState } from '../../core/transports/session-state'
 
 export async function createCustomClusterCommander(
   logger: Logger,
@@ -72,6 +69,7 @@ export class ClusterCommander implements DBCommandExecutor {
   private readonly kernel: RedisKernel
   private readonly sessions = new Map<string, Session>()
   private readonly baseValidator: RegistryCommandValidator
+  private readonly router: ClusterRouter
 
   constructor(
     private readonly db: DB,
@@ -82,15 +80,11 @@ export class ClusterCommander implements DBCommandExecutor {
   ) {
     this.kernel = new RedisKernel(this.handleJob.bind(this))
     this.baseValidator = new RegistryCommandValidator(this.commands)
-  }
-
-  /**
-   * Execute method is not used in Phase 4 architecture.
-   * Use createAdapter() instead for real connections.
-   */
-  async execute(): Promise<void> {
-    throw new Error(
-      'Direct execute() is not supported in Phase 4 architecture. Use createAdapter() for connection-based execution.',
+    const myself = this.discoveryService.getById(this.mySelfId)
+    this.router = new ClusterRouter(
+      this.discoveryService,
+      myself,
+      this.commands,
     )
   }
 
@@ -107,30 +101,14 @@ export class ClusterCommander implements DBCommandExecutor {
    * Creates a new RespAdapter for an incoming connection.
    * This is called by Resp2Transport when a new client connects.
    *
-   * In Phase 6, we use ClusterNormalState which provides:
+   * Uses NormalState with slot validation for cluster mode:
    * - Schema-driven slot validation via ClusterRouter
    * - Slot pinning for transactions (all keys must hash to same slot)
    * - MOVED/CROSSSLOT error generation
    */
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
-    // Create cluster router for slot validation
-    const me = this.discoveryService.getById(this.mySelfId)
-    const clusterState = createClusterState(this.discoveryService, me)
-    const router = new ClusterRouter(clusterState)
-
-    // Create cluster-aware command validator that combines
-    // syntax validation with slot validation for transactions
-    const clusterValidator = new ClusterCommandValidator(
-      this.baseValidator,
-      this.commands,
-      router,
-    )
-
-    // Create cluster-aware initial state with slot pinning support
-    const initialState = new ClusterNormalState(
-      this.baseValidator,
-      clusterValidator,
-    )
+    // Create initial state with slot validation for cluster mode
+    const initialState = new NormalState(this.baseValidator, this.router)
 
     // Create session with cluster-aware state machine
     const session = new Session(this.commands, this.kernel, initialState)
