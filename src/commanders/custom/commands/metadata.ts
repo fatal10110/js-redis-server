@@ -36,6 +36,15 @@ export interface CommandMetadata {
    */
   keyStep: number
 
+  /**
+   * Divisor for remaining args when lastKey=-1
+   * @see https://redis.io/docs/latest/develop/reference/key-specs/
+   * 0 or 1: no limit (all remaining args are keys)
+   * 2: half the remaining args are keys (e.g., MSET key val key val)
+   * 3: one-third are keys, etc.
+   */
+  limit: number
+
   /** Redis command categories */
   categories: CommandCategory[]
 }
@@ -107,6 +116,7 @@ export function defineCommand(
     firstKey?: number
     lastKey?: number
     keyStep?: number
+    limit?: number
     categories: CommandCategory[]
   },
 ): CommandMetadata {
@@ -117,6 +127,7 @@ export function defineCommand(
     firstKey: options.firstKey ?? -1,
     lastKey: options.lastKey ?? -1,
     keyStep: options.keyStep ?? 1,
+    limit: options.limit ?? 0,
     categories: options.categories,
   }
 }

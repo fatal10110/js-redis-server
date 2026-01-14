@@ -24,7 +24,7 @@ export const LsetCommandDefinition: SchemaCommandRegistration<
   [Buffer, number, Buffer]
 > = {
   metadata,
-  schema: t.tuple([t.key(), t.integer(), t.key()]),
+  schema: t.tuple([t.key(), t.integer(), t.string()]),
   handler: async ([key, index, value], { db }) => {
     const existing = db.get(key)
 

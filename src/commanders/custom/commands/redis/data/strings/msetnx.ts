@@ -16,6 +16,7 @@ const metadata = defineCommand('msetnx', {
   firstKey: 0,
   lastKey: -1,
   keyStep: 2,
+  limit: 2,
   categories: [CommandCategory.STRING],
 })
 

@@ -324,6 +324,7 @@ describe('defineCommand helper', () => {
     assert.strictEqual(metadata.firstKey, -1)
     assert.strictEqual(metadata.lastKey, -1)
     assert.strictEqual(metadata.keyStep, 1)
+    assert.strictEqual(metadata.limit, 0)
   })
 
   test('should use provided optional fields', () => {

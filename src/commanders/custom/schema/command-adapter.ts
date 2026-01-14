@@ -2,7 +2,8 @@ import type { Command, CommandResult, ExecutionContext } from '../../../types'
 import type { CommandMetadata } from '../commands/metadata'
 import type { DB } from '../db'
 import type { SchemaType } from './types'
-import type { InputMapper } from './input-mapper'
+import type { CompiledSchema, InputMapper } from './input-mapper'
+import { compileSchema } from './input-mapper'
 import { RespInputMapper } from './resp-input-mapper'
 import { LuaEngine } from 'wasmoon'
 
@@ -33,6 +34,7 @@ export function createSchemaCommand(
 
 class SchemaCommandAdapter implements Command {
   readonly metadata: CommandMetadata
+  private readonly compiledSchema: CompiledSchema
 
   constructor(
     private readonly definition: SchemaCommandRegistration<any>,
@@ -40,6 +42,7 @@ class SchemaCommandAdapter implements Command {
     private readonly mapper: InputMapper<Buffer[]>,
   ) {
     this.metadata = definition.metadata
+    this.compiledSchema = compileSchema(definition.schema)
   }
 
   getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
@@ -76,7 +79,7 @@ class SchemaCommandAdapter implements Command {
     args: Buffer[],
     signal: AbortSignal,
   ): Promise<CommandResult> {
-    const parsed = this.mapper.parse(this.definition.schema, args, {
+    const parsed = this.mapper.parse(this.compiledSchema, args, {
       commandName: this.metadata.name,
     })
     const result = await this.definition.handler(parsed, {

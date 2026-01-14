@@ -24,7 +24,7 @@ export const ZrevrankCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer]
 > = {
   metadata,
-  schema: t.tuple([t.key(), t.key()]),
+  schema: t.tuple([t.key(), t.string()]),
   handler: async ([key, member], { db }) => {
     const existing = db.get(key)
 

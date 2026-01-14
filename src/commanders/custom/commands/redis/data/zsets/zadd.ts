@@ -28,8 +28,8 @@ export const ZaddCommandDefinition: SchemaCommandRegistration<
   schema: t.tuple([
     t.key(),
     t.string(),
-    t.key(),
-    t.variadic(t.tuple([t.string(), t.key()])),
+    t.string(),
+    t.variadic(t.tuple([t.string(), t.string()])),
   ]),
   handler: async ([key, firstScoreStr, firstMember, restPairs], { db }) => {
     const firstScore = parseFloat(firstScoreStr)

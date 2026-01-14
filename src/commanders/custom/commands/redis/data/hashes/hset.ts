@@ -27,9 +27,9 @@ export const HsetCommandDefinition: SchemaCommandRegistration<
   metadata,
   schema: t.tuple([
     t.key(),
-    t.key(),
-    t.key(),
-    t.variadic(t.tuple([t.key(), t.key()])),
+    t.string(),
+    t.string(),
+    t.variadic(t.tuple([t.string(), t.string()])),
   ]),
   handler: async ([key, firstField, firstValue, restPairs], { db }) => {
     const existing = db.get(key)

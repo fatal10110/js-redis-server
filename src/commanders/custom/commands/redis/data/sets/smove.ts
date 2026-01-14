@@ -24,7 +24,7 @@ export const SmoveCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer]
 > = {
   metadata,
-  schema: t.tuple([t.key(), t.key(), t.key()]),
+  schema: t.tuple([t.key(), t.key(), t.string()]),
   handler: async ([sourceKey, destinationKey, member], { db }) => {
     const sourceExisting = db.get(sourceKey)
 

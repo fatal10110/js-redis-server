@@ -23,7 +23,7 @@ export const LremCommandDefinition: SchemaCommandRegistration<
   [Buffer, number, Buffer]
 > = {
   metadata,
-  schema: t.tuple([t.key(), t.integer(), t.key()]),
+  schema: t.tuple([t.key(), t.integer(), t.string()]),
   handler: async ([key, count, value], { db }) => {
     const existing = db.get(key)
 
