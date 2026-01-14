@@ -1,7 +1,7 @@
 import { Transport, Command } from '../../types'
 import { UserFacedError } from '../errors'
 import { CommandRequest } from '../../commanders/custom/redis-kernel'
-import { SlotValidator } from '../../commanders/custom/slot-validation'
+import { ClusterRouter } from '../../commanders/custom/cluster-router'
 import {
   SessionState,
   SessionStateTransition,
@@ -17,7 +17,7 @@ export class ClusterCommandValidator implements CommandValidator {
   constructor(
     private readonly baseValidator: CommandValidator,
     private readonly commands: Record<string, Command>,
-    private readonly slotValidator: SlotValidator,
+    private readonly router: ClusterRouter,
   ) {}
 
   validate(command: string, args: Buffer[]): void {
@@ -39,12 +39,7 @@ export class ClusterCommandValidator implements CommandValidator {
       return null
     }
 
-    return this.slotValidator.validateSlot(
-      cmd,
-      Buffer.from(command),
-      args,
-      pinnedSlot,
-    )
+    return this.router.validateSlot(cmd, Buffer.from(command), args, pinnedSlot)
   }
 }
 
