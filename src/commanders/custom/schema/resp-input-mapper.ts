@@ -3,7 +3,7 @@ import {
   RedisSyntaxError,
   WrongNumberOfArguments,
 } from '../../../core/errors'
-import { InputMapper, ParseOptions, getSchemaArity } from './input-mapper'
+import { CompiledSchema, InputMapper, ParseOptions } from './input-mapper'
 import { SchemaType } from './types'
 
 type ParseResult = {
@@ -24,8 +24,12 @@ class MissingInputError extends Error {
 }
 
 export class RespInputMapper implements InputMapper<Buffer[]> {
-  parse(schema: SchemaType, input: Buffer[], options?: ParseOptions): unknown {
-    const arity = getSchemaArity(schema)
+  parse(
+    compiled: CompiledSchema,
+    input: Buffer[],
+    options?: ParseOptions,
+  ): unknown {
+    const { schema, arity } = compiled
 
     if (input.length < arity.min) {
       throw this.makeWrongNumberError(options)

@@ -24,7 +24,7 @@ export const HincrbyCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, number]
 > = {
   metadata,
-  schema: t.tuple([t.key(), t.key(), t.integer()]),
+  schema: t.tuple([t.key(), t.string(), t.integer()]),
   handler: async ([key, field, increment], { db }) => {
     const existing = db.get(key)
 

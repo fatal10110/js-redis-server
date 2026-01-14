@@ -4,16 +4,39 @@ export interface ParseOptions {
   commandName?: string
 }
 
+export interface ArityRange {
+  min: number
+  max: number
+}
+
+/**
+ * A compiled schema with pre-computed arity for efficient parsing
+ */
+export interface CompiledSchema {
+  schema: SchemaType
+  arity: ArityRange
+}
+
 export interface InputMapper<RawInput> {
   /**
    * Validates and converts raw input into the Schema's expected types.
    */
-  parse(schema: SchemaType, input: RawInput, options?: ParseOptions): unknown
+  parse(
+    schema: CompiledSchema,
+    input: RawInput,
+    options?: ParseOptions,
+  ): unknown
 }
 
-export interface ArityRange {
-  min: number
-  max: number
+/**
+ * Compiles a schema by pre-computing its arity.
+ * Call this once at command registration time.
+ */
+export function compileSchema(schema: SchemaType): CompiledSchema {
+  return {
+    schema,
+    arity: getSchemaArity(schema),
+  }
 }
 
 export function getSchemaArity(schema: SchemaType): ArityRange {

@@ -24,7 +24,7 @@ export const SremCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer[]]
 > = {
   metadata,
-  schema: t.tuple([t.key(), t.key(), t.variadic(t.key())]),
+  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
   handler: async ([key, firstMember, restMembers], { db }) => {
     const existing = db.get(key)
 

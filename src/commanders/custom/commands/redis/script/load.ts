@@ -20,7 +20,7 @@ const metadata = defineCommand('script|load', {
 export const ScriptLoadCommandDefinition: SchemaCommandRegistration<[Buffer]> =
   {
     metadata,
-    schema: t.tuple([t.key()]),
+    schema: t.tuple([t.string()]),
     handler: async ([script], { db }) => {
       const hash = db.addScript(script)
       return { response: hash }
