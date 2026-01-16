@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('sinter', {
   arity: -2, // SINTER key [key ...]
   flags: {
@@ -19,34 +18,29 @@ const metadata = defineCommand('sinter', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SinterCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db, transport }) => {
     const keys = [firstKey, ...restKeys]
-
     const sets: SetDataType[] = []
     for (const key of keys) {
       const existing = db.get(key)
       if (existing === null) {
-        return []
+        transport.write([])
+        return
       }
-
       if (!(existing instanceof SetDataType)) {
         throw new WrongType()
       }
-
       sets.push(existing)
     }
-
     const [firstSet, ...otherSets] = sets
-    return firstSet.sinter(otherSets)
+    transport.write(firstSet.sinter(otherSets))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SinterCommandDefinition, { db })
 }

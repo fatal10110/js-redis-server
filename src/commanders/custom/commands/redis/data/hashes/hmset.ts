@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hmset', {
   arity: -4, // HMSET key field value [field value ...]
   flags: {
@@ -20,7 +19,6 @@ const metadata = defineCommand('hmset', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HmsetCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer, Array<[Buffer, Buffer]>]
 > = {
@@ -31,30 +29,23 @@ export const HmsetCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
   ]),
-  handler: ([key, firstField, firstValue, restPairs], { db }) => {
+  handler: ([key, firstField, firstValue, restPairs], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
     const hash =
       existing instanceof HashDataType ? existing : new HashDataType()
-
     if (!(existing instanceof HashDataType)) {
       db.set(key, hash)
     }
-
     hash.hset(firstField, firstValue)
-
     for (const [field, value] of restPairs) {
       hash.hset(field, value)
     }
-
-    return 'OK'
+    transport.write('OK')
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HmsetCommandDefinition, { db })
 }

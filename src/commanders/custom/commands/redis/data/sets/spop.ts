@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('spop', {
   arity: 2, // SPOP key
   flags: {
@@ -21,31 +20,25 @@ const metadata = defineCommand('spop', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
     const member = existing.spop()
-
     if (existing.scard() === 0) {
       db.del(key)
     }
-
-    return member
+    transport.write(member)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SpopCommandDefinition, { db })
 }

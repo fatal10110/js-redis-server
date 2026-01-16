@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('lpush', {
   arity: -3, // LPUSH key element [element ...]
   flags: {
@@ -20,35 +19,28 @@ const metadata = defineCommand('lpush', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LpushCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstValue, restValues], { db }) => {
+  handler: ([key, firstValue, restValues], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing !== null && !(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
     const list =
       existing instanceof ListDataType ? existing : new ListDataType()
-
     if (!(existing instanceof ListDataType)) {
       db.set(key, list)
     }
-
     list.lpush(firstValue)
     for (const value of restValues) {
       list.lpush(value)
     }
-
-    return list.llen()
+    transport.write(list.llen())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LpushCommandDefinition, { db })
 }

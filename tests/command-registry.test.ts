@@ -5,7 +5,8 @@ import {
   defineCommand,
   CommandCategory,
 } from '../src/commanders/custom/commands/metadata'
-import type { CommandDefinition } from '../src/commanders/custom/commands/registry'
+import { t } from '../src/commanders/custom/schema'
+import type { SchemaCommandRegistration } from '../src/commanders/custom/schema'
 import type { Command, CommandResult } from '../src/types'
 
 // Mock command class for testing
@@ -29,13 +30,14 @@ describe('CommandRegistry', () => {
   test('should register and retrieve commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
     registry.register(getDef)
@@ -46,13 +48,14 @@ describe('CommandRegistry', () => {
   test('should be case-insensitive for command names', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
     registry.register(getDef)
@@ -64,22 +67,24 @@ describe('CommandRegistry', () => {
   test('should filter readonly commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
-    const setDef: CommandDefinition = {
+    const setDef: SchemaCommandRegistration = {
       metadata: defineCommand('set', {
         arity: -3,
         flags: { write: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(setDef.metadata),
+      schema: t.tuple([t.key(), t.string()]),
+      handler: () => {},
     }
 
     registry.registerAll([getDef, setDef])
@@ -92,31 +97,34 @@ describe('CommandRegistry', () => {
   test('should filter lua-safe commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
-    const randomkeyDef: CommandDefinition = {
+    const randomkeyDef: SchemaCommandRegistration = {
       metadata: defineCommand('randomkey', {
         arity: 1,
         flags: { readonly: true, random: true },
         categories: [CommandCategory.KEYS],
       }),
-      factory: deps => new MockCommand(randomkeyDef.metadata),
+      schema: t.tuple([]),
+      handler: () => {},
     }
 
-    const blpopDef: CommandDefinition = {
+    const blpopDef: SchemaCommandRegistration = {
       metadata: defineCommand('blpop', {
         arity: -3,
         flags: { write: true, blocking: true },
         categories: [CommandCategory.LIST],
       }),
-      factory: deps => new MockCommand(blpopDef.metadata),
+      schema: t.tuple([]),
+      handler: () => {},
     }
 
     registry.registerAll([getDef, randomkeyDef, blpopDef])
@@ -129,13 +137,14 @@ describe('CommandRegistry', () => {
   test('should filter multi-safe commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
     const blpopDef: CommandDefinition = {
@@ -194,13 +203,14 @@ describe('CommandRegistry', () => {
       factory: deps => new MockCommand(getDef.metadata),
     }
 
-    const hgetDef: CommandDefinition = {
+    const hgetDef: SchemaCommandRegistration = {
       metadata: defineCommand('hget', {
         arity: 3,
         flags: { readonly: true },
         categories: [CommandCategory.HASH],
       }),
-      factory: deps => new MockCommand(hgetDef.metadata),
+      schema: t.tuple([t.key(), t.string()]),
+      handler: () => {},
     }
 
     registry.registerAll([getDef, hgetDef])
@@ -217,20 +227,21 @@ describe('CommandRegistry', () => {
   test('should create command instances', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
     registry.register(getDef)
 
     const commands = registry.createCommands({ db: {} as any })
     assert.ok(commands.get)
-    assert.ok(commands.get instanceof MockCommand)
+    assert.ok(typeof commands.get.run === 'function')
   })
 
   test('should return correct count', () => {
@@ -238,13 +249,14 @@ describe('CommandRegistry', () => {
 
     assert.strictEqual(registry.count(), 0)
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
     registry.register(getDef)
@@ -254,22 +266,24 @@ describe('CommandRegistry', () => {
   test('should get all command names', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
+    const getDef: SchemaCommandRegistration = {
       metadata: defineCommand('get', {
         arity: 2,
         flags: { readonly: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(getDef.metadata),
+      schema: t.tuple([t.key()]),
+      handler: () => {},
     }
 
-    const setDef: CommandDefinition = {
+    const setDef: SchemaCommandRegistration = {
       metadata: defineCommand('set', {
         arity: -3,
         flags: { write: true },
         categories: [CommandCategory.STRING],
       }),
-      factory: deps => new MockCommand(setDef.metadata),
+      schema: t.tuple([t.key(), t.string()]),
+      handler: () => {},
     }
 
     registry.registerAll([getDef, setDef])

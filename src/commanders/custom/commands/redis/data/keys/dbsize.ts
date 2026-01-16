@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('dbsize', {
   arity: 1, // DBSIZE
   flags: {
@@ -17,16 +16,14 @@ const metadata = defineCommand('dbsize', {
   keyStep: 1,
   categories: [CommandCategory.SERVER],
 })
-
 export const DbSizeCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: (_args, { db }) => {
+  handler: (_args, { db, transport }) => {
     const size = db.size()
-    return size
+    transport.write(size)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(DbSizeCommandDefinition, { db })
 }

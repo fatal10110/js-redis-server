@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('smove', {
   arity: 4, // SMOVE source destination member
   flags: {
@@ -19,23 +18,20 @@ const metadata = defineCommand('smove', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SmoveCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.key(), t.string()]),
-  handler: ([sourceKey, destinationKey, member], { db }) => {
+  handler: ([sourceKey, destinationKey, member], { db, transport }) => {
     const sourceExisting = db.get(sourceKey)
-
     if (sourceExisting === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(sourceExisting instanceof SetDataType)) {
       throw new WrongType()
     }
-
     const destinationExisting = db.get(destinationKey)
     if (
       destinationExisting !== null &&
@@ -43,26 +39,20 @@ export const SmoveCommandDefinition: SchemaCommandRegistration<
     ) {
       throw new WrongType()
     }
-
     const destinationSet =
       destinationExisting instanceof SetDataType
         ? destinationExisting
         : new SetDataType()
-
     if (!(destinationExisting instanceof SetDataType)) {
       db.set(destinationKey, destinationSet)
     }
-
     const moved = sourceExisting.smove(destinationSet, member)
-
     if (sourceExisting.scard() === 0) {
       db.del(sourceKey)
     }
-
-    return moved ? 1 : 0
+    transport.write(moved ? 1 : 0)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SmoveCommandDefinition, { db })
 }

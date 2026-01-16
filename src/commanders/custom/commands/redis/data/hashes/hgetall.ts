@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hgetall', {
   arity: 2, // HGETALL key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('hgetall', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HgetallCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return []
+      transport.write([])
+      return
     }
-
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
-    return existing.hgetall()
+    transport.write(existing.hgetall())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HgetallCommandDefinition, { db })
 }

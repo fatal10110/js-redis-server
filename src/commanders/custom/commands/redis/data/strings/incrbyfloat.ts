@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('incrbyfloat', {
   arity: 3, // INCRBYFLOAT key increment
   flags: {
@@ -19,39 +18,32 @@ const metadata = defineCommand('incrbyfloat', {
   keyStep: 1,
   categories: [CommandCategory.STRING],
 })
-
 export const IncrbyfloatCommandDefinition: SchemaCommandRegistration<
   [Buffer, string]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, incrementStr], { db }) => {
+  handler: ([key, incrementStr], { db, transport }) => {
     const increment = parseFloat(incrementStr)
     if (isNaN(increment)) {
       throw new ExpectedFloat()
     }
-
     const existing = db.get(key)
     let currentValue = 0
-
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
         throw new WrongType()
       }
-
       currentValue = parseFloat(existing.data.toString())
       if (isNaN(currentValue)) {
         throw new ExpectedFloat()
       }
     }
-
     const newValue = currentValue + increment
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
-
-    return Buffer.from(newValue.toString())
+    transport.write(Buffer.from(newValue.toString()))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(IncrbyfloatCommandDefinition, { db })
 }

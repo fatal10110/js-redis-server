@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('zscore', {
   arity: 3, // ZSCORE key member
   flags: {
@@ -19,29 +18,25 @@ const metadata = defineCommand('zscore', {
   keyStep: 1,
   categories: [CommandCategory.ZSET],
 })
-
 export const ZscoreCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, member], { db }) => {
+  handler: ([key, member], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
-
     const score = existing.zscore(member)
     const response = score !== null ? Buffer.from(score.toString()) : null
-    return response
+    transport.write(response)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ZscoreCommandDefinition, { db })
 }

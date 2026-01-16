@@ -6,9 +6,7 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 export const commandName = 'shards'
-
 const metadata = defineCommand(`cluster|${commandName}`, {
   arity: 1, // CLUSTER SHARDS
   flags: {
@@ -20,26 +18,21 @@ const metadata = defineCommand(`cluster|${commandName}`, {
   keyStep: 1,
   categories: [CommandCategory.CLUSTER],
 })
-
 export const ClusterShardsCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: (_args, { discoveryService, mySelfId }) => {
+  handler: (_args, { discoveryService, mySelfId, transport }) => {
     const service = discoveryService as DiscoveryService | undefined
     if (!service || !mySelfId) {
       throw new Error('Cluster shards requires discoveryService and mySelfId')
     }
-
     const me = service.getById(mySelfId)
     const mapping: Record<number, DiscoveryNode[]> = {}
-
     for (const clusterNode of service.getAll()) {
       const arr = (mapping[clusterNode.slots[0][0]] ??= [])
-
       if (service.isMaster(me.id)) arr.unshift(clusterNode)
       else arr.push(clusterNode)
     }
-
     const shards: [
       string,
       number[],
@@ -61,15 +54,12 @@ export const ClusterShardsCommandDefinition: SchemaCommandRegistration<[]> = {
         string,
       ][],
     ][] = []
-
     for (const clusterNodes of Object.values(mapping)) {
       const master = clusterNodes[0]
       const slots = master.slots.reduce<number[]>((acc, range) => {
         acc.push(...range)
-
         return acc
       }, [])
-
       shards.push([
         'slots',
         slots,
@@ -94,11 +84,9 @@ export const ClusterShardsCommandDefinition: SchemaCommandRegistration<[]> = {
         }),
       ])
     }
-
-    return shards
+    transport.write(shards)
   },
 }
-
 export default function (
   db: DB,
   discoveryService: DiscoveryService,

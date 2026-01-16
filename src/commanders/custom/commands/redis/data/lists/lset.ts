@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('lset', {
   arity: 4, // LSET key index value
   flags: {
@@ -19,32 +18,26 @@ const metadata = defineCommand('lset', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LsetCommandDefinition: SchemaCommandRegistration<
   [Buffer, number, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer(), t.string()]),
-  handler: ([key, index, value], { db }) => {
+  handler: ([key, index, value], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
       throw new OutOfRangeIndex()
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
     const success = existing.lset(index, value)
     if (!success) {
       throw new OutOfRangeIndex()
     }
-
-    return 'OK'
+    transport.write('OK')
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LsetCommandDefinition, { db })
 }

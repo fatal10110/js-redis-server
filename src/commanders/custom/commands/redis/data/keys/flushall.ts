@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('flushall', {
   arity: 1, // FLUSHALL
   flags: {
@@ -16,16 +15,16 @@ const metadata = defineCommand('flushall', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC, CommandCategory.SERVER],
 })
-
 export const FlushallCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: (_args, { db }) => {
+  handler: (_args, { db, transport }) => {
     db.flushall()
-    return 'OK'
+
+    transport.write('OK')
+    return
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(FlushallCommandDefinition, { db })
 }

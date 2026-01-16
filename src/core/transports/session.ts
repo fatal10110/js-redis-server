@@ -131,7 +131,8 @@ export class Session {
 
         // If the command closed the connection, stop execution
         if (capturingTransport.isClosed()) {
-          transport.write(results, true)
+          transport.write(results)
+          transport.flush({ close: true })
           return
         }
       } catch (err) {
@@ -142,6 +143,7 @@ export class Session {
 
     // Write all results as an array
     transport.write(results)
+    transport.flush()
   }
 
   getConnectionId(): string {

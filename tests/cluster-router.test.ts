@@ -18,9 +18,27 @@ import type { CommandMetadata } from '../src/commanders/custom/commands/metadata
 // Mock transport for testing
 class MockTransport {
   public readonly responses: unknown[] = []
+  private closeRequested = false
+  private flushedWithClose = false
 
   write(data: unknown): void {
     this.responses.push(data)
+  }
+
+  flush(options?: { close?: boolean }): void {
+    const close = options?.close ?? this.closeRequested
+    if (close) {
+      this.flushedWithClose = true
+    }
+    this.closeRequested = false
+  }
+
+  closeAfterFlush(): void {
+    this.closeRequested = true
+  }
+
+  wasClosed(): boolean {
+    return this.flushedWithClose
   }
 }
 

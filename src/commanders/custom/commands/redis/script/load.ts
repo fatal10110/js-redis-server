@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 const metadata = defineCommand('script|load', {
   arity: 2, // SCRIPT LOAD <script>
   flags: {
@@ -16,17 +15,15 @@ const metadata = defineCommand('script|load', {
   keyStep: 1,
   categories: [CommandCategory.SCRIPT],
 })
-
 export const ScriptLoadCommandDefinition: SchemaCommandRegistration<[Buffer]> =
   {
     metadata,
     schema: t.tuple([t.string()]),
-    handler: ([script], { db }) => {
+    handler: ([script], { db, transport }) => {
       const hash = db.addScript(script)
-      return hash
+      transport.write(hash)
     },
   }
-
 export default function (db: DB) {
   return createSchemaCommand(ScriptLoadCommandDefinition, { db })
 }

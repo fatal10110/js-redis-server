@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('zrank', {
   arity: 3, // ZRANK key member
   flags: {
@@ -19,27 +18,23 @@ const metadata = defineCommand('zrank', {
   keyStep: 1,
   categories: [CommandCategory.ZSET],
 })
-
 export const ZrankCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, member], { db }) => {
+  handler: ([key, member], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
-
-    return existing.zrank(member)
+    transport.write(existing.zrank(member))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ZrankCommandDefinition, { db })
 }

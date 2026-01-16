@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 const metadata = defineCommand('script|help', {
   arity: 1, // SCRIPT HELP
   flags: {
@@ -16,11 +15,10 @@ const metadata = defineCommand('script|help', {
   keyStep: 1,
   categories: [CommandCategory.SCRIPT],
 })
-
 export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: () => {
+  handler: (_args, { transport }) => {
     const helpText = [
       'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
       'DEBUG <YES|SYNC|NO>',
@@ -36,11 +34,9 @@ export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
       'LOAD <script>',
       '    Load a script into the scripts cache without executing it.',
     ]
-
-    return helpText
+    transport.write(helpText)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ScriptHelpCommandDefinition, { db })
 }

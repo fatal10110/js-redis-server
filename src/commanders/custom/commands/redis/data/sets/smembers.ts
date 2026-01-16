@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('smembers', {
   arity: 2, // SMEMBERS key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('smembers', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SmembersCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return []
+      transport.write([])
+      return
     }
-
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
-    return existing.smembers()
+    transport.write(existing.smembers())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SmembersCommandDefinition, { db })
 }

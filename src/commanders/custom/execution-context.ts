@@ -1,4 +1,5 @@
 import { UnknownCommand, UserFacedError } from '../../core/errors'
+import { BufferedTransport } from '../../core/transports/buffered-transport'
 import { Command, ExecutionContext, Transport } from '../../types'
 
 /**
@@ -24,15 +25,18 @@ export class CommandExecutionContext implements ExecutionContext {
 
     if (!cmd) {
       transport.write(new UnknownCommand(cmdName, args))
+      transport.flush()
       return this
     }
 
     try {
-      const res = cmd.run(rawCmd, args, signal)
-      transport.write(res, cmd.metadata.closesConnection)
+      const buffered = new BufferedTransport(transport)
+      cmd.run(rawCmd, args, signal, buffered)
+      buffered.flush()
     } catch (err) {
       if (err instanceof UserFacedError) {
         transport.write(err)
+        transport.flush()
         return this
       }
 

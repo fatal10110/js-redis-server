@@ -6,9 +6,7 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 export const commandName = 'info'
-
 const metadata = defineCommand(`cluster|${commandName}`, {
   arity: 1, // CLUSTER INFO
   flags: {
@@ -20,35 +18,28 @@ const metadata = defineCommand(`cluster|${commandName}`, {
   keyStep: 1,
   categories: [CommandCategory.CLUSTER],
 })
-
 export const ClusterInfoCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: (_args, { discoveryService, mySelfId }) => {
+  handler: (_args, { discoveryService, mySelfId, transport }) => {
     const service = discoveryService as DiscoveryService | undefined
     if (!service || !mySelfId) {
       throw new Error('Cluster info requires discoveryService and mySelfId')
     }
-
     const me = service.getById(mySelfId)
     let nodesCount = 0
     let masters = 0
     let myEpoch = 0
-
     const myMaster = service.getMaster(me.id)
-
     for (const clusterNode of service.getAll()) {
       nodesCount += 1
-
       if (service.isMaster(clusterNode.id)) {
         masters += 1
       }
-
       if (me.id === clusterNode.id || myMaster.id === clusterNode.id) {
         myEpoch = masters
       }
     }
-
     const values = [
       'cluster_state:ok',
       'cluster_slots_assigned:16384',
@@ -68,11 +59,9 @@ export const ClusterInfoCommandDefinition: SchemaCommandRegistration<[]> = {
       'cluster_stats_messages_received:132611',
       'total_cluster_links_buffer_limit_exceeded:0',
     ]
-
-    return Buffer.from(`${values.join('\n')}\n`)
+    transport.write(Buffer.from(`${values.join('\n')}\n`))
   },
 }
-
 export default function (
   db: DB,
   discoveryService: DiscoveryService,

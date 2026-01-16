@@ -2,24 +2,33 @@ import { Transport } from '../src/types'
 
 export interface MockTransportCall {
   responseData: unknown
-  close?: boolean
   timestamp: number
 }
 
 export class MockTransport implements Transport {
   private calls: MockTransportCall[] = []
+  private flushes: Array<{ close?: boolean; timestamp: number }> = []
   private closed = false
+  private closeRequested = false
 
-  write(responseData: unknown, close?: boolean): void {
+  write(responseData: unknown): void {
     this.calls.push({
       responseData,
-      close,
       timestamp: Date.now(),
     })
+  }
 
+  flush(options?: { close?: boolean }): void {
+    const close = options?.close ?? this.closeRequested
+    this.flushes.push({ close, timestamp: Date.now() })
     if (close) {
       this.closed = true
     }
+    this.closeRequested = false
+  }
+
+  closeAfterFlush(): void {
+    this.closeRequested = true
   }
 
   // Test utility methods
@@ -35,6 +44,10 @@ export class MockTransport implements Transport {
     return this.calls.length
   }
 
+  getFlushes(): Array<{ close?: boolean; timestamp: number }> {
+    return [...this.flushes]
+  }
+
   getResponseData(): unknown[] {
     return this.calls.map(call => call.responseData)
   }
@@ -45,7 +58,7 @@ export class MockTransport implements Transport {
   }
 
   wasCloseCalled(): boolean {
-    return this.calls.some(call => call.close === true)
+    return this.flushes.some(flush => flush.close === true)
   }
 
   isClosed(): boolean {
@@ -54,7 +67,9 @@ export class MockTransport implements Transport {
 
   reset(): void {
     this.calls = []
+    this.flushes = []
     this.closed = false
+    this.closeRequested = false
   }
 
   // Assertion helpers

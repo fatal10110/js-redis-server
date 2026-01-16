@@ -6,7 +6,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('msetnx', {
   arity: -3, // MSETNX key value [key value ...]
   flags: {
@@ -19,7 +18,6 @@ const metadata = defineCommand('msetnx', {
   limit: 2,
   categories: [CommandCategory.STRING],
 })
-
 export const MsetnxCommandDefinition: SchemaCommandRegistration<
   [Buffer, string, Array<[Buffer, string]>]
 > = {
@@ -29,26 +27,23 @@ export const MsetnxCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.key(), t.string()])),
   ]),
-  handler: ([firstKey, firstValue, restPairs], { db }) => {
+  handler: ([firstKey, firstValue, restPairs], { db, transport }) => {
     const pairs: Array<[Buffer, string]> = [
       [firstKey, firstValue],
       ...restPairs,
     ]
-
     for (const [key] of pairs) {
       if (db.get(key) !== null) {
-        return 0
+        transport.write(0)
+        return
       }
     }
-
     for (const [key, value] of pairs) {
       db.set(key, new StringDataType(Buffer.from(value)))
     }
-
-    return 1
+    transport.write(1)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(MsetnxCommandDefinition, { db })
 }

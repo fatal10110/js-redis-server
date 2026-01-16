@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('ltrim', {
   arity: 4, // LTRIM key start stop
   flags: {
@@ -18,33 +17,27 @@ const metadata = defineCommand('ltrim', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LtrimCommandDefinition: SchemaCommandRegistration<
   [Buffer, number, number]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer(), t.integer()]),
-  handler: ([key, start, stop], { db }) => {
+  handler: ([key, start, stop], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 'OK'
+      transport.write('OK')
+      return
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
     existing.ltrim(start, stop)
-
     if (existing.llen() === 0) {
       db.del(key)
     }
-
-    return 'OK'
+    transport.write('OK')
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LtrimCommandDefinition, { db })
 }

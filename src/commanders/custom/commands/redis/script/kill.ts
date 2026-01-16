@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 const metadata = defineCommand('script|kill', {
   arity: 1, // SCRIPT KILL
   flags: {
@@ -16,13 +15,13 @@ const metadata = defineCommand('script|kill', {
   keyStep: 1,
   categories: [CommandCategory.SCRIPT],
 })
-
 export const ScriptKillCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: () => 'OK',
+  handler: (_args, ctx) => {
+    ctx.transport.write('OK')
+  },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ScriptKillCommandDefinition, { db })
 }

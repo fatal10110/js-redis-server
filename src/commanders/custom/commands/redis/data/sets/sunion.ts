@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('sunion', {
   arity: -2, // SUNION key [key ...]
   flags: {
@@ -19,15 +18,13 @@ const metadata = defineCommand('sunion', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SunionCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db, transport }) => {
     const keys = [firstKey, ...restKeys]
-
     const sets: SetDataType[] = []
     for (const key of keys) {
       const existing = db.get(key)
@@ -35,19 +32,15 @@ export const SunionCommandDefinition: SchemaCommandRegistration<
         sets.push(new SetDataType())
         continue
       }
-
       if (!(existing instanceof SetDataType)) {
         throw new WrongType()
       }
-
       sets.push(existing)
     }
-
     const [firstSet, ...otherSets] = sets
-    return firstSet.sunion(otherSets)
+    transport.write(firstSet.sunion(otherSets))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SunionCommandDefinition, { db })
 }

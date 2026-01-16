@@ -11,9 +11,7 @@ import {
   ClientSetNameCommandDefinition,
   commandName as setNameCommandName,
 } from './clientSetName'
-
 export const commandName = 'client'
-
 const metadata = defineCommand(commandName, {
   arity: -2, // CLIENT <subcommand> [args...]
   flags: {
@@ -25,7 +23,6 @@ const metadata = defineCommand(commandName, {
   keyStep: 1,
   categories: [CommandCategory.CONNECTION],
 })
-
 export const ClientCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
@@ -34,22 +31,18 @@ export const ClientCommandDefinition: SchemaCommandRegistration<
   handler: ([subCommandName, rest], ctx) => {
     const subCommands = createSubCommands(ctx)
     const subCommand = subCommands[subCommandName.toString().toLowerCase()]
-
     if (!subCommand) {
       throw new UnknwonClientSubCommand(subCommandName.toString())
     }
-
-    return subCommand.run(subCommandName, rest, ctx.signal)
+    subCommand.run(subCommandName, rest, ctx.signal, ctx.transport)
   },
 }
-
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
     discoveryService: ctx.discoveryService,
     mySelfId: ctx.mySelfId,
   }
-
   return {
     [setNameCommandName]: createSchemaCommand(
       ClientSetNameCommandDefinition,
@@ -57,7 +50,6 @@ function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
     ),
   }
 }
-
 export default function (db: SchemaCommandContext['db']) {
   return createSchemaCommand(ClientCommandDefinition, { db })
 }

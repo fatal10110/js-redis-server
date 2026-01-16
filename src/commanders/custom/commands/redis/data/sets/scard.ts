@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('scard', {
   arity: 2, // SCARD key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('scard', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const ScardCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
-    return existing.scard()
+    transport.write(existing.scard())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ScardCommandDefinition, { db })
 }

@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('decrby', {
   arity: 3, // DECRBY key decrement
   flags: {
@@ -19,39 +18,32 @@ const metadata = defineCommand('decrby', {
   keyStep: 1,
   categories: [CommandCategory.STRING],
 })
-
 export const DecrbyCommandDefinition: SchemaCommandRegistration<
   [Buffer, string]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, decrementStr], { db }) => {
+  handler: ([key, decrementStr], { db, transport }) => {
     const decrement = parseInt(decrementStr)
     if (isNaN(decrement)) {
       throw new ExpectedInteger()
     }
-
     const existing = db.get(key)
     let currentValue = 0
-
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
         throw new WrongType()
       }
-
       currentValue = parseInt(existing.data.toString())
       if (isNaN(currentValue)) {
         throw new ExpectedInteger()
       }
     }
-
     const newValue = currentValue - decrement
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
-
-    return newValue
+    transport.write(newValue)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(DecrbyCommandDefinition, { db })
 }

@@ -17,7 +17,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 const metadata = defineCommand('command', {
   arity: -1, // COMMAND [subcommand] [args...]
   flags: {
@@ -29,37 +28,46 @@ const metadata = defineCommand('command', {
   keyStep: 0,
   categories: [CommandCategory.SERVER],
 })
-
 export const CommandInfoDefinition: SchemaCommandRegistration<[Buffer[]]> = {
   metadata,
   schema: t.tuple([t.variadic(t.string())]),
   handler: ([args], ctx) => {
     // COMMAND (no args) - list all commands
     if (args.length === 0) {
-      return handleCommandList(ctx)
+      ctx.transport.write(handleCommandList(ctx))
+      return
     }
-
     const subcommand = args[0].toString().toLowerCase()
-
     switch (subcommand) {
-      case 'info':
-        return handleCommandInfo(args.slice(1), ctx)
-      case 'count':
-        return handleCommandCount(ctx)
-      case 'getkeys':
-        return handleCommandGetKeys(args.slice(1), ctx)
-      case 'docs':
-        return handleCommandDocs(args.slice(1), ctx)
-      case 'list':
-        return handleCommandNames(ctx)
-      case 'help':
-        return handleCommandHelp()
+      case 'info': {
+        ctx.transport.write(handleCommandInfo(args.slice(1), ctx))
+        return
+      }
+      case 'count': {
+        ctx.transport.write(handleCommandCount(ctx))
+        return
+      }
+      case 'getkeys': {
+        ctx.transport.write(handleCommandGetKeys(args.slice(1), ctx))
+        return
+      }
+      case 'docs': {
+        ctx.transport.write(handleCommandDocs(args.slice(1), ctx))
+        return
+      }
+      case 'list': {
+        ctx.transport.write(handleCommandNames(ctx))
+        return
+      }
+      case 'help': {
+        ctx.transport.write(handleCommandHelp())
+        return
+      }
       default:
         throw new UnknownCommandSubCommand(subcommand)
     }
   },
 }
-
 /**
  * COMMAND - Return all command metadata
  */
@@ -67,7 +75,6 @@ function handleCommandList(ctx: SchemaCommandContext): CommandResult[] {
   const commands = getAllCommands(ctx)
   return commands.map(cmd => formatCommand(cmd.metadata))
 }
-
 /**
  * COMMAND INFO <cmd> [<cmd> ...]
  */
@@ -78,7 +85,6 @@ function handleCommandInfo(
   if (args.length === 0) {
     throw new WrongNumberOfArguments('command|info')
   }
-
   const commands = ctx.commands || {}
   return args.map(arg => {
     const cmdName = arg.toString().toLowerCase()
@@ -86,14 +92,12 @@ function handleCommandInfo(
     return cmd ? formatCommand(cmd.metadata) : null
   })
 }
-
 /**
  * COMMAND COUNT
  */
 function handleCommandCount(ctx: SchemaCommandContext): number {
   return getAllCommands(ctx).length
 }
-
 /**
  * COMMAND GETKEYS <command> <arg> [arg ...]
  */
@@ -104,24 +108,19 @@ function handleCommandGetKeys(
   if (args.length < 1) {
     throw new WrongNumberOfArguments('command|getkeys')
   }
-
   const cmdName = args[0].toString().toLowerCase()
   const commands = ctx.commands || {}
   const cmd = commands[cmdName]
-
   if (!cmd) {
     throw new InvalidCommandArgs(cmdName)
   }
-
   const cmdArgs = args.slice(1)
-
   try {
     return cmd.getKeys(args[0], cmdArgs)
   } catch {
     throw new InvalidCommandArgs(cmdName)
   }
 }
-
 /**
  * COMMAND DOCS [<cmd> ...] (Redis 7.0+)
  * Returns documentation for commands - stub implementation
@@ -134,11 +133,9 @@ function handleCommandDocs(
     // Return docs for all commands - stub with empty array
     return []
   }
-
   // Return docs for specific commands - stub with empty entries
   return args.map(() => [])
 }
-
 /**
  * COMMAND LIST (Redis 7.0+)
  * Returns list of command names
@@ -146,7 +143,6 @@ function handleCommandDocs(
 function handleCommandNames(ctx: SchemaCommandContext): string[] {
   return getAllCommands(ctx).map(cmd => cmd.metadata.name)
 }
-
 /**
  * COMMAND HELP
  * Returns help text for COMMAND command
@@ -169,7 +165,6 @@ function handleCommandHelp(): string[] {
     '    Prints this help.',
   ]
 }
-
 /**
  * Get all commands from context
  */
@@ -177,7 +172,6 @@ function getAllCommands(ctx: SchemaCommandContext): Command[] {
   const commands = ctx.commands || {}
   return Object.values(commands)
 }
-
 /**
  * Format command metadata to Redis response format
  * Returns: [name, arity, flags, firstKey, lastKey, keyStep, categories]
@@ -195,13 +189,11 @@ function formatCommand(meta: CommandMetadata): CommandResult[] {
     meta.categories,
   ]
 }
-
 /**
  * Convert CommandFlags to array of flag strings
  */
 function formatFlags(flags: CommandFlags): string[] {
   const result: string[] = []
-
   if (flags.readonly) result.push('readonly')
   if (flags.write) result.push('write')
   if (flags.denyoom) result.push('denyoom')
@@ -212,10 +204,8 @@ function formatFlags(flags: CommandFlags): string[] {
   if (flags.fast) result.push('fast')
   if (flags.movablekeys) result.push('movablekeys')
   if (flags.transaction) result.push('transaction')
-
   return result
 }
-
 export default function (db: DB) {
   return createSchemaCommand(CommandInfoDefinition, { db })
 }

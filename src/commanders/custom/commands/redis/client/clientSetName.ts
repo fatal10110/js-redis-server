@@ -5,9 +5,7 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 export const commandName = 'setname'
-
 const metadata = defineCommand(`client|${commandName}`, {
   arity: 2, // CLIENT SETNAME <name>
   flags: {
@@ -19,15 +17,15 @@ const metadata = defineCommand(`client|${commandName}`, {
   keyStep: 1,
   categories: [CommandCategory.CONNECTION],
 })
-
 export const ClientSetNameCommandDefinition: SchemaCommandRegistration<
   [string]
 > = {
   metadata,
   schema: t.tuple([t.string()]),
-  handler: () => 'OK',
+  handler: (_args, ctx) => {
+    ctx.transport.write('OK')
+  },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ClientSetNameCommandDefinition, { db })
 }

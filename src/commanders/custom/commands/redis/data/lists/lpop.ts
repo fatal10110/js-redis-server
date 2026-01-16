@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('lpop', {
   arity: 2, // LPOP key
   flags: {
@@ -19,31 +18,25 @@ const metadata = defineCommand('lpop', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
     const value = existing.lpop()
-
     if (existing.llen() === 0) {
       db.del(key)
     }
-
-    return value
+    transport.write(value)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LpopCommandDefinition, { db })
 }

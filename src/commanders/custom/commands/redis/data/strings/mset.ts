@@ -6,7 +6,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('mset', {
   arity: -3, // MSET key value [key value ...]
   flags: {
@@ -19,7 +18,6 @@ const metadata = defineCommand('mset', {
   limit: 2,
   categories: [CommandCategory.STRING],
 })
-
 export const MsetCommandDefinition: SchemaCommandRegistration<
   [Buffer, string, Array<[Buffer, string]>]
 > = {
@@ -29,17 +27,14 @@ export const MsetCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.key(), t.string()])),
   ]),
-  handler: ([firstKey, firstValue, restPairs], { db }) => {
+  handler: ([firstKey, firstValue, restPairs], { db, transport }) => {
     db.set(firstKey, new StringDataType(Buffer.from(firstValue)))
-
     for (const [key, value] of restPairs) {
       db.set(key, new StringDataType(Buffer.from(value)))
     }
-
-    return 'OK'
+    transport.write('OK')
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(MsetCommandDefinition, { db })
 }

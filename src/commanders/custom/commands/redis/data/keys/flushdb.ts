@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('flushdb', {
   arity: 1, // FLUSHDB
   flags: {
@@ -16,16 +15,14 @@ const metadata = defineCommand('flushdb', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC, CommandCategory.SERVER],
 })
-
 export const FlushdbCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: (_args, { db }) => {
+  handler: (_args, { db, transport }) => {
     db.flushdb()
-    return 'OK'
+    transport.write('OK')
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(FlushdbCommandDefinition, { db })
 }

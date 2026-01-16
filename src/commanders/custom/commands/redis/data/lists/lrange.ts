@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('lrange', {
   arity: 4, // LRANGE key start stop
   flags: {
@@ -19,27 +18,23 @@ const metadata = defineCommand('lrange', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LrangeCommandDefinition: SchemaCommandRegistration<
   [Buffer, number, number]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer(), t.integer()]),
-  handler: ([key, start, stop], { db }) => {
+  handler: ([key, start, stop], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return []
+      transport.write([])
+      return
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
-    return existing.lrange(start, stop)
+    transport.write(existing.lrange(start, stop))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LrangeCommandDefinition, { db })
 }

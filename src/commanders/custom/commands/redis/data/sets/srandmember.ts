@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('srandmember', {
   arity: -2, // SRANDMEMBER key [count]
   flags: {
@@ -20,36 +19,35 @@ const metadata = defineCommand('srandmember', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SrandmemberCommandDefinition: SchemaCommandRegistration<
   [Buffer, number | undefined]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.optional(t.integer())]),
-  handler: ([key, count], { db }) => {
+  handler: ([key, count], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
       if (count !== undefined) {
-        return []
+        transport.write([])
+        return
       }
-      return null
-    }
 
+      transport.write(null)
+      return
+    }
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
     if (count === undefined) {
       const member = existing.srandmember()
-      return member
-    }
 
+      transport.write(member)
+      return
+    }
     const members = existing.srandmember(count)
-    return members
+    transport.write(members)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SrandmemberCommandDefinition, { db })
 }

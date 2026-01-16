@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('lrem', {
   arity: 4, // LREM key count element
   flags: {
@@ -18,33 +17,27 @@ const metadata = defineCommand('lrem', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LremCommandDefinition: SchemaCommandRegistration<
   [Buffer, number, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer(), t.string()]),
-  handler: ([key, count, value], { db }) => {
+  handler: ([key, count, value], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
     const removed = existing.lrem(count, value)
-
     if (existing.llen() === 0) {
       db.del(key)
     }
-
-    return removed
+    transport.write(removed)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LremCommandDefinition, { db })
 }

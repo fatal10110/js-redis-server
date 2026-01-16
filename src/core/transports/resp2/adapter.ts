@@ -8,17 +8,19 @@ import { Session } from '../session'
  * RespTransport handles encoding responses to RESP format.
  */
 class RespTransport implements Transport {
+  private closeRequested = false
+
   constructor(
     private readonly logger: Logger,
     private readonly socket: Socket,
   ) {}
 
-  write(responseData: unknown, close?: boolean) {
+  write(responseData: unknown) {
     if (
       responseData instanceof Error &&
       !(responseData instanceof UserFacedError)
     ) {
-      close = true
+      this.closeRequested = true
     }
 
     this.socket.write(this.prepareResponse(responseData), err => {
@@ -28,9 +30,21 @@ class RespTransport implements Transport {
       }
     })
 
+    if (this.closeRequested) {
+      this.flush({ close: true })
+    }
+  }
+
+  flush(options?: { close?: boolean }): void {
+    const close = options?.close ?? this.closeRequested
+    this.closeRequested = false
     if (close) {
       this.socket.destroySoon()
     }
+  }
+
+  closeAfterFlush(): void {
+    this.closeRequested = true
   }
 
   private prepareResponse(jsResponse: unknown): Buffer {
@@ -123,6 +137,7 @@ export class RespAdapter {
     const parser = new Resp({ bufBulk: true })
       .on('error', (err: unknown) => {
         this.transport.write(err)
+        this.transport.flush()
       })
       .on('data', (data: Buffer[]) => {
         const [cmdName, ...args] = data
@@ -166,6 +181,7 @@ export class RespAdapter {
         )
       } catch (err) {
         this.transport.write(err)
+        this.transport.flush()
       }
     }
 

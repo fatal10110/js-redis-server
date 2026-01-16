@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hincrby', {
   arity: 4, // HINCRBY key field increment
   flags: {
@@ -19,31 +18,25 @@ const metadata = defineCommand('hincrby', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HincrbyCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, number]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.integer()]),
-  handler: ([key, field, increment], { db }) => {
+  handler: ([key, field, increment], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
     const hash =
       existing instanceof HashDataType ? existing : new HashDataType()
-
     if (!(existing instanceof HashDataType)) {
       db.set(key, hash)
     }
-
     const result = hash.hincrby(field, increment)
-    return result
+    transport.write(result)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HincrbyCommandDefinition, { db })
 }

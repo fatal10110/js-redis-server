@@ -6,7 +6,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('expireat', {
   arity: 3, // EXPIREAT key timestamp
   flags: {
@@ -18,31 +17,27 @@ const metadata = defineCommand('expireat', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC],
 })
-
 export const ExpireatCommandDefinition: SchemaCommandRegistration<
   [Buffer, number]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer()]),
-  handler: ([key, timestamp], { db }) => {
+  handler: ([key, timestamp], { db, transport }) => {
     if (timestamp < 0) {
       throw new InvalidExpireTime(metadata.name)
     }
-
     const expiration = timestamp * 1000
     const now = Date.now()
-
     if (expiration <= now) {
       const deleted = db.del(key)
-      return deleted ? 1 : 0
+
+      transport.write(deleted ? 1 : 0)
+      return
     }
-
     const success = db.setExpiration(key, expiration)
-
-    return success ? 1 : 0
+    transport.write(success ? 1 : 0)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ExpireatCommandDefinition, { db })
 }

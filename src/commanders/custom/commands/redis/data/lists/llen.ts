@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('llen', {
   arity: 2, // LLEN key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('llen', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
-    return existing.llen()
+    transport.write(existing.llen())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LlenCommandDefinition, { db })
 }
