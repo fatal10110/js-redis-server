@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Testing
+
 ```bash
 # Run unit tests (all tests in tests/ directory)
 npm test
@@ -26,6 +27,7 @@ TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-co
 ```
 
 ### Building & Running
+
 ```bash
 # Build TypeScript to JavaScript
 npm run build
@@ -57,24 +59,26 @@ This is a Redis-compatible server implementation that supports both standalone a
 ### Key Components
 
 #### 1. DB ([src/commanders/custom/db.ts](src/commanders/custom/db.ts))
+
 - Central in-memory data store using three Maps:
   - `mapping`: string → Buffer (key lookup)
   - `data`: Buffer → DataTypes (actual data)
   - `timings`: Buffer → number (expiration timestamps)
   - `scriptsStore`: string → Buffer (Lua scripts by SHA)
 - Handles key expiration via lazy eviction in `tryEvict()`
-- Thread-safe operations using `async-mutex` for Lua script execution
 - All data operations go through this class
 
 #### 2. Commander Types
 
 **Commander** ([src/commanders/custom/commander.ts](src/commanders/custom/commander.ts))
+
 - Standalone Redis mode
 - Simple command execution without clustering logic
 - Handles MULTI/EXEC transactions via `TransactionCommand`
 - Creates commands via `createCommands()` factory
 
 **ClusterCommander** ([src/commanders/custom/clusterCommander.ts](src/commanders/custom/clusterCommander.ts))
+
 - Cluster mode implementation
 - Validates slot ownership before executing commands
 - Throws `MovedError` to redirect clients to correct nodes
@@ -85,6 +89,7 @@ This is a Redis-compatible server implementation that supports both standalone a
 #### 3. Command Architecture
 
 Commands are organized by Redis data type:
+
 - **Strings**: [src/commanders/custom/commands/redis/data/strings/](src/commanders/custom/commands/redis/data/strings/)
 - **Hashes**: [src/commanders/custom/commands/redis/data/hashes/](src/commanders/custom/commands/redis/data/hashes/)
 - **Lists**: [src/commanders/custom/commands/redis/data/lists/](src/commanders/custom/commands/redis/data/lists/)
@@ -93,16 +98,22 @@ Commands are organized by Redis data type:
 - **Keys**: [src/commanders/custom/commands/redis/data/keys/](src/commanders/custom/commands/redis/data/keys/)
 
 Each command implements the `Command` interface:
+
 ```typescript
 interface Command {
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[]  // Extract keys for cluster routing
-  run(rawCmd: Buffer, args: Buffer[], signal: AbortSignal): Promise<CommandResult>
+  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] // Extract keys for cluster routing
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+  ): Promise<CommandResult>
 }
 ```
 
 #### 4. Data Structures
 
 Custom implementations in [src/commanders/custom/data-structures/](src/commanders/custom/data-structures/):
+
 - `StringDataType` - String values
 - `HashDataType` - Hash maps
 - `ListDataType` - Doubly-linked lists
@@ -110,14 +121,7 @@ Custom implementations in [src/commanders/custom/data-structures/](src/commander
 - `SortedSetDataType` - Sorted sets with scores
 - `StreamDataType` - Stream data structure (future)
 
-#### 5. Lua Script Execution
-
-- Uses `wasmoon` for Lua engine (WebAssembly-based)
-- Scripts stored by SHA-1 hash in DB
-- Commands: `EVAL`, `EVALSHA`, `SCRIPT LOAD/EXISTS/FLUSH`
-- Supports calling Redis commands from Lua via `redis.call()`
-
-#### 6. Transaction Support (MULTI/EXEC)
+#### 5. Transaction Support (MULTI/EXEC)
 
 - Implemented via `TransactionCommand` class
 - Commands are queued during MULTI state
@@ -125,9 +129,10 @@ Custom implementations in [src/commanders/custom/data-structures/](src/commander
 - DISCARD cancels transaction
 - Cluster mode validates slots during transaction execution
 
-#### 7. Dual Backend System
+#### 6. Dual Backend System
 
 The test suite supports two backends via `TEST_BACKEND` environment variable:
+
 - `mock`: Uses `ioredis-mock` (fast, no external dependencies)
 - `real`: Uses actual Redis cluster (validates real-world compatibility)
 
@@ -136,6 +141,7 @@ Integration tests live in [tests-integration/](tests-integration/) with subdirec
 ### Type System
 
 Core types in [src/types.ts](src/types.ts):
+
 - `DBCommandExecutor` - Interface for command execution
 - `Command` - Individual command interface
 - `CommandResult` - Response with optional close flag
@@ -146,6 +152,7 @@ Core types in [src/types.ts](src/types.ts):
 ### Error Handling
 
 Custom errors in [src/core/errors.ts](src/core/errors.ts):
+
 - `UserFacedError` - Base class for client-visible errors
 - `UnknownCommand` - Command not found
 - `MovedError` - Cluster redirect (MOVED response)
@@ -155,6 +162,7 @@ Custom errors in [src/core/errors.ts](src/core/errors.ts):
 ## Code Style & Conventions
 
 ### Early Returns and Linear Flow
+
 Use early returns to avoid nested conditions. Keep code flow linear and predictable:
 
 ```typescript
@@ -176,6 +184,7 @@ if (option) {
 ```
 
 ### Loop Patterns
+
 - Prefer `for...of` with `Object.entries()` over `for...in`
 - Use traditional `for` loops for index-based iteration
 - Avoid array methods in performance-critical code paths
@@ -193,6 +202,7 @@ for (let i = 0; i < args.length; i++) {
 ```
 
 ### Performance Considerations
+
 1. Minimize object allocations in hot paths
 2. Avoid unnecessary string conversions
 3. Use efficient data structures
@@ -215,17 +225,21 @@ describe('MyFeature', () => {
   })
 
   test('should throw error', () => {
-    assert.throws(() => { throw new Error('fail') }, Error)
+    assert.throws(() => {
+      throw new Error('fail')
+    }, Error)
   })
 })
 ```
 
 **DO NOT use:**
+
 - Jest (`it()`, `expect()`, `toBe()`, `toEqual()`)
 - Mocha
 - Chai or other assertion libraries
 
 **DO use:**
+
 - `test()` for individual test cases
 - `describe()` for grouping tests
 - `assert.strictEqual()` for strict equality
@@ -233,6 +247,7 @@ describe('MyFeature', () => {
 - `assert.throws()` for error assertions
 
 ### Test Organization
+
 - Unit tests: [tests/](tests/) directory
 - Integration tests: [tests-integration/](tests-integration/) directory
   - `ioredis/` - Tests using ioredis client
@@ -247,11 +262,11 @@ describe('MyFeature', () => {
 5. Consider adding to filtered command sets:
    - `createReadonlyCommands()` - Safe for replicas
    - `createMultiCommands()` - Allowed in transactions
-   - `createLuaCommands()` - Allowed in Lua scripts
 
 ## Cluster Slot Routing
 
 When implementing commands that operate on keys:
+
 1. Implement `getKeys()` to extract all keys from arguments
 2. `ClusterCommander` uses `cluster-key-slot` to determine slot ownership
 3. If command accesses multiple keys, all must hash to same slot (or throw `CorssSlot`)
@@ -260,6 +275,7 @@ When implementing commands that operate on keys:
 ## Transaction Execution Context
 
 Recent architecture changes introduced execution contexts:
+
 - `ExecutionContext` interface for stateful command execution
 - `TransactionExecutionContext` for MULTI/EXEC blocks
 - Each context can transition to another context based on commands

@@ -7,7 +7,6 @@ import {
   Logger,
 } from '../../types'
 import { createClusterCommands, createMultiCommands } from './commands/redis'
-import { LuaEngine, LuaFactory } from 'wasmoon'
 import { DB } from './db'
 import { ClusterRouter } from './cluster-router'
 import { CommandJob, RedisKernel } from './redis-kernel'
@@ -20,9 +19,7 @@ export async function createCustomClusterCommander(
   logger: Logger,
   discoveryService: DiscoveryService,
 ): Promise<ClusterCommanderFactory> {
-  const factory = new LuaFactory()
-  const lua = await factory.createEngine({ injectObjects: true })
-  return new CustomClusterCommanderFactory(logger, lua, discoveryService)
+  return new CustomClusterCommanderFactory(logger, discoveryService)
 }
 
 export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
@@ -30,20 +27,14 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
 
   constructor(
     private readonly logger: Logger,
-    private readonly luaEngine: LuaEngine,
     private readonly discoveryService: DiscoveryService,
   ) {}
 
   createCommander(mySelfId: string): DBCommandExecutor {
     this.dbs[mySelfId] = this.dbs[mySelfId] || new DB()
     const db = this.dbs[mySelfId]
-    const commands = createClusterCommands(
-      db,
-      this.luaEngine,
-      this.discoveryService,
-      mySelfId,
-    )
-    const transactionCommands = createMultiCommands(this.luaEngine, db)
+    const commands = createClusterCommands(db, this.discoveryService, mySelfId)
+    const transactionCommands = createMultiCommands(db)
 
     return new ClusterCommander(
       db,
@@ -65,7 +56,6 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   }
 
   shutdown(): Promise<void> {
-    this.luaEngine.global.close()
     return Promise.resolve()
   }
 

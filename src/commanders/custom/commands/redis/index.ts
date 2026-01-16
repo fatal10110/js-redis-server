@@ -1,10 +1,8 @@
-import { LuaEngine } from 'wasmoon'
 import { Command, ExecutionContext } from '../../../../types'
 import { DB } from '../../db'
 import type { DiscoveryService } from '../../../../types'
 
 // Basic Redis commands
-export { default as createEval } from './eval'
 export { default as createClient } from './client'
 export { default as createCommandInfo } from './command'
 export { default as createInfo } from './info'
@@ -15,7 +13,6 @@ export { default as createQuit } from './quit'
 export * from './data'
 
 export function createCommands(
-  luaEngine: LuaEngine,
   db: DB,
   options?: {
     executionContext?: ExecutionContext
@@ -25,7 +22,6 @@ export function createCommands(
 ): Record<string, Command> {
   const deps: CommandDependencies = {
     db,
-    luaEngine,
     discoveryService: options?.discoveryService,
     mySelfId: options?.mySelfId,
     executionContext: options?.executionContext,
@@ -41,22 +37,18 @@ export function createCommands(
 
 export function createClusterCommands(
   db: DB,
-  luaEngine: LuaEngine,
   discoveryService: DiscoveryService,
   mySelfId: string,
 ): Record<string, Command> {
-  return createCommands(luaEngine, db, { discoveryService, mySelfId })
+  return createCommands(db, { discoveryService, mySelfId })
 }
 
 /**
  * Create a filtered set of readonly commands safe for replicas
  * These commands don't modify data and are safe for read-only operations
  */
-export function createReadonlyCommands(
-  luaEngine: LuaEngine,
-  db: DB,
-): Record<string, Command> {
-  const deps: CommandDependencies = { db, luaEngine }
+export function createReadonlyCommands(db: DB): Record<string, Command> {
+  const deps: CommandDependencies = { db }
   const registry = createCommandRegistry(deps)
   const allCommands = stripSubCommands(registry.createCommands(deps))
   deps.commands = allCommands
@@ -72,11 +64,8 @@ export function createReadonlyCommands(
  * Create a filtered set of commands allowed within MULTI/EXEC transactions
  * Excludes connection-level commands and certain server commands
  */
-export function createMultiCommands(
-  luaEngine: LuaEngine,
-  db: DB,
-): Record<string, Command> {
-  const deps: CommandDependencies = { db, luaEngine }
+export function createMultiCommands(db: DB): Record<string, Command> {
+  const deps: CommandDependencies = { db }
   const registry = createCommandRegistry(deps)
   const allCommands = stripSubCommands(registry.createCommands(deps))
   deps.commands = allCommands
@@ -90,11 +79,8 @@ export function createMultiCommands(
  * Create a filtered set of commands allowed within Lua scripts
  * Excludes non-deterministic commands and connection-level commands
  */
-export function createLuaCommands(
-  luaEngine: LuaEngine,
-  db: DB,
-): Record<string, Command> {
-  const deps: CommandDependencies = { db, luaEngine }
+export function createLuaCommands(db: DB): Record<string, Command> {
+  const deps: CommandDependencies = { db }
   const registry = createCommandRegistry(deps)
   const allCommands = stripSubCommands(registry.createCommands(deps))
   deps.commands = allCommands
@@ -230,8 +216,6 @@ import { ScriptFlushCommandDefinition } from './script/flush'
 import { ScriptKillCommandDefinition } from './script/kill'
 import { ScriptDebugCommandDefinition } from './script/debug'
 import { ScriptHelpCommandDefinition } from './script/help'
-import { EvalCommandDefinition } from './eval'
-import { EvalShaCommandDefinition } from './evalsha'
 import { ClusterCommandDefinition } from './cluster'
 import { ClusterInfoCommandDefinition } from './cluster/clusterInfo'
 import { ClusterNodesCommandDefinition } from './cluster/clusterNodes'
@@ -338,8 +322,6 @@ export function createCommandRegistry(
     ClientSetNameCommandDefinition,
 
     // Script commands
-    EvalCommandDefinition,
-    EvalShaCommandDefinition,
     ScriptCommandDefinition,
     ScriptLoadCommandDefinition,
     ScriptExistsCommandDefinition,

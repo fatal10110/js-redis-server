@@ -1,14 +1,5 @@
 import { Socket } from 'net'
-import { LuaEngine, LuaFactory } from 'wasmoon'
 import { Command, DBCommandExecutor, Logger } from '../../types'
-import { UnknownCommand, UserFacedError } from '../../core/errors'
-import {
-  Command,
-  DBCommandExecutor,
-  ExecutionContext,
-  Logger,
-  Transport,
-} from '../../types'
 
 import { DB } from './db'
 
@@ -23,28 +14,21 @@ import { NormalState } from '../../core/transports/session-state'
 export async function createCustomCommander(
   logger: Logger,
 ): Promise<CustomCommanderFactory> {
-  const factory = new LuaFactory()
-  const lua = await factory.createEngine({ injectObjects: true })
-
-  return new CustomCommanderFactory(logger, lua)
+  return new CustomCommanderFactory(logger)
 }
 
 export class CustomCommanderFactory {
   private readonly db = new DB()
 
-  constructor(
-    private readonly logger: Logger,
-    private readonly luaEngine: LuaEngine,
-  ) {}
+  constructor(private readonly logger: Logger) {}
 
   shutdown(): Promise<void> {
     this.logger.info('Shutting down CustomClusterCommanderFactory')
-    this.luaEngine.global.close()
     return Promise.resolve()
   }
 
   createCommander(): DBCommandExecutor {
-    return new Commander(this.luaEngine, this.db)
+    return new Commander(this.db)
   }
 }
 
@@ -54,9 +38,9 @@ class Commander implements DBCommandExecutor {
   private readonly commands: Record<string, Command>
   private readonly transactionCommands: Record<string, Command>
 
-  constructor(luaEngine: LuaEngine, db: DB) {
-    this.commands = createCommands(luaEngine, db)
-    this.transactionCommands = createMultiCommands(luaEngine, db)
+  constructor(db: DB) {
+    this.commands = createCommands(db)
+    this.transactionCommands = createMultiCommands(db)
     // Transaction state is now managed by Session, so no transactionCommands needed here
     this.kernel = new RedisKernel(this.handleJob.bind(this))
   }

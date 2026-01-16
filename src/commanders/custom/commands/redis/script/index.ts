@@ -46,7 +46,6 @@ export const ScriptCommandDefinition: SchemaCommandRegistration<
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
-    luaEngine: ctx.luaEngine,
     discoveryService: ctx.discoveryService,
     mySelfId: ctx.mySelfId,
   }

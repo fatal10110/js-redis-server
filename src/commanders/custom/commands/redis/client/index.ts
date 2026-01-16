@@ -1,5 +1,5 @@
 import { UnknwonClientSubCommand } from '../../../../../core/errors'
-import { Command, CommandResult } from '../../../../../types'
+import { Command } from '../../../../../types'
 import { defineCommand, CommandCategory } from '../../metadata'
 import {
   createSchemaCommand,
@@ -46,7 +46,6 @@ export const ClientCommandDefinition: SchemaCommandRegistration<
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
-    luaEngine: ctx.luaEngine,
     discoveryService: ctx.discoveryService,
     mySelfId: ctx.mySelfId,
   }
