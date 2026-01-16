@@ -89,7 +89,7 @@ export class RespAdapter {
 
   constructor(
     private readonly logger: Logger,
-    socket: Socket,
+    private readonly socket: Socket,
     private readonly session: Session,
   ) {
     this.controller = new AbortController()
