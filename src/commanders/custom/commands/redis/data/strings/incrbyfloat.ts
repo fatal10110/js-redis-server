@@ -25,7 +25,7 @@ export const IncrbyfloatCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: async ([key, incrementStr], { db }) => {
+  handler: ([key, incrementStr], { db }) => {
     const increment = parseFloat(incrementStr)
     if (isNaN(increment)) {
       throw new ExpectedFloat()

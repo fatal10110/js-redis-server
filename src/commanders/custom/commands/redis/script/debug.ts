@@ -24,7 +24,7 @@ export const ScriptDebugCommandDefinition: SchemaCommandRegistration<
   schema: t.tuple([
     t.xor([t.literal('YES'), t.literal('SYNC'), t.literal('NO')]),
   ]),
-  handler: async () => ({ response: 'OK' }),
+  handler: () => ({ response: 'OK' }),
 }
 
 export default function (db: DB) {

@@ -17,11 +17,7 @@ const metadata = defineCommand('monitor', {
 export const MonitorCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async () => {
-    await new Promise(resolve => {
-      setTimeout(resolve, 10000)
-    })
-
+  handler: () => {
     return { response: 'OK' }
   },
 }

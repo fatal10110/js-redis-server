@@ -25,7 +25,7 @@ export const SismemberCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: async ([key, member], { db }) => {
+  handler: ([key, member], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

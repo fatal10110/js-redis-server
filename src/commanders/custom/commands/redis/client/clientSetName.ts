@@ -25,7 +25,7 @@ export const ClientSetNameCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.string()]),
-  handler: async () => ({ response: 'OK' }),
+  handler: () => ({ response: 'OK' }),
 }
 
 export default function (db: DB) {

@@ -25,7 +25,7 @@ export const HgetCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: async ([key, field], { db }) => {
+  handler: ([key, field], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

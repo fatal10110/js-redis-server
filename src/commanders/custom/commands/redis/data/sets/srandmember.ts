@@ -26,7 +26,7 @@ export const SrandmemberCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.optional(t.integer())]),
-  handler: async ([key, count], { db }) => {
+  handler: ([key, count], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

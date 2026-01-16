@@ -25,7 +25,7 @@ export const ZremCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: async ([key, firstMember, restMembers], { db }) => {
+  handler: ([key, firstMember, restMembers], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

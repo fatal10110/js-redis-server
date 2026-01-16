@@ -29,7 +29,7 @@ export const MsetnxCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.key(), t.string()])),
   ]),
-  handler: async ([firstKey, firstValue, restPairs], { db }) => {
+  handler: ([firstKey, firstValue, restPairs], { db }) => {
     const pairs: Array<[Buffer, string]> = [
       [firstKey, firstValue],
       ...restPairs,

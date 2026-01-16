@@ -12,12 +12,12 @@ export class CommandExecutionContext implements ExecutionContext {
     return Promise.resolve()
   }
 
-  async execute(
+  execute(
     transport: Transport,
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
-  ): Promise<ExecutionContext> {
+  ): ExecutionContext {
     const cmdName = rawCmd.toString().toLowerCase()
 
     const cmd = this.commands[cmdName]
@@ -28,7 +28,7 @@ export class CommandExecutionContext implements ExecutionContext {
     }
 
     try {
-      const res = await cmd.run(rawCmd, args, signal)
+      const res = cmd.run(rawCmd, args, signal)
       transport.write(res.response, res.close)
     } catch (err) {
       if (err instanceof UserFacedError) {

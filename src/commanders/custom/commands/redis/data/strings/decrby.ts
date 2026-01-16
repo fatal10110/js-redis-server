@@ -25,7 +25,7 @@ export const DecrbyCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: async ([key, decrementStr], { db }) => {
+  handler: ([key, decrementStr], { db }) => {
     const decrement = parseInt(decrementStr)
     if (isNaN(decrement)) {
       throw new ExpectedInteger()

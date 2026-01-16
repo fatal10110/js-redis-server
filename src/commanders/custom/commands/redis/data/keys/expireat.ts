@@ -24,7 +24,7 @@ export const ExpireatCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer()]),
-  handler: async ([key, timestamp], { db }) => {
+  handler: ([key, timestamp], { db }) => {
     if (timestamp < 0) {
       throw new InvalidExpireTime(metadata.name)
     }

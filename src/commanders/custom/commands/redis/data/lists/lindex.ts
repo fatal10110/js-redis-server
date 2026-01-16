@@ -25,7 +25,7 @@ export const LindexCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer()]),
-  handler: async ([key, index], { db }) => {
+  handler: ([key, index], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

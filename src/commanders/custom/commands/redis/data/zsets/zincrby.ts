@@ -25,7 +25,7 @@ export const ZincrbyCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: async ([key, incrementStr, member], { db }) => {
+  handler: ([key, incrementStr, member], { db }) => {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
       throw new ExpectedFloat()

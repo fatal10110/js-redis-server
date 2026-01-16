@@ -23,7 +23,7 @@ export const ExistsCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: async ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db }) => {
     const keys = [firstKey, ...restKeys]
     let count = 0
 

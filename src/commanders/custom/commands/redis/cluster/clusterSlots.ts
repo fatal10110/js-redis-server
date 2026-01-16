@@ -24,7 +24,7 @@ const metadata = defineCommand(`cluster|${commandName}`, {
 export const ClusterSlotsCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async (_args, { discoveryService, mySelfId }) => {
+  handler: (_args, { discoveryService, mySelfId }) => {
     const service = discoveryService as DiscoveryService | undefined
     if (!service || !mySelfId) {
       throw new Error('Cluster slots requires discoveryService and mySelfId')

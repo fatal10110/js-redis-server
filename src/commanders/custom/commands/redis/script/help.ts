@@ -20,7 +20,7 @@ const metadata = defineCommand('script|help', {
 export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async () => {
+  handler: () => {
     const helpText = [
       'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
       'DEBUG <YES|SYNC|NO>',

@@ -31,7 +31,7 @@ export const ScriptCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.string(), t.variadic(t.string())]),
-  handler: async ([subCommandName, rest], ctx) => {
+  handler: ([subCommandName, rest], ctx) => {
     const subCommands = createSubCommands(ctx)
     const subCommand = subCommands[subCommandName.toString().toLowerCase()]
 

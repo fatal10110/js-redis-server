@@ -64,7 +64,7 @@ export const SetCommandDefinition: SchemaCommandRegistration<
       get: t.flag('GET'),
     }),
   ]),
-  handler: async ([key, value, schemaOptions], { db }) => {
+  handler: ([key, value, schemaOptions], { db }) => {
     const options = parseOptions(schemaOptions ?? {})
 
     const existingData = db.get(key)

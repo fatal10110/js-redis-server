@@ -26,7 +26,7 @@ export const RpushCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: async ([key, firstValue, restValues], { db }) => {
+  handler: ([key, firstValue, restValues], { db }) => {
     const existing = db.get(key)
 
     if (existing !== null && !(existing instanceof ListDataType)) {

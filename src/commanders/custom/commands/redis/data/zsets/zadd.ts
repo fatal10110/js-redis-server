@@ -31,7 +31,7 @@ export const ZaddCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
   ]),
-  handler: async ([key, firstScoreStr, firstMember, restPairs], { db }) => {
+  handler: ([key, firstScoreStr, firstMember, restPairs], { db }) => {
     const firstScore = parseFloat(firstScoreStr)
     if (Number.isNaN(firstScore)) {
       throw new ExpectedFloat()

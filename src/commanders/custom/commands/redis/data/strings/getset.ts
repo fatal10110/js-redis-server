@@ -26,7 +26,7 @@ export const GetsetCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: async ([key, value], { db }) => {
+  handler: ([key, value], { db }) => {
     const existing = db.get(key)
     let oldValue: Buffer | null = null
 

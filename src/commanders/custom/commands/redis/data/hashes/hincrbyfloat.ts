@@ -25,7 +25,7 @@ export const HincrbyfloatCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: async ([key, field, incrementStr], { db }) => {
+  handler: ([key, field, incrementStr], { db }) => {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
       throw new ExpectedFloat()

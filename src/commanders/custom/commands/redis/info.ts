@@ -18,7 +18,7 @@ export const InfoCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.optional(t.string())]),
-  handler: async () => ({ response: 'mock info' }),
+  handler: () => ({ response: 'mock info' }),
 }
 
 export default function (db: DB) {

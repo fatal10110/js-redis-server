@@ -24,7 +24,7 @@ export const MgetCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: async ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db }) => {
     const keys = [firstKey, ...restKeys]
     const res: (Buffer | null)[] = []
 
