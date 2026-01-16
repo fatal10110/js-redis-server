@@ -1,17 +1,19 @@
-import type { Command, ExecutionContext } from '../../../types'
-import type { CommandMetadata, CommandCategory } from './metadata'
+import type {
+  Command,
+  DiscoveryService,
+  ExecutionContext,
+} from '../../../types'
+import type { CommandCategory } from './metadata'
 import type { DB } from '../db'
 import type { InputMapper } from '../schema'
 import { createSchemaCommand, SchemaCommandRegistration } from '../schema'
-import { LuaEngine } from 'wasmoon'
 
 /**
  * Dependencies passed to command factories
  */
 export interface CommandDependencies {
   db: DB
-  luaEngine?: LuaEngine
-  discoveryService?: any // For cluster commands
+  discoveryService?: DiscoveryService
   mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>

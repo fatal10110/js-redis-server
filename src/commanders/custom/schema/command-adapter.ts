@@ -5,11 +5,9 @@ import type { SchemaType } from './types'
 import type { CompiledSchema, InputMapper } from './input-mapper'
 import { compileSchema } from './input-mapper'
 import { RespInputMapper } from './resp-input-mapper'
-import { LuaEngine } from 'wasmoon'
 
 export interface SchemaCommandContext {
   db: DB
-  luaEngine?: LuaEngine
   discoveryService?: unknown
   mySelfId?: string
   executionContext?: ExecutionContext
