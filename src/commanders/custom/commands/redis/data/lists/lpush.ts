@@ -45,7 +45,7 @@ export const LpushCommandDefinition: SchemaCommandRegistration<
       list.lpush(value)
     }
 
-    return { response: list.llen() }
+    return list.llen()
   },
 }
 

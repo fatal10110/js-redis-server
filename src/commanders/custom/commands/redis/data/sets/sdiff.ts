@@ -44,7 +44,7 @@ export const SdiffCommandDefinition: SchemaCommandRegistration<
     }
 
     const [firstSet, ...otherSets] = sets
-    return { response: firstSet.sdiff(otherSets) }
+    return firstSet.sdiff(otherSets)
   },
 }
 

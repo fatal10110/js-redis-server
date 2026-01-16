@@ -31,9 +31,9 @@ export const SrandmemberCommandDefinition: SchemaCommandRegistration<
 
     if (existing === null) {
       if (count !== undefined) {
-        return { response: [] }
+        return []
       }
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof SetDataType)) {
@@ -42,11 +42,11 @@ export const SrandmemberCommandDefinition: SchemaCommandRegistration<
 
     if (count === undefined) {
       const member = existing.srandmember()
-      return { response: member }
+      return member
     }
 
     const members = existing.srandmember(count)
-    return { response: members }
+    return members
   },
 }
 

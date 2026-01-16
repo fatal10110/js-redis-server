@@ -44,7 +44,7 @@ export const SunionCommandDefinition: SchemaCommandRegistration<
     }
 
     const [firstSet, ...otherSets] = sets
-    return { response: firstSet.sunion(otherSets) }
+    return firstSet.sunion(otherSets)
   },
 }
 

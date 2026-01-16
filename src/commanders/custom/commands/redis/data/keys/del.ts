@@ -32,7 +32,7 @@ export const DelCommandDefinition: SchemaCommandRegistration<
       }
     }
 
-    return { response: counter }
+    return counter
   },
 }
 

@@ -39,7 +39,7 @@ export const MgetCommandDefinition: SchemaCommandRegistration<
       res.push(val.data)
     }
 
-    return { response: res }
+    return res
   },
 }
 

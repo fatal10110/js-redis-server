@@ -1,4 +1,4 @@
-import { DiscoveryService } from '../../../../../types'
+import { CommandResult, DiscoveryService } from '../../../../../types'
 import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
 import {
@@ -30,12 +30,12 @@ export const ClusterSlotsCommandDefinition: SchemaCommandRegistration<[]> = {
       throw new Error('Cluster slots requires discoveryService and mySelfId')
     }
 
-    const slots: unknown[] = []
+    const slots: CommandResult[] = []
 
     for (const clusterNode of service.getAll()) {
       if (!service.isMaster(clusterNode.id)) continue
 
-      const nodeInfo: (string | number | Iterable<void>)[] = [
+      const nodeInfo: CommandResult[] = [
         clusterNode.host,
         clusterNode.port,
         clusterNode.id,
@@ -47,7 +47,7 @@ export const ClusterSlotsCommandDefinition: SchemaCommandRegistration<[]> = {
       }
     }
 
-    return { response: slots }
+    return slots
   },
 }
 

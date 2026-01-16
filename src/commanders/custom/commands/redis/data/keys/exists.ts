@@ -33,7 +33,7 @@ export const ExistsCommandDefinition: SchemaCommandRegistration<
       }
     }
 
-    return { response: count }
+    return count
   },
 }
 

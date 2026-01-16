@@ -23,7 +23,7 @@ export const DbSizeCommandDefinition: SchemaCommandRegistration<[]> = {
   schema: t.tuple([]),
   handler: (_args, { db }) => {
     const size = db.size()
-    return { response: size }
+    return size
   },
 }
 

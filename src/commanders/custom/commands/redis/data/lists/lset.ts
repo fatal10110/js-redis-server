@@ -41,7 +41,7 @@ export const LsetCommandDefinition: SchemaCommandRegistration<
       throw new OutOfRangeIndex()
     }
 
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

@@ -29,7 +29,7 @@ export const HdelCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof HashDataType)) {
@@ -47,7 +47,7 @@ export const HdelCommandDefinition: SchemaCommandRegistration<
       db.del(key)
     }
 
-    return { response: deletedCount }
+    return deletedCount
   },
 }
 

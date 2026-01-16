@@ -19,7 +19,7 @@ export const PingCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.optional(t.string())]),
-  handler: () => ({ response: 'PONG' }),
+  handler: () => 'PONG',
 }
 
 export default function (db: DB) {

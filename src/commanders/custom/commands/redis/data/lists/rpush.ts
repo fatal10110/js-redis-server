@@ -45,7 +45,7 @@ export const RpushCommandDefinition: SchemaCommandRegistration<
       list.rpush(value)
     }
 
-    return { response: list.llen() }
+    return list.llen()
   },
 }
 

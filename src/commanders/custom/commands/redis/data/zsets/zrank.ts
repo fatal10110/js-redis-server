@@ -29,14 +29,14 @@ export const ZrankCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.zrank(member) }
+    return existing.zrank(member)
   },
 }
 

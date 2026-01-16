@@ -40,7 +40,7 @@ export const HincrbyCommandDefinition: SchemaCommandRegistration<
     }
 
     const result = hash.hincrby(field, increment)
-    return { response: result }
+    return result
   },
 }
 

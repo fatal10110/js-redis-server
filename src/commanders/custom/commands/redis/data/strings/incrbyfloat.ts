@@ -48,7 +48,7 @@ export const IncrbyfloatCommandDefinition: SchemaCommandRegistration<
     const newValue = currentValue + increment
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
 
-    return { response: Buffer.from(newValue.toString()) }
+    return Buffer.from(newValue.toString())
   },
 }
 

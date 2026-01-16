@@ -48,7 +48,7 @@ export const DecrbyCommandDefinition: SchemaCommandRegistration<
     const newValue = currentValue - decrement
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
 
-    return { response: newValue }
+    return newValue
   },
 }
 

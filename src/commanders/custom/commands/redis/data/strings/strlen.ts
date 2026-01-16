@@ -27,14 +27,14 @@ export const StrlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const val = db.get(key)
 
     if (val === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(val instanceof StringDataType)) {
       throw new WrongType()
     }
 
-    return { response: val.data.length }
+    return val.data.length
   },
 }
 

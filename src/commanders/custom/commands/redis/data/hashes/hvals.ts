@@ -27,14 +27,14 @@ export const HvalsCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: [] }
+      return []
     }
 
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.hvals() }
+    return existing.hvals()
   },
 }
 

@@ -27,14 +27,14 @@ export const GetCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const val = db.get(key)
 
     if (val === null) {
-      return { response: null }
+      return null
     }
 
     if (!(val instanceof StringDataType)) {
       throw new WrongType()
     }
 
-    return { response: val.data }
+    return val.data
   },
 }
 

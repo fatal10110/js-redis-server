@@ -37,7 +37,7 @@ export const MsetnxCommandDefinition: SchemaCommandRegistration<
 
     for (const [key] of pairs) {
       if (db.get(key) !== null) {
-        return { response: 0 }
+        return 0
       }
     }
 
@@ -45,7 +45,7 @@ export const MsetnxCommandDefinition: SchemaCommandRegistration<
       db.set(key, new StringDataType(Buffer.from(value)))
     }
 
-    return { response: 1 }
+    return 1
   },
 }
 

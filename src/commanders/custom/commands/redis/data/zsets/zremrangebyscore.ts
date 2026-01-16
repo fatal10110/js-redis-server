@@ -35,7 +35,7 @@ export const ZremrangebyscoreCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof SortedSetDataType)) {
@@ -43,7 +43,7 @@ export const ZremrangebyscoreCommandDefinition: SchemaCommandRegistration<
     }
 
     const removed = existing.zremrangebyscore(min, max)
-    return { response: removed }
+    return removed
   },
 }
 

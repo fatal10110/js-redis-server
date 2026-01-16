@@ -29,7 +29,7 @@ export const SremCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof SetDataType)) {
@@ -46,7 +46,7 @@ export const SremCommandDefinition: SchemaCommandRegistration<
       db.del(key)
     }
 
-    return { response: removed }
+    return removed
   },
 }
 

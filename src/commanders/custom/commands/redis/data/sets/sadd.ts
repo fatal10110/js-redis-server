@@ -45,7 +45,7 @@ export const SaddCommandDefinition: SchemaCommandRegistration<
       added += set.sadd(member)
     }
 
-    return { response: added }
+    return added
   },
 }
 

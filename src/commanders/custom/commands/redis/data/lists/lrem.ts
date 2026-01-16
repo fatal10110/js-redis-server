@@ -28,7 +28,7 @@ export const LremCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof ListDataType)) {
@@ -41,7 +41,7 @@ export const LremCommandDefinition: SchemaCommandRegistration<
       db.del(key)
     }
 
-    return { response: removed }
+    return removed
   },
 }
 

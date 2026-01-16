@@ -95,7 +95,7 @@ export const ClusterShardsCommandDefinition: SchemaCommandRegistration<[]> = {
       ])
     }
 
-    return { response: shards }
+    return shards
   },
 }
 

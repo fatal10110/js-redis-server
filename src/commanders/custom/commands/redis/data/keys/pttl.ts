@@ -25,16 +25,16 @@ export const PttlCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: -2 }
+      return -2
     }
 
     const ttl = db.getTtl(key)
     if (ttl === -1) {
-      return { response: -1 }
+      return -1
     }
 
     const remainingMilliseconds = Math.max(0, ttl - Date.now())
-    return { response: remainingMilliseconds }
+    return remainingMilliseconds
   },
 }
 

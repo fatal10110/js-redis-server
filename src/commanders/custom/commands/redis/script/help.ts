@@ -37,7 +37,7 @@ export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
       '    Load a script into the scripts cache without executing it.',
     ]
 
-    return { response: helpText }
+    return helpText
   },
 }
 

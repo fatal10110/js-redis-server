@@ -12,15 +12,13 @@ const metadata = defineCommand('quit', {
   lastKey: -1,
   keyStep: 1,
   categories: [CommandCategory.CONNECTION],
+  closesConnection: true,
 })
 
 export const QuitCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: () => ({
-    close: true,
-    response: 'OK',
-  }),
+  handler: () => 'OK',
 }
 
 export default function (db: DB) {

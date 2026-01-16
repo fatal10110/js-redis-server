@@ -1,4 +1,4 @@
-import { Command } from '../../../../../types'
+import { Command, CommandResult } from '../../../../../types'
 import { DB } from '../../../db'
 import {
   WrongNumberOfArguments,
@@ -63,7 +63,7 @@ export const CommandInfoDefinition: SchemaCommandRegistration<[Buffer[]]> = {
 /**
  * COMMAND - Return all command metadata
  */
-function handleCommandList(ctx: SchemaCommandContext): unknown[] {
+function handleCommandList(ctx: SchemaCommandContext): CommandResult[] {
   const commands = getAllCommands(ctx)
   return commands.map(cmd => formatCommand(cmd.metadata))
 }
@@ -71,7 +71,10 @@ function handleCommandList(ctx: SchemaCommandContext): unknown[] {
 /**
  * COMMAND INFO <cmd> [<cmd> ...]
  */
-function handleCommandInfo(args: Buffer[], ctx: SchemaCommandContext): unknown {
+function handleCommandInfo(
+  args: Buffer[],
+  ctx: SchemaCommandContext,
+): CommandResult {
   if (args.length === 0) {
     throw new WrongNumberOfArguments('command|info')
   }
@@ -126,7 +129,7 @@ function handleCommandGetKeys(
 function handleCommandDocs(
   args: Buffer[],
   ctx: SchemaCommandContext,
-): unknown[] {
+): CommandResult[] {
   if (args.length === 0) {
     // Return docs for all commands - stub with empty array
     return []
@@ -181,7 +184,7 @@ function getAllCommands(ctx: SchemaCommandContext): Command[] {
  *
  * Redis returns 1-indexed positions where 0 means no keys
  */
-function formatCommand(meta: CommandMetadata): unknown[] {
+function formatCommand(meta: CommandMetadata): CommandResult[] {
   return [
     meta.name,
     meta.arity,

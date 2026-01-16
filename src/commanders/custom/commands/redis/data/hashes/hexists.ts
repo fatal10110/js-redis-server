@@ -29,14 +29,14 @@ export const HexistsCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.hexists(field) ? 1 : 0 }
+    return existing.hexists(field) ? 1 : 0
   },
 }
 

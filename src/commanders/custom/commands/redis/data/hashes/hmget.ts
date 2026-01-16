@@ -29,7 +29,7 @@ export const HmgetCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: [null, ...restFields.map(() => null)] }
+      return [null, ...restFields.map(() => null)]
     }
 
     if (!(existing instanceof HashDataType)) {
@@ -37,7 +37,7 @@ export const HmgetCommandDefinition: SchemaCommandRegistration<
     }
 
     const fields = [firstField, ...restFields]
-    return { response: existing.hmget(fields) }
+    return existing.hmget(fields)
   },
 }
 

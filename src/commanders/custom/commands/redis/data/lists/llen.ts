@@ -27,14 +27,14 @@ export const LlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.llen() }
+    return existing.llen()
   },
 }
 

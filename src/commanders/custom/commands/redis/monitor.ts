@@ -18,7 +18,7 @@ export const MonitorCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
   handler: () => {
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

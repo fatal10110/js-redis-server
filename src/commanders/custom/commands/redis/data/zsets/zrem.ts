@@ -29,7 +29,7 @@ export const ZremCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof SortedSetDataType)) {
@@ -42,7 +42,7 @@ export const ZremCommandDefinition: SchemaCommandRegistration<
       removed += existing.zrem(member)
     }
 
-    return { response: removed }
+    return removed
   },
 }
 

@@ -29,7 +29,7 @@ export const SmoveCommandDefinition: SchemaCommandRegistration<
     const sourceExisting = db.get(sourceKey)
 
     if (sourceExisting === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(sourceExisting instanceof SetDataType)) {
@@ -59,7 +59,7 @@ export const SmoveCommandDefinition: SchemaCommandRegistration<
       db.del(sourceKey)
     }
 
-    return { response: moved ? 1 : 0 }
+    return moved ? 1 : 0
   },
 }
 

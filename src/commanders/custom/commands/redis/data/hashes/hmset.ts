@@ -51,7 +51,7 @@ export const HmsetCommandDefinition: SchemaCommandRegistration<
       hash.hset(field, value)
     }
 
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

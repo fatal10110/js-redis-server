@@ -31,13 +31,13 @@ export const ExpireCommandDefinition: SchemaCommandRegistration<
 
     if (seconds === 0) {
       const deleted = db.del(key)
-      return { response: deleted ? 1 : 0 }
+      return deleted ? 1 : 0
     }
 
     const expiration = Date.now() + seconds * 1000
     const success = db.setExpiration(key, expiration)
 
-    return { response: success ? 1 : 0 }
+    return success ? 1 : 0
   },
 }
 

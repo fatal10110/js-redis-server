@@ -27,14 +27,14 @@ export const HlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.hlen() }
+    return existing.hlen()
   },
 }
 

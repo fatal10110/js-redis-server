@@ -29,14 +29,14 @@ export const LrangeCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: [] }
+      return []
     }
 
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.lrange(start, stop) }
+    return existing.lrange(start, stop)
   },
 }
 

@@ -28,7 +28,7 @@ export const LtrimCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 'OK' }
+      return 'OK'
     }
 
     if (!(existing instanceof ListDataType)) {
@@ -41,7 +41,7 @@ export const LtrimCommandDefinition: SchemaCommandRegistration<
       db.del(key)
     }
 
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

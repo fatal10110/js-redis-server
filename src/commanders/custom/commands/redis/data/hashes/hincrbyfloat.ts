@@ -45,7 +45,7 @@ export const HincrbyfloatCommandDefinition: SchemaCommandRegistration<
     }
 
     const result = hash.hincrbyfloat(field, increment)
-    return { response: Buffer.from(result.toString()) }
+    return Buffer.from(result.toString())
   },
 }
 

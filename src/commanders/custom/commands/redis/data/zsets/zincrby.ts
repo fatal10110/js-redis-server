@@ -45,7 +45,7 @@ export const ZincrbyCommandDefinition: SchemaCommandRegistration<
     }
 
     const newScore = zset.zincrby(member, increment)
-    return { response: Buffer.from(newScore.toString()) }
+    return Buffer.from(newScore.toString())
   },
 }
 

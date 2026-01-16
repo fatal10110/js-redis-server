@@ -14,10 +14,13 @@ export interface ExecutionContext {
   shutdown(): Promise<void>
 }
 
-export type CommandResult = {
-  close?: boolean
-  response: unknown
-}
+export type CommandResult =
+  | string
+  | number
+  | bigint
+  | null
+  | Buffer
+  | CommandResult[]
 
 export interface Logger {
   info(msg: unknown, metadata?: Record<string, unknown>): void
