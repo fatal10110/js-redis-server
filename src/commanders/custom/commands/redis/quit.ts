@@ -1,7 +1,6 @@
 import { DB } from '../../db'
 import { defineCommand, CommandCategory } from '../metadata'
 import { createSchemaCommand, SchemaCommandRegistration, t } from '../../schema'
-
 const metadata = defineCommand('quit', {
   arity: 1, // QUIT
   flags: {
@@ -12,15 +11,15 @@ const metadata = defineCommand('quit', {
   lastKey: -1,
   keyStep: 1,
   categories: [CommandCategory.CONNECTION],
-  closesConnection: true,
 })
-
 export const QuitCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: () => 'OK',
+  handler: (_args, ctx) => {
+    ctx.transport.closeAfterFlush()
+    transport.write('OK')
+  },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(QuitCommandDefinition, { db })
 }

@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('zrem', {
   arity: -3, // ZREM key member [member ...]
   flags: {
@@ -19,33 +18,35 @@ const metadata = defineCommand('zrem', {
   keyStep: 1,
   categories: [CommandCategory.ZSET],
 })
-
 export const ZremCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstMember, restMembers], { db }) => {
+  handler: ([key, firstMember, restMembers], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      {
+        transport.write(0)
+        return
+      }
     }
-
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
-
     let removed = 0
     removed += existing.zrem(firstMember)
     for (const member of restMembers) {
       removed += existing.zrem(member)
     }
 
-    return removed
+    if (existing.zcard() === 0) {
+      db.del(key)
+    }
+
+    transport.write(removed)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ZremCommandDefinition, { db })
 }

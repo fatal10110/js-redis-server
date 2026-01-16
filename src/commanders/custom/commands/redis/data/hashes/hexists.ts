@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hexists', {
   arity: 3, // HEXISTS key field
   flags: {
@@ -19,27 +18,23 @@ const metadata = defineCommand('hexists', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HexistsCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, field], { db }) => {
+  handler: ([key, field], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
-    return existing.hexists(field) ? 1 : 0
+    transport.write(existing.hexists(field) ? 1 : 0)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HexistsCommandDefinition, { db })
 }

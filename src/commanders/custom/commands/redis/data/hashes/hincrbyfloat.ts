@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hincrbyfloat', {
   arity: 4, // HINCRBYFLOAT key field increment
   flags: {
@@ -19,36 +18,29 @@ const metadata = defineCommand('hincrbyfloat', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HincrbyfloatCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, string]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: ([key, field, incrementStr], { db }) => {
+  handler: ([key, field, incrementStr], { db, transport }) => {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
       throw new ExpectedFloat()
     }
-
     const existing = db.get(key)
-
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
     const hash =
       existing instanceof HashDataType ? existing : new HashDataType()
-
     if (!(existing instanceof HashDataType)) {
       db.set(key, hash)
     }
-
     const result = hash.hincrbyfloat(field, increment)
-    return Buffer.from(result.toString())
+    transport.write(Buffer.from(result.toString()))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HincrbyfloatCommandDefinition, { db })
 }

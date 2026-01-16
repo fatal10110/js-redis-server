@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hvals', {
   arity: 2, // HVALS key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('hvals', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HvalsCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return []
+      transport.write([])
+      return
     }
-
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
-    return existing.hvals()
+    transport.write(existing.hvals())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HvalsCommandDefinition, { db })
 }

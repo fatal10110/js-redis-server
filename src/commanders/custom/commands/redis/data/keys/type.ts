@@ -10,7 +10,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('type', {
   arity: 2, // TYPE key
   flags: {
@@ -22,37 +21,38 @@ const metadata = defineCommand('type', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC],
 })
-
 export const TypeCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 'none'
+      transport.write('none')
+      return
     }
-
     if (existing instanceof StringDataType) {
-      return 'string'
+      transport.write('string')
+      return
     }
     if (existing instanceof HashDataType) {
-      return 'hash'
+      transport.write('hash')
+      return
     }
     if (existing instanceof ListDataType) {
-      return 'list'
+      transport.write('list')
+      return
     }
     if (existing instanceof SetDataType) {
-      return 'set'
+      transport.write('set')
+      return
     }
     if (existing instanceof SortedSetDataType) {
-      return 'zset'
+      transport.write('zset')
+      return
     }
-
-    return 'unknown'
+    transport.write('unknown')
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(TypeCommandDefinition, { db })
 }

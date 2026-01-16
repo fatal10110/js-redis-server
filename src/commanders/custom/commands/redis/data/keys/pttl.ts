@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('pttl', {
   arity: 2, // PTTL key
   flags: {
@@ -17,27 +16,24 @@ const metadata = defineCommand('pttl', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC],
 })
-
 export const PttlCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return -2
+      transport.write(-2)
+      return
     }
-
     const ttl = db.getTtl(key)
     if (ttl === -1) {
-      return -1
+      transport.write(-1)
+      return
     }
-
     const remainingMilliseconds = Math.max(0, ttl - Date.now())
-    return remainingMilliseconds
+    transport.write(remainingMilliseconds)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(PttlCommandDefinition, { db })
 }

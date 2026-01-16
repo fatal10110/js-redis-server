@@ -1,4 +1,9 @@
-import type { Command, CommandResult, ExecutionContext } from '../../../types'
+import type {
+  Command,
+  CommandResult,
+  ExecutionContext,
+  Transport,
+} from '../../../types'
 import type { CommandMetadata } from '../commands/metadata'
 import type { DB } from '../db'
 import type { SchemaType } from './types'
@@ -13,18 +18,19 @@ export interface SchemaCommandContext {
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
   signal: AbortSignal
+  transport: Transport
 }
 
 export interface SchemaCommandRegistration<TArgs = unknown> {
   metadata: CommandMetadata
   schema: SchemaType
-  handler: (args: TArgs, ctx: SchemaCommandContext) => CommandResult
+  handler: (args: TArgs, ctx: SchemaCommandContext) => CommandResult | void
   getKeys?: (rawCmd: Buffer, args: Buffer[]) => Buffer[]
 }
 
 export function createSchemaCommand(
   definition: SchemaCommandRegistration<any>,
-  ctx: Omit<SchemaCommandContext, 'signal'>,
+  ctx: Omit<SchemaCommandContext, 'signal' | 'transport'>,
   mapper: InputMapper<Buffer[]> = new RespInputMapper(),
 ): Command {
   return new SchemaCommandAdapter(definition, ctx, mapper)
@@ -36,7 +42,7 @@ class SchemaCommandAdapter implements Command {
 
   constructor(
     private readonly definition: SchemaCommandRegistration<any>,
-    private readonly ctx: Omit<SchemaCommandContext, 'signal'>,
+    private readonly ctx: Omit<SchemaCommandContext, 'signal' | 'transport'>,
     private readonly mapper: InputMapper<Buffer[]>,
   ) {
     this.metadata = definition.metadata
@@ -80,13 +86,19 @@ class SchemaCommandAdapter implements Command {
     return keys
   }
 
-  run(_rawCmd: Buffer, args: Buffer[], signal: AbortSignal): CommandResult {
+  run(
+    _rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+    transport: Transport,
+  ): CommandResult | void {
     const parsed = this.mapper.parse(this.compiledSchema, args, {
       commandName: this.metadata.name,
     })
     const result = this.definition.handler(parsed, {
       ...this.ctx,
       signal,
+      transport,
     })
 
     return result

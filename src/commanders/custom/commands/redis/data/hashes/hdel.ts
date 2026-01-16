@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hdel', {
   arity: -3, // HDEL key field [field ...]
   flags: {
@@ -19,38 +18,31 @@ const metadata = defineCommand('hdel', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HdelCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstField, restFields], { db }) => {
+  handler: ([key, firstField, restFields], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
     let deletedCount = 0
     deletedCount += existing.hdel(firstField)
-
     for (const field of restFields) {
       deletedCount += existing.hdel(field)
     }
-
     if (existing.hlen() === 0) {
       db.del(key)
     }
-
-    return deletedCount
+    transport.write(deletedCount)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HdelCommandDefinition, { db })
 }

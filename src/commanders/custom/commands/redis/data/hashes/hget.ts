@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hget', {
   arity: 3, // HGET key field
   flags: {
@@ -19,28 +18,27 @@ const metadata = defineCommand('hget', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HgetCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, field], { db }) => {
+  handler: ([key, field], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
     const value = existing.hget(field)
-    return value
+    {
+      transport.write(value)
+      return
+    }
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HgetCommandDefinition, { db })
 }

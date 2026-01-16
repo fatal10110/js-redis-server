@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('zadd', {
   arity: -4, // ZADD key score member [score member ...]
   flags: {
@@ -20,7 +19,6 @@ const metadata = defineCommand('zadd', {
   keyStep: 1,
   categories: [CommandCategory.ZSET],
 })
-
 export const ZaddCommandDefinition: SchemaCommandRegistration<
   [Buffer, string, Buffer, Array<[string, Buffer]>]
 > = {
@@ -31,28 +29,25 @@ export const ZaddCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
   ]),
-  handler: ([key, firstScoreStr, firstMember, restPairs], { db }) => {
+  handler: (
+    [key, firstScoreStr, firstMember, restPairs],
+    { db, transport },
+  ) => {
     const firstScore = parseFloat(firstScoreStr)
     if (Number.isNaN(firstScore)) {
       throw new ExpectedFloat()
     }
-
     const existing = db.get(key)
-
     if (existing !== null && !(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
-
     const zset =
       existing instanceof SortedSetDataType ? existing : new SortedSetDataType()
-
     if (!(existing instanceof SortedSetDataType)) {
       db.set(key, zset)
     }
-
     let addedCount = 0
     addedCount += zset.zadd(firstScore, firstMember)
-
     for (const [scoreStr, member] of restPairs) {
       const score = parseFloat(scoreStr)
       if (Number.isNaN(score)) {
@@ -60,11 +55,9 @@ export const ZaddCommandDefinition: SchemaCommandRegistration<
       }
       addedCount += zset.zadd(score, member)
     }
-
-    return addedCount
+    transport.write(addedCount)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ZaddCommandDefinition, { db })
 }

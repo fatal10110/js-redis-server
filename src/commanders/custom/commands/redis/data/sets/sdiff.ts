@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('sdiff', {
   arity: -2, // SDIFF key [key ...]
   flags: {
@@ -19,15 +18,13 @@ const metadata = defineCommand('sdiff', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SdiffCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db, transport }) => {
     const keys = [firstKey, ...restKeys]
-
     const sets: SetDataType[] = []
     for (const key of keys) {
       const existing = db.get(key)
@@ -35,19 +32,15 @@ export const SdiffCommandDefinition: SchemaCommandRegistration<
         sets.push(new SetDataType())
         continue
       }
-
       if (!(existing instanceof SetDataType)) {
         throw new WrongType()
       }
-
       sets.push(existing)
     }
-
     const [firstSet, ...otherSets] = sets
-    return firstSet.sdiff(otherSets)
+    transport.write(firstSet.sdiff(otherSets))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SdiffCommandDefinition, { db })
 }

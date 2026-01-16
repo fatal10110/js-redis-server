@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('exists', {
   arity: -2, // EXISTS key [key ...]
   flags: {
@@ -17,26 +16,22 @@ const metadata = defineCommand('exists', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC],
 })
-
 export const ExistsCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db, transport }) => {
     const keys = [firstKey, ...restKeys]
     let count = 0
-
     for (const key of keys) {
       if (db.get(key) !== null) {
         count += 1
       }
     }
-
-    return count
+    transport.write(count)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ExistsCommandDefinition, { db })
 }

@@ -1,34 +1,34 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { DB } from '../../src/commanders/custom/db'
-import { createCustomCommander } from '../../src/commanders/custom/commander'
 import { createMockTransport } from '../mock-transport'
 
 // List commands
-import { LpushCommand } from '../../src/commanders/custom/commands/redis/data/lists/lpush'
-import { RpushCommand } from '../../src/commanders/custom/commands/redis/data/lists/rpush'
-import { LpopCommand } from '../../src/commanders/custom/commands/redis/data/lists/lpop'
-import { RpopCommand } from '../../src/commanders/custom/commands/redis/data/lists/rpop'
-import { LlenCommand } from '../../src/commanders/custom/commands/redis/data/lists/llen'
-import { LrangeCommand } from '../../src/commanders/custom/commands/redis/data/lists/lrange'
+import createLpush from '../../src/commanders/custom/commands/redis/data/lists/lpush'
+import createRpush from '../../src/commanders/custom/commands/redis/data/lists/rpush'
+import createLpop from '../../src/commanders/custom/commands/redis/data/lists/lpop'
+import createRpop from '../../src/commanders/custom/commands/redis/data/lists/rpop'
+import createLlen from '../../src/commanders/custom/commands/redis/data/lists/llen'
+import createLrange from '../../src/commanders/custom/commands/redis/data/lists/lrange'
 
 // Error imports
 import { WrongNumberOfArguments, ExpectedInteger } from '../../src/core/errors'
+import { runCommand, createTestSession } from '../command-test-utils'
 
 describe('List Commands', () => {
   describe('LPUSH and RPUSH commands', () => {
     test('LPUSH on new list', async () => {
       const db = new DB()
-      const lpushCommand = new LpushCommand(db)
-      const rpushCommand = new RpushCommand(db)
+      const lpushCommand = createLpush(db)
+      const rpushCommand = createRpush(db)
 
-      const result = await lpushCommand.run(Buffer.from('LPUSH'), [
+      const result = await runCommand(lpushCommand, 'LPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
       ])
       assert.strictEqual(result.response, 1)
 
-      const result2 = await rpushCommand.run(Buffer.from('RPUSH'), [
+      const result2 = await runCommand(rpushCommand, 'RPUSH', [
         Buffer.from('list'),
         Buffer.from('item2'),
       ])
@@ -37,9 +37,9 @@ describe('List Commands', () => {
 
     test('LPUSH multiple items', async () => {
       const db = new DB()
-      const lpushCommand = new LpushCommand(db)
+      const lpushCommand = createLpush(db)
 
-      const result = await lpushCommand.run(Buffer.from('LPUSH'), [
+      const result = await runCommand(lpushCommand, 'LPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
         Buffer.from('item2'),
@@ -50,9 +50,9 @@ describe('List Commands', () => {
 
     test('RPUSH multiple items', async () => {
       const db = new DB()
-      const rpushCommand = new RpushCommand(db)
+      const rpushCommand = createRpush(db)
 
-      const result = await rpushCommand.run(Buffer.from('RPUSH'), [
+      const result = await runCommand(rpushCommand, 'RPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
         Buffer.from('item2'),
@@ -65,15 +65,15 @@ describe('List Commands', () => {
   describe('LPOP and RPOP commands', () => {
     test('LPOP and RPOP on non-existent list', async () => {
       const db = new DB()
-      const lpopCommand = new LpopCommand(db)
-      const rpopCommand = new RpopCommand(db)
+      const lpopCommand = createLpop(db)
+      const rpopCommand = createRpop(db)
 
-      const result1 = await lpopCommand.run(Buffer.from('LPOP'), [
+      const result1 = await runCommand(lpopCommand, 'LPOP', [
         Buffer.from('list'),
       ])
       assert.strictEqual(result1.response, null)
 
-      const result2 = await rpopCommand.run(Buffer.from('RPOP'), [
+      const result2 = await runCommand(rpopCommand, 'RPOP', [
         Buffer.from('list'),
       ])
       assert.strictEqual(result2.response, null)
@@ -81,25 +81,25 @@ describe('List Commands', () => {
 
     test('LPOP and RPOP on existing list', async () => {
       const db = new DB()
-      const lpushCommand = new LpushCommand(db)
-      const lpopCommand = new LpopCommand(db)
-      const rpopCommand = new RpopCommand(db)
+      const lpushCommand = createLpush(db)
+      const lpopCommand = createLpop(db)
+      const rpopCommand = createRpop(db)
 
-      await lpushCommand.run(Buffer.from('LPUSH'), [
+      await runCommand(lpushCommand, 'LPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
         Buffer.from('item2'),
       ])
 
-      const result1 = await lpopCommand.run(Buffer.from('LPOP'), [
+      const result1 = await runCommand(lpopCommand, 'LPOP', [
         Buffer.from('list'),
       ])
-      assert.deepStrictEqual(result1.response, Buffer.from('item2'))
+      assert.strictEqual(result1.response, 'item2')
 
-      const result2 = await rpopCommand.run(Buffer.from('RPOP'), [
+      const result2 = await runCommand(rpopCommand, 'RPOP', [
         Buffer.from('list'),
       ])
-      assert.deepStrictEqual(result2.response, Buffer.from('item1'))
+      assert.strictEqual(result2.response, 'item1')
 
       // List should be empty and removed from DB
       assert.strictEqual(db.get(Buffer.from('list')), null)
@@ -109,9 +109,9 @@ describe('List Commands', () => {
   describe('LLEN command', () => {
     test('LLEN on non-existent list', async () => {
       const db = new DB()
-      const llenCommand = new LlenCommand(db)
+      const llenCommand = createLlen(db)
 
-      const result = await llenCommand.run(Buffer.from('LLEN'), [
+      const result = await runCommand(llenCommand, 'LLEN', [
         Buffer.from('list'),
       ])
       assert.strictEqual(result.response, 0)
@@ -119,15 +119,15 @@ describe('List Commands', () => {
 
     test('LLEN on existing list', async () => {
       const db = new DB()
-      const llenCommand = new LlenCommand(db)
-      const lpushCommand = new LpushCommand(db)
+      const llenCommand = createLlen(db)
+      const lpushCommand = createLpush(db)
 
-      await lpushCommand.run(Buffer.from('LPUSH'), [
+      await runCommand(lpushCommand, 'LPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
         Buffer.from('item2'),
       ])
-      const result = await llenCommand.run(Buffer.from('LLEN'), [
+      const result = await runCommand(llenCommand, 'LLEN', [
         Buffer.from('list'),
       ])
       assert.strictEqual(result.response, 2)
@@ -137,9 +137,9 @@ describe('List Commands', () => {
   describe('LRANGE command', () => {
     test('LRANGE on non-existent list', async () => {
       const db = new DB()
-      const lrangeCommand = new LrangeCommand(db)
+      const lrangeCommand = createLrange(db)
 
-      const result = await lrangeCommand.run(Buffer.from('LRANGE'), [
+      const result = await runCommand(lrangeCommand, 'LRANGE', [
         Buffer.from('list'),
         Buffer.from('0'),
         Buffer.from('-1'),
@@ -149,17 +149,17 @@ describe('List Commands', () => {
 
     test('LRANGE on existing list', async () => {
       const db = new DB()
-      const lrangeCommand = new LrangeCommand(db)
-      const lpushCommand = new LpushCommand(db)
+      const lrangeCommand = createLrange(db)
+      const lpushCommand = createLpush(db)
 
-      await lpushCommand.run(Buffer.from('LPUSH'), [
+      await runCommand(lpushCommand, 'LPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
         Buffer.from('item2'),
         Buffer.from('item3'),
       ])
 
-      const result = await lrangeCommand.run(Buffer.from('LRANGE'), [
+      const result = await runCommand(lrangeCommand, 'LRANGE', [
         Buffer.from('list'),
         Buffer.from('0'),
         Buffer.from('1'),
@@ -170,16 +170,16 @@ describe('List Commands', () => {
 
     test('LRANGE with non-integer arguments throws error', async () => {
       const db = new DB()
-      const lrangeCommand = new LrangeCommand(db)
-      const lpushCommand = new LpushCommand(db)
+      const lrangeCommand = createLrange(db)
+      const lpushCommand = createLpush(db)
 
-      await lpushCommand.run(Buffer.from('LPUSH'), [
+      await runCommand(lpushCommand, 'LPUSH', [
         Buffer.from('list'),
         Buffer.from('item1'),
       ])
 
       try {
-        await lrangeCommand.run(Buffer.from('LRANGE'), [
+        await runCommand(lrangeCommand, 'LRANGE', [
           Buffer.from('list'),
           Buffer.from('abc'),
           Buffer.from('def'),
@@ -198,11 +198,11 @@ describe('List Commands', () => {
 
   describe('New List Commands (with commander)', () => {
     test('LINDEX command', async () => {
-      const factory = await createCustomCommander(console)
-      const commander = factory.createCommander()
+      const db = new DB()
+      const session = createTestSession(db)
       const transport = createMockTransport()
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lpush'),
         [
@@ -214,40 +214,37 @@ describe('List Commands', () => {
         new AbortController().signal,
       )
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lindex'),
         [Buffer.from('list'), Buffer.from('0')],
         new AbortController().signal,
       )
-      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('item3'))
+      assert.strictEqual(transport.getLastResponse(), 'item3')
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lindex'),
         [Buffer.from('list'), Buffer.from('-1')],
         new AbortController().signal,
       )
-      assert.deepStrictEqual(transport.getLastResponse(), Buffer.from('item1'))
+      assert.strictEqual(transport.getLastResponse(), 'item1')
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lindex'),
         [Buffer.from('list'), Buffer.from('10')],
         new AbortController().signal,
       )
       assert.strictEqual(transport.getLastResponse(), null)
-
-      await commander.shutdown()
-      await factory.shutdown()
     })
 
     test('LSET command', async () => {
-      const factory = await createCustomCommander(console)
-      const commander = factory.createCommander()
+      const db = new DB()
+      const session = createTestSession(db)
       const transport = createMockTransport()
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lpush'),
         [
@@ -259,7 +256,7 @@ describe('List Commands', () => {
         new AbortController().signal,
       )
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lset'),
         [Buffer.from('list'), Buffer.from('1'), Buffer.from('newitem')],
@@ -267,27 +264,21 @@ describe('List Commands', () => {
       )
       assert.strictEqual(transport.getLastResponse(), 'OK')
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lindex'),
         [Buffer.from('list'), Buffer.from('1')],
         new AbortController().signal,
       )
-      assert.deepStrictEqual(
-        transport.getLastResponse(),
-        Buffer.from('newitem'),
-      )
-
-      await commander.shutdown()
-      await factory.shutdown()
+      assert.strictEqual(transport.getLastResponse(), 'newitem')
     })
 
     test('LREM command', async () => {
-      const factory = await createCustomCommander(console)
-      const commander = factory.createCommander()
+      const db = new DB()
+      const session = createTestSession(db)
       const transport = createMockTransport()
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lpush'),
         [
@@ -300,7 +291,7 @@ describe('List Commands', () => {
         new AbortController().signal,
       )
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lrem'),
         [Buffer.from('list'), Buffer.from('2'), Buffer.from('item1')],
@@ -308,24 +299,21 @@ describe('List Commands', () => {
       )
       assert.strictEqual(transport.getLastResponse(), 2)
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('llen'),
         [Buffer.from('list')],
         new AbortController().signal,
       )
       assert.strictEqual(transport.getLastResponse(), 2)
-
-      await commander.shutdown()
-      await factory.shutdown()
     })
 
     test('LTRIM command', async () => {
-      const factory = await createCustomCommander(console)
-      const commander = factory.createCommander()
+      const db = new DB()
+      const session = createTestSession(db)
       const transport = createMockTransport()
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('lpush'),
         [
@@ -339,7 +327,7 @@ describe('List Commands', () => {
         new AbortController().signal,
       )
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('ltrim'),
         [Buffer.from('list'), Buffer.from('1'), Buffer.from('3')],
@@ -347,26 +335,23 @@ describe('List Commands', () => {
       )
       assert.strictEqual(transport.getLastResponse(), 'OK')
 
-      await commander.execute(
+      await session.execute(
         transport,
         Buffer.from('llen'),
         [Buffer.from('list')],
         new AbortController().signal,
       )
       assert.strictEqual(transport.getLastResponse(), 3)
-
-      await commander.shutdown()
-      await factory.shutdown()
     })
   })
 
   describe('List Error Handling', () => {
     test('List commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const llenCommand = new LlenCommand(db)
+      const llenCommand = createLlen(db)
 
       try {
-        await llenCommand.run(Buffer.from('LLEN'), [])
+        await runCommand(llenCommand, 'LLEN', [])
         assert.fail('Should have thrown WrongNumberOfArguments for llen')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)

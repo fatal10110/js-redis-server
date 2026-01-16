@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('getset', {
   arity: 3, // GETSET key value
   flags: {
@@ -20,28 +19,24 @@ const metadata = defineCommand('getset', {
   keyStep: 1,
   categories: [CommandCategory.STRING],
 })
-
 export const GetsetCommandDefinition: SchemaCommandRegistration<
   [Buffer, string]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, value], { db }) => {
+  handler: ([key, value], { db, transport }) => {
     const existing = db.get(key)
     let oldValue: Buffer | null = null
-
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
         throw new WrongType()
       }
       oldValue = existing.data
     }
-
     db.set(key, new StringDataType(Buffer.from(value)))
-    return oldValue
+    transport.write(oldValue)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(GetsetCommandDefinition, { db })
 }

@@ -11,7 +11,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 interface SetOptions {
   expiration?: number
   nx?: boolean
@@ -19,20 +18,29 @@ interface SetOptions {
   keepTtl?: boolean
   get?: boolean
 }
-
 type SetTtlToken =
-  | { type: 'EX'; value: number }
-  | { type: 'PX'; value: number }
-  | { type: 'EXAT'; value: number }
-  | { type: 'PXAT'; value: number }
-
+  | {
+      type: 'EX'
+      value: number
+    }
+  | {
+      type: 'PX'
+      value: number
+    }
+  | {
+      type: 'EXAT'
+      value: number
+    }
+  | {
+      type: 'PXAT'
+      value: number
+    }
 type SetSchemaOptions = Partial<{
   ttl: SetTtlToken
   condition: 'NX' | 'XX'
   keepTtl: 'KEEPTTL'
   get: 'GET'
 }>
-
 const metadata = defineCommand('set', {
   arity: -3, // SET key value [options...]
   flags: {
@@ -44,7 +52,6 @@ const metadata = defineCommand('set', {
   keyStep: 1,
   categories: [CommandCategory.STRING],
 })
-
 export const SetCommandDefinition: SchemaCommandRegistration<
   [Buffer, string, SetSchemaOptions]
 > = {
@@ -64,12 +71,10 @@ export const SetCommandDefinition: SchemaCommandRegistration<
       get: t.flag('GET'),
     }),
   ]),
-  handler: ([key, value, schemaOptions], { db }) => {
+  handler: ([key, value, schemaOptions], { db, transport }) => {
     const options = parseOptions(schemaOptions ?? {})
-
     const existingData = db.get(key)
     let oldValue: Buffer | null = null
-
     if (options.get) {
       if (existingData instanceof StringDataType) {
         oldValue = existingData.data
@@ -77,61 +82,55 @@ export const SetCommandDefinition: SchemaCommandRegistration<
         throw new WrongType()
       }
     }
-
     if (options.nx && existingData !== null) {
       if (options.get) {
-        return oldValue
+        transport.write(oldValue)
+        return
       }
-      return null
-    }
 
+      transport.write(null)
+      return
+    }
     if (options.xx && existingData === null) {
       if (options.get) {
-        return null
+        transport.write(null)
+        return
       }
-      return null
-    }
 
+      transport.write(null)
+      return
+    }
     if (existingData !== null && !(existingData instanceof StringDataType)) {
       db.del(key)
     }
-
     let expiration: number | undefined
-
     if (options.keepTtl && existingData instanceof StringDataType) {
       expiration = undefined
     } else if (options.expiration !== undefined) {
       expiration = options.expiration
     }
-
     const valueBuffer = Buffer.from(value)
     db.set(key, new StringDataType(valueBuffer), expiration)
-
     if (options.get) {
-      return oldValue
+      transport.write(oldValue)
+      return
     }
-
-    return 'OK'
+    transport.write('OK')
   },
 }
-
 function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
   const options: SetOptions = {}
-
   if (schemaOptions.condition === 'NX') {
     options.nx = true
   } else if (schemaOptions.condition === 'XX') {
     options.xx = true
   }
-
   if (schemaOptions.keepTtl) {
     options.keepTtl = true
   }
-
   if (schemaOptions.get) {
     options.get = true
   }
-
   const ttl = schemaOptions.ttl
   if (ttl) {
     if (options.keepTtl) {
@@ -161,18 +160,14 @@ function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
       throw new RedisSyntaxError()
     }
   }
-
   if (options.nx && options.xx) {
     throw new RedisSyntaxError()
   }
-
   if (options.keepTtl && options.expiration !== undefined) {
     throw new RedisSyntaxError()
   }
-
   return options
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SetCommandDefinition, { db })
 }

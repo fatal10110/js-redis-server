@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('get', {
   arity: 2, // GET key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('get', {
   keyStep: 1,
   categories: [CommandCategory.STRING, CommandCategory.GENERIC],
 })
-
 export const GetCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const val = db.get(key)
-
     if (val === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(val instanceof StringDataType)) {
       throw new WrongType()
     }
-
-    return val.data
+    transport.write(val.data)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(GetCommandDefinition, { db })
 }

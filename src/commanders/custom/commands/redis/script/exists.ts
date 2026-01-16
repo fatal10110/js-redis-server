@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 const metadata = defineCommand('script|exists', {
   arity: -2, // SCRIPT EXISTS <sha1> [<sha1> ...]
   flags: {
@@ -17,20 +16,17 @@ const metadata = defineCommand('script|exists', {
   keyStep: 1,
   categories: [CommandCategory.SCRIPT],
 })
-
 export const ScriptExistsCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.string(), t.variadic(t.string())]),
-  handler: ([firstHash, rest], { db }) => {
+  handler: ([firstHash, rest], { db, transport }) => {
     const hashes = [firstHash, ...rest]
     const results = hashes.map(hash => (db.getScript(hash.toString()) ? 1 : 0))
-
-    return results
+    transport.write(results)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ScriptExistsCommandDefinition, { db })
 }

@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('hlen', {
   arity: 2, // HLEN key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('hlen', {
   keyStep: 1,
   categories: [CommandCategory.HASH],
 })
-
 export const HlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof HashDataType)) {
       throw new WrongType()
     }
-
-    return existing.hlen()
+    transport.write(existing.hlen())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(HlenCommandDefinition, { db })
 }

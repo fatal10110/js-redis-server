@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('srem', {
   arity: -3, // SREM key member [member ...]
   flags: {
@@ -19,37 +18,31 @@ const metadata = defineCommand('srem', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SremCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstMember, restMembers], { db }) => {
+  handler: ([key, firstMember, restMembers], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
     let removed = 0
     removed += existing.srem(firstMember)
     for (const member of restMembers) {
       removed += existing.srem(member)
     }
-
     if (existing.scard() === 0) {
       db.del(key)
     }
-
-    return removed
+    transport.write(removed)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SremCommandDefinition, { db })
 }

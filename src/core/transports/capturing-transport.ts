@@ -7,12 +7,22 @@ import { Transport } from '../../types'
 export class CapturingTransport implements Transport {
   private results: unknown[] = []
   private closed = false
+  private closeRequested = false
 
-  write(responseData: unknown, close?: boolean): void {
+  write(responseData: unknown): void {
     this.results.push(responseData)
+  }
+
+  flush(options?: { close?: boolean }): void {
+    const close = options?.close ?? this.closeRequested
     if (close) {
       this.closed = true
     }
+    this.closeRequested = false
+  }
+
+  closeAfterFlush(): void {
+    this.closeRequested = true
   }
 
   getResults(): unknown[] {

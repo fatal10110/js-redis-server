@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('del', {
   arity: -2, // DEL key [key ...]
   flags: {
@@ -16,26 +15,22 @@ const metadata = defineCommand('del', {
   keyStep: 1,
   categories: [CommandCategory.GENERIC],
 })
-
 export const DelCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db }) => {
+  handler: ([firstKey, restKeys], { db, transport }) => {
     const keys = [firstKey, ...restKeys]
     let counter = 0
-
     for (const key of keys) {
       if (db.del(key)) {
         counter += 1
       }
     }
-
-    return counter
+    transport.write(counter)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(DelCommandDefinition, { db })
 }

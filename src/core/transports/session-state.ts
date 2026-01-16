@@ -77,6 +77,7 @@ export class NormalState implements SessionState {
 
     if (cmdName === 'multi') {
       transport.write('OK')
+      transport.flush()
       return {
         nextState: new TransactionState(
           this,
@@ -133,6 +134,7 @@ export class TransactionState implements SessionState {
             'EXECABORT Transaction discarded because of previous errors.',
           ),
         )
+        transport.flush()
         return {
           nextState: this.normalState,
         }
@@ -147,6 +149,7 @@ export class TransactionState implements SessionState {
 
     if (cmdName === 'discard') {
       transport.write('OK')
+      transport.flush()
       return {
         nextState: this.normalState,
       }
@@ -154,6 +157,7 @@ export class TransactionState implements SessionState {
 
     if (cmdName === 'multi') {
       transport.write(new Error('ERR MULTI calls can not be nested'))
+      transport.flush()
       return {
         nextState: this,
       }
@@ -165,6 +169,7 @@ export class TransactionState implements SessionState {
     } catch (err) {
       if (err instanceof UserFacedError) {
         transport.write(err)
+        transport.flush()
         this.shouldDiscard = true
         return {
           nextState: this,
@@ -189,6 +194,7 @@ export class TransactionState implements SessionState {
       } catch (err) {
         if (err instanceof UserFacedError) {
           transport.write(err)
+          transport.flush()
           this.shouldDiscard = true
           return {
             nextState: this,
@@ -207,6 +213,7 @@ export class TransactionState implements SessionState {
     })
 
     transport.write('QUEUED')
+    transport.flush()
 
     return {
       nextState: this,

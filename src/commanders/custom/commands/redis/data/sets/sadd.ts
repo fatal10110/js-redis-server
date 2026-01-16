@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('sadd', {
   arity: -3, // SADD key member [member ...]
   flags: {
@@ -20,35 +19,30 @@ const metadata = defineCommand('sadd', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SaddCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer, Buffer[]]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstMember, restMembers], { db }) => {
+  handler: ([key, firstMember, restMembers], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing !== null && !(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
     const set = existing instanceof SetDataType ? existing : new SetDataType()
-
     if (!(existing instanceof SetDataType)) {
       db.set(key, set)
     }
-
     let added = 0
     added += set.sadd(firstMember)
     for (const member of restMembers) {
       added += set.sadd(member)
     }
 
-    return added
+    transport.write(added)
+    return
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SaddCommandDefinition, { db })
 }

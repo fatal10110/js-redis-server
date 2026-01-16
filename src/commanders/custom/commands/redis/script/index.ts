@@ -13,7 +13,6 @@ import { ScriptFlushCommandDefinition } from './flush'
 import { ScriptKillCommandDefinition } from './kill'
 import { ScriptDebugCommandDefinition } from './debug'
 import { ScriptHelpCommandDefinition } from './help'
-
 const metadata = defineCommand('script', {
   arity: -2, // SCRIPT subcommand [args...]
   flags: {
@@ -25,7 +24,6 @@ const metadata = defineCommand('script', {
   keyStep: 1,
   categories: [CommandCategory.SCRIPT],
 })
-
 export const ScriptCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
@@ -34,22 +32,18 @@ export const ScriptCommandDefinition: SchemaCommandRegistration<
   handler: ([subCommandName, rest], ctx) => {
     const subCommands = createSubCommands(ctx)
     const subCommand = subCommands[subCommandName.toString().toLowerCase()]
-
     if (!subCommand) {
       throw new UnknowScriptSubCommand(subCommandName.toString())
     }
-
-    return subCommand.run(subCommandName, rest, ctx.signal)
+    subCommand.run(subCommandName, rest, ctx.signal, ctx.transport)
   },
 }
-
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
     discoveryService: ctx.discoveryService,
     mySelfId: ctx.mySelfId,
   }
-
   return {
     load: createSchemaCommand(ScriptLoadCommandDefinition, baseCtx),
     exists: createSchemaCommand(ScriptExistsCommandDefinition, baseCtx),
@@ -59,7 +53,6 @@ function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
     help: createSchemaCommand(ScriptHelpCommandDefinition, baseCtx),
   }
 }
-
 export default function (db: SchemaCommandContext['db']) {
   return createSchemaCommand(ScriptCommandDefinition, { db })
 }

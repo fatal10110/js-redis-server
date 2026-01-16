@@ -23,7 +23,6 @@ import {
   ClusterSlotsCommandDefinition,
   commandName as clusterSlotsCommandName,
 } from './clusterSlots'
-
 const metadata = defineCommand('cluster', {
   arity: -2, // CLUSTER <subcommand> [args...]
   flags: {
@@ -34,7 +33,6 @@ const metadata = defineCommand('cluster', {
   keyStep: 1,
   categories: [CommandCategory.CLUSTER],
 })
-
 export const ClusterCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer[]]
 > = {
@@ -44,28 +42,22 @@ export const ClusterCommandDefinition: SchemaCommandRegistration<
     const subCommands = createSubCommands(ctx)
     const args = [subCommandName, ...rest]
     const subCommand = args.pop()
-
     if (!subCommand) {
       throw new UnknwonClusterSubCommand('')
     }
-
     const sub = subCommands[subCommand.toString().toLowerCase()]
-
     if (!sub) {
       throw new UnknwonClusterSubCommand(subCommand.toString())
     }
-
-    return sub.run(subCommand, args, ctx.signal)
+    sub.run(subCommand, args, ctx.signal, ctx.transport)
   },
 }
-
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
     discoveryService: ctx.discoveryService,
     mySelfId: ctx.mySelfId,
   }
-
   return {
     [clusterInfoCommandName]: createSchemaCommand(
       ClusterInfoCommandDefinition,
@@ -85,7 +77,6 @@ function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
     ),
   }
 }
-
 export default function (db: SchemaCommandContext['db']) {
   return createSchemaCommand(ClusterCommandDefinition, { db })
 }

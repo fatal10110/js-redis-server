@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('zcard', {
   arity: 2, // ZCARD key
   flags: {
@@ -19,25 +18,21 @@ const metadata = defineCommand('zcard', {
   keyStep: 1,
   categories: [CommandCategory.ZSET],
 })
-
 export const ZcardCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: ([key], { db }) => {
+  handler: ([key], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
-
-    return existing.zcard()
+    transport.write(existing.zcard())
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ZcardCommandDefinition, { db })
 }

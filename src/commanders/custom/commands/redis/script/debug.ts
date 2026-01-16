@@ -5,7 +5,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-
 const metadata = defineCommand('script|debug', {
   arity: 2, // SCRIPT DEBUG <YES|SYNC|NO>
   flags: {
@@ -16,7 +15,6 @@ const metadata = defineCommand('script|debug', {
   keyStep: 1,
   categories: [CommandCategory.SCRIPT],
 })
-
 export const ScriptDebugCommandDefinition: SchemaCommandRegistration<
   ['YES' | 'SYNC' | 'NO']
 > = {
@@ -24,9 +22,10 @@ export const ScriptDebugCommandDefinition: SchemaCommandRegistration<
   schema: t.tuple([
     t.xor([t.literal('YES'), t.literal('SYNC'), t.literal('NO')]),
   ]),
-  handler: () => 'OK',
+  handler: (_args, ctx) => {
+    ctx.transport.write('OK')
+  },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(ScriptDebugCommandDefinition, { db })
 }

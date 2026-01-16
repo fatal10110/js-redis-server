@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('lindex', {
   arity: 3, // LINDEX key index
   flags: {
@@ -19,27 +18,23 @@ const metadata = defineCommand('lindex', {
   keyStep: 1,
   categories: [CommandCategory.LIST],
 })
-
 export const LindexCommandDefinition: SchemaCommandRegistration<
   [Buffer, number]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer()]),
-  handler: ([key, index], { db }) => {
+  handler: ([key, index], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return null
+      transport.write(null)
+      return
     }
-
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
-
-    return existing.lindex(index)
+    transport.write(existing.lindex(index))
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(LindexCommandDefinition, { db })
 }

@@ -40,7 +40,12 @@ export interface Command {
   /**
    * Execute command
    */
-  run(rawCmd: Buffer, args: Buffer[], signal: AbortSignal): CommandResult
+  run(
+    rawCmd: Buffer,
+    args: Buffer[],
+    signal: AbortSignal,
+    transport: Transport,
+  ): CommandResult | void
 }
 
 export type SlotRange = [number, number]
@@ -65,5 +70,7 @@ export interface DiscoveryService {
   getBySlot(slot: number): DiscoveryNode
 }
 export interface Transport {
-  write(responseData: unknown, close?: boolean): void
+  write(responseData: unknown): void
+  flush(options?: { close?: boolean }): void
+  closeAfterFlush(): void
 }

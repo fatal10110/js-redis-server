@@ -1,7 +1,6 @@
 import { DB } from '../../db'
 import { defineCommand, CommandCategory } from '../metadata'
 import { createSchemaCommand, SchemaCommandRegistration, t } from '../../schema'
-
 const metadata = defineCommand('info', {
   arity: -1, // INFO [section]
   flags: {
@@ -12,15 +11,15 @@ const metadata = defineCommand('info', {
   keyStep: 1,
   categories: [CommandCategory.SERVER],
 })
-
 export const InfoCommandDefinition: SchemaCommandRegistration<
   [string | undefined]
 > = {
   metadata,
   schema: t.tuple([t.optional(t.string())]),
-  handler: () => 'mock info',
+  handler: (_args, ctx) => {
+    ctx.transport.write('mock info')
+  },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(InfoCommandDefinition, { db })
 }

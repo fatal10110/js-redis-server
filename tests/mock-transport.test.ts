@@ -7,15 +7,14 @@ describe('MockTransport', () => {
     const transport = new MockTransport()
 
     transport.write('hello')
-    transport.write('world', true)
+    transport.write('world')
+    transport.flush({ close: true })
 
     assert.strictEqual(transport.getCallCount(), 2)
 
     const calls = transport.getCalls()
     assert.strictEqual(calls[0].responseData, 'hello')
-    assert.strictEqual(calls[0].close, undefined)
     assert.strictEqual(calls[1].responseData, 'world')
-    assert.strictEqual(calls[1].close, true)
   })
 
   test('should track last call and response', () => {
@@ -47,10 +46,12 @@ describe('MockTransport', () => {
     assert.strictEqual(transport.isClosed(), false)
 
     transport.write('data')
+    transport.flush()
     assert.strictEqual(transport.wasCloseCalled(), false)
     assert.strictEqual(transport.isClosed(), false)
 
-    transport.write('data', true)
+    transport.write('data')
+    transport.flush({ close: true })
     assert.strictEqual(transport.wasCloseCalled(), true)
     assert.strictEqual(transport.isClosed(), true)
   })
@@ -58,7 +59,8 @@ describe('MockTransport', () => {
   test('should reset state', () => {
     const transport = new MockTransport()
 
-    transport.write('data', true)
+    transport.write('data')
+    transport.flush({ close: true })
     assert.strictEqual(transport.getCallCount(), 1)
     assert.strictEqual(transport.isClosed(), true)
 
@@ -72,11 +74,13 @@ describe('MockTransport', () => {
     const transport = new MockTransport()
 
     transport.write('test')
+    transport.flush()
     transport.assertCallCount(1)
     transport.assertLastResponse('test')
     transport.assertCloseNotCalled()
 
-    transport.write('final', true)
+    transport.write('final')
+    transport.flush({ close: true })
     transport.assertCallCount(2)
     transport.assertLastResponse('final')
     transport.assertCloseCalled()
@@ -86,6 +90,7 @@ describe('MockTransport', () => {
     const transport = new MockTransport()
 
     transport.write('test')
+    transport.flush()
 
     assert.throws(
       () => transport.assertCallCount(2),
@@ -100,7 +105,8 @@ describe('MockTransport', () => {
       /Expected close to be called, but it was not/,
     )
 
-    transport.write('data', true)
+    transport.write('data')
+    transport.flush({ close: true })
     assert.throws(
       () => transport.assertCloseNotCalled(),
       /Expected close not to be called, but it was/,
@@ -112,7 +118,9 @@ describe('MockTransport', () => {
     const transport2 = createMockTransport()
 
     transport1.write('test1')
+    transport1.flush()
     transport2.write('test2')
+    transport2.flush()
 
     assert.strictEqual(transport1.getCallCount(), 1)
     assert.strictEqual(transport2.getCallCount(), 1)

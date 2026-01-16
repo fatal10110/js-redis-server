@@ -7,7 +7,6 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-
 const metadata = defineCommand('sismember', {
   arity: 3, // SISMEMBER key member
   flags: {
@@ -19,27 +18,23 @@ const metadata = defineCommand('sismember', {
   keyStep: 1,
   categories: [CommandCategory.SET],
 })
-
 export const SismemberCommandDefinition: SchemaCommandRegistration<
   [Buffer, Buffer]
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, member], { db }) => {
+  handler: ([key, member], { db, transport }) => {
     const existing = db.get(key)
-
     if (existing === null) {
-      return 0
+      transport.write(0)
+      return
     }
-
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
-
-    return existing.sismember(member) ? 1 : 0
+    transport.write(existing.sismember(member) ? 1 : 0)
   },
 }
-
 export default function (db: DB) {
   return createSchemaCommand(SismemberCommandDefinition, { db })
 }
