@@ -48,13 +48,21 @@ class SchemaCommandAdapter implements Command {
       return this.definition.getKeys(_rawCmd, args)
     }
 
-    const { firstKey, lastKey, keyStep } = this.metadata
+    const { firstKey, lastKey, keyStep, limit } = this.metadata
 
     if (firstKey < 0 || args.length === 0) {
       return []
     }
 
-    const resolvedLast = lastKey < 0 ? args.length + lastKey : lastKey
+    let resolvedLast = lastKey < 0 ? args.length + lastKey : lastKey
+    if (lastKey === -1 && limit > 1) {
+      const remaining = Math.max(args.length - firstKey, 0)
+      const keyCount = Math.floor(remaining / limit)
+      if (keyCount <= 0) {
+        return []
+      }
+      resolvedLast = firstKey + (keyCount - 1) * keyStep
+    }
     const end = Math.min(resolvedLast, args.length - 1)
 
     if (end < firstKey) {
