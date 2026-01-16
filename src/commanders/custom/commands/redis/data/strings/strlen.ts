@@ -23,7 +23,7 @@ const metadata = defineCommand('strlen', {
 export const StrlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: async ([key], { db }) => {
+  handler: ([key], { db }) => {
     const val = db.get(key)
 
     if (val === null) {

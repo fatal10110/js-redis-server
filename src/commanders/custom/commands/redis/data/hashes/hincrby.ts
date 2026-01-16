@@ -25,7 +25,7 @@ export const HincrbyCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.integer()]),
-  handler: async ([key, field, increment], { db }) => {
+  handler: ([key, field, increment], { db }) => {
     const existing = db.get(key)
 
     if (existing !== null && !(existing instanceof HashDataType)) {

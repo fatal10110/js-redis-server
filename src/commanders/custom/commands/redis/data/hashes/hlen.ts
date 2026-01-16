@@ -23,7 +23,7 @@ const metadata = defineCommand('hlen', {
 export const HlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: async ([key], { db }) => {
+  handler: ([key], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

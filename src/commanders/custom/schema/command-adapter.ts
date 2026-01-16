@@ -18,7 +18,7 @@ export interface SchemaCommandContext {
 export interface SchemaCommandRegistration<TArgs = unknown> {
   metadata: CommandMetadata
   schema: SchemaType
-  handler: (args: TArgs, ctx: SchemaCommandContext) => Promise<unknown>
+  handler: (args: TArgs, ctx: SchemaCommandContext) => unknown
   getKeys?: (rawCmd: Buffer, args: Buffer[]) => Buffer[]
 }
 
@@ -72,15 +72,11 @@ class SchemaCommandAdapter implements Command {
     return keys
   }
 
-  async run(
-    _rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
+  run(_rawCmd: Buffer, args: Buffer[], signal: AbortSignal): CommandResult {
     const parsed = this.mapper.parse(this.compiledSchema, args, {
       commandName: this.metadata.name,
     })
-    const result = await this.definition.handler(parsed, {
+    const result = this.definition.handler(parsed, {
       ...this.ctx,
       signal,
     })

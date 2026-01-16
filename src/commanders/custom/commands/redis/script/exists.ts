@@ -23,7 +23,7 @@ export const ScriptExistsCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.string(), t.variadic(t.string())]),
-  handler: async ([firstHash, rest], { db }) => {
+  handler: ([firstHash, rest], { db }) => {
     const hashes = [firstHash, ...rest]
     const results = hashes.map(hash => (db.getScript(hash.toString()) ? 1 : 0))
 

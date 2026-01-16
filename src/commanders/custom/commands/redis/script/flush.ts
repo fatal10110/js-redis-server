@@ -23,7 +23,7 @@ export const ScriptFlushCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.optional(t.xor([t.literal('ASYNC'), t.literal('SYNC')]))]),
-  handler: async (_args, { db }) => {
+  handler: (_args, { db }) => {
     db.flushScripts()
     return { response: 'OK' }
   },

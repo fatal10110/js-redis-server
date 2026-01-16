@@ -21,7 +21,7 @@ const metadata = defineCommand('dbsize', {
 export const DbSizeCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async (_args, { db }) => {
+  handler: (_args, { db }) => {
     const size = db.size()
     return { response: size }
   },

@@ -10,7 +10,7 @@ export interface ExecutionContext {
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
-  ): Promise<ExecutionContext>
+  ): ExecutionContext
   shutdown(): Promise<void>
 }
 
@@ -37,11 +37,7 @@ export interface Command {
   /**
    * Execute command
    */
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult>
+  run(rawCmd: Buffer, args: Buffer[], signal: AbortSignal): CommandResult
 }
 
 export type SlotRange = [number, number]

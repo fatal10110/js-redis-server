@@ -33,7 +33,7 @@ const metadata = defineCommand('command', {
 export const CommandInfoDefinition: SchemaCommandRegistration<[Buffer[]]> = {
   metadata,
   schema: t.tuple([t.variadic(t.string())]),
-  handler: async ([args], ctx) => {
+  handler: ([args], ctx) => {
     // COMMAND (no args) - list all commands
     if (args.length === 0) {
       return handleCommandList(ctx)

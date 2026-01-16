@@ -24,7 +24,7 @@ export const ZrangebyscoreCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: async ([key, minStr, maxStr], { db }) => {
+  handler: ([key, minStr, maxStr], { db }) => {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
 

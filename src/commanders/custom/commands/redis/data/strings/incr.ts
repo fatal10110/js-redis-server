@@ -23,7 +23,7 @@ const metadata = defineCommand('incr', {
 export const IncrCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
   metadata,
   schema: t.tuple([t.key()]),
-  handler: async ([key], { db }) => {
+  handler: ([key], { db }) => {
     const existing = db.get(key)
     let currentValue = 0
 

@@ -95,7 +95,7 @@ export class Session {
 
     // Handle single command execution
     const req = job.request
-    await this.executeCommand(req.transport, req.command, req.args, req.signal)
+    this.executeCommand(req.transport, req.command, req.args, req.signal)
   }
 
   /**
@@ -113,7 +113,7 @@ export class Session {
       const capturingTransport = new CapturingTransport()
 
       try {
-        await this.executeCommand(
+        this.executeCommand(
           capturingTransport,
           req.command,
           req.args,
@@ -148,13 +148,13 @@ export class Session {
     return this.connectionId
   }
 
-  private async executeCommand(
+  private executeCommand(
     transport: Transport,
     rawCmd: Buffer,
     args: Buffer[],
     signal: AbortSignal,
-  ): Promise<void> {
-    await this.context.execute(transport, rawCmd, args, signal)
+  ): void {
+    this.context.execute(transport, rawCmd, args, signal)
   }
 
   async shutdown(): Promise<void> {

@@ -25,7 +25,7 @@ export const HdelCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: async ([key, firstField, restFields], { db }) => {
+  handler: ([key, firstField, restFields], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

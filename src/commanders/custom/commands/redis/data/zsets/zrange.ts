@@ -29,7 +29,7 @@ export const ZrangeCommandDefinition: SchemaCommandRegistration<
     t.integer(),
     t.optional(t.literal('WITHSCORES')),
   ]),
-  handler: async ([key, start, stop, withScoresToken], { db }) => {
+  handler: ([key, start, stop, withScoresToken], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

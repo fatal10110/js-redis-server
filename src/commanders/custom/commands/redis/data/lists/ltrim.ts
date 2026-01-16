@@ -24,7 +24,7 @@ export const LtrimCommandDefinition: SchemaCommandRegistration<
 > = {
   metadata,
   schema: t.tuple([t.key(), t.integer(), t.integer()]),
-  handler: async ([key, start, stop], { db }) => {
+  handler: ([key, start, stop], { db }) => {
     const existing = db.get(key)
 
     if (existing === null) {

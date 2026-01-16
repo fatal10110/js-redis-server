@@ -20,7 +20,7 @@ const metadata = defineCommand('flushall', {
 export const FlushallCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async (_args, { db }) => {
+  handler: (_args, { db }) => {
     db.flushall()
     return { response: 'OK' }
   },

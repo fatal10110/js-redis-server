@@ -31,7 +31,7 @@ export const HmsetCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
   ]),
-  handler: async ([key, firstField, firstValue, restPairs], { db }) => {
+  handler: ([key, firstField, firstValue, restPairs], { db }) => {
     const existing = db.get(key)
 
     if (existing !== null && !(existing instanceof HashDataType)) {

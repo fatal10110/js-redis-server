@@ -20,7 +20,7 @@ const metadata = defineCommand('flushdb', {
 export const FlushdbCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async (_args, { db }) => {
+  handler: (_args, { db }) => {
     db.flushdb()
     return { response: 'OK' }
   },

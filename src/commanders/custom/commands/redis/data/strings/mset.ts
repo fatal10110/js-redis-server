@@ -29,7 +29,7 @@ export const MsetCommandDefinition: SchemaCommandRegistration<
     t.string(),
     t.variadic(t.tuple([t.key(), t.string()])),
   ]),
-  handler: async ([firstKey, firstValue, restPairs], { db }) => {
+  handler: ([firstKey, firstValue, restPairs], { db }) => {
     db.set(firstKey, new StringDataType(Buffer.from(firstValue)))
 
     for (const [key, value] of restPairs) {

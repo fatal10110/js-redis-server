@@ -17,7 +17,7 @@ const metadata = defineCommand('quit', {
 export const QuitCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: async () => ({
+  handler: () => ({
     close: true,
     response: 'OK',
   }),
