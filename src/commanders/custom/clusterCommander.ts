@@ -1,4 +1,3 @@
-import { Socket } from 'net'
 import {
   ClusterCommanderFactory,
   Command,
@@ -9,11 +8,10 @@ import {
 import { createClusterCommands, createMultiCommands } from './commands/redis'
 import { DB } from './db'
 import { ClusterRouter } from './cluster-router'
-import { CommandJob, RedisKernel } from './redis-kernel'
-import { RespAdapter } from '../../core/transports/resp2/adapter'
-import { Session } from '../../core/transports/session'
-import { RegistryCommandValidator } from '../../core/transports/command-validator'
 import { NormalState } from '../../core/transports/session-state'
+import { BaseCommander } from './base-commander'
+import { RespAdapter } from '../../core/transports/resp2/adapter'
+import { Socket } from 'net'
 
 export async function createCustomClusterCommander(
   logger: Logger,
@@ -74,10 +72,8 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
 }
 
 export class ClusterCommander implements DBCommandExecutor {
-  private readonly kernel: RedisKernel
-  private readonly sessions = new Map<string, Session>()
-  private readonly baseValidator: RegistryCommandValidator
   private readonly router: ClusterRouter
+  private readonly baseCommander: BaseCommander
 
   constructor(
     private readonly db: DB,
@@ -86,22 +82,19 @@ export class ClusterCommander implements DBCommandExecutor {
     private readonly commands: Record<string, Command>,
     private readonly transactionCommands: Record<string, Command>,
   ) {
-    this.kernel = new RedisKernel(this.handleJob.bind(this))
-    this.baseValidator = new RegistryCommandValidator(this.commands)
     this.router = new ClusterRouter(
       this.discoveryService,
       this.mySelfId,
       this.commands,
     )
+    this.baseCommander = new BaseCommander(
+      this.commands,
+      validator => new NormalState(validator, this.router),
+    )
   }
 
   async shutdown(): Promise<void> {
-    // Shutdown all sessions
-    const shutdownPromises = Array.from(this.sessions.values()).map(session =>
-      session.shutdown(),
-    )
-    await Promise.all(shutdownPromises)
-    this.sessions.clear()
+    await this.baseCommander.shutdown()
   }
 
   /**
@@ -114,36 +107,6 @@ export class ClusterCommander implements DBCommandExecutor {
    * - MOVED/CROSSSLOT error generation
    */
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
-    // Create initial state with slot validation for cluster mode
-    const initialState = new NormalState(this.baseValidator, this.router)
-
-    // Create session with cluster-aware state machine
-    const session = new Session(this.commands, this.kernel, initialState)
-    const connectionId = session.getConnectionId()
-    this.sessions.set(connectionId, session)
-
-    // Clean up session when socket closes
-    socket.on('close', () => {
-      this.sessions.delete(connectionId)
-      session.shutdown().catch(err => logger.error(err))
-    })
-
-    const adapter = new RespAdapter(logger, socket, session)
-    return adapter
-  }
-
-  /**
-   * Handle a job from the kernel by routing it to the appropriate session.
-   */
-  private async handleJob(job: CommandJob): Promise<void> {
-    const session = this.sessions.get(job.connectionId)
-
-    if (!session) {
-      // Session not found - this shouldn't happen in normal operation
-      // The session should be registered when the adapter is created
-      throw new Error(`Session not found for connection ${job.connectionId}`)
-    }
-
-    await session.executeJob(job)
+    return this.baseCommander.createAdapter(logger, socket)
   }
 }

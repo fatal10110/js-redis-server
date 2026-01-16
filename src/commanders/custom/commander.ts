@@ -5,11 +5,9 @@ import { DB } from './db'
 
 // Import createCommands function from Redis index
 import { createCommands, createMultiCommands } from './commands/redis'
-import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
-import { Session } from '../../core/transports/session'
-import { RegistryCommandValidator } from '../../core/transports/command-validator'
 import { NormalState } from '../../core/transports/session-state'
+import { BaseCommander } from './base-commander'
 
 export async function createCustomCommander(
   logger: Logger,
@@ -33,25 +31,22 @@ export class CustomCommanderFactory {
 }
 
 class Commander implements DBCommandExecutor {
-  private readonly kernel: RedisKernel
-  private readonly sessions = new Map<string, Session>()
   private readonly commands: Record<string, Command>
   private readonly transactionCommands: Record<string, Command>
+  private readonly baseCommander: BaseCommander
 
   constructor(db: DB) {
     this.commands = createCommands(db)
     this.transactionCommands = createMultiCommands(db)
     // Transaction state is now managed by Session, so no transactionCommands needed here
-    this.kernel = new RedisKernel(this.handleJob.bind(this))
+    this.baseCommander = new BaseCommander(
+      this.commands,
+      validator => new NormalState(validator),
+    )
   }
 
   async shutdown(): Promise<void> {
-    // Shutdown all sessions
-    const shutdownPromises = Array.from(this.sessions.values()).map(session =>
-      session.shutdown(),
-    )
-    await Promise.all(shutdownPromises)
-    this.sessions.clear()
+    await this.baseCommander.shutdown()
   }
 
   /**
@@ -59,41 +54,6 @@ class Commander implements DBCommandExecutor {
    * This is called by Resp2Transport when a new client connects.
    */
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
-    // Create validator for ALL commands (not just transaction-safe ones)
-    // The validator only checks syntax/arity, not whether commands are allowed
-    const validator = new RegistryCommandValidator(this.commands)
-
-    // Create session and register it
-    const session = new Session(
-      this.commands,
-      this.kernel,
-      new NormalState(validator),
-    )
-    const connectionId = session.getConnectionId()
-    this.sessions.set(connectionId, session)
-
-    // Clean up session when socket closes
-    socket.on('close', () => {
-      this.sessions.delete(connectionId)
-      session.shutdown().catch(err => logger.error(err))
-    })
-
-    const adapter = new RespAdapter(logger, socket, session)
-    return adapter
-  }
-
-  /**
-   * Handle a job from the kernel by routing it to the appropriate session.
-   */
-  private async handleJob(job: CommandJob): Promise<void> {
-    const session = this.sessions.get(job.connectionId)
-
-    if (!session) {
-      // Session not found - this shouldn't happen in normal operation
-      // The session should be registered when the adapter is created
-      throw new Error(`Session not found for connection ${job.connectionId}`)
-    }
-
-    await session.executeJob(job)
+    return this.baseCommander.createAdapter(logger, socket)
   }
 }
