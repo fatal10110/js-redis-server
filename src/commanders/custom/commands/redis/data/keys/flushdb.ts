@@ -22,7 +22,7 @@ export const FlushdbCommandDefinition: SchemaCommandRegistration<[]> = {
   schema: t.tuple([]),
   handler: (_args, { db }) => {
     db.flushdb()
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

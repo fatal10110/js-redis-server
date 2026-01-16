@@ -48,7 +48,7 @@ export const IncrbyCommandDefinition: SchemaCommandRegistration<
     const newValue = currentValue + increment
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
 
-    return { response: newValue }
+    return newValue
   },
 }
 

@@ -34,12 +34,12 @@ export const ExpireatCommandDefinition: SchemaCommandRegistration<
 
     if (expiration <= now) {
       const deleted = db.del(key)
-      return { response: deleted ? 1 : 0 }
+      return deleted ? 1 : 0
     }
 
     const success = db.setExpiration(key, expiration)
 
-    return { response: success ? 1 : 0 }
+    return success ? 1 : 0
   },
 }
 

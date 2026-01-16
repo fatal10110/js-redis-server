@@ -25,7 +25,7 @@ export const ScriptFlushCommandDefinition: SchemaCommandRegistration<
   schema: t.tuple([t.optional(t.xor([t.literal('ASYNC'), t.literal('SYNC')]))]),
   handler: (_args, { db }) => {
     db.flushScripts()
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

@@ -47,6 +47,9 @@ export interface CommandMetadata {
 
   /** Redis command categories */
   categories: CommandCategory[]
+
+  /** Whether the command should close the client connection after responding */
+  closesConnection?: boolean
 }
 
 /**
@@ -118,6 +121,7 @@ export function defineCommand(
     keyStep?: number
     limit?: number
     categories: CommandCategory[]
+    closesConnection?: boolean
   },
 ): CommandMetadata {
   return {
@@ -129,5 +133,6 @@ export function defineCommand(
     keyStep: options.keyStep ?? 1,
     limit: options.limit ?? 0,
     categories: options.categories,
+    closesConnection: options.closesConnection ?? false,
   }
 }

@@ -27,14 +27,14 @@ export const SmembersCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: [] }
+      return []
     }
 
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.smembers() }
+    return existing.smembers()
   },
 }
 

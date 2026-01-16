@@ -29,7 +29,7 @@ export const ZscoreCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof SortedSetDataType)) {
@@ -38,7 +38,7 @@ export const ZscoreCommandDefinition: SchemaCommandRegistration<
 
     const score = existing.zscore(member)
     const response = score !== null ? Buffer.from(score.toString()) : null
-    return { response }
+    return response
   },
 }
 

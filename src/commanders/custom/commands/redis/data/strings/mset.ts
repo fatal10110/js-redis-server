@@ -36,7 +36,7 @@ export const MsetCommandDefinition: SchemaCommandRegistration<
       db.set(key, new StringDataType(Buffer.from(value)))
     }
 
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

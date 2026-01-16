@@ -32,7 +32,7 @@ export const SinterCommandDefinition: SchemaCommandRegistration<
     for (const key of keys) {
       const existing = db.get(key)
       if (existing === null) {
-        return { response: [] }
+        return []
       }
 
       if (!(existing instanceof SetDataType)) {
@@ -43,7 +43,7 @@ export const SinterCommandDefinition: SchemaCommandRegistration<
     }
 
     const [firstSet, ...otherSets] = sets
-    return { response: firstSet.sinter(otherSets) }
+    return firstSet.sinter(otherSets)
   },
 }
 

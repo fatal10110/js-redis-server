@@ -33,7 +33,7 @@ export const ZrangeCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: [] }
+      return []
     }
 
     if (!(existing instanceof SortedSetDataType)) {
@@ -42,7 +42,7 @@ export const ZrangeCommandDefinition: SchemaCommandRegistration<
 
     const withScores = withScoresToken === 'WITHSCORES'
     const result = existing.zrange(start, stop, withScores)
-    return { response: result }
+    return result
   },
 }
 

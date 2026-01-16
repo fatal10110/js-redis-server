@@ -29,7 +29,7 @@ export const HgetCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof HashDataType)) {
@@ -37,7 +37,7 @@ export const HgetCommandDefinition: SchemaCommandRegistration<
     }
 
     const value = existing.hget(field)
-    return { response: value }
+    return value
   },
 }
 

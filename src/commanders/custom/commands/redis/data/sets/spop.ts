@@ -29,7 +29,7 @@ export const SpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof SetDataType)) {
@@ -42,7 +42,7 @@ export const SpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       db.del(key)
     }
 
-    return { response: member }
+    return member
   },
 }
 

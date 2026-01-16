@@ -80,16 +80,16 @@ export const SetCommandDefinition: SchemaCommandRegistration<
 
     if (options.nx && existingData !== null) {
       if (options.get) {
-        return { response: oldValue }
+        return oldValue
       }
-      return { response: null }
+      return null
     }
 
     if (options.xx && existingData === null) {
       if (options.get) {
-        return { response: null }
+        return null
       }
-      return { response: null }
+      return null
     }
 
     if (existingData !== null && !(existingData instanceof StringDataType)) {
@@ -108,10 +108,10 @@ export const SetCommandDefinition: SchemaCommandRegistration<
     db.set(key, new StringDataType(valueBuffer), expiration)
 
     if (options.get) {
-      return { response: oldValue }
+      return oldValue
     }
 
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

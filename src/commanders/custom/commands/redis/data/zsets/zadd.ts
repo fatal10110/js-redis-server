@@ -61,7 +61,7 @@ export const ZaddCommandDefinition: SchemaCommandRegistration<
       addedCount += zset.zadd(score, member)
     }
 
-    return { response: addedCount }
+    return addedCount
   },
 }
 

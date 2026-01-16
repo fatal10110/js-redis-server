@@ -69,7 +69,7 @@ export const ClusterInfoCommandDefinition: SchemaCommandRegistration<[]> = {
       'total_cluster_links_buffer_limit_exceeded:0',
     ]
 
-    return { response: Buffer.from(`${values.join('\n')}\n`) }
+    return Buffer.from(`${values.join('\n')}\n`)
   },
 }
 

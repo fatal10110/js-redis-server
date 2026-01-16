@@ -27,7 +27,7 @@ export const RpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof ListDataType)) {
@@ -40,7 +40,7 @@ export const RpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       db.del(key)
     }
 
-    return { response: value }
+    return value
   },
 }
 

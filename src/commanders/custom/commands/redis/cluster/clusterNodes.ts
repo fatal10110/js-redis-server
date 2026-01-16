@@ -66,7 +66,7 @@ export const ClusterNodesCommandDefinition: SchemaCommandRegistration<[]> = {
       )
     }
 
-    return { response: Buffer.from(res.join('')) }
+    return Buffer.from(res.join(''))
   },
 }
 

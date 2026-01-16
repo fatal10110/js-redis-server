@@ -30,26 +30,26 @@ export const TypeCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 'none' }
+      return 'none'
     }
 
     if (existing instanceof StringDataType) {
-      return { response: 'string' }
+      return 'string'
     }
     if (existing instanceof HashDataType) {
-      return { response: 'hash' }
+      return 'hash'
     }
     if (existing instanceof ListDataType) {
-      return { response: 'list' }
+      return 'list'
     }
     if (existing instanceof SetDataType) {
-      return { response: 'set' }
+      return 'set'
     }
     if (existing instanceof SortedSetDataType) {
-      return { response: 'zset' }
+      return 'zset'
     }
 
-    return { response: 'unknown' }
+    return 'unknown'
   },
 }
 

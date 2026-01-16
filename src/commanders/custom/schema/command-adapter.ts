@@ -18,7 +18,7 @@ export interface SchemaCommandContext {
 export interface SchemaCommandRegistration<TArgs = unknown> {
   metadata: CommandMetadata
   schema: SchemaType
-  handler: (args: TArgs, ctx: SchemaCommandContext) => unknown
+  handler: (args: TArgs, ctx: SchemaCommandContext) => CommandResult
   getKeys?: (rawCmd: Buffer, args: Buffer[]) => Buffer[]
 }
 
@@ -81,14 +81,6 @@ class SchemaCommandAdapter implements Command {
       signal,
     })
 
-    return normalizeResult(result)
+    return result
   }
-}
-
-function normalizeResult(result: unknown): CommandResult {
-  if (result && typeof result === 'object' && 'response' in result) {
-    return result as CommandResult
-  }
-
-  return { response: result }
 }

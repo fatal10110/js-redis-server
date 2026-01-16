@@ -29,7 +29,7 @@ export class CommandExecutionContext implements ExecutionContext {
 
     try {
       const res = cmd.run(rawCmd, args, signal)
-      transport.write(res.response, res.close)
+      transport.write(res, cmd.metadata.closesConnection)
     } catch (err) {
       if (err instanceof UserFacedError) {
         transport.write(err)

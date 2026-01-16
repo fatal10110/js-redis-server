@@ -41,7 +41,7 @@ export const AppendCommandDefinition: SchemaCommandRegistration<
 
     db.set(key, new StringDataType(newValue))
 
-    return { response: newValue.length }
+    return newValue.length
   },
 }
 

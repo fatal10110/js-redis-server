@@ -38,7 +38,7 @@ export const GetsetCommandDefinition: SchemaCommandRegistration<
     }
 
     db.set(key, new StringDataType(Buffer.from(value)))
-    return { response: oldValue }
+    return oldValue
   },
 }
 

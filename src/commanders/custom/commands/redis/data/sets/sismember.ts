@@ -29,14 +29,14 @@ export const SismemberCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.sismember(member) ? 1 : 0 }
+    return existing.sismember(member) ? 1 : 0
   },
 }
 

@@ -23,7 +23,7 @@ export const ScriptLoadCommandDefinition: SchemaCommandRegistration<[Buffer]> =
     schema: t.tuple([t.string()]),
     handler: ([script], { db }) => {
       const hash = db.addScript(script)
-      return { response: hash }
+      return hash
     },
   }
 

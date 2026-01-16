@@ -22,7 +22,7 @@ export const FlushallCommandDefinition: SchemaCommandRegistration<[]> = {
   schema: t.tuple([]),
   handler: (_args, { db }) => {
     db.flushall()
-    return { response: 'OK' }
+    return 'OK'
   },
 }
 

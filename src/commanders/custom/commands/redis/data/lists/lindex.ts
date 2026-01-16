@@ -29,14 +29,14 @@ export const LindexCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: null }
+      return null
     }
 
     if (!(existing instanceof ListDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.lindex(index) }
+    return existing.lindex(index)
   },
 }
 

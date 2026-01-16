@@ -41,7 +41,7 @@ export const DecrCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const newValue = currentValue - 1
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
 
-    return { response: newValue }
+    return newValue
   },
 }
 

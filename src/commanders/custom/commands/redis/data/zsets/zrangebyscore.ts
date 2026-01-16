@@ -35,7 +35,7 @@ export const ZrangebyscoreCommandDefinition: SchemaCommandRegistration<
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: [] }
+      return []
     }
 
     if (!(existing instanceof SortedSetDataType)) {
@@ -43,7 +43,7 @@ export const ZrangebyscoreCommandDefinition: SchemaCommandRegistration<
     }
 
     const result = existing.zrangebyscore(min, max)
-    return { response: result }
+    return result
   },
 }
 

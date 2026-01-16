@@ -27,14 +27,14 @@ export const ScardCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const existing = db.get(key)
 
     if (existing === null) {
-      return { response: 0 }
+      return 0
     }
 
     if (!(existing instanceof SetDataType)) {
       throw new WrongType()
     }
 
-    return { response: existing.scard() }
+    return existing.scard()
   },
 }
 

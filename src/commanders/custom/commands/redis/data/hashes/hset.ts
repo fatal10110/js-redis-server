@@ -52,7 +52,7 @@ export const HsetCommandDefinition: SchemaCommandRegistration<
       fieldsSet += hash.hset(field, value)
     }
 
-    return { response: fieldsSet }
+    return fieldsSet
   },
 }
 

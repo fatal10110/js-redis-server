@@ -20,7 +20,7 @@ const metadata = defineCommand('script|kill', {
 export const ScriptKillCommandDefinition: SchemaCommandRegistration<[]> = {
   metadata,
   schema: t.tuple([]),
-  handler: () => ({ response: 'OK' }),
+  handler: () => 'OK',
 }
 
 export default function (db: DB) {

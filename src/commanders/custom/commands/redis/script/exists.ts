@@ -27,7 +27,7 @@ export const ScriptExistsCommandDefinition: SchemaCommandRegistration<
     const hashes = [firstHash, ...rest]
     const results = hashes.map(hash => (db.getScript(hash.toString()) ? 1 : 0))
 
-    return { response: results }
+    return results
   },
 }
 

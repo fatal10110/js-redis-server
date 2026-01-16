@@ -38,6 +38,9 @@ class RespTransport implements Transport {
       return Resp.encodeNull()
     } else if (jsResponse instanceof Error) {
       return Resp.encodeError(jsResponse)
+    } else if (typeof jsResponse === 'bigint') {
+      // TODO fix respjs
+      return Buffer.from(`:${jsResponse.toString()}\r\n`)
     } else if (Number.isInteger(jsResponse)) {
       return Resp.encodeInteger(jsResponse as number)
     } else if (Array.isArray(jsResponse)) {
