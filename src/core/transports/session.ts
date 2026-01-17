@@ -1,8 +1,7 @@
-import { Command, Transport } from '../../types'
+import { ExecutionContext, Transport } from '../../types'
 import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
 import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
-import { CommandExecutionContext } from '../../commanders/custom/execution-context'
 
 /**
  * Session represents a single client connection's execution state.
@@ -14,14 +13,14 @@ export class Session {
   private static connectionCounter = 0
   private jobCounter = 0
   private readonly connectionId: string
-  private readonly context: CommandExecutionContext
+  private readonly context: ExecutionContext
 
   constructor(
-    commands: Record<string, Command>,
+    context: ExecutionContext,
     private readonly kernel: RedisKernel,
     initialState: SessionState,
   ) {
-    this.context = new CommandExecutionContext(commands)
+    this.context = context
     this.currentState = initialState
     this.connectionId = `conn-${++Session.connectionCounter}`
   }

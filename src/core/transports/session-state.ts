@@ -1,4 +1,4 @@
-import { Transport } from '../../types'
+import { SlotOwnershipValidator, SlotValidator, Transport } from '../../types'
 import { UnknownCommand, UserFacedError } from '../errors'
 import { CommandRequest } from '../../commanders/custom/redis-kernel'
 
@@ -39,24 +39,6 @@ export interface CommandValidator {
 }
 
 /**
- * Interface for slot validation in cluster mode.
- * Optional - when provided, TransactionState will validate slot constraints.
- */
-export interface SlotValidator {
-  /**
-   * Validate the command's slot against a pinned slot.
-   * Returns the computed slot, or null if the command has no keys.
-   * @throws CorssSlot if keys hash to different slots
-   * @throws MovedError if the slot is not owned by this node
-   */
-  validateSlot(
-    command: string,
-    args: Buffer[],
-    pinnedSlot?: number,
-  ): number | null
-}
-
-/**
  * NormalState: Commands are executed immediately.
  * MULTI transitions to TransactionState.
  *
@@ -66,6 +48,7 @@ export class NormalState implements SessionState {
   constructor(
     private readonly commandValidator: CommandValidator,
     private readonly slotValidator?: SlotValidator,
+    private readonly slotOwnershipValidator?: SlotOwnershipValidator,
   ) {}
 
   handle(
@@ -83,6 +66,7 @@ export class NormalState implements SessionState {
           this,
           this.commandValidator,
           this.slotValidator,
+          this.slotOwnershipValidator,
         ),
       }
     }
@@ -118,6 +102,7 @@ export class TransactionState implements SessionState {
     private readonly normalState: SessionState,
     private readonly validator: CommandValidator,
     private readonly slotValidator?: SlotValidator,
+    private readonly slotOwnershipValidator?: SlotOwnershipValidator,
   ) {}
 
   handle(
@@ -186,6 +171,10 @@ export class TransactionState implements SessionState {
           args,
           this.pinnedSlot,
         )
+
+        if (slot !== null && this.slotOwnershipValidator) {
+          this.slotOwnershipValidator.validateSlotOwnership(slot)
+        }
 
         // Pin the slot on first command with keys
         if (this.pinnedSlot === undefined && slot !== null) {

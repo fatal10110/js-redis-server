@@ -1,23 +1,32 @@
 import { Socket } from 'net'
-import { Command, Logger } from '../../types'
+import { Command, ExecutionContext, Logger } from '../../types'
 import { CommandJob, RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
 import { NormalState } from '../../core/transports/session-state'
+import { CommandExecutionContext } from './execution-context'
 
 type InitialStateFactory = (validator: RegistryCommandValidator) => NormalState
+type ExecutionContextFactory = (
+  commands: Record<string, Command>,
+) => ExecutionContext
 
 export class BaseCommander {
   private readonly kernel: RedisKernel
   private readonly sessions = new Map<string, Session>()
   private readonly validator: RegistryCommandValidator
+  private readonly createExecutionContext: ExecutionContextFactory
 
   constructor(
     private readonly commands: Record<string, Command>,
     private readonly createInitialState: InitialStateFactory,
+    createExecutionContext?: ExecutionContextFactory,
   ) {
     this.validator = new RegistryCommandValidator(this.commands)
+    this.createExecutionContext =
+      createExecutionContext ??
+      (commands => new CommandExecutionContext(commands))
     this.kernel = new RedisKernel(this.handleJob.bind(this))
   }
 
@@ -30,8 +39,9 @@ export class BaseCommander {
   }
 
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
+    const context = this.createExecutionContext(this.commands)
     const session = new Session(
-      this.commands,
+      context,
       this.kernel,
       this.createInitialState(this.validator),
     )

@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert'
-import { ClusterRouter } from '../src/commanders/custom/cluster-router'
+import { ClusterSlotOwnershipValidator } from '../src/commanders/custom/cluster-slot-ownership-validator'
+import { ClusterSlotValidator } from '../src/commanders/custom/cluster-slot-validator'
 import {
   NormalState,
   TransactionState,
@@ -89,15 +90,10 @@ function createMockDiscoveryService(
   }
 }
 
-describe('ClusterRouter', () => {
-  describe('validateSlot', () => {
+describe('ClusterSlotValidator', () => {
+  describe('validateCommandSlot', () => {
     test('should return null for commands with no keys', () => {
-      const localSlots: Array<[number, number]> = [[0, 16383]]
-      const nodeMap = new Map<number, { host: string; port: number }>()
-      const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-      const myself = discoveryService.getById('local-node')
-
-      const router = new ClusterRouter(discoveryService, myself, {})
+      const validator = new ClusterSlotValidator({})
 
       const pingCommand = new MockCommand(
         {
@@ -113,7 +109,7 @@ describe('ClusterRouter', () => {
         [], // No key positions
       )
 
-      const slot = router.validateCommandSlot(
+      const slot = validator.validateCommandSlot(
         pingCommand,
         Buffer.from('PING'),
         [],
@@ -123,12 +119,7 @@ describe('ClusterRouter', () => {
     })
 
     test('should return slot for single-key command', () => {
-      const localSlots: Array<[number, number]> = [[0, 16383]]
-      const nodeMap = new Map<number, { host: string; port: number }>()
-      const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-      const myself = discoveryService.getById('local-node')
-
-      const router = new ClusterRouter(discoveryService, myself, {})
+      const validator = new ClusterSlotValidator({})
 
       const getCommand = new MockCommand(
         {
@@ -144,21 +135,18 @@ describe('ClusterRouter', () => {
         [0], // Key at position 0
       )
 
-      const slot = router.validateCommandSlot(getCommand, Buffer.from('GET'), [
-        Buffer.from('mykey'),
-      ])
+      const slot = validator.validateCommandSlot(
+        getCommand,
+        Buffer.from('GET'),
+        [Buffer.from('mykey')],
+      )
 
       assert.strictEqual(typeof slot, 'number')
       assert.ok(slot! >= 0 && slot! <= 16383)
     })
 
     test('should throw CorssSlot for keys in different slots', () => {
-      const localSlots: Array<[number, number]> = [[0, 16383]]
-      const nodeMap = new Map<number, { host: string; port: number }>()
-      const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-      const myself = discoveryService.getById('local-node')
-
-      const router = new ClusterRouter(discoveryService, myself, {})
+      const validator = new ClusterSlotValidator({})
 
       const mgetCommand = new MockCommand(
         {
@@ -177,7 +165,7 @@ describe('ClusterRouter', () => {
       // These keys hash to different slots
       assert.throws(
         () =>
-          router.validateCommandSlot(mgetCommand, Buffer.from('MGET'), [
+          validator.validateCommandSlot(mgetCommand, Buffer.from('MGET'), [
             Buffer.from('key1'),
             Buffer.from('key2'),
           ]),
@@ -186,12 +174,7 @@ describe('ClusterRouter', () => {
     })
 
     test('should accept keys in same slot using hash tags', () => {
-      const localSlots: Array<[number, number]> = [[0, 16383]]
-      const nodeMap = new Map<number, { host: string; port: number }>()
-      const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-      const myself = discoveryService.getById('local-node')
-
-      const router = new ClusterRouter(discoveryService, myself, {})
+      const validator = new ClusterSlotValidator({})
 
       const mgetCommand = new MockCommand(
         {
@@ -208,7 +191,7 @@ describe('ClusterRouter', () => {
       )
 
       // Using hash tags to force same slot
-      const slot = router.validateCommandSlot(
+      const slot = validator.validateCommandSlot(
         mgetCommand,
         Buffer.from('MGET'),
         [Buffer.from('{user}:name'), Buffer.from('{user}:email')],
@@ -217,48 +200,8 @@ describe('ClusterRouter', () => {
       assert.strictEqual(typeof slot, 'number')
     })
 
-    test('should throw MovedError for non-local slot', () => {
-      const localSlots: Array<[number, number]> = [[0, 5460]]
-      const nodeMap = new Map<number, { host: string; port: number }>()
-      // Slot 12539 (where "foo" hashes) maps to remote node
-      nodeMap.set(12182, { host: '192.168.1.2', port: 7001 })
-
-      const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-      const myself = discoveryService.getById('local-node')
-
-      const router = new ClusterRouter(discoveryService, myself, {})
-
-      const getCommand = new MockCommand(
-        {
-          name: 'get',
-          arity: 2,
-          flags: {},
-          firstKey: 0,
-          lastKey: 0,
-          keyStep: 1,
-          limit: 0,
-          categories: [],
-        },
-        [0],
-      )
-
-      // "foo" hashes to slot 12182 which is not in our range
-      assert.throws(
-        () =>
-          router.validateCommandSlot(getCommand, Buffer.from('GET'), [
-            Buffer.from('foo'),
-          ]),
-        MovedError,
-      )
-    })
-
     test('should enforce required slot constraint', () => {
-      const localSlots: Array<[number, number]> = [[0, 16383]]
-      const nodeMap = new Map<number, { host: string; port: number }>()
-      const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
-      const myself = discoveryService.getById('local-node')
-
-      const router = new ClusterRouter(discoveryService, myself, {})
+      const validator = new ClusterSlotValidator({})
 
       const getCommand = new MockCommand(
         {
@@ -275,12 +218,14 @@ describe('ClusterRouter', () => {
       )
 
       // First call establishes a slot
-      const slot1 = router.validateCommandSlot(getCommand, Buffer.from('GET'), [
-        Buffer.from('{test}:key1'),
-      ])
+      const slot1 = validator.validateCommandSlot(
+        getCommand,
+        Buffer.from('GET'),
+        [Buffer.from('{test}:key1')],
+      )
 
       // Second call with same slot constraint should pass
-      const slot2 = router.validateCommandSlot(
+      const slot2 = validator.validateCommandSlot(
         getCommand,
         Buffer.from('GET'),
         [Buffer.from('{test}:key2')],
@@ -292,7 +237,7 @@ describe('ClusterRouter', () => {
       // Call with different key violating constraint should throw
       assert.throws(
         () =>
-          router.validateCommandSlot(
+          validator.validateCommandSlot(
             getCommand,
             Buffer.from('GET'),
             [Buffer.from('differentkey')], // Different slot
@@ -301,6 +246,41 @@ describe('ClusterRouter', () => {
         CorssSlot,
       )
     })
+  })
+})
+
+describe('ClusterSlotOwnershipValidator', () => {
+  test('should not throw for local slot', () => {
+    const localSlots: Array<[number, number]> = [[0, 16383]]
+    const nodeMap = new Map<number, { host: string; port: number }>()
+    const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
+    const myself = discoveryService.getById('local-node')
+
+    const ownershipValidator = new ClusterSlotOwnershipValidator(
+      discoveryService,
+      myself.id,
+    )
+
+    ownershipValidator.validateSlotOwnership(12000)
+  })
+
+  test('should throw MovedError for non-local slot', () => {
+    const localSlots: Array<[number, number]> = [[0, 5460]]
+    const nodeMap = new Map<number, { host: string; port: number }>()
+    nodeMap.set(12182, { host: '192.168.1.2', port: 7001 })
+
+    const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
+    const myself = discoveryService.getById('local-node')
+
+    const ownershipValidator = new ClusterSlotOwnershipValidator(
+      discoveryService,
+      myself.id,
+    )
+
+    assert.throws(
+      () => ownershipValidator.validateSlotOwnership(12182),
+      MovedError,
+    )
   })
 })
 
@@ -369,9 +349,17 @@ describe('TransactionState with slot validation', () => {
     }
 
     const baseValidator = new RegistryCommandValidator(commands)
-    const router = new ClusterRouter(discoveryService, myself, commands)
+    const slotValidator = new ClusterSlotValidator(commands)
+    const ownershipValidator = new ClusterSlotOwnershipValidator(
+      discoveryService,
+      myself.id,
+    )
 
-    const normalState = new NormalState(baseValidator, router)
+    const normalState = new NormalState(
+      baseValidator,
+      slotValidator,
+      ownershipValidator,
+    )
 
     return { normalState, commands }
   }
@@ -639,9 +627,17 @@ describe('NormalState with slot validation', () => {
     }
 
     const baseValidator = new RegistryCommandValidator(commands)
-    const router = new ClusterRouter(discoveryService, myself, commands)
+    const slotValidator = new ClusterSlotValidator(commands)
+    const ownershipValidator = new ClusterSlotOwnershipValidator(
+      discoveryService,
+      myself.id,
+    )
 
-    const normalState = new NormalState(baseValidator, router)
+    const normalState = new NormalState(
+      baseValidator,
+      slotValidator,
+      ownershipValidator,
+    )
     const transport = new MockTransport()
 
     const transition = normalState.handle(

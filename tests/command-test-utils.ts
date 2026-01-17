@@ -1,6 +1,7 @@
 import { Command } from '../src/types'
 import { DB } from '../src/commanders/custom/db'
 import { createCommands } from '../src/commanders/custom/commands/redis'
+import { CommandExecutionContext } from '../src/commanders/custom/execution-context'
 import { Session } from '../src/core/transports/session'
 import { RedisKernel } from '../src/commanders/custom/redis-kernel'
 import { RegistryCommandValidator } from '../src/core/transports/command-validator'
@@ -24,9 +25,10 @@ export function runCommand(
 export function createTestSession(db: DB) {
   const commands = createCommands(db)
   const validator = new RegistryCommandValidator(commands)
+  const context = new CommandExecutionContext(commands)
   let session: Session
   const kernel = new RedisKernel(async job => session.executeJob(job))
-  session = new Session(commands, kernel, new NormalState(validator))
+  session = new Session(context, kernel, new NormalState(validator))
 
   return {
     execute(
