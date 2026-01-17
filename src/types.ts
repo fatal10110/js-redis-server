@@ -1,4 +1,5 @@
 import { CommandMetadata } from './commanders/custom/commands/metadata'
+import { UserFacedError } from './core/errors'
 
 export interface DBCommandExecutor {
   shutdown(): Promise<void>
@@ -20,6 +21,7 @@ export type CommandResult =
   | bigint
   | null
   | Buffer
+  | UserFacedError
   | CommandResult[]
 
 export interface Logger {
@@ -70,7 +72,7 @@ export interface DiscoveryService {
   getBySlot(slot: number): DiscoveryNode
 }
 export interface Transport {
-  write(responseData: unknown): void
+  write(responseData: CommandResult): void
   flush(options?: { close?: boolean }): void
   closeAfterFlush(): void
 }

@@ -5,6 +5,7 @@ import { DB } from './db'
 
 // Import createCommands function from Redis index
 import { createCommands, createMultiCommands } from './commands/redis'
+import { createLuaRuntime, LuaRuntime } from './lua-runtime'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { NormalState } from '../../core/transports/session-state'
 import { BaseCommander } from './base-commander'
@@ -12,13 +13,19 @@ import { BaseCommander } from './base-commander'
 export async function createCustomCommander(
   logger: Logger,
 ): Promise<CustomCommanderFactory> {
-  return new CustomCommanderFactory(logger)
+  const { load } = await import('lua-redis-wasm')
+  const module = await load()
+  const luaRuntime = createLuaRuntime(module)
+  return new CustomCommanderFactory(logger, luaRuntime)
 }
 
 export class CustomCommanderFactory {
   private readonly db = new DB()
 
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly luaRuntime: LuaRuntime,
+  ) {}
 
   shutdown(): Promise<void> {
     this.logger.info('Shutting down CustomClusterCommanderFactory')
@@ -26,7 +33,7 @@ export class CustomCommanderFactory {
   }
 
   createCommander(): DBCommandExecutor {
-    return new Commander(this.db)
+    return new Commander(this.db, this.luaRuntime)
   }
 }
 
@@ -35,8 +42,8 @@ class Commander implements DBCommandExecutor {
   private readonly transactionCommands: Record<string, Command>
   private readonly baseCommander: BaseCommander
 
-  constructor(db: DB) {
-    this.commands = createCommands(db)
+  constructor(db: DB, luaRuntime: LuaRuntime) {
+    this.commands = createCommands(db, { luaRuntime })
     this.transactionCommands = createMultiCommands(db)
     // Transaction state is now managed by Session, so no transactionCommands needed here
     this.baseCommander = new BaseCommander(

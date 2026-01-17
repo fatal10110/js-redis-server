@@ -5,6 +5,7 @@ import type {
 } from '../../../types'
 import type { CommandCategory } from './metadata'
 import type { DB } from '../db'
+import type { LuaRuntime } from '../lua-runtime'
 import type { InputMapper } from '../schema'
 import { createSchemaCommand, SchemaCommandRegistration } from '../schema'
 
@@ -17,6 +18,7 @@ export interface CommandDependencies {
   mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
+  luaRuntime?: LuaRuntime
 }
 
 /**

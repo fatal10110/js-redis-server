@@ -1,5 +1,6 @@
 import { Command, ExecutionContext } from '../../../../types'
 import { DB } from '../../db'
+import type { LuaRuntime } from '../../lua-runtime'
 import type { DiscoveryService } from '../../../../types'
 
 // Basic Redis commands
@@ -18,6 +19,7 @@ export function createCommands(
     executionContext?: ExecutionContext
     discoveryService?: DiscoveryService
     mySelfId?: string
+    luaRuntime?: LuaRuntime
   },
 ): Record<string, Command> {
   const deps: CommandDependencies = {
@@ -25,6 +27,7 @@ export function createCommands(
     discoveryService: options?.discoveryService,
     mySelfId: options?.mySelfId,
     executionContext: options?.executionContext,
+    luaRuntime: options?.luaRuntime,
   }
   const registry = createCommandRegistry(deps)
   const commands = stripSubCommands(registry.createCommands(deps))
@@ -39,8 +42,9 @@ export function createClusterCommands(
   db: DB,
   discoveryService: DiscoveryService,
   mySelfId: string,
+  luaRuntime?: LuaRuntime,
 ): Record<string, Command> {
-  return createCommands(db, { discoveryService, mySelfId })
+  return createCommands(db, { discoveryService, mySelfId, luaRuntime })
 }
 
 /**
@@ -216,6 +220,8 @@ import { ScriptFlushCommandDefinition } from './script/flush'
 import { ScriptKillCommandDefinition } from './script/kill'
 import { ScriptDebugCommandDefinition } from './script/debug'
 import { ScriptHelpCommandDefinition } from './script/help'
+import { EvalCommandDefinition } from './script/eval'
+import { EvalShaCommandDefinition } from './script/evalsha'
 import { ClusterCommandDefinition } from './cluster'
 import { ClusterInfoCommandDefinition } from './cluster/clusterInfo'
 import { ClusterNodesCommandDefinition } from './cluster/clusterNodes'
@@ -329,6 +335,8 @@ export function createCommandRegistry(
     ScriptKillCommandDefinition,
     ScriptDebugCommandDefinition,
     ScriptHelpCommandDefinition,
+    EvalCommandDefinition,
+    EvalShaCommandDefinition,
   ])
 
   if (deps.discoveryService && deps.mySelfId) {

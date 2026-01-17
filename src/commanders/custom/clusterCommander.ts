@@ -12,12 +12,15 @@ import { NormalState } from '../../core/transports/session-state'
 import { BaseCommander } from './base-commander'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Socket } from 'net'
+import { createLuaRuntime, LuaRuntime } from './lua-runtime'
 
 export async function createCustomClusterCommander(
   logger: Logger,
   discoveryService: DiscoveryService,
 ): Promise<ClusterCommanderFactory> {
-  return new CustomClusterCommanderFactory(logger, discoveryService)
+  const module = await load()
+  const luaRuntime = createLuaRuntime(module)
+  return new CustomClusterCommanderFactory(logger, discoveryService, luaRuntime)
 }
 
 export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
@@ -26,12 +29,18 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   constructor(
     private readonly logger: Logger,
     private readonly discoveryService: DiscoveryService,
+    private readonly luaRuntime: LuaRuntime,
   ) {}
 
   createCommander(mySelfId: string): DBCommandExecutor {
     this.dbs[mySelfId] = this.dbs[mySelfId] || new DB()
     const db = this.dbs[mySelfId]
-    const commands = createClusterCommands(db, this.discoveryService, mySelfId)
+    const commands = createClusterCommands(
+      db,
+      this.discoveryService,
+      mySelfId,
+      this.luaRuntime,
+    )
     const transactionCommands = createMultiCommands(db)
 
     return new ClusterCommander(

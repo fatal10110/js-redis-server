@@ -17,7 +17,7 @@ export const QuitCommandDefinition: SchemaCommandRegistration<[]> = {
   schema: t.tuple([]),
   handler: (_args, ctx) => {
     ctx.transport.closeAfterFlush()
-    transport.write('OK')
+    ctx.transport.write('OK')
   },
 }
 export default function (db: DB) {
