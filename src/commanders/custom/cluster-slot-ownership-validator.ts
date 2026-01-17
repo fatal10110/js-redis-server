@@ -1,8 +1,8 @@
-import { MovedError } from '../../core/errors'
 import { DiscoveryService, SlotOwnershipValidator } from '../../types'
+import clusterKeySlot from 'cluster-key-slot'
 
 /**
- * ClusterSlotOwnershipValidator enforces local slot ownership for Redis Cluster.
+ * ClusterSlotOwnershipValidator resolves whether a slot is local for Redis Cluster.
  */
 export class ClusterSlotOwnershipValidator implements SlotOwnershipValidator {
   constructor(
@@ -21,12 +21,20 @@ export class ClusterSlotOwnershipValidator implements SlotOwnershipValidator {
     return false
   }
 
-  validateSlotOwnership(slot: number): void {
-    if (this.isLocalSlot(slot)) {
-      return
+  getLocalSlot(keys: Buffer[]): number | null {
+    if (keys.length === 0) {
+      return null
     }
 
-    const owner = this.discoveryService.getBySlot(slot)
-    throw new MovedError(owner.host, owner.port, slot)
+    const slot = clusterKeySlot.generateMulti(keys)
+    if (slot === -1) {
+      return null
+    }
+
+    if (!this.isLocalSlot(slot)) {
+      return null
+    }
+
+    return slot
   }
 }

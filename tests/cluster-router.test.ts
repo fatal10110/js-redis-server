@@ -7,7 +7,7 @@ import {
   TransactionState,
 } from '../src/core/transports/session-state'
 import { RegistryCommandValidator } from '../src/core/transports/command-validator'
-import { CorssSlot, MovedError } from '../src/core/errors'
+import { CorssSlot } from '../src/core/errors'
 import type {
   Command,
   CommandResult,
@@ -250,7 +250,7 @@ describe('ClusterSlotValidator', () => {
 })
 
 describe('ClusterSlotOwnershipValidator', () => {
-  test('should not throw for local slot', () => {
+  test('should return slot for local keys', () => {
     const localSlots: Array<[number, number]> = [[0, 16383]]
     const nodeMap = new Map<number, { host: string; port: number }>()
     const discoveryService = createMockDiscoveryService(localSlots, nodeMap)
@@ -261,10 +261,11 @@ describe('ClusterSlotOwnershipValidator', () => {
       myself.id,
     )
 
-    ownershipValidator.validateSlotOwnership(12000)
+    const slot = ownershipValidator.getLocalSlot([Buffer.from('foo')])
+    assert.ok(typeof slot === 'number')
   })
 
-  test('should throw MovedError for non-local slot', () => {
+  test('should return null for non-local keys', () => {
     const localSlots: Array<[number, number]> = [[0, 5460]]
     const nodeMap = new Map<number, { host: string; port: number }>()
     nodeMap.set(12182, { host: '192.168.1.2', port: 7001 })
@@ -277,9 +278,9 @@ describe('ClusterSlotOwnershipValidator', () => {
       myself.id,
     )
 
-    assert.throws(
-      () => ownershipValidator.validateSlotOwnership(12182),
-      MovedError,
+    assert.strictEqual(
+      ownershipValidator.getLocalSlot([Buffer.from('foo')]),
+      null,
     )
   })
 })

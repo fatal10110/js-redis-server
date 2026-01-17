@@ -1,3 +1,4 @@
+import { CorssSlot } from '../errors'
 import { SlotOwnershipValidator, SlotValidator, Transport } from '../../types'
 import { UnknownCommand, UserFacedError } from '../errors'
 import { CommandRequest } from '../../commanders/custom/redis-kernel'
@@ -173,7 +174,11 @@ export class TransactionState implements SessionState {
         )
 
         if (slot !== null && this.slotOwnershipValidator) {
-          this.slotOwnershipValidator.validateSlotOwnership(slot)
+          const keys = this.slotValidator.getKeys(cmdName, args)
+          const localSlot = this.slotOwnershipValidator.getLocalSlot(keys)
+          if (localSlot === null) {
+            throw new CorssSlot()
+          }
         }
 
         // Pin the slot on first command with keys

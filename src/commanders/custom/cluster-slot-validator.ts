@@ -48,6 +48,14 @@ export class ClusterSlotValidator implements SlotValidator {
     )
   }
 
+  getKeys(commandName: string, args: Buffer[]): Buffer[] {
+    const command = this.commands[commandName.toLowerCase()]
+    if (!command) {
+      return []
+    }
+    return this.extractKeys(command, Buffer.from(commandName), args)
+  }
+
   /**
    * Validate a command's keys against cluster slot requirements.
    * Returns the slot if valid, null if the command has no keys.

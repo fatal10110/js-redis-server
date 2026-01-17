@@ -1,5 +1,6 @@
 import { UnknownCommand, UserFacedError } from '../../core/errors'
 import { BufferedTransport } from '../../core/transports/buffered-transport'
+import { CorssSlot } from '../../core/errors'
 import {
   Command,
   ExecutionContext,
@@ -43,7 +44,11 @@ export class CommandExecutionContext implements ExecutionContext {
       if (this.slotValidator) {
         const slot = this.slotValidator.validateSlot(cmdName, args)
         if (slot !== null && this.slotOwnershipValidator) {
-          this.slotOwnershipValidator.validateSlotOwnership(slot)
+          const keys = cmd.getKeys(rawCmd, args)
+          const localSlot = this.slotOwnershipValidator.getLocalSlot(keys)
+          if (localSlot === null) {
+            throw new CorssSlot()
+          }
         }
       }
 

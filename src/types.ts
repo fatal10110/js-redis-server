@@ -63,6 +63,11 @@ export interface SlotValidator {
     args: Buffer[],
     pinnedSlot?: number,
   ): number | null
+
+  /**
+   * Extract keys for a command by name.
+   */
+  getKeys(command: string, args: Buffer[]): Buffer[]
 }
 
 /**
@@ -71,10 +76,9 @@ export interface SlotValidator {
  */
 export interface SlotOwnershipValidator {
   /**
-   * Validate slot ownership for the current node.
-   * @throws MovedError if the slot is not owned by this node
+   * Returns the slot if it belongs to the current node, otherwise null.
    */
-  validateSlotOwnership(slot: number): void
+  getLocalSlot(keys: Buffer[]): number | null
 }
 
 export type SlotRange = [number, number]
