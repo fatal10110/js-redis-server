@@ -48,6 +48,39 @@ export interface Command {
   ): CommandResult | void
 }
 
+/**
+ * Interface for slot validation in cluster mode.
+ * Optional - when provided, execution can validate slot constraints.
+ */
+export interface SlotValidator {
+  /**
+   * Validate the command's slot against a pinned slot.
+   * Returns the computed slot, or null if the command has no keys.
+   * @throws CorssSlot if keys hash to different slots
+   */
+  validateSlot(
+    command: string,
+    args: Buffer[],
+    pinnedSlot?: number,
+  ): number | null
+
+  /**
+   * Extract keys for a command by name.
+   */
+  getKeys(command: string, args: Buffer[]): Buffer[]
+}
+
+/**
+ * Interface for ownership validation in cluster mode.
+ * Optional - when provided, execution can enforce local slot ownership.
+ */
+export interface SlotOwnershipValidator {
+  /**
+   * Returns the slot if it belongs to the current node, otherwise null.
+   */
+  getLocalSlot(keys: Buffer[]): number | null
+}
+
 export type SlotRange = [number, number]
 export type DiscoveryNode = {
   host: string

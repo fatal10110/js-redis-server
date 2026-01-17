@@ -1,13 +1,24 @@
 import { UnknownCommand, UserFacedError } from '../../core/errors'
 import { BufferedTransport } from '../../core/transports/buffered-transport'
-import { Command, ExecutionContext, Transport } from '../../types'
+import { CorssSlot } from '../../core/errors'
+import {
+  Command,
+  ExecutionContext,
+  SlotOwnershipValidator,
+  SlotValidator,
+  Transport,
+} from '../../types'
 
 /**
  * CommandExecutionContext handles single command execution.
  * Transaction state (MULTI/EXEC) is now managed by Session's state machine.
  */
 export class CommandExecutionContext implements ExecutionContext {
-  constructor(private readonly commands: Record<string, Command>) {}
+  constructor(
+    private readonly commands: Record<string, Command>,
+    private readonly slotValidator?: SlotValidator,
+    private readonly slotOwnershipValidator?: SlotOwnershipValidator,
+  ) {}
 
   shutdown(): Promise<void> {
     return Promise.resolve()
@@ -30,6 +41,17 @@ export class CommandExecutionContext implements ExecutionContext {
     }
 
     try {
+      if (this.slotValidator) {
+        const slot = this.slotValidator.validateSlot(cmdName, args)
+        if (slot !== null && this.slotOwnershipValidator) {
+          const keys = cmd.getKeys(rawCmd, args)
+          const localSlot = this.slotOwnershipValidator.getLocalSlot(keys)
+          if (localSlot === null) {
+            throw new CorssSlot()
+          }
+        }
+      }
+
       const buffered = new BufferedTransport(transport)
       cmd.run(rawCmd, args, signal, buffered)
       buffered.flush()

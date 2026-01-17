@@ -7,11 +7,13 @@ import {
 } from '../../types'
 import { createClusterCommands, createMultiCommands } from './commands/redis'
 import { DB } from './db'
-import { ClusterRouter } from './cluster-router'
 import { NormalState } from '../../core/transports/session-state'
 import { BaseCommander } from './base-commander'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Socket } from 'net'
+import { ClusterSlotOwnershipValidator } from './cluster-slot-ownership-validator'
+import { ClusterSlotValidator } from './cluster-slot-validator'
+import { CommandExecutionContext } from './execution-context'
 
 export async function createCustomClusterCommander(
   logger: Logger,
@@ -72,7 +74,8 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
 }
 
 export class ClusterCommander implements DBCommandExecutor {
-  private readonly router: ClusterRouter
+  private readonly slotValidator: ClusterSlotValidator
+  private readonly slotOwnershipValidator: ClusterSlotOwnershipValidator
   private readonly baseCommander: BaseCommander
 
   constructor(
@@ -82,14 +85,25 @@ export class ClusterCommander implements DBCommandExecutor {
     private readonly commands: Record<string, Command>,
     private readonly transactionCommands: Record<string, Command>,
   ) {
-    this.router = new ClusterRouter(
+    this.slotValidator = new ClusterSlotValidator(this.commands)
+    this.slotOwnershipValidator = new ClusterSlotOwnershipValidator(
       this.discoveryService,
       this.mySelfId,
-      this.commands,
     )
     this.baseCommander = new BaseCommander(
       this.commands,
-      validator => new NormalState(validator, this.router),
+      validator =>
+        new NormalState(
+          validator,
+          this.slotValidator,
+          this.slotOwnershipValidator,
+        ),
+      commands =>
+        new CommandExecutionContext(
+          commands,
+          this.slotValidator,
+          this.slotOwnershipValidator,
+        ),
     )
   }
 
@@ -102,7 +116,7 @@ export class ClusterCommander implements DBCommandExecutor {
    * This is called by Resp2Transport when a new client connects.
    *
    * Uses NormalState with slot validation for cluster mode:
-   * - Schema-driven slot validation via ClusterRouter
+   * - Schema-driven slot validation via ClusterSlotValidator
    * - Slot pinning for transactions (all keys must hash to same slot)
    * - MOVED/CROSSSLOT error generation
    */
