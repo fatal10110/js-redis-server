@@ -1,8 +1,9 @@
-import { Command, Transport } from '../../types'
+import { Command, CommandResult, Transport } from '../../types'
 import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
 import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
 import { CommandExecutionContext } from '../../commanders/custom/execution-context'
+import { UserFacedError } from '../errors'
 
 /**
  * Session represents a single client connection's execution state.
@@ -89,7 +90,7 @@ export class Session {
   async executeJob(job: CommandJob): Promise<void> {
     // Handle batch execution (EXEC)
     if (job.batch) {
-      await this.executeBatch(job)
+      this.executeBatch(job)
       return
     }
 
@@ -102,10 +103,10 @@ export class Session {
    * Execute a batch of commands atomically.
    * This is called when processing an EXEC command.
    */
-  private async executeBatch(job: CommandJob): Promise<void> {
+  private executeBatch(job: CommandJob): void {
     const { transport } = job.request
     const batch = job.batch!
-    const results: unknown[] = []
+    const results: CommandResult[] = []
 
     // Execute all commands in the batch without yielding to other jobs
     for (const req of batch) {
@@ -121,13 +122,8 @@ export class Session {
         )
 
         // Get the captured results
-        const capturedResults = capturingTransport.getResults()
-        if (capturedResults.length > 0) {
-          // Take the first result (commands typically write once)
-          results.push(capturedResults[0])
-        } else {
-          results.push(null)
-        }
+        const capturedResult = capturingTransport.getResults()
+        results.push(capturedResult)
 
         // If the command closed the connection, stop execution
         if (capturingTransport.isClosed()) {
@@ -136,8 +132,12 @@ export class Session {
           return
         }
       } catch (err) {
-        // Errors during execution are added to results
-        results.push(err)
+        if (err instanceof UserFacedError) {
+          // Errors during execution are added to results
+          results.push(err)
+        }
+
+        throw err
       }
     }
 

@@ -6,6 +6,7 @@ import type {
 } from '../../../types'
 import type { CommandMetadata } from '../commands/metadata'
 import type { DB } from '../db'
+import type { LuaRuntime } from '../lua-runtime'
 import type { SchemaType } from './types'
 import type { CompiledSchema, InputMapper } from './input-mapper'
 import { compileSchema } from './input-mapper'
@@ -17,6 +18,7 @@ export interface SchemaCommandContext {
   mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
+  luaRuntime?: LuaRuntime
   signal: AbortSignal
   transport: Transport
 }

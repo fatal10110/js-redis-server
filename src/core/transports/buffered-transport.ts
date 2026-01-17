@@ -1,23 +1,30 @@
-import { Transport } from '../../types'
+import { CommandResult, Transport } from '../../types'
 
 export class BufferedTransport implements Transport {
-  private buffer: unknown[] = []
+  private result: CommandResult | null = null
+  private hasWritten = false
   private closeRequested = false
 
   constructor(private readonly inner: Transport) {}
 
-  write(responseData: unknown): void {
-    this.buffer.push(responseData)
+  write(responseData: CommandResult): void {
+    if (this.hasWritten) {
+      throw new Error('BufferedTransport only allows a single write')
+    }
+    if (responseData instanceof Error) {
+      throw responseData
+    }
+    this.hasWritten = true
+    this.result = responseData as CommandResult
   }
 
   flush(options?: { close?: boolean }): void {
     const close = options?.close ?? this.closeRequested
-
-    for (const responseData of this.buffer) {
-      this.inner.write(responseData)
+    if (this.hasWritten) {
+      this.inner.write(this.result)
     }
-
-    this.buffer = []
+    this.result = null
+    this.hasWritten = false
     this.closeRequested = false
     this.inner.flush({ close })
   }

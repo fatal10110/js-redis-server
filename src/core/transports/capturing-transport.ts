@@ -1,16 +1,24 @@
-import { Transport } from '../../types'
+import { CommandResult, Transport } from '../../types'
 
 /**
  * CapturingTransport captures responses instead of writing them to a socket.
  * Used during EXEC to collect all command results for the final array response.
  */
 export class CapturingTransport implements Transport {
-  private results: unknown[] = []
+  private result: CommandResult | null = null
+  private hasWritten = false
   private closed = false
   private closeRequested = false
 
-  write(responseData: unknown): void {
-    this.results.push(responseData)
+  write(responseData: CommandResult): void {
+    if (this.hasWritten) {
+      throw new Error('CapturingTransport only allows a single write')
+    }
+    if (responseData instanceof Error) {
+      throw responseData
+    }
+    this.hasWritten = true
+    this.result = responseData
   }
 
   flush(options?: { close?: boolean }): void {
@@ -25,8 +33,8 @@ export class CapturingTransport implements Transport {
     this.closeRequested = true
   }
 
-  getResults(): unknown[] {
-    return this.results
+  getResults(): CommandResult {
+    return this.result
   }
 
   isClosed(): boolean {

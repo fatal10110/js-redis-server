@@ -3,10 +3,14 @@
   "version": "0.0.1",
   "description": "In-memory mini redis server, useful for client agnostic mocks",
   "main": "index.js",
+  "bin": {
+    "js-redis-server": "dist/cli.js"
+  },
   "dependencies": {
     "async-mutex": "^0.5.0",
     "cluster-key-slot": "^1.1.2",
     "ioredis-mock": "^8.9.0",
+    "lua-redis-wasm": "^1.2.1",
     "respjs": "^4.2.0"
   },
   "scripts": {
