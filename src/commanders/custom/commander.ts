@@ -13,9 +13,7 @@ import { BaseCommander } from './base-commander'
 export async function createCustomCommander(
   logger: Logger,
 ): Promise<CustomCommanderFactory> {
-  const { load } = await import('lua-redis-wasm')
-  const module = await load()
-  const luaRuntime = createLuaRuntime(module)
+  const luaRuntime = await createLuaRuntime()
   return new CustomCommanderFactory(logger, luaRuntime)
 }
 
