@@ -97,7 +97,7 @@ export class ClusterCommander implements DBCommandExecutor {
     )
     this.baseCommander = new BaseCommander(
       this.commands,
-      validator => new NormalState(validator, this.router, this.db),
+      validator => new NormalState(validator, this.db, this.router),
     )
   }
 

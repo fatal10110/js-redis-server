@@ -102,9 +102,10 @@ describe('Reactive Store', () => {
   describe('key-specific event emission', () => {
     test('emits key-specific event on set', async () => {
       const events: StoreEvent[] = []
-      db.on('key:mykey', event => events.push(event))
+      const key = Buffer.from('mykey')
+      db.on(`key:${key.toString('hex')}`, event => events.push(event))
 
-      db.set(Buffer.from('mykey'), new StringDataType(Buffer.from('value')))
+      db.set(key, new StringDataType(Buffer.from('value')))
       db.set(Buffer.from('otherkey'), new StringDataType(Buffer.from('other')))
 
       assert.strictEqual(events.length, 1)
@@ -116,7 +117,7 @@ describe('Reactive Store', () => {
       db.set(key, new StringDataType(Buffer.from('value')))
 
       const events: StoreEvent[] = []
-      db.on('key:watchedkey', event => events.push(event))
+      db.on(`key:${key.toString('hex')}`, event => events.push(event))
 
       db.del(key)
 
@@ -129,7 +130,7 @@ describe('Reactive Store', () => {
       db.set(key, new StringDataType(Buffer.from('initial')))
 
       let watchTriggered = false
-      db.once('key:watched', () => {
+      db.once(`key:${key.toString('hex')}`, () => {
         watchTriggered = true
       })
 
@@ -152,7 +153,7 @@ describe('Reactive Store', () => {
       // Simulate WATCH - transaction context tracks if key changed
       let transactionAborted = false
       const watchKey = (keyToWatch: Buffer) => {
-        db.once(`key:${keyToWatch.toString('binary')}`, () => {
+        db.once(`key:${keyToWatch.toString('hex')}`, () => {
           transactionAborted = true
         })
       }
@@ -173,7 +174,7 @@ describe('Reactive Store', () => {
       db.set(key2, new StringDataType(Buffer.from('value2')))
 
       let transactionAborted = false
-      db.once(`key:key1`, () => {
+      db.once(`key:${key1.toString('hex')}`, () => {
         transactionAborted = true
       })
 
@@ -340,7 +341,7 @@ describe('Kernel Suspended Jobs', () => {
 
         // Otherwise, suspend and wait for a push
         const suspendedPromise = new Promise<void>(resolve => {
-          db.once(`key:${key.toString('binary')}`, event => {
+          db.once(`key:${key.toString('hex')}`, event => {
             if (event.type === 'set') {
               const updatedList = db.get(key)
               if (updatedList instanceof ListDataType) {

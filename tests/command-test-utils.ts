@@ -26,7 +26,7 @@ export function createTestSession(db: DB) {
   const validator = new RegistryCommandValidator(commands)
   let session: Session
   const kernel = new RedisKernel(async job => session.executeJob(job))
-  session = new Session(commands, kernel, new NormalState(validator))
+  session = new Session(commands, kernel, new NormalState(validator, db))
 
   return {
     execute(

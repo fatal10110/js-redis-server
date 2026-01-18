@@ -6,6 +6,7 @@ import { SetDataType } from './data-structures/set'
 import { StreamDataType } from './data-structures/stream'
 import { StringDataType } from './data-structures/string'
 import { SortedSetDataType } from './data-structures/zset'
+import { ReactiveDB } from '../../core/transports/reactive-db'
 
 export type DataTypes =
   | HashDataType
@@ -35,7 +36,7 @@ export interface StoreEvents {
   [key: `key:${string}`]: [event: StoreEvent]
 }
 
-export class DB extends EventEmitter<StoreEvents> {
+export class DB extends EventEmitter<StoreEvents> implements ReactiveDB {
   // TODO solve this, storing more than twice the size of the key
   private readonly mapping = new Map<string, Buffer>()
   private readonly timings = new Map<Buffer, number>()
@@ -53,11 +54,11 @@ export class DB extends EventEmitter<StoreEvents> {
     if (timing && timing <= now) {
       this.timings.delete(key)
       this.data.delete(key)
-      this.mapping.delete(key.toString('binary'))
+      this.mapping.delete(key.toString('hex'))
 
       const event: StoreEvent = { type: 'evict', key }
       this.emit('change', event)
-      this.emit(`key:${key.toString('binary')}`, event)
+      this.emit(`key:${key.toString('hex')}`, event)
 
       return true
     }
@@ -66,7 +67,7 @@ export class DB extends EventEmitter<StoreEvents> {
   }
 
   get(rawKey: Buffer) {
-    const key = this.mapping.get(rawKey.toString('binary'))
+    const key = this.mapping.get(rawKey.toString('hex'))
 
     if (!key) {
       return null
@@ -78,7 +79,7 @@ export class DB extends EventEmitter<StoreEvents> {
   }
 
   set(rawKey: Buffer, val: DataTypes, expiration?: number) {
-    const stringifiedKey = rawKey.toString('binary')
+    const stringifiedKey = rawKey.toString('hex')
     let key = this.mapping.get(stringifiedKey)
 
     if (!key) {
@@ -100,7 +101,7 @@ export class DB extends EventEmitter<StoreEvents> {
   }
 
   del(rawKey: Buffer) {
-    const stringifiedKey = rawKey.toString('binary')
+    const stringifiedKey = rawKey.toString('hex')
     const existingRef = this.mapping.get(stringifiedKey)
 
     if (!existingRef) {
@@ -137,7 +138,7 @@ export class DB extends EventEmitter<StoreEvents> {
   }
 
   getTtl(rawKey: Buffer): number {
-    const stringifiedKey = rawKey.toString('binary')
+    const stringifiedKey = rawKey.toString('hex')
     const key = this.mapping.get(stringifiedKey)
 
     if (!key || this.tryEvict(key)) {
@@ -153,7 +154,7 @@ export class DB extends EventEmitter<StoreEvents> {
   }
 
   setExpiration(rawKey: Buffer, expiration: number): boolean {
-    const stringifiedKey = rawKey.toString('binary')
+    const stringifiedKey = rawKey.toString('hex')
     const key = this.mapping.get(stringifiedKey)
 
     if (!key) {
@@ -179,7 +180,7 @@ export class DB extends EventEmitter<StoreEvents> {
    * Remove expiration from a key
    */
   persist(rawKey: Buffer): boolean {
-    const stringifiedKey = rawKey.toString('binary')
+    const stringifiedKey = rawKey.toString('hex')
     const key = this.mapping.get(stringifiedKey)
 
     if (!key) {

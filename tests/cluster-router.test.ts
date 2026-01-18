@@ -14,6 +14,7 @@ import type {
   DiscoveryService,
 } from '../src/types'
 import type { CommandMetadata } from '../src/commanders/custom/commands/metadata'
+import { createMockDB } from './mock-db'
 
 // Mock transport for testing
 class MockTransport {
@@ -370,8 +371,9 @@ describe('TransactionState with slot validation', () => {
 
     const baseValidator = new RegistryCommandValidator(commands)
     const router = new ClusterRouter(discoveryService, myself, commands)
+    const mockDB = createMockDB()
 
-    const normalState = new NormalState(baseValidator, router)
+    const normalState = new NormalState(baseValidator, mockDB, router)
 
     return { normalState, commands }
   }
@@ -644,8 +646,9 @@ describe('NormalState with slot validation', () => {
 
     const baseValidator = new RegistryCommandValidator(commands)
     const router = new ClusterRouter(discoveryService, myself, commands)
+    const mockDB = createMockDB()
 
-    const normalState = new NormalState(baseValidator, router)
+    const normalState = new NormalState(baseValidator, mockDB, router)
     const transport = new MockTransport()
 
     const transition = normalState.handle(
