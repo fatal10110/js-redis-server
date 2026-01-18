@@ -10,7 +10,7 @@
     "async-mutex": "^0.5.0",
     "cluster-key-slot": "^1.1.2",
     "ioredis-mock": "^8.9.0",
-    "lua-redis-wasm": "^1.2.1",
+    "lua-redis-wasm": "^1.2.2",
     "respjs": "^4.2.0"
   },
   "scripts": {

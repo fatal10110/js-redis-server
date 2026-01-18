@@ -1,6 +1,7 @@
 import { UnknownScriptCommand, UserFacedError } from '../../core/errors'
 import { CapturingTransport } from '../../core/transports/capturing-transport'
 import { Command, CommandResult } from '../../types'
+import { LuaWasmEngine } from 'lua-redis-wasm'
 
 type ReplyValue =
   | null
@@ -51,7 +52,7 @@ type LuaHostState = {
   sha: string
 }
 
-export function createLuaRuntime(module: LuaWasmModule): LuaRuntime {
+export async function createLuaRuntime(): Promise<LuaRuntime> {
   // TODO implement
   const hostState: LuaHostState = { ctx: null, sha: '' }
   const host: RedisHost = {
@@ -59,7 +60,7 @@ export function createLuaRuntime(module: LuaWasmModule): LuaRuntime {
     redisPcall: args => runLuaCommand(args, hostState, true),
     log: () => {},
   }
-  const engine = module.create(host)
+  const engine = await LuaWasmEngine.create({ host })
 
   return {
     eval: (script, ctx, sha) => {
