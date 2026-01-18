@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { Resp2Transport } from './core/transports/resp2'
 import { createCustomCommander } from './commanders/custom/commander'
 import { ClusterNetwork } from './core/cluster/network'
@@ -208,7 +207,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMain = typeof require !== 'undefined' && require.main === module
+// Run when executed directly as CLI (ESM check)
+import { fileURLToPath } from 'node:url'
+
+const isMain = process.argv[1] === fileURLToPath(import.meta.url)
 
 if (isMain) {
   main().catch(err => {
