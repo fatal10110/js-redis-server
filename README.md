@@ -1,56 +1,170 @@
-# Redis Kernel Architecture Plan
+# js-redis-server
 
-## Overview
+[![CI](https://github.com/fatal10110/js-redis-server/actions/workflows/ci.yml/badge.svg)](https://github.com/fatal10110/js-redis-server/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/js-redis-server.svg)](https://www.npmjs.com/package/js-redis-server)
+[![npm downloads](https://img.shields.io/npm/dm/js-redis-server.svg)](https://www.npmjs.com/package/js-redis-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/node/v/js-redis-server.svg)](https://nodejs.org)
 
-This architectural plan proposes a fundamental shift from the current "Mutex-per-command" model to a **"Redis Kernel"** model. This design mimics the real Redis event loop in Node.js, ensuring strict serialization of commands, atomicity without locks, and complete decoupling of the transport layer (RESP) from the execution logic.
+In-memory Redis-compatible server implementation in JavaScript. Useful for testing and development without requiring a real Redis instance.
 
-## Core Concepts
+## Features
 
-1.  **The Kernel (Sequencer):** A single-threaded job queue that executes commands one by one. No race conditions are possible by design.
-2.  **Schema-First Design:** Commands are defined by abstract schemas, not code. This allows validation to be decoupled from the wire protocol (RESP).
-3.  **Reactive Store:** The data store emits events, enabling `WATCH`, `MULTI`, and Client-Side Caching to work via the Observer pattern.
-4.  **Transport Agnostic:** The core server does not know about RESP. It accepts `CommandJobs` and returns results. RESP is just one of many possible adapters.
+- **Redis-compatible protocol** - Works with any Redis client (ioredis, node-redis, etc.)
+- **Standalone and Cluster modes** - Run a single server or a full cluster
+- **Lua scripting support** - Execute Redis Lua scripts via WebAssembly
+- **No external dependencies** - Pure JavaScript, no Redis installation needed
+- **Dual package** - Supports both ESM and CommonJS
 
-## Roadmap
+## Installation
 
-### Phase 1: The Kernel & Sequencer
+```bash
+npm install js-redis-server
+```
 
-**Goal:** Establish the single-threaded execution loop.
+## Quick Start
 
-- Implement `RedisKernel` class.
-- Implement `CommandJob` interface.
-- Remove all `Mutex` usage.
+### As a Library
 
-### Phase 2: Protocol-Agnostic Schema Registry
+```typescript
+import { createCustomCommander, Resp2Transport } from 'js-redis-server'
 
-**Goal:** Define commands using abstract types, decoupling validation from RESP.
+const logger = {
+  info: console.log,
+  error: console.error,
+}
 
-- Create a Zod-like schema builder for Redis arguments.
-- Implement `CommandRegistry`.
-- Ensure schemas support different input parsers (RESP, JSON, etc.).
+const factory = await createCustomCommander(logger)
+const transport = new Resp2Transport(logger, factory.createCommander())
 
-### Phase 3: Reactive Data Store
+await transport.listen(6379)
+console.log('Redis server listening on port 6379')
 
-**Goal:** Support transactions and blocking operations via events.
+// Cleanup
+await transport.close()
+await factory.shutdown()
+```
 
-- Refactor `DB` to extend `EventEmitter`.
-- Implement `WATCH` using event listeners.
-- Implement `BLPOP` using event listeners.
+### As a CLI
 
-### Phase 4: Transport Adapters
+```bash
+# Run a single server on default port 6379
+npx js-redis-server
 
-**Goal:** Plug the existing RESP parser into the new Kernel.
+# Run on a specific port
+npx js-redis-server --port 6380
 
-- Create `Transport` interface.
-- Implement `RespAdapter`.
-- Implement `ConnectionState` management.
+# Run a cluster with 3 masters
+npx js-redis-server --cluster --masters 3
 
-## Benefits vs Current Architecture
+# Run a cluster with replicas
+npx js-redis-server --cluster --masters 3 --slaves 1
+```
 
-| Feature         | Current (Refactoring Plan)    | Kernel Architecture       |
-| :-------------- | :---------------------------- | :------------------------ |
-| **Concurrency** | Patchy `Mutex` locks          | **Guaranteed Serialized** |
-| **Atomicity**   | Developer discipline required | **By Design**             |
-| **Protocol**    | Tightly coupled to RESP       | **Protocol Agnostic**     |
-| **Validation**  | Manual parsing in commands    | **Declarative Schema**    |
-| **Testing**     | Requires Mock Sockets         | **Test Kernel directly**  |
+### CLI Options
+
+```
+Modes:
+  --single               Run a single Redis server (default)
+  --cluster              Run a Redis cluster
+  --mode <single|cluster>
+
+Single server options:
+  --port <number>        Port to listen on (default 6379)
+
+Cluster options:
+  --masters <number>     Number of masters (default 3)
+  --slaves <number>      Number of replicas per master (default 0)
+  --base-port <number>   Starting port for cluster nodes (default 30000)
+
+General:
+  -h, --help             Show help
+```
+
+## Cluster Mode
+
+```typescript
+import { ClusterNetwork } from 'js-redis-server'
+
+const logger = { info: console.log, error: console.error }
+const cluster = new ClusterNetwork(logger)
+
+await cluster.init({
+  masters: 3,
+  slaves: 1,
+  basePort: 30000,
+})
+
+// Get all node addresses
+const nodes = cluster.getAll()
+console.log(nodes.map(n => `${n.host}:${n.port}`))
+
+// Cleanup
+await cluster.shutdown()
+```
+
+## Supported Commands
+
+### Strings
+`GET`, `SET`, `MGET`, `MSET`, `MSETNX`, `APPEND`, `STRLEN`, `GETSET`, `INCR`, `INCRBY`, `INCRBYFLOAT`, `DECR`, `DECRBY`
+
+### Hashes
+`HGET`, `HSET`, `HMGET`, `HMSET`, `HDEL`, `HEXISTS`, `HGETALL`, `HINCRBY`, `HINCRBYFLOAT`, `HKEYS`, `HLEN`, `HVALS`
+
+### Lists
+`LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LLEN`, `LRANGE`, `LINDEX`, `LSET`, `LREM`, `LTRIM`
+
+### Sets
+`SADD`, `SREM`, `SMEMBERS`, `SISMEMBER`, `SCARD`, `SPOP`, `SRANDMEMBER`, `SMOVE`, `SDIFF`, `SINTER`, `SUNION`
+
+### Sorted Sets
+`ZADD`, `ZREM`, `ZSCORE`, `ZRANK`, `ZREVRANK`, `ZCARD`, `ZRANGE`, `ZREVRANGE`, `ZRANGEBYSCORE`, `ZREMRANGEBYSCORE`, `ZINCRBY`
+
+### Keys
+`DEL`, `EXISTS`, `EXPIRE`, `EXPIREAT`, `TTL`, `PTTL`, `TYPE`
+
+### Server
+`PING`, `QUIT`, `INFO`, `DBSIZE`, `FLUSHDB`, `FLUSHALL`
+
+### Cluster
+`CLUSTER INFO`, `CLUSTER NODES`, `CLUSTER SLOTS`, `CLUSTER SHARDS`
+
+### Scripting
+`EVAL`, `EVALSHA`, `SCRIPT LOAD`
+
+### Client
+`CLIENT SETNAME`
+
+## Requirements
+
+- Node.js >= 22
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build
+npm run build
+
+# Run tests
+npm test
+
+# Run integration tests (mock backend)
+npm run test:integration:mock
+
+# Run integration tests (real Redis)
+npm run test:integration:real
+
+# Run all tests
+npm run test:all
+```
+
+## Contributing
+
+Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) before submitting a pull request.
+
+## License
+
+MIT - see [LICENSE](LICENSE) for details.
