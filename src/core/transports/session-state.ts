@@ -1,5 +1,9 @@
 import { Transport } from '../../types'
-import { UnknownCommand, UserFacedError } from '../errors'
+import {
+  NestedMulti,
+  TransactionDiscardedWithError,
+  UserFacedError,
+} from '../errors'
 import { CommandRequest } from '../../commanders/custom/redis-kernel'
 
 /**
@@ -129,11 +133,7 @@ export class TransactionState implements SessionState {
 
     if (cmdName === 'exec') {
       if (this.shouldDiscard) {
-        transport.write(
-          new Error(
-            'EXECABORT Transaction discarded because of previous errors.',
-          ),
-        )
+        transport.write(new TransactionDiscardedWithError())
         transport.flush()
         return {
           nextState: this.normalState,
@@ -156,7 +156,7 @@ export class TransactionState implements SessionState {
     }
 
     if (cmdName === 'multi') {
-      transport.write(new Error('ERR MULTI calls can not be nested'))
+      transport.write(new NestedMulti())
       transport.flush()
       return {
         nextState: this,

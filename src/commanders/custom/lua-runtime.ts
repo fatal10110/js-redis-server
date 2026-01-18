@@ -1,4 +1,8 @@
-import { UnknownScriptCommand, UserFacedError } from '../../core/errors'
+import {
+  UnknownScriptCommand,
+  UserFacedError,
+  WrongNumberOfArguments,
+} from '../../core/errors'
 import { CapturingTransport } from '../../core/transports/capturing-transport'
 import { Command, CommandResult } from '../../types'
 import { LuaWasmEngine } from 'lua-redis-wasm'
@@ -56,8 +60,8 @@ export async function createLuaRuntime(): Promise<LuaRuntime> {
   // TODO implement
   const hostState: LuaHostState = { ctx: null, sha: '' }
   const host: RedisHost = {
-    redisCall: args => runLuaCommand(args, hostState, false),
-    redisPcall: args => runLuaCommand(args, hostState, true),
+    redisCall: args => runLuaCommand(args, hostState),
+    redisPcall: args => runLuaCommand(args, hostState),
     log: () => {},
   }
   const engine = await LuaWasmEngine.create({ host })
@@ -86,24 +90,14 @@ export async function createLuaRuntime(): Promise<LuaRuntime> {
   }
 }
 
-function runLuaCommand(
-  args: Buffer[],
-  hostState: LuaHostState,
-  isPcall: boolean,
-): ReplyValue {
+function runLuaCommand(args: Buffer[], hostState: LuaHostState): ReplyValue {
   const ctx = hostState.ctx
   if (!ctx) {
-    return handleLuaError(
-      new Error('ERR Lua runtime is not initialized'),
-      isPcall,
-    )
+    throw new Error('ERR Lua runtime is not initialized')
   }
 
   if (args.length === 0) {
-    return handleLuaError(
-      new Error("ERR wrong number of arguments for 'redis.call' command"),
-      isPcall,
-    )
+    return new WrongNumberOfArguments('eval').toLuaError()
   }
 
   const rawCmd = args[0]
@@ -111,14 +105,18 @@ function runLuaCommand(
   const command = ctx.commands?.[cmdName]
 
   if (!command || !isAllowedInLua(command)) {
-    return handleLuaError(new UnknownScriptCommand(hostState.sha), isPcall)
+    return new UnknownScriptCommand(hostState.sha).toLuaError()
   }
 
   const capture = new CapturingTransport()
   try {
     command.run(rawCmd, args.slice(1), ctx.signal, capture)
   } catch (err) {
-    return handleLuaError(err, isPcall)
+    if (err instanceof UserFacedError) {
+      return err.toLuaError()
+    }
+
+    throw err
   }
 
   return commandResultToReplyValue(capture.getResults())
@@ -139,48 +137,12 @@ function commandResultToReplyValue(result: CommandResult): ReplyValue {
   }
 
   if (result instanceof UserFacedError) {
-    const err = normalizeRedisError(result)
-    return { err: encodeErrorBuffer(err) }
+    return result.toLuaError()
+  }
+
+  if (result instanceof Error) {
+    throw result
   }
 
   return result
-}
-
-function handleLuaError(err: unknown, isPcall: boolean): ReplyValue {
-  const normalized = normalizeRedisError(err)
-  const buffer = encodeErrorBuffer(normalized)
-
-  if (isPcall) {
-    return { err: buffer }
-  }
-
-  throw normalized
-}
-
-function encodeErrorBuffer(err: Error): Buffer {
-  const name = err.name && err.name !== 'Error' ? err.name : 'ERR'
-  const message = err.message ?? ''
-  return Buffer.from(`${name} ${message}`.trim())
-}
-
-function normalizeRedisError(err: unknown): Error {
-  if (err instanceof UserFacedError) {
-    return err
-  }
-
-  const base = err instanceof Error ? err : new Error(String(err))
-  const message = base.message ?? ''
-  const match = message.match(/^([A-Z]+)\\s+(.*)$/)
-
-  if (match) {
-    const normalized = new Error(match[2])
-    normalized.name = match[1]
-    return normalized
-  }
-
-  if (!base.name || base.name === 'Error') {
-    base.name = 'ERR'
-  }
-
-  return base
 }

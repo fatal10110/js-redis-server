@@ -6,7 +6,7 @@ import {
   TransactionState,
 } from '../src/core/transports/session-state'
 import { RegistryCommandValidator } from '../src/core/transports/command-validator'
-import { CorssSlot, MovedError } from '../src/core/errors'
+import { CorssSlot, MovedError, UserFacedError } from '../src/core/errors'
 import type {
   Command,
   CommandResult,
@@ -611,7 +611,11 @@ describe('TransactionState with slot validation', () => {
     transition = state.handle(transport as any, Buffer.from('EXEC'), [])
 
     assert.ok(transport.responses[3] instanceof Error)
-    assert.ok((transport.responses[3] as Error).message.includes('EXECABORT'))
+    assert.equal(
+      (transport.responses[3] as Error).name,
+      'EXECABORT',
+      `Expected EXECABORT got ${transport.responses[3].message}`,
+    )
   })
 })
 
