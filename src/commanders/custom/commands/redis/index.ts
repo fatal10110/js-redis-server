@@ -33,6 +33,11 @@ export function createCommands(
   const commands = stripSubCommands(registry.createCommands(deps))
   deps.commands = commands
 
+  // Create filtered Lua-allowed commands
+  const luaDefinitions = registry.getLuaCommands()
+  const luaNames = new Set(luaDefinitions.map(def => def.metadata.name))
+  deps.luaCommands = filterCommands(commands, luaNames)
+
   return {
     ...commands,
   }
