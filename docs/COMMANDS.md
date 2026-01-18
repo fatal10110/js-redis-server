@@ -170,6 +170,66 @@ This document provides a detailed overview of Redis commands and their implement
   - [ ] `DECRBY key decrement` - Decrement the integer value of a key by the given amount
   - [ ] `INCRBYFLOAT key increment` - Increment the float value of a key by the given amount
 
+#### Hashes
+
+##### HSET
+
+- [x] `HSET key field value [field value ...]` - Set the value of one or more hash fields
+
+##### HSETNX
+
+- [x] `HSETNX key field value` - Set the value of a hash field, only if the field does not exist
+
+##### HGET
+
+- [x] `HGET key field` - Get the value of a hash field
+
+##### HMSET
+
+- [x] `HMSET key field value [field value ...]` - Set multiple hash fields to multiple values (deprecated, use HSET)
+
+##### HMGET
+
+- [x] `HMGET key field [field ...]` - Get the values of multiple hash fields
+
+##### HGETALL
+
+- [x] `HGETALL key` - Get all the fields and values in a hash
+
+##### HDEL
+
+- [x] `HDEL key field [field ...]` - Delete one or more hash fields
+
+##### HEXISTS
+
+- [x] `HEXISTS key field` - Determine if a hash field exists
+
+##### HKEYS
+
+- [x] `HKEYS key` - Get all the fields in a hash
+
+##### HVALS
+
+- [x] `HVALS key` - Get all the values in a hash
+
+##### HLEN
+
+- [x] `HLEN key` - Get the number of fields in a hash
+
+##### HINCRBY
+
+- [x] `HINCRBY key field increment` - Increment the integer value of a hash field by the given number
+
+##### HINCRBYFLOAT
+
+- [x] `HINCRBYFLOAT key field increment` - Increment the float value of a hash field by the given amount
+
+##### Additional Hash Commands
+
+- [ ] `HSTRLEN key field` - Get the length of the value of a hash field
+- [ ] `HSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate hash fields and values
+- [ ] `HRANDFIELD key [count [WITHVALUES]]` - Get one or multiple random fields from a hash
+
 ### 7. Pub/Sub Commands
 
 #### PUBLISH

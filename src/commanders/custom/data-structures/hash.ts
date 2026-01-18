@@ -14,6 +14,15 @@ export class HashDataType {
     return existed ? 0 : 1
   }
 
+  hsetnx(field: Buffer, value: Buffer): number {
+    const fieldStr = field.toString()
+    if (this.data.has(fieldStr)) {
+      return 0
+    }
+    this.data.set(fieldStr, value)
+    return 1
+  }
+
   hget(field: Buffer): Buffer | null {
     const fieldStr = field.toString()
     return this.data.get(fieldStr) || null

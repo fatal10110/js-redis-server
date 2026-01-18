@@ -176,6 +176,31 @@ export class DB extends EventEmitter<StoreEvents> {
   }
 
   /**
+   * Remove expiration from a key
+   */
+  persist(rawKey: Buffer): boolean {
+    const stringifiedKey = rawKey.toString('binary')
+    const key = this.mapping.get(stringifiedKey)
+
+    if (!key) {
+      return false // Key does not exist
+    }
+
+    // Check if key still exists (hasn't expired)
+    const existing = this.get(rawKey)
+    if (existing === null) {
+      return false // Key has expired or doesn't exist
+    }
+
+    const hadExpiration = this.timings.has(key)
+    if (hadExpiration) {
+      this.timings.delete(key)
+    }
+
+    return hadExpiration // Return true only if expiration was removed
+  }
+
+  /**
    * Remove all keys from the current database
    */
   flushdb(): void {

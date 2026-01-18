@@ -147,6 +147,13 @@ import { DecrCommandDefinition } from './data/strings/decr'
 import { IncrbyCommandDefinition } from './data/strings/incrby'
 import { DecrbyCommandDefinition } from './data/strings/decrby'
 import { IncrbyfloatCommandDefinition } from './data/strings/incrbyfloat'
+import { SetnxCommandDefinition } from './data/strings/setnx'
+import { SetexCommandDefinition } from './data/strings/setex'
+import { PsetexCommandDefinition } from './data/strings/psetex'
+import { GetdelCommandDefinition } from './data/strings/getdel'
+import { GetexCommandDefinition } from './data/strings/getex'
+import { SetrangeCommandDefinition } from './data/strings/setrange'
+import { GetrangeCommandDefinition } from './data/strings/getrange'
 
 // Key commands
 import { DelCommandDefinition } from './data/keys/del'
@@ -159,9 +166,13 @@ import { ExpireatCommandDefinition } from './data/keys/expireat'
 import { FlushdbCommandDefinition } from './data/keys/flushdb'
 import { FlushallCommandDefinition } from './data/keys/flushall'
 import { DbSizeCommandDefinition } from './data/keys/dbsize'
+import { RenameCommandDefinition } from './data/keys/rename'
+import { RenamenxCommandDefinition } from './data/keys/renamenx'
+import { PersistCommandDefinition } from './data/keys/persist'
 
 // Hash commands
 import { HsetCommandDefinition } from './data/hashes/hset'
+import { HsetnxCommandDefinition } from './data/hashes/hsetnx'
 import { HgetCommandDefinition } from './data/hashes/hget'
 import { HdelCommandDefinition } from './data/hashes/hdel'
 import { HgetallCommandDefinition } from './data/hashes/hgetall'
@@ -173,6 +184,7 @@ import { HlenCommandDefinition } from './data/hashes/hlen'
 import { HexistsCommandDefinition } from './data/hashes/hexists'
 import { HincrbyCommandDefinition } from './data/hashes/hincrby'
 import { HincrbyfloatCommandDefinition } from './data/hashes/hincrbyfloat'
+import { HstrlenCommandDefinition } from './data/hashes/hstrlen'
 
 // List commands
 import { LpushCommandDefinition } from './data/lists/lpush'
@@ -185,6 +197,9 @@ import { LindexCommandDefinition } from './data/lists/lindex'
 import { LsetCommandDefinition } from './data/lists/lset'
 import { LremCommandDefinition } from './data/lists/lrem'
 import { LtrimCommandDefinition } from './data/lists/ltrim'
+import { LpushxCommandDefinition } from './data/lists/lpushx'
+import { RpushxCommandDefinition } from './data/lists/rpushx'
+import { RpoplpushCommandDefinition } from './data/lists/rpoplpush'
 
 // Set commands
 import { SaddCommandDefinition } from './data/sets/sadd'
@@ -198,6 +213,9 @@ import { SdiffCommandDefinition } from './data/sets/sdiff'
 import { SinterCommandDefinition } from './data/sets/sinter'
 import { SunionCommandDefinition } from './data/sets/sunion'
 import { SmoveCommandDefinition } from './data/sets/smove'
+import { SdiffstoreCommandDefinition } from './data/sets/sdiffstore'
+import { SinterstoreCommandDefinition } from './data/sets/sinterstore'
+import { SunionstoreCommandDefinition } from './data/sets/sunionstore'
 
 // Sorted set commands
 import { ZaddCommandDefinition } from './data/zsets/zadd'
@@ -211,6 +229,9 @@ import { ZcardCommandDefinition } from './data/zsets/zcard'
 import { ZincrbyCommandDefinition } from './data/zsets/zincrby'
 import { ZrangebyscoreCommandDefinition } from './data/zsets/zrangebyscore'
 import { ZremrangebyscoreCommandDefinition } from './data/zsets/zremrangebyscore'
+import { ZcountCommandDefinition } from './data/zsets/zcount'
+import { ZpopminCommandDefinition } from './data/zsets/zpopmin'
+import { ZpopmaxCommandDefinition } from './data/zsets/zpopmax'
 import { PingCommandDefinition } from './ping'
 import { InfoCommandDefinition } from './info'
 import { QuitCommandDefinition } from './quit'
@@ -238,7 +259,7 @@ export function createCommandRegistry(
 ): CommandRegistry {
   const registry = new CommandRegistry()
 
-  // String commands (13 commands)
+  // String commands (20 commands)
   registry.registerAll([
     GetCommandDefinition,
     SetCommandDefinition,
@@ -253,11 +274,18 @@ export function createCommandRegistry(
     IncrbyCommandDefinition,
     DecrbyCommandDefinition,
     IncrbyfloatCommandDefinition,
+    SetnxCommandDefinition,
+    SetexCommandDefinition,
+    PsetexCommandDefinition,
+    GetdelCommandDefinition,
+    GetexCommandDefinition,
+    SetrangeCommandDefinition,
+    GetrangeCommandDefinition,
   ])
 
   // Register commands that have been migrated to the new metadata system
   registry.registerAll([
-    // Key commands (10 commands)
+    // Key commands (13 commands)
     DelCommandDefinition,
     ExistsCommandDefinition,
     TypeCommandDefinition,
@@ -268,10 +296,13 @@ export function createCommandRegistry(
     FlushdbCommandDefinition,
     FlushallCommandDefinition,
     DbSizeCommandDefinition,
+    RenameCommandDefinition,
+    RenamenxCommandDefinition,
+    PersistCommandDefinition,
   ])
 
   registry.registerAll([
-    // List commands (10 commands)
+    // List commands (13 commands)
     LpushCommandDefinition,
     RpushCommandDefinition,
     LpopCommandDefinition,
@@ -282,8 +313,11 @@ export function createCommandRegistry(
     LsetCommandDefinition,
     LremCommandDefinition,
     LtrimCommandDefinition,
+    LpushxCommandDefinition,
+    RpushxCommandDefinition,
+    RpoplpushCommandDefinition,
 
-    // Set commands (11 commands)
+    // Set commands (14 commands)
     SaddCommandDefinition,
     SremCommandDefinition,
     ScardCommandDefinition,
@@ -295,8 +329,11 @@ export function createCommandRegistry(
     SinterCommandDefinition,
     SunionCommandDefinition,
     SmoveCommandDefinition,
+    SdiffstoreCommandDefinition,
+    SinterstoreCommandDefinition,
+    SunionstoreCommandDefinition,
 
-    // Sorted set commands (11 commands)
+    // Sorted set commands (14 commands)
     ZaddCommandDefinition,
     ZremCommandDefinition,
     ZrangeCommandDefinition,
@@ -308,9 +345,13 @@ export function createCommandRegistry(
     ZincrbyCommandDefinition,
     ZrangebyscoreCommandDefinition,
     ZremrangebyscoreCommandDefinition,
+    ZcountCommandDefinition,
+    ZpopminCommandDefinition,
+    ZpopmaxCommandDefinition,
 
-    // Hash commands (12 commands)
+    // Hash commands (14 commands)
     HsetCommandDefinition,
+    HsetnxCommandDefinition,
     HgetCommandDefinition,
     HdelCommandDefinition,
     HgetallCommandDefinition,
@@ -322,6 +363,7 @@ export function createCommandRegistry(
     HexistsCommandDefinition,
     HincrbyCommandDefinition,
     HincrbyfloatCommandDefinition,
+    HstrlenCommandDefinition,
 
     // Server/connection commands
     PingCommandDefinition,

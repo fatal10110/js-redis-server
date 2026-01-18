@@ -223,4 +223,46 @@ export class SortedSetDataType {
 
     return allMembers.map(item => item.member)
   }
+
+  zcount(min: number, max: number): number {
+    let count = 0
+    for (const [, score] of this.memberToScore.entries()) {
+      if (score >= min && score <= max) {
+        count++
+      }
+    }
+    return count
+  }
+
+  zpopmin(count: number = 1): Buffer[] {
+    const sortedMembers = this.getSortedMembers()
+    const result: Buffer[] = []
+    const toRemove = Math.min(count, sortedMembers.length)
+
+    for (let i = 0; i < toRemove; i++) {
+      const member = sortedMembers[i]
+      const score = this.memberToScore.get(member)!
+      result.push(Buffer.from(member))
+      result.push(Buffer.from(score.toString()))
+      this.zrem(Buffer.from(member))
+    }
+
+    return result
+  }
+
+  zpopmax(count: number = 1): Buffer[] {
+    const sortedMembers = this.getSortedMembers().reverse()
+    const result: Buffer[] = []
+    const toRemove = Math.min(count, sortedMembers.length)
+
+    for (let i = 0; i < toRemove; i++) {
+      const member = sortedMembers[i]
+      const score = this.memberToScore.get(member)!
+      result.push(Buffer.from(member))
+      result.push(Buffer.from(score.toString()))
+      this.zrem(Buffer.from(member))
+    }
+
+    return result
+  }
 }

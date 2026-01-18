@@ -13,7 +13,7 @@ import { BaseCommander } from './base-commander'
 export async function createCustomCommander(
   logger: Logger,
 ): Promise<CustomCommanderFactory> {
-  const luaRuntime = await createLuaRuntime()
+  const luaRuntime = await createLuaRuntime(logger)
   return new CustomCommanderFactory(logger, luaRuntime)
 }
 

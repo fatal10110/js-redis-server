@@ -46,7 +46,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "rm -rf ./dist && rollup -c",
+    "build": "rm -rf ./dist && rollup -c && chmod +x dist/cli.mjs",
     "start": "npm run build && node --enable-source-maps ./dist/cli.mjs",
     "test": "glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests/**/*.test.ts\"",
     "test:integration:mock": "TEST_BACKEND=mock glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests-integration/**/*.test.ts\"",

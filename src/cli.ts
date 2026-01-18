@@ -12,6 +12,7 @@ export type CliOptions = {
   slaves: number
   basePort: number
   help: boolean
+  debug: boolean
 }
 
 const defaultOptions: CliOptions = {
@@ -21,6 +22,7 @@ const defaultOptions: CliOptions = {
   slaves: 0,
   basePort: 30000,
   help: false,
+  debug: false,
 }
 
 export function parseArgs(args: string[]): CliOptions {
@@ -31,6 +33,11 @@ export function parseArgs(args: string[]): CliOptions {
 
     if (arg === '--help' || arg === '-h') {
       options.help = true
+      continue
+    }
+
+    if (arg === '--debug' || arg === '-d') {
+      options.debug = true
       continue
     }
 
@@ -96,7 +103,7 @@ function validatePort(port: number, name: string): void {
   }
 }
 
-function createLogger(): Logger {
+function createLogger(debug = false): Logger {
   return {
     info: (msg, metadata) => {
       if (metadata) {
@@ -110,6 +117,15 @@ function createLogger(): Logger {
         console.error(msg, metadata)
       } else {
         console.error(msg)
+      }
+    },
+    debug: (msg, metadata) => {
+      if (debug) {
+        if (metadata) {
+          console.debug(msg, metadata)
+        } else {
+          console.debug(msg)
+        }
       }
     },
   }
@@ -132,12 +148,14 @@ Cluster options:
   --base-port <number>   Starting port for cluster nodes (default 30000)
 
 General:
+  -d, --debug            Enable debug logging
   -h, --help             Show help
 `)
 }
 
 async function runSingle(options: CliOptions, logger: Logger) {
   validatePort(options.port, 'port')
+  logger.debug('Starting single server mode', { port: options.port })
   const commanderFactory = await createCustomCommander(logger)
   const transport = new Resp2Transport(
     logger,
@@ -170,6 +188,13 @@ async function runCluster(options: CliOptions, logger: Logger) {
     throw new Error('Cluster base-port range exceeds 65535')
   }
 
+  logger.debug('Starting cluster mode', {
+    masters: options.masters,
+    slaves: options.slaves,
+    basePort: options.basePort,
+    totalNodes,
+  })
+
   const network = new ClusterNetwork(logger)
   await network.init({
     masters: options.masters,
@@ -198,7 +223,7 @@ export async function main(argv = process.argv.slice(2)) {
     return
   }
 
-  const logger = createLogger()
+  const logger = createLogger(options.debug)
 
   if (options.mode === 'cluster') {
     await runCluster(options, logger)
@@ -208,9 +233,16 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 // Run when executed directly as CLI (ESM check)
+// For bin scripts, we check if this is the main module by comparing resolved paths
 import { fileURLToPath } from 'node:url'
+import { realpathSync } from 'node:fs'
+import { resolve } from 'node:path'
 
-const isMain = process.argv[1] === fileURLToPath(import.meta.url)
+// When used as a bin script (e.g., via npm link or global install),
+// process.argv[1] might be a symlink, so we resolve both paths
+const scriptPath = resolve(realpathSync(process.argv[1] || ''))
+const modulePath = resolve(fileURLToPath(import.meta.url))
+const isMain = scriptPath === modulePath
 
 if (isMain) {
   main().catch(err => {

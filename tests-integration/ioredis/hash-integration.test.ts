@@ -95,6 +95,32 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(exists2, 0)
   })
 
+  test('HSETNX command', async () => {
+    // HSETNX on new field
+    const result1 = await redisClient?.hsetnx('hashsetnx', 'field1', 'value1')
+    assert.strictEqual(result1, 1)
+
+    // Verify field was set
+    const value1 = await redisClient?.hget('hashsetnx', 'field1')
+    assert.strictEqual(value1, 'value1')
+
+    // HSETNX on existing field (should fail)
+    const result2 = await redisClient?.hsetnx('hashsetnx', 'field1', 'value2')
+    assert.strictEqual(result2, 0)
+
+    // Verify field was not changed
+    const value2 = await redisClient?.hget('hashsetnx', 'field1')
+    assert.strictEqual(value2, 'value1')
+
+    // HSETNX on different field in same hash
+    const result3 = await redisClient?.hsetnx('hashsetnx', 'field2', 'value2')
+    assert.strictEqual(result3, 1)
+
+    // Verify both fields exist
+    const len = await redisClient?.hlen('hashsetnx')
+    assert.strictEqual(len, 2)
+  })
+
   test('HDEL command', async () => {
     await redisClient?.hset(
       'hash7',
