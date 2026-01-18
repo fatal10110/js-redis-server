@@ -3,6 +3,8 @@ import {
   NestedMulti,
   TransactionDiscardedWithError,
   UserFacedError,
+  WrongNumberOfArguments,
+  WatchInsideMulti,
 } from '../errors'
 import { CommandRequest } from '../../commanders/custom/redis-kernel'
 
@@ -20,6 +22,17 @@ export interface SessionState {
     command: Buffer,
     args: Buffer[],
   ): SessionStateTransition
+
+  /**
+   * Watch keys for optimistic locking.
+   * Keys are monitored for modifications until EXEC/DISCARD.
+   */
+  watch?(keys: Buffer[]): void
+
+  /**
+   * Unwatch all keys.
+   */
+  unwatch?(): void
 }
 
 /**
@@ -65,12 +78,59 @@ export interface SlotValidator {
  * MULTI transitions to TransactionState.
  *
  * Supports optional slot validation for cluster mode.
+ * Supports WATCH for optimistic locking.
  */
 export class NormalState implements SessionState {
+  private watchedKeys: Set<string> = new Set()
+  private watchedKeysModified = false
+  private listeners: Map<string, (event: any) => void> = new Map()
+
   constructor(
     private readonly commandValidator: CommandValidator,
     private readonly slotValidator?: SlotValidator,
+    private readonly db?: any, // DB instance for event listening
   ) {}
+
+  watch(keys: Buffer[]): void {
+    if (!this.db) return
+
+    for (const key of keys) {
+      const keyStr = key.toString('binary')
+      if (this.watchedKeys.has(keyStr)) continue
+
+      this.watchedKeys.add(keyStr)
+
+      // Listen for modifications to this key
+      const eventName = `key:${keyStr}` as const
+      const listener = (event: any) => {
+        // Mark as modified if the key was set or deleted
+        if (
+          event.type === 'set' ||
+          event.type === 'del' ||
+          event.type === 'expire'
+        ) {
+          this.watchedKeysModified = true
+        }
+      }
+
+      this.listeners.set(keyStr, listener)
+      this.db.on(eventName, listener)
+    }
+  }
+
+  unwatch(): void {
+    if (!this.db) return
+
+    // Remove all listeners
+    for (const [keyStr, listener] of this.listeners) {
+      const eventName = `key:${keyStr}` as const
+      this.db.off(eventName, listener)
+    }
+
+    this.watchedKeys.clear()
+    this.listeners.clear()
+    this.watchedKeysModified = false
+  }
 
   handle(
     transport: Transport,
@@ -78,6 +138,26 @@ export class NormalState implements SessionState {
     args: Buffer[],
   ): SessionStateTransition {
     const cmdName = command.toString().toLowerCase()
+
+    if (cmdName === 'watch') {
+      if (args.length === 0) {
+        transport.write(new WrongNumberOfArguments('WATCH'))
+        transport.flush()
+        return { nextState: this }
+      }
+
+      this.watch(args)
+      transport.write('OK')
+      transport.flush()
+      return { nextState: this }
+    }
+
+    if (cmdName === 'unwatch') {
+      this.unwatch()
+      transport.write('OK')
+      transport.flush()
+      return { nextState: this }
+    }
 
     if (cmdName === 'multi') {
       transport.write('OK')
@@ -87,6 +167,7 @@ export class NormalState implements SessionState {
           this,
           this.commandValidator,
           this.slotValidator,
+          this.watchedKeysModified,
         ),
       }
     }
@@ -112,6 +193,8 @@ export class NormalState implements SessionState {
  * In cluster mode (when slotValidator is provided), implements slot pinning:
  * 1. The first command with keys "pins" the transaction to a specific slot.
  * 2. Every subsequent command must hash to the same slot.
+ *
+ * Supports WATCH: If any watched keys were modified, EXEC will abort.
  */
 export class TransactionState implements SessionState {
   private readonly buffer: CommandRequest[] = []
@@ -122,6 +205,7 @@ export class TransactionState implements SessionState {
     private readonly normalState: SessionState,
     private readonly validator: CommandValidator,
     private readonly slotValidator?: SlotValidator,
+    private readonly watchedKeysModified: boolean = false,
   ) {}
 
   handle(
@@ -132,8 +216,14 @@ export class TransactionState implements SessionState {
     const cmdName = command.toString().toLowerCase()
 
     if (cmdName === 'exec') {
-      if (this.shouldDiscard) {
-        transport.write(new TransactionDiscardedWithError())
+      // Clean up watched keys
+      if (this.normalState.unwatch) {
+        this.normalState.unwatch()
+      }
+
+      // Check if watched keys were modified
+      if (this.watchedKeysModified || this.shouldDiscard) {
+        transport.write(null)
         transport.flush()
         return {
           nextState: this.normalState,
@@ -148,6 +238,11 @@ export class TransactionState implements SessionState {
     }
 
     if (cmdName === 'discard') {
+      // Clean up watched keys
+      if (this.normalState.unwatch) {
+        this.normalState.unwatch()
+      }
+
       transport.write('OK')
       transport.flush()
       return {
@@ -157,6 +252,24 @@ export class TransactionState implements SessionState {
 
     if (cmdName === 'multi') {
       transport.write(new NestedMulti())
+      transport.flush()
+      return {
+        nextState: this,
+      }
+    }
+
+    if (cmdName === 'watch') {
+      transport.write(new WatchInsideMulti())
+      transport.flush()
+      this.shouldDiscard = true
+      return {
+        nextState: this,
+      }
+    }
+
+    if (cmdName === 'unwatch') {
+      // UNWATCH is allowed in MULTI but does nothing
+      transport.write('QUEUED')
       transport.flush()
       return {
         nextState: this,

@@ -202,3 +202,10 @@ export class OffsetOutOfRange extends UserFacedError {
     this.name = 'ERR'
   }
 }
+
+export class WatchInsideMulti extends UserFacedError {
+  constructor() {
+    super('WATCH inside MULTI is not allowed')
+    this.name = 'ERR'
+  }
+}
