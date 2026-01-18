@@ -39,14 +39,16 @@ class Commander implements DBCommandExecutor {
   private readonly commands: Record<string, Command>
   private readonly transactionCommands: Record<string, Command>
   private readonly baseCommander: BaseCommander
+  private readonly db: DB
 
   constructor(db: DB, luaRuntime: LuaRuntime) {
+    this.db = db
     this.commands = createCommands(db, { luaRuntime })
     this.transactionCommands = createMultiCommands(db)
     // Transaction state is now managed by Session, so no transactionCommands needed here
     this.baseCommander = new BaseCommander(
       this.commands,
-      validator => new NormalState(validator),
+      validator => new NormalState(validator, undefined, this.db),
     )
   }
 
