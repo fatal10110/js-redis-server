@@ -1,54 +1,15 @@
 import {
+  ScriptCallNoCommand,
   UnknownScriptCommand,
   UserFacedError,
-  WrongNumberOfArguments,
 } from '../../core/errors'
 import { CapturingTransport } from '../../core/transports/capturing-transport'
 import { Command, CommandResult } from '../../types'
-import { LuaWasmEngine } from 'lua-redis-wasm'
-
-type ReplyValue =
-  | null
-  | number
-  | bigint
-  | Buffer
-  | { ok: Buffer }
-  | { err: Buffer }
-  | ReplyValue[]
-
-type RedisHost = {
-  redisCall: (args: Buffer[]) => ReplyValue
-  redisPcall: (args: Buffer[]) => ReplyValue
-  log: (level: number, message: Buffer) => void
-}
-
-type LuaEngine = {
-  eval: (script: Buffer) => ReplyValue
-  evalWithArgs: (
-    script: Buffer,
-    keys?: Array<Buffer | Uint8Array | string>,
-    args?: Array<Buffer | Uint8Array | string>,
-  ) => ReplyValue
-}
-
-export type LuaWasmModule = {
-  create: (host: RedisHost) => LuaEngine
-}
+import { ReplyValue, load, LuaWasmModule, LuaEngine } from 'lua-redis-wasm'
 
 export interface LuaCommandContext {
-  commands?: Record<string, Command>
+  luaCommands?: Record<string, Command>
   signal: AbortSignal
-}
-
-export type LuaRuntime = {
-  eval: (script: Buffer, ctx: LuaCommandContext, sha: string) => ReplyValue
-  evalWithArgs: (
-    script: Buffer,
-    keys: Buffer[],
-    args: Buffer[],
-    ctx: LuaCommandContext,
-    sha: string,
-  ) => ReplyValue
 }
 
 type LuaHostState = {
@@ -56,75 +17,82 @@ type LuaHostState = {
   sha: string
 }
 
-export async function createLuaRuntime(): Promise<LuaRuntime> {
-  // TODO implement
-  const hostState: LuaHostState = { ctx: null, sha: '' }
-  const host: RedisHost = {
-    redisCall: args => runLuaCommand(args, hostState),
-    redisPcall: args => runLuaCommand(args, hostState),
-    log: () => {},
-  }
-  const engine = await LuaWasmEngine.create({ host })
+export class LuaRuntime {
+  private readonly hostState: LuaHostState = { ctx: null, sha: '' }
+  private engine: LuaEngine
 
-  return {
-    eval: (script, ctx, sha) => {
-      hostState.ctx = ctx
-      hostState.sha = sha
-      try {
-        return engine.eval(script)
-      } finally {
-        hostState.ctx = null
-        hostState.sha = ''
-      }
-    },
-    evalWithArgs: (script, keys, args, ctx, sha) => {
-      hostState.ctx = ctx
-      hostState.sha = sha
-      try {
-        return engine.evalWithArgs(script, keys, args)
-      } finally {
-        hostState.ctx = null
-        hostState.sha = ''
-      }
-    },
-  }
-}
-
-function runLuaCommand(args: Buffer[], hostState: LuaHostState): ReplyValue {
-  const ctx = hostState.ctx
-  if (!ctx) {
-    throw new Error('ERR Lua runtime is not initialized')
+  constructor(module: LuaWasmModule) {
+    this.engine = module.create({
+      redisCall: args => this.runLuaCommand(args, this.hostState),
+      redisPcall: args => this.runLuaCommand(args, this.hostState),
+      log: () => {},
+    })
   }
 
-  if (args.length === 0) {
-    return new WrongNumberOfArguments('eval').toLuaError()
+  eval(script: Buffer, ctx: LuaCommandContext, sha: string) {
+    this.hostState.ctx = ctx
+    this.hostState.sha = sha
+    try {
+      return this.engine.eval(script)
+    } finally {
+      this.hostState.ctx = null
+      this.hostState.sha = ''
+    }
   }
 
-  const rawCmd = args[0]
-  const cmdName = rawCmd.toString().toLowerCase()
-  const command = ctx.commands?.[cmdName]
-
-  if (!command || !isAllowedInLua(command)) {
-    return new UnknownScriptCommand(hostState.sha).toLuaError()
+  evalWithArgs(
+    script: Buffer,
+    keys: Buffer[],
+    args: Buffer[],
+    ctx: LuaCommandContext,
+    sha: string,
+  ) {
+    this.hostState.ctx = ctx
+    this.hostState.sha = sha
+    try {
+      return this.engine.evalWithArgs(script, keys, args)
+    } finally {
+      this.hostState.ctx = null
+      this.hostState.sha = ''
+    }
   }
 
-  const capture = new CapturingTransport()
-  try {
-    command.run(rawCmd, args.slice(1), ctx.signal, capture)
-  } catch (err) {
-    if (err instanceof UserFacedError) {
-      return err.toLuaError()
+  private runLuaCommand(args: Buffer[], hostState: LuaHostState): ReplyValue {
+    const ctx = hostState.ctx
+    if (!ctx) {
+      throw new Error('ERR Lua runtime is not initialized')
     }
 
-    throw err
-  }
+    if (args.length === 0) {
+      return new ScriptCallNoCommand().toLuaError()
+    }
 
-  return commandResultToReplyValue(capture.getResults())
+    const rawCmd = args[0]
+    const cmdName = rawCmd.toString().toLowerCase()
+    const command = ctx.luaCommands?.[cmdName]
+
+    if (!command) {
+      return new UnknownScriptCommand(hostState.sha).toLuaError()
+    }
+
+    const capture = new CapturingTransport()
+    try {
+      command.run(rawCmd, args.slice(1), ctx.signal, capture)
+    } catch (err) {
+      if (err instanceof UserFacedError) {
+        return err.toLuaError()
+      }
+
+      throw err
+    }
+
+    return commandResultToReplyValue(capture.getResults())
+  }
 }
 
-function isAllowedInLua(command: Command): boolean {
-  const flags = command.metadata.flags
-  return !flags.random && !flags.blocking && !flags.noscript && !flags.admin
+export async function createLuaRuntime(): Promise<LuaRuntime> {
+  const module = await load()
+  return new LuaRuntime(module)
 }
 
 function commandResultToReplyValue(result: CommandResult): ReplyValue {

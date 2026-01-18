@@ -70,6 +70,13 @@ export class UnknownScriptCommand extends UserFacedError {
   }
 }
 
+export class ScriptCallNoCommand extends UserFacedError {
+  constructor() {
+    super(`Please specify at least one argument for this redis lib call`)
+    this.name = 'ERR'
+  }
+}
+
 export class UnknwonClusterSubCommand extends UserFacedError {
   constructor(subCommand: string | Buffer) {
     super(`unknown subcommand '${subCommand}'. Try CLUSTER HELP.`)

@@ -18,6 +18,7 @@ export interface CommandDependencies {
   mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
+  luaCommands?: Record<string, Command>
   luaRuntime?: LuaRuntime
 }
 
