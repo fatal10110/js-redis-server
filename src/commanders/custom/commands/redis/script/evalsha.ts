@@ -46,7 +46,7 @@ export const EvalShaCommandDefinition: SchemaCommandRegistration<EvalShaArgs> =
       const argv = rest.slice(numKeys)
       const runtime = ctx.luaRuntime
       if (!runtime) {
-        throw missingLuaRuntimeError()
+        throw Error('Lua runtime is not initialized')
       }
 
       let reply
@@ -56,21 +56,16 @@ export const EvalShaCommandDefinition: SchemaCommandRegistration<EvalShaArgs> =
             ? runtime.eval(script, ctx, sha)
             : runtime.evalWithArgs(script, keys, argv, ctx, sha)
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        throw new Error(message)
+        if (err instanceof Error) {
+          throw err
+        }
+
+        throw new Error(String(err))
       }
-      ctx.transport.write(
-        replyValueToResponse(reply, sha, message => new Error(message)),
-      )
+      ctx.transport.write(replyValueToResponse(reply, sha))
     },
   }
 
 export default function (db: DB) {
   return createSchemaCommand(EvalShaCommandDefinition, { db })
-}
-
-function missingLuaRuntimeError(): Error {
-  const err = new Error('Lua runtime is not initialized')
-  err.name = 'ERR'
-  return err
 }

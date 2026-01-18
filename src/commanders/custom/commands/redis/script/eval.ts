@@ -54,9 +54,7 @@ export const EvalCommandDefinition: SchemaCommandRegistration<EvalArgs> = {
       const message = err instanceof Error ? err.message : String(err)
       throw new UserFacedError(message)
     }
-    ctx.transport.write(
-      replyValueToResponse(reply, sha, message => new UserFacedError(message)),
-    )
+    ctx.transport.write(replyValueToResponse(reply, sha))
   },
 }
 

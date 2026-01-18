@@ -1,4 +1,14 @@
-export class UserFacedError extends Error {}
+export class UserFacedError extends Error {
+  toLuaError(): { err: Buffer } {
+    return { err: Buffer.from(this.toString()) }
+  }
+}
+
+export class LuaReplyError extends UserFacedError {
+  toString() {
+    return this.message
+  }
+}
 
 export class WrongNumberOfArguments extends UserFacedError {
   constructor(cmdName: string) {
