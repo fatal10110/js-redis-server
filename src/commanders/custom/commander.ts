@@ -48,7 +48,7 @@ class Commander implements DBCommandExecutor {
     // Transaction state is now managed by Session, so no transactionCommands needed here
     this.baseCommander = new BaseCommander(
       this.commands,
-      validator => new NormalState(validator, undefined, this.db),
+      validator => new NormalState(validator, this.db),
     )
   }
 
