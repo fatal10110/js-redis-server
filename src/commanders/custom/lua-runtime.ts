@@ -4,7 +4,7 @@ import {
   UserFacedError,
 } from '../../core/errors'
 import { CapturingTransport } from '../../core/transports/capturing-transport'
-import { Command, CommandResult } from '../../types'
+import { Command, CommandResult, Logger } from '../../types'
 import { ReplyValue, load, LuaWasmModule, LuaEngine } from 'lua-redis-wasm'
 
 export interface LuaCommandContext {
@@ -21,7 +21,10 @@ export class LuaRuntime {
   private readonly hostState: LuaHostState = { ctx: null, sha: '' }
   private engine: LuaEngine
 
-  constructor(module: LuaWasmModule) {
+  constructor(
+    module: LuaWasmModule,
+    private readonly logger: Logger,
+  ) {
     this.engine = module.create({
       redisCall: args => this.runLuaCommand(args, this.hostState),
       redisPcall: args => this.runLuaCommand(args, this.hostState),
@@ -72,6 +75,7 @@ export class LuaRuntime {
     const command = ctx.luaCommands?.[cmdName]
 
     if (!command) {
+      this.logger.debug(`Unknown script command: ${cmdName}`)
       return new UnknownScriptCommand(hostState.sha).toLuaError()
     }
 
@@ -90,9 +94,9 @@ export class LuaRuntime {
   }
 }
 
-export async function createLuaRuntime(): Promise<LuaRuntime> {
+export async function createLuaRuntime(logger: Logger): Promise<LuaRuntime> {
   const module = await load()
-  return new LuaRuntime(module)
+  return new LuaRuntime(module, logger)
 }
 
 function commandResultToReplyValue(result: CommandResult): ReplyValue {

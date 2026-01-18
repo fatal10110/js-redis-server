@@ -18,7 +18,7 @@ export async function createCustomClusterCommander(
   logger: Logger,
   discoveryService: DiscoveryService,
 ): Promise<ClusterCommanderFactory> {
-  const luaRuntime = await createLuaRuntime()
+  const luaRuntime = await createLuaRuntime(logger)
   return new CustomClusterCommanderFactory(logger, discoveryService, luaRuntime)
 }
 

@@ -69,6 +69,82 @@ describe('Hash Commands', () => {
     })
   })
 
+  describe('HSETNX command', () => {
+    test('HSETNX on new field', async () => {
+      const db = new DB()
+      const session = createTestSession(db)
+      const transport = createMockTransport()
+
+      await session.execute(
+        transport,
+        Buffer.from('hsetnx'),
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
+
+      await session.execute(
+        transport,
+        Buffer.from('hget'),
+        [Buffer.from('hash'), Buffer.from('field1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'value1')
+    })
+
+    test('HSETNX on existing field returns 0', async () => {
+      const db = new DB()
+      const session = createTestSession(db)
+      const transport = createMockTransport()
+
+      await session.execute(
+        transport,
+        Buffer.from('hset'),
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
+        new AbortController().signal,
+      )
+
+      await session.execute(
+        transport,
+        Buffer.from('hsetnx'),
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value2')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 0)
+
+      // Verify original value was not changed
+      await session.execute(
+        transport,
+        Buffer.from('hget'),
+        [Buffer.from('hash'), Buffer.from('field1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'value1')
+    })
+
+    test('HSETNX creates hash if it does not exist', async () => {
+      const db = new DB()
+      const session = createTestSession(db)
+      const transport = createMockTransport()
+
+      await session.execute(
+        transport,
+        Buffer.from('hsetnx'),
+        [Buffer.from('newhash'), Buffer.from('field1'), Buffer.from('value1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 1)
+
+      await session.execute(
+        transport,
+        Buffer.from('hget'),
+        [Buffer.from('newhash'), Buffer.from('field1')],
+        new AbortController().signal,
+      )
+      assert.strictEqual(transport.getLastResponse(), 'value1')
+    })
+  })
+
   describe('HDEL command', () => {
     test('HDEL existing field', async () => {
       const db = new DB()

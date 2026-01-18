@@ -10,6 +10,7 @@ describe('CLI argument parsing', () => {
     assert.strictEqual(options.masters, 3)
     assert.strictEqual(options.slaves, 0)
     assert.strictEqual(options.basePort, 30000)
+    assert.strictEqual(options.debug, false)
   })
 
   test('parses cluster mode and options', () => {
@@ -26,6 +27,23 @@ describe('CLI argument parsing', () => {
     assert.strictEqual(options.masters, 4)
     assert.strictEqual(options.slaves, 2)
     assert.strictEqual(options.basePort, 31000)
+  })
+
+  test('parses debug flag with --debug', () => {
+    const options = parseArgs(['--debug'])
+    assert.strictEqual(options.debug, true)
+  })
+
+  test('parses debug flag with -d', () => {
+    const options = parseArgs(['-d'])
+    assert.strictEqual(options.debug, true)
+  })
+
+  test('parses debug flag with other options', () => {
+    const options = parseArgs(['--cluster', '--debug', '--masters', '5'])
+    assert.strictEqual(options.debug, true)
+    assert.strictEqual(options.mode, 'cluster')
+    assert.strictEqual(options.masters, 5)
   })
 
   test('rejects invalid values', () => {

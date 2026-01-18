@@ -195,3 +195,10 @@ export class InvalidCommandArgs extends UserFacedError {
     this.name = 'ERR'
   }
 }
+
+export class OffsetOutOfRange extends UserFacedError {
+  constructor() {
+    super('offset is out of range')
+    this.name = 'ERR'
+  }
+}
