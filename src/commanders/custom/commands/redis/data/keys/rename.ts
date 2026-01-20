@@ -3,26 +3,30 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('rename', {
-  arity: 3, // RENAME key newkey
-  flags: {
-    write: true,
-  },
-  firstKey: 0,
-  lastKey: 1,
-  keyStep: 1,
-  categories: [CommandCategory.KEYS],
-})
+export class RenameCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer]>
+{
+  metadata = defineCommand('rename', {
+    arity: 3, // RENAME key newkey
+    flags: {
+      write: true,
+    },
+    firstKey: 0,
+    lastKey: 1,
+    keyStep: 1,
+    categories: [CommandCategory.KEYS],
+  })
 
-export const RenameCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.key()]),
-  handler: ([key, newKey], { db, transport }) => {
+  schema = t.tuple([t.key(), t.key()])
+
+  handler(
+    [key, newKey]: [Buffer, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
 
     if (existing === null) {
@@ -40,9 +44,9 @@ export const RenameCommandDefinition: SchemaCommandRegistration<
     db.set(newKey, existing, expiration)
 
     transport.write('OK')
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(RenameCommandDefinition, { db })
+  return createSchemaCommand(new RenameCommandDefinition(), { db })
 }

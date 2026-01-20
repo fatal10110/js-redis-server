@@ -3,27 +3,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('dbsize', {
-  arity: 1, // DBSIZE
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.SERVER],
-})
-export const DbSizeCommandDefinition: SchemaCommandRegistration<[]> = {
-  metadata,
-  schema: t.tuple([]),
-  handler: (_args, { db, transport }) => {
+
+export class DbSizeCommandDefinition implements SchemaCommandRegistration<[]> {
+  metadata = defineCommand('dbsize', {
+    arity: 1, // DBSIZE
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.SERVER],
+  })
+
+  schema = t.tuple([])
+
+  handler(_args: [], { db, transport }: SchemaCommandContext) {
     const size = db.size()
     transport.write(size)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(DbSizeCommandDefinition, { db })
+  return createSchemaCommand(new DbSizeCommandDefinition(), { db })
 }

@@ -4,68 +4,71 @@ import { defineCommand, CommandCategory } from '../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../schema'
 import { replyValueToResponse } from './lua-reply'
 
-const metadata = defineCommand('evalsha', {
-  arity: -3, // EVALSHA sha numkeys [key ...] [arg ...]
-  flags: {
-    write: true,
-    movablekeys: true,
-    noscript: true,
-  },
-  categories: [CommandCategory.SCRIPT],
-})
-
 type EvalShaArgs = [string, number, Buffer[]]
 
-export const EvalShaCommandDefinition: SchemaCommandRegistration<EvalShaArgs> =
-  {
-    metadata,
-    schema: t.tuple([t.string(), t.integer({ min: 0 }), t.variadic(t.key())]),
-    getKeys: (_rawCmd, args) => {
-      const numKeys = parseInt(args[1]?.toString() ?? '', 10)
-      if (!Number.isFinite(numKeys) || numKeys <= 0) {
-        return []
-      }
-
-      return args.slice(2, 2 + numKeys)
+export class EvalShaCommandDefinition
+  implements SchemaCommandRegistration<EvalShaArgs>
+{
+  metadata = defineCommand('evalsha', {
+    arity: -3, // EVALSHA sha numkeys [key ...] [arg ...]
+    flags: {
+      write: true,
+      movablekeys: true,
+      noscript: true,
     },
-    handler: ([sha, numKeys, rest], ctx) => {
-      if (numKeys > rest.length) {
-        throw new WrongNumberOfKeys()
-      }
+    categories: [CommandCategory.SCRIPT],
+  })
 
-      const script = ctx.db.getScript(sha)
-      if (!script) {
-        throw new NoScript()
-      }
+  schema = t.tuple([t.string(), t.integer({ min: 0 }), t.variadic(t.key())])
 
-      const keys = rest.slice(0, numKeys)
-      const argv = rest.slice(numKeys)
-      const runtime = ctx.luaRuntime
-      if (!runtime) {
-        throw Error('Lua runtime is not initialized')
-      }
+  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
+    const numKeys = parseInt(args[1]?.toString() ?? '', 10)
+    if (!Number.isFinite(numKeys) || numKeys <= 0) {
+      return []
+    }
 
-      let reply
-      try {
-        reply =
-          keys.length === 0 && argv.length === 0
-            ? runtime.eval(script, ctx, sha)
-            : runtime.evalWithArgs(script, keys, argv, ctx, sha)
-      } catch (err) {
-        if (err instanceof Error) {
-          throw err
-        }
-
-        throw new Error(String(err))
-      }
-      ctx.transport.write(replyValueToResponse(reply, sha))
-    },
+    return args.slice(2, 2 + numKeys)
   }
 
+  handler([sha, numKeys, rest]: EvalShaArgs, ctx: SchemaCommandContext) {
+    if (numKeys > rest.length) {
+      throw new WrongNumberOfKeys()
+    }
+
+    const script = ctx.db.getScript(sha)
+    if (!script) {
+      throw new NoScript()
+    }
+
+    const keys = rest.slice(0, numKeys)
+    const argv = rest.slice(numKeys)
+    const runtime = ctx.luaRuntime
+    if (!runtime) {
+      throw Error('Lua runtime is not initialized')
+    }
+
+    let reply
+    try {
+      reply =
+        keys.length === 0 && argv.length === 0
+          ? runtime.eval(script, ctx, sha)
+          : runtime.evalWithArgs(script, keys, argv, ctx, sha)
+    } catch (err) {
+      if (err instanceof Error) {
+        throw err
+      }
+
+      throw new Error(String(err))
+    }
+    ctx.transport.write(replyValueToResponse(reply, sha))
+  }
+}
+
 export default function (db: DB) {
-  return createSchemaCommand(EvalShaCommandDefinition, { db })
+  return createSchemaCommand(new EvalShaCommandDefinition(), { db })
 }

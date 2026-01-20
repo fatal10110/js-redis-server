@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('zscore', {
-  arity: 3, // ZSCORE key member
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.ZSET],
-})
-export const ZscoreCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, member], { db, transport }) => {
+
+export class ZscoreCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer]>
+{
+  metadata = defineCommand('zscore', {
+    arity: 3, // ZSCORE key member
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.ZSET],
+  })
+
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, member]: [Buffer, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(null)
@@ -35,8 +41,9 @@ export const ZscoreCommandDefinition: SchemaCommandRegistration<
     const score = existing.zscore(member)
     const response = score !== null ? Buffer.from(score.toString()) : null
     transport.write(response)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ZscoreCommandDefinition, { db })
+  return createSchemaCommand(new ZscoreCommandDefinition(), { db })
 }

@@ -4,27 +4,33 @@ import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
+  SchemaCommandContext,
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('srandmember', {
-  arity: -2, // SRANDMEMBER key [count]
-  flags: {
-    readonly: true,
-    random: true,
-    noscript: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
-export const SrandmemberCommandDefinition: SchemaCommandRegistration<
-  [Buffer, number | undefined]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.optional(t.integer())]),
-  handler: ([key, count], { db, transport }) => {
+
+export class SrandmemberCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, number | undefined]>
+{
+  metadata = defineCommand('srandmember', {
+    arity: -2, // SRANDMEMBER key [count]
+    flags: {
+      readonly: true,
+      random: true,
+      noscript: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
+
+  schema = t.tuple([t.key(), t.optional(t.integer())])
+
+  handler(
+    [key, count]: [Buffer, number | undefined],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       if (count !== undefined) {
@@ -46,8 +52,9 @@ export const SrandmemberCommandDefinition: SchemaCommandRegistration<
     }
     const members = existing.srandmember(count)
     transport.write(members)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(SrandmemberCommandDefinition, { db })
+  return createSchemaCommand(new SrandmemberCommandDefinition(), { db })
 }

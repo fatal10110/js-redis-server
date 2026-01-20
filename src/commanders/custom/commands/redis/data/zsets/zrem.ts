@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('zrem', {
-  arity: -3, // ZREM key member [member ...]
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.ZSET],
-})
-export const ZremCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstMember, restMembers], { db, transport }) => {
+
+export class ZremCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('zrem', {
+    arity: -3, // ZREM key member [member ...]
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.ZSET],
+  })
+
+  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+
+  handler(
+    [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       {
@@ -45,8 +51,9 @@ export const ZremCommandDefinition: SchemaCommandRegistration<
     }
 
     transport.write(removed)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ZremCommandDefinition, { db })
+  return createSchemaCommand(new ZremCommandDefinition(), { db })
 }

@@ -5,28 +5,32 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('hsetnx', {
-  arity: 4, // HSETNX key field value
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.HASH],
-})
+export class HsetnxCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer]>
+{
+  metadata = defineCommand('hsetnx', {
+    arity: 4, // HSETNX key field value
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  })
 
-export const HsetnxCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: ([key, field, value], { db, transport }) => {
+  schema = t.tuple([t.key(), t.string(), t.string()])
+
+  handler(
+    [key, field, value]: [Buffer, Buffer, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
@@ -38,9 +42,9 @@ export const HsetnxCommandDefinition: SchemaCommandRegistration<
     }
     const result = hash.hsetnx(field, value)
     transport.write(result)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(HsetnxCommandDefinition, { db })
+  return createSchemaCommand(new HsetnxCommandDefinition(), { db })
 }

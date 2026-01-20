@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('zrevrank', {
-  arity: 3, // ZREVRANK key member
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.ZSET],
-})
-export const ZrevrankCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, member], { db, transport }) => {
+
+export class ZrevrankCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer]>
+{
+  metadata = defineCommand('zrevrank', {
+    arity: 3, // ZREVRANK key member
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.ZSET],
+  })
+
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, member]: [Buffer, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(null)
@@ -33,8 +39,9 @@ export const ZrevrankCommandDefinition: SchemaCommandRegistration<
       throw new WrongType()
     }
     transport.write(existing.zrevrank(member))
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ZrevrankCommandDefinition, { db })
+  return createSchemaCommand(new ZrevrankCommandDefinition(), { db })
 }

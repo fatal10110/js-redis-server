@@ -4,24 +4,33 @@ import { defineCommand, CommandCategory } from '../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../schema'
+
 export const commandName = 'nodes'
-const metadata = defineCommand(`cluster|${commandName}`, {
-  arity: 1, // CLUSTER NODES
-  flags: {
-    admin: true,
-    readonly: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.CLUSTER],
-})
-export const ClusterNodesCommandDefinition: SchemaCommandRegistration<[]> = {
-  metadata,
-  schema: t.tuple([]),
-  handler: (_args, { discoveryService, mySelfId, transport }) => {
+
+export class ClusterNodesCommandDefinition
+  implements SchemaCommandRegistration<[]>
+{
+  metadata = defineCommand(`cluster|${commandName}`, {
+    arity: 1, // CLUSTER NODES
+    flags: {
+      admin: true,
+      readonly: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.CLUSTER],
+  })
+
+  schema = t.tuple([])
+
+  handler(
+    _args: [],
+    { discoveryService, mySelfId, transport }: SchemaCommandContext,
+  ) {
     const service = discoveryService as DiscoveryService | undefined
     if (!service || !mySelfId) {
       throw new Error('Cluster nodes requires discoveryService and mySelfId')
@@ -56,8 +65,9 @@ export const ClusterNodesCommandDefinition: SchemaCommandRegistration<[]> = {
       )
     }
     transport.write(Buffer.from(res.join('')))
-  },
+  }
 }
+
 function generateClusterNodeInfo(
   me: DiscoveryNode,
   discoveryService: {
@@ -82,12 +92,13 @@ function generateClusterNodeInfo(
     : ` ${clusterNode.slots.map(slot => `${slot[0]}-${slot[1]}`).join(',')}`
   return `${clusterNode.id} ${connectionDetails} ${myselfDefinition}${masterSlave} ${pingPong} ${configEpoch} connected${slots}\n`
 }
+
 export default function (
   db: DB,
   discoveryService: DiscoveryService,
   mySelfId: string,
 ) {
-  return createSchemaCommand(ClusterNodesCommandDefinition, {
+  return createSchemaCommand(new ClusterNodesCommandDefinition(), {
     db,
     discoveryService,
     mySelfId,

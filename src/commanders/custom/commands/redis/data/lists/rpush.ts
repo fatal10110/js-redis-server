@@ -5,26 +5,32 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('rpush', {
-  arity: -3, // RPUSH key element [element ...]
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
-export const RpushCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstValue, restValues], { db, transport }) => {
+
+export class RpushCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('rpush', {
+    arity: -3, // RPUSH key element [element ...]
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
+
+  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+
+  handler(
+    [key, firstValue, restValues]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof ListDataType)) {
       throw new WrongType()
@@ -39,8 +45,9 @@ export const RpushCommandDefinition: SchemaCommandRegistration<
       list.rpush(value)
     }
     transport.write(list.llen())
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(RpushCommandDefinition, { db })
+  return createSchemaCommand(new RpushCommandDefinition(), { db })
 }

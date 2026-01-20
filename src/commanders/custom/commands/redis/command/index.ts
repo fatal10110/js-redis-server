@@ -17,21 +17,25 @@ import {
   SchemaCommandRegistration,
   t,
 } from '../../../schema'
-const metadata = defineCommand('command', {
-  arity: -1, // COMMAND [subcommand] [args...]
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 0,
-  categories: [CommandCategory.SERVER],
-})
-export const CommandInfoDefinition: SchemaCommandRegistration<[Buffer[]]> = {
-  metadata,
-  schema: t.tuple([t.variadic(t.string())]),
-  handler: ([args], ctx) => {
+
+export class CommandInfoDefinition
+  implements SchemaCommandRegistration<[Buffer[]]>
+{
+  metadata = defineCommand('command', {
+    arity: -1, // COMMAND [subcommand] [args...]
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 0,
+    categories: [CommandCategory.SERVER],
+  })
+
+  schema = t.tuple([t.variadic(t.string())])
+
+  handler([args]: [Buffer[]], ctx: SchemaCommandContext) {
     // COMMAND (no args) - list all commands
     if (args.length === 0) {
       ctx.transport.write(handleCommandList(ctx))
@@ -66,8 +70,9 @@ export const CommandInfoDefinition: SchemaCommandRegistration<[Buffer[]]> = {
       default:
         throw new UnknownCommandSubCommand(subcommand)
     }
-  },
+  }
 }
+
 /**
  * COMMAND - Return all command metadata
  */
@@ -75,6 +80,7 @@ function handleCommandList(ctx: SchemaCommandContext): CommandResult[] {
   const commands = getAllCommands(ctx)
   return commands.map(cmd => formatCommand(cmd.metadata))
 }
+
 /**
  * COMMAND INFO <cmd> [<cmd> ...]
  */
@@ -92,12 +98,14 @@ function handleCommandInfo(
     return cmd ? formatCommand(cmd.metadata) : null
   })
 }
+
 /**
  * COMMAND COUNT
  */
 function handleCommandCount(ctx: SchemaCommandContext): number {
   return getAllCommands(ctx).length
 }
+
 /**
  * COMMAND GETKEYS <command> <arg> [arg ...]
  */
@@ -121,6 +129,7 @@ function handleCommandGetKeys(
     throw new InvalidCommandArgs(cmdName)
   }
 }
+
 /**
  * COMMAND DOCS [<cmd> ...] (Redis 7.0+)
  * Returns documentation for commands - stub implementation
@@ -136,6 +145,7 @@ function handleCommandDocs(
   // Return docs for specific commands - stub with empty entries
   return args.map(() => [])
 }
+
 /**
  * COMMAND LIST (Redis 7.0+)
  * Returns list of command names
@@ -143,6 +153,7 @@ function handleCommandDocs(
 function handleCommandNames(ctx: SchemaCommandContext): string[] {
   return getAllCommands(ctx).map(cmd => cmd.metadata.name)
 }
+
 /**
  * COMMAND HELP
  * Returns help text for COMMAND command
@@ -165,6 +176,7 @@ function handleCommandHelp(): string[] {
     '    Prints this help.',
   ]
 }
+
 /**
  * Get all commands from context
  */
@@ -172,6 +184,7 @@ function getAllCommands(ctx: SchemaCommandContext): Command[] {
   const commands = ctx.commands || {}
   return Object.values(commands)
 }
+
 /**
  * Format command metadata to Redis response format
  * Returns: [name, arity, flags, firstKey, lastKey, keyStep, categories]
@@ -189,6 +202,7 @@ function formatCommand(meta: CommandMetadata): CommandResult[] {
     meta.categories,
   ]
 }
+
 /**
  * Convert CommandFlags to array of flag strings
  */
@@ -206,6 +220,7 @@ function formatFlags(flags: CommandFlags): string[] {
   if (flags.transaction) result.push('transaction')
   return result
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(CommandInfoDefinition, { db })
+  return createSchemaCommand(new CommandInfoDefinition(), { db })
 }

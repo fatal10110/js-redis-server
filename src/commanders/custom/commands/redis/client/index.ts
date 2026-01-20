@@ -11,32 +11,39 @@ import {
   ClientSetNameCommandDefinition,
   commandName as setNameCommandName,
 } from './clientSetName'
+
 export const commandName = 'client'
-const metadata = defineCommand(commandName, {
-  arity: -2, // CLIENT <subcommand> [args...]
-  flags: {
-    readonly: true,
-    admin: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.CONNECTION],
-})
-export const ClientCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.string(), t.variadic(t.string())]),
-  handler: ([subCommandName, rest], ctx) => {
+
+export class ClientCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
+{
+  metadata = defineCommand(commandName, {
+    arity: -2, // CLIENT <subcommand> [args...]
+    flags: {
+      readonly: true,
+      admin: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.CONNECTION],
+  })
+
+  schema = t.tuple([t.string(), t.variadic(t.string())])
+
+  handler(
+    [subCommandName, rest]: [Buffer, Buffer[]],
+    ctx: SchemaCommandContext,
+  ) {
     const subCommands = createSubCommands(ctx)
     const subCommand = subCommands[subCommandName.toString().toLowerCase()]
     if (!subCommand) {
       throw new UnknwonClientSubCommand(subCommandName.toString())
     }
     subCommand.run(subCommandName, rest, ctx.signal, ctx.transport)
-  },
+  }
 }
+
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
@@ -45,11 +52,12 @@ function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   }
   return {
     [setNameCommandName]: createSchemaCommand(
-      ClientSetNameCommandDefinition,
+      new ClientSetNameCommandDefinition(),
       baseCtx,
     ),
   }
 }
+
 export default function (db: SchemaCommandContext['db']) {
-  return createSchemaCommand(ClientCommandDefinition, { db })
+  return createSchemaCommand(new ClientCommandDefinition(), { db })
 }

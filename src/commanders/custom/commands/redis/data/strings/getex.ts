@@ -9,6 +9,7 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
@@ -35,23 +36,22 @@ type GetexSchemaOptions = Partial<{
   persist: 'PERSIST'
 }>
 
-const metadata = defineCommand('getex', {
-  arity: -2, // GETEX key [options...]
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
+export class GetexCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, GetexSchemaOptions]>
+{
+  metadata = defineCommand('getex', {
+    arity: -2, // GETEX key [options...]
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
 
-export const GetexCommandDefinition: SchemaCommandRegistration<
-  [Buffer, GetexSchemaOptions]
-> = {
-  metadata,
-  schema: t.tuple([
+  schema = t.tuple([
     t.key(),
     t.options({
       ttl: t.xor([
@@ -62,8 +62,12 @@ export const GetexCommandDefinition: SchemaCommandRegistration<
       ]),
       persist: t.flag('PERSIST'),
     }),
-  ]),
-  handler: ([key, schemaOptions], { db, transport }) => {
+  ])
+
+  handler(
+    [key, schemaOptions]: [Buffer, GetexSchemaOptions],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
 
     if (existing === null) {
@@ -117,9 +121,9 @@ export const GetexCommandDefinition: SchemaCommandRegistration<
     }
 
     transport.write(existing.data)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(GetexCommandDefinition, { db })
+  return createSchemaCommand(new GetexCommandDefinition(), { db })
 }

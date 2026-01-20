@@ -5,27 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('sdiffstore', {
-  arity: -3, // SDIFFSTORE destination key [key ...]
-  flags: {
-    write: true,
-    denyoom: true,
-  },
-  firstKey: 0,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
+export class SdiffstoreCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('sdiffstore', {
+    arity: -3, // SDIFFSTORE destination key [key ...]
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
 
-export const SdiffstoreCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.key(), t.variadic(t.key())]),
-  handler: ([destination, firstKey, otherKeys], { db, transport }) => {
+  schema = t.tuple([t.key(), t.key(), t.variadic(t.key())])
+
+  handler(
+    [destination, firstKey, otherKeys]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const firstSet = db.get(firstKey)
 
     if (firstSet === null) {
@@ -66,9 +70,9 @@ export const SdiffstoreCommandDefinition: SchemaCommandRegistration<
       db.set(destination, resultSet)
       transport.write(resultMembers.length)
     }
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(SdiffstoreCommandDefinition, { db })
+  return createSchemaCommand(new SdiffstoreCommandDefinition(), { db })
 }

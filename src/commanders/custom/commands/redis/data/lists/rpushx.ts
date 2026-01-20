@@ -5,28 +5,32 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('rpushx', {
-  arity: -3, // RPUSHX key element [element ...]
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
+export class RpushxCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('rpushx', {
+    arity: -3, // RPUSHX key element [element ...]
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
 
-export const RpushxCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstValue, restValues], { db, transport }) => {
+  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+
+  handler(
+    [key, firstValue, restValues]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const data = db.get(key)
 
     // Only push if key exists
@@ -46,9 +50,9 @@ export const RpushxCommandDefinition: SchemaCommandRegistration<
     }
 
     transport.write(data.llen())
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(RpushxCommandDefinition, { db })
+  return createSchemaCommand(new RpushxCommandDefinition(), { db })
 }

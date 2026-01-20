@@ -4,27 +4,33 @@ import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
+  SchemaCommandContext,
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('sadd', {
-  arity: -3, // SADD key member [member ...]
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
-export const SaddCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstMember, restMembers], { db, transport }) => {
+
+export class SaddCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('sadd', {
+    arity: -3, // SADD key member [member ...]
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
+
+  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+
+  handler(
+    [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof SetDataType)) {
       throw new WrongType()
@@ -41,8 +47,9 @@ export const SaddCommandDefinition: SchemaCommandRegistration<
 
     transport.write(added)
     return
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(SaddCommandDefinition, { db })
+  return createSchemaCommand(new SaddCommandDefinition(), { db })
 }

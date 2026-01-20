@@ -4,30 +4,41 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('msetnx', {
-  arity: -3, // MSETNX key value [key value ...]
-  flags: {
-    write: true,
-    denyoom: true,
-  },
-  firstKey: 0,
-  lastKey: -1,
-  keyStep: 2,
-  limit: 2,
-  categories: [CommandCategory.STRING],
-})
-export const MsetnxCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string, Array<[Buffer, string]>]
-> = {
-  metadata,
-  schema: t.tuple([
+
+export class MsetnxCommandDefinition
+  implements
+    SchemaCommandRegistration<[Buffer, string, Array<[Buffer, string]>]>
+{
+  metadata = defineCommand('msetnx', {
+    arity: -3, // MSETNX key value [key value ...]
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: -1,
+    keyStep: 2,
+    limit: 2,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([
     t.key(),
     t.string(),
     t.variadic(t.tuple([t.key(), t.string()])),
-  ]),
-  handler: ([firstKey, firstValue, restPairs], { db, transport }) => {
+  ])
+
+  handler(
+    [firstKey, firstValue, restPairs]: [
+      Buffer,
+      string,
+      Array<[Buffer, string]>,
+    ],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const pairs: Array<[Buffer, string]> = [
       [firstKey, firstValue],
       ...restPairs,
@@ -42,8 +53,9 @@ export const MsetnxCommandDefinition: SchemaCommandRegistration<
       db.set(key, new StringDataType(Buffer.from(value)))
     }
     transport.write(1)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(MsetnxCommandDefinition, { db })
+  return createSchemaCommand(new MsetnxCommandDefinition(), { db })
 }

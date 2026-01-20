@@ -5,23 +5,28 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('decr', {
-  arity: 2, // DECR key
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const DecrCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class DecrCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('decr', {
+    arity: 2, // DECR key
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     let currentValue = 0
     if (existing !== null) {
@@ -36,8 +41,9 @@ export const DecrCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
     const newValue = currentValue - 1
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(DecrCommandDefinition, { db })
+  return createSchemaCommand(new DecrCommandDefinition(), { db })
 }

@@ -4,26 +4,31 @@ import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
+  SchemaCommandContext,
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('spop', {
-  arity: 2, // SPOP key
-  flags: {
-    write: true,
-    random: true,
-    fast: true,
-    noscript: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
-export const SpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class SpopCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('spop', {
+    arity: 2, // SPOP key
+    flags: {
+      write: true,
+      random: true,
+      fast: true,
+      noscript: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(null)
@@ -37,8 +42,9 @@ export const SpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       db.del(key)
     }
     transport.write(member)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(SpopCommandDefinition, { db })
+  return createSchemaCommand(new SpopCommandDefinition(), { db })
 }

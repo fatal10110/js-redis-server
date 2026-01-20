@@ -5,27 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('zcount', {
-  arity: 4, // ZCOUNT key min max
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.ZSET],
-})
+export class ZcountCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string, string]>
+{
+  metadata = defineCommand('zcount', {
+    arity: 4, // ZCOUNT key min max
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.ZSET],
+  })
 
-export const ZcountCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: ([key, minStr, maxStr], { db, transport }) => {
+  schema = t.tuple([t.key(), t.string(), t.string()])
+
+  handler(
+    [key, minStr, maxStr]: [Buffer, string, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
 
@@ -45,9 +49,9 @@ export const ZcountCommandDefinition: SchemaCommandRegistration<
     }
 
     transport.write(data.zcount(min, max))
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(ZcountCommandDefinition, { db })
+  return createSchemaCommand(new ZcountCommandDefinition(), { db })
 }

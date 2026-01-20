@@ -4,34 +4,38 @@ import { defineCommand, CommandCategory } from '../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../schema'
 import { replyValueToResponse } from './lua-reply'
 
-const metadata = defineCommand('eval', {
-  arity: -3, // EVAL script numkeys [key ...] [arg ...]
-  flags: {
-    write: true,
-    movablekeys: true,
-    noscript: true,
-  },
-  categories: [CommandCategory.SCRIPT],
-})
-
 type EvalArgs = [Buffer, number, Buffer[]]
 
-export const EvalCommandDefinition: SchemaCommandRegistration<EvalArgs> = {
-  metadata,
-  schema: t.tuple([t.key(), t.integer({ min: 0 }), t.variadic(t.key())]),
-  getKeys: (_rawCmd, args) => {
+export class EvalCommandDefinition
+  implements SchemaCommandRegistration<EvalArgs>
+{
+  metadata = defineCommand('eval', {
+    arity: -3, // EVAL script numkeys [key ...] [arg ...]
+    flags: {
+      write: true,
+      movablekeys: true,
+      noscript: true,
+    },
+    categories: [CommandCategory.SCRIPT],
+  })
+
+  schema = t.tuple([t.key(), t.integer({ min: 0 }), t.variadic(t.key())])
+
+  getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
     const numKeys = parseInt(args[1]?.toString() ?? '', 10)
     if (!Number.isFinite(numKeys) || numKeys <= 0) {
       return []
     }
 
     return args.slice(2, 2 + numKeys)
-  },
-  handler: ([script, numKeys, rest], ctx) => {
+  }
+
+  handler([script, numKeys, rest]: EvalArgs, ctx: SchemaCommandContext) {
     if (numKeys > rest.length) {
       throw new WrongNumberOfKeys()
     }
@@ -55,11 +59,11 @@ export const EvalCommandDefinition: SchemaCommandRegistration<EvalArgs> = {
       throw new UserFacedError(message)
     }
     ctx.transport.write(replyValueToResponse(reply, sha))
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(EvalCommandDefinition, { db })
+  return createSchemaCommand(new EvalCommandDefinition(), { db })
 }
 
 function missingLuaRuntimeError(): Error {

@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('decrby', {
-  arity: 3, // DECRBY key decrement
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const DecrbyCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, decrementStr], { db, transport }) => {
+
+export class DecrbyCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string]>
+{
+  metadata = defineCommand('decrby', {
+    arity: 3, // DECRBY key decrement
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, decrementStr]: [Buffer, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const decrement = parseInt(decrementStr)
     if (isNaN(decrement)) {
       throw new ExpectedInteger()
@@ -42,8 +48,9 @@ export const DecrbyCommandDefinition: SchemaCommandRegistration<
     const newValue = currentValue - decrement
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(DecrbyCommandDefinition, { db })
+  return createSchemaCommand(new DecrbyCommandDefinition(), { db })
 }

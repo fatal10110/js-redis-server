@@ -5,27 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('rpoplpush', {
-  arity: 3, // RPOPLPUSH source destination
-  flags: {
-    write: true,
-    denyoom: true,
-  },
-  firstKey: 0,
-  lastKey: 1,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
+export class RpoplpushCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer]>
+{
+  metadata = defineCommand('rpoplpush', {
+    arity: 3, // RPOPLPUSH source destination
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: 1,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
 
-export const RpoplpushCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.key()]),
-  handler: ([source, destination], { db, transport }) => {
+  schema = t.tuple([t.key(), t.key()])
+
+  handler(
+    [source, destination]: [Buffer, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const sourceData = db.get(source)
 
     if (sourceData === null) {
@@ -58,9 +62,9 @@ export const RpoplpushCommandDefinition: SchemaCommandRegistration<
     }
 
     transport.write(value)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(RpoplpushCommandDefinition, { db })
+  return createSchemaCommand(new RpoplpushCommandDefinition(), { db })
 }

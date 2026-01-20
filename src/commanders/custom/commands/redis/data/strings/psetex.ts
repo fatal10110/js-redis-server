@@ -5,27 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('psetex', {
-  arity: 4, // PSETEX key milliseconds value
-  flags: {
-    write: true,
-    denyoom: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
+export class PsetexCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, number, string]>
+{
+  metadata = defineCommand('psetex', {
+    arity: 4, // PSETEX key milliseconds value
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
 
-export const PsetexCommandDefinition: SchemaCommandRegistration<
-  [Buffer, number, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.integer({ min: 1 }), t.string()]),
-  handler: ([key, milliseconds, value], { db, transport }) => {
+  schema = t.tuple([t.key(), t.integer({ min: 1 }), t.string()])
+
+  handler(
+    [key, milliseconds, value]: [Buffer, number, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     if (milliseconds <= 0) {
       throw new InvalidExpireTime('psetex')
     }
@@ -33,9 +37,9 @@ export const PsetexCommandDefinition: SchemaCommandRegistration<
     const expiration = Date.now() + milliseconds
     db.set(key, new StringDataType(Buffer.from(value)), expiration)
     transport.write('OK')
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(PsetexCommandDefinition, { db })
+  return createSchemaCommand(new PsetexCommandDefinition(), { db })
 }

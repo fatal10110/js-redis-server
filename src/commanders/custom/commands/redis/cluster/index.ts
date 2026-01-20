@@ -23,22 +23,27 @@ import {
   ClusterSlotsCommandDefinition,
   commandName as clusterSlotsCommandName,
 } from './clusterSlots'
-const metadata = defineCommand('cluster', {
-  arity: -2, // CLUSTER <subcommand> [args...]
-  flags: {
-    admin: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.CLUSTER],
-})
-export const ClusterCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.string(), t.variadic(t.string())]),
-  handler: ([subCommandName, rest], ctx) => {
+
+export class ClusterCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
+{
+  metadata = defineCommand('cluster', {
+    arity: -2, // CLUSTER <subcommand> [args...]
+    flags: {
+      admin: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.CLUSTER],
+  })
+
+  schema = t.tuple([t.string(), t.variadic(t.string())])
+
+  handler(
+    [subCommandName, rest]: [Buffer, Buffer[]],
+    ctx: SchemaCommandContext,
+  ) {
     const subCommands = createSubCommands(ctx)
     const args = [subCommandName, ...rest]
     const subCommand = args.pop()
@@ -50,8 +55,9 @@ export const ClusterCommandDefinition: SchemaCommandRegistration<
       throw new UnknwonClusterSubCommand(subCommand.toString())
     }
     sub.run(subCommand, args, ctx.signal, ctx.transport)
-  },
+  }
 }
+
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
@@ -60,23 +66,24 @@ function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   }
   return {
     [clusterInfoCommandName]: createSchemaCommand(
-      ClusterInfoCommandDefinition,
+      new ClusterInfoCommandDefinition(),
       baseCtx,
     ),
     [clusterNodesCommandName]: createSchemaCommand(
-      ClusterNodesCommandDefinition,
+      new ClusterNodesCommandDefinition(),
       baseCtx,
     ),
     [clusterShardsCommandName]: createSchemaCommand(
-      ClusterShardsCommandDefinition,
+      new ClusterShardsCommandDefinition(),
       baseCtx,
     ),
     [clusterSlotsCommandName]: createSchemaCommand(
-      ClusterSlotsCommandDefinition,
+      new ClusterSlotsCommandDefinition(),
       baseCtx,
     ),
   }
 }
+
 export default function (db: SchemaCommandContext['db']) {
-  return createSchemaCommand(ClusterCommandDefinition, { db })
+  return createSchemaCommand(new ClusterCommandDefinition(), { db })
 }

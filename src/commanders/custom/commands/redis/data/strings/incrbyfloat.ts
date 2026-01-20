@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('incrbyfloat', {
-  arity: 3, // INCRBYFLOAT key increment
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const IncrbyfloatCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, incrementStr], { db, transport }) => {
+
+export class IncrbyfloatCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string]>
+{
+  metadata = defineCommand('incrbyfloat', {
+    arity: 3, // INCRBYFLOAT key increment
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, incrementStr]: [Buffer, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const increment = parseFloat(incrementStr)
     if (isNaN(increment)) {
       throw new ExpectedFloat()
@@ -42,8 +48,9 @@ export const IncrbyfloatCommandDefinition: SchemaCommandRegistration<
     const newValue = currentValue + increment
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(Buffer.from(newValue.toString()))
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(IncrbyfloatCommandDefinition, { db })
+  return createSchemaCommand(new IncrbyfloatCommandDefinition(), { db })
 }

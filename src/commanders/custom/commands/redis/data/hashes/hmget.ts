@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('hmget', {
-  arity: -3, // HMGET key field [field ...]
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.HASH],
-})
-export const HmgetCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstField, restFields], { db, transport }) => {
+
+export class HmgetCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('hmget', {
+    arity: -3, // HMGET key field [field ...]
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  })
+
+  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+
+  handler(
+    [key, firstField, restFields]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write([null, ...restFields.map(() => null)])
@@ -34,8 +40,9 @@ export const HmgetCommandDefinition: SchemaCommandRegistration<
     }
     const fields = [firstField, ...restFields]
     transport.write(existing.hmget(fields))
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(HmgetCommandDefinition, { db })
+  return createSchemaCommand(new HmgetCommandDefinition(), { db })
 }

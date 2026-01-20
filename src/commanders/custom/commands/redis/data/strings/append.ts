@@ -5,26 +5,32 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('append', {
-  arity: 3, // APPEND key value
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const AppendCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, value], { db, transport }) => {
+
+export class AppendCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string]>
+{
+  metadata = defineCommand('append', {
+    arity: 3, // APPEND key value
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, value]: [Buffer, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof StringDataType)) {
       throw new WrongType()
@@ -36,8 +42,9 @@ export const AppendCommandDefinition: SchemaCommandRegistration<
         : valueBuffer
     db.set(key, new StringDataType(newValue))
     transport.write(newValue.length)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(AppendCommandDefinition, { db })
+  return createSchemaCommand(new AppendCommandDefinition(), { db })
 }

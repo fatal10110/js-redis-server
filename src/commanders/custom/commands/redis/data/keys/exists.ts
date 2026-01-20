@@ -3,25 +3,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('exists', {
-  arity: -2, // EXISTS key [key ...]
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: -1, // Last argument is a key
-  keyStep: 1,
-  categories: [CommandCategory.GENERIC],
-})
-export const ExistsCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db, transport }) => {
+
+export class ExistsCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
+{
+  metadata = defineCommand('exists', {
+    arity: -2, // EXISTS key [key ...]
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: -1, // Last argument is a key
+    keyStep: 1,
+    categories: [CommandCategory.GENERIC],
+  })
+
+  schema = t.tuple([t.key(), t.variadic(t.key())])
+
+  handler(
+    [firstKey, restKeys]: [Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const keys = [firstKey, ...restKeys]
     let count = 0
     for (const key of keys) {
@@ -30,8 +36,9 @@ export const ExistsCommandDefinition: SchemaCommandRegistration<
       }
     }
     transport.write(count)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ExistsCommandDefinition, { db })
+  return createSchemaCommand(new ExistsCommandDefinition(), { db })
 }

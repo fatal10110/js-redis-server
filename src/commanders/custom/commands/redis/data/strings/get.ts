@@ -5,23 +5,28 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('get', {
-  arity: 2, // GET key
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING, CommandCategory.GENERIC],
-})
-export const GetCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class GetCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('get', {
+    arity: 2, // GET key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING, CommandCategory.GENERIC],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const val = db.get(key)
     if (val === null) {
       transport.write(null)
@@ -31,8 +36,9 @@ export const GetCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       throw new WrongType()
     }
     transport.write(val.data)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(GetCommandDefinition, { db })
+  return createSchemaCommand(new GetCommandDefinition(), { db })
 }
