@@ -3,22 +3,27 @@ import { defineCommand, CommandCategory } from '../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../schema'
-const metadata = defineCommand('script|help', {
-  arity: 1, // SCRIPT HELP
-  flags: {
-    readonly: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.SCRIPT],
-})
-export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
-  metadata,
-  schema: t.tuple([]),
-  handler: (_args, { transport }) => {
+
+export class ScriptHelpCommandDefinition
+  implements SchemaCommandRegistration<[]>
+{
+  metadata = defineCommand('script|help', {
+    arity: 1, // SCRIPT HELP
+    flags: {
+      readonly: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.SCRIPT],
+  })
+
+  schema = t.tuple([])
+
+  handler(_args: [], { transport }: SchemaCommandContext) {
     const helpText = [
       'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
       'DEBUG <YES|SYNC|NO>',
@@ -35,8 +40,9 @@ export const ScriptHelpCommandDefinition: SchemaCommandRegistration<[]> = {
       '    Load a script into the scripts cache without executing it.',
     ]
     transport.write(helpText)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ScriptHelpCommandDefinition, { db })
+  return createSchemaCommand(new ScriptHelpCommandDefinition(), { db })
 }

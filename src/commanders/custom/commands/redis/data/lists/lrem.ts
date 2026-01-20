@@ -5,24 +5,30 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('lrem', {
-  arity: 4, // LREM key count element
-  flags: {
-    write: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
-export const LremCommandDefinition: SchemaCommandRegistration<
-  [Buffer, number, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.integer(), t.string()]),
-  handler: ([key, count, value], { db, transport }) => {
+
+export class LremCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, number, Buffer]>
+{
+  metadata = defineCommand('lrem', {
+    arity: 4, // LREM key count element
+    flags: {
+      write: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
+
+  schema = t.tuple([t.key(), t.integer(), t.string()])
+
+  handler(
+    [key, count, value]: [Buffer, number, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(0)
@@ -36,8 +42,9 @@ export const LremCommandDefinition: SchemaCommandRegistration<
       db.del(key)
     }
     transport.write(removed)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(LremCommandDefinition, { db })
+  return createSchemaCommand(new LremCommandDefinition(), { db })
 }

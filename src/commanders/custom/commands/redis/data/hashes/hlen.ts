@@ -5,23 +5,28 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('hlen', {
-  arity: 2, // HLEN key
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.HASH],
-})
-export const HlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class HlenCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('hlen', {
+    arity: 2, // HLEN key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(0)
@@ -31,8 +36,9 @@ export const HlenCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       throw new WrongType()
     }
     transport.write(existing.hlen())
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(HlenCommandDefinition, { db })
+  return createSchemaCommand(new HlenCommandDefinition(), { db })
 }

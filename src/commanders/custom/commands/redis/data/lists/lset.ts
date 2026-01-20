@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('lset', {
-  arity: 4, // LSET key index value
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
-export const LsetCommandDefinition: SchemaCommandRegistration<
-  [Buffer, number, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.integer(), t.string()]),
-  handler: ([key, index, value], { db, transport }) => {
+
+export class LsetCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, number, Buffer]>
+{
+  metadata = defineCommand('lset', {
+    arity: 4, // LSET key index value
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
+
+  schema = t.tuple([t.key(), t.integer(), t.string()])
+
+  handler(
+    [key, index, value]: [Buffer, number, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
     if (existing === null) {
       throw new OutOfRangeIndex()
@@ -36,8 +42,9 @@ export const LsetCommandDefinition: SchemaCommandRegistration<
       throw new OutOfRangeIndex()
     }
     transport.write('OK')
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(LsetCommandDefinition, { db })
+  return createSchemaCommand(new LsetCommandDefinition(), { db })
 }

@@ -4,26 +4,32 @@ import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
+  SchemaCommandContext,
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('sunion', {
-  arity: -2, // SUNION key [key ...]
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
-export const SunionCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db, transport }) => {
+
+export class SunionCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
+{
+  metadata = defineCommand('sunion', {
+    arity: -2, // SUNION key [key ...]
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
+
+  schema = t.tuple([t.key(), t.variadic(t.key())])
+
+  handler(
+    [firstKey, restKeys]: [Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const keys = [firstKey, ...restKeys]
     const sets: SetDataType[] = []
     for (const key of keys) {
@@ -39,8 +45,9 @@ export const SunionCommandDefinition: SchemaCommandRegistration<
     }
     const [firstSet, ...otherSets] = sets
     transport.write(firstSet.sunion(otherSets))
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(SunionCommandDefinition, { db })
+  return createSchemaCommand(new SunionCommandDefinition(), { db })
 }

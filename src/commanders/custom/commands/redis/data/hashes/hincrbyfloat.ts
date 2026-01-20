@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('hincrbyfloat', {
-  arity: 4, // HINCRBYFLOAT key field increment
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.HASH],
-})
-export const HincrbyfloatCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: ([key, field, incrementStr], { db, transport }) => {
+
+export class HincrbyfloatCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, string]>
+{
+  metadata = defineCommand('hincrbyfloat', {
+    arity: 4, // HINCRBYFLOAT key field increment
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  })
+
+  schema = t.tuple([t.key(), t.string(), t.string()])
+
+  handler(
+    [key, field, incrementStr]: [Buffer, Buffer, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
       throw new ExpectedFloat()
@@ -39,8 +45,9 @@ export const HincrbyfloatCommandDefinition: SchemaCommandRegistration<
     }
     const result = hash.hincrbyfloat(field, increment)
     transport.write(Buffer.from(result.toString()))
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(HincrbyfloatCommandDefinition, { db })
+  return createSchemaCommand(new HincrbyfloatCommandDefinition(), { db })
 }

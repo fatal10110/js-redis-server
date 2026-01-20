@@ -4,24 +4,29 @@ import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
+  SchemaCommandContext,
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('smembers', {
-  arity: 2, // SMEMBERS key
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
-export const SmembersCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class SmembersCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('smembers', {
+    arity: 2, // SMEMBERS key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write([])
@@ -31,8 +36,9 @@ export const SmembersCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       throw new WrongType()
     }
     transport.write(existing.smembers())
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(SmembersCommandDefinition, { db })
+  return createSchemaCommand(new SmembersCommandDefinition(), { db })
 }

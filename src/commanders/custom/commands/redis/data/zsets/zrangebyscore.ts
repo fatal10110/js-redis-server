@@ -5,24 +5,30 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('zrangebyscore', {
-  arity: 4, // ZRANGEBYSCORE key min max
-  flags: {
-    readonly: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.ZSET],
-})
-export const ZrangebyscoreCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.string()]),
-  handler: ([key, minStr, maxStr], { db, transport }) => {
+
+export class ZrangebyscoreCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string, string]>
+{
+  metadata = defineCommand('zrangebyscore', {
+    arity: 4, // ZRANGEBYSCORE key min max
+    flags: {
+      readonly: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.ZSET],
+  })
+
+  schema = t.tuple([t.key(), t.string(), t.string()])
+
+  handler(
+    [key, minStr, maxStr]: [Buffer, string, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
     if (Number.isNaN(min) || Number.isNaN(max)) {
@@ -38,8 +44,9 @@ export const ZrangebyscoreCommandDefinition: SchemaCommandRegistration<
     }
     const result = existing.zrangebyscore(min, max)
     transport.write(result)
-  },
+  }
 }
+
 export default function createZrangebyscore(db: DB) {
-  return createSchemaCommand(ZrangebyscoreCommandDefinition, { db })
+  return createSchemaCommand(new ZrangebyscoreCommandDefinition(), { db })
 }

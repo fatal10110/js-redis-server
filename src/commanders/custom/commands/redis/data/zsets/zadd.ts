@@ -5,34 +5,45 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('zadd', {
-  arity: -4, // ZADD key score member [score member ...]
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.ZSET],
-})
-export const ZaddCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string, Buffer, Array<[string, Buffer]>]
-> = {
-  metadata,
-  schema: t.tuple([
+
+export class ZaddCommandDefinition
+  implements
+    SchemaCommandRegistration<
+      [Buffer, string, Buffer, Array<[string, Buffer]>]
+    >
+{
+  metadata = defineCommand('zadd', {
+    arity: -4, // ZADD key score member [score member ...]
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.ZSET],
+  })
+
+  schema = t.tuple([
     t.key(),
     t.string(),
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
-  ]),
-  handler: (
-    [key, firstScoreStr, firstMember, restPairs],
-    { db, transport },
-  ) => {
+  ])
+
+  handler(
+    [key, firstScoreStr, firstMember, restPairs]: [
+      Buffer,
+      string,
+      Buffer,
+      Array<[string, Buffer]>,
+    ],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const firstScore = parseFloat(firstScoreStr)
     if (Number.isNaN(firstScore)) {
       throw new ExpectedFloat()
@@ -56,8 +67,9 @@ export const ZaddCommandDefinition: SchemaCommandRegistration<
       addedCount += zset.zadd(score, member)
     }
     transport.write(addedCount)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ZaddCommandDefinition, { db })
+  return createSchemaCommand(new ZaddCommandDefinition(), { db })
 }

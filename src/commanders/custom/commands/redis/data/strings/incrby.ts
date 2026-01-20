@@ -5,25 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('incrby', {
-  arity: 3, // INCRBY key increment
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const IncrbyCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, incrementStr], { db, transport }) => {
+
+export class IncrbyCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string]>
+{
+  metadata = defineCommand('incrby', {
+    arity: 3, // INCRBY key increment
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, incrementStr]: [Buffer, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const increment = parseInt(incrementStr)
     if (isNaN(increment)) {
       throw new ExpectedInteger()
@@ -42,8 +48,9 @@ export const IncrbyCommandDefinition: SchemaCommandRegistration<
     const newValue = currentValue + increment
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(IncrbyCommandDefinition, { db })
+  return createSchemaCommand(new IncrbyCommandDefinition(), { db })
 }

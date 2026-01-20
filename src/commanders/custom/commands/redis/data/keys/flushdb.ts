@@ -3,26 +3,30 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('flushdb', {
-  arity: 1, // FLUSHDB
-  flags: {
-    write: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.GENERIC, CommandCategory.SERVER],
-})
-export const FlushdbCommandDefinition: SchemaCommandRegistration<[]> = {
-  metadata,
-  schema: t.tuple([]),
-  handler: (_args, { db, transport }) => {
+
+export class FlushdbCommandDefinition implements SchemaCommandRegistration<[]> {
+  metadata = defineCommand('flushdb', {
+    arity: 1, // FLUSHDB
+    flags: {
+      write: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.GENERIC, CommandCategory.SERVER],
+  })
+
+  schema = t.tuple([])
+
+  handler(_args: [], { db, transport }: SchemaCommandContext) {
     db.flushdb()
     transport.write('OK')
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(FlushdbCommandDefinition, { db })
+  return createSchemaCommand(new FlushdbCommandDefinition(), { db })
 }

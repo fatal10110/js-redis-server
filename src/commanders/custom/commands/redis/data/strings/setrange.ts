@@ -5,27 +5,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('setrange', {
-  arity: 4, // SETRANGE key offset value
-  flags: {
-    write: true,
-    denyoom: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
+export class SetrangeCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, number, string]>
+{
+  metadata = defineCommand('setrange', {
+    arity: 4, // SETRANGE key offset value
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
 
-export const SetrangeCommandDefinition: SchemaCommandRegistration<
-  [Buffer, number, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.integer({ min: 0 }), t.string()]),
-  handler: ([key, offset, value], { db, transport }) => {
+  schema = t.tuple([t.key(), t.integer({ min: 0 }), t.string()])
+
+  handler(
+    [key, offset, value]: [Buffer, number, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     if (offset < 0) {
       throw new OffsetOutOfRange()
     }
@@ -61,9 +65,9 @@ export const SetrangeCommandDefinition: SchemaCommandRegistration<
 
     db.set(key, new StringDataType(currentBuffer))
     transport.write(currentBuffer.length)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(SetrangeCommandDefinition, { db })
+  return createSchemaCommand(new SetrangeCommandDefinition(), { db })
 }

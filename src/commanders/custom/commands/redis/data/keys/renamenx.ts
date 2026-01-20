@@ -3,27 +3,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('renamenx', {
-  arity: 3, // RENAMENX key newkey
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 1,
-  keyStep: 1,
-  categories: [CommandCategory.KEYS],
-})
+export class RenamenxCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer]>
+{
+  metadata = defineCommand('renamenx', {
+    arity: 3, // RENAMENX key newkey
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 1,
+    keyStep: 1,
+    categories: [CommandCategory.KEYS],
+  })
 
-export const RenamenxCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.key()]),
-  handler: ([key, newKey], { db, transport }) => {
+  schema = t.tuple([t.key(), t.key()])
+
+  handler(
+    [key, newKey]: [Buffer, Buffer],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
 
     if (existing === null) {
@@ -48,9 +52,9 @@ export const RenamenxCommandDefinition: SchemaCommandRegistration<
     db.set(newKey, existing, expiration)
 
     transport.write(1)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(RenamenxCommandDefinition, { db })
+  return createSchemaCommand(new RenamenxCommandDefinition(), { db })
 }

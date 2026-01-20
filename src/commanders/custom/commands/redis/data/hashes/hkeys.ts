@@ -5,23 +5,28 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('hkeys', {
-  arity: 2, // HKEYS key
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.HASH],
-})
-export const HkeysCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class HkeysCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('hkeys', {
+    arity: 2, // HKEYS key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.HASH],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write([])
@@ -31,8 +36,9 @@ export const HkeysCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       throw new WrongType()
     }
     transport.write(existing.hkeys())
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(HkeysCommandDefinition, { db })
+  return createSchemaCommand(new HkeysCommandDefinition(), { db })
 }

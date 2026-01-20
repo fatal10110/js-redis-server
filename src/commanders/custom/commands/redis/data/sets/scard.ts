@@ -4,24 +4,29 @@ import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
+  SchemaCommandContext,
   SchemaCommandRegistration,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('scard', {
-  arity: 2, // SCARD key
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.SET],
-})
-export const ScardCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class ScardCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('scard', {
+    arity: 2, // SCARD key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.SET],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(0)
@@ -31,8 +36,9 @@ export const ScardCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       throw new WrongType()
     }
     transport.write(existing.scard())
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(ScardCommandDefinition, { db })
+  return createSchemaCommand(new ScardCommandDefinition(), { db })
 }

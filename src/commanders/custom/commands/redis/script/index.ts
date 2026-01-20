@@ -13,31 +13,37 @@ import { ScriptFlushCommandDefinition } from './flush'
 import { ScriptKillCommandDefinition } from './kill'
 import { ScriptDebugCommandDefinition } from './debug'
 import { ScriptHelpCommandDefinition } from './help'
-const metadata = defineCommand('script', {
-  arity: -2, // SCRIPT subcommand [args...]
-  flags: {
-    admin: true,
-    noscript: true,
-  },
-  firstKey: -1,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.SCRIPT],
-})
-export const ScriptCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.string(), t.variadic(t.string())]),
-  handler: ([subCommandName, rest], ctx) => {
+
+export class ScriptCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
+{
+  metadata = defineCommand('script', {
+    arity: -2, // SCRIPT subcommand [args...]
+    flags: {
+      admin: true,
+      noscript: true,
+    },
+    firstKey: -1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.SCRIPT],
+  })
+
+  schema = t.tuple([t.string(), t.variadic(t.string())])
+
+  handler(
+    [subCommandName, rest]: [Buffer, Buffer[]],
+    ctx: SchemaCommandContext,
+  ) {
     const subCommands = createSubCommands(ctx)
     const subCommand = subCommands[subCommandName.toString().toLowerCase()]
     if (!subCommand) {
       throw new UnknowScriptSubCommand(subCommandName.toString())
     }
     subCommand.run(subCommandName, rest, ctx.signal, ctx.transport)
-  },
+  }
 }
+
 function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
   const baseCtx = {
     db: ctx.db,
@@ -45,14 +51,15 @@ function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
     mySelfId: ctx.mySelfId,
   }
   return {
-    load: createSchemaCommand(ScriptLoadCommandDefinition, baseCtx),
-    exists: createSchemaCommand(ScriptExistsCommandDefinition, baseCtx),
-    flush: createSchemaCommand(ScriptFlushCommandDefinition, baseCtx),
-    kill: createSchemaCommand(ScriptKillCommandDefinition, baseCtx),
-    debug: createSchemaCommand(ScriptDebugCommandDefinition, baseCtx),
-    help: createSchemaCommand(ScriptHelpCommandDefinition, baseCtx),
+    load: createSchemaCommand(new ScriptLoadCommandDefinition(), baseCtx),
+    exists: createSchemaCommand(new ScriptExistsCommandDefinition(), baseCtx),
+    flush: createSchemaCommand(new ScriptFlushCommandDefinition(), baseCtx),
+    kill: createSchemaCommand(new ScriptKillCommandDefinition(), baseCtx),
+    debug: createSchemaCommand(new ScriptDebugCommandDefinition(), baseCtx),
+    help: createSchemaCommand(new ScriptHelpCommandDefinition(), baseCtx),
   }
 }
+
 export default function (db: SchemaCommandContext['db']) {
-  return createSchemaCommand(ScriptCommandDefinition, { db })
+  return createSchemaCommand(new ScriptCommandDefinition(), { db })
 }

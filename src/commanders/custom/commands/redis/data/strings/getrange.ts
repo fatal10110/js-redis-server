@@ -5,26 +5,30 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('getrange', {
-  arity: 4, // GETRANGE key start end
-  flags: {
-    readonly: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
+export class GetrangeCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, number, number]>
+{
+  metadata = defineCommand('getrange', {
+    arity: 4, // GETRANGE key start end
+    flags: {
+      readonly: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
 
-export const GetrangeCommandDefinition: SchemaCommandRegistration<
-  [Buffer, number, number]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.integer(), t.integer()]),
-  handler: ([key, start, end], { db, transport }) => {
+  schema = t.tuple([t.key(), t.integer(), t.integer()])
+
+  handler(
+    [key, start, end]: [Buffer, number, number],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
 
     if (existing === null) {
@@ -40,29 +44,31 @@ export const GetrangeCommandDefinition: SchemaCommandRegistration<
     const length = buffer.length
 
     // Handle negative indices
-    if (start < 0) {
-      start = length + start
+    let startIdx = start
+    let endIdx = end
+    if (startIdx < 0) {
+      startIdx = length + startIdx
     }
-    if (end < 0) {
-      end = length + end
+    if (endIdx < 0) {
+      endIdx = length + endIdx
     }
 
     // Clamp to valid range
-    if (start < 0) start = 0
-    if (end >= length) end = length - 1
+    if (startIdx < 0) startIdx = 0
+    if (endIdx >= length) endIdx = length - 1
 
     // If start > end or start >= length, return empty string
-    if (start > end || start >= length) {
+    if (startIdx > endIdx || startIdx >= length) {
       transport.write(Buffer.from(''))
       return
     }
 
     // Extract substring (end is inclusive)
-    const result = buffer.slice(start, end + 1)
+    const result = buffer.slice(startIdx, endIdx + 1)
     transport.write(result)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(GetrangeCommandDefinition, { db })
+  return createSchemaCommand(new GetrangeCommandDefinition(), { db })
 }

@@ -5,28 +5,32 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('setnx', {
-  arity: 3, // SETNX key value
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
+export class SetnxCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string]>
+{
+  metadata = defineCommand('setnx', {
+    arity: 3, // SETNX key value
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
 
-export const SetnxCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string()]),
-  handler: ([key, value], { db, transport }) => {
+  schema = t.tuple([t.key(), t.string()])
+
+  handler(
+    [key, value]: [Buffer, string],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const existing = db.get(key)
 
     if (existing !== null) {
@@ -36,9 +40,9 @@ export const SetnxCommandDefinition: SchemaCommandRegistration<
 
     db.set(key, new StringDataType(Buffer.from(value)))
     transport.write(1)
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(SetnxCommandDefinition, { db })
+  return createSchemaCommand(new SetnxCommandDefinition(), { db })
 }

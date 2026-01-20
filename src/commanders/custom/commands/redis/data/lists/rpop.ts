@@ -5,23 +5,28 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('rpop', {
-  arity: 2, // RPOP key
-  flags: {
-    write: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
-export const RpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class RpopCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('rpop', {
+    arity: 2, // RPOP key
+    flags: {
+      write: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(null)
@@ -35,8 +40,9 @@ export const RpopCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       db.del(key)
     }
     transport.write(value)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(RpopCommandDefinition, { db })
+  return createSchemaCommand(new RpopCommandDefinition(), { db })
 }

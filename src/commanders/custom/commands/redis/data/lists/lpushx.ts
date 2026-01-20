@@ -5,28 +5,32 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
 
-const metadata = defineCommand('lpushx', {
-  arity: -3, // LPUSHX key element [element ...]
-  flags: {
-    write: true,
-    denyoom: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.LIST],
-})
+export class LpushxCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
+{
+  metadata = defineCommand('lpushx', {
+    arity: -3, // LPUSHX key element [element ...]
+    flags: {
+      write: true,
+      denyoom: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.LIST],
+  })
 
-export const LpushxCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.string(), t.variadic(t.string())]),
-  handler: ([key, firstValue, restValues], { db, transport }) => {
+  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+
+  handler(
+    [key, firstValue, restValues]: [Buffer, Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const data = db.get(key)
 
     // Only push if key exists
@@ -46,9 +50,9 @@ export const LpushxCommandDefinition: SchemaCommandRegistration<
     }
 
     transport.write(data.llen())
-  },
+  }
 }
 
 export default function (db: DB) {
-  return createSchemaCommand(LpushxCommandDefinition, { db })
+  return createSchemaCommand(new LpushxCommandDefinition(), { db })
 }

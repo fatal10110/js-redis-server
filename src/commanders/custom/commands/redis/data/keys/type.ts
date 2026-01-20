@@ -8,23 +8,28 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('type', {
-  arity: 2, // TYPE key
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.GENERIC],
-})
-export const TypeCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
-  metadata,
-  schema: t.tuple([t.key()]),
-  handler: ([key], { db, transport }) => {
+
+export class TypeCommandDefinition
+  implements SchemaCommandRegistration<[Buffer]>
+{
+  metadata = defineCommand('type', {
+    arity: 2, // TYPE key
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.GENERIC],
+  })
+
+  schema = t.tuple([t.key()])
+
+  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write('none')
@@ -51,8 +56,9 @@ export const TypeCommandDefinition: SchemaCommandRegistration<[Buffer]> = {
       return
     }
     transport.write('unknown')
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(TypeCommandDefinition, { db })
+  return createSchemaCommand(new TypeCommandDefinition(), { db })
 }

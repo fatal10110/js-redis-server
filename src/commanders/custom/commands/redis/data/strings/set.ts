@@ -9,8 +9,10 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
+
 interface SetOptions {
   expiration?: number
   nx?: boolean
@@ -18,6 +20,7 @@ interface SetOptions {
   keepTtl?: boolean
   get?: boolean
 }
+
 type SetTtlToken =
   | {
       type: 'EX'
@@ -35,89 +38,14 @@ type SetTtlToken =
       type: 'PXAT'
       value: number
     }
+
 type SetSchemaOptions = Partial<{
   ttl: SetTtlToken
   condition: 'NX' | 'XX'
   keepTtl: 'KEEPTTL'
   get: 'GET'
 }>
-const metadata = defineCommand('set', {
-  arity: -3, // SET key value [options...]
-  flags: {
-    write: true,
-    denyoom: true,
-  },
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const SetCommandDefinition: SchemaCommandRegistration<
-  [Buffer, string, SetSchemaOptions]
-> = {
-  metadata,
-  schema: t.tuple([
-    t.key(),
-    t.string(),
-    t.options({
-      ttl: t.xor([
-        t.named('EX', t.integer({ min: 1 })),
-        t.named('PX', t.integer({ min: 1 })),
-        t.named('EXAT', t.integer({ min: 1 })),
-        t.named('PXAT', t.integer({ min: 1 })),
-      ]),
-      condition: t.xor([t.flag('NX'), t.flag('XX')]),
-      keepTtl: t.flag('KEEPTTL'),
-      get: t.flag('GET'),
-    }),
-  ]),
-  handler: ([key, value, schemaOptions], { db, transport }) => {
-    const options = parseOptions(schemaOptions ?? {})
-    const existingData = db.get(key)
-    let oldValue: Buffer | null = null
-    if (options.get) {
-      if (existingData instanceof StringDataType) {
-        oldValue = existingData.data
-      } else if (existingData !== null) {
-        throw new WrongType()
-      }
-    }
-    if (options.nx && existingData !== null) {
-      if (options.get) {
-        transport.write(oldValue)
-        return
-      }
 
-      transport.write(null)
-      return
-    }
-    if (options.xx && existingData === null) {
-      if (options.get) {
-        transport.write(null)
-        return
-      }
-
-      transport.write(null)
-      return
-    }
-    if (existingData !== null && !(existingData instanceof StringDataType)) {
-      db.del(key)
-    }
-    let expiration: number | undefined
-    if (options.keepTtl && existingData instanceof StringDataType) {
-      expiration = undefined
-    } else if (options.expiration !== undefined) {
-      expiration = options.expiration
-    }
-    const valueBuffer = Buffer.from(value)
-    db.set(key, new StringDataType(valueBuffer), expiration)
-    if (options.get) {
-      transport.write(oldValue)
-      return
-    }
-    transport.write('OK')
-  },
-}
 function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
   const options: SetOptions = {}
   if (schemaOptions.condition === 'NX') {
@@ -168,6 +96,89 @@ function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
   }
   return options
 }
+
+export class SetCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, string, SetSchemaOptions]>
+{
+  metadata = defineCommand('set', {
+    arity: -3, // SET key value [options...]
+    flags: {
+      write: true,
+      denyoom: true,
+    },
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([
+    t.key(),
+    t.string(),
+    t.options({
+      ttl: t.xor([
+        t.named('EX', t.integer({ min: 1 })),
+        t.named('PX', t.integer({ min: 1 })),
+        t.named('EXAT', t.integer({ min: 1 })),
+        t.named('PXAT', t.integer({ min: 1 })),
+      ]),
+      condition: t.xor([t.flag('NX'), t.flag('XX')]),
+      keepTtl: t.flag('KEEPTTL'),
+      get: t.flag('GET'),
+    }),
+  ])
+
+  handler(
+    [key, value, schemaOptions]: [Buffer, string, SetSchemaOptions],
+    { db, transport }: SchemaCommandContext,
+  ) {
+    const options = parseOptions(schemaOptions ?? {})
+    const existingData = db.get(key)
+    let oldValue: Buffer | null = null
+    if (options.get) {
+      if (existingData instanceof StringDataType) {
+        oldValue = existingData.data
+      } else if (existingData !== null) {
+        throw new WrongType()
+      }
+    }
+    if (options.nx && existingData !== null) {
+      if (options.get) {
+        transport.write(oldValue)
+        return
+      }
+
+      transport.write(null)
+      return
+    }
+    if (options.xx && existingData === null) {
+      if (options.get) {
+        transport.write(null)
+        return
+      }
+
+      transport.write(null)
+      return
+    }
+    if (existingData !== null && !(existingData instanceof StringDataType)) {
+      db.del(key)
+    }
+    let expiration: number | undefined
+    if (options.keepTtl && existingData instanceof StringDataType) {
+      expiration = undefined
+    } else if (options.expiration !== undefined) {
+      expiration = options.expiration
+    }
+    const valueBuffer = Buffer.from(value)
+    db.set(key, new StringDataType(valueBuffer), expiration)
+    if (options.get) {
+      transport.write(oldValue)
+      return
+    }
+    transport.write('OK')
+  }
+}
+
 export default function (db: DB) {
-  return createSchemaCommand(SetCommandDefinition, { db })
+  return createSchemaCommand(new SetCommandDefinition(), { db })
 }

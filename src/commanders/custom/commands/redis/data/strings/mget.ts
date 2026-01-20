@@ -4,25 +4,31 @@ import { defineCommand, CommandCategory } from '../../../metadata'
 import {
   createSchemaCommand,
   SchemaCommandRegistration,
+  SchemaCommandContext,
   t,
 } from '../../../../schema'
-const metadata = defineCommand('mget', {
-  arity: -2, // MGET key [key ...]
-  flags: {
-    readonly: true,
-    fast: true,
-  },
-  firstKey: 0,
-  lastKey: -1,
-  keyStep: 1,
-  categories: [CommandCategory.STRING],
-})
-export const MgetCommandDefinition: SchemaCommandRegistration<
-  [Buffer, Buffer[]]
-> = {
-  metadata,
-  schema: t.tuple([t.key(), t.variadic(t.key())]),
-  handler: ([firstKey, restKeys], { db, transport }) => {
+
+export class MgetCommandDefinition
+  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
+{
+  metadata = defineCommand('mget', {
+    arity: -2, // MGET key [key ...]
+    flags: {
+      readonly: true,
+      fast: true,
+    },
+    firstKey: 0,
+    lastKey: -1,
+    keyStep: 1,
+    categories: [CommandCategory.STRING],
+  })
+
+  schema = t.tuple([t.key(), t.variadic(t.key())])
+
+  handler(
+    [firstKey, restKeys]: [Buffer, Buffer[]],
+    { db, transport }: SchemaCommandContext,
+  ) {
     const keys = [firstKey, ...restKeys]
     const res: (Buffer | null)[] = []
     for (const key of keys) {
@@ -34,8 +40,9 @@ export const MgetCommandDefinition: SchemaCommandRegistration<
       res.push(val.data)
     }
     transport.write(res)
-  },
+  }
 }
+
 export default function (db: DB) {
-  return createSchemaCommand(MgetCommandDefinition, { db })
+  return createSchemaCommand(new MgetCommandDefinition(), { db })
 }
