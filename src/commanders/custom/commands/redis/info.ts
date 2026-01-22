@@ -1,15 +1,8 @@
-import { DB } from '../../db'
 import { defineCommand, CommandCategory } from '../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../schema'
+import { SchemaCommand, CommandContext } from '../../schema/schema-command'
+import { t } from '../../schema'
 
-export class InfoCommandDefinition
-  implements SchemaCommandRegistration<[string | undefined]>
-{
+export class InfoCommand extends SchemaCommand<[string | undefined]> {
   metadata = defineCommand('info', {
     arity: -1, // INFO [section]
     flags: {
@@ -21,13 +14,9 @@ export class InfoCommandDefinition
     categories: [CommandCategory.SERVER],
   })
 
-  schema = t.tuple([t.optional(t.string())])
+  protected schema = t.tuple([t.optional(t.string())])
 
-  handler(_args: [string | undefined], ctx: SchemaCommandContext) {
+  protected execute(_args: [string | undefined], ctx: CommandContext) {
     ctx.transport.write('mock info')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new InfoCommandDefinition(), { db })
 }

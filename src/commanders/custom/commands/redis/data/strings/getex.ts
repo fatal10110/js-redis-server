@@ -4,14 +4,12 @@ import {
   WrongType,
 } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
 type GetexTtlToken =
   | {
@@ -36,9 +34,7 @@ type GetexSchemaOptions = Partial<{
   persist: 'PERSIST'
 }>
 
-export class GetexCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, GetexSchemaOptions]>
-{
+export class GetexCommand extends SchemaCommand<[Buffer, GetexSchemaOptions]> {
   metadata = defineCommand('getex', {
     arity: -2, // GETEX key [options...]
     flags: {
@@ -51,7 +47,7 @@ export class GetexCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([
+  protected schema = t.tuple([
     t.key(),
     t.options({
       ttl: t.xor([
@@ -64,9 +60,9 @@ export class GetexCommandDefinition
     }),
   ])
 
-  handler(
+  protected execute(
     [key, schemaOptions]: [Buffer, GetexSchemaOptions],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
 
@@ -122,8 +118,4 @@ export class GetexCommandDefinition
 
     transport.write(existing.data)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new GetexCommandDefinition(), { db })
 }

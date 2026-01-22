@@ -1,18 +1,10 @@
 import { DiscoveryNode, DiscoveryService } from '../../../../../types'
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext, t } from '../../../schema'
 
 export const commandName = 'nodes'
 
-export class ClusterNodesCommandDefinition
-  implements SchemaCommandRegistration<[]>
-{
+export class ClusterNodesCommand extends SchemaCommand<[]> {
   metadata = defineCommand(`cluster|${commandName}`, {
     arity: 1, // CLUSTER NODES
     flags: {
@@ -25,11 +17,11 @@ export class ClusterNodesCommandDefinition
     categories: [CommandCategory.CLUSTER],
   })
 
-  schema = t.tuple([])
+  protected schema = t.tuple([])
 
-  handler(
+  protected execute(
     _args: [],
-    { discoveryService, mySelfId, transport }: SchemaCommandContext,
+    { discoveryService, mySelfId, transport }: CommandContext,
   ) {
     const service = discoveryService as DiscoveryService | undefined
     if (!service || !mySelfId) {
@@ -91,16 +83,4 @@ function generateClusterNodeInfo(
     ? ''
     : ` ${clusterNode.slots.map(slot => `${slot[0]}-${slot[1]}`).join(',')}`
   return `${clusterNode.id} ${connectionDetails} ${myselfDefinition}${masterSlave} ${pingPong} ${configEpoch} connected${slots}\n`
-}
-
-export default function (
-  db: DB,
-  discoveryService: DiscoveryService,
-  mySelfId: string,
-) {
-  return createSchemaCommand(new ClusterNodesCommandDefinition(), {
-    db,
-    discoveryService,
-    mySelfId,
-  })
 }

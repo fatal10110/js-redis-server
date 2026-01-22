@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ZremCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class ZremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
   metadata = defineCommand('zrem', {
     arity: -3, // ZREM key member [member ...]
     flags: {
@@ -24,11 +20,11 @@ export class ZremCommandDefinition
     categories: [CommandCategory.ZSET],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -52,8 +48,4 @@ export class ZremCommandDefinition
 
     transport.write(removed)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ZremCommandDefinition(), { db })
 }

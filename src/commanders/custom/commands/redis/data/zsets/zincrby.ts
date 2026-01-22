@@ -1,17 +1,13 @@
 import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ZincrbyCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string, Buffer]>
-{
+export class ZincrbyCommand extends SchemaCommand<[Buffer, string, Buffer]> {
   metadata = defineCommand('zincrby', {
     arity: 4, // ZINCRBY key increment member
     flags: {
@@ -24,11 +20,11 @@ export class ZincrbyCommandDefinition
     categories: [CommandCategory.ZSET],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.string()])
+  protected schema = t.tuple([t.key(), t.string(), t.string()])
 
-  handler(
+  protected execute(
     [key, incrementStr, member]: [Buffer, string, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
@@ -46,8 +42,4 @@ export class ZincrbyCommandDefinition
     const newScore = zset.zincrby(member, increment)
     transport.write(Buffer.from(newScore.toString()))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ZincrbyCommandDefinition(), { db })
 }

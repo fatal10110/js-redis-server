@@ -1,13 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class FlushdbCommandDefinition implements SchemaCommandRegistration<[]> {
+export class FlushdbCommand extends SchemaCommand<[]> {
   metadata = defineCommand('flushdb', {
     arity: 1, // FLUSHDB
     flags: {
@@ -19,14 +17,10 @@ export class FlushdbCommandDefinition implements SchemaCommandRegistration<[]> {
     categories: [CommandCategory.GENERIC, CommandCategory.SERVER],
   })
 
-  schema = t.tuple([])
+  protected schema = t.tuple([])
 
-  handler(_args: [], { db, transport }: SchemaCommandContext) {
+  protected execute(_args: [], { db, transport }: CommandContext) {
     db.flushdb()
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new FlushdbCommandDefinition(), { db })
 }

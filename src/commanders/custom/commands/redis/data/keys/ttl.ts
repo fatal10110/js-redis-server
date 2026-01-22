@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class TtlCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class TtlCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('ttl', {
     arity: 2, // TTL key
     flags: {
@@ -22,9 +18,9 @@ export class TtlCommandDefinition
     categories: [CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(-2)
@@ -38,8 +34,4 @@ export class TtlCommandDefinition
     const remainingSeconds = Math.max(0, Math.ceil((ttl - Date.now()) / 1000))
     transport.write(remainingSeconds)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new TtlCommandDefinition(), { db })
 }

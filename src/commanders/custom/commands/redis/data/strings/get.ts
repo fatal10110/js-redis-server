@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class GetCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class GetCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('get', {
     arity: 2, // GET key
     flags: {
@@ -24,9 +20,9 @@ export class GetCommandDefinition
     categories: [CommandCategory.STRING, CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const val = db.get(key)
     if (val === null) {
       transport.write(null)
@@ -37,8 +33,4 @@ export class GetCommandDefinition
     }
     transport.write(val.data)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new GetCommandDefinition(), { db })
 }

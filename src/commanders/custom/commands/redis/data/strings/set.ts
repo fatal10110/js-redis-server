@@ -4,14 +4,12 @@ import {
   WrongType,
 } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
 interface SetOptions {
   expiration?: number
@@ -97,9 +95,9 @@ function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
   return options
 }
 
-export class SetCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string, SetSchemaOptions]>
-{
+export class SetCommand extends SchemaCommand<
+  [Buffer, string, SetSchemaOptions]
+> {
   metadata = defineCommand('set', {
     arity: -3, // SET key value [options...]
     flags: {
@@ -112,7 +110,7 @@ export class SetCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([
+  protected schema = t.tuple([
     t.key(),
     t.string(),
     t.options({
@@ -128,9 +126,9 @@ export class SetCommandDefinition
     }),
   ])
 
-  handler(
+  protected execute(
     [key, value, schemaOptions]: [Buffer, string, SetSchemaOptions],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const options = parseOptions(schemaOptions ?? {})
     const existingData = db.get(key)
@@ -177,8 +175,4 @@ export class SetCommandDefinition
     }
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SetCommandDefinition(), { db })
 }

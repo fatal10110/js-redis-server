@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class GetrangeCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number, number]>
-{
+export class GetrangeCommand extends SchemaCommand<[Buffer, number, number]> {
   metadata = defineCommand('getrange', {
     arity: 4, // GETRANGE key start end
     flags: {
@@ -23,11 +19,11 @@ export class GetrangeCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.integer(), t.integer()])
+  protected schema = t.tuple([t.key(), t.integer(), t.integer()])
 
-  handler(
+  protected execute(
     [key, start, end]: [Buffer, number, number],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
 
@@ -67,8 +63,4 @@ export class GetrangeCommandDefinition
     const result = buffer.slice(startIdx, endIdx + 1)
     transport.write(result)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new GetrangeCommandDefinition(), { db })
 }

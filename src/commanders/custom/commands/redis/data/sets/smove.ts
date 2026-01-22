@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SmoveCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer]>
-{
+export class SmoveCommand extends SchemaCommand<[Buffer, Buffer, Buffer]> {
   metadata = defineCommand('smove', {
     arity: 4, // SMOVE source destination member
     flags: {
@@ -24,11 +20,11 @@ export class SmoveCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.key(), t.string()])
+  protected schema = t.tuple([t.key(), t.key(), t.string()])
 
-  handler(
+  protected execute(
     [sourceKey, destinationKey, member]: [Buffer, Buffer, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const sourceExisting = db.get(sourceKey)
     if (sourceExisting === null) {
@@ -58,8 +54,4 @@ export class SmoveCommandDefinition
     }
     transport.write(moved ? 1 : 0)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SmoveCommandDefinition(), { db })
 }

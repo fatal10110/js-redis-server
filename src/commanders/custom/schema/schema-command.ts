@@ -1,6 +1,8 @@
 import type {
   Command,
+  CommandContext as BaseCommandContext,
   CommandResult,
+  DiscoveryService,
   ExecutionContext,
   Transport,
 } from '../../../types'
@@ -12,9 +14,9 @@ import type { CompiledSchema, InputMapper } from './input-mapper'
 import { compileSchema } from './input-mapper'
 import { RespInputMapper } from './resp-input-mapper'
 
-export interface SchemaCommandContext {
+export interface CommandContext {
   db: DB
-  discoveryService?: unknown
+  discoveryService?: DiscoveryService
   mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
@@ -24,39 +26,25 @@ export interface SchemaCommandContext {
   transport: Transport
 }
 
-export interface SchemaCommandRegistration<TArgs = unknown> {
-  metadata: CommandMetadata
-  schema: SchemaType
-  handler: (args: TArgs, ctx: SchemaCommandContext) => CommandResult | void
-  getKeys?: (rawCmd: Buffer, args: Buffer[]) => Buffer[]
-}
+export abstract class SchemaCommand<TArgs = unknown> implements Command {
+  abstract readonly metadata: CommandMetadata
+  protected abstract readonly schema: SchemaType
 
-export function createSchemaCommand(
-  definition: SchemaCommandRegistration<any>,
-  ctx: Omit<SchemaCommandContext, 'signal' | 'transport'>,
-  mapper: InputMapper<Buffer[]> = new RespInputMapper(),
-): Command {
-  return new SchemaCommandAdapter(definition, ctx, mapper)
-}
+  private _compiledSchema: CompiledSchema | null = null
+  private readonly mapper: InputMapper<Buffer[]>
 
-class SchemaCommandAdapter implements Command {
-  readonly metadata: CommandMetadata
-  private readonly compiledSchema: CompiledSchema
+  constructor(mapper: InputMapper<Buffer[]> = new RespInputMapper()) {
+    this.mapper = mapper
+  }
 
-  constructor(
-    private readonly definition: SchemaCommandRegistration<any>,
-    private readonly ctx: Omit<SchemaCommandContext, 'signal' | 'transport'>,
-    private readonly mapper: InputMapper<Buffer[]>,
-  ) {
-    this.metadata = definition.metadata
-    this.compiledSchema = compileSchema(definition.schema)
+  protected get compiledSchema(): CompiledSchema {
+    if (!this._compiledSchema) {
+      this._compiledSchema = compileSchema(this.schema)
+    }
+    return this._compiledSchema
   }
 
   getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    if (this.definition.getKeys) {
-      return this.definition.getKeys(_rawCmd, args)
-    }
-
     const { firstKey, lastKey, keyStep, limit } = this.metadata
 
     if (firstKey < 0 || args.length === 0) {
@@ -92,18 +80,16 @@ class SchemaCommandAdapter implements Command {
   run(
     _rawCmd: Buffer,
     args: Buffer[],
-    signal: AbortSignal,
-    transport: Transport,
+    ctx: BaseCommandContext,
   ): CommandResult | void {
     const parsed = this.mapper.parse(this.compiledSchema, args, {
       commandName: this.metadata.name,
     })
-    const result = this.definition.handler(parsed, {
-      ...this.ctx,
-      signal,
-      transport,
-    })
-
-    return result
+    return this.execute(parsed as TArgs, ctx as CommandContext)
   }
+
+  protected abstract execute(
+    args: TArgs,
+    ctx: CommandContext,
+  ): CommandResult | void
 }

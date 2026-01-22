@@ -1,22 +1,19 @@
 import { UnknwonClientSubCommand } from '../../../../../core/errors'
 import { Command } from '../../../../../types'
 import { defineCommand, CommandCategory } from '../../metadata'
+import { SchemaCommand, CommandContext, t } from '../../../schema'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../schema'
-import {
-  ClientSetNameCommandDefinition,
+  ClientSetNameCommand,
   commandName as setNameCommandName,
 } from './clientSetName'
 
 export const commandName = 'client'
 
-export class ClientCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
-{
+const subCommands: Record<string, Command> = {
+  [setNameCommandName]: new ClientSetNameCommand(),
+}
+
+export class ClientCommand extends SchemaCommand<[Buffer, Buffer[]]> {
   metadata = defineCommand(commandName, {
     arity: -2, // CLIENT <subcommand> [args...]
     flags: {
@@ -29,35 +26,16 @@ export class ClientCommandDefinition
     categories: [CommandCategory.CONNECTION],
   })
 
-  schema = t.tuple([t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [subCommandName, rest]: [Buffer, Buffer[]],
-    ctx: SchemaCommandContext,
+    ctx: CommandContext,
   ) {
-    const subCommands = createSubCommands(ctx)
     const subCommand = subCommands[subCommandName.toString().toLowerCase()]
     if (!subCommand) {
       throw new UnknwonClientSubCommand(subCommandName.toString())
     }
-    subCommand.run(subCommandName, rest, ctx.signal, ctx.transport)
+    subCommand.run(subCommandName, rest, ctx)
   }
-}
-
-function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
-  const baseCtx = {
-    db: ctx.db,
-    discoveryService: ctx.discoveryService,
-    mySelfId: ctx.mySelfId,
-  }
-  return {
-    [setNameCommandName]: createSchemaCommand(
-      new ClientSetNameCommandDefinition(),
-      baseCtx,
-    ),
-  }
-}
-
-export default function (db: SchemaCommandContext['db']) {
-  return createSchemaCommand(new ClientCommandDefinition(), { db })
 }

@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class PersistCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class PersistCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('persist', {
     arity: 2, // PERSIST key
     flags: {
@@ -22,14 +18,10 @@ export class PersistCommandDefinition
     categories: [CommandCategory.KEYS],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const result = db.persist(key)
     transport.write(result ? 1 : 0)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new PersistCommandDefinition(), { db })
 }

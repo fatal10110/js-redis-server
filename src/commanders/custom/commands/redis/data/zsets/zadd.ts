@@ -1,20 +1,15 @@
 import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ZaddCommandDefinition
-  implements
-    SchemaCommandRegistration<
-      [Buffer, string, Buffer, Array<[string, Buffer]>]
-    >
-{
+export class ZaddCommand extends SchemaCommand<
+  [Buffer, string, Buffer, Array<[string, Buffer]>]
+> {
   metadata = defineCommand('zadd', {
     arity: -4, // ZADD key score member [score member ...]
     flags: {
@@ -28,21 +23,21 @@ export class ZaddCommandDefinition
     categories: [CommandCategory.ZSET],
   })
 
-  schema = t.tuple([
+  protected schema = t.tuple([
     t.key(),
     t.string(),
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
   ])
 
-  handler(
+  protected execute(
     [key, firstScoreStr, firstMember, restPairs]: [
       Buffer,
       string,
       Buffer,
       Array<[string, Buffer]>,
     ],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const firstScore = parseFloat(firstScoreStr)
     if (Number.isNaN(firstScore)) {
@@ -68,8 +63,4 @@ export class ZaddCommandDefinition
     }
     transport.write(addedCount)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ZaddCommandDefinition(), { db })
 }

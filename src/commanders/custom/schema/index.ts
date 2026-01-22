@@ -1,9 +1,5 @@
-export { cmd, t } from './builder'
-export {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-} from './command-adapter'
+export { t } from './builder'
+export { SchemaCommand, CommandContext } from './schema-command'
 export {
   InputMapper,
   ParseOptions,
@@ -11,6 +7,5 @@ export {
   CompiledSchema,
   compileSchema,
 } from './input-mapper'
-export { SchemaRegistry, globalSchemaRegistry } from './registry'
 export { RespInputMapper } from './resp-input-mapper'
-export type { SchemaType, SchemaCommandDefinition } from './types'
+export type { SchemaType } from './types'

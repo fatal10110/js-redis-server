@@ -1,17 +1,14 @@
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class MsetnxCommandDefinition
-  implements
-    SchemaCommandRegistration<[Buffer, string, Array<[Buffer, string]>]>
-{
+export class MsetnxCommand extends SchemaCommand<
+  [Buffer, string, Array<[Buffer, string]>]
+> {
   metadata = defineCommand('msetnx', {
     arity: -3, // MSETNX key value [key value ...]
     flags: {
@@ -25,19 +22,19 @@ export class MsetnxCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([
+  protected schema = t.tuple([
     t.key(),
     t.string(),
     t.variadic(t.tuple([t.key(), t.string()])),
   ])
 
-  handler(
+  protected execute(
     [firstKey, firstValue, restPairs]: [
       Buffer,
       string,
       Array<[Buffer, string]>,
     ],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const pairs: Array<[Buffer, string]> = [
       [firstKey, firstValue],
@@ -54,8 +51,4 @@ export class MsetnxCommandDefinition
     }
     transport.write(1)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new MsetnxCommandDefinition(), { db })
 }

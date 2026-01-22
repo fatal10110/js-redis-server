@@ -4,7 +4,7 @@ import { Command, DBCommandExecutor, Logger } from '../../types'
 import { DB } from './db'
 
 // Import createCommands function from Redis index
-import { createCommands, createMultiCommands } from './commands/redis'
+import { createCommands, createLuaCommands } from './commands/redis'
 import { createLuaRuntime, LuaRuntime } from './lua-runtime'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { NormalState } from '../../core/transports/session-state'
@@ -37,18 +37,19 @@ export class CustomCommanderFactory {
 
 class Commander implements DBCommandExecutor {
   private readonly commands: Record<string, Command>
-  private readonly transactionCommands: Record<string, Command>
+  private readonly luaCommands: Record<string, Command>
   private readonly baseCommander: BaseCommander
   private readonly db: DB
 
   constructor(db: DB, luaRuntime: LuaRuntime) {
     this.db = db
-    this.commands = createCommands(db, { luaRuntime })
-    this.transactionCommands = createMultiCommands(db)
-    // Transaction state is now managed by Session, so no transactionCommands needed here
+    this.commands = createCommands()
+    this.luaCommands = createLuaCommands()
     this.baseCommander = new BaseCommander(
       this.commands,
+      { db, luaRuntime },
       validator => new NormalState(validator, this.db),
+      this.luaCommands,
     )
   }
 

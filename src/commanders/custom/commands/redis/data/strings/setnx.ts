@@ -1,17 +1,12 @@
-import { WrongType } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SetnxCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string]>
-{
+export class SetnxCommand extends SchemaCommand<[Buffer, string]> {
   metadata = defineCommand('setnx', {
     arity: 3, // SETNX key value
     flags: {
@@ -25,11 +20,11 @@ export class SetnxCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.string()])
+  protected schema = t.tuple([t.key(), t.string()])
 
-  handler(
+  protected execute(
     [key, value]: [Buffer, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
 
@@ -41,8 +36,4 @@ export class SetnxCommandDefinition
     db.set(key, new StringDataType(Buffer.from(value)))
     transport.write(1)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SetnxCommandDefinition(), { db })
 }

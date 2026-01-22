@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class PttlCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class PttlCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('pttl', {
     arity: 2, // PTTL key
     flags: {
@@ -22,9 +18,9 @@ export class PttlCommandDefinition
     categories: [CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(-2)
@@ -38,8 +34,4 @@ export class PttlCommandDefinition
     const remainingMilliseconds = Math.max(0, ttl - Date.now())
     transport.write(remainingMilliseconds)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new PttlCommandDefinition(), { db })
 }

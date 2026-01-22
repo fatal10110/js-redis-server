@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class DelCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
-{
+export class DelCommand extends SchemaCommand<[Buffer, Buffer[]]> {
   metadata = defineCommand('del', {
     arity: -2, // DEL key [key ...]
     flags: {
@@ -21,11 +17,11 @@ export class DelCommandDefinition
     categories: [CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key(), t.variadic(t.key())])
+  protected schema = t.tuple([t.key(), t.variadic(t.key())])
 
-  handler(
+  protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     let counter = 0
@@ -36,8 +32,4 @@ export class DelCommandDefinition
     }
     transport.write(counter)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new DelCommandDefinition(), { db })
 }

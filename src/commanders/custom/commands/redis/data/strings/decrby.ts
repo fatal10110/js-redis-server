@@ -1,17 +1,13 @@
 import { WrongType, ExpectedInteger } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class DecrbyCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string]>
-{
+export class DecrbyCommand extends SchemaCommand<[Buffer, string]> {
   metadata = defineCommand('decrby', {
     arity: 3, // DECRBY key decrement
     flags: {
@@ -24,11 +20,11 @@ export class DecrbyCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.string()])
+  protected schema = t.tuple([t.key(), t.string()])
 
-  handler(
+  protected execute(
     [key, decrementStr]: [Buffer, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const decrement = parseInt(decrementStr)
     if (isNaN(decrement)) {
@@ -49,8 +45,4 @@ export class DecrbyCommandDefinition
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new DecrbyCommandDefinition(), { db })
 }

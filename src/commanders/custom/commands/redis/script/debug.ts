@@ -1,15 +1,8 @@
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 
-export class ScriptDebugCommandDefinition
-  implements SchemaCommandRegistration<['YES' | 'SYNC' | 'NO']>
-{
+export class ScriptDebugCommand extends SchemaCommand<['YES' | 'SYNC' | 'NO']> {
   metadata = defineCommand('script|debug', {
     arity: 2, // SCRIPT DEBUG <YES|SYNC|NO>
     flags: {
@@ -21,15 +14,11 @@ export class ScriptDebugCommandDefinition
     categories: [CommandCategory.SCRIPT],
   })
 
-  schema = t.tuple([
+  protected schema = t.tuple([
     t.xor([t.literal('YES'), t.literal('SYNC'), t.literal('NO')]),
   ])
 
-  handler(_args: ['YES' | 'SYNC' | 'NO'], ctx: SchemaCommandContext) {
+  protected execute(_args: ['YES' | 'SYNC' | 'NO'], ctx: CommandContext) {
     ctx.transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ScriptDebugCommandDefinition(), { db })
 }

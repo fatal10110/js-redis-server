@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SmembersCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class SmembersCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('smembers', {
     arity: 2, // SMEMBERS key
     flags: {
@@ -24,9 +20,9 @@ export class SmembersCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write([])
@@ -37,8 +33,4 @@ export class SmembersCommandDefinition
     }
     transport.write(existing.smembers())
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SmembersCommandDefinition(), { db })
 }

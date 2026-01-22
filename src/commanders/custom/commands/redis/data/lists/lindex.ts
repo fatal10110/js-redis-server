@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class LindexCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number]>
-{
+export class LindexCommand extends SchemaCommand<[Buffer, number]> {
   metadata = defineCommand('lindex', {
     arity: 3, // LINDEX key index
     flags: {
@@ -24,11 +20,11 @@ export class LindexCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key(), t.integer()])
+  protected schema = t.tuple([t.key(), t.integer()])
 
-  handler(
+  protected execute(
     [key, index]: [Buffer, number],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -40,8 +36,4 @@ export class LindexCommandDefinition
     }
     transport.write(existing.lindex(index))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new LindexCommandDefinition(), { db })
 }

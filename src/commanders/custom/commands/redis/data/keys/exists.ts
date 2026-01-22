@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ExistsCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
-{
+export class ExistsCommand extends SchemaCommand<[Buffer, Buffer[]]> {
   metadata = defineCommand('exists', {
     arity: -2, // EXISTS key [key ...]
     flags: {
@@ -22,11 +18,11 @@ export class ExistsCommandDefinition
     categories: [CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key(), t.variadic(t.key())])
+  protected schema = t.tuple([t.key(), t.variadic(t.key())])
 
-  handler(
+  protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     let count = 0
@@ -37,8 +33,4 @@ export class ExistsCommandDefinition
     }
     transport.write(count)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ExistsCommandDefinition(), { db })
 }

@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HmgetCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class HmgetCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
   metadata = defineCommand('hmget', {
     arity: -3, // HMGET key field [field ...]
     flags: {
@@ -24,11 +20,11 @@ export class HmgetCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [key, firstField, restFields]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -41,8 +37,4 @@ export class HmgetCommandDefinition
     const fields = [firstField, ...restFields]
     transport.write(existing.hmget(fields))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HmgetCommandDefinition(), { db })
 }

@@ -6,12 +6,12 @@ import { ListDataType } from '../../src/commanders/custom/data-structures/list'
 import { Buffer } from 'buffer'
 
 // String commands
-import createIncr from '../../src/commanders/custom/commands/redis/data/strings/incr'
-import createDecr from '../../src/commanders/custom/commands/redis/data/strings/decr'
-import createAppend from '../../src/commanders/custom/commands/redis/data/strings/append'
-import createStrlen from '../../src/commanders/custom/commands/redis/data/strings/strlen'
-import createMget from '../../src/commanders/custom/commands/redis/data/strings/mget'
-import createSet from '../../src/commanders/custom/commands/redis/data/strings/set'
+import { IncrCommand } from '../../src/commanders/custom/commands/redis/data/strings/incr'
+import { DecrCommand } from '../../src/commanders/custom/commands/redis/data/strings/decr'
+import { AppendCommand } from '../../src/commanders/custom/commands/redis/data/strings/append'
+import { StrlenCommand } from '../../src/commanders/custom/commands/redis/data/strings/strlen'
+import { MgetCommand } from '../../src/commanders/custom/commands/redis/data/strings/mget'
+import { SetCommand } from '../../src/commanders/custom/commands/redis/data/strings/set'
 
 // Error imports
 import {
@@ -27,42 +27,48 @@ describe('String Commands', () => {
   describe('INCR command', () => {
     test('increment on non-existent key', async () => {
       const db = new DB()
-      const incrCommand = createIncr(db)
+      const incrCommand = new IncrCommand()
 
-      const result = await runCommand(incrCommand, 'INCR', [
-        Buffer.from('counter'),
-      ])
+      const result = runCommand(
+        incrCommand,
+        'INCR',
+        [Buffer.from('counter')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
     })
 
     test('increment on existing key', async () => {
       const db = new DB()
-      const incrCommand = createIncr(db)
+      const incrCommand = new IncrCommand()
 
-      await runCommand(incrCommand, 'INCR', [Buffer.from('counter')])
-      const result = await runCommand(incrCommand, 'INCR', [
-        Buffer.from('counter'),
-      ])
+      runCommand(incrCommand, 'INCR', [Buffer.from('counter')], db)
+      const result = runCommand(
+        incrCommand,
+        'INCR',
+        [Buffer.from('counter')],
+        db,
+      )
       assert.strictEqual(result.response, 2)
     })
 
     test('increment on existing string value', async () => {
       const db = new DB()
-      const incrCommand = createIncr(db)
+      const incrCommand = new IncrCommand()
 
       db.set(Buffer.from('num'), new StringDataType(Buffer.from('10')))
-      const result = await runCommand(incrCommand, 'INCR', [Buffer.from('num')])
+      const result = runCommand(incrCommand, 'INCR', [Buffer.from('num')], db)
       assert.strictEqual(result.response, 11)
     })
 
     test('increment with non-numeric value throws error', async () => {
       const db = new DB()
-      const incrCommand = createIncr(db)
+      const incrCommand = new IncrCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('notanumber')))
 
       try {
-        await runCommand(incrCommand, 'INCR', [Buffer.from('key')])
+        runCommand(incrCommand, 'INCR', [Buffer.from('key')], db)
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -76,12 +82,12 @@ describe('String Commands', () => {
 
     test('increment on wrong data type throws error', async () => {
       const db = new DB()
-      const incrCommand = createIncr(db)
+      const incrCommand = new IncrCommand()
 
       db.set(Buffer.from('key'), new ListDataType())
 
       try {
-        await runCommand(incrCommand, 'INCR', [Buffer.from('key')])
+        runCommand(incrCommand, 'INCR', [Buffer.from('key')], db)
         assert.fail('Should have thrown WrongType error')
       } catch (error) {
         assert.ok(error instanceof WrongType)
@@ -97,22 +103,28 @@ describe('String Commands', () => {
   describe('DECR command', () => {
     test('decrement on non-existent key', async () => {
       const db = new DB()
-      const decrCommand = createDecr(db)
+      const decrCommand = new DecrCommand()
 
-      const result = await runCommand(decrCommand, 'DECR', [
-        Buffer.from('counter'),
-      ])
+      const result = runCommand(
+        decrCommand,
+        'DECR',
+        [Buffer.from('counter')],
+        db,
+      )
       assert.strictEqual(result.response, -1)
     })
 
     test('decrement on existing key', async () => {
       const db = new DB()
-      const decrCommand = createDecr(db)
+      const decrCommand = new DecrCommand()
 
-      await runCommand(decrCommand, 'DECR', [Buffer.from('counter')])
-      const result = await runCommand(decrCommand, 'DECR', [
-        Buffer.from('counter'),
-      ])
+      runCommand(decrCommand, 'DECR', [Buffer.from('counter')], db)
+      const result = runCommand(
+        decrCommand,
+        'DECR',
+        [Buffer.from('counter')],
+        db,
+      )
       assert.strictEqual(result.response, -2)
     })
   })
@@ -120,27 +132,33 @@ describe('String Commands', () => {
   describe('APPEND command', () => {
     test('append to non-existent key', async () => {
       const db = new DB()
-      const appendCommand = createAppend(db)
+      const appendCommand = new AppendCommand()
 
-      const result = await runCommand(appendCommand, 'APPEND', [
-        Buffer.from('key'),
-        Buffer.from('hello'),
-      ])
+      const result = runCommand(
+        appendCommand,
+        'APPEND',
+        [Buffer.from('key'), Buffer.from('hello')],
+        db,
+      )
       assert.strictEqual(result.response, 5)
     })
 
     test('append to existing key', async () => {
       const db = new DB()
-      const appendCommand = createAppend(db)
+      const appendCommand = new AppendCommand()
 
-      await runCommand(appendCommand, 'APPEND', [
-        Buffer.from('key'),
-        Buffer.from('hello'),
-      ])
-      const result = await runCommand(appendCommand, 'APPEND', [
-        Buffer.from('key'),
-        Buffer.from(' world'),
-      ])
+      runCommand(
+        appendCommand,
+        'APPEND',
+        [Buffer.from('key'), Buffer.from('hello')],
+        db,
+      )
+      const result = runCommand(
+        appendCommand,
+        'APPEND',
+        [Buffer.from('key'), Buffer.from(' world')],
+        db,
+      )
       assert.strictEqual(result.response, 11)
 
       const value = db.get(Buffer.from('key')) as StringDataType
@@ -151,22 +169,28 @@ describe('String Commands', () => {
   describe('STRLEN command', () => {
     test('strlen on non-existent key', async () => {
       const db = new DB()
-      const strlenCommand = createStrlen(db)
+      const strlenCommand = new StrlenCommand()
 
-      const result = await runCommand(strlenCommand, 'STRLEN', [
-        Buffer.from('key'),
-      ])
+      const result = runCommand(
+        strlenCommand,
+        'STRLEN',
+        [Buffer.from('key')],
+        db,
+      )
       assert.strictEqual(result.response, 0)
     })
 
     test('strlen on existing key', async () => {
       const db = new DB()
-      const strlenCommand = createStrlen(db)
+      const strlenCommand = new StrlenCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('hello')))
-      const result = await runCommand(strlenCommand, 'STRLEN', [
-        Buffer.from('key'),
-      ])
+      const result = runCommand(
+        strlenCommand,
+        'STRLEN',
+        [Buffer.from('key')],
+        db,
+      )
       assert.strictEqual(result.response, 5)
     })
   })
@@ -174,15 +198,17 @@ describe('String Commands', () => {
   describe('MGET command', () => {
     test('basic MGET operation', async () => {
       const db = new DB()
-      const mgetCommand = createMget(db)
+      const mgetCommand = new MgetCommand()
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
 
-      const result = await runCommand(mgetCommand, 'MGET', [
-        Buffer.from('key1'),
-        Buffer.from('key2'),
-      ])
+      const result = runCommand(
+        mgetCommand,
+        'MGET',
+        [Buffer.from('key1'), Buffer.from('key2')],
+        db,
+      )
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 2)
@@ -194,12 +220,14 @@ describe('String Commands', () => {
 
     test('MGET with non-existent keys returns null', async () => {
       const db = new DB()
-      const mgetCommand = createMget(db)
+      const mgetCommand = new MgetCommand()
 
-      const result = await runCommand(mgetCommand, 'MGET', [
-        Buffer.from('nonexistent1'),
-        Buffer.from('nonexistent2'),
-      ])
+      const result = runCommand(
+        mgetCommand,
+        'MGET',
+        [Buffer.from('nonexistent1'), Buffer.from('nonexistent2')],
+        db,
+      )
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 2)
@@ -209,15 +237,20 @@ describe('String Commands', () => {
 
     test('MGET with mixed existing and non-existing keys', async () => {
       const db = new DB()
-      const mgetCommand = createMget(db)
+      const mgetCommand = new MgetCommand()
 
       db.set(Buffer.from('existing'), new StringDataType(Buffer.from('value')))
 
-      const result = await runCommand(mgetCommand, 'MGET', [
-        Buffer.from('existing'),
-        Buffer.from('nonexistent'),
-        Buffer.from('existing'),
-      ])
+      const result = runCommand(
+        mgetCommand,
+        'MGET',
+        [
+          Buffer.from('existing'),
+          Buffer.from('nonexistent'),
+          Buffer.from('existing'),
+        ],
+        db,
+      )
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 3)
@@ -230,18 +263,23 @@ describe('String Commands', () => {
 
     test('MGET preserves key order in response', async () => {
       const db = new DB()
-      const mgetCommand = createMget(db)
+      const mgetCommand = new MgetCommand()
 
       db.set(Buffer.from('z'), new StringDataType(Buffer.from('last')))
       db.set(Buffer.from('a'), new StringDataType(Buffer.from('first')))
       db.set(Buffer.from('m'), new StringDataType(Buffer.from('middle')))
 
-      const result = await runCommand(mgetCommand, 'MGET', [
-        Buffer.from('a'),
-        Buffer.from('nonexistent'),
-        Buffer.from('m'),
-        Buffer.from('z'),
-      ])
+      const result = runCommand(
+        mgetCommand,
+        'MGET',
+        [
+          Buffer.from('a'),
+          Buffer.from('nonexistent'),
+          Buffer.from('m'),
+          Buffer.from('z'),
+        ],
+        db,
+      )
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 4)
@@ -253,10 +291,10 @@ describe('String Commands', () => {
 
     test('MGET with no arguments throws error', async () => {
       const db = new DB()
-      const mgetCommand = createMget(db)
+      const mgetCommand = new MgetCommand()
 
       try {
-        await runCommand(mgetCommand, 'MGET', [])
+        runCommand(mgetCommand, 'MGET', [], db)
         assert.fail('Expected WrongNumberOfArguments error')
       } catch (err) {
         assert.ok(err instanceof WrongNumberOfArguments)
@@ -267,12 +305,14 @@ describe('String Commands', () => {
   describe('SET command', () => {
     test('basic SET operation', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
-      const result = await runCommand(setCommand, 'SET', [
-        Buffer.from('mykey'),
-        Buffer.from('myvalue'),
-      ])
+      const result = runCommand(
+        setCommand,
+        'SET',
+        [Buffer.from('mykey'), Buffer.from('myvalue')],
+        db,
+      )
 
       assert.strictEqual(result.response, 'OK')
 
@@ -283,14 +323,19 @@ describe('String Commands', () => {
 
     test('SET with EX option', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
-      const result = await runCommand(setCommand, 'SET', [
-        Buffer.from('mykey'),
-        Buffer.from('myvalue'),
-        Buffer.from('EX'),
-        Buffer.from('10'),
-      ])
+      const result = runCommand(
+        setCommand,
+        'SET',
+        [
+          Buffer.from('mykey'),
+          Buffer.from('myvalue'),
+          Buffer.from('EX'),
+          Buffer.from('10'),
+        ],
+        db,
+      )
 
       assert.strictEqual(result.response, 'OK')
 
@@ -301,14 +346,19 @@ describe('String Commands', () => {
 
     test('SET with PX option', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
-      const result = await runCommand(setCommand, 'SET', [
-        Buffer.from('mykey'),
-        Buffer.from('myvalue'),
-        Buffer.from('PX'),
-        Buffer.from('5000'),
-      ])
+      const result = runCommand(
+        setCommand,
+        'SET',
+        [
+          Buffer.from('mykey'),
+          Buffer.from('myvalue'),
+          Buffer.from('PX'),
+          Buffer.from('5000'),
+        ],
+        db,
+      )
 
       assert.strictEqual(result.response, 'OK')
 
@@ -319,13 +369,14 @@ describe('String Commands', () => {
 
     test('SET with NX option - key does not exist', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
-      const result = await runCommand(setCommand, 'SET', [
-        Buffer.from('mykey'),
-        Buffer.from('myvalue'),
-        Buffer.from('NX'),
-      ])
+      const result = runCommand(
+        setCommand,
+        'SET',
+        [Buffer.from('mykey'), Buffer.from('myvalue'), Buffer.from('NX')],
+        db,
+      )
 
       assert.strictEqual(result.response, 'OK')
 
@@ -336,15 +387,16 @@ describe('String Commands', () => {
 
     test('SET with NX option - key exists', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
       db.set(Buffer.from('mykey'), new StringDataType(Buffer.from('existing')))
 
-      const result = await runCommand(setCommand, 'SET', [
-        Buffer.from('mykey'),
-        Buffer.from('myvalue'),
-        Buffer.from('NX'),
-      ])
+      const result = runCommand(
+        setCommand,
+        'SET',
+        [Buffer.from('mykey'), Buffer.from('myvalue'), Buffer.from('NX')],
+        db,
+      )
 
       assert.strictEqual(result.response, null)
 
@@ -355,15 +407,16 @@ describe('String Commands', () => {
 
     test('SET with GET option - key exists', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
       db.set(Buffer.from('mykey'), new StringDataType(Buffer.from('oldvalue')))
 
-      const result = await runCommand(setCommand, 'SET', [
-        Buffer.from('mykey'),
-        Buffer.from('newvalue'),
-        Buffer.from('GET'),
-      ])
+      const result = runCommand(
+        setCommand,
+        'SET',
+        [Buffer.from('mykey'), Buffer.from('newvalue'), Buffer.from('GET')],
+        db,
+      )
 
       assert.ok(Buffer.isBuffer(result.response))
       assert.strictEqual(result.response.toString(), 'oldvalue')
@@ -375,10 +428,10 @@ describe('String Commands', () => {
 
     test('SET wrong number of arguments', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
       try {
-        await runCommand(setCommand, 'SET', [Buffer.from('mykey')])
+        runCommand(setCommand, 'SET', [Buffer.from('mykey')], db)
         assert.fail('Expected WrongNumberOfArguments error')
       } catch (err) {
         assert.ok(err instanceof WrongNumberOfArguments)
@@ -387,15 +440,16 @@ describe('String Commands', () => {
 
     test('SET invalid syntax errors', async () => {
       const db = new DB()
-      const setCommand = createSet(db)
+      const setCommand = new SetCommand()
 
       // EX without value
       try {
-        await runCommand(setCommand, 'SET', [
-          Buffer.from('mykey'),
-          Buffer.from('myvalue'),
-          Buffer.from('EX'),
-        ])
+        runCommand(
+          setCommand,
+          'SET',
+          [Buffer.from('mykey'), Buffer.from('myvalue'), Buffer.from('EX')],
+          db,
+        )
         assert.fail('Expected WrongNumberOfArguments')
       } catch (err) {
         assert.ok(err instanceof WrongNumberOfArguments)
@@ -403,12 +457,17 @@ describe('String Commands', () => {
 
       // NX and XX together
       try {
-        await runCommand(setCommand, 'SET', [
-          Buffer.from('mykey'),
-          Buffer.from('myvalue'),
-          Buffer.from('NX'),
-          Buffer.from('XX'),
-        ])
+        runCommand(
+          setCommand,
+          'SET',
+          [
+            Buffer.from('mykey'),
+            Buffer.from('myvalue'),
+            Buffer.from('NX'),
+            Buffer.from('XX'),
+          ],
+          db,
+        )
         assert.fail('Expected RedisSyntaxError')
       } catch (err) {
         assert.ok(err instanceof RedisSyntaxError)

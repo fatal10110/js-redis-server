@@ -1,15 +1,8 @@
-import { DB } from '../../db'
 import { defineCommand, CommandCategory } from '../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../schema'
+import { SchemaCommand, CommandContext } from '../../schema/schema-command'
+import { t } from '../../schema'
 
-export class PingCommandDefinition
-  implements SchemaCommandRegistration<[string | undefined]>
-{
+export class PingCommand extends SchemaCommand<[string | undefined]> {
   metadata = defineCommand('ping', {
     arity: -1, // PING [message]
     flags: {
@@ -22,13 +15,9 @@ export class PingCommandDefinition
     categories: [CommandCategory.CONNECTION],
   })
 
-  schema = t.tuple([t.optional(t.string())])
+  protected schema = t.tuple([t.optional(t.string())])
 
-  handler(_args: [string | undefined], ctx: SchemaCommandContext) {
+  protected execute(_args: [string | undefined], ctx: CommandContext) {
     ctx.transport.write('PONG')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new PingCommandDefinition(), { db })
 }

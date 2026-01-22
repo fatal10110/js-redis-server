@@ -1,17 +1,15 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SrandmemberCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number | undefined]>
-{
+export class SrandmemberCommand extends SchemaCommand<
+  [Buffer, number | undefined]
+> {
   metadata = defineCommand('srandmember', {
     arity: -2, // SRANDMEMBER key [count]
     flags: {
@@ -25,11 +23,11 @@ export class SrandmemberCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.optional(t.integer())])
+  protected schema = t.tuple([t.key(), t.optional(t.integer())])
 
-  handler(
+  protected execute(
     [key, count]: [Buffer, number | undefined],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -53,8 +51,4 @@ export class SrandmemberCommandDefinition
     const members = existing.srandmember(count)
     transport.write(members)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SrandmemberCommandDefinition(), { db })
 }

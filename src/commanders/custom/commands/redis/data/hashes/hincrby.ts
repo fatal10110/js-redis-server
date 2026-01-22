@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HincrbyCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, number]>
-{
+export class HincrbyCommand extends SchemaCommand<[Buffer, Buffer, number]> {
   metadata = defineCommand('hincrby', {
     arity: 4, // HINCRBY key field increment
     flags: {
@@ -24,11 +20,11 @@ export class HincrbyCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.integer()])
+  protected schema = t.tuple([t.key(), t.string(), t.integer()])
 
-  handler(
+  protected execute(
     [key, field, increment]: [Buffer, Buffer, number],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
@@ -42,8 +38,4 @@ export class HincrbyCommandDefinition
     const result = hash.hincrby(field, increment)
     transport.write(result)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HincrbyCommandDefinition(), { db })
 }

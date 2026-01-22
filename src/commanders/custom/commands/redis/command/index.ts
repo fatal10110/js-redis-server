@@ -1,5 +1,4 @@
 import { Command, CommandResult } from '../../../../../types'
-import { DB } from '../../../db'
 import {
   WrongNumberOfArguments,
   UnknownCommandSubCommand,
@@ -11,16 +10,10 @@ import {
   CommandMetadata,
   CommandFlags,
 } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 
-export class CommandInfoDefinition
-  implements SchemaCommandRegistration<[Buffer[]]>
-{
+export class CommandInfoCommand extends SchemaCommand<[Buffer[]]> {
   metadata = defineCommand('command', {
     arity: -1, // COMMAND [subcommand] [args...]
     flags: {
@@ -33,9 +26,9 @@ export class CommandInfoDefinition
     categories: [CommandCategory.SERVER],
   })
 
-  schema = t.tuple([t.variadic(t.string())])
+  protected schema = t.tuple([t.variadic(t.string())])
 
-  handler([args]: [Buffer[]], ctx: SchemaCommandContext) {
+  protected execute([args]: [Buffer[]], ctx: CommandContext) {
     // COMMAND (no args) - list all commands
     if (args.length === 0) {
       ctx.transport.write(handleCommandList(ctx))
@@ -76,7 +69,7 @@ export class CommandInfoDefinition
 /**
  * COMMAND - Return all command metadata
  */
-function handleCommandList(ctx: SchemaCommandContext): CommandResult[] {
+function handleCommandList(ctx: CommandContext): CommandResult[] {
   const commands = getAllCommands(ctx)
   return commands.map(cmd => formatCommand(cmd.metadata))
 }
@@ -84,10 +77,7 @@ function handleCommandList(ctx: SchemaCommandContext): CommandResult[] {
 /**
  * COMMAND INFO <cmd> [<cmd> ...]
  */
-function handleCommandInfo(
-  args: Buffer[],
-  ctx: SchemaCommandContext,
-): CommandResult {
+function handleCommandInfo(args: Buffer[], ctx: CommandContext): CommandResult {
   if (args.length === 0) {
     throw new WrongNumberOfArguments('command|info')
   }
@@ -102,17 +92,14 @@ function handleCommandInfo(
 /**
  * COMMAND COUNT
  */
-function handleCommandCount(ctx: SchemaCommandContext): number {
+function handleCommandCount(ctx: CommandContext): number {
   return getAllCommands(ctx).length
 }
 
 /**
  * COMMAND GETKEYS <command> <arg> [arg ...]
  */
-function handleCommandGetKeys(
-  args: Buffer[],
-  ctx: SchemaCommandContext,
-): Buffer[] {
+function handleCommandGetKeys(args: Buffer[], ctx: CommandContext): Buffer[] {
   if (args.length < 1) {
     throw new WrongNumberOfArguments('command|getkeys')
   }
@@ -136,7 +123,7 @@ function handleCommandGetKeys(
  */
 function handleCommandDocs(
   args: Buffer[],
-  ctx: SchemaCommandContext,
+  ctx: CommandContext,
 ): CommandResult[] {
   if (args.length === 0) {
     // Return docs for all commands - stub with empty array
@@ -150,7 +137,7 @@ function handleCommandDocs(
  * COMMAND LIST (Redis 7.0+)
  * Returns list of command names
  */
-function handleCommandNames(ctx: SchemaCommandContext): string[] {
+function handleCommandNames(ctx: CommandContext): string[] {
   return getAllCommands(ctx).map(cmd => cmd.metadata.name)
 }
 
@@ -180,7 +167,7 @@ function handleCommandHelp(): string[] {
 /**
  * Get all commands from context
  */
-function getAllCommands(ctx: SchemaCommandContext): Command[] {
+function getAllCommands(ctx: CommandContext): Command[] {
   const commands = ctx.commands || {}
   return Object.values(commands)
 }
@@ -219,8 +206,4 @@ function formatFlags(flags: CommandFlags): string[] {
   if (flags.movablekeys) result.push('movablekeys')
   if (flags.transaction) result.push('transaction')
   return result
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new CommandInfoDefinition(), { db })
 }

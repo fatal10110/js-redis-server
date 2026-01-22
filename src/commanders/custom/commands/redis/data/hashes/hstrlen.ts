@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HstrlenCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string]>
-{
+export class HstrlenCommand extends SchemaCommand<[Buffer, string]> {
   metadata = defineCommand('hstrlen', {
     arity: 3, // HSTRLEN key field
     flags: {
@@ -24,11 +20,11 @@ export class HstrlenCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key(), t.string()])
+  protected schema = t.tuple([t.key(), t.string()])
 
-  handler(
+  protected execute(
     [key, field]: [Buffer, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const data = db.get(key)
 
@@ -44,8 +40,4 @@ export class HstrlenCommandDefinition
     const value = data.hget(Buffer.from(field))
     transport.write(value ? value.length : 0)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HstrlenCommandDefinition(), { db })
 }

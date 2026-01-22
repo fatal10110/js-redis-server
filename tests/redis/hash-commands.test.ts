@@ -5,10 +5,10 @@ import { HashDataType } from '../../src/commanders/custom/data-structures/hash'
 import { createMockTransport } from '../mock-transport'
 
 // Hash commands
-import createHset from '../../src/commanders/custom/commands/redis/data/hashes/hset'
-import createHget from '../../src/commanders/custom/commands/redis/data/hashes/hget'
-import createHdel from '../../src/commanders/custom/commands/redis/data/hashes/hdel'
-import createHgetall from '../../src/commanders/custom/commands/redis/data/hashes/hgetall'
+import { HsetCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hset'
+import { HgetCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hget'
+import { HdelCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hdel'
+import { HgetallCommand } from '../../src/commanders/custom/commands/redis/data/hashes/hgetall'
 import { runCommand, createTestSession } from '../command-test-utils'
 
 // Error imports
@@ -22,49 +22,57 @@ describe('Hash Commands', () => {
   describe('HSET and HGET commands', () => {
     test('HSET on new hash', async () => {
       const db = new DB()
-      const hsetCommand = createHset(db)
-      const hgetCommand = createHget(db)
+      const hsetCommand = new HsetCommand()
+      const hgetCommand = new HgetCommand()
 
-      const result = await runCommand(hsetCommand, 'HSET', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-      ])
+      const result = runCommand(
+        hsetCommand,
+        'HSET',
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
 
-      const getResult = await runCommand(hgetCommand, 'HGET', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-      ])
+      const getResult = runCommand(
+        hgetCommand,
+        'HGET',
+        [Buffer.from('hash'), Buffer.from('field1')],
+        db,
+      )
       assert.strictEqual(getResult.response, 'value1')
     })
 
     test('HGET on non-existent field', async () => {
       const db = new DB()
-      const hsetCommand = createHset(db)
-      const hgetCommand = createHget(db)
+      const hsetCommand = new HsetCommand()
+      const hgetCommand = new HgetCommand()
 
-      await runCommand(hsetCommand, 'HSET', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-      ])
+      runCommand(
+        hsetCommand,
+        'HSET',
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
+        db,
+      )
 
-      const result = await runCommand(hgetCommand, 'HGET', [
-        Buffer.from('hash'),
-        Buffer.from('field2'),
-      ])
+      const result = runCommand(
+        hgetCommand,
+        'HGET',
+        [Buffer.from('hash'), Buffer.from('field2')],
+        db,
+      )
       assert.strictEqual(result.response, null)
     })
 
     test('HGET on non-existent hash', async () => {
       const db = new DB()
-      const hgetCommand = createHget(db)
+      const hgetCommand = new HgetCommand()
 
-      const result = await runCommand(hgetCommand, 'HGET', [
-        Buffer.from('nonexistent'),
-        Buffer.from('field'),
-      ])
+      const result = runCommand(
+        hgetCommand,
+        'HGET',
+        [Buffer.from('nonexistent'), Buffer.from('field')],
+        db,
+      )
       assert.strictEqual(result.response, null)
     })
   })
@@ -148,50 +156,62 @@ describe('Hash Commands', () => {
   describe('HDEL command', () => {
     test('HDEL existing field', async () => {
       const db = new DB()
-      const hsetCommand = createHset(db)
-      const hdelCommand = createHdel(db)
+      const hsetCommand = new HsetCommand()
+      const hdelCommand = new HdelCommand()
 
-      await runCommand(hsetCommand, 'HSET', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
+      runCommand(
+        hsetCommand,
+        'HSET',
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        db,
+      )
 
-      const result = await runCommand(hdelCommand, 'HDEL', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-      ])
+      const result = runCommand(
+        hdelCommand,
+        'HDEL',
+        [Buffer.from('hash'), Buffer.from('field1')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
     })
 
     test('HDEL non-existent field', async () => {
       const db = new DB()
-      const hsetCommand = createHset(db)
-      const hdelCommand = createHdel(db)
+      const hsetCommand = new HsetCommand()
+      const hdelCommand = new HdelCommand()
 
-      await runCommand(hsetCommand, 'HSET', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-      ])
+      runCommand(
+        hsetCommand,
+        'HSET',
+        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
+        db,
+      )
 
-      const result = await runCommand(hdelCommand, 'HDEL', [
-        Buffer.from('hash'),
-        Buffer.from('field3'),
-      ])
+      const result = runCommand(
+        hdelCommand,
+        'HDEL',
+        [Buffer.from('hash'), Buffer.from('field3')],
+        db,
+      )
       assert.strictEqual(result.response, 0)
     })
 
     test('HDEL on non-existent hash', async () => {
       const db = new DB()
-      const hdelCommand = createHdel(db)
+      const hdelCommand = new HdelCommand()
 
-      const result = await runCommand(hdelCommand, 'HDEL', [
-        Buffer.from('nonexistent'),
-        Buffer.from('field'),
-      ])
+      const result = runCommand(
+        hdelCommand,
+        'HDEL',
+        [Buffer.from('nonexistent'), Buffer.from('field')],
+        db,
+      )
       assert.strictEqual(result.response, 0)
     })
   })
@@ -199,30 +219,41 @@ describe('Hash Commands', () => {
   describe('HGETALL command', () => {
     test('HGETALL on non-existent hash', async () => {
       const db = new DB()
-      const hgetallCommand = createHgetall(db)
+      const hgetallCommand = new HgetallCommand()
 
-      const result = await runCommand(hgetallCommand, 'HGETALL', [
-        Buffer.from('hash'),
-      ])
+      const result = runCommand(
+        hgetallCommand,
+        'HGETALL',
+        [Buffer.from('hash')],
+        db,
+      )
       assert.deepStrictEqual(result.response, [])
     })
 
     test('HGETALL on existing hash', async () => {
       const db = new DB()
-      const hsetCommand = createHset(db)
-      const hgetallCommand = createHgetall(db)
+      const hsetCommand = new HsetCommand()
+      const hgetallCommand = new HgetallCommand()
 
-      await runCommand(hsetCommand, 'HSET', [
-        Buffer.from('hash'),
-        Buffer.from('field1'),
-        Buffer.from('value1'),
-        Buffer.from('field2'),
-        Buffer.from('value2'),
-      ])
+      runCommand(
+        hsetCommand,
+        'HSET',
+        [
+          Buffer.from('hash'),
+          Buffer.from('field1'),
+          Buffer.from('value1'),
+          Buffer.from('field2'),
+          Buffer.from('value2'),
+        ],
+        db,
+      )
 
-      const result = await runCommand(hgetallCommand, 'HGETALL', [
-        Buffer.from('hash'),
-      ])
+      const result = runCommand(
+        hgetallCommand,
+        'HGETALL',
+        [Buffer.from('hash')],
+        db,
+      )
       assert.ok(Array.isArray(result.response))
       assert.strictEqual((result.response as Buffer[]).length, 4) // 2 fields * 2 (field + value)
     })
@@ -507,10 +538,10 @@ describe('Hash Commands', () => {
 
     test('Hash commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const hgetCommand = createHget(db)
+      const hgetCommand = new HgetCommand()
 
       try {
-        await runCommand(hgetCommand, 'HGET', [Buffer.from('key')])
+        runCommand(hgetCommand, 'HGET', [Buffer.from('key')], db)
         assert.fail('Should have thrown WrongNumberOfArguments for hget')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)

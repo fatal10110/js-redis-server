@@ -7,14 +7,14 @@ import { ListDataType } from '../../src/commanders/custom/data-structures/list'
 import { SetDataType } from '../../src/commanders/custom/data-structures/set'
 
 // Key commands
-import createExists from '../../src/commanders/custom/commands/redis/data/keys/exists'
-import createType from '../../src/commanders/custom/commands/redis/data/keys/type'
-import createTtl from '../../src/commanders/custom/commands/redis/data/keys/ttl'
-import createExpire from '../../src/commanders/custom/commands/redis/data/keys/expire'
-import createExpireat from '../../src/commanders/custom/commands/redis/data/keys/expireat'
-import createFlushdb from '../../src/commanders/custom/commands/redis/data/keys/flushdb'
-import createFlushall from '../../src/commanders/custom/commands/redis/data/keys/flushall'
-import createDbsize from '../../src/commanders/custom/commands/redis/data/keys/dbsize'
+import { ExistsCommand } from '../../src/commanders/custom/commands/redis/data/keys/exists'
+import { TypeCommand } from '../../src/commanders/custom/commands/redis/data/keys/type'
+import { TtlCommand } from '../../src/commanders/custom/commands/redis/data/keys/ttl'
+import { ExpireCommand } from '../../src/commanders/custom/commands/redis/data/keys/expire'
+import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data/keys/expireat'
+import { FlushdbCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushdb'
+import { FlushallCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushall'
+import { DbSizeCommand } from '../../src/commanders/custom/commands/redis/data/keys/dbsize'
 import { runCommand, createTestSession } from '../command-test-utils'
 
 // Error imports
@@ -28,61 +28,71 @@ describe('Key Commands', () => {
   describe('EXISTS command', () => {
     test('EXISTS on non-existent keys', async () => {
       const db = new DB()
-      const existsCommand = createExists(db)
+      const existsCommand = new ExistsCommand()
 
-      const result = await runCommand(existsCommand, 'EXISTS', [
-        Buffer.from('key1'),
-        Buffer.from('key2'),
-      ])
+      const result = runCommand(
+        existsCommand,
+        'EXISTS',
+        [Buffer.from('key1'), Buffer.from('key2')],
+        db,
+      )
       assert.strictEqual(result.response, 0)
     })
 
     test('EXISTS on mixed keys', async () => {
       const db = new DB()
-      const existsCommand = createExists(db)
+      const existsCommand = new ExistsCommand()
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(existsCommand, 'EXISTS', [
-        Buffer.from('key1'),
-        Buffer.from('key2'),
-      ])
+      const result = runCommand(
+        existsCommand,
+        'EXISTS',
+        [Buffer.from('key1'), Buffer.from('key2')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
     })
 
     test('EXISTS on all existing keys', async () => {
       const db = new DB()
-      const existsCommand = createExists(db)
+      const existsCommand = new ExistsCommand()
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(existsCommand, 'EXISTS', [
-        Buffer.from('key1'),
-        Buffer.from('key2'),
-      ])
+      const result = runCommand(
+        existsCommand,
+        'EXISTS',
+        [Buffer.from('key1'), Buffer.from('key2')],
+        db,
+      )
       assert.strictEqual(result.response, 2)
     })
 
     test('EXISTS with single key', async () => {
       const db = new DB()
-      const existsCommand = createExists(db)
+      const existsCommand = new ExistsCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(existsCommand, 'EXISTS', [
-        Buffer.from('key'),
-      ])
+      const result = runCommand(
+        existsCommand,
+        'EXISTS',
+        [Buffer.from('key')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
     })
 
     test('EXISTS with duplicate keys', async () => {
       const db = new DB()
-      const existsCommand = createExists(db)
+      const existsCommand = new ExistsCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(existsCommand, 'EXISTS', [
-        Buffer.from('key'),
-        Buffer.from('key'),
-        Buffer.from('key'),
-      ])
+      const result = runCommand(
+        existsCommand,
+        'EXISTS',
+        [Buffer.from('key'), Buffer.from('key'), Buffer.from('key')],
+        db,
+      )
       assert.strictEqual(result.response, 3)
     })
   })
@@ -90,49 +100,45 @@ describe('Key Commands', () => {
   describe('TYPE command', () => {
     test('TYPE on non-existent key', async () => {
       const db = new DB()
-      const typeCommand = createType(db)
+      const typeCommand = new TypeCommand()
 
-      const result = await runCommand(typeCommand, 'TYPE', [Buffer.from('key')])
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('key')], db)
       assert.strictEqual(result.response, 'none')
     })
 
     test('TYPE on string', async () => {
       const db = new DB()
-      const typeCommand = createType(db)
+      const typeCommand = new TypeCommand()
 
       db.set(Buffer.from('str'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(typeCommand, 'TYPE', [Buffer.from('str')])
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('str')], db)
       assert.strictEqual(result.response, 'string')
     })
 
     test('TYPE on hash', async () => {
       const db = new DB()
-      const typeCommand = createType(db)
+      const typeCommand = new TypeCommand()
 
       db.set(Buffer.from('hash'), new HashDataType())
-      const result = await runCommand(typeCommand, 'TYPE', [
-        Buffer.from('hash'),
-      ])
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('hash')], db)
       assert.strictEqual(result.response, 'hash')
     })
 
     test('TYPE on list', async () => {
       const db = new DB()
-      const typeCommand = createType(db)
+      const typeCommand = new TypeCommand()
 
       db.set(Buffer.from('list'), new ListDataType())
-      const result = await runCommand(typeCommand, 'TYPE', [
-        Buffer.from('list'),
-      ])
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('list')], db)
       assert.strictEqual(result.response, 'list')
     })
 
     test('TYPE on set', async () => {
       const db = new DB()
-      const typeCommand = createType(db)
+      const typeCommand = new TypeCommand()
 
       db.set(Buffer.from('set'), new SetDataType())
-      const result = await runCommand(typeCommand, 'TYPE', [Buffer.from('set')])
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('set')], db)
       assert.strictEqual(result.response, 'set')
     })
   })
@@ -140,24 +146,24 @@ describe('Key Commands', () => {
   describe('TTL command', () => {
     test('TTL on non-existent key', async () => {
       const db = new DB()
-      const ttlCommand = createTtl(db)
+      const ttlCommand = new TtlCommand()
 
-      const result = await runCommand(ttlCommand, 'TTL', [Buffer.from('key')])
+      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
       assert.strictEqual(result.response, -2)
     })
 
     test('TTL on key without expiration', async () => {
       const db = new DB()
-      const ttlCommand = createTtl(db)
+      const ttlCommand = new TtlCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(ttlCommand, 'TTL', [Buffer.from('key')])
+      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
       assert.strictEqual(result.response, -1)
     })
 
     test('TTL on key with expiration', async () => {
       const db = new DB()
-      const ttlCommand = createTtl(db)
+      const ttlCommand = new TtlCommand()
 
       const expirationTime = Date.now() + 10000 // 10 seconds from now
       db.set(
@@ -165,7 +171,7 @@ describe('Key Commands', () => {
         new StringDataType(Buffer.from('value')),
         expirationTime,
       )
-      const result = await runCommand(ttlCommand, 'TTL', [Buffer.from('key')])
+      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
       assert.strictEqual(result.response, 10)
     })
   })
@@ -173,36 +179,42 @@ describe('Key Commands', () => {
   describe('EXPIRE command', () => {
     test('EXPIRE on existing key', async () => {
       const db = new DB()
-      const expireCommand = createExpire(db)
+      const expireCommand = new ExpireCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(expireCommand, 'EXPIRE', [
-        Buffer.from('key'),
-        Buffer.from('10'),
-      ])
+      const result = runCommand(
+        expireCommand,
+        'EXPIRE',
+        [Buffer.from('key'), Buffer.from('10')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
     })
 
     test('EXPIRE on non-existent key', async () => {
       const db = new DB()
-      const expireCommand = createExpire(db)
+      const expireCommand = new ExpireCommand()
 
-      const result = await runCommand(expireCommand, 'EXPIRE', [
-        Buffer.from('nonexistent'),
-        Buffer.from('10'),
-      ])
+      const result = runCommand(
+        expireCommand,
+        'EXPIRE',
+        [Buffer.from('nonexistent'), Buffer.from('10')],
+        db,
+      )
       assert.strictEqual(result.response, 0)
     })
 
     test('EXPIRE with 0 seconds deletes key', async () => {
       const db = new DB()
-      const expireCommand = createExpire(db)
+      const expireCommand = new ExpireCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = await runCommand(expireCommand, 'EXPIRE', [
-        Buffer.from('key'),
-        Buffer.from('0'),
-      ])
+      const result = runCommand(
+        expireCommand,
+        'EXPIRE',
+        [Buffer.from('key'), Buffer.from('0')],
+        db,
+      )
       assert.strictEqual(result.response, 1)
 
       // Key should be deleted
@@ -212,15 +224,17 @@ describe('Key Commands', () => {
 
     test('EXPIRE with negative seconds throws error', async () => {
       const db = new DB()
-      const expireCommand = createExpire(db)
+      const expireCommand = new ExpireCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        await runCommand(expireCommand, 'EXPIRE', [
-          Buffer.from('key'),
-          Buffer.from('-1'),
-        ])
+        runCommand(
+          expireCommand,
+          'EXPIRE',
+          [Buffer.from('key'), Buffer.from('-1')],
+          db,
+        )
         assert.fail('Should have thrown InvalidExpireTime error')
       } catch (error) {
         assert.ok(error instanceof InvalidExpireTime)
@@ -233,15 +247,17 @@ describe('Key Commands', () => {
 
     test('EXPIRE with non-integer throws error', async () => {
       const db = new DB()
-      const expireCommand = createExpire(db)
+      const expireCommand = new ExpireCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        await runCommand(expireCommand, 'EXPIRE', [
-          Buffer.from('key'),
-          Buffer.from('abc'),
-        ])
+        runCommand(
+          expireCommand,
+          'EXPIRE',
+          [Buffer.from('key'), Buffer.from('abc')],
+          db,
+        )
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -254,10 +270,10 @@ describe('Key Commands', () => {
 
     test('EXPIRE with wrong number of arguments throws error', async () => {
       const db = new DB()
-      const expireCommand = createExpire(db)
+      const expireCommand = new ExpireCommand()
 
       try {
-        await runCommand(expireCommand, 'EXPIRE', [Buffer.from('key')])
+        runCommand(expireCommand, 'EXPIRE', [Buffer.from('key')], db)
         assert.fail('Should have thrown WrongNumberOfArguments error')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -272,39 +288,45 @@ describe('Key Commands', () => {
   describe('EXPIREAT command', () => {
     test('EXPIREAT on existing key', async () => {
       const db = new DB()
-      const expireatCommand = createExpireat(db)
+      const expireatCommand = new ExpireatCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const futureTimestamp = Math.floor(Date.now() / 1000) + 10
-      const result = await runCommand(expireatCommand, 'EXPIREAT', [
-        Buffer.from('key'),
-        Buffer.from(futureTimestamp.toString()),
-      ])
+      const result = runCommand(
+        expireatCommand,
+        'EXPIREAT',
+        [Buffer.from('key'), Buffer.from(futureTimestamp.toString())],
+        db,
+      )
       assert.strictEqual(result.response, 1)
     })
 
     test('EXPIREAT on non-existent key', async () => {
       const db = new DB()
-      const expireatCommand = createExpireat(db)
+      const expireatCommand = new ExpireatCommand()
 
       const futureTimestamp = Math.floor(Date.now() / 1000) + 10
-      const result = await runCommand(expireatCommand, 'EXPIREAT', [
-        Buffer.from('nonexistent'),
-        Buffer.from(futureTimestamp.toString()),
-      ])
+      const result = runCommand(
+        expireatCommand,
+        'EXPIREAT',
+        [Buffer.from('nonexistent'), Buffer.from(futureTimestamp.toString())],
+        db,
+      )
       assert.strictEqual(result.response, 0)
     })
 
     test('EXPIREAT with past timestamp deletes key', async () => {
       const db = new DB()
-      const expireatCommand = createExpireat(db)
+      const expireatCommand = new ExpireatCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const pastTimestamp = Math.floor(Date.now() / 1000) - 1
-      const result = await runCommand(expireatCommand, 'EXPIREAT', [
-        Buffer.from('key'),
-        Buffer.from(pastTimestamp.toString()),
-      ])
+      const result = runCommand(
+        expireatCommand,
+        'EXPIREAT',
+        [Buffer.from('key'), Buffer.from(pastTimestamp.toString())],
+        db,
+      )
       assert.strictEqual(result.response, 1)
 
       // Key should be deleted
@@ -314,15 +336,17 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with negative timestamp throws error', async () => {
       const db = new DB()
-      const expireatCommand = createExpireat(db)
+      const expireatCommand = new ExpireatCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        await runCommand(expireatCommand, 'EXPIREAT', [
-          Buffer.from('key'),
-          Buffer.from('-1'),
-        ])
+        runCommand(
+          expireatCommand,
+          'EXPIREAT',
+          [Buffer.from('key'), Buffer.from('-1')],
+          db,
+        )
         assert.fail('Should have thrown InvalidExpireTime error')
       } catch (error) {
         assert.ok(error instanceof InvalidExpireTime)
@@ -335,15 +359,17 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with non-integer throws error', async () => {
       const db = new DB()
-      const expireatCommand = createExpireat(db)
+      const expireatCommand = new ExpireatCommand()
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        await runCommand(expireatCommand, 'EXPIREAT', [
-          Buffer.from('key'),
-          Buffer.from('abc'),
-        ])
+        runCommand(
+          expireatCommand,
+          'EXPIREAT',
+          [Buffer.from('key'), Buffer.from('abc')],
+          db,
+        )
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -356,10 +382,10 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with wrong number of arguments throws error', async () => {
       const db = new DB()
-      const expireatCommand = createExpireat(db)
+      const expireatCommand = new ExpireatCommand()
 
       try {
-        await runCommand(expireatCommand, 'EXPIREAT', [Buffer.from('key')])
+        runCommand(expireatCommand, 'EXPIREAT', [Buffer.from('key')], db)
         assert.fail('Should have thrown WrongNumberOfArguments error')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -374,15 +400,15 @@ describe('Key Commands', () => {
   describe('FLUSHDB command', () => {
     test('FLUSHDB on empty database', async () => {
       const db = new DB()
-      const flushdbCommand = createFlushdb(db)
+      const flushdbCommand = new FlushdbCommand()
 
-      const result = await runCommand(flushdbCommand, '', [])
+      const result = runCommand(flushdbCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
     })
 
     test('FLUSHDB removes all keys', async () => {
       const db = new DB()
-      const flushdbCommand = createFlushdb(db)
+      const flushdbCommand = new FlushdbCommand()
 
       // Add various data types
       db.set(
@@ -400,7 +426,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('set_key')) !== null)
 
       // Execute FLUSHDB
-      const result = await runCommand(flushdbCommand, '', [])
+      const result = runCommand(flushdbCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys are removed
@@ -412,7 +438,7 @@ describe('Key Commands', () => {
 
     test('FLUSHDB removes keys with expiration', async () => {
       const db = new DB()
-      const flushdbCommand = createFlushdb(db)
+      const flushdbCommand = new FlushdbCommand()
 
       // Add keys with expiration
       const expirationTime = Date.now() + 10000
@@ -432,7 +458,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('key2')) !== null)
 
       // Execute FLUSHDB
-      const result = await runCommand(flushdbCommand, '', [])
+      const result = runCommand(flushdbCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys and their expiration data are removed
@@ -446,15 +472,15 @@ describe('Key Commands', () => {
   describe('FLUSHALL command', () => {
     test('FLUSHALL on empty database', async () => {
       const db = new DB()
-      const flushallCommand = createFlushall(db)
+      const flushallCommand = new FlushallCommand()
 
-      const result = await runCommand(flushallCommand, '', [])
+      const result = runCommand(flushallCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
     })
 
     test('FLUSHALL removes all keys', async () => {
       const db = new DB()
-      const flushallCommand = createFlushall(db)
+      const flushallCommand = new FlushallCommand()
 
       // Add various data types
       db.set(
@@ -472,7 +498,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('set_key')) !== null)
 
       // Execute FLUSHALL
-      const result = await runCommand(flushallCommand, '', [])
+      const result = runCommand(flushallCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys are removed
@@ -484,7 +510,7 @@ describe('Key Commands', () => {
 
     test('FLUSHALL removes keys with expiration', async () => {
       const db = new DB()
-      const flushallCommand = createFlushall(db)
+      const flushallCommand = new FlushallCommand()
 
       // Add keys with expiration
       const expirationTime = Date.now() + 10000
@@ -504,7 +530,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('key2')) !== null)
 
       // Execute FLUSHALL
-      const result = await runCommand(flushallCommand, '', [])
+      const result = runCommand(flushallCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys and their expiration data are removed
@@ -517,8 +543,8 @@ describe('Key Commands', () => {
     test('FLUSHALL and FLUSHDB have same behavior in single-database implementation', async () => {
       const db1 = new DB()
       const db2 = new DB()
-      const flushdbCommand = createFlushdb(db1)
-      const flushallCommand = createFlushall(db2)
+      const flushdbCommand = new FlushdbCommand()
+      const flushallCommand = new FlushallCommand()
 
       // Add same data to both databases
       db1.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
@@ -527,8 +553,8 @@ describe('Key Commands', () => {
       db2.set(Buffer.from('key2'), new HashDataType())
 
       // Execute both commands
-      const result1 = await runCommand(flushdbCommand, '', [])
-      const result2 = await runCommand(flushallCommand, '', [])
+      const result1 = runCommand(flushdbCommand, '', [], db1)
+      const result2 = runCommand(flushallCommand, '', [], db2)
 
       // Both should return OK
       assert.strictEqual(result1.response, 'OK')
@@ -545,30 +571,30 @@ describe('Key Commands', () => {
   describe('DBSIZE command', () => {
     test('should return 0 for empty database', async () => {
       const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
-      const result = await runCommand(dbsizeCommand, 'DBSIZE', [])
+      const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
 
       assert.strictEqual(result.response, 0)
     })
 
     test('should return correct count after adding keys', async () => {
       const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
       // Add some keys
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
       db.set(Buffer.from('key3'), new StringDataType(Buffer.from('value3')))
 
-      const result = await runCommand(dbsizeCommand, 'DBSIZE', [])
+      const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
 
       assert.strictEqual(result.response, 3)
     })
 
     test('should exclude expired keys from count', async () => {
       const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
       // Add keys with different expiration times
       const now = Date.now()
@@ -584,36 +610,36 @@ describe('Key Commands', () => {
         now - 1000,
       ) // already expired
 
-      const result = await runCommand(dbsizeCommand, 'DBSIZE', [])
+      const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
 
       assert.strictEqual(result.response, 2) // Only non-expired keys
     })
 
     test('should return 0 after flushing database', async () => {
       const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
       // Add some keys
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
 
-      let result = await runCommand(dbsizeCommand, 'DBSIZE', [])
+      let result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
       assert.strictEqual(result.response, 2)
 
       // Flush database
       db.flushdb()
 
-      result = await runCommand(dbsizeCommand, 'DBSIZE', [])
+      result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
       assert.strictEqual(result.response, 0)
     })
 
     test('should throw error if arguments are provided', async () => {
       const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
-      await assert.rejects(
-        async () => {
-          await runCommand(dbsizeCommand, 'DBSIZE', [Buffer.from('arg1')])
+      assert.throws(
+        () => {
+          runCommand(dbsizeCommand, 'DBSIZE', [Buffer.from('arg1')], db)
         },
         error => {
           return error instanceof WrongNumberOfArguments
@@ -622,8 +648,7 @@ describe('Key Commands', () => {
     })
 
     test('should return empty array for getKeys when no arguments', () => {
-      const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
       const keys = dbsizeCommand.getKeys(Buffer.from('DBSIZE'), [])
 
@@ -631,8 +656,7 @@ describe('Key Commands', () => {
     })
 
     test('should return empty array for getKeys when arguments are provided', () => {
-      const db = new DB()
-      const dbsizeCommand = createDbsize(db)
+      const dbsizeCommand = new DbSizeCommand()
 
       const keys = dbsizeCommand.getKeys(Buffer.from('DBSIZE'), [
         Buffer.from('arg1'),
@@ -645,12 +669,12 @@ describe('Key Commands', () => {
   describe('Key Commands Error Handling', () => {
     test('Key commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const existsCommand = createExists(db)
-      const typeCommand = createType(db)
+      const existsCommand = new ExistsCommand()
+      const typeCommand = new TypeCommand()
 
       // Test EXISTS with no arguments
       try {
-        await runCommand(existsCommand, 'EXISTS', [])
+        runCommand(existsCommand, 'EXISTS', [], db)
         assert.fail('Should have thrown WrongNumberOfArguments for exists')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -663,7 +687,7 @@ describe('Key Commands', () => {
 
       // Test TYPE with no arguments
       try {
-        await runCommand(typeCommand, 'TYPE', [])
+        runCommand(typeCommand, 'TYPE', [], db)
         assert.fail('Should have thrown WrongNumberOfArguments for type')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -676,10 +700,12 @@ describe('Key Commands', () => {
 
       // Test TYPE with too many arguments
       try {
-        await runCommand(typeCommand, 'TYPE', [
-          Buffer.from('key1'),
-          Buffer.from('key2'),
-        ])
+        runCommand(
+          typeCommand,
+          'TYPE',
+          [Buffer.from('key1'), Buffer.from('key2')],
+          db,
+        )
         assert.fail('Should have thrown WrongNumberOfArguments for type')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)

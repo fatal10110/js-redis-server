@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class RpopCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class RpopCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('rpop', {
     arity: 2, // RPOP key
     flags: {
@@ -24,9 +20,9 @@ export class RpopCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(null)
@@ -41,8 +37,4 @@ export class RpopCommandDefinition
     }
     transport.write(value)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new RpopCommandDefinition(), { db })
 }

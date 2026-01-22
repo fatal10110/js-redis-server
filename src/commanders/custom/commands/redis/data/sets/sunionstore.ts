@@ -1,17 +1,15 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SunionstoreCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class SunionstoreCommand extends SchemaCommand<
+  [Buffer, Buffer, Buffer[]]
+> {
   metadata = defineCommand('sunionstore', {
     arity: -3, // SUNIONSTORE destination key [key ...]
     flags: {
@@ -24,11 +22,11 @@ export class SunionstoreCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.key(), t.variadic(t.key())])
+  protected schema = t.tuple([t.key(), t.key(), t.variadic(t.key())])
 
-  handler(
+  protected execute(
     [destination, firstKey, otherKeys]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const firstSet = db.get(firstKey)
 
@@ -95,8 +93,4 @@ export class SunionstoreCommandDefinition
     db.set(destination, resultSet)
     transport.write(resultMembers.length)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SunionstoreCommandDefinition(), { db })
 }

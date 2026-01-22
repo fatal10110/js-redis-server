@@ -1,20 +1,15 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HmsetCommandDefinition
-  implements
-    SchemaCommandRegistration<
-      [Buffer, Buffer, Buffer, Array<[Buffer, Buffer]>]
-    >
-{
+export class HmsetCommand extends SchemaCommand<
+  [Buffer, Buffer, Buffer, Array<[Buffer, Buffer]>]
+> {
   metadata = defineCommand('hmset', {
     arity: -4, // HMSET key field value [field value ...]
     flags: {
@@ -28,21 +23,21 @@ export class HmsetCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([
+  protected schema = t.tuple([
     t.key(),
     t.string(),
     t.string(),
     t.variadic(t.tuple([t.string(), t.string()])),
   ])
 
-  handler(
+  protected execute(
     [key, firstField, firstValue, restPairs]: [
       Buffer,
       Buffer,
       Buffer,
       Array<[Buffer, Buffer]>,
     ],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
@@ -59,8 +54,4 @@ export class HmsetCommandDefinition
     }
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HmsetCommandDefinition(), { db })
 }

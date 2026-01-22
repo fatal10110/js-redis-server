@@ -1,19 +1,12 @@
 import { NoScript, WrongNumberOfKeys } from '../../../../../core/errors'
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 import { replyValueToResponse } from './lua-reply'
 
 type EvalShaArgs = [string, number, Buffer[]]
 
-export class EvalShaCommandDefinition
-  implements SchemaCommandRegistration<EvalShaArgs>
-{
+export class EvalShaCommand extends SchemaCommand<EvalShaArgs> {
   metadata = defineCommand('evalsha', {
     arity: -3, // EVALSHA sha numkeys [key ...] [arg ...]
     flags: {
@@ -24,7 +17,11 @@ export class EvalShaCommandDefinition
     categories: [CommandCategory.SCRIPT],
   })
 
-  schema = t.tuple([t.string(), t.integer({ min: 0 }), t.variadic(t.key())])
+  protected schema = t.tuple([
+    t.string(),
+    t.integer({ min: 0 }),
+    t.variadic(t.key()),
+  ])
 
   getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
     const numKeys = parseInt(args[1]?.toString() ?? '', 10)
@@ -35,7 +32,7 @@ export class EvalShaCommandDefinition
     return args.slice(2, 2 + numKeys)
   }
 
-  handler([sha, numKeys, rest]: EvalShaArgs, ctx: SchemaCommandContext) {
+  protected execute([sha, numKeys, rest]: EvalShaArgs, ctx: CommandContext) {
     if (numKeys > rest.length) {
       throw new WrongNumberOfKeys()
     }
@@ -67,8 +64,4 @@ export class EvalShaCommandDefinition
     }
     ctx.transport.write(replyValueToResponse(reply, sha))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new EvalShaCommandDefinition(), { db })
 }

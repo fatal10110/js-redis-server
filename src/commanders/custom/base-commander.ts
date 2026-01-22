@@ -5,6 +5,7 @@ import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
 import { NormalState } from '../../core/transports/session-state'
+import type { ExecutionContextOptions } from './execution-context'
 
 type InitialStateFactory = (validator: RegistryCommandValidator) => NormalState
 
@@ -15,7 +16,9 @@ export class BaseCommander {
 
   constructor(
     private readonly commands: Record<string, Command>,
+    private readonly options: ExecutionContextOptions,
     private readonly createInitialState: InitialStateFactory,
+    private readonly luaCommands?: Record<string, Command>,
   ) {
     this.validator = new RegistryCommandValidator(this.commands)
     this.kernel = new RedisKernel(this.handleJob.bind(this))
@@ -32,9 +35,13 @@ export class BaseCommander {
   createAdapter(logger: Logger, socket: Socket): RespAdapter {
     const session = new Session(
       this.commands,
+      this.options,
       this.kernel,
       this.createInitialState(this.validator),
     )
+    if (this.luaCommands) {
+      session.setLuaCommands(this.luaCommands)
+    }
     const connectionId = session.getConnectionId()
     this.sessions.set(connectionId, session)
 

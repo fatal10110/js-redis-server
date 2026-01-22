@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class LtrimCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number, number]>
-{
+export class LtrimCommand extends SchemaCommand<[Buffer, number, number]> {
   metadata = defineCommand('ltrim', {
     arity: 4, // LTRIM key start stop
     flags: {
@@ -23,11 +19,11 @@ export class LtrimCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key(), t.integer(), t.integer()])
+  protected schema = t.tuple([t.key(), t.integer(), t.integer()])
 
-  handler(
+  protected execute(
     [key, start, stop]: [Buffer, number, number],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -43,8 +39,4 @@ export class LtrimCommandDefinition
     }
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new LtrimCommandDefinition(), { db })
 }
