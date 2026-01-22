@@ -11,7 +11,6 @@ export function runCommand(
   command: Command,
   rawCmd: string | Buffer,
   args: Buffer[],
-  _db: DB,
 ) {
   const transport = createMockTransport()
   const raw = typeof rawCmd === 'string' ? Buffer.from(rawCmd) : rawCmd

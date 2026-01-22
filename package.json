@@ -48,9 +48,9 @@
   "scripts": {
     "build": "rm -rf ./dist && rollup -c && chmod +x dist/cli.mjs",
     "start": "npm run build && node --enable-source-maps ./dist/cli.mjs",
-    "test": "glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests/**/*.test.ts\"",
-    "test:integration:mock": "TEST_BACKEND=mock glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests-integration/**/*.test.ts\"",
-    "test:integration:real": "npm run clean:redis && TEST_BACKEND=real glob -c \"node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test\" \"./tests-integration/**/*.test.ts\"",
+    "test": "tsc --noEmit && glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests/**/*.test.ts\"",
+    "test:integration:mock": "tsc --noEmit && TEST_BACKEND=mock glob -c \"node --enable-source-maps --import tsx --no-warnings --test\" \"./tests-integration/**/*.test.ts\"",
+    "test:integration:real": "tsc --noEmit && npm run clean:redis && TEST_BACKEND=real glob -c \"node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test\" \"./tests-integration/**/*.test.ts\"",
     "test:all": "npm run test && npm run test:integration:mock && npm run test:integration:real",
     "clean:redis": "redis-cli --cluster call 127.0.0.1:30000 FLUSHALL || redis-cli FLUSHALL || echo 'Redis cleanup attempted'",
     "lint": "eslint --ignore-path .eslintignore --ext .js,.ts",

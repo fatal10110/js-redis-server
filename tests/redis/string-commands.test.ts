@@ -29,12 +29,7 @@ describe('String Commands', () => {
       const db = new DB()
       const incrCommand = new IncrCommand(db)
 
-      const result = runCommand(
-        incrCommand,
-        'INCR',
-        [Buffer.from('counter')],
-        db,
-      )
+      const result = runCommand(incrCommand, 'INCR', [Buffer.from('counter')])
       assert.strictEqual(result.response, 1)
     })
 
@@ -42,13 +37,8 @@ describe('String Commands', () => {
       const db = new DB()
       const incrCommand = new IncrCommand(db)
 
-      runCommand(incrCommand, 'INCR', [Buffer.from('counter')], db)
-      const result = runCommand(
-        incrCommand,
-        'INCR',
-        [Buffer.from('counter')],
-        db,
-      )
+      runCommand(incrCommand, 'INCR', [Buffer.from('counter')])
+      const result = runCommand(incrCommand, 'INCR', [Buffer.from('counter')])
       assert.strictEqual(result.response, 2)
     })
 
@@ -57,7 +47,7 @@ describe('String Commands', () => {
       const incrCommand = new IncrCommand(db)
 
       db.set(Buffer.from('num'), new StringDataType(Buffer.from('10')))
-      const result = runCommand(incrCommand, 'INCR', [Buffer.from('num')], db)
+      const result = runCommand(incrCommand, 'INCR', [Buffer.from('num')])
       assert.strictEqual(result.response, 11)
     })
 
@@ -68,7 +58,7 @@ describe('String Commands', () => {
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('notanumber')))
 
       try {
-        runCommand(incrCommand, 'INCR', [Buffer.from('key')], db)
+        runCommand(incrCommand, 'INCR', [Buffer.from('key')])
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -87,7 +77,7 @@ describe('String Commands', () => {
       db.set(Buffer.from('key'), new ListDataType())
 
       try {
-        runCommand(incrCommand, 'INCR', [Buffer.from('key')], db)
+        runCommand(incrCommand, 'INCR', [Buffer.from('key')])
         assert.fail('Should have thrown WrongType error')
       } catch (error) {
         assert.ok(error instanceof WrongType)
@@ -105,12 +95,7 @@ describe('String Commands', () => {
       const db = new DB()
       const decrCommand = new DecrCommand(db)
 
-      const result = runCommand(
-        decrCommand,
-        'DECR',
-        [Buffer.from('counter')],
-        db,
-      )
+      const result = runCommand(decrCommand, 'DECR', [Buffer.from('counter')])
       assert.strictEqual(result.response, -1)
     })
 
@@ -118,13 +103,8 @@ describe('String Commands', () => {
       const db = new DB()
       const decrCommand = new DecrCommand(db)
 
-      runCommand(decrCommand, 'DECR', [Buffer.from('counter')], db)
-      const result = runCommand(
-        decrCommand,
-        'DECR',
-        [Buffer.from('counter')],
-        db,
-      )
+      runCommand(decrCommand, 'DECR', [Buffer.from('counter')])
+      const result = runCommand(decrCommand, 'DECR', [Buffer.from('counter')])
       assert.strictEqual(result.response, -2)
     })
   })
@@ -134,12 +114,10 @@ describe('String Commands', () => {
       const db = new DB()
       const appendCommand = new AppendCommand(db)
 
-      const result = runCommand(
-        appendCommand,
-        'APPEND',
-        [Buffer.from('key'), Buffer.from('hello')],
-        db,
-      )
+      const result = runCommand(appendCommand, 'APPEND', [
+        Buffer.from('key'),
+        Buffer.from('hello'),
+      ])
       assert.strictEqual(result.response, 5)
     })
 
@@ -147,18 +125,14 @@ describe('String Commands', () => {
       const db = new DB()
       const appendCommand = new AppendCommand(db)
 
-      runCommand(
-        appendCommand,
-        'APPEND',
-        [Buffer.from('key'), Buffer.from('hello')],
-        db,
-      )
-      const result = runCommand(
-        appendCommand,
-        'APPEND',
-        [Buffer.from('key'), Buffer.from(' world')],
-        db,
-      )
+      runCommand(appendCommand, 'APPEND', [
+        Buffer.from('key'),
+        Buffer.from('hello'),
+      ])
+      const result = runCommand(appendCommand, 'APPEND', [
+        Buffer.from('key'),
+        Buffer.from(' world'),
+      ])
       assert.strictEqual(result.response, 11)
 
       const value = db.get(Buffer.from('key')) as StringDataType
@@ -171,12 +145,7 @@ describe('String Commands', () => {
       const db = new DB()
       const strlenCommand = new StrlenCommand(db)
 
-      const result = runCommand(
-        strlenCommand,
-        'STRLEN',
-        [Buffer.from('key')],
-        db,
-      )
+      const result = runCommand(strlenCommand, 'STRLEN', [Buffer.from('key')])
       assert.strictEqual(result.response, 0)
     })
 
@@ -185,12 +154,7 @@ describe('String Commands', () => {
       const strlenCommand = new StrlenCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('hello')))
-      const result = runCommand(
-        strlenCommand,
-        'STRLEN',
-        [Buffer.from('key')],
-        db,
-      )
+      const result = runCommand(strlenCommand, 'STRLEN', [Buffer.from('key')])
       assert.strictEqual(result.response, 5)
     })
   })
@@ -203,12 +167,10 @@ describe('String Commands', () => {
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
 
-      const result = runCommand(
-        mgetCommand,
-        'MGET',
-        [Buffer.from('key1'), Buffer.from('key2')],
-        db,
-      )
+      const result = runCommand(mgetCommand, 'MGET', [
+        Buffer.from('key1'),
+        Buffer.from('key2'),
+      ])
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 2)
@@ -222,12 +184,10 @@ describe('String Commands', () => {
       const db = new DB()
       const mgetCommand = new MgetCommand(db)
 
-      const result = runCommand(
-        mgetCommand,
-        'MGET',
-        [Buffer.from('nonexistent1'), Buffer.from('nonexistent2')],
-        db,
-      )
+      const result = runCommand(mgetCommand, 'MGET', [
+        Buffer.from('nonexistent1'),
+        Buffer.from('nonexistent2'),
+      ])
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 2)
@@ -241,16 +201,11 @@ describe('String Commands', () => {
 
       db.set(Buffer.from('existing'), new StringDataType(Buffer.from('value')))
 
-      const result = runCommand(
-        mgetCommand,
-        'MGET',
-        [
-          Buffer.from('existing'),
-          Buffer.from('nonexistent'),
-          Buffer.from('existing'),
-        ],
-        db,
-      )
+      const result = runCommand(mgetCommand, 'MGET', [
+        Buffer.from('existing'),
+        Buffer.from('nonexistent'),
+        Buffer.from('existing'),
+      ])
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 3)
@@ -269,17 +224,12 @@ describe('String Commands', () => {
       db.set(Buffer.from('a'), new StringDataType(Buffer.from('first')))
       db.set(Buffer.from('m'), new StringDataType(Buffer.from('middle')))
 
-      const result = runCommand(
-        mgetCommand,
-        'MGET',
-        [
-          Buffer.from('a'),
-          Buffer.from('nonexistent'),
-          Buffer.from('m'),
-          Buffer.from('z'),
-        ],
-        db,
-      )
+      const result = runCommand(mgetCommand, 'MGET', [
+        Buffer.from('a'),
+        Buffer.from('nonexistent'),
+        Buffer.from('m'),
+        Buffer.from('z'),
+      ])
 
       assert.ok(Array.isArray(result.response))
       assert.strictEqual(result.response.length, 4)
@@ -294,7 +244,7 @@ describe('String Commands', () => {
       const mgetCommand = new MgetCommand(db)
 
       try {
-        runCommand(mgetCommand, 'MGET', [], db)
+        runCommand(mgetCommand, 'MGET', [])
         assert.fail('Expected WrongNumberOfArguments error')
       } catch (err) {
         assert.ok(err instanceof WrongNumberOfArguments)
@@ -307,12 +257,10 @@ describe('String Commands', () => {
       const db = new DB()
       const setCommand = new SetCommand(db)
 
-      const result = runCommand(
-        setCommand,
-        'SET',
-        [Buffer.from('mykey'), Buffer.from('myvalue')],
-        db,
-      )
+      const result = runCommand(setCommand, 'SET', [
+        Buffer.from('mykey'),
+        Buffer.from('myvalue'),
+      ])
 
       assert.strictEqual(result.response, 'OK')
 
@@ -325,17 +273,12 @@ describe('String Commands', () => {
       const db = new DB()
       const setCommand = new SetCommand(db)
 
-      const result = runCommand(
-        setCommand,
-        'SET',
-        [
-          Buffer.from('mykey'),
-          Buffer.from('myvalue'),
-          Buffer.from('EX'),
-          Buffer.from('10'),
-        ],
-        db,
-      )
+      const result = runCommand(setCommand, 'SET', [
+        Buffer.from('mykey'),
+        Buffer.from('myvalue'),
+        Buffer.from('EX'),
+        Buffer.from('10'),
+      ])
 
       assert.strictEqual(result.response, 'OK')
 
@@ -348,17 +291,12 @@ describe('String Commands', () => {
       const db = new DB()
       const setCommand = new SetCommand(db)
 
-      const result = runCommand(
-        setCommand,
-        'SET',
-        [
-          Buffer.from('mykey'),
-          Buffer.from('myvalue'),
-          Buffer.from('PX'),
-          Buffer.from('5000'),
-        ],
-        db,
-      )
+      const result = runCommand(setCommand, 'SET', [
+        Buffer.from('mykey'),
+        Buffer.from('myvalue'),
+        Buffer.from('PX'),
+        Buffer.from('5000'),
+      ])
 
       assert.strictEqual(result.response, 'OK')
 
@@ -371,12 +309,11 @@ describe('String Commands', () => {
       const db = new DB()
       const setCommand = new SetCommand(db)
 
-      const result = runCommand(
-        setCommand,
-        'SET',
-        [Buffer.from('mykey'), Buffer.from('myvalue'), Buffer.from('NX')],
-        db,
-      )
+      const result = runCommand(setCommand, 'SET', [
+        Buffer.from('mykey'),
+        Buffer.from('myvalue'),
+        Buffer.from('NX'),
+      ])
 
       assert.strictEqual(result.response, 'OK')
 
@@ -391,12 +328,11 @@ describe('String Commands', () => {
 
       db.set(Buffer.from('mykey'), new StringDataType(Buffer.from('existing')))
 
-      const result = runCommand(
-        setCommand,
-        'SET',
-        [Buffer.from('mykey'), Buffer.from('myvalue'), Buffer.from('NX')],
-        db,
-      )
+      const result = runCommand(setCommand, 'SET', [
+        Buffer.from('mykey'),
+        Buffer.from('myvalue'),
+        Buffer.from('NX'),
+      ])
 
       assert.strictEqual(result.response, null)
 
@@ -411,12 +347,11 @@ describe('String Commands', () => {
 
       db.set(Buffer.from('mykey'), new StringDataType(Buffer.from('oldvalue')))
 
-      const result = runCommand(
-        setCommand,
-        'SET',
-        [Buffer.from('mykey'), Buffer.from('newvalue'), Buffer.from('GET')],
-        db,
-      )
+      const result = runCommand(setCommand, 'SET', [
+        Buffer.from('mykey'),
+        Buffer.from('newvalue'),
+        Buffer.from('GET'),
+      ])
 
       assert.ok(Buffer.isBuffer(result.response))
       assert.strictEqual(result.response.toString(), 'oldvalue')
@@ -431,7 +366,7 @@ describe('String Commands', () => {
       const setCommand = new SetCommand(db)
 
       try {
-        runCommand(setCommand, 'SET', [Buffer.from('mykey')], db)
+        runCommand(setCommand, 'SET', [Buffer.from('mykey')])
         assert.fail('Expected WrongNumberOfArguments error')
       } catch (err) {
         assert.ok(err instanceof WrongNumberOfArguments)
@@ -444,12 +379,11 @@ describe('String Commands', () => {
 
       // EX without value
       try {
-        runCommand(
-          setCommand,
-          'SET',
-          [Buffer.from('mykey'), Buffer.from('myvalue'), Buffer.from('EX')],
-          db,
-        )
+        runCommand(setCommand, 'SET', [
+          Buffer.from('mykey'),
+          Buffer.from('myvalue'),
+          Buffer.from('EX'),
+        ])
         assert.fail('Expected WrongNumberOfArguments')
       } catch (err) {
         assert.ok(err instanceof WrongNumberOfArguments)
@@ -457,17 +391,12 @@ describe('String Commands', () => {
 
       // NX and XX together
       try {
-        runCommand(
-          setCommand,
-          'SET',
-          [
-            Buffer.from('mykey'),
-            Buffer.from('myvalue'),
-            Buffer.from('NX'),
-            Buffer.from('XX'),
-          ],
-          db,
-        )
+        runCommand(setCommand, 'SET', [
+          Buffer.from('mykey'),
+          Buffer.from('myvalue'),
+          Buffer.from('NX'),
+          Buffer.from('XX'),
+        ])
         assert.fail('Expected RedisSyntaxError')
       } catch (err) {
         assert.ok(err instanceof RedisSyntaxError)
