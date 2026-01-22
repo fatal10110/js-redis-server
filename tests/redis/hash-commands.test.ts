@@ -25,20 +25,17 @@ describe('Hash Commands', () => {
       const hsetCommand = new HsetCommand(db)
       const hgetCommand = new HgetCommand(db)
 
-      const result = runCommand(
-        hsetCommand,
-        'HSET',
-        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
-        db,
-      )
+      const result = runCommand(hsetCommand, 'HSET', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+        Buffer.from('value1'),
+      ])
       assert.strictEqual(result.response, 1)
 
-      const getResult = runCommand(
-        hgetCommand,
-        'HGET',
-        [Buffer.from('hash'), Buffer.from('field1')],
-        db,
-      )
+      const getResult = runCommand(hgetCommand, 'HGET', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+      ])
       assert.strictEqual(getResult.response, 'value1')
     })
 
@@ -47,19 +44,16 @@ describe('Hash Commands', () => {
       const hsetCommand = new HsetCommand(db)
       const hgetCommand = new HgetCommand(db)
 
-      runCommand(
-        hsetCommand,
-        'HSET',
-        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
-        db,
-      )
+      runCommand(hsetCommand, 'HSET', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+        Buffer.from('value1'),
+      ])
 
-      const result = runCommand(
-        hgetCommand,
-        'HGET',
-        [Buffer.from('hash'), Buffer.from('field2')],
-        db,
-      )
+      const result = runCommand(hgetCommand, 'HGET', [
+        Buffer.from('hash'),
+        Buffer.from('field2'),
+      ])
       assert.strictEqual(result.response, null)
     })
 
@@ -67,12 +61,10 @@ describe('Hash Commands', () => {
       const db = new DB()
       const hgetCommand = new HgetCommand(db)
 
-      const result = runCommand(
-        hgetCommand,
-        'HGET',
-        [Buffer.from('nonexistent'), Buffer.from('field')],
-        db,
-      )
+      const result = runCommand(hgetCommand, 'HGET', [
+        Buffer.from('nonexistent'),
+        Buffer.from('field'),
+      ])
       assert.strictEqual(result.response, null)
     })
   })
@@ -159,25 +151,18 @@ describe('Hash Commands', () => {
       const hsetCommand = new HsetCommand(db)
       const hdelCommand = new HdelCommand(db)
 
-      runCommand(
-        hsetCommand,
-        'HSET',
-        [
-          Buffer.from('hash'),
-          Buffer.from('field1'),
-          Buffer.from('value1'),
-          Buffer.from('field2'),
-          Buffer.from('value2'),
-        ],
-        db,
-      )
+      runCommand(hsetCommand, 'HSET', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+        Buffer.from('value1'),
+        Buffer.from('field2'),
+        Buffer.from('value2'),
+      ])
 
-      const result = runCommand(
-        hdelCommand,
-        'HDEL',
-        [Buffer.from('hash'), Buffer.from('field1')],
-        db,
-      )
+      const result = runCommand(hdelCommand, 'HDEL', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+      ])
       assert.strictEqual(result.response, 1)
     })
 
@@ -186,19 +171,16 @@ describe('Hash Commands', () => {
       const hsetCommand = new HsetCommand(db)
       const hdelCommand = new HdelCommand(db)
 
-      runCommand(
-        hsetCommand,
-        'HSET',
-        [Buffer.from('hash'), Buffer.from('field1'), Buffer.from('value1')],
-        db,
-      )
+      runCommand(hsetCommand, 'HSET', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+        Buffer.from('value1'),
+      ])
 
-      const result = runCommand(
-        hdelCommand,
-        'HDEL',
-        [Buffer.from('hash'), Buffer.from('field3')],
-        db,
-      )
+      const result = runCommand(hdelCommand, 'HDEL', [
+        Buffer.from('hash'),
+        Buffer.from('field3'),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -206,12 +188,10 @@ describe('Hash Commands', () => {
       const db = new DB()
       const hdelCommand = new HdelCommand(db)
 
-      const result = runCommand(
-        hdelCommand,
-        'HDEL',
-        [Buffer.from('nonexistent'), Buffer.from('field')],
-        db,
-      )
+      const result = runCommand(hdelCommand, 'HDEL', [
+        Buffer.from('nonexistent'),
+        Buffer.from('field'),
+      ])
       assert.strictEqual(result.response, 0)
     })
   })
@@ -221,12 +201,9 @@ describe('Hash Commands', () => {
       const db = new DB()
       const hgetallCommand = new HgetallCommand(db)
 
-      const result = runCommand(
-        hgetallCommand,
-        'HGETALL',
-        [Buffer.from('hash')],
-        db,
-      )
+      const result = runCommand(hgetallCommand, 'HGETALL', [
+        Buffer.from('hash'),
+      ])
       assert.deepStrictEqual(result.response, [])
     })
 
@@ -235,25 +212,17 @@ describe('Hash Commands', () => {
       const hsetCommand = new HsetCommand(db)
       const hgetallCommand = new HgetallCommand(db)
 
-      runCommand(
-        hsetCommand,
-        'HSET',
-        [
-          Buffer.from('hash'),
-          Buffer.from('field1'),
-          Buffer.from('value1'),
-          Buffer.from('field2'),
-          Buffer.from('value2'),
-        ],
-        db,
-      )
+      runCommand(hsetCommand, 'HSET', [
+        Buffer.from('hash'),
+        Buffer.from('field1'),
+        Buffer.from('value1'),
+        Buffer.from('field2'),
+        Buffer.from('value2'),
+      ])
 
-      const result = runCommand(
-        hgetallCommand,
-        'HGETALL',
-        [Buffer.from('hash')],
-        db,
-      )
+      const result = runCommand(hgetallCommand, 'HGETALL', [
+        Buffer.from('hash'),
+      ])
       assert.ok(Array.isArray(result.response))
       assert.strictEqual((result.response as Buffer[]).length, 4) // 2 fields * 2 (field + value)
     })
@@ -541,7 +510,7 @@ describe('Hash Commands', () => {
       const hgetCommand = new HgetCommand(db)
 
       try {
-        runCommand(hgetCommand, 'HGET', [Buffer.from('key')], db)
+        runCommand(hgetCommand, 'HGET', [Buffer.from('key')])
         assert.fail('Should have thrown WrongNumberOfArguments for hget')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)

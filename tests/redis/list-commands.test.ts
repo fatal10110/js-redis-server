@@ -22,20 +22,16 @@ describe('List Commands', () => {
       const lpushCommand = new LpushCommand(db)
       const rpushCommand = new RpushCommand(db)
 
-      const result = runCommand(
-        lpushCommand,
-        'LPUSH',
-        [Buffer.from('list'), Buffer.from('item1')],
-        db,
-      )
+      const result = runCommand(lpushCommand, 'LPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+      ])
       assert.strictEqual(result.response, 1)
 
-      const result2 = runCommand(
-        rpushCommand,
-        'RPUSH',
-        [Buffer.from('list'), Buffer.from('item2')],
-        db,
-      )
+      const result2 = runCommand(rpushCommand, 'RPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item2'),
+      ])
       assert.strictEqual(result2.response, 2)
     })
 
@@ -43,17 +39,12 @@ describe('List Commands', () => {
       const db = new DB()
       const lpushCommand = new LpushCommand(db)
 
-      const result = runCommand(
-        lpushCommand,
-        'LPUSH',
-        [
-          Buffer.from('list'),
-          Buffer.from('item1'),
-          Buffer.from('item2'),
-          Buffer.from('item3'),
-        ],
-        db,
-      )
+      const result = runCommand(lpushCommand, 'LPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+        Buffer.from('item2'),
+        Buffer.from('item3'),
+      ])
       assert.strictEqual(result.response, 3)
     })
 
@@ -61,17 +52,12 @@ describe('List Commands', () => {
       const db = new DB()
       const rpushCommand = new RpushCommand(db)
 
-      const result = runCommand(
-        rpushCommand,
-        'RPUSH',
-        [
-          Buffer.from('list'),
-          Buffer.from('item1'),
-          Buffer.from('item2'),
-          Buffer.from('item3'),
-        ],
-        db,
-      )
+      const result = runCommand(rpushCommand, 'RPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+        Buffer.from('item2'),
+        Buffer.from('item3'),
+      ])
       assert.strictEqual(result.response, 3)
     })
   })
@@ -82,10 +68,10 @@ describe('List Commands', () => {
       const lpopCommand = new LpopCommand(db)
       const rpopCommand = new RpopCommand(db)
 
-      const result1 = runCommand(lpopCommand, 'LPOP', [Buffer.from('list')], db)
+      const result1 = runCommand(lpopCommand, 'LPOP', [Buffer.from('list')])
       assert.strictEqual(result1.response, null)
 
-      const result2 = runCommand(rpopCommand, 'RPOP', [Buffer.from('list')], db)
+      const result2 = runCommand(rpopCommand, 'RPOP', [Buffer.from('list')])
       assert.strictEqual(result2.response, null)
     })
 
@@ -95,17 +81,16 @@ describe('List Commands', () => {
       const lpopCommand = new LpopCommand(db)
       const rpopCommand = new RpopCommand(db)
 
-      runCommand(
-        lpushCommand,
-        'LPUSH',
-        [Buffer.from('list'), Buffer.from('item1'), Buffer.from('item2')],
-        db,
-      )
+      runCommand(lpushCommand, 'LPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+        Buffer.from('item2'),
+      ])
 
-      const result1 = runCommand(lpopCommand, 'LPOP', [Buffer.from('list')], db)
+      const result1 = runCommand(lpopCommand, 'LPOP', [Buffer.from('list')])
       assert.strictEqual(result1.response, 'item2')
 
-      const result2 = runCommand(rpopCommand, 'RPOP', [Buffer.from('list')], db)
+      const result2 = runCommand(rpopCommand, 'RPOP', [Buffer.from('list')])
       assert.strictEqual(result2.response, 'item1')
 
       // List should be empty and removed from DB
@@ -118,7 +103,7 @@ describe('List Commands', () => {
       const db = new DB()
       const llenCommand = new LlenCommand(db)
 
-      const result = runCommand(llenCommand, 'LLEN', [Buffer.from('list')], db)
+      const result = runCommand(llenCommand, 'LLEN', [Buffer.from('list')])
       assert.strictEqual(result.response, 0)
     })
 
@@ -127,13 +112,12 @@ describe('List Commands', () => {
       const llenCommand = new LlenCommand(db)
       const lpushCommand = new LpushCommand(db)
 
-      runCommand(
-        lpushCommand,
-        'LPUSH',
-        [Buffer.from('list'), Buffer.from('item1'), Buffer.from('item2')],
-        db,
-      )
-      const result = runCommand(llenCommand, 'LLEN', [Buffer.from('list')], db)
+      runCommand(lpushCommand, 'LPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+        Buffer.from('item2'),
+      ])
+      const result = runCommand(llenCommand, 'LLEN', [Buffer.from('list')])
       assert.strictEqual(result.response, 2)
     })
   })
@@ -143,12 +127,11 @@ describe('List Commands', () => {
       const db = new DB()
       const lrangeCommand = new LrangeCommand(db)
 
-      const result = runCommand(
-        lrangeCommand,
-        'LRANGE',
-        [Buffer.from('list'), Buffer.from('0'), Buffer.from('-1')],
-        db,
-      )
+      const result = runCommand(lrangeCommand, 'LRANGE', [
+        Buffer.from('list'),
+        Buffer.from('0'),
+        Buffer.from('-1'),
+      ])
       assert.deepStrictEqual(result.response, [])
     })
 
@@ -157,24 +140,18 @@ describe('List Commands', () => {
       const lrangeCommand = new LrangeCommand(db)
       const lpushCommand = new LpushCommand(db)
 
-      runCommand(
-        lpushCommand,
-        'LPUSH',
-        [
-          Buffer.from('list'),
-          Buffer.from('item1'),
-          Buffer.from('item2'),
-          Buffer.from('item3'),
-        ],
-        db,
-      )
+      runCommand(lpushCommand, 'LPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+        Buffer.from('item2'),
+        Buffer.from('item3'),
+      ])
 
-      const result = runCommand(
-        lrangeCommand,
-        'LRANGE',
-        [Buffer.from('list'), Buffer.from('0'), Buffer.from('1')],
-        db,
-      )
+      const result = runCommand(lrangeCommand, 'LRANGE', [
+        Buffer.from('list'),
+        Buffer.from('0'),
+        Buffer.from('1'),
+      ])
       assert.ok(Array.isArray(result.response))
       assert.strictEqual((result.response as Buffer[]).length, 2)
     })
@@ -184,20 +161,17 @@ describe('List Commands', () => {
       const lrangeCommand = new LrangeCommand(db)
       const lpushCommand = new LpushCommand(db)
 
-      runCommand(
-        lpushCommand,
-        'LPUSH',
-        [Buffer.from('list'), Buffer.from('item1')],
-        db,
-      )
+      runCommand(lpushCommand, 'LPUSH', [
+        Buffer.from('list'),
+        Buffer.from('item1'),
+      ])
 
       try {
-        runCommand(
-          lrangeCommand,
-          'LRANGE',
-          [Buffer.from('list'), Buffer.from('abc'), Buffer.from('def')],
-          db,
-        )
+        runCommand(lrangeCommand, 'LRANGE', [
+          Buffer.from('list'),
+          Buffer.from('abc'),
+          Buffer.from('def'),
+        ])
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -365,7 +339,7 @@ describe('List Commands', () => {
       const llenCommand = new LlenCommand(db)
 
       try {
-        runCommand(llenCommand, 'LLEN', [], db)
+        runCommand(llenCommand, 'LLEN', [])
         assert.fail('Should have thrown WrongNumberOfArguments for llen')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)

@@ -30,12 +30,10 @@ describe('Key Commands', () => {
       const db = new DB()
       const existsCommand = new ExistsCommand(db)
 
-      const result = runCommand(
-        existsCommand,
-        'EXISTS',
-        [Buffer.from('key1'), Buffer.from('key2')],
-        db,
-      )
+      const result = runCommand(existsCommand, 'EXISTS', [
+        Buffer.from('key1'),
+        Buffer.from('key2'),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -44,12 +42,10 @@ describe('Key Commands', () => {
       const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(
-        existsCommand,
-        'EXISTS',
-        [Buffer.from('key1'), Buffer.from('key2')],
-        db,
-      )
+      const result = runCommand(existsCommand, 'EXISTS', [
+        Buffer.from('key1'),
+        Buffer.from('key2'),
+      ])
       assert.strictEqual(result.response, 1)
     })
 
@@ -59,12 +55,10 @@ describe('Key Commands', () => {
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(
-        existsCommand,
-        'EXISTS',
-        [Buffer.from('key1'), Buffer.from('key2')],
-        db,
-      )
+      const result = runCommand(existsCommand, 'EXISTS', [
+        Buffer.from('key1'),
+        Buffer.from('key2'),
+      ])
       assert.strictEqual(result.response, 2)
     })
 
@@ -73,12 +67,7 @@ describe('Key Commands', () => {
       const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(
-        existsCommand,
-        'EXISTS',
-        [Buffer.from('key')],
-        db,
-      )
+      const result = runCommand(existsCommand, 'EXISTS', [Buffer.from('key')])
       assert.strictEqual(result.response, 1)
     })
 
@@ -87,12 +76,11 @@ describe('Key Commands', () => {
       const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(
-        existsCommand,
-        'EXISTS',
-        [Buffer.from('key'), Buffer.from('key'), Buffer.from('key')],
-        db,
-      )
+      const result = runCommand(existsCommand, 'EXISTS', [
+        Buffer.from('key'),
+        Buffer.from('key'),
+        Buffer.from('key'),
+      ])
       assert.strictEqual(result.response, 3)
     })
   })
@@ -102,7 +90,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const typeCommand = new TypeCommand(db)
 
-      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('key')], db)
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('key')])
       assert.strictEqual(result.response, 'none')
     })
 
@@ -111,7 +99,7 @@ describe('Key Commands', () => {
       const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('str'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('str')], db)
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('str')])
       assert.strictEqual(result.response, 'string')
     })
 
@@ -120,7 +108,7 @@ describe('Key Commands', () => {
       const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('hash'), new HashDataType())
-      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('hash')], db)
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('hash')])
       assert.strictEqual(result.response, 'hash')
     })
 
@@ -129,7 +117,7 @@ describe('Key Commands', () => {
       const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('list'), new ListDataType())
-      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('list')], db)
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('list')])
       assert.strictEqual(result.response, 'list')
     })
 
@@ -138,7 +126,7 @@ describe('Key Commands', () => {
       const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('set'), new SetDataType())
-      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('set')], db)
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('set')])
       assert.strictEqual(result.response, 'set')
     })
   })
@@ -148,7 +136,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const ttlCommand = new TtlCommand(db)
 
-      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
+      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')])
       assert.strictEqual(result.response, -2)
     })
 
@@ -157,7 +145,7 @@ describe('Key Commands', () => {
       const ttlCommand = new TtlCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
+      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')])
       assert.strictEqual(result.response, -1)
     })
 
@@ -171,7 +159,7 @@ describe('Key Commands', () => {
         new StringDataType(Buffer.from('value')),
         expirationTime,
       )
-      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
+      const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')])
       assert.strictEqual(result.response, 10)
     })
   })
@@ -182,12 +170,10 @@ describe('Key Commands', () => {
       const expireCommand = new ExpireCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(
-        expireCommand,
-        'EXPIRE',
-        [Buffer.from('key'), Buffer.from('10')],
-        db,
-      )
+      const result = runCommand(expireCommand, 'EXPIRE', [
+        Buffer.from('key'),
+        Buffer.from('10'),
+      ])
       assert.strictEqual(result.response, 1)
     })
 
@@ -195,12 +181,10 @@ describe('Key Commands', () => {
       const db = new DB()
       const expireCommand = new ExpireCommand(db)
 
-      const result = runCommand(
-        expireCommand,
-        'EXPIRE',
-        [Buffer.from('nonexistent'), Buffer.from('10')],
-        db,
-      )
+      const result = runCommand(expireCommand, 'EXPIRE', [
+        Buffer.from('nonexistent'),
+        Buffer.from('10'),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -209,12 +193,10 @@ describe('Key Commands', () => {
       const expireCommand = new ExpireCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
-      const result = runCommand(
-        expireCommand,
-        'EXPIRE',
-        [Buffer.from('key'), Buffer.from('0')],
-        db,
-      )
+      const result = runCommand(expireCommand, 'EXPIRE', [
+        Buffer.from('key'),
+        Buffer.from('0'),
+      ])
       assert.strictEqual(result.response, 1)
 
       // Key should be deleted
@@ -229,12 +211,10 @@ describe('Key Commands', () => {
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        runCommand(
-          expireCommand,
-          'EXPIRE',
-          [Buffer.from('key'), Buffer.from('-1')],
-          db,
-        )
+        runCommand(expireCommand, 'EXPIRE', [
+          Buffer.from('key'),
+          Buffer.from('-1'),
+        ])
         assert.fail('Should have thrown InvalidExpireTime error')
       } catch (error) {
         assert.ok(error instanceof InvalidExpireTime)
@@ -252,12 +232,10 @@ describe('Key Commands', () => {
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        runCommand(
-          expireCommand,
-          'EXPIRE',
-          [Buffer.from('key'), Buffer.from('abc')],
-          db,
-        )
+        runCommand(expireCommand, 'EXPIRE', [
+          Buffer.from('key'),
+          Buffer.from('abc'),
+        ])
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -273,7 +251,7 @@ describe('Key Commands', () => {
       const expireCommand = new ExpireCommand(db)
 
       try {
-        runCommand(expireCommand, 'EXPIRE', [Buffer.from('key')], db)
+        runCommand(expireCommand, 'EXPIRE', [Buffer.from('key')])
         assert.fail('Should have thrown WrongNumberOfArguments error')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -292,12 +270,10 @@ describe('Key Commands', () => {
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const futureTimestamp = Math.floor(Date.now() / 1000) + 10
-      const result = runCommand(
-        expireatCommand,
-        'EXPIREAT',
-        [Buffer.from('key'), Buffer.from(futureTimestamp.toString())],
-        db,
-      )
+      const result = runCommand(expireatCommand, 'EXPIREAT', [
+        Buffer.from('key'),
+        Buffer.from(futureTimestamp.toString()),
+      ])
       assert.strictEqual(result.response, 1)
     })
 
@@ -306,12 +282,10 @@ describe('Key Commands', () => {
       const expireatCommand = new ExpireatCommand(db)
 
       const futureTimestamp = Math.floor(Date.now() / 1000) + 10
-      const result = runCommand(
-        expireatCommand,
-        'EXPIREAT',
-        [Buffer.from('nonexistent'), Buffer.from(futureTimestamp.toString())],
-        db,
-      )
+      const result = runCommand(expireatCommand, 'EXPIREAT', [
+        Buffer.from('nonexistent'),
+        Buffer.from(futureTimestamp.toString()),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -321,12 +295,10 @@ describe('Key Commands', () => {
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const pastTimestamp = Math.floor(Date.now() / 1000) - 1
-      const result = runCommand(
-        expireatCommand,
-        'EXPIREAT',
-        [Buffer.from('key'), Buffer.from(pastTimestamp.toString())],
-        db,
-      )
+      const result = runCommand(expireatCommand, 'EXPIREAT', [
+        Buffer.from('key'),
+        Buffer.from(pastTimestamp.toString()),
+      ])
       assert.strictEqual(result.response, 1)
 
       // Key should be deleted
@@ -341,12 +313,10 @@ describe('Key Commands', () => {
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        runCommand(
-          expireatCommand,
-          'EXPIREAT',
-          [Buffer.from('key'), Buffer.from('-1')],
-          db,
-        )
+        runCommand(expireatCommand, 'EXPIREAT', [
+          Buffer.from('key'),
+          Buffer.from('-1'),
+        ])
         assert.fail('Should have thrown InvalidExpireTime error')
       } catch (error) {
         assert.ok(error instanceof InvalidExpireTime)
@@ -364,12 +334,10 @@ describe('Key Commands', () => {
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        runCommand(
-          expireatCommand,
-          'EXPIREAT',
-          [Buffer.from('key'), Buffer.from('abc')],
-          db,
-        )
+        runCommand(expireatCommand, 'EXPIREAT', [
+          Buffer.from('key'),
+          Buffer.from('abc'),
+        ])
         assert.fail('Should have thrown ExpectedInteger error')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -385,7 +353,7 @@ describe('Key Commands', () => {
       const expireatCommand = new ExpireatCommand(db)
 
       try {
-        runCommand(expireatCommand, 'EXPIREAT', [Buffer.from('key')], db)
+        runCommand(expireatCommand, 'EXPIREAT', [Buffer.from('key')])
         assert.fail('Should have thrown WrongNumberOfArguments error')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -402,7 +370,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const flushdbCommand = new FlushdbCommand(db)
 
-      const result = runCommand(flushdbCommand, '', [], db)
+      const result = runCommand(flushdbCommand, '', [])
       assert.strictEqual(result.response, 'OK')
     })
 
@@ -426,7 +394,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('set_key')) !== null)
 
       // Execute FLUSHDB
-      const result = runCommand(flushdbCommand, '', [], db)
+      const result = runCommand(flushdbCommand, '', [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys are removed
@@ -458,7 +426,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('key2')) !== null)
 
       // Execute FLUSHDB
-      const result = runCommand(flushdbCommand, '', [], db)
+      const result = runCommand(flushdbCommand, '', [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys and their expiration data are removed
@@ -474,7 +442,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const flushallCommand = new FlushallCommand(db)
 
-      const result = runCommand(flushallCommand, '', [], db)
+      const result = runCommand(flushallCommand, '', [])
       assert.strictEqual(result.response, 'OK')
     })
 
@@ -498,7 +466,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('set_key')) !== null)
 
       // Execute FLUSHALL
-      const result = runCommand(flushallCommand, '', [], db)
+      const result = runCommand(flushallCommand, '', [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys are removed
@@ -530,7 +498,7 @@ describe('Key Commands', () => {
       assert.ok(db.get(Buffer.from('key2')) !== null)
 
       // Execute FLUSHALL
-      const result = runCommand(flushallCommand, '', [], db)
+      const result = runCommand(flushallCommand, '', [])
       assert.strictEqual(result.response, 'OK')
 
       // Verify all keys and their expiration data are removed
@@ -553,8 +521,8 @@ describe('Key Commands', () => {
       db2.set(Buffer.from('key2'), new HashDataType())
 
       // Execute both commands
-      const result1 = runCommand(flushdbCommand, '', [], db1)
-      const result2 = runCommand(flushallCommand, '', [], db2)
+      const result1 = runCommand(flushdbCommand, '', [])
+      const result2 = runCommand(flushallCommand, '', [])
 
       // Both should return OK
       assert.strictEqual(result1.response, 'OK')
@@ -573,7 +541,7 @@ describe('Key Commands', () => {
       const db = new DB()
       const dbsizeCommand = new DbSizeCommand(db)
 
-      const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
+      const result = runCommand(dbsizeCommand, 'DBSIZE', [])
 
       assert.strictEqual(result.response, 0)
     })
@@ -587,7 +555,7 @@ describe('Key Commands', () => {
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
       db.set(Buffer.from('key3'), new StringDataType(Buffer.from('value3')))
 
-      const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
+      const result = runCommand(dbsizeCommand, 'DBSIZE', [])
 
       assert.strictEqual(result.response, 3)
     })
@@ -610,7 +578,7 @@ describe('Key Commands', () => {
         now - 1000,
       ) // already expired
 
-      const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
+      const result = runCommand(dbsizeCommand, 'DBSIZE', [])
 
       assert.strictEqual(result.response, 2) // Only non-expired keys
     })
@@ -623,13 +591,13 @@ describe('Key Commands', () => {
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value2')))
 
-      let result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
+      let result = runCommand(dbsizeCommand, 'DBSIZE', [])
       assert.strictEqual(result.response, 2)
 
       // Flush database
       db.flushdb()
 
-      result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
+      result = runCommand(dbsizeCommand, 'DBSIZE', [])
       assert.strictEqual(result.response, 0)
     })
 
@@ -639,7 +607,7 @@ describe('Key Commands', () => {
 
       assert.throws(
         () => {
-          runCommand(dbsizeCommand, 'DBSIZE', [Buffer.from('arg1')], db)
+          runCommand(dbsizeCommand, 'DBSIZE', [Buffer.from('arg1')])
         },
         error => {
           return error instanceof WrongNumberOfArguments
@@ -676,7 +644,7 @@ describe('Key Commands', () => {
 
       // Test EXISTS with no arguments
       try {
-        runCommand(existsCommand, 'EXISTS', [], db)
+        runCommand(existsCommand, 'EXISTS', [])
         assert.fail('Should have thrown WrongNumberOfArguments for exists')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -689,7 +657,7 @@ describe('Key Commands', () => {
 
       // Test TYPE with no arguments
       try {
-        runCommand(typeCommand, 'TYPE', [], db)
+        runCommand(typeCommand, 'TYPE', [])
         assert.fail('Should have thrown WrongNumberOfArguments for type')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -702,12 +670,10 @@ describe('Key Commands', () => {
 
       // Test TYPE with too many arguments
       try {
-        runCommand(
-          typeCommand,
-          'TYPE',
-          [Buffer.from('key1'), Buffer.from('key2')],
-          db,
-        )
+        runCommand(typeCommand, 'TYPE', [
+          Buffer.from('key1'),
+          Buffer.from('key2'),
+        ])
         assert.fail('Should have thrown WrongNumberOfArguments for type')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)

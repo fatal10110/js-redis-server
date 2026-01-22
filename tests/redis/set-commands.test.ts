@@ -19,12 +19,10 @@ describe('Set Commands', () => {
       const db = new DB()
       const saddCommand = new SaddCommand(db)
 
-      const result = runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1')],
-        db,
-      )
+      const result = runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 1)
     })
 
@@ -32,18 +30,14 @@ describe('Set Commands', () => {
       const db = new DB()
       const saddCommand = new SaddCommand(db)
 
-      runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1')],
-        db,
-      )
-      const result = runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1')],
-        db,
-      )
+      runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+      ])
+      const result = runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -51,17 +45,12 @@ describe('Set Commands', () => {
       const db = new DB()
       const saddCommand = new SaddCommand(db)
 
-      const result = runCommand(
-        saddCommand,
-        'SADD',
-        [
-          Buffer.from('set'),
-          Buffer.from('member1'),
-          Buffer.from('member2'),
-          Buffer.from('member3'),
-        ],
-        db,
-      )
+      const result = runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+        Buffer.from('member2'),
+        Buffer.from('member3'),
+      ])
       assert.strictEqual(result.response, 3)
     })
   })
@@ -71,12 +60,10 @@ describe('Set Commands', () => {
       const db = new DB()
       const sremCommand = new SremCommand(db)
 
-      const result = runCommand(
-        sremCommand,
-        'SREM',
-        [Buffer.from('set'), Buffer.from('member1')],
-        db,
-      )
+      const result = runCommand(sremCommand, 'SREM', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -85,19 +72,16 @@ describe('Set Commands', () => {
       const saddCommand = new SaddCommand(db)
       const sremCommand = new SremCommand(db)
 
-      runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1'), Buffer.from('member2')],
-        db,
-      )
+      runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+        Buffer.from('member2'),
+      ])
 
-      const result = runCommand(
-        sremCommand,
-        'SREM',
-        [Buffer.from('set'), Buffer.from('member1')],
-        db,
-      )
+      const result = runCommand(sremCommand, 'SREM', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 1)
     })
 
@@ -106,19 +90,15 @@ describe('Set Commands', () => {
       const saddCommand = new SaddCommand(db)
       const sremCommand = new SremCommand(db)
 
-      runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1')],
-        db,
-      )
+      runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+      ])
 
-      const result = runCommand(
-        sremCommand,
-        'SREM',
-        [Buffer.from('set'), Buffer.from('member3')],
-        db,
-      )
+      const result = runCommand(sremCommand, 'SREM', [
+        Buffer.from('set'),
+        Buffer.from('member3'),
+      ])
       assert.strictEqual(result.response, 0)
     })
   })
@@ -128,7 +108,7 @@ describe('Set Commands', () => {
       const db = new DB()
       const scardCommand = new ScardCommand(db)
 
-      const result = runCommand(scardCommand, 'SCARD', [Buffer.from('set')], db)
+      const result = runCommand(scardCommand, 'SCARD', [Buffer.from('set')])
       assert.strictEqual(result.response, 0)
     })
 
@@ -137,13 +117,12 @@ describe('Set Commands', () => {
       const scardCommand = new ScardCommand(db)
       const saddCommand = new SaddCommand(db)
 
-      runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1'), Buffer.from('member2')],
-        db,
-      )
-      const result = runCommand(scardCommand, 'SCARD', [Buffer.from('set')], db)
+      runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+        Buffer.from('member2'),
+      ])
+      const result = runCommand(scardCommand, 'SCARD', [Buffer.from('set')])
       assert.strictEqual(result.response, 2)
     })
   })
@@ -153,12 +132,9 @@ describe('Set Commands', () => {
       const db = new DB()
       const smembersCommand = new SmembersCommand(db)
 
-      const result = runCommand(
-        smembersCommand,
-        'SMEMBERS',
-        [Buffer.from('set')],
-        db,
-      )
+      const result = runCommand(smembersCommand, 'SMEMBERS', [
+        Buffer.from('set'),
+      ])
       assert.deepStrictEqual(result.response, [])
     })
 
@@ -167,18 +143,14 @@ describe('Set Commands', () => {
       const smembersCommand = new SmembersCommand(db)
       const saddCommand = new SaddCommand(db)
 
-      runCommand(
-        saddCommand,
-        'SADD',
-        [Buffer.from('set'), Buffer.from('member1'), Buffer.from('member2')],
-        db,
-      )
-      const result = runCommand(
-        smembersCommand,
-        'SMEMBERS',
-        [Buffer.from('set')],
-        db,
-      )
+      runCommand(saddCommand, 'SADD', [
+        Buffer.from('set'),
+        Buffer.from('member1'),
+        Buffer.from('member2'),
+      ])
+      const result = runCommand(smembersCommand, 'SMEMBERS', [
+        Buffer.from('set'),
+      ])
       assert.ok(Array.isArray(result.response))
       assert.strictEqual((result.response as Buffer[]).length, 2)
     })

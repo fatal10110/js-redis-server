@@ -31,36 +31,29 @@ describe('Sorted Set Commands', () => {
       const zaddCommand = new ZaddCommand(db)
 
       // Add single member
-      let result = runCommand(
-        zaddCommand,
-        'ZADD',
-        [Buffer.from('zset'), Buffer.from('1.5'), Buffer.from('member1')],
-        db,
-      )
+      let result = runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('1.5'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 1)
 
       // Add multiple members
-      result = runCommand(
-        zaddCommand,
-        'ZADD',
-        [
-          Buffer.from('zset'),
-          Buffer.from('2.5'),
-          Buffer.from('member2'),
-          Buffer.from('0.5'),
-          Buffer.from('member3'),
-        ],
-        db,
-      )
+      result = runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('2.5'),
+        Buffer.from('member2'),
+        Buffer.from('0.5'),
+        Buffer.from('member3'),
+      ])
       assert.strictEqual(result.response, 2)
 
       // Add existing member (should update score, return 0)
-      result = runCommand(
-        zaddCommand,
-        'ZADD',
-        [Buffer.from('zset'), Buffer.from('3.0'), Buffer.from('member1')],
-        db,
-      )
+      result = runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('3.0'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 0)
     })
 
@@ -69,19 +62,17 @@ describe('Sorted Set Commands', () => {
       const zaddCommand = new ZaddCommand(db)
 
       try {
-        runCommand(zaddCommand, 'ZADD', [Buffer.from('zset')], db)
+        runCommand(zaddCommand, 'ZADD', [Buffer.from('zset')])
         assert.fail('Should have thrown WrongNumberOfArguments')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
       }
 
       try {
-        runCommand(
-          zaddCommand,
-          'ZADD',
-          [Buffer.from('zset'), Buffer.from('1.0')],
-          db,
-        )
+        runCommand(zaddCommand, 'ZADD', [
+          Buffer.from('zset'),
+          Buffer.from('1.0'),
+        ])
         assert.fail('Should have thrown WrongNumberOfArguments')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -93,16 +84,11 @@ describe('Sorted Set Commands', () => {
       const zaddCommand = new ZaddCommand(db)
 
       try {
-        runCommand(
-          zaddCommand,
-          'ZADD',
-          [
-            Buffer.from('zset'),
-            Buffer.from('notanumber'),
-            Buffer.from('member'),
-          ],
-          db,
-        )
+        runCommand(zaddCommand, 'ZADD', [
+          Buffer.from('zset'),
+          Buffer.from('notanumber'),
+          Buffer.from('member'),
+        ])
         assert.fail('Should have thrown ExpectedFloat')
       } catch (error) {
         assert.ok(error instanceof ExpectedFloat)
@@ -117,12 +103,11 @@ describe('Sorted Set Commands', () => {
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
       try {
-        runCommand(
-          zaddCommand,
-          'ZADD',
-          [Buffer.from('key'), Buffer.from('1.0'), Buffer.from('member')],
-          db,
-        )
+        runCommand(zaddCommand, 'ZADD', [
+          Buffer.from('key'),
+          Buffer.from('1.0'),
+          Buffer.from('member'),
+        ])
         assert.fail('Should have thrown WrongType')
       } catch (error) {
         assert.ok(error instanceof WrongType)
@@ -137,37 +122,29 @@ describe('Sorted Set Commands', () => {
       const zremCommand = new ZremCommand(db)
 
       // Set up sorted set
-      runCommand(
-        zaddCommand,
-        'ZADD',
-        [
-          Buffer.from('zset'),
-          Buffer.from('1.0'),
-          Buffer.from('member1'),
-          Buffer.from('2.0'),
-          Buffer.from('member2'),
-          Buffer.from('3.0'),
-          Buffer.from('member3'),
-        ],
-        db,
-      )
+      runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('1.0'),
+        Buffer.from('member1'),
+        Buffer.from('2.0'),
+        Buffer.from('member2'),
+        Buffer.from('3.0'),
+        Buffer.from('member3'),
+      ])
 
       // Remove single member
-      let result = runCommand(
-        zremCommand,
-        'ZREM',
-        [Buffer.from('zset'), Buffer.from('member1')],
-        db,
-      )
+      let result = runCommand(zremCommand, 'ZREM', [
+        Buffer.from('zset'),
+        Buffer.from('member1'),
+      ])
       assert.strictEqual(result.response, 1)
 
       // Remove multiple members
-      result = runCommand(
-        zremCommand,
-        'ZREM',
-        [Buffer.from('zset'), Buffer.from('member2'), Buffer.from('member3')],
-        db,
-      )
+      result = runCommand(zremCommand, 'ZREM', [
+        Buffer.from('zset'),
+        Buffer.from('member2'),
+        Buffer.from('member3'),
+      ])
       assert.strictEqual(result.response, 2)
 
       // Key should be removed when empty
@@ -178,12 +155,10 @@ describe('Sorted Set Commands', () => {
       const db = new DB()
       const zremCommand = new ZremCommand(db)
 
-      const result = runCommand(
-        zremCommand,
-        'ZREM',
-        [Buffer.from('zset'), Buffer.from('member')],
-        db,
-      )
+      const result = runCommand(zremCommand, 'ZREM', [
+        Buffer.from('zset'),
+        Buffer.from('member'),
+      ])
       assert.strictEqual(result.response, 0)
     })
   })
@@ -195,28 +170,22 @@ describe('Sorted Set Commands', () => {
       const zrangeCommand = new ZrangeCommand(db)
 
       // Set up sorted set with different scores
-      runCommand(
-        zaddCommand,
-        'ZADD',
-        [
-          Buffer.from('zset'),
-          Buffer.from('3.0'),
-          Buffer.from('member3'),
-          Buffer.from('1.0'),
-          Buffer.from('member1'),
-          Buffer.from('2.0'),
-          Buffer.from('member2'),
-        ],
-        db,
-      )
+      runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('3.0'),
+        Buffer.from('member3'),
+        Buffer.from('1.0'),
+        Buffer.from('member1'),
+        Buffer.from('2.0'),
+        Buffer.from('member2'),
+      ])
 
       // Get all members
-      let result = runCommand(
-        zrangeCommand,
-        'ZRANGE',
-        [Buffer.from('zset'), Buffer.from('0'), Buffer.from('-1')],
-        db,
-      )
+      let result = runCommand(zrangeCommand, 'ZRANGE', [
+        Buffer.from('zset'),
+        Buffer.from('0'),
+        Buffer.from('-1'),
+      ])
       assert.ok(Array.isArray(result.response))
       const members = result.response as Buffer[]
       assert.strictEqual(members.length, 3)
@@ -225,17 +194,12 @@ describe('Sorted Set Commands', () => {
       assert.strictEqual(members[2].toString(), 'member3')
 
       // Get range with scores
-      result = runCommand(
-        zrangeCommand,
-        'ZRANGE',
-        [
-          Buffer.from('zset'),
-          Buffer.from('0'),
-          Buffer.from('1'),
-          Buffer.from('WITHSCORES'),
-        ],
-        db,
-      )
+      result = runCommand(zrangeCommand, 'ZRANGE', [
+        Buffer.from('zset'),
+        Buffer.from('0'),
+        Buffer.from('1'),
+        Buffer.from('WITHSCORES'),
+      ])
       const withScores = result.response as Buffer[]
       assert.strictEqual(withScores.length, 4) // 2 members * 2 (member + score)
       assert.strictEqual(withScores[0].toString(), 'member1')
@@ -249,12 +213,11 @@ describe('Sorted Set Commands', () => {
       const zrangeCommand = new ZrangeCommand(db)
 
       try {
-        runCommand(
-          zrangeCommand,
-          'ZRANGE',
-          [Buffer.from('zset'), Buffer.from('abc'), Buffer.from('def')],
-          db,
-        )
+        runCommand(zrangeCommand, 'ZRANGE', [
+          Buffer.from('zset'),
+          Buffer.from('abc'),
+          Buffer.from('def'),
+        ])
         assert.fail('Should have thrown ExpectedInteger')
       } catch (error) {
         assert.ok(error instanceof ExpectedInteger)
@@ -269,20 +232,17 @@ describe('Sorted Set Commands', () => {
       const zscoreCommand = new ZscoreCommand(db)
 
       // Set up sorted set
-      runCommand(
-        zaddCommand,
-        'ZADD',
-        [Buffer.from('zset'), Buffer.from('1.5'), Buffer.from('member1')],
-        db,
-      )
+      runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('1.5'),
+        Buffer.from('member1'),
+      ])
 
       // Get score
-      const result = runCommand(
-        zscoreCommand,
-        'ZSCORE',
-        [Buffer.from('zset'), Buffer.from('member1')],
-        db,
-      )
+      const result = runCommand(zscoreCommand, 'ZSCORE', [
+        Buffer.from('zset'),
+        Buffer.from('member1'),
+      ])
       assert.ok(result.response instanceof Buffer)
       assert.strictEqual((result.response as Buffer).toString(), '1.5')
     })
@@ -291,12 +251,10 @@ describe('Sorted Set Commands', () => {
       const db = new DB()
       const zscoreCommand = new ZscoreCommand(db)
 
-      const result = runCommand(
-        zscoreCommand,
-        'ZSCORE',
-        [Buffer.from('zset'), Buffer.from('member')],
-        db,
-      )
+      const result = runCommand(zscoreCommand, 'ZSCORE', [
+        Buffer.from('zset'),
+        Buffer.from('member'),
+      ])
       assert.strictEqual(result.response, null)
     })
   })
@@ -308,24 +266,19 @@ describe('Sorted Set Commands', () => {
       const zcardCommand = new ZcardCommand(db)
 
       // Test on non-existent sorted set
-      let result = runCommand(zcardCommand, 'ZCARD', [Buffer.from('zset')], db)
+      let result = runCommand(zcardCommand, 'ZCARD', [Buffer.from('zset')])
       assert.strictEqual(result.response, 0)
 
       // Add members and test count
-      runCommand(
-        zaddCommand,
-        'ZADD',
-        [
-          Buffer.from('zset'),
-          Buffer.from('1.0'),
-          Buffer.from('member1'),
-          Buffer.from('2.0'),
-          Buffer.from('member2'),
-        ],
-        db,
-      )
+      runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('1.0'),
+        Buffer.from('member1'),
+        Buffer.from('2.0'),
+        Buffer.from('member2'),
+      ])
 
-      result = runCommand(zcardCommand, 'ZCARD', [Buffer.from('zset')], db)
+      result = runCommand(zcardCommand, 'ZCARD', [Buffer.from('zset')])
       assert.strictEqual(result.response, 2)
     })
   })
@@ -338,39 +291,34 @@ describe('Sorted Set Commands', () => {
       const zscoreCommand = new ZscoreCommand(db)
 
       // Increment non-existent member
-      let result = runCommand(
-        zincrbyCommand,
-        'ZINCRBY',
-        [Buffer.from('zset'), Buffer.from('5.5'), Buffer.from('member1')],
-        db,
-      )
+      let result = runCommand(zincrbyCommand, 'ZINCRBY', [
+        Buffer.from('zset'),
+        Buffer.from('5.5'),
+        Buffer.from('member1'),
+      ])
       assert.ok(result.response instanceof Buffer)
       assert.strictEqual((result.response as Buffer).toString(), '5.5')
 
       // Increment existing member
-      runCommand(
-        zaddCommand,
-        'ZADD',
-        [Buffer.from('zset'), Buffer.from('2.0'), Buffer.from('member2')],
-        db,
-      )
+      runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('2.0'),
+        Buffer.from('member2'),
+      ])
 
-      result = runCommand(
-        zincrbyCommand,
-        'ZINCRBY',
-        [Buffer.from('zset'), Buffer.from('3.0'), Buffer.from('member2')],
-        db,
-      )
+      result = runCommand(zincrbyCommand, 'ZINCRBY', [
+        Buffer.from('zset'),
+        Buffer.from('3.0'),
+        Buffer.from('member2'),
+      ])
       assert.ok(result.response instanceof Buffer)
       assert.strictEqual((result.response as Buffer).toString(), '5')
 
       // Verify score was updated
-      const scoreResult = runCommand(
-        zscoreCommand,
-        'ZSCORE',
-        [Buffer.from('zset'), Buffer.from('member2')],
-        db,
-      )
+      const scoreResult = runCommand(zscoreCommand, 'ZSCORE', [
+        Buffer.from('zset'),
+        Buffer.from('member2'),
+      ])
       assert.ok(scoreResult.response instanceof Buffer)
       assert.strictEqual((scoreResult.response as Buffer).toString(), '5')
     })
@@ -383,14 +331,13 @@ describe('Sorted Set Commands', () => {
       const typeCommand = new TypeCommand(db)
 
       // Add sorted set
-      runCommand(
-        zaddCommand,
-        'ZADD',
-        [Buffer.from('zset'), Buffer.from('1.0'), Buffer.from('member')],
-        db,
-      )
+      runCommand(zaddCommand, 'ZADD', [
+        Buffer.from('zset'),
+        Buffer.from('1.0'),
+        Buffer.from('member'),
+      ])
 
-      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('zset')], db)
+      const result = runCommand(typeCommand, 'TYPE', [Buffer.from('zset')])
       assert.strictEqual(result.response, 'zset')
     })
   })
@@ -418,7 +365,7 @@ describe('Sorted Set Commands', () => {
 
       for (const { cmd, name, args } of commands) {
         try {
-          runCommand(cmd, name.toUpperCase(), args, db)
+          runCommand(cmd, name.toUpperCase(), args)
           assert.fail(`Should have thrown WrongNumberOfArguments for ${name}`)
         } catch (error) {
           assert.ok(error instanceof WrongNumberOfArguments)

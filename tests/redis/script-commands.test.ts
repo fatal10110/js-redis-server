@@ -17,7 +17,7 @@ describe('Script Commands', () => {
       const command = new ScriptLoadCommand(db)
 
       const script = Buffer.from('return "hello"')
-      const result = runCommand(command, 'SCRIPT', [script], db)
+      const result = runCommand(command, 'SCRIPT', [script])
 
       assert.strictEqual(typeof result.response, 'string')
       assert.strictEqual((result.response as string).length, 40) // SHA1 is 40 chars
@@ -31,7 +31,7 @@ describe('Script Commands', () => {
       const command = new ScriptLoadCommand(db)
 
       try {
-        runCommand(command, 'SCRIPT', [], db)
+        runCommand(command, 'SCRIPT', [])
         assert.fail('Should have thrown WrongNumberOfArguments')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -43,8 +43,8 @@ describe('Script Commands', () => {
       const command = new ScriptLoadCommand(db)
 
       const script = Buffer.from('return "hello"')
-      const result1 = runCommand(command, 'SCRIPT', [script], db)
-      const result2 = runCommand(command, 'SCRIPT', [script], db)
+      const result1 = runCommand(command, 'SCRIPT', [script])
+      const result2 = runCommand(command, 'SCRIPT', [script])
 
       assert.strictEqual(result1.response, result2.response)
     })
@@ -58,16 +58,11 @@ describe('Script Commands', () => {
 
       // Load a script first
       const script = Buffer.from('return "test"')
-      const loadResult = runCommand(loadCommand, 'SCRIPT', [script], db)
+      const loadResult = runCommand(loadCommand, 'SCRIPT', [script])
       const hash = loadResult.response as string
 
       // Check if it exists
-      const result = runCommand(
-        existsCommand,
-        'SCRIPT',
-        [Buffer.from(hash)],
-        db,
-      )
+      const result = runCommand(existsCommand, 'SCRIPT', [Buffer.from(hash)])
 
       assert.deepStrictEqual(result.response, [1])
     })
@@ -77,7 +72,7 @@ describe('Script Commands', () => {
       const command = new ScriptExistsCommand(db)
 
       const fakeHash = Buffer.from('nonexistent_hash')
-      const result = runCommand(command, 'SCRIPT', [fakeHash], db)
+      const result = runCommand(command, 'SCRIPT', [fakeHash])
 
       assert.deepStrictEqual(result.response, [0])
     })
@@ -89,17 +84,15 @@ describe('Script Commands', () => {
 
       // Load one script
       const script1 = Buffer.from('return "test1"')
-      const loadResult = runCommand(loadCommand, 'SCRIPT', [script1], db)
+      const loadResult = runCommand(loadCommand, 'SCRIPT', [script1])
       const hash1 = loadResult.response as string
 
       const fakeHash = 'nonexistent_hash'
 
-      const result = runCommand(
-        existsCommand,
-        'SCRIPT',
-        [Buffer.from(hash1), Buffer.from(fakeHash)],
-        db,
-      )
+      const result = runCommand(existsCommand, 'SCRIPT', [
+        Buffer.from(hash1),
+        Buffer.from(fakeHash),
+      ])
 
       assert.deepStrictEqual(result.response, [1, 0])
     })
@@ -109,7 +102,7 @@ describe('Script Commands', () => {
       const command = new ScriptExistsCommand(db)
 
       try {
-        runCommand(command, 'SCRIPT', [], db)
+        runCommand(command, 'SCRIPT', [])
         assert.fail('Should have thrown WrongNumberOfArguments')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -124,24 +117,18 @@ describe('Script Commands', () => {
       const flushCommand = new ScriptFlushCommand(db)
 
       // Load some scripts
-      const result1 = runCommand(
-        loadCommand,
-        'SCRIPT',
-        [Buffer.from('return "test1"')],
-        db,
-      )
-      const result2 = runCommand(
-        loadCommand,
-        'SCRIPT',
-        [Buffer.from('return "test2"')],
-        db,
-      )
+      const result1 = runCommand(loadCommand, 'SCRIPT', [
+        Buffer.from('return "test1"'),
+      ])
+      const result2 = runCommand(loadCommand, 'SCRIPT', [
+        Buffer.from('return "test2"'),
+      ])
 
       assert.ok(db.getScript(result1.response as string))
       assert.ok(db.getScript(result2.response as string))
 
       // Flush all scripts
-      const result = runCommand(flushCommand, '', [], db)
+      const result = runCommand(flushCommand, '', [])
 
       assert.strictEqual(result.response, 'OK')
       assert.ok(db.getScript(result1.response as string) === undefined)
@@ -152,7 +139,7 @@ describe('Script Commands', () => {
       const db = new DB()
       const command = new ScriptFlushCommand(db)
 
-      const result = runCommand(command, '', [], db)
+      const result = runCommand(command, '', [])
 
       assert.strictEqual(result.response, 'OK')
     })
@@ -163,7 +150,7 @@ describe('Script Commands', () => {
       const db = new DB()
       const command = new ScriptKillCommand()
 
-      const result = runCommand(command, 'SCRIPT', [], db)
+      const result = runCommand(command, 'SCRIPT', [])
 
       assert.strictEqual(result.response, 'OK')
     })
@@ -177,7 +164,7 @@ describe('Script Commands', () => {
       const validModes = ['YES', 'SYNC', 'NO', 'yes', 'sync', 'no']
 
       for (const mode of validModes) {
-        const result = runCommand(command, 'SCRIPT', [Buffer.from(mode)], db)
+        const result = runCommand(command, 'SCRIPT', [Buffer.from(mode)])
         assert.strictEqual(result.response, 'OK')
       }
     })
@@ -187,7 +174,7 @@ describe('Script Commands', () => {
       const command = new ScriptDebugCommand()
 
       try {
-        runCommand(command, 'SCRIPT', [Buffer.from('INVALID')], db)
+        runCommand(command, 'SCRIPT', [Buffer.from('INVALID')])
         assert.fail('Should have thrown error for invalid debug mode')
       } catch (error) {
         assert.ok(error instanceof RedisSyntaxError)
@@ -199,7 +186,7 @@ describe('Script Commands', () => {
       const command = new ScriptDebugCommand()
 
       try {
-        runCommand(command, 'SCRIPT', [], db)
+        runCommand(command, 'SCRIPT', [])
         assert.fail('Should have thrown WrongNumberOfArguments')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -211,12 +198,10 @@ describe('Script Commands', () => {
       const command = new ScriptDebugCommand()
 
       try {
-        runCommand(
-          command,
-          'SCRIPT',
-          [Buffer.from('YES'), Buffer.from('extra')],
-          db,
-        )
+        runCommand(command, 'SCRIPT', [
+          Buffer.from('YES'),
+          Buffer.from('extra'),
+        ])
         assert.fail('Should have thrown WrongNumberOfArguments')
       } catch (error) {
         assert.ok(error instanceof WrongNumberOfArguments)
@@ -229,7 +214,7 @@ describe('Script Commands', () => {
       const db = new DB()
       const command = new ScriptHelpCommand()
 
-      const result = runCommand(command, 'SCRIPT', [], db)
+      const result = runCommand(command, 'SCRIPT', [])
 
       assert.ok(Array.isArray(result.response))
       const helpText = result.response as string[]
