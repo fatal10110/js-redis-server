@@ -1,10 +1,14 @@
 import { Command } from '../../../../types'
 import type { DiscoveryService } from '../../../../types'
+import { DB } from '../../db'
+import type { LuaRuntime } from '../../lua-runtime'
 
 // All data commands (strings, keys, hashes, lists, sets, zsets)
 export * from './data'
 
-export function createCommands(options?: {
+export function createCommands(options: {
+  db: DB
+  luaRuntime?: LuaRuntime
   discoveryService?: DiscoveryService
   mySelfId?: string
 }): Record<string, Command> {
@@ -13,18 +17,20 @@ export function createCommands(options?: {
 }
 
 export function createClusterCommands(
+  db: DB,
   discoveryService: DiscoveryService,
   mySelfId: string,
+  luaRuntime?: LuaRuntime,
 ): Record<string, Command> {
-  return createCommands({ discoveryService, mySelfId })
+  return createCommands({ db, discoveryService, mySelfId, luaRuntime })
 }
 
 /**
  * Create a filtered set of readonly commands safe for replicas
  * These commands don't modify data and are safe for read-only operations
  */
-export function createReadonlyCommands(): Record<string, Command> {
-  const registry = createCommandRegistry()
+export function createReadonlyCommands(db: DB): Record<string, Command> {
+  const registry = createCommandRegistry({ db })
   const allCommands = stripSubCommands(registry.toRecord())
   const readonlyDefinitions = registry.getReadonlyCommands()
   const readonlyNames = new Set(
@@ -38,8 +44,8 @@ export function createReadonlyCommands(): Record<string, Command> {
  * Create a filtered set of commands allowed within MULTI/EXEC transactions
  * Excludes connection-level commands and certain server commands
  */
-export function createMultiCommands(): Record<string, Command> {
-  const registry = createCommandRegistry()
+export function createMultiCommands(db: DB): Record<string, Command> {
+  const registry = createCommandRegistry({ db })
   const allCommands = stripSubCommands(registry.toRecord())
   const multiDefinitions = registry.getMultiCommands()
   const multiNames = new Set(multiDefinitions.map(def => def.metadata.name))
@@ -51,8 +57,10 @@ export function createMultiCommands(): Record<string, Command> {
  * Create a filtered set of commands allowed within Lua scripts
  * Excludes non-deterministic commands and connection-level commands
  */
-export function createLuaCommands(): Record<string, Command> {
-  const registry = createCommandRegistry()
+export function createLuaCommands(options: {
+  db: DB
+}): Record<string, Command> {
+  const registry = createCommandRegistry({ db: options.db })
   const allCommands = stripSubCommands(registry.toRecord())
   const luaDefinitions = registry.getLuaCommands()
   const luaNames = new Set(luaDefinitions.map(def => def.metadata.name))
@@ -220,117 +228,119 @@ import { ClusterNodesCommand } from './cluster/clusterNodes'
 import { ClusterSlotsCommand } from './cluster/clusterSlots'
 import { ClusterShardsCommand } from './cluster/clusterShards'
 
-export function createCommandRegistry(options?: {
+export function createCommandRegistry(options: {
+  db: DB
   discoveryService?: DiscoveryService
   mySelfId?: string
+  luaRuntime?: LuaRuntime
 }): CommandRegistry {
   const registry = new CommandRegistry()
 
   // String commands (20 commands)
   registry.registerAll([
-    new GetCommand(),
-    new SetCommand(),
-    new MgetCommand(),
-    new MsetCommand(),
-    new MsetnxCommand(),
-    new GetsetCommand(),
-    new AppendCommand(),
-    new StrlenCommand(),
-    new IncrCommand(),
-    new DecrCommand(),
-    new IncrbyCommand(),
-    new DecrbyCommand(),
-    new IncrbyfloatCommand(),
-    new SetnxCommand(),
-    new SetexCommand(),
-    new PsetexCommand(),
-    new GetdelCommand(),
-    new GetexCommand(),
-    new SetrangeCommand(),
-    new GetrangeCommand(),
+    new GetCommand(options.db),
+    new SetCommand(options.db),
+    new MgetCommand(options.db),
+    new MsetCommand(options.db),
+    new MsetnxCommand(options.db),
+    new GetsetCommand(options.db),
+    new AppendCommand(options.db),
+    new StrlenCommand(options.db),
+    new IncrCommand(options.db),
+    new DecrCommand(options.db),
+    new IncrbyCommand(options.db),
+    new DecrbyCommand(options.db),
+    new IncrbyfloatCommand(options.db),
+    new SetnxCommand(options.db),
+    new SetexCommand(options.db),
+    new PsetexCommand(options.db),
+    new GetdelCommand(options.db),
+    new GetexCommand(options.db),
+    new SetrangeCommand(options.db),
+    new GetrangeCommand(options.db),
   ])
 
   // Register commands that have been migrated to the new metadata system
   registry.registerAll([
     // Key commands (13 commands)
-    new DelCommand(),
-    new ExistsCommand(),
-    new TypeCommand(),
-    new TtlCommand(),
-    new PttlCommand(),
-    new ExpireCommand(),
-    new ExpireatCommand(),
-    new FlushdbCommand(),
-    new FlushallCommand(),
-    new DbSizeCommand(),
-    new RenameCommand(),
-    new RenamenxCommand(),
-    new PersistCommand(),
+    new DelCommand(options.db),
+    new ExistsCommand(options.db),
+    new TypeCommand(options.db),
+    new TtlCommand(options.db),
+    new PttlCommand(options.db),
+    new ExpireCommand(options.db),
+    new ExpireatCommand(options.db),
+    new FlushdbCommand(options.db),
+    new FlushallCommand(options.db),
+    new DbSizeCommand(options.db),
+    new RenameCommand(options.db),
+    new RenamenxCommand(options.db),
+    new PersistCommand(options.db),
   ])
 
   registry.registerAll([
     // List commands (13 commands)
-    new LpushCommand(),
-    new RpushCommand(),
-    new LpopCommand(),
-    new RpopCommand(),
-    new LlenCommand(),
-    new LrangeCommand(),
-    new LindexCommand(),
-    new LsetCommand(),
-    new LremCommand(),
-    new LtrimCommand(),
-    new LpushxCommand(),
-    new RpushxCommand(),
-    new RpoplpushCommand(),
+    new LpushCommand(options.db),
+    new RpushCommand(options.db),
+    new LpopCommand(options.db),
+    new RpopCommand(options.db),
+    new LlenCommand(options.db),
+    new LrangeCommand(options.db),
+    new LindexCommand(options.db),
+    new LsetCommand(options.db),
+    new LremCommand(options.db),
+    new LtrimCommand(options.db),
+    new LpushxCommand(options.db),
+    new RpushxCommand(options.db),
+    new RpoplpushCommand(options.db),
 
     // Set commands (14 commands)
-    new SaddCommand(),
-    new SremCommand(),
-    new ScardCommand(),
-    new SmembersCommand(),
-    new SismemberCommand(),
-    new SpopCommand(),
-    new SrandmemberCommand(),
-    new SdiffCommand(),
-    new SinterCommand(),
-    new SunionCommand(),
-    new SmoveCommand(),
-    new SdiffstoreCommand(),
-    new SinterstoreCommand(),
-    new SunionstoreCommand(),
+    new SaddCommand(options.db),
+    new SremCommand(options.db),
+    new ScardCommand(options.db),
+    new SmembersCommand(options.db),
+    new SismemberCommand(options.db),
+    new SpopCommand(options.db),
+    new SrandmemberCommand(options.db),
+    new SdiffCommand(options.db),
+    new SinterCommand(options.db),
+    new SunionCommand(options.db),
+    new SmoveCommand(options.db),
+    new SdiffstoreCommand(options.db),
+    new SinterstoreCommand(options.db),
+    new SunionstoreCommand(options.db),
 
     // Sorted set commands (14 commands)
-    new ZaddCommand(),
-    new ZremCommand(),
-    new ZrangeCommand(),
-    new ZrevrangeCommand(),
-    new ZrankCommand(),
-    new ZrevrankCommand(),
-    new ZscoreCommand(),
-    new ZcardCommand(),
-    new ZincrbyCommand(),
-    new ZrangebyscoreCommand(),
-    new ZremrangebyscoreCommand(),
-    new ZcountCommand(),
-    new ZpopminCommand(),
-    new ZpopmaxCommand(),
+    new ZaddCommand(options.db),
+    new ZremCommand(options.db),
+    new ZrangeCommand(options.db),
+    new ZrevrangeCommand(options.db),
+    new ZrankCommand(options.db),
+    new ZrevrankCommand(options.db),
+    new ZscoreCommand(options.db),
+    new ZcardCommand(options.db),
+    new ZincrbyCommand(options.db),
+    new ZrangebyscoreCommand(options.db),
+    new ZremrangebyscoreCommand(options.db),
+    new ZcountCommand(options.db),
+    new ZpopminCommand(options.db),
+    new ZpopmaxCommand(options.db),
 
     // Hash commands (14 commands)
-    new HsetCommand(),
-    new HsetnxCommand(),
-    new HgetCommand(),
-    new HdelCommand(),
-    new HgetallCommand(),
-    new HmgetCommand(),
-    new HmsetCommand(),
-    new HkeysCommand(),
-    new HvalsCommand(),
-    new HlenCommand(),
-    new HexistsCommand(),
-    new HincrbyCommand(),
-    new HincrbyfloatCommand(),
-    new HstrlenCommand(),
+    new HsetCommand(options.db),
+    new HsetnxCommand(options.db),
+    new HgetCommand(options.db),
+    new HdelCommand(options.db),
+    new HgetallCommand(options.db),
+    new HmgetCommand(options.db),
+    new HmsetCommand(options.db),
+    new HkeysCommand(options.db),
+    new HvalsCommand(options.db),
+    new HlenCommand(options.db),
+    new HexistsCommand(options.db),
+    new HincrbyCommand(options.db),
+    new HincrbyfloatCommand(options.db),
+    new HstrlenCommand(options.db),
 
     // Server/connection commands
     new PingCommand(),
@@ -342,24 +352,24 @@ export function createCommandRegistry(options?: {
     new ClientSetNameCommand(),
 
     // Script commands
-    new ScriptCommand(),
-    new ScriptLoadCommand(),
-    new ScriptExistsCommand(),
-    new ScriptFlushCommand(),
+    new ScriptCommand(options.db),
+    new ScriptLoadCommand(options.db),
+    new ScriptExistsCommand(options.db),
+    new ScriptFlushCommand(options.db),
     new ScriptKillCommand(),
     new ScriptDebugCommand(),
     new ScriptHelpCommand(),
-    new EvalCommand(),
-    new EvalShaCommand(),
+    new EvalCommand(options.db, options.luaRuntime),
+    new EvalShaCommand(options.db, options.luaRuntime),
   ])
 
-  if (options?.discoveryService && options?.mySelfId) {
+  if (options.discoveryService && options.mySelfId) {
     registry.registerAll([
-      new ClusterCommand(),
-      new ClusterInfoCommand(),
-      new ClusterNodesCommand(),
-      new ClusterSlotsCommand(),
-      new ClusterShardsCommand(),
+      new ClusterCommand(options.discoveryService, options.mySelfId),
+      new ClusterInfoCommand(options.discoveryService, options.mySelfId),
+      new ClusterNodesCommand(options.discoveryService, options.mySelfId),
+      new ClusterSlotsCommand(options.discoveryService),
+      new ClusterShardsCommand(options.discoveryService, options.mySelfId),
     ])
   }
 

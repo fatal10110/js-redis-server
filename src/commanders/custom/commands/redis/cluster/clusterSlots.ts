@@ -5,6 +5,10 @@ import { SchemaCommand, CommandContext, t } from '../../../schema'
 export const commandName = 'slots'
 
 export class ClusterSlotsCommand extends SchemaCommand<[]> {
+  constructor(private readonly discoveryService: DiscoveryService) {
+    super()
+  }
+
   metadata = defineCommand(`cluster|${commandName}`, {
     arity: 1, // CLUSTER SLOTS
     flags: {
@@ -19,17 +23,10 @@ export class ClusterSlotsCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(
-    _args: [],
-    { discoveryService, mySelfId, transport }: CommandContext,
-  ) {
-    const service = discoveryService as DiscoveryService | undefined
-    if (!service || !mySelfId) {
-      throw new Error('Cluster slots requires discoveryService and mySelfId')
-    }
+  protected execute(_args: [], { transport }: CommandContext) {
     const slots: CommandResult[] = []
-    for (const clusterNode of service.getAll()) {
-      if (!service.isMaster(clusterNode.id)) continue
+    for (const clusterNode of this.discoveryService.getAll()) {
+      if (!this.discoveryService.isMaster(clusterNode.id)) continue
       const nodeInfo: CommandResult[] = [
         clusterNode.host,
         clusterNode.port,

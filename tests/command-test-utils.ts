@@ -11,12 +11,11 @@ export function runCommand(
   command: Command,
   rawCmd: string | Buffer,
   args: Buffer[],
-  db: DB,
+  _db: DB,
 ) {
   const transport = createMockTransport()
   const raw = typeof rawCmd === 'string' ? Buffer.from(rawCmd) : rawCmd
   const ctx: CommandContext = {
-    db: db ?? new DB(),
     signal: new AbortController().signal,
     transport,
   }
@@ -28,16 +27,11 @@ export function runCommand(
 }
 
 export function createTestSession(db: DB) {
-  const commands = createCommands()
+  const commands = createCommands({ db })
   const validator = new RegistryCommandValidator(commands)
   let session: Session
   const kernel = new RedisKernel(async job => session.executeJob(job))
-  session = new Session(
-    commands,
-    { db },
-    kernel,
-    new NormalState(validator, db),
-  )
+  session = new Session(commands, kernel, new NormalState(validator, db))
 
   return {
     execute(

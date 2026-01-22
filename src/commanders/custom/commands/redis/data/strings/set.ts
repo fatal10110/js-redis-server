@@ -10,6 +10,7 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 interface SetOptions {
   expiration?: number
@@ -98,6 +99,10 @@ function parseOptions(schemaOptions: SetSchemaOptions): SetOptions {
 export class SetCommand extends SchemaCommand<
   [Buffer, string, SetSchemaOptions]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('set', {
     arity: -3, // SET key value [options...]
     flags: {
@@ -128,10 +133,10 @@ export class SetCommand extends SchemaCommand<
 
   protected execute(
     [key, value, schemaOptions]: [Buffer, string, SetSchemaOptions],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const options = parseOptions(schemaOptions ?? {})
-    const existingData = db.get(key)
+    const existingData = this.db.get(key)
     let oldValue: Buffer | null = null
     if (options.get) {
       if (existingData instanceof StringDataType) {
@@ -159,7 +164,7 @@ export class SetCommand extends SchemaCommand<
       return
     }
     if (existingData !== null && !(existingData instanceof StringDataType)) {
-      db.del(key)
+      this.db.del(key)
     }
     let expiration: number | undefined
     if (options.keepTtl && existingData instanceof StringDataType) {
@@ -168,7 +173,7 @@ export class SetCommand extends SchemaCommand<
       expiration = options.expiration
     }
     const valueBuffer = Buffer.from(value)
-    db.set(key, new StringDataType(valueBuffer), expiration)
+    this.db.set(key, new StringDataType(valueBuffer), expiration)
     if (options.get) {
       transport.write(oldValue)
       return

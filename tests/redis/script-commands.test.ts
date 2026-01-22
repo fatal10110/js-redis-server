@@ -14,7 +14,7 @@ describe('Script Commands', () => {
   describe('SCRIPT LOAD command', () => {
     test('loads a script and returns SHA1 hash', async () => {
       const db = new DB()
-      const command = new ScriptLoadCommand()
+      const command = new ScriptLoadCommand(db)
 
       const script = Buffer.from('return "hello"')
       const result = runCommand(command, 'SCRIPT', [script], db)
@@ -28,7 +28,7 @@ describe('Script Commands', () => {
 
     test('throws error when no script provided', async () => {
       const db = new DB()
-      const command = new ScriptLoadCommand()
+      const command = new ScriptLoadCommand(db)
 
       try {
         runCommand(command, 'SCRIPT', [], db)
@@ -40,7 +40,7 @@ describe('Script Commands', () => {
 
     test('does not duplicate scripts with same content', async () => {
       const db = new DB()
-      const command = new ScriptLoadCommand()
+      const command = new ScriptLoadCommand(db)
 
       const script = Buffer.from('return "hello"')
       const result1 = runCommand(command, 'SCRIPT', [script], db)
@@ -53,8 +53,8 @@ describe('Script Commands', () => {
   describe('SCRIPT EXISTS command', () => {
     test('checks if scripts exist', async () => {
       const db = new DB()
-      const loadCommand = new ScriptLoadCommand()
-      const existsCommand = new ScriptExistsCommand()
+      const loadCommand = new ScriptLoadCommand(db)
+      const existsCommand = new ScriptExistsCommand(db)
 
       // Load a script first
       const script = Buffer.from('return "test"')
@@ -74,7 +74,7 @@ describe('Script Commands', () => {
 
     test('returns 0 for non-existent scripts', async () => {
       const db = new DB()
-      const command = new ScriptExistsCommand()
+      const command = new ScriptExistsCommand(db)
 
       const fakeHash = Buffer.from('nonexistent_hash')
       const result = runCommand(command, 'SCRIPT', [fakeHash], db)
@@ -84,8 +84,8 @@ describe('Script Commands', () => {
 
     test('checks multiple scripts at once', async () => {
       const db = new DB()
-      const loadCommand = new ScriptLoadCommand()
-      const existsCommand = new ScriptExistsCommand()
+      const loadCommand = new ScriptLoadCommand(db)
+      const existsCommand = new ScriptExistsCommand(db)
 
       // Load one script
       const script1 = Buffer.from('return "test1"')
@@ -106,7 +106,7 @@ describe('Script Commands', () => {
 
     test('throws error when no hashes provided', async () => {
       const db = new DB()
-      const command = new ScriptExistsCommand()
+      const command = new ScriptExistsCommand(db)
 
       try {
         runCommand(command, 'SCRIPT', [], db)
@@ -120,8 +120,8 @@ describe('Script Commands', () => {
   describe('SCRIPT FLUSH command', () => {
     test('flushes all scripts from cache', async () => {
       const db = new DB()
-      const loadCommand = new ScriptLoadCommand()
-      const flushCommand = new ScriptFlushCommand()
+      const loadCommand = new ScriptLoadCommand(db)
+      const flushCommand = new ScriptFlushCommand(db)
 
       // Load some scripts
       const result1 = runCommand(
@@ -150,7 +150,7 @@ describe('Script Commands', () => {
 
     test('works when cache is already empty', async () => {
       const db = new DB()
-      const command = new ScriptFlushCommand()
+      const command = new ScriptFlushCommand(db)
 
       const result = runCommand(command, '', [], db)
 

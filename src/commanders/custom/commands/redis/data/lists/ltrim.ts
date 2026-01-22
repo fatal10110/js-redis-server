@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LtrimCommand extends SchemaCommand<[Buffer, number, number]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('ltrim', {
     arity: 4, // LTRIM key start stop
     flags: {
@@ -23,9 +28,9 @@ export class LtrimCommand extends SchemaCommand<[Buffer, number, number]> {
 
   protected execute(
     [key, start, stop]: [Buffer, number, number],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write('OK')
       return
@@ -35,7 +40,7 @@ export class LtrimCommand extends SchemaCommand<[Buffer, number, number]> {
     }
     existing.ltrim(start, stop)
     if (existing.llen() === 0) {
-      db.del(key)
+      this.db.del(key)
     }
     transport.write('OK')
   }

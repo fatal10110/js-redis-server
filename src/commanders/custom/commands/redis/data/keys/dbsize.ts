@@ -4,8 +4,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class DbSizeCommand extends SchemaCommand<[]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('dbsize', {
     arity: 1, // DBSIZE
     flags: {
@@ -20,8 +25,8 @@ export class DbSizeCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(_args: [], { db, transport }: CommandContext) {
-    const size = db.size()
+  protected execute(_args: [], { transport }: CommandContext) {
+    const size = this.db.size()
     transport.write(size)
   }
 }

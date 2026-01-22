@@ -18,15 +18,30 @@ import {
   ClusterSlotsCommand,
   commandName as clusterSlotsCommandName,
 } from './clusterSlots'
-
-const subCommands: Record<string, Command> = {
-  [clusterInfoCommandName]: new ClusterInfoCommand(),
-  [clusterNodesCommandName]: new ClusterNodesCommand(),
-  [clusterShardsCommandName]: new ClusterShardsCommand(),
-  [clusterSlotsCommandName]: new ClusterSlotsCommand(),
-}
+import type { DiscoveryService } from '../../../../../types'
 
 export class ClusterCommand extends SchemaCommand<[Buffer, Buffer[]]> {
+  private readonly subCommands: Record<string, Command>
+
+  constructor(discoveryService: DiscoveryService, mySelfId: string) {
+    super()
+    this.subCommands = {
+      [clusterInfoCommandName]: new ClusterInfoCommand(
+        discoveryService,
+        mySelfId,
+      ),
+      [clusterNodesCommandName]: new ClusterNodesCommand(
+        discoveryService,
+        mySelfId,
+      ),
+      [clusterShardsCommandName]: new ClusterShardsCommand(
+        discoveryService,
+        mySelfId,
+      ),
+      [clusterSlotsCommandName]: new ClusterSlotsCommand(discoveryService),
+    }
+  }
+
   metadata = defineCommand('cluster', {
     arity: -2, // CLUSTER <subcommand> [args...]
     flags: {
@@ -49,7 +64,7 @@ export class ClusterCommand extends SchemaCommand<[Buffer, Buffer[]]> {
     if (!subCommand) {
       throw new UnknwonClusterSubCommand('')
     }
-    const sub = subCommands[subCommand.toString().toLowerCase()]
+    const sub = this.subCommands[subCommand.toString().toLowerCase()]
     if (!sub) {
       throw new UnknwonClusterSubCommand(subCommand.toString())
     }

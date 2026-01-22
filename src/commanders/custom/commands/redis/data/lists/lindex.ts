@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LindexCommand extends SchemaCommand<[Buffer, number]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('lindex', {
     arity: 3, // LINDEX key index
     flags: {
@@ -24,9 +29,9 @@ export class LindexCommand extends SchemaCommand<[Buffer, number]> {
 
   protected execute(
     [key, index]: [Buffer, number],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(null)
       return

@@ -1,5 +1,4 @@
 import { CommandMetadata } from './commanders/custom/commands/metadata'
-import { DB } from './commanders/custom/db'
 import { UserFacedError } from './core/errors'
 
 export interface DBCommandExecutor {
@@ -32,13 +31,9 @@ export interface Logger {
 }
 
 export interface CommandContext {
-  db: DB
-  discoveryService?: DiscoveryService
-  mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
   luaCommands?: Record<string, Command>
-  luaRuntime?: unknown
   signal: AbortSignal
   transport: Transport
 }

@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class HmgetCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('hmget', {
     arity: -3, // HMGET key field [field ...]
     flags: {
@@ -24,9 +29,9 @@ export class HmgetCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
 
   protected execute(
     [key, firstField, restFields]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write([null, ...restFields.map(() => null)])
       return

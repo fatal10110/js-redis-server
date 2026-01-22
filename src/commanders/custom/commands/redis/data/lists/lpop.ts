@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LpopCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('lpop', {
     arity: 2, // LPOP key
     flags: {
@@ -22,8 +27,8 @@ export class LpopCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const existing = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(null)
       return
@@ -33,7 +38,7 @@ export class LpopCommand extends SchemaCommand<[Buffer]> {
     }
     const value = existing.lpop()
     if (existing.llen() === 0) {
-      db.del(key)
+      this.db.del(key)
     }
     transport.write(value)
   }

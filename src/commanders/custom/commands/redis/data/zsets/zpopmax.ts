@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ZpopmaxCommand extends SchemaCommand<[Buffer, number?]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('zpopmax', {
     arity: -2, // ZPOPMAX key [count]
     flags: {
@@ -24,9 +29,9 @@ export class ZpopmaxCommand extends SchemaCommand<[Buffer, number?]> {
 
   protected execute(
     [key, count]: [Buffer, number?],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const data = db.get(key)
+    const data = this.db.get(key)
 
     if (data === null) {
       transport.write([])

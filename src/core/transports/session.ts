@@ -2,10 +2,7 @@ import { Command, CommandContext, CommandResult, Transport } from '../../types'
 import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
 import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
-import {
-  CommandExecutionContext,
-  ExecutionContextOptions,
-} from '../../commanders/custom/execution-context'
+import { CommandExecutionContext } from '../../commanders/custom/execution-context'
 import { UserFacedError } from '../errors'
 
 /**
@@ -20,22 +17,21 @@ export class Session {
   private readonly connectionId: string
   private readonly context: CommandExecutionContext
   private readonly commands: Record<string, Command>
-  private readonly options: ExecutionContextOptions
+  private luaCommands?: Record<string, Command>
 
   constructor(
     commands: Record<string, Command>,
-    options: ExecutionContextOptions,
     private readonly kernel: RedisKernel,
     initialState: SessionState,
   ) {
     this.commands = commands
-    this.options = options
-    this.context = new CommandExecutionContext(commands, options)
+    this.context = new CommandExecutionContext(commands)
     this.currentState = initialState
     this.connectionId = `conn-${++Session.connectionCounter}`
   }
 
   setLuaCommands(luaCommands: Record<string, Command>): void {
+    this.luaCommands = luaCommands
     this.context.setLuaCommands(luaCommands)
   }
 
@@ -127,11 +123,8 @@ export class Session {
 
       try {
         const ctx: CommandContext = {
-          db: this.options.db,
-          discoveryService: this.options.discoveryService,
-          mySelfId: this.options.mySelfId,
-          luaRuntime: this.options.luaRuntime,
           commands: this.commands,
+          luaCommands: this.luaCommands,
           signal,
           transport: capturingTransport,
         }

@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class AppendCommand extends SchemaCommand<[Buffer, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('append', {
     arity: 3, // APPEND key value
     flags: {
@@ -25,9 +30,9 @@ export class AppendCommand extends SchemaCommand<[Buffer, string]> {
 
   protected execute(
     [key, value]: [Buffer, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof StringDataType)) {
       throw new WrongType()
     }
@@ -36,7 +41,7 @@ export class AppendCommand extends SchemaCommand<[Buffer, string]> {
       existing instanceof StringDataType
         ? Buffer.concat([existing.data, valueBuffer])
         : valueBuffer
-    db.set(key, new StringDataType(newValue))
+    this.db.set(key, new StringDataType(newValue))
     transport.write(newValue.length)
   }
 }

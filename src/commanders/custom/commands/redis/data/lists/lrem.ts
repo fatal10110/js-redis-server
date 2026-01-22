@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LremCommand extends SchemaCommand<[Buffer, number, Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('lrem', {
     arity: 4, // LREM key count element
     flags: {
@@ -23,9 +28,9 @@ export class LremCommand extends SchemaCommand<[Buffer, number, Buffer]> {
 
   protected execute(
     [key, count, value]: [Buffer, number, Buffer],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(0)
       return
@@ -35,7 +40,7 @@ export class LremCommand extends SchemaCommand<[Buffer, number, Buffer]> {
     }
     const removed = existing.lrem(count, value)
     if (existing.llen() === 0) {
-      db.del(key)
+      this.db.del(key)
     }
     transport.write(removed)
   }

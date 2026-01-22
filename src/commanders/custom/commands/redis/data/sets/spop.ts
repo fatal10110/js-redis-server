@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SpopCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('spop', {
     arity: 2, // SPOP key
     flags: {
@@ -24,8 +29,8 @@ export class SpopCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const existing = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(null)
       return
@@ -35,7 +40,7 @@ export class SpopCommand extends SchemaCommand<[Buffer]> {
     }
     const member = existing.spop()
     if (existing.scard() === 0) {
-      db.del(key)
+      this.db.del(key)
     }
     transport.write(member)
   }

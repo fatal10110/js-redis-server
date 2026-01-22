@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ZremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('zrem', {
     arity: -3, // ZREM key member [member ...]
     flags: {
@@ -24,9 +29,9 @@ export class ZremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
 
   protected execute(
     [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       {
         transport.write(0)
@@ -43,7 +48,7 @@ export class ZremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
     }
 
     if (existing.zcard() === 0) {
-      db.del(key)
+      this.db.del(key)
     }
 
     transport.write(removed)

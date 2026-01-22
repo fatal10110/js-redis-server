@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SinterCommand extends SchemaCommand<[Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('sinter', {
     arity: -2, // SINTER key [key ...]
     flags: {
@@ -24,12 +29,12 @@ export class SinterCommand extends SchemaCommand<[Buffer, Buffer[]]> {
 
   protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     const sets: SetDataType[] = []
     for (const key of keys) {
-      const existing = db.get(key)
+      const existing = this.db.get(key)
       if (existing === null) {
         transport.write([])
         return

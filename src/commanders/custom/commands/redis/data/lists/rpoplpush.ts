@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class RpoplpushCommand extends SchemaCommand<[Buffer, Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('rpoplpush', {
     arity: 3, // RPOPLPUSH source destination
     flags: {
@@ -24,9 +29,9 @@ export class RpoplpushCommand extends SchemaCommand<[Buffer, Buffer]> {
 
   protected execute(
     [source, destination]: [Buffer, Buffer],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const sourceData = db.get(source)
+    const sourceData = this.db.get(source)
 
     if (sourceData === null) {
       transport.write(null)
@@ -45,11 +50,11 @@ export class RpoplpushCommand extends SchemaCommand<[Buffer, Buffer]> {
     }
 
     // Get or create destination list
-    let destData = db.get(destination)
+    let destData = this.db.get(destination)
 
     if (destData === null) {
       const newList = new ListDataType()
-      db.set(destination, newList)
+      this.db.set(destination, newList)
       newList.lpush(value)
     } else if (!(destData instanceof ListDataType)) {
       throw new WrongType()

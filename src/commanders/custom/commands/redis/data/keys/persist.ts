@@ -4,8 +4,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class PersistCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('persist', {
     arity: 2, // PERSIST key
     flags: {
@@ -20,8 +25,8 @@ export class PersistCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const result = db.persist(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const result = this.db.persist(key)
     transport.write(result ? 1 : 0)
   }
 }

@@ -28,7 +28,7 @@ describe('Key Commands', () => {
   describe('EXISTS command', () => {
     test('EXISTS on non-existent keys', async () => {
       const db = new DB()
-      const existsCommand = new ExistsCommand()
+      const existsCommand = new ExistsCommand(db)
 
       const result = runCommand(
         existsCommand,
@@ -41,7 +41,7 @@ describe('Key Commands', () => {
 
     test('EXISTS on mixed keys', async () => {
       const db = new DB()
-      const existsCommand = new ExistsCommand()
+      const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
       const result = runCommand(
@@ -55,7 +55,7 @@ describe('Key Commands', () => {
 
     test('EXISTS on all existing keys', async () => {
       const db = new DB()
-      const existsCommand = new ExistsCommand()
+      const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
       db.set(Buffer.from('key2'), new StringDataType(Buffer.from('value')))
@@ -70,7 +70,7 @@ describe('Key Commands', () => {
 
     test('EXISTS with single key', async () => {
       const db = new DB()
-      const existsCommand = new ExistsCommand()
+      const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const result = runCommand(
@@ -84,7 +84,7 @@ describe('Key Commands', () => {
 
     test('EXISTS with duplicate keys', async () => {
       const db = new DB()
-      const existsCommand = new ExistsCommand()
+      const existsCommand = new ExistsCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const result = runCommand(
@@ -100,7 +100,7 @@ describe('Key Commands', () => {
   describe('TYPE command', () => {
     test('TYPE on non-existent key', async () => {
       const db = new DB()
-      const typeCommand = new TypeCommand()
+      const typeCommand = new TypeCommand(db)
 
       const result = runCommand(typeCommand, 'TYPE', [Buffer.from('key')], db)
       assert.strictEqual(result.response, 'none')
@@ -108,7 +108,7 @@ describe('Key Commands', () => {
 
     test('TYPE on string', async () => {
       const db = new DB()
-      const typeCommand = new TypeCommand()
+      const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('str'), new StringDataType(Buffer.from('value')))
       const result = runCommand(typeCommand, 'TYPE', [Buffer.from('str')], db)
@@ -117,7 +117,7 @@ describe('Key Commands', () => {
 
     test('TYPE on hash', async () => {
       const db = new DB()
-      const typeCommand = new TypeCommand()
+      const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('hash'), new HashDataType())
       const result = runCommand(typeCommand, 'TYPE', [Buffer.from('hash')], db)
@@ -126,7 +126,7 @@ describe('Key Commands', () => {
 
     test('TYPE on list', async () => {
       const db = new DB()
-      const typeCommand = new TypeCommand()
+      const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('list'), new ListDataType())
       const result = runCommand(typeCommand, 'TYPE', [Buffer.from('list')], db)
@@ -135,7 +135,7 @@ describe('Key Commands', () => {
 
     test('TYPE on set', async () => {
       const db = new DB()
-      const typeCommand = new TypeCommand()
+      const typeCommand = new TypeCommand(db)
 
       db.set(Buffer.from('set'), new SetDataType())
       const result = runCommand(typeCommand, 'TYPE', [Buffer.from('set')], db)
@@ -146,7 +146,7 @@ describe('Key Commands', () => {
   describe('TTL command', () => {
     test('TTL on non-existent key', async () => {
       const db = new DB()
-      const ttlCommand = new TtlCommand()
+      const ttlCommand = new TtlCommand(db)
 
       const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
       assert.strictEqual(result.response, -2)
@@ -154,7 +154,7 @@ describe('Key Commands', () => {
 
     test('TTL on key without expiration', async () => {
       const db = new DB()
-      const ttlCommand = new TtlCommand()
+      const ttlCommand = new TtlCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const result = runCommand(ttlCommand, 'TTL', [Buffer.from('key')], db)
@@ -163,7 +163,7 @@ describe('Key Commands', () => {
 
     test('TTL on key with expiration', async () => {
       const db = new DB()
-      const ttlCommand = new TtlCommand()
+      const ttlCommand = new TtlCommand(db)
 
       const expirationTime = Date.now() + 10000 // 10 seconds from now
       db.set(
@@ -179,7 +179,7 @@ describe('Key Commands', () => {
   describe('EXPIRE command', () => {
     test('EXPIRE on existing key', async () => {
       const db = new DB()
-      const expireCommand = new ExpireCommand()
+      const expireCommand = new ExpireCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const result = runCommand(
@@ -193,7 +193,7 @@ describe('Key Commands', () => {
 
     test('EXPIRE on non-existent key', async () => {
       const db = new DB()
-      const expireCommand = new ExpireCommand()
+      const expireCommand = new ExpireCommand(db)
 
       const result = runCommand(
         expireCommand,
@@ -206,7 +206,7 @@ describe('Key Commands', () => {
 
     test('EXPIRE with 0 seconds deletes key', async () => {
       const db = new DB()
-      const expireCommand = new ExpireCommand()
+      const expireCommand = new ExpireCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const result = runCommand(
@@ -224,7 +224,7 @@ describe('Key Commands', () => {
 
     test('EXPIRE with negative seconds throws error', async () => {
       const db = new DB()
-      const expireCommand = new ExpireCommand()
+      const expireCommand = new ExpireCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
@@ -247,7 +247,7 @@ describe('Key Commands', () => {
 
     test('EXPIRE with non-integer throws error', async () => {
       const db = new DB()
-      const expireCommand = new ExpireCommand()
+      const expireCommand = new ExpireCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
@@ -270,7 +270,7 @@ describe('Key Commands', () => {
 
     test('EXPIRE with wrong number of arguments throws error', async () => {
       const db = new DB()
-      const expireCommand = new ExpireCommand()
+      const expireCommand = new ExpireCommand(db)
 
       try {
         runCommand(expireCommand, 'EXPIRE', [Buffer.from('key')], db)
@@ -288,7 +288,7 @@ describe('Key Commands', () => {
   describe('EXPIREAT command', () => {
     test('EXPIREAT on existing key', async () => {
       const db = new DB()
-      const expireatCommand = new ExpireatCommand()
+      const expireatCommand = new ExpireatCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const futureTimestamp = Math.floor(Date.now() / 1000) + 10
@@ -303,7 +303,7 @@ describe('Key Commands', () => {
 
     test('EXPIREAT on non-existent key', async () => {
       const db = new DB()
-      const expireatCommand = new ExpireatCommand()
+      const expireatCommand = new ExpireatCommand(db)
 
       const futureTimestamp = Math.floor(Date.now() / 1000) + 10
       const result = runCommand(
@@ -317,7 +317,7 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with past timestamp deletes key', async () => {
       const db = new DB()
-      const expireatCommand = new ExpireatCommand()
+      const expireatCommand = new ExpireatCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
       const pastTimestamp = Math.floor(Date.now() / 1000) - 1
@@ -336,7 +336,7 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with negative timestamp throws error', async () => {
       const db = new DB()
-      const expireatCommand = new ExpireatCommand()
+      const expireatCommand = new ExpireatCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
@@ -359,7 +359,7 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with non-integer throws error', async () => {
       const db = new DB()
-      const expireatCommand = new ExpireatCommand()
+      const expireatCommand = new ExpireatCommand(db)
 
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
 
@@ -382,7 +382,7 @@ describe('Key Commands', () => {
 
     test('EXPIREAT with wrong number of arguments throws error', async () => {
       const db = new DB()
-      const expireatCommand = new ExpireatCommand()
+      const expireatCommand = new ExpireatCommand(db)
 
       try {
         runCommand(expireatCommand, 'EXPIREAT', [Buffer.from('key')], db)
@@ -400,7 +400,7 @@ describe('Key Commands', () => {
   describe('FLUSHDB command', () => {
     test('FLUSHDB on empty database', async () => {
       const db = new DB()
-      const flushdbCommand = new FlushdbCommand()
+      const flushdbCommand = new FlushdbCommand(db)
 
       const result = runCommand(flushdbCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
@@ -408,7 +408,7 @@ describe('Key Commands', () => {
 
     test('FLUSHDB removes all keys', async () => {
       const db = new DB()
-      const flushdbCommand = new FlushdbCommand()
+      const flushdbCommand = new FlushdbCommand(db)
 
       // Add various data types
       db.set(
@@ -438,7 +438,7 @@ describe('Key Commands', () => {
 
     test('FLUSHDB removes keys with expiration', async () => {
       const db = new DB()
-      const flushdbCommand = new FlushdbCommand()
+      const flushdbCommand = new FlushdbCommand(db)
 
       // Add keys with expiration
       const expirationTime = Date.now() + 10000
@@ -472,7 +472,7 @@ describe('Key Commands', () => {
   describe('FLUSHALL command', () => {
     test('FLUSHALL on empty database', async () => {
       const db = new DB()
-      const flushallCommand = new FlushallCommand()
+      const flushallCommand = new FlushallCommand(db)
 
       const result = runCommand(flushallCommand, '', [], db)
       assert.strictEqual(result.response, 'OK')
@@ -480,7 +480,7 @@ describe('Key Commands', () => {
 
     test('FLUSHALL removes all keys', async () => {
       const db = new DB()
-      const flushallCommand = new FlushallCommand()
+      const flushallCommand = new FlushallCommand(db)
 
       // Add various data types
       db.set(
@@ -510,7 +510,7 @@ describe('Key Commands', () => {
 
     test('FLUSHALL removes keys with expiration', async () => {
       const db = new DB()
-      const flushallCommand = new FlushallCommand()
+      const flushallCommand = new FlushallCommand(db)
 
       // Add keys with expiration
       const expirationTime = Date.now() + 10000
@@ -543,8 +543,8 @@ describe('Key Commands', () => {
     test('FLUSHALL and FLUSHDB have same behavior in single-database implementation', async () => {
       const db1 = new DB()
       const db2 = new DB()
-      const flushdbCommand = new FlushdbCommand()
-      const flushallCommand = new FlushallCommand()
+      const flushdbCommand = new FlushdbCommand(db1)
+      const flushallCommand = new FlushallCommand(db2)
 
       // Add same data to both databases
       db1.set(Buffer.from('key1'), new StringDataType(Buffer.from('value')))
@@ -571,7 +571,7 @@ describe('Key Commands', () => {
   describe('DBSIZE command', () => {
     test('should return 0 for empty database', async () => {
       const db = new DB()
-      const dbsizeCommand = new DbSizeCommand()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       const result = runCommand(dbsizeCommand, 'DBSIZE', [], db)
 
@@ -580,7 +580,7 @@ describe('Key Commands', () => {
 
     test('should return correct count after adding keys', async () => {
       const db = new DB()
-      const dbsizeCommand = new DbSizeCommand()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       // Add some keys
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
@@ -594,7 +594,7 @@ describe('Key Commands', () => {
 
     test('should exclude expired keys from count', async () => {
       const db = new DB()
-      const dbsizeCommand = new DbSizeCommand()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       // Add keys with different expiration times
       const now = Date.now()
@@ -617,7 +617,7 @@ describe('Key Commands', () => {
 
     test('should return 0 after flushing database', async () => {
       const db = new DB()
-      const dbsizeCommand = new DbSizeCommand()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       // Add some keys
       db.set(Buffer.from('key1'), new StringDataType(Buffer.from('value1')))
@@ -635,7 +635,7 @@ describe('Key Commands', () => {
 
     test('should throw error if arguments are provided', async () => {
       const db = new DB()
-      const dbsizeCommand = new DbSizeCommand()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       assert.throws(
         () => {
@@ -648,7 +648,8 @@ describe('Key Commands', () => {
     })
 
     test('should return empty array for getKeys when no arguments', () => {
-      const dbsizeCommand = new DbSizeCommand()
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       const keys = dbsizeCommand.getKeys(Buffer.from('DBSIZE'), [])
 
@@ -656,7 +657,8 @@ describe('Key Commands', () => {
     })
 
     test('should return empty array for getKeys when arguments are provided', () => {
-      const dbsizeCommand = new DbSizeCommand()
+      const db = new DB()
+      const dbsizeCommand = new DbSizeCommand(db)
 
       const keys = dbsizeCommand.getKeys(Buffer.from('DBSIZE'), [
         Buffer.from('arg1'),
@@ -669,8 +671,8 @@ describe('Key Commands', () => {
   describe('Key Commands Error Handling', () => {
     test('Key commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const existsCommand = new ExistsCommand()
-      const typeCommand = new TypeCommand()
+      const existsCommand = new ExistsCommand(db)
+      const typeCommand = new TypeCommand(db)
 
       // Test EXISTS with no arguments
       try {

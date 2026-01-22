@@ -19,8 +19,8 @@ describe('List Commands', () => {
   describe('LPUSH and RPUSH commands', () => {
     test('LPUSH on new list', async () => {
       const db = new DB()
-      const lpushCommand = new LpushCommand()
-      const rpushCommand = new RpushCommand()
+      const lpushCommand = new LpushCommand(db)
+      const rpushCommand = new RpushCommand(db)
 
       const result = runCommand(
         lpushCommand,
@@ -41,7 +41,7 @@ describe('List Commands', () => {
 
     test('LPUSH multiple items', async () => {
       const db = new DB()
-      const lpushCommand = new LpushCommand()
+      const lpushCommand = new LpushCommand(db)
 
       const result = runCommand(
         lpushCommand,
@@ -59,7 +59,7 @@ describe('List Commands', () => {
 
     test('RPUSH multiple items', async () => {
       const db = new DB()
-      const rpushCommand = new RpushCommand()
+      const rpushCommand = new RpushCommand(db)
 
       const result = runCommand(
         rpushCommand,
@@ -79,8 +79,8 @@ describe('List Commands', () => {
   describe('LPOP and RPOP commands', () => {
     test('LPOP and RPOP on non-existent list', async () => {
       const db = new DB()
-      const lpopCommand = new LpopCommand()
-      const rpopCommand = new RpopCommand()
+      const lpopCommand = new LpopCommand(db)
+      const rpopCommand = new RpopCommand(db)
 
       const result1 = runCommand(lpopCommand, 'LPOP', [Buffer.from('list')], db)
       assert.strictEqual(result1.response, null)
@@ -91,9 +91,9 @@ describe('List Commands', () => {
 
     test('LPOP and RPOP on existing list', async () => {
       const db = new DB()
-      const lpushCommand = new LpushCommand()
-      const lpopCommand = new LpopCommand()
-      const rpopCommand = new RpopCommand()
+      const lpushCommand = new LpushCommand(db)
+      const lpopCommand = new LpopCommand(db)
+      const rpopCommand = new RpopCommand(db)
 
       runCommand(
         lpushCommand,
@@ -116,7 +116,7 @@ describe('List Commands', () => {
   describe('LLEN command', () => {
     test('LLEN on non-existent list', async () => {
       const db = new DB()
-      const llenCommand = new LlenCommand()
+      const llenCommand = new LlenCommand(db)
 
       const result = runCommand(llenCommand, 'LLEN', [Buffer.from('list')], db)
       assert.strictEqual(result.response, 0)
@@ -124,8 +124,8 @@ describe('List Commands', () => {
 
     test('LLEN on existing list', async () => {
       const db = new DB()
-      const llenCommand = new LlenCommand()
-      const lpushCommand = new LpushCommand()
+      const llenCommand = new LlenCommand(db)
+      const lpushCommand = new LpushCommand(db)
 
       runCommand(
         lpushCommand,
@@ -141,7 +141,7 @@ describe('List Commands', () => {
   describe('LRANGE command', () => {
     test('LRANGE on non-existent list', async () => {
       const db = new DB()
-      const lrangeCommand = new LrangeCommand()
+      const lrangeCommand = new LrangeCommand(db)
 
       const result = runCommand(
         lrangeCommand,
@@ -154,8 +154,8 @@ describe('List Commands', () => {
 
     test('LRANGE on existing list', async () => {
       const db = new DB()
-      const lrangeCommand = new LrangeCommand()
-      const lpushCommand = new LpushCommand()
+      const lrangeCommand = new LrangeCommand(db)
+      const lpushCommand = new LpushCommand(db)
 
       runCommand(
         lpushCommand,
@@ -181,8 +181,8 @@ describe('List Commands', () => {
 
     test('LRANGE with non-integer arguments throws error', async () => {
       const db = new DB()
-      const lrangeCommand = new LrangeCommand()
-      const lpushCommand = new LpushCommand()
+      const lrangeCommand = new LrangeCommand(db)
+      const lpushCommand = new LpushCommand(db)
 
       runCommand(
         lpushCommand,
@@ -362,7 +362,7 @@ describe('List Commands', () => {
   describe('List Error Handling', () => {
     test('List commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const llenCommand = new LlenCommand()
+      const llenCommand = new LlenCommand(db)
 
       try {
         runCommand(llenCommand, 'LLEN', [], db)

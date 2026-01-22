@@ -5,10 +5,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class MsetnxCommand extends SchemaCommand<
   [Buffer, string, Array<[Buffer, string]>]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('msetnx', {
     arity: -3, // MSETNX key value [key value ...]
     flags: {
@@ -34,20 +39,20 @@ export class MsetnxCommand extends SchemaCommand<
       string,
       Array<[Buffer, string]>,
     ],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const pairs: Array<[Buffer, string]> = [
       [firstKey, firstValue],
       ...restPairs,
     ]
     for (const [key] of pairs) {
-      if (db.get(key) !== null) {
+      if (this.db.get(key) !== null) {
         transport.write(0)
         return
       }
     }
     for (const [key, value] of pairs) {
-      db.set(key, new StringDataType(Buffer.from(value)))
+      this.db.set(key, new StringDataType(Buffer.from(value)))
     }
     transport.write(1)
   }

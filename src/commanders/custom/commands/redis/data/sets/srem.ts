@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('srem', {
     arity: -3, // SREM key member [member ...]
     flags: {
@@ -24,9 +29,9 @@ export class SremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
 
   protected execute(
     [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(0)
       return
@@ -40,7 +45,7 @@ export class SremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
       removed += existing.srem(member)
     }
     if (existing.scard() === 0) {
-      db.del(key)
+      this.db.del(key)
     }
     transport.write(removed)
   }

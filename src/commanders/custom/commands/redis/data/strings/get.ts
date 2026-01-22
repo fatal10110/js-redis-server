@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class GetCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('get', {
     arity: 2, // GET key
     flags: {
@@ -22,8 +27,8 @@ export class GetCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const val = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const val = this.db.get(key)
     if (val === null) {
       transport.write(null)
       return

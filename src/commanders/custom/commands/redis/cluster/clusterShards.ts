@@ -5,6 +5,13 @@ import { SchemaCommand, CommandContext, t } from '../../../schema'
 export const commandName = 'shards'
 
 export class ClusterShardsCommand extends SchemaCommand<[]> {
+  constructor(
+    private readonly discoveryService: DiscoveryService,
+    private readonly mySelfId: string,
+  ) {
+    super()
+  }
+
   metadata = defineCommand(`cluster|${commandName}`, {
     arity: 1, // CLUSTER SHARDS
     flags: {
@@ -19,19 +26,12 @@ export class ClusterShardsCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(
-    _args: [],
-    { discoveryService, mySelfId, transport }: CommandContext,
-  ) {
-    const service = discoveryService as DiscoveryService | undefined
-    if (!service || !mySelfId) {
-      throw new Error('Cluster shards requires discoveryService and mySelfId')
-    }
-    const me = service.getById(mySelfId)
+  protected execute(_args: [], { transport }: CommandContext) {
+    const me = this.discoveryService.getById(this.mySelfId)
     const mapping: Record<number, DiscoveryNode[]> = {}
-    for (const clusterNode of service.getAll()) {
+    for (const clusterNode of this.discoveryService.getAll()) {
       const arr = (mapping[clusterNode.slots[0][0]] ??= [])
-      if (service.isMaster(me.id)) arr.unshift(clusterNode)
+      if (this.discoveryService.isMaster(me.id)) arr.unshift(clusterNode)
       else arr.push(clusterNode)
     }
     const shards: [

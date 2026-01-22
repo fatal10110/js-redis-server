@@ -4,8 +4,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class DelCommand extends SchemaCommand<[Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('del', {
     arity: -2, // DEL key [key ...]
     flags: {
@@ -21,12 +26,12 @@ export class DelCommand extends SchemaCommand<[Buffer, Buffer[]]> {
 
   protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     let counter = 0
     for (const key of keys) {
-      if (db.del(key)) {
+      if (this.db.del(key)) {
         counter += 1
       }
     }

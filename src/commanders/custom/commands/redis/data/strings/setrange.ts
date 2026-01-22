@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SetrangeCommand extends SchemaCommand<[Buffer, number, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('setrange', {
     arity: 4, // SETRANGE key offset value
     flags: {
@@ -24,7 +29,7 @@ export class SetrangeCommand extends SchemaCommand<[Buffer, number, string]> {
 
   protected execute(
     [key, offset, value]: [Buffer, number, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     if (offset < 0) {
       throw new OffsetOutOfRange()
@@ -36,7 +41,7 @@ export class SetrangeCommand extends SchemaCommand<[Buffer, number, string]> {
       throw new OffsetOutOfRange()
     }
 
-    const existing = db.get(key)
+    const existing = this.db.get(key)
 
     if (existing !== null && !(existing instanceof StringDataType)) {
       throw new WrongType()
@@ -59,7 +64,7 @@ export class SetrangeCommand extends SchemaCommand<[Buffer, number, string]> {
     // Write the value at the offset
     valueBuffer.copy(currentBuffer, offset)
 
-    db.set(key, new StringDataType(currentBuffer))
+    this.db.set(key, new StringDataType(currentBuffer))
     transport.write(currentBuffer.length)
   }
 }

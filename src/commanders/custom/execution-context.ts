@@ -3,19 +3,9 @@ import { BufferedTransport } from '../../core/transports/buffered-transport'
 import {
   Command,
   CommandContext,
-  DiscoveryService,
   ExecutionContext,
   Transport,
 } from '../../types'
-import type { DB } from './db'
-import type { LuaRuntime } from './lua-runtime'
-
-export interface ExecutionContextOptions {
-  db: DB
-  discoveryService?: DiscoveryService
-  mySelfId?: string
-  luaRuntime?: LuaRuntime
-}
 
 /**
  * CommandExecutionContext handles single command execution.
@@ -24,14 +14,9 @@ export interface ExecutionContextOptions {
 export class CommandExecutionContext implements ExecutionContext {
   private readonly commands: Record<string, Command>
   private luaCommands?: Record<string, Command>
-  private readonly options: ExecutionContextOptions
 
-  constructor(
-    commands: Record<string, Command>,
-    options: ExecutionContextOptions,
-  ) {
+  constructor(commands: Record<string, Command>) {
     this.commands = commands
-    this.options = options
   }
 
   setLuaCommands(luaCommands: Record<string, Command>): void {
@@ -61,10 +46,6 @@ export class CommandExecutionContext implements ExecutionContext {
     try {
       const buffered = new BufferedTransport(transport)
       const ctx: CommandContext = {
-        db: this.options.db,
-        discoveryService: this.options.discoveryService,
-        mySelfId: this.options.mySelfId,
-        luaRuntime: this.options.luaRuntime,
         commands: this.commands,
         luaCommands: this.luaCommands,
         signal,

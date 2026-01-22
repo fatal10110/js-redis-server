@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class GetrangeCommand extends SchemaCommand<[Buffer, number, number]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('getrange', {
     arity: 4, // GETRANGE key start end
     flags: {
@@ -23,9 +28,9 @@ export class GetrangeCommand extends SchemaCommand<[Buffer, number, number]> {
 
   protected execute(
     [key, start, end]: [Buffer, number, number],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
 
     if (existing === null) {
       transport.write(Buffer.from(''))

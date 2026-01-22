@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class HsetCommand extends SchemaCommand<
   [Buffer, Buffer, Buffer, Array<[Buffer, Buffer]>]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('hset', {
     arity: -4, // HSET key field value [field value ...]
     flags: {
@@ -37,16 +42,16 @@ export class HsetCommand extends SchemaCommand<
       Buffer,
       Array<[Buffer, Buffer]>,
     ],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
     const hash =
       existing instanceof HashDataType ? existing : new HashDataType()
     if (!(existing instanceof HashDataType)) {
-      db.set(key, hash)
+      this.db.set(key, hash)
     }
     let fieldsSet = 0
     fieldsSet += hash.hset(firstField, firstValue)

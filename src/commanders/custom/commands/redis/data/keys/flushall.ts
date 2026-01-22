@@ -4,8 +4,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class FlushallCommand extends SchemaCommand<[]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('flushall', {
     arity: 1, // FLUSHALL
     flags: {
@@ -19,8 +24,8 @@ export class FlushallCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(_args: [], { db, transport }: CommandContext) {
-    db.flushall()
+  protected execute(_args: [], { transport }: CommandContext) {
+    this.db.flushall()
 
     transport.write('OK')
     return

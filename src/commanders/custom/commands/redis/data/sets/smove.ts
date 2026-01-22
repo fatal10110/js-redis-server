@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SmoveCommand extends SchemaCommand<[Buffer, Buffer, Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('smove', {
     arity: 4, // SMOVE source destination member
     flags: {
@@ -24,9 +29,9 @@ export class SmoveCommand extends SchemaCommand<[Buffer, Buffer, Buffer]> {
 
   protected execute(
     [sourceKey, destinationKey, member]: [Buffer, Buffer, Buffer],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const sourceExisting = db.get(sourceKey)
+    const sourceExisting = this.db.get(sourceKey)
     if (sourceExisting === null) {
       transport.write(0)
       return
@@ -34,7 +39,7 @@ export class SmoveCommand extends SchemaCommand<[Buffer, Buffer, Buffer]> {
     if (!(sourceExisting instanceof SetDataType)) {
       throw new WrongType()
     }
-    const destinationExisting = db.get(destinationKey)
+    const destinationExisting = this.db.get(destinationKey)
     if (
       destinationExisting !== null &&
       !(destinationExisting instanceof SetDataType)
@@ -46,11 +51,11 @@ export class SmoveCommand extends SchemaCommand<[Buffer, Buffer, Buffer]> {
         ? destinationExisting
         : new SetDataType()
     if (!(destinationExisting instanceof SetDataType)) {
-      db.set(destinationKey, destinationSet)
+      this.db.set(destinationKey, destinationSet)
     }
     const moved = sourceExisting.smove(destinationSet, member)
     if (sourceExisting.scard() === 0) {
-      db.del(sourceKey)
+      this.db.del(sourceKey)
     }
     transport.write(moved ? 1 : 0)
   }

@@ -1,10 +1,15 @@
 import { defineCommand, CommandCategory } from '../../metadata'
 import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
 import { t } from '../../../schema'
+import { DB } from '../../../db'
 
 export class ScriptFlushCommand extends SchemaCommand<
   ['ASYNC' | 'SYNC' | undefined]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('script|flush', {
     arity: -1, // SCRIPT FLUSH [ASYNC|SYNC]
     flags: {
@@ -23,9 +28,9 @@ export class ScriptFlushCommand extends SchemaCommand<
 
   protected execute(
     _args: ['ASYNC' | 'SYNC' | undefined],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    db.flushScripts()
+    this.db.flushScripts()
     transport.write('OK')
   }
 }

@@ -1,8 +1,13 @@
 import { defineCommand, CommandCategory } from '../../metadata'
 import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
 import { t } from '../../../schema'
+import { DB } from '../../../db'
 
 export class ScriptLoadCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('script|load', {
     arity: 2, // SCRIPT LOAD <script>
     flags: {
@@ -16,8 +21,8 @@ export class ScriptLoadCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.string()])
 
-  protected execute([script]: [Buffer], { db, transport }: CommandContext) {
-    const hash = db.addScript(script)
+  protected execute([script]: [Buffer], { transport }: CommandContext) {
+    const hash = this.db.addScript(script)
     transport.write(hash)
   }
 }

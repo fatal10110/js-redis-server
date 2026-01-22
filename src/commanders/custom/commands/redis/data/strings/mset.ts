@@ -5,10 +5,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class MsetCommand extends SchemaCommand<
   [Buffer, string, Array<[Buffer, string]>]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('mset', {
     arity: -3, // MSET key value [key value ...]
     flags: {
@@ -34,11 +39,11 @@ export class MsetCommand extends SchemaCommand<
       string,
       Array<[Buffer, string]>,
     ],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    db.set(firstKey, new StringDataType(Buffer.from(firstValue)))
+    this.db.set(firstKey, new StringDataType(Buffer.from(firstValue)))
     for (const [key, value] of restPairs) {
-      db.set(key, new StringDataType(Buffer.from(value)))
+      this.db.set(key, new StringDataType(Buffer.from(value)))
     }
     transport.write('OK')
   }

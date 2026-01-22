@@ -34,8 +34,13 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   createCommander(mySelfId: string): DBCommandExecutor {
     this.dbs[mySelfId] = this.dbs[mySelfId] || new DB()
     const db = this.dbs[mySelfId]
-    const commands = createClusterCommands(this.discoveryService, mySelfId)
-    const luaCommands = createLuaCommands()
+    const commands = createClusterCommands(
+      db,
+      this.discoveryService,
+      mySelfId,
+      this.luaRuntime,
+    )
+    const luaCommands = createLuaCommands({ db })
 
     return new ClusterCommander(
       db,
@@ -94,7 +99,6 @@ export class ClusterCommander implements DBCommandExecutor {
     )
     this.baseCommander = new BaseCommander(
       this.commands,
-      { db, discoveryService, mySelfId, luaRuntime },
       validator => new NormalState(validator, this.db, this.router),
       this.luaCommands,
     )

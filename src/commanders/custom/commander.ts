@@ -43,11 +43,10 @@ class Commander implements DBCommandExecutor {
 
   constructor(db: DB, luaRuntime: LuaRuntime) {
     this.db = db
-    this.commands = createCommands()
-    this.luaCommands = createLuaCommands()
+    this.commands = createCommands({ db, luaRuntime })
+    this.luaCommands = createLuaCommands({ db })
     this.baseCommander = new BaseCommander(
       this.commands,
-      { db, luaRuntime },
       validator => new NormalState(validator, this.db),
       this.luaCommands,
     )

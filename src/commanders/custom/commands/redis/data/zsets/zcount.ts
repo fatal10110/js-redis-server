@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ZcountCommand extends SchemaCommand<[Buffer, string, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('zcount', {
     arity: 4, // ZCOUNT key min max
     flags: {
@@ -24,7 +29,7 @@ export class ZcountCommand extends SchemaCommand<[Buffer, string, string]> {
 
   protected execute(
     [key, minStr, maxStr]: [Buffer, string, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
@@ -33,7 +38,7 @@ export class ZcountCommand extends SchemaCommand<[Buffer, string, string]> {
       throw new ExpectedFloat()
     }
 
-    const data = db.get(key)
+    const data = this.db.get(key)
 
     if (data === null) {
       transport.write(0)
