@@ -31,7 +31,6 @@ export interface Logger {
 }
 
 export interface CommandContext {
-  executionContext?: ExecutionContext
   commands?: Record<string, Command>
   luaCommands?: Record<string, Command>
   signal: AbortSignal
@@ -55,6 +54,7 @@ export interface Command {
 }
 
 export type SlotRange = [number, number]
+
 export type DiscoveryNode = {
   host: string
   port: number

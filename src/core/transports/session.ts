@@ -2,7 +2,6 @@ import { Command, CommandContext, CommandResult, Transport } from '../../types'
 import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
 import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
-import { CommandExecutionContext } from '../../commanders/custom/execution-context'
 import { UserFacedError } from '../errors'
 
 /**
@@ -15,7 +14,6 @@ export class Session {
   private static connectionCounter = 0
   private jobCounter = 0
   private readonly connectionId: string
-  private readonly context: CommandExecutionContext
   private readonly commands: Record<string, Command>
   private luaCommands?: Record<string, Command>
 
@@ -25,14 +23,12 @@ export class Session {
     initialState: SessionState,
   ) {
     this.commands = commands
-    this.context = new CommandExecutionContext(commands)
     this.currentState = initialState
     this.connectionId = `conn-${++Session.connectionCounter}`
   }
 
   setLuaCommands(luaCommands: Record<string, Command>): void {
     this.luaCommands = luaCommands
-    this.context.setLuaCommands(luaCommands)
   }
 
   /**
@@ -170,7 +166,35 @@ export class Session {
     args: Buffer[],
     signal: AbortSignal,
   ): void {
-    this.context.execute(transport, rawCmd, args, signal)
+    const capturingTransport = new CapturingTransport()
+
+    try {
+      const ctx: CommandContext = {
+        commands: this.commands,
+        luaCommands: this.luaCommands,
+        signal,
+        transport: capturingTransport,
+      }
+
+      const cmdName = rawCmd.toString().toLowerCase()
+      const cmd = this.commands[cmdName]
+
+      if (cmd) {
+        cmd.run(rawCmd, args, ctx)
+      }
+
+      // Get the captured results
+      const capturedResult = capturingTransport.getResults()
+      transport.write(capturedResult)
+      transport.flush({ close: capturingTransport.isClosed() })
+    } catch (err) {
+      if (err instanceof UserFacedError) {
+        transport.write(err)
+        transport.flush()
+      }
+
+      throw err
+    }
   }
 
   async shutdown(): Promise<void> {

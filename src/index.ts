@@ -9,7 +9,6 @@ export type {
   DiscoveryNode,
   DiscoveryService,
   ClusterCommanderFactory,
-  SlotRange,
 } from './types'
 
 // Errors
