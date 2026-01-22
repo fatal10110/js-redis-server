@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class HincrbyfloatCommand extends SchemaCommand<
   [Buffer, Buffer, string]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('hincrbyfloat', {
     arity: 4, // HINCRBYFLOAT key field increment
     flags: {
@@ -26,20 +31,20 @@ export class HincrbyfloatCommand extends SchemaCommand<
 
   protected execute(
     [key, field, incrementStr]: [Buffer, Buffer, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
       throw new ExpectedFloat()
     }
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
     const hash =
       existing instanceof HashDataType ? existing : new HashDataType()
     if (!(existing instanceof HashDataType)) {
-      db.set(key, hash)
+      this.db.set(key, hash)
     }
     const result = hash.hincrbyfloat(field, increment)
     transport.write(Buffer.from(result.toString()))

@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ZrangeCommand extends SchemaCommand<
   [Buffer, number, number, 'WITHSCORES' | undefined]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('zrange', {
     arity: -4, // ZRANGE key start stop [WITHSCORES]
     flags: {
@@ -35,9 +40,9 @@ export class ZrangeCommand extends SchemaCommand<
       number,
       'WITHSCORES' | undefined,
     ],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write([])
       return

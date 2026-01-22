@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ZincrbyCommand extends SchemaCommand<[Buffer, string, Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('zincrby', {
     arity: 4, // ZINCRBY key increment member
     flags: {
@@ -24,20 +29,20 @@ export class ZincrbyCommand extends SchemaCommand<[Buffer, string, Buffer]> {
 
   protected execute(
     [key, incrementStr, member]: [Buffer, string, Buffer],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
       throw new ExpectedFloat()
     }
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof SortedSetDataType)) {
       throw new WrongType()
     }
     const zset =
       existing instanceof SortedSetDataType ? existing : new SortedSetDataType()
     if (!(existing instanceof SortedSetDataType)) {
-      db.set(key, zset)
+      this.db.set(key, zset)
     }
     const newScore = zset.zincrby(member, increment)
     transport.write(Buffer.from(newScore.toString()))

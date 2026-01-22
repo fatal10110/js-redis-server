@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class HgetCommand extends SchemaCommand<[Buffer, Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('hget', {
     arity: 3, // HGET key field
     flags: {
@@ -24,9 +29,9 @@ export class HgetCommand extends SchemaCommand<[Buffer, Buffer]> {
 
   protected execute(
     [key, field]: [Buffer, Buffer],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(null)
       return

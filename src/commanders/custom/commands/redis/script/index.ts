@@ -8,17 +8,23 @@ import { ScriptFlushCommand } from './flush'
 import { ScriptKillCommand } from './kill'
 import { ScriptDebugCommand } from './debug'
 import { ScriptHelpCommand } from './help'
-
-const subCommands: Record<string, Command> = {
-  load: new ScriptLoadCommand(),
-  exists: new ScriptExistsCommand(),
-  flush: new ScriptFlushCommand(),
-  kill: new ScriptKillCommand(),
-  debug: new ScriptDebugCommand(),
-  help: new ScriptHelpCommand(),
-}
+import { DB } from '../../../db'
 
 export class ScriptCommand extends SchemaCommand<[Buffer, Buffer[]]> {
+  private readonly subCommands: Record<string, Command>
+
+  constructor(db: DB) {
+    super()
+    this.subCommands = {
+      load: new ScriptLoadCommand(db),
+      exists: new ScriptExistsCommand(db),
+      flush: new ScriptFlushCommand(db),
+      kill: new ScriptKillCommand(),
+      debug: new ScriptDebugCommand(),
+      help: new ScriptHelpCommand(),
+    }
+  }
+
   metadata = defineCommand('script', {
     arity: -2, // SCRIPT subcommand [args...]
     flags: {
@@ -37,7 +43,7 @@ export class ScriptCommand extends SchemaCommand<[Buffer, Buffer[]]> {
     [subCommandName, rest]: [Buffer, Buffer[]],
     ctx: CommandContext,
   ) {
-    const subCommand = subCommands[subCommandName.toString().toLowerCase()]
+    const subCommand = this.subCommands[subCommandName.toString().toLowerCase()]
     if (!subCommand) {
       throw new UnknowScriptSubCommand(subCommandName.toString())
     }

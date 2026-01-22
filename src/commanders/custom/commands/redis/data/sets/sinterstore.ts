@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SinterstoreCommand extends SchemaCommand<
   [Buffer, Buffer, Buffer[]]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('sinterstore', {
     arity: -3, // SINTERSTORE destination key [key ...]
     flags: {
@@ -26,13 +31,13 @@ export class SinterstoreCommand extends SchemaCommand<
 
   protected execute(
     [destination, firstKey, otherKeys]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const firstSet = db.get(firstKey)
+    const firstSet = this.db.get(firstKey)
 
     if (firstSet === null) {
       // If first set doesn't exist, result is empty
-      db.del(destination)
+      this.db.del(destination)
       transport.write(0)
       return
     }
@@ -44,10 +49,10 @@ export class SinterstoreCommand extends SchemaCommand<
     // Get other sets
     const otherSets: SetDataType[] = []
     for (const key of otherKeys) {
-      const data = db.get(key)
+      const data = this.db.get(key)
       if (data === null) {
         // If any set doesn't exist, result is empty
-        db.del(destination)
+        this.db.del(destination)
         transport.write(0)
         return
       }
@@ -62,14 +67,14 @@ export class SinterstoreCommand extends SchemaCommand<
 
     // Store result
     if (resultMembers.length === 0) {
-      db.del(destination)
+      this.db.del(destination)
       transport.write(0)
     } else {
       const resultSet = new SetDataType()
       for (const member of resultMembers) {
         resultSet.sadd(member)
       }
-      db.set(destination, resultSet)
+      this.db.set(destination, resultSet)
       transport.write(resultMembers.length)
     }
   }

@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ZremrangebyscoreCommand extends SchemaCommand<
   [Buffer, string, string]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('zremrangebyscore', {
     arity: 4, // ZREMRANGEBYSCORE key min max
     flags: {
@@ -25,14 +30,14 @@ export class ZremrangebyscoreCommand extends SchemaCommand<
 
   protected execute(
     [key, minStr, maxStr]: [Buffer, string, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
     if (Number.isNaN(min) || Number.isNaN(max)) {
       throw new ExpectedFloat()
     }
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(0)
       return

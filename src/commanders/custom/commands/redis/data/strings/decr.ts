@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class DecrCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('decr', {
     arity: 2, // DECR key
     flags: {
@@ -22,8 +27,8 @@ export class DecrCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const existing = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const existing = this.db.get(key)
     let currentValue = 0
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
@@ -35,7 +40,7 @@ export class DecrCommand extends SchemaCommand<[Buffer]> {
       }
     }
     const newValue = currentValue - 1
-    db.set(key, new StringDataType(Buffer.from(newValue.toString())))
+    this.db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
   }
 }

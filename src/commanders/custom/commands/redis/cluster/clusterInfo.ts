@@ -5,6 +5,13 @@ import { SchemaCommand, CommandContext, t } from '../../../schema'
 export const commandName = 'info'
 
 export class ClusterInfoCommand extends SchemaCommand<[]> {
+  constructor(
+    private readonly discoveryService: DiscoveryService,
+    private readonly mySelfId: string,
+  ) {
+    super()
+  }
+
   metadata = defineCommand(`cluster|${commandName}`, {
     arity: 1, // CLUSTER INFO
     flags: {
@@ -19,22 +26,15 @@ export class ClusterInfoCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(
-    _args: [],
-    { discoveryService, mySelfId, transport }: CommandContext,
-  ) {
-    const service = discoveryService as DiscoveryService | undefined
-    if (!service || !mySelfId) {
-      throw new Error('Cluster info requires discoveryService and mySelfId')
-    }
-    const me = service.getById(mySelfId)
+  protected execute(_args: [], { transport }: CommandContext) {
+    const me = this.discoveryService.getById(this.mySelfId)
     let nodesCount = 0
     let masters = 0
     let myEpoch = 0
-    const myMaster = service.getMaster(me.id)
-    for (const clusterNode of service.getAll()) {
+    const myMaster = this.discoveryService.getMaster(me.id)
+    for (const clusterNode of this.discoveryService.getAll()) {
       nodesCount += 1
-      if (service.isMaster(clusterNode.id)) {
+      if (this.discoveryService.isMaster(clusterNode.id)) {
         masters += 1
       }
       if (me.id === clusterNode.id || myMaster.id === clusterNode.id) {

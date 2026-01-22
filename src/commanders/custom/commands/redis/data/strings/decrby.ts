@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class DecrbyCommand extends SchemaCommand<[Buffer, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('decrby', {
     arity: 3, // DECRBY key decrement
     flags: {
@@ -24,13 +29,13 @@ export class DecrbyCommand extends SchemaCommand<[Buffer, string]> {
 
   protected execute(
     [key, decrementStr]: [Buffer, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const decrement = parseInt(decrementStr)
     if (isNaN(decrement)) {
       throw new ExpectedInteger()
     }
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     let currentValue = 0
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
@@ -42,7 +47,7 @@ export class DecrbyCommand extends SchemaCommand<[Buffer, string]> {
       }
     }
     const newValue = currentValue - decrement
-    db.set(key, new StringDataType(Buffer.from(newValue.toString())))
+    this.db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
   }
 }

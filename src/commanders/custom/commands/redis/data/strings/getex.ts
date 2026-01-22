@@ -10,6 +10,7 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 type GetexTtlToken =
   | {
@@ -35,6 +36,10 @@ type GetexSchemaOptions = Partial<{
 }>
 
 export class GetexCommand extends SchemaCommand<[Buffer, GetexSchemaOptions]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('getex', {
     arity: -2, // GETEX key [options...]
     flags: {
@@ -62,9 +67,9 @@ export class GetexCommand extends SchemaCommand<[Buffer, GetexSchemaOptions]> {
 
   protected execute(
     [key, schemaOptions]: [Buffer, GetexSchemaOptions],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
 
     if (existing === null) {
       transport.write(null)
@@ -84,7 +89,7 @@ export class GetexCommand extends SchemaCommand<[Buffer, GetexSchemaOptions]> {
 
     // Update expiration if requested
     if (options.persist) {
-      db.persist(key)
+      this.db.persist(key)
     } else if (options.ttl) {
       const ttl = options.ttl
       let expiration: number
@@ -113,7 +118,7 @@ export class GetexCommand extends SchemaCommand<[Buffer, GetexSchemaOptions]> {
         throw new RedisSyntaxError()
       }
 
-      db.set(key, existing, expiration)
+      this.db.set(key, existing, expiration)
     }
 
     transport.write(existing.data)

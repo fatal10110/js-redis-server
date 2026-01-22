@@ -2,26 +2,19 @@ import type {
   Command,
   CommandContext as BaseCommandContext,
   CommandResult,
-  DiscoveryService,
   ExecutionContext,
   Transport,
 } from '../../../types'
 import type { CommandMetadata } from '../commands/metadata'
-import type { DB } from '../db'
-import type { LuaRuntime } from '../lua-runtime'
 import type { SchemaType } from './types'
 import type { CompiledSchema, InputMapper } from './input-mapper'
 import { compileSchema } from './input-mapper'
 import { RespInputMapper } from './resp-input-mapper'
 
 export interface CommandContext {
-  db: DB
-  discoveryService?: DiscoveryService
-  mySelfId?: string
   executionContext?: ExecutionContext
   commands?: Record<string, Command>
   luaCommands?: Record<string, Command>
-  luaRuntime?: LuaRuntime
   signal: AbortSignal
   transport: Transport
 }

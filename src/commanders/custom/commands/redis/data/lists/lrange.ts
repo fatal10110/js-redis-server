@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LrangeCommand extends SchemaCommand<[Buffer, number, number]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('lrange', {
     arity: 4, // LRANGE key start stop
     flags: {
@@ -24,9 +29,9 @@ export class LrangeCommand extends SchemaCommand<[Buffer, number, number]> {
 
   protected execute(
     [key, start, stop]: [Buffer, number, number],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write([])
       return

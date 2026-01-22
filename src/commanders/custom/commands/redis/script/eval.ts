@@ -3,10 +3,19 @@ import { defineCommand, CommandCategory } from '../../metadata'
 import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
 import { t } from '../../../schema'
 import { replyValueToResponse } from './lua-reply'
+import { DB } from '../../../db'
+import { LuaRuntime } from '../../../lua-runtime'
 
 type EvalArgs = [Buffer, number, Buffer[]]
 
 export class EvalCommand extends SchemaCommand<EvalArgs> {
+  constructor(
+    private readonly db: DB,
+    private readonly luaRuntime?: LuaRuntime,
+  ) {
+    super()
+  }
+
   metadata = defineCommand('eval', {
     arity: -3, // EVAL script numkeys [key ...] [arg ...]
     flags: {
@@ -39,8 +48,8 @@ export class EvalCommand extends SchemaCommand<EvalArgs> {
 
     const keys = rest.slice(0, numKeys)
     const argv = rest.slice(numKeys)
-    const sha = ctx.db.addScript(script)
-    const runtime = ctx.luaRuntime
+    const sha = this.db.addScript(script)
+    const runtime = this.luaRuntime
     if (!runtime) {
       throw missingLuaRuntimeError()
     }

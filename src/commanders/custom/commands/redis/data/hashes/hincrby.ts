@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class HincrbyCommand extends SchemaCommand<[Buffer, Buffer, number]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('hincrby', {
     arity: 4, // HINCRBY key field increment
     flags: {
@@ -24,16 +29,16 @@ export class HincrbyCommand extends SchemaCommand<[Buffer, Buffer, number]> {
 
   protected execute(
     [key, field, increment]: [Buffer, Buffer, number],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
       throw new WrongType()
     }
     const hash =
       existing instanceof HashDataType ? existing : new HashDataType()
     if (!(existing instanceof HashDataType)) {
-      db.set(key, hash)
+      this.db.set(key, hash)
     }
     const result = hash.hincrby(field, increment)
     transport.write(result)

@@ -17,7 +17,7 @@ describe('Set Commands', () => {
   describe('SADD command', () => {
     test('SADD on new set', async () => {
       const db = new DB()
-      const saddCommand = new SaddCommand()
+      const saddCommand = new SaddCommand(db)
 
       const result = runCommand(
         saddCommand,
@@ -30,7 +30,7 @@ describe('Set Commands', () => {
 
     test('SADD duplicate member', async () => {
       const db = new DB()
-      const saddCommand = new SaddCommand()
+      const saddCommand = new SaddCommand(db)
 
       runCommand(
         saddCommand,
@@ -49,7 +49,7 @@ describe('Set Commands', () => {
 
     test('SADD multiple members', async () => {
       const db = new DB()
-      const saddCommand = new SaddCommand()
+      const saddCommand = new SaddCommand(db)
 
       const result = runCommand(
         saddCommand,
@@ -69,7 +69,7 @@ describe('Set Commands', () => {
   describe('SREM command', () => {
     test('SREM on non-existent set', async () => {
       const db = new DB()
-      const sremCommand = new SremCommand()
+      const sremCommand = new SremCommand(db)
 
       const result = runCommand(
         sremCommand,
@@ -82,8 +82,8 @@ describe('Set Commands', () => {
 
     test('SREM existing member', async () => {
       const db = new DB()
-      const saddCommand = new SaddCommand()
-      const sremCommand = new SremCommand()
+      const saddCommand = new SaddCommand(db)
+      const sremCommand = new SremCommand(db)
 
       runCommand(
         saddCommand,
@@ -103,8 +103,8 @@ describe('Set Commands', () => {
 
     test('SREM non-existent member', async () => {
       const db = new DB()
-      const saddCommand = new SaddCommand()
-      const sremCommand = new SremCommand()
+      const saddCommand = new SaddCommand(db)
+      const sremCommand = new SremCommand(db)
 
       runCommand(
         saddCommand,
@@ -126,7 +126,7 @@ describe('Set Commands', () => {
   describe('SCARD command', () => {
     test('SCARD on non-existent set', async () => {
       const db = new DB()
-      const scardCommand = new ScardCommand()
+      const scardCommand = new ScardCommand(db)
 
       const result = runCommand(scardCommand, 'SCARD', [Buffer.from('set')], db)
       assert.strictEqual(result.response, 0)
@@ -134,8 +134,8 @@ describe('Set Commands', () => {
 
     test('SCARD on existing set', async () => {
       const db = new DB()
-      const scardCommand = new ScardCommand()
-      const saddCommand = new SaddCommand()
+      const scardCommand = new ScardCommand(db)
+      const saddCommand = new SaddCommand(db)
 
       runCommand(
         saddCommand,
@@ -151,7 +151,7 @@ describe('Set Commands', () => {
   describe('SMEMBERS command', () => {
     test('SMEMBERS on non-existent set', async () => {
       const db = new DB()
-      const smembersCommand = new SmembersCommand()
+      const smembersCommand = new SmembersCommand(db)
 
       const result = runCommand(
         smembersCommand,
@@ -164,8 +164,8 @@ describe('Set Commands', () => {
 
     test('SMEMBERS on existing set', async () => {
       const db = new DB()
-      const smembersCommand = new SmembersCommand()
-      const saddCommand = new SaddCommand()
+      const smembersCommand = new SmembersCommand(db)
+      const saddCommand = new SaddCommand(db)
 
       runCommand(
         saddCommand,
@@ -480,7 +480,7 @@ describe('Set Commands', () => {
   describe('Set Error Handling', () => {
     test('Set commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const scardCommand = new ScardCommand()
+      const scardCommand = new ScardCommand(db)
 
       try {
         runCommand(scardCommand, 'SCARD', [])

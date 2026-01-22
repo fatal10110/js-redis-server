@@ -5,6 +5,13 @@ import { SchemaCommand, CommandContext, t } from '../../../schema'
 export const commandName = 'nodes'
 
 export class ClusterNodesCommand extends SchemaCommand<[]> {
+  constructor(
+    private readonly discoveryService: DiscoveryService,
+    private readonly mySelfId: string,
+  ) {
+    super()
+  }
+
   metadata = defineCommand(`cluster|${commandName}`, {
     arity: 1, // CLUSTER NODES
     flags: {
@@ -19,19 +26,12 @@ export class ClusterNodesCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(
-    _args: [],
-    { discoveryService, mySelfId, transport }: CommandContext,
-  ) {
-    const service = discoveryService as DiscoveryService | undefined
-    if (!service || !mySelfId) {
-      throw new Error('Cluster nodes requires discoveryService and mySelfId')
-    }
-    const me = service.getById(mySelfId)
+  protected execute(_args: [], { transport }: CommandContext) {
+    const me = this.discoveryService.getById(this.mySelfId)
     const master: DiscoveryNode[] = []
     const replicas: DiscoveryNode[] = []
-    for (const clusterNode of service.getAll()) {
-      if (service.isMaster(clusterNode.id)) {
+    for (const clusterNode of this.discoveryService.getAll()) {
+      if (this.discoveryService.isMaster(clusterNode.id)) {
         master.push(clusterNode)
       } else {
         replicas.push(clusterNode)
@@ -43,14 +43,21 @@ export class ClusterNodesCommand extends SchemaCommand<[]> {
       const clusterNode = master[i]
       const configEpoch = i + 1
       mapping[clusterNode.id] = configEpoch
-      res.push(generateClusterNodeInfo(me, service, clusterNode, configEpoch))
-    }
-    for (const clusterNode of replicas) {
-      const masterNode = service.getMaster(clusterNode.id)
       res.push(
         generateClusterNodeInfo(
           me,
-          service,
+          this.discoveryService,
+          clusterNode,
+          configEpoch,
+        ),
+      )
+    }
+    for (const clusterNode of replicas) {
+      const masterNode = this.discoveryService.getMaster(clusterNode.id)
+      res.push(
+        generateClusterNodeInfo(
+          me,
+          this.discoveryService,
           clusterNode,
           mapping[masterNode.id],
         ),

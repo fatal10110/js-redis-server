@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LsetCommand extends SchemaCommand<[Buffer, number, Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('lset', {
     arity: 4, // LSET key index value
     flags: {
@@ -24,9 +29,9 @@ export class LsetCommand extends SchemaCommand<[Buffer, number, Buffer]> {
 
   protected execute(
     [key, index, value]: [Buffer, number, Buffer],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       throw new OutOfRangeIndex()
     }

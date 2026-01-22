@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class RpushxCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('rpushx', {
     arity: -3, // RPUSHX key element [element ...]
     flags: {
@@ -25,9 +30,9 @@ export class RpushxCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
 
   protected execute(
     [key, firstValue, restValues]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const data = db.get(key)
+    const data = this.db.get(key)
 
     // Only push if key exists
     if (data === null) {

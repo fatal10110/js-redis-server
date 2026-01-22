@@ -22,8 +22,8 @@ describe('Hash Commands', () => {
   describe('HSET and HGET commands', () => {
     test('HSET on new hash', async () => {
       const db = new DB()
-      const hsetCommand = new HsetCommand()
-      const hgetCommand = new HgetCommand()
+      const hsetCommand = new HsetCommand(db)
+      const hgetCommand = new HgetCommand(db)
 
       const result = runCommand(
         hsetCommand,
@@ -44,8 +44,8 @@ describe('Hash Commands', () => {
 
     test('HGET on non-existent field', async () => {
       const db = new DB()
-      const hsetCommand = new HsetCommand()
-      const hgetCommand = new HgetCommand()
+      const hsetCommand = new HsetCommand(db)
+      const hgetCommand = new HgetCommand(db)
 
       runCommand(
         hsetCommand,
@@ -65,7 +65,7 @@ describe('Hash Commands', () => {
 
     test('HGET on non-existent hash', async () => {
       const db = new DB()
-      const hgetCommand = new HgetCommand()
+      const hgetCommand = new HgetCommand(db)
 
       const result = runCommand(
         hgetCommand,
@@ -156,8 +156,8 @@ describe('Hash Commands', () => {
   describe('HDEL command', () => {
     test('HDEL existing field', async () => {
       const db = new DB()
-      const hsetCommand = new HsetCommand()
-      const hdelCommand = new HdelCommand()
+      const hsetCommand = new HsetCommand(db)
+      const hdelCommand = new HdelCommand(db)
 
       runCommand(
         hsetCommand,
@@ -183,8 +183,8 @@ describe('Hash Commands', () => {
 
     test('HDEL non-existent field', async () => {
       const db = new DB()
-      const hsetCommand = new HsetCommand()
-      const hdelCommand = new HdelCommand()
+      const hsetCommand = new HsetCommand(db)
+      const hdelCommand = new HdelCommand(db)
 
       runCommand(
         hsetCommand,
@@ -204,7 +204,7 @@ describe('Hash Commands', () => {
 
     test('HDEL on non-existent hash', async () => {
       const db = new DB()
-      const hdelCommand = new HdelCommand()
+      const hdelCommand = new HdelCommand(db)
 
       const result = runCommand(
         hdelCommand,
@@ -219,7 +219,7 @@ describe('Hash Commands', () => {
   describe('HGETALL command', () => {
     test('HGETALL on non-existent hash', async () => {
       const db = new DB()
-      const hgetallCommand = new HgetallCommand()
+      const hgetallCommand = new HgetallCommand(db)
 
       const result = runCommand(
         hgetallCommand,
@@ -232,8 +232,8 @@ describe('Hash Commands', () => {
 
     test('HGETALL on existing hash', async () => {
       const db = new DB()
-      const hsetCommand = new HsetCommand()
-      const hgetallCommand = new HgetallCommand()
+      const hsetCommand = new HsetCommand(db)
+      const hgetallCommand = new HgetallCommand(db)
 
       runCommand(
         hsetCommand,
@@ -538,7 +538,7 @@ describe('Hash Commands', () => {
 
     test('Hash commands throw WrongNumberOfArguments with correct format', async () => {
       const db = new DB()
-      const hgetCommand = new HgetCommand()
+      const hgetCommand = new HgetCommand(db)
 
       try {
         runCommand(hgetCommand, 'HGET', [Buffer.from('key')], db)

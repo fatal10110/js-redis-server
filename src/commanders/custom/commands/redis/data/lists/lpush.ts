@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class LpushCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('lpush', {
     arity: -3, // LPUSH key element [element ...]
     flags: {
@@ -25,16 +30,16 @@ export class LpushCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
 
   protected execute(
     [key, firstValue, restValues]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof ListDataType)) {
       throw new WrongType()
     }
     const list =
       existing instanceof ListDataType ? existing : new ListDataType()
     if (!(existing instanceof ListDataType)) {
-      db.set(key, list)
+      this.db.set(key, list)
     }
     list.lpush(firstValue)
     for (const value of restValues) {

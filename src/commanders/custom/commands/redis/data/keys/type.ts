@@ -9,8 +9,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class TypeCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('type', {
     arity: 2, // TYPE key
     flags: {
@@ -25,8 +30,8 @@ export class TypeCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const existing = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write('none')
       return

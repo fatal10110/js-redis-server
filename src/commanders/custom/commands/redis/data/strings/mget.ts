@@ -5,8 +5,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class MgetCommand extends SchemaCommand<[Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('mget', {
     arity: -2, // MGET key [key ...]
     flags: {
@@ -23,12 +28,12 @@ export class MgetCommand extends SchemaCommand<[Buffer, Buffer[]]> {
 
   protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     const res: (Buffer | null)[] = []
     for (const key of keys) {
-      const val = db.get(key)
+      const val = this.db.get(key)
       if (!(val instanceof StringDataType)) {
         res.push(null)
         continue

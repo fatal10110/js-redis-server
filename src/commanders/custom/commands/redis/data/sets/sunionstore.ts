@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SunionstoreCommand extends SchemaCommand<
   [Buffer, Buffer, Buffer[]]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('sunionstore', {
     arity: -3, // SUNIONSTORE destination key [key ...]
     flags: {
@@ -26,9 +31,9 @@ export class SunionstoreCommand extends SchemaCommand<
 
   protected execute(
     [destination, firstKey, otherKeys]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const firstSet = db.get(firstKey)
+    const firstSet = this.db.get(firstKey)
 
     if (firstSet === null) {
       // Start with empty set
@@ -36,7 +41,7 @@ export class SunionstoreCommand extends SchemaCommand<
 
       // Collect all other sets
       for (const key of otherKeys) {
-        const data = db.get(key)
+        const data = this.db.get(key)
         if (data !== null) {
           if (!(data instanceof SetDataType)) {
             throw new WrongType()
@@ -47,7 +52,7 @@ export class SunionstoreCommand extends SchemaCommand<
 
       // If all sets are empty, delete destination
       if (otherSets.length === 0) {
-        db.del(destination)
+        this.db.del(destination)
         transport.write(0)
         return
       }
@@ -61,7 +66,7 @@ export class SunionstoreCommand extends SchemaCommand<
         }
       }
 
-      db.set(destination, resultSet)
+      this.db.set(destination, resultSet)
       transport.write(resultSet.scard())
       return
     }
@@ -73,7 +78,7 @@ export class SunionstoreCommand extends SchemaCommand<
     // Get other sets
     const otherSets: SetDataType[] = []
     for (const key of otherKeys) {
-      const data = db.get(key)
+      const data = this.db.get(key)
       if (data !== null) {
         if (!(data instanceof SetDataType)) {
           throw new WrongType()
@@ -90,7 +95,7 @@ export class SunionstoreCommand extends SchemaCommand<
     for (const member of resultMembers) {
       resultSet.sadd(member)
     }
-    db.set(destination, resultSet)
+    this.db.set(destination, resultSet)
     transport.write(resultMembers.length)
   }
 }

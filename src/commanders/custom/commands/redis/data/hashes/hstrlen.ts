@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class HstrlenCommand extends SchemaCommand<[Buffer, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('hstrlen', {
     arity: 3, // HSTRLEN key field
     flags: {
@@ -24,9 +29,9 @@ export class HstrlenCommand extends SchemaCommand<[Buffer, string]> {
 
   protected execute(
     [key, field]: [Buffer, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const data = db.get(key)
+    const data = this.db.get(key)
 
     if (data === null) {
       transport.write(0)

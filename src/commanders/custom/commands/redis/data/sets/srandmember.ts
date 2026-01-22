@@ -6,10 +6,15 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SrandmemberCommand extends SchemaCommand<
   [Buffer, number | undefined]
 > {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('srandmember', {
     arity: -2, // SRANDMEMBER key [count]
     flags: {
@@ -27,9 +32,9 @@ export class SrandmemberCommand extends SchemaCommand<
 
   protected execute(
     [key, count]: [Buffer, number | undefined],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing === null) {
       if (count !== undefined) {
         transport.write([])

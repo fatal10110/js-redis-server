@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class SaddCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('sadd', {
     arity: -3, // SADD key member [member ...]
     flags: {
@@ -25,15 +30,15 @@ export class SaddCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
 
   protected execute(
     [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     if (existing !== null && !(existing instanceof SetDataType)) {
       throw new WrongType()
     }
     const set = existing instanceof SetDataType ? existing : new SetDataType()
     if (!(existing instanceof SetDataType)) {
-      db.set(key, set)
+      this.db.set(key, set)
     }
     let added = 0
     added += set.sadd(firstMember)

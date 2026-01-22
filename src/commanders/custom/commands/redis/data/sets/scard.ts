@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ScardCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('scard', {
     arity: 2, // SCARD key
     flags: {
@@ -22,8 +27,8 @@ export class ScardCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const existing = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const existing = this.db.get(key)
     if (existing === null) {
       transport.write(0)
       return

@@ -4,8 +4,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class ExistsCommand extends SchemaCommand<[Buffer, Buffer[]]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('exists', {
     arity: -2, // EXISTS key [key ...]
     flags: {
@@ -22,12 +27,12 @@ export class ExistsCommand extends SchemaCommand<[Buffer, Buffer[]]> {
 
   protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     let count = 0
     for (const key of keys) {
-      if (db.get(key) !== null) {
+      if (this.db.get(key) !== null) {
         count += 1
       }
     }

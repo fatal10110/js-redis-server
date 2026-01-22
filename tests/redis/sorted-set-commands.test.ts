@@ -28,7 +28,7 @@ describe('Sorted Set Commands', () => {
   describe('ZADD command', () => {
     test('ZADD adds new members to sorted set', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
+      const zaddCommand = new ZaddCommand(db)
 
       // Add single member
       let result = runCommand(
@@ -66,7 +66,7 @@ describe('Sorted Set Commands', () => {
 
     test('ZADD with wrong number of arguments throws error', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
+      const zaddCommand = new ZaddCommand(db)
 
       try {
         runCommand(zaddCommand, 'ZADD', [Buffer.from('zset')], db)
@@ -90,7 +90,7 @@ describe('Sorted Set Commands', () => {
 
     test('ZADD with non-numeric score throws error', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
+      const zaddCommand = new ZaddCommand(db)
 
       try {
         runCommand(
@@ -111,7 +111,7 @@ describe('Sorted Set Commands', () => {
 
     test('ZADD on wrong data type throws error', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
+      const zaddCommand = new ZaddCommand(db)
 
       // Set a string value
       db.set(Buffer.from('key'), new StringDataType(Buffer.from('value')))
@@ -133,8 +133,8 @@ describe('Sorted Set Commands', () => {
   describe('ZREM command', () => {
     test('ZREM removes members from sorted set', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
-      const zremCommand = new ZremCommand()
+      const zaddCommand = new ZaddCommand(db)
+      const zremCommand = new ZremCommand(db)
 
       // Set up sorted set
       runCommand(
@@ -176,7 +176,7 @@ describe('Sorted Set Commands', () => {
 
     test('ZREM on non-existent key returns 0', async () => {
       const db = new DB()
-      const zremCommand = new ZremCommand()
+      const zremCommand = new ZremCommand(db)
 
       const result = runCommand(
         zremCommand,
@@ -191,8 +191,8 @@ describe('Sorted Set Commands', () => {
   describe('ZRANGE command', () => {
     test('ZRANGE returns members in score order', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
-      const zrangeCommand = new ZrangeCommand()
+      const zaddCommand = new ZaddCommand(db)
+      const zrangeCommand = new ZrangeCommand(db)
 
       // Set up sorted set with different scores
       runCommand(
@@ -246,7 +246,7 @@ describe('Sorted Set Commands', () => {
 
     test('ZRANGE with non-integer arguments throws error', async () => {
       const db = new DB()
-      const zrangeCommand = new ZrangeCommand()
+      const zrangeCommand = new ZrangeCommand(db)
 
       try {
         runCommand(
@@ -265,8 +265,8 @@ describe('Sorted Set Commands', () => {
   describe('ZSCORE command', () => {
     test('ZSCORE returns member score', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
-      const zscoreCommand = new ZscoreCommand()
+      const zaddCommand = new ZaddCommand(db)
+      const zscoreCommand = new ZscoreCommand(db)
 
       // Set up sorted set
       runCommand(
@@ -289,7 +289,7 @@ describe('Sorted Set Commands', () => {
 
     test('ZSCORE returns null for non-existent member', async () => {
       const db = new DB()
-      const zscoreCommand = new ZscoreCommand()
+      const zscoreCommand = new ZscoreCommand(db)
 
       const result = runCommand(
         zscoreCommand,
@@ -304,8 +304,8 @@ describe('Sorted Set Commands', () => {
   describe('ZCARD command', () => {
     test('ZCARD returns number of members in sorted set', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
-      const zcardCommand = new ZcardCommand()
+      const zaddCommand = new ZaddCommand(db)
+      const zcardCommand = new ZcardCommand(db)
 
       // Test on non-existent sorted set
       let result = runCommand(zcardCommand, 'ZCARD', [Buffer.from('zset')], db)
@@ -333,9 +333,9 @@ describe('Sorted Set Commands', () => {
   describe('ZINCRBY command', () => {
     test('ZINCRBY increments member score', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
-      const zincrbyCommand = new ZincrbyCommand()
-      const zscoreCommand = new ZscoreCommand()
+      const zaddCommand = new ZaddCommand(db)
+      const zincrbyCommand = new ZincrbyCommand(db)
+      const zscoreCommand = new ZscoreCommand(db)
 
       // Increment non-existent member
       let result = runCommand(
@@ -379,8 +379,8 @@ describe('Sorted Set Commands', () => {
   describe('TYPE command with sorted sets', () => {
     test('TYPE returns zset for sorted set', async () => {
       const db = new DB()
-      const zaddCommand = new ZaddCommand()
-      const typeCommand = new TypeCommand()
+      const zaddCommand = new ZaddCommand(db)
+      const typeCommand = new TypeCommand(db)
 
       // Add sorted set
       runCommand(
@@ -400,17 +400,17 @@ describe('Sorted Set Commands', () => {
       const db = new DB()
 
       const commands = [
-        { cmd: new ZaddCommand(), name: 'zadd', args: [] },
-        { cmd: new ZremCommand(), name: 'zrem', args: [] },
+        { cmd: new ZaddCommand(db), name: 'zadd', args: [] },
+        { cmd: new ZremCommand(db), name: 'zrem', args: [] },
         {
-          cmd: new ZrangeCommand(),
+          cmd: new ZrangeCommand(db),
           name: 'zrange',
           args: [Buffer.from('key')],
         },
-        { cmd: new ZscoreCommand(), name: 'zscore', args: [] },
-        { cmd: new ZcardCommand(), name: 'zcard', args: [] },
+        { cmd: new ZscoreCommand(db), name: 'zscore', args: [] },
+        { cmd: new ZcardCommand(db), name: 'zcard', args: [] },
         {
-          cmd: new ZincrbyCommand(),
+          cmd: new ZincrbyCommand(db),
           name: 'zincrby',
           args: [Buffer.from('key')],
         },

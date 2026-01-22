@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class IncrbyCommand extends SchemaCommand<[Buffer, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('incrby', {
     arity: 3, // INCRBY key increment
     flags: {
@@ -24,13 +29,13 @@ export class IncrbyCommand extends SchemaCommand<[Buffer, string]> {
 
   protected execute(
     [key, incrementStr]: [Buffer, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     const increment = parseInt(incrementStr)
     if (isNaN(increment)) {
       throw new ExpectedInteger()
     }
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     let currentValue = 0
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
@@ -42,7 +47,7 @@ export class IncrbyCommand extends SchemaCommand<[Buffer, string]> {
       }
     }
     const newValue = currentValue + increment
-    db.set(key, new StringDataType(Buffer.from(newValue.toString())))
+    this.db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(newValue)
   }
 }

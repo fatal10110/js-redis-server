@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class GetsetCommand extends SchemaCommand<[Buffer, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('getset', {
     arity: 3, // GETSET key value
     flags: {
@@ -25,9 +30,9 @@ export class GetsetCommand extends SchemaCommand<[Buffer, string]> {
 
   protected execute(
     [key, value]: [Buffer, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
-    const existing = db.get(key)
+    const existing = this.db.get(key)
     let oldValue: Buffer | null = null
     if (existing !== null) {
       if (!(existing instanceof StringDataType)) {
@@ -35,7 +40,7 @@ export class GetsetCommand extends SchemaCommand<[Buffer, string]> {
       }
       oldValue = existing.data
     }
-    db.set(key, new StringDataType(Buffer.from(value)))
+    this.db.set(key, new StringDataType(Buffer.from(value)))
     transport.write(oldValue)
   }
 }

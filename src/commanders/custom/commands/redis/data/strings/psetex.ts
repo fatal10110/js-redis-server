@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class PsetexCommand extends SchemaCommand<[Buffer, number, string]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('psetex', {
     arity: 4, // PSETEX key milliseconds value
     flags: {
@@ -24,14 +29,14 @@ export class PsetexCommand extends SchemaCommand<[Buffer, number, string]> {
 
   protected execute(
     [key, milliseconds, value]: [Buffer, number, string],
-    { db, transport }: CommandContext,
+    { transport }: CommandContext,
   ) {
     if (milliseconds <= 0) {
       throw new InvalidExpireTime('psetex')
     }
 
     const expiration = Date.now() + milliseconds
-    db.set(key, new StringDataType(Buffer.from(value)), expiration)
+    this.db.set(key, new StringDataType(Buffer.from(value)), expiration)
     transport.write('OK')
   }
 }

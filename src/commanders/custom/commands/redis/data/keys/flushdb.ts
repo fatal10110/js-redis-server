@@ -4,8 +4,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class FlushdbCommand extends SchemaCommand<[]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('flushdb', {
     arity: 1, // FLUSHDB
     flags: {
@@ -19,8 +24,8 @@ export class FlushdbCommand extends SchemaCommand<[]> {
 
   protected schema = t.tuple([])
 
-  protected execute(_args: [], { db, transport }: CommandContext) {
-    db.flushdb()
+  protected execute(_args: [], { transport }: CommandContext) {
+    this.db.flushdb()
     transport.write('OK')
   }
 }

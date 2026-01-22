@@ -3,10 +3,19 @@ import { defineCommand, CommandCategory } from '../../metadata'
 import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
 import { t } from '../../../schema'
 import { replyValueToResponse } from './lua-reply'
+import { DB } from '../../../db'
+import { LuaRuntime } from '../../../lua-runtime'
 
 type EvalShaArgs = [string, number, Buffer[]]
 
 export class EvalShaCommand extends SchemaCommand<EvalShaArgs> {
+  constructor(
+    private readonly db: DB,
+    private readonly luaRuntime?: LuaRuntime,
+  ) {
+    super()
+  }
+
   metadata = defineCommand('evalsha', {
     arity: -3, // EVALSHA sha numkeys [key ...] [arg ...]
     flags: {
@@ -37,14 +46,14 @@ export class EvalShaCommand extends SchemaCommand<EvalShaArgs> {
       throw new WrongNumberOfKeys()
     }
 
-    const script = ctx.db.getScript(sha)
+    const script = this.db.getScript(sha)
     if (!script) {
       throw new NoScript()
     }
 
     const keys = rest.slice(0, numKeys)
     const argv = rest.slice(numKeys)
-    const runtime = ctx.luaRuntime
+    const runtime = this.luaRuntime
     if (!runtime) {
       throw Error('Lua runtime is not initialized')
     }

@@ -6,8 +6,13 @@ import {
   CommandContext,
 } from '../../../../schema/schema-command'
 import { t } from '../../../../schema'
+import { DB } from '../../../../db'
 
 export class GetdelCommand extends SchemaCommand<[Buffer]> {
+  constructor(private readonly db: DB) {
+    super()
+  }
+
   metadata = defineCommand('getdel', {
     arity: 2, // GETDEL key
     flags: {
@@ -22,8 +27,8 @@ export class GetdelCommand extends SchemaCommand<[Buffer]> {
 
   protected schema = t.tuple([t.key()])
 
-  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
-    const existing = db.get(key)
+  protected execute([key]: [Buffer], { transport }: CommandContext) {
+    const existing = this.db.get(key)
 
     if (existing === null) {
       transport.write(null)
@@ -35,7 +40,7 @@ export class GetdelCommand extends SchemaCommand<[Buffer]> {
     }
 
     const value = existing.data
-    db.del(key)
+    this.db.del(key)
     transport.write(value)
   }
 }
