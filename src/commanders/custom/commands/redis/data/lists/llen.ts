@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class LlenCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class LlenCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('llen', {
     arity: 2, // LLEN key
     flags: {
@@ -24,9 +20,9 @@ export class LlenCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(0)
@@ -37,8 +33,4 @@ export class LlenCommandDefinition
     }
     transport.write(existing.llen())
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new LlenCommandDefinition(), { db })
 }

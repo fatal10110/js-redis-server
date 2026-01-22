@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ZpopminCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number?]>
-{
+export class ZpopminCommand extends SchemaCommand<[Buffer, number?]> {
   metadata = defineCommand('zpopmin', {
     arity: -2, // ZPOPMIN key [count]
     flags: {
@@ -24,11 +20,11 @@ export class ZpopminCommandDefinition
     categories: [CommandCategory.ZSET],
   })
 
-  schema = t.tuple([t.key(), t.optional(t.integer({ min: 1 }))])
+  protected schema = t.tuple([t.key(), t.optional(t.integer({ min: 1 }))])
 
-  handler(
+  protected execute(
     [key, count]: [Buffer, number?],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const data = db.get(key)
 
@@ -44,8 +40,4 @@ export class ZpopminCommandDefinition
     const result = data.zpopmin(count ?? 1)
     transport.write(result)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ZpopminCommandDefinition(), { db })
 }

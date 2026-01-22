@@ -1,16 +1,12 @@
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class MgetCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
-{
+export class MgetCommand extends SchemaCommand<[Buffer, Buffer[]]> {
   metadata = defineCommand('mget', {
     arity: -2, // MGET key [key ...]
     flags: {
@@ -23,11 +19,11 @@ export class MgetCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.variadic(t.key())])
+  protected schema = t.tuple([t.key(), t.variadic(t.key())])
 
-  handler(
+  protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     const res: (Buffer | null)[] = []
@@ -41,8 +37,4 @@ export class MgetCommandDefinition
     }
     transport.write(res)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new MgetCommandDefinition(), { db })
 }

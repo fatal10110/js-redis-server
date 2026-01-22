@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HsetnxCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer]>
-{
+export class HsetnxCommand extends SchemaCommand<[Buffer, Buffer, Buffer]> {
   metadata = defineCommand('hsetnx', {
     arity: 4, // HSETNX key field value
     flags: {
@@ -25,11 +21,11 @@ export class HsetnxCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.string()])
+  protected schema = t.tuple([t.key(), t.string(), t.string()])
 
-  handler(
+  protected execute(
     [key, field, value]: [Buffer, Buffer, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof HashDataType)) {
@@ -43,8 +39,4 @@ export class HsetnxCommandDefinition
     const result = hash.hsetnx(field, value)
     transport.write(result)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HsetnxCommandDefinition(), { db })
 }

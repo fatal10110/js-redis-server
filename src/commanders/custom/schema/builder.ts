@@ -1,4 +1,4 @@
-import { SchemaCommandDefinition, SchemaType } from './types'
+import { SchemaType } from './types'
 
 export const t = {
   string(): SchemaType {
@@ -40,18 +40,4 @@ export const t = {
   optional(item: SchemaType): SchemaType {
     return { type: 'optional', item }
   },
-}
-
-export function cmd<TArgs = unknown, TContext = unknown>(
-  name: string,
-  definition: {
-    schema: SchemaType
-    handler: (args: TArgs, ctx: TContext) => Promise<unknown>
-  },
-): SchemaCommandDefinition<TArgs, TContext> {
-  return {
-    name: name.toLowerCase(),
-    schema: definition.schema,
-    handler: definition.handler,
-  }
 }

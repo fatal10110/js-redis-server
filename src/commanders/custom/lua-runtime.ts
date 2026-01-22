@@ -4,16 +4,11 @@ import {
   UserFacedError,
 } from '../../core/errors'
 import { CapturingTransport } from '../../core/transports/capturing-transport'
-import { Command, CommandResult, Logger } from '../../types'
+import { CommandContext, CommandResult, Logger } from '../../types'
 import { ReplyValue, load, LuaWasmModule, LuaEngine } from 'lua-redis-wasm'
 
-export interface LuaCommandContext {
-  luaCommands?: Record<string, Command>
-  signal: AbortSignal
-}
-
 type LuaHostState = {
-  ctx: LuaCommandContext | null
+  ctx: CommandContext | null
   sha: string
 }
 
@@ -32,7 +27,7 @@ export class LuaRuntime {
     })
   }
 
-  eval(script: Buffer, ctx: LuaCommandContext, sha: string) {
+  eval(script: Buffer, ctx: CommandContext, sha: string) {
     this.hostState.ctx = ctx
     this.hostState.sha = sha
     try {
@@ -47,7 +42,7 @@ export class LuaRuntime {
     script: Buffer,
     keys: Buffer[],
     args: Buffer[],
-    ctx: LuaCommandContext,
+    ctx: CommandContext,
     sha: string,
   ) {
     this.hostState.ctx = ctx
@@ -81,7 +76,11 @@ export class LuaRuntime {
 
     const capture = new CapturingTransport()
     try {
-      command.run(rawCmd, args.slice(1), ctx.signal, capture)
+      const luaCtx: CommandContext = {
+        ...ctx,
+        transport: capture,
+      }
+      command.run(rawCmd, args.slice(1), luaCtx)
     } catch (err) {
       if (err instanceof UserFacedError) {
         return err.toLuaError()

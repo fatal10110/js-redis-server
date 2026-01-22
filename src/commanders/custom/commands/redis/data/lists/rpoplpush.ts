@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class RpoplpushCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer]>
-{
+export class RpoplpushCommand extends SchemaCommand<[Buffer, Buffer]> {
   metadata = defineCommand('rpoplpush', {
     arity: 3, // RPOPLPUSH source destination
     flags: {
@@ -24,11 +20,11 @@ export class RpoplpushCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key(), t.key()])
+  protected schema = t.tuple([t.key(), t.key()])
 
-  handler(
+  protected execute(
     [source, destination]: [Buffer, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const sourceData = db.get(source)
 
@@ -63,8 +59,4 @@ export class RpoplpushCommandDefinition
 
     transport.write(value)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new RpoplpushCommandDefinition(), { db })
 }

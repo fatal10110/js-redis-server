@@ -1,17 +1,15 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SinterstoreCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class SinterstoreCommand extends SchemaCommand<
+  [Buffer, Buffer, Buffer[]]
+> {
   metadata = defineCommand('sinterstore', {
     arity: -3, // SINTERSTORE destination key [key ...]
     flags: {
@@ -24,11 +22,11 @@ export class SinterstoreCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.key(), t.variadic(t.key())])
+  protected schema = t.tuple([t.key(), t.key(), t.variadic(t.key())])
 
-  handler(
+  protected execute(
     [destination, firstKey, otherKeys]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const firstSet = db.get(firstKey)
 
@@ -75,8 +73,4 @@ export class SinterstoreCommandDefinition
       transport.write(resultMembers.length)
     }
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SinterstoreCommandDefinition(), { db })
 }

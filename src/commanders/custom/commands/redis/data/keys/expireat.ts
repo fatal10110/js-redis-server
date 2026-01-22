@@ -1,16 +1,12 @@
 import { InvalidExpireTime } from '../../../../../../core/errors'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ExpireatCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number]>
-{
+export class ExpireatCommand extends SchemaCommand<[Buffer, number]> {
   metadata = defineCommand('expireat', {
     arity: 3, // EXPIREAT key timestamp
     flags: {
@@ -23,11 +19,11 @@ export class ExpireatCommandDefinition
     categories: [CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key(), t.integer()])
+  protected schema = t.tuple([t.key(), t.integer()])
 
-  handler(
+  protected execute(
     [key, timestamp]: [Buffer, number],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     if (timestamp < 0) {
       throw new InvalidExpireTime(this.metadata.name)
@@ -43,8 +39,4 @@ export class ExpireatCommandDefinition
     const success = db.setExpiration(key, expiration)
     transport.write(success ? 1 : 0)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ExpireatCommandDefinition(), { db })
 }

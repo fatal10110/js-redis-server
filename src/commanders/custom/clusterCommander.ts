@@ -5,7 +5,7 @@ import {
   DiscoveryService,
   Logger,
 } from '../../types'
-import { createClusterCommands, createMultiCommands } from './commands/redis'
+import { createClusterCommands, createLuaCommands } from './commands/redis'
 import { DB } from './db'
 import { ClusterRouter } from './cluster-router'
 import { NormalState } from '../../core/transports/session-state'
@@ -34,20 +34,16 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
   createCommander(mySelfId: string): DBCommandExecutor {
     this.dbs[mySelfId] = this.dbs[mySelfId] || new DB()
     const db = this.dbs[mySelfId]
-    const commands = createClusterCommands(
-      db,
-      this.discoveryService,
-      mySelfId,
-      this.luaRuntime,
-    )
-    const transactionCommands = createMultiCommands(db)
+    const commands = createClusterCommands(this.discoveryService, mySelfId)
+    const luaCommands = createLuaCommands()
 
     return new ClusterCommander(
       db,
       this.discoveryService,
       mySelfId,
       commands,
-      transactionCommands,
+      luaCommands,
+      this.luaRuntime,
     )
   }
 
@@ -88,7 +84,8 @@ export class ClusterCommander implements DBCommandExecutor {
     private readonly discoveryService: DiscoveryService,
     private readonly mySelfId: string,
     private readonly commands: Record<string, Command>,
-    private readonly transactionCommands: Record<string, Command>,
+    private readonly luaCommands: Record<string, Command>,
+    private readonly luaRuntime: LuaRuntime,
   ) {
     this.router = new ClusterRouter(
       this.discoveryService,
@@ -97,7 +94,9 @@ export class ClusterCommander implements DBCommandExecutor {
     )
     this.baseCommander = new BaseCommander(
       this.commands,
+      { db, discoveryService, mySelfId, luaRuntime },
       validator => new NormalState(validator, this.db, this.router),
+      this.luaCommands,
     )
   }
 

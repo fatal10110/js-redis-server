@@ -1,15 +1,8 @@
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 
-export class ScriptLoadCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class ScriptLoadCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('script|load', {
     arity: 2, // SCRIPT LOAD <script>
     flags: {
@@ -21,14 +14,10 @@ export class ScriptLoadCommandDefinition
     categories: [CommandCategory.SCRIPT],
   })
 
-  schema = t.tuple([t.string()])
+  protected schema = t.tuple([t.string()])
 
-  handler([script]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([script]: [Buffer], { db, transport }: CommandContext) {
     const hash = db.addScript(script)
     transport.write(hash)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ScriptLoadCommandDefinition(), { db })
 }

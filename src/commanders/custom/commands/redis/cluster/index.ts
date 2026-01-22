@@ -1,32 +1,32 @@
 import { UnknwonClusterSubCommand } from '../../../../../core/errors'
 import { Command } from '../../../../../types'
 import { defineCommand, CommandCategory } from '../../metadata'
+import { SchemaCommand, CommandContext, t } from '../../../schema'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../schema'
-import {
-  ClusterInfoCommandDefinition,
+  ClusterInfoCommand,
   commandName as clusterInfoCommandName,
 } from './clusterInfo'
 import {
-  ClusterNodesCommandDefinition,
+  ClusterNodesCommand,
   commandName as clusterNodesCommandName,
 } from './clusterNodes'
 import {
-  ClusterShardsCommandDefinition,
+  ClusterShardsCommand,
   commandName as clusterShardsCommandName,
 } from './clusterShards'
 import {
-  ClusterSlotsCommandDefinition,
+  ClusterSlotsCommand,
   commandName as clusterSlotsCommandName,
 } from './clusterSlots'
 
-export class ClusterCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
-{
+const subCommands: Record<string, Command> = {
+  [clusterInfoCommandName]: new ClusterInfoCommand(),
+  [clusterNodesCommandName]: new ClusterNodesCommand(),
+  [clusterShardsCommandName]: new ClusterShardsCommand(),
+  [clusterSlotsCommandName]: new ClusterSlotsCommand(),
+}
+
+export class ClusterCommand extends SchemaCommand<[Buffer, Buffer[]]> {
   metadata = defineCommand('cluster', {
     arity: -2, // CLUSTER <subcommand> [args...]
     flags: {
@@ -38,13 +38,12 @@ export class ClusterCommandDefinition
     categories: [CommandCategory.CLUSTER],
   })
 
-  schema = t.tuple([t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [subCommandName, rest]: [Buffer, Buffer[]],
-    ctx: SchemaCommandContext,
+    ctx: CommandContext,
   ) {
-    const subCommands = createSubCommands(ctx)
     const args = [subCommandName, ...rest]
     const subCommand = args.pop()
     if (!subCommand) {
@@ -54,36 +53,6 @@ export class ClusterCommandDefinition
     if (!sub) {
       throw new UnknwonClusterSubCommand(subCommand.toString())
     }
-    sub.run(subCommand, args, ctx.signal, ctx.transport)
+    sub.run(subCommand, args, ctx)
   }
-}
-
-function createSubCommands(ctx: SchemaCommandContext): Record<string, Command> {
-  const baseCtx = {
-    db: ctx.db,
-    discoveryService: ctx.discoveryService,
-    mySelfId: ctx.mySelfId,
-  }
-  return {
-    [clusterInfoCommandName]: createSchemaCommand(
-      new ClusterInfoCommandDefinition(),
-      baseCtx,
-    ),
-    [clusterNodesCommandName]: createSchemaCommand(
-      new ClusterNodesCommandDefinition(),
-      baseCtx,
-    ),
-    [clusterShardsCommandName]: createSchemaCommand(
-      new ClusterShardsCommandDefinition(),
-      baseCtx,
-    ),
-    [clusterSlotsCommandName]: createSchemaCommand(
-      new ClusterSlotsCommandDefinition(),
-      baseCtx,
-    ),
-  }
-}
-
-export default function (db: SchemaCommandContext['db']) {
-  return createSchemaCommand(new ClusterCommandDefinition(), { db })
 }

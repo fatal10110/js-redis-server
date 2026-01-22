@@ -1,17 +1,13 @@
 import { InvalidExpireTime } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SetexCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number, string]>
-{
+export class SetexCommand extends SchemaCommand<[Buffer, number, string]> {
   metadata = defineCommand('setex', {
     arity: 4, // SETEX key seconds value
     flags: {
@@ -24,11 +20,11 @@ export class SetexCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.integer({ min: 1 }), t.string()])
+  protected schema = t.tuple([t.key(), t.integer({ min: 1 }), t.string()])
 
-  handler(
+  protected execute(
     [key, seconds, value]: [Buffer, number, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     if (seconds <= 0) {
       throw new InvalidExpireTime('setex')
@@ -38,8 +34,4 @@ export class SetexCommandDefinition
     db.set(key, new StringDataType(Buffer.from(value)), expiration)
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SetexCommandDefinition(), { db })
 }

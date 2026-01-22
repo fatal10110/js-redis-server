@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SaddCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class SaddCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
   metadata = defineCommand('sadd', {
     arity: -3, // SADD key member [member ...]
     flags: {
@@ -25,11 +21,11 @@ export class SaddCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing !== null && !(existing instanceof SetDataType)) {
@@ -48,8 +44,4 @@ export class SaddCommandDefinition
     transport.write(added)
     return
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SaddCommandDefinition(), { db })
 }

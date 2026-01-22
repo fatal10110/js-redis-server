@@ -1,13 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class DbSizeCommandDefinition implements SchemaCommandRegistration<[]> {
+export class DbSizeCommand extends SchemaCommand<[]> {
   metadata = defineCommand('dbsize', {
     arity: 1, // DBSIZE
     flags: {
@@ -20,14 +18,10 @@ export class DbSizeCommandDefinition implements SchemaCommandRegistration<[]> {
     categories: [CommandCategory.SERVER],
   })
 
-  schema = t.tuple([])
+  protected schema = t.tuple([])
 
-  handler(_args: [], { db, transport }: SchemaCommandContext) {
+  protected execute(_args: [], { db, transport }: CommandContext) {
     const size = db.size()
     transport.write(size)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new DbSizeCommandDefinition(), { db })
 }

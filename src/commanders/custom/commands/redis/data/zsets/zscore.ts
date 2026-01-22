@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ZscoreCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer]>
-{
+export class ZscoreCommand extends SchemaCommand<[Buffer, Buffer]> {
   metadata = defineCommand('zscore', {
     arity: 3, // ZSCORE key member
     flags: {
@@ -24,11 +20,11 @@ export class ZscoreCommandDefinition
     categories: [CommandCategory.ZSET],
   })
 
-  schema = t.tuple([t.key(), t.string()])
+  protected schema = t.tuple([t.key(), t.string()])
 
-  handler(
+  protected execute(
     [key, member]: [Buffer, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -42,8 +38,4 @@ export class ZscoreCommandDefinition
     const response = score !== null ? Buffer.from(score.toString()) : null
     transport.write(response)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ZscoreCommandDefinition(), { db })
 }

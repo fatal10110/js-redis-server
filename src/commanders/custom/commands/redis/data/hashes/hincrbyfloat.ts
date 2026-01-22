@@ -1,17 +1,15 @@
 import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HincrbyfloatCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, string]>
-{
+export class HincrbyfloatCommand extends SchemaCommand<
+  [Buffer, Buffer, string]
+> {
   metadata = defineCommand('hincrbyfloat', {
     arity: 4, // HINCRBYFLOAT key field increment
     flags: {
@@ -24,11 +22,11 @@ export class HincrbyfloatCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.string()])
+  protected schema = t.tuple([t.key(), t.string(), t.string()])
 
-  handler(
+  protected execute(
     [key, field, incrementStr]: [Buffer, Buffer, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const increment = parseFloat(incrementStr)
     if (Number.isNaN(increment)) {
@@ -46,8 +44,4 @@ export class HincrbyfloatCommandDefinition
     const result = hash.hincrbyfloat(field, increment)
     transport.write(Buffer.from(result.toString()))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HincrbyfloatCommandDefinition(), { db })
 }

@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class RenameCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer]>
-{
+export class RenameCommand extends SchemaCommand<[Buffer, Buffer]> {
   metadata = defineCommand('rename', {
     arity: 3, // RENAME key newkey
     flags: {
@@ -21,11 +17,11 @@ export class RenameCommandDefinition
     categories: [CommandCategory.KEYS],
   })
 
-  schema = t.tuple([t.key(), t.key()])
+  protected schema = t.tuple([t.key(), t.key()])
 
-  handler(
+  protected execute(
     [key, newKey]: [Buffer, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
 
@@ -45,8 +41,4 @@ export class RenameCommandDefinition
 
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new RenameCommandDefinition(), { db })
 }

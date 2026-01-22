@@ -5,89 +5,149 @@ import {
   defineCommand,
   CommandCategory,
 } from '../src/commanders/custom/commands/metadata'
-import { t } from '../src/commanders/custom/schema'
-import type { SchemaCommandRegistration } from '../src/commanders/custom/schema'
-import type { Command, CommandResult } from '../src/types'
+import {
+  SchemaCommand,
+  CommandContext,
+  t,
+} from '../src/commanders/custom/schema'
 
-// Mock command class for testing
-class MockCommand implements Command {
-  constructor(public readonly metadata: any) {}
+// Mock command classes for testing
+class GetCommand extends SchemaCommand<[Buffer]> {
+  metadata = defineCommand('get', {
+    arity: 2,
+    flags: { readonly: true },
+    categories: [CommandCategory.STRING],
+  })
 
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] {
-    return args
+  protected schema = t.tuple([t.key()])
+
+  protected execute(_args: [Buffer], _ctx: CommandContext) {
+    // Mock implementation
   }
+}
 
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult> {
-    return Promise.resolve({ response: 'OK' })
+class SetCommand extends SchemaCommand<[Buffer, string]> {
+  metadata = defineCommand('set', {
+    arity: -3,
+    flags: { write: true },
+    categories: [CommandCategory.STRING],
+  })
+
+  protected schema = t.tuple([t.key(), t.string()])
+
+  protected execute(_args: [Buffer, string], _ctx: CommandContext) {
+    // Mock implementation
+  }
+}
+
+class HgetCommand extends SchemaCommand<[Buffer, string]> {
+  metadata = defineCommand('hget', {
+    arity: 3,
+    flags: { readonly: true },
+    categories: [CommandCategory.HASH],
+  })
+
+  protected schema = t.tuple([t.key(), t.string()])
+
+  protected execute(_args: [Buffer, string], _ctx: CommandContext) {
+    // Mock implementation
+  }
+}
+
+class RandomkeyCommand extends SchemaCommand<[]> {
+  metadata = defineCommand('randomkey', {
+    arity: 1,
+    flags: { readonly: true, random: true },
+    categories: [CommandCategory.KEYS],
+  })
+
+  protected schema = t.tuple([])
+
+  protected execute(_args: [], _ctx: CommandContext) {
+    // Mock implementation
+  }
+}
+
+class BlpopCommand extends SchemaCommand<[]> {
+  metadata = defineCommand('blpop', {
+    arity: -3,
+    flags: { write: true, blocking: true },
+    categories: [CommandCategory.LIST],
+  })
+
+  protected schema = t.tuple([])
+
+  protected execute(_args: [], _ctx: CommandContext) {
+    // Mock implementation
+  }
+}
+
+class MultiCommand extends SchemaCommand<[]> {
+  metadata = defineCommand('multi', {
+    arity: 1,
+    flags: { transaction: true },
+    categories: [CommandCategory.TRANSACTION],
+  })
+
+  protected schema = t.tuple([])
+
+  protected execute(_args: [], _ctx: CommandContext) {
+    // Mock implementation
+  }
+}
+
+class ScanCommand extends SchemaCommand<[]> {
+  metadata = defineCommand('scan', {
+    arity: -2,
+    flags: { readonly: true },
+    categories: [CommandCategory.KEYS],
+  })
+
+  protected schema = t.tuple([])
+
+  protected execute(_args: [], _ctx: CommandContext) {
+    // Mock implementation
+  }
+}
+
+class FastGetCommand extends SchemaCommand<[Buffer]> {
+  metadata = defineCommand('fastget', {
+    arity: 2,
+    flags: { readonly: true, fast: true },
+    categories: [CommandCategory.STRING],
+  })
+
+  protected schema = t.tuple([t.key()])
+
+  protected execute(_args: [Buffer], _ctx: CommandContext) {
+    // Mock implementation
   }
 }
 
 describe('CommandRegistry', () => {
   test('should register and retrieve commands', () => {
     const registry = new CommandRegistry()
+    const getCmd = new GetCommand()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    registry.register(getDef)
+    registry.register(getCmd)
     assert.strictEqual(registry.has('get'), true)
-    assert.strictEqual(registry.get('get'), getDef)
+    assert.strictEqual(registry.get('get'), getCmd)
   })
 
   test('should be case-insensitive for command names', () => {
     const registry = new CommandRegistry()
+    const getCmd = new GetCommand()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    registry.register(getDef)
+    registry.register(getCmd)
     assert.strictEqual(registry.has('GET'), true)
     assert.strictEqual(registry.has('Get'), true)
-    assert.strictEqual(registry.get('GET'), getDef)
+    assert.strictEqual(registry.get('GET'), getCmd)
   })
 
   test('should filter readonly commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    const setDef: SchemaCommandRegistration = {
-      metadata: defineCommand('set', {
-        arity: -3,
-        flags: { write: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key(), t.string()]),
-      handler: () => {},
-    }
-
-    registry.registerAll([getDef, setDef])
+    registry.registerAll([new GetCommand(), new SetCommand()])
 
     const readonly = registry.getReadonlyCommands()
     assert.strictEqual(readonly.length, 1)
@@ -97,37 +157,11 @@ describe('CommandRegistry', () => {
   test('should filter lua-safe commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    const randomkeyDef: SchemaCommandRegistration = {
-      metadata: defineCommand('randomkey', {
-        arity: 1,
-        flags: { readonly: true, random: true },
-        categories: [CommandCategory.KEYS],
-      }),
-      schema: t.tuple([]),
-      handler: () => {},
-    }
-
-    const blpopDef: SchemaCommandRegistration = {
-      metadata: defineCommand('blpop', {
-        arity: -3,
-        flags: { write: true, blocking: true },
-        categories: [CommandCategory.LIST],
-      }),
-      schema: t.tuple([]),
-      handler: () => {},
-    }
-
-    registry.registerAll([getDef, randomkeyDef, blpopDef])
+    registry.registerAll([
+      new GetCommand(),
+      new RandomkeyCommand(),
+      new BlpopCommand(),
+    ])
 
     const luaSafe = registry.getLuaCommands()
     assert.strictEqual(luaSafe.length, 1)
@@ -137,35 +171,11 @@ describe('CommandRegistry', () => {
   test('should filter multi-safe commands', () => {
     const registry = new CommandRegistry()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    const blpopDef: CommandDefinition = {
-      metadata: defineCommand('blpop', {
-        arity: -3,
-        flags: { write: true, blocking: true },
-        categories: [CommandCategory.LIST],
-      }),
-      factory: deps => new MockCommand(blpopDef.metadata),
-    }
-
-    const multiDef: CommandDefinition = {
-      metadata: defineCommand('multi', {
-        arity: 1,
-        flags: { transaction: true },
-        categories: [CommandCategory.TRANSACTION],
-      }),
-      factory: deps => new MockCommand(multiDef.metadata),
-    }
-
-    registry.registerAll([getDef, blpopDef, multiDef])
+    registry.registerAll([
+      new GetCommand(),
+      new BlpopCommand(),
+      new MultiCommand(),
+    ])
 
     const multiSafe = registry.getMultiCommands()
     assert.strictEqual(multiSafe.length, 1)
@@ -175,45 +185,17 @@ describe('CommandRegistry', () => {
   test('should throw on duplicate registration', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      factory: deps => new MockCommand(getDef.metadata),
-    }
-
-    registry.register(getDef)
+    registry.register(new GetCommand())
 
     assert.throws(() => {
-      registry.register(getDef)
+      registry.register(new GetCommand())
     }, /already registered/)
   })
 
   test('should filter by category', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      factory: deps => new MockCommand(getDef.metadata),
-    }
-
-    const hgetDef: SchemaCommandRegistration = {
-      metadata: defineCommand('hget', {
-        arity: 3,
-        flags: { readonly: true },
-        categories: [CommandCategory.HASH],
-      }),
-      schema: t.tuple([t.key(), t.string()]),
-      handler: () => {},
-    }
-
-    registry.registerAll([getDef, hgetDef])
+    registry.registerAll([new GetCommand(), new HgetCommand()])
 
     const stringCommands = registry.getByCategory(CommandCategory.STRING)
     assert.strictEqual(stringCommands.length, 1)
@@ -224,22 +206,12 @@ describe('CommandRegistry', () => {
     assert.strictEqual(hashCommands[0].metadata.name, 'hget')
   })
 
-  test('should create command instances', () => {
+  test('should convert to record', () => {
     const registry = new CommandRegistry()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
+    registry.register(new GetCommand())
 
-    registry.register(getDef)
-
-    const commands = registry.createCommands({ db: {} as any })
+    const commands = registry.toRecord()
     assert.ok(commands.get)
     assert.ok(typeof commands.get.run === 'function')
   })
@@ -249,44 +221,14 @@ describe('CommandRegistry', () => {
 
     assert.strictEqual(registry.count(), 0)
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    registry.register(getDef)
+    registry.register(new GetCommand())
     assert.strictEqual(registry.count(), 1)
   })
 
   test('should get all command names', () => {
     const registry = new CommandRegistry()
 
-    const getDef: SchemaCommandRegistration = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key()]),
-      handler: () => {},
-    }
-
-    const setDef: SchemaCommandRegistration = {
-      metadata: defineCommand('set', {
-        arity: -3,
-        flags: { write: true },
-        categories: [CommandCategory.STRING],
-      }),
-      schema: t.tuple([t.key(), t.string()]),
-      handler: () => {},
-    }
-
-    registry.registerAll([getDef, setDef])
+    registry.registerAll([new GetCommand(), new SetCommand()])
 
     const names = registry.getNames()
     assert.strictEqual(names.length, 2)
@@ -297,31 +239,13 @@ describe('CommandRegistry', () => {
   test('should support custom filter predicates', () => {
     const registry = new CommandRegistry()
 
-    const getDef: CommandDefinition = {
-      metadata: defineCommand('get', {
-        arity: 2,
-        flags: { readonly: true, fast: true },
-        categories: [CommandCategory.STRING],
-      }),
-      factory: deps => new MockCommand(getDef.metadata),
-    }
-
-    const scanDef: CommandDefinition = {
-      metadata: defineCommand('scan', {
-        arity: -2,
-        flags: { readonly: true },
-        categories: [CommandCategory.KEYS],
-      }),
-      factory: deps => new MockCommand(scanDef.metadata),
-    }
-
-    registry.registerAll([getDef, scanDef])
+    registry.registerAll([new FastGetCommand(), new ScanCommand()])
 
     const fastCommands = registry.filter(
-      def => def.metadata.flags.fast === true,
+      cmd => cmd.metadata.flags.fast === true,
     )
     assert.strictEqual(fastCommands.length, 1)
-    assert.strictEqual(fastCommands[0].metadata.name, 'get')
+    assert.strictEqual(fastCommands[0].metadata.name, 'fastget')
   })
 })
 

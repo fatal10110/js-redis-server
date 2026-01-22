@@ -1,19 +1,12 @@
 import { UserFacedError, WrongNumberOfKeys } from '../../../../../core/errors'
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 import { replyValueToResponse } from './lua-reply'
 
 type EvalArgs = [Buffer, number, Buffer[]]
 
-export class EvalCommandDefinition
-  implements SchemaCommandRegistration<EvalArgs>
-{
+export class EvalCommand extends SchemaCommand<EvalArgs> {
   metadata = defineCommand('eval', {
     arity: -3, // EVAL script numkeys [key ...] [arg ...]
     flags: {
@@ -24,7 +17,11 @@ export class EvalCommandDefinition
     categories: [CommandCategory.SCRIPT],
   })
 
-  schema = t.tuple([t.key(), t.integer({ min: 0 }), t.variadic(t.key())])
+  protected schema = t.tuple([
+    t.key(),
+    t.integer({ min: 0 }),
+    t.variadic(t.key()),
+  ])
 
   getKeys(_rawCmd: Buffer, args: Buffer[]): Buffer[] {
     const numKeys = parseInt(args[1]?.toString() ?? '', 10)
@@ -35,7 +32,7 @@ export class EvalCommandDefinition
     return args.slice(2, 2 + numKeys)
   }
 
-  handler([script, numKeys, rest]: EvalArgs, ctx: SchemaCommandContext) {
+  protected execute([script, numKeys, rest]: EvalArgs, ctx: CommandContext) {
     if (numKeys > rest.length) {
       throw new WrongNumberOfKeys()
     }
@@ -60,10 +57,6 @@ export class EvalCommandDefinition
     }
     ctx.transport.write(replyValueToResponse(reply, sha))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new EvalCommandDefinition(), { db })
 }
 
 function missingLuaRuntimeError(): Error {

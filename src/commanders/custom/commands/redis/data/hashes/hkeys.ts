@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HkeysCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class HkeysCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('hkeys', {
     arity: 2, // HKEYS key
     flags: {
@@ -24,9 +20,9 @@ export class HkeysCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write([])
@@ -37,8 +33,4 @@ export class HkeysCommandDefinition
     }
     transport.write(existing.hkeys())
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HkeysCommandDefinition(), { db })
 }

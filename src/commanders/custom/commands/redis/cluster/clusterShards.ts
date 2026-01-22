@@ -1,18 +1,10 @@
 import { DiscoveryNode, DiscoveryService } from '../../../../../types'
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext, t } from '../../../schema'
 
 export const commandName = 'shards'
 
-export class ClusterShardsCommandDefinition
-  implements SchemaCommandRegistration<[]>
-{
+export class ClusterShardsCommand extends SchemaCommand<[]> {
   metadata = defineCommand(`cluster|${commandName}`, {
     arity: 1, // CLUSTER SHARDS
     flags: {
@@ -25,11 +17,11 @@ export class ClusterShardsCommandDefinition
     categories: [CommandCategory.CLUSTER],
   })
 
-  schema = t.tuple([])
+  protected schema = t.tuple([])
 
-  handler(
+  protected execute(
     _args: [],
-    { discoveryService, mySelfId, transport }: SchemaCommandContext,
+    { discoveryService, mySelfId, transport }: CommandContext,
   ) {
     const service = discoveryService as DiscoveryService | undefined
     if (!service || !mySelfId) {
@@ -95,16 +87,4 @@ export class ClusterShardsCommandDefinition
     }
     transport.write(shards)
   }
-}
-
-export default function (
-  db: DB,
-  discoveryService: DiscoveryService,
-  mySelfId: string,
-) {
-  return createSchemaCommand(new ClusterShardsCommandDefinition(), {
-    db,
-    discoveryService,
-    mySelfId,
-  })
 }

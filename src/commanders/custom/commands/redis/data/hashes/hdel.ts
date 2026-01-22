@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { HashDataType } from '../../../../data-structures/hash'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class HdelCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class HdelCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
   metadata = defineCommand('hdel', {
     arity: -3, // HDEL key field [field ...]
     flags: {
@@ -24,11 +20,11 @@ export class HdelCommandDefinition
     categories: [CommandCategory.HASH],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [key, firstField, restFields]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -48,8 +44,4 @@ export class HdelCommandDefinition
     }
     transport.write(deletedCount)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new HdelCommandDefinition(), { db })
 }

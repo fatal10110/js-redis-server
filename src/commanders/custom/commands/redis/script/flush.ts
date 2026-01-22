@@ -1,15 +1,10 @@
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 
-export class ScriptFlushCommandDefinition
-  implements SchemaCommandRegistration<['ASYNC' | 'SYNC' | undefined]>
-{
+export class ScriptFlushCommand extends SchemaCommand<
+  ['ASYNC' | 'SYNC' | undefined]
+> {
   metadata = defineCommand('script|flush', {
     arity: -1, // SCRIPT FLUSH [ASYNC|SYNC]
     flags: {
@@ -22,17 +17,15 @@ export class ScriptFlushCommandDefinition
     categories: [CommandCategory.SCRIPT],
   })
 
-  schema = t.tuple([t.optional(t.xor([t.literal('ASYNC'), t.literal('SYNC')]))])
+  protected schema = t.tuple([
+    t.optional(t.xor([t.literal('ASYNC'), t.literal('SYNC')])),
+  ])
 
-  handler(
+  protected execute(
     _args: ['ASYNC' | 'SYNC' | undefined],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     db.flushScripts()
     transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ScriptFlushCommandDefinition(), { db })
 }

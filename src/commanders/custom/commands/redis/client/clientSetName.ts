@@ -1,17 +1,10 @@
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 
 export const commandName = 'setname'
 
-export class ClientSetNameCommandDefinition
-  implements SchemaCommandRegistration<[string]>
-{
+export class ClientSetNameCommand extends SchemaCommand<[string]> {
   metadata = defineCommand(`client|${commandName}`, {
     arity: 2, // CLIENT SETNAME <name>
     flags: {
@@ -24,13 +17,9 @@ export class ClientSetNameCommandDefinition
     categories: [CommandCategory.CONNECTION],
   })
 
-  schema = t.tuple([t.string()])
+  protected schema = t.tuple([t.string()])
 
-  handler(_args: [string], ctx: SchemaCommandContext) {
+  protected execute(_args: [string], ctx: CommandContext) {
     ctx.transport.write('OK')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ClientSetNameCommandDefinition(), { db })
 }

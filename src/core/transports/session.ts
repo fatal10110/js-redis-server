@@ -1,8 +1,11 @@
-import { Command, CommandResult, Transport } from '../../types'
+import { Command, CommandContext, CommandResult, Transport } from '../../types'
 import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
 import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
-import { CommandExecutionContext } from '../../commanders/custom/execution-context'
+import {
+  CommandExecutionContext,
+  ExecutionContextOptions,
+} from '../../commanders/custom/execution-context'
 import { UserFacedError } from '../errors'
 
 /**
@@ -16,15 +19,24 @@ export class Session {
   private jobCounter = 0
   private readonly connectionId: string
   private readonly context: CommandExecutionContext
+  private readonly commands: Record<string, Command>
+  private readonly options: ExecutionContextOptions
 
   constructor(
     commands: Record<string, Command>,
+    options: ExecutionContextOptions,
     private readonly kernel: RedisKernel,
     initialState: SessionState,
   ) {
-    this.context = new CommandExecutionContext(commands)
+    this.commands = commands
+    this.options = options
+    this.context = new CommandExecutionContext(commands, options)
     this.currentState = initialState
     this.connectionId = `conn-${++Session.connectionCounter}`
+  }
+
+  setLuaCommands(luaCommands: Record<string, Command>): void {
+    this.context.setLuaCommands(luaCommands)
   }
 
   /**
@@ -104,7 +116,7 @@ export class Session {
    * This is called when processing an EXEC command.
    */
   private executeBatch(job: CommandJob): void {
-    const { transport } = job.request
+    const { transport, signal } = job.request
     const batch = job.batch!
     const results: CommandResult[] = []
 
@@ -114,12 +126,21 @@ export class Session {
       const capturingTransport = new CapturingTransport()
 
       try {
-        this.executeCommand(
-          capturingTransport,
-          req.command,
-          req.args,
-          req.signal,
-        )
+        const ctx: CommandContext = {
+          db: this.options.db,
+          discoveryService: this.options.discoveryService,
+          mySelfId: this.options.mySelfId,
+          luaRuntime: this.options.luaRuntime,
+          commands: this.commands,
+          signal,
+          transport: capturingTransport,
+        }
+
+        const cmdName = req.command.toString().toLowerCase()
+        const cmd = this.commands[cmdName]
+        if (cmd) {
+          cmd.run(req.command, req.args, ctx)
+        }
 
         // Get the captured results
         const capturedResult = capturingTransport.getResults()

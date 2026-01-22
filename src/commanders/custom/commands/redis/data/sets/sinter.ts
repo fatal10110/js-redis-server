@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SinterCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer[]]>
-{
+export class SinterCommand extends SchemaCommand<[Buffer, Buffer[]]> {
   metadata = defineCommand('sinter', {
     arity: -2, // SINTER key [key ...]
     flags: {
@@ -24,11 +20,11 @@ export class SinterCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.variadic(t.key())])
+  protected schema = t.tuple([t.key(), t.variadic(t.key())])
 
-  handler(
+  protected execute(
     [firstKey, restKeys]: [Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const keys = [firstKey, ...restKeys]
     const sets: SetDataType[] = []
@@ -46,8 +42,4 @@ export class SinterCommandDefinition
     const [firstSet, ...otherSets] = sets
     transport.write(firstSet.sinter(otherSets))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SinterCommandDefinition(), { db })
 }

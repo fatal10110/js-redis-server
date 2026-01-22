@@ -1,17 +1,13 @@
 import { OffsetOutOfRange, WrongType } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SetrangeCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number, string]>
-{
+export class SetrangeCommand extends SchemaCommand<[Buffer, number, string]> {
   metadata = defineCommand('setrange', {
     arity: 4, // SETRANGE key offset value
     flags: {
@@ -24,11 +20,11 @@ export class SetrangeCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.integer({ min: 0 }), t.string()])
+  protected schema = t.tuple([t.key(), t.integer({ min: 0 }), t.string()])
 
-  handler(
+  protected execute(
     [key, offset, value]: [Buffer, number, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     if (offset < 0) {
       throw new OffsetOutOfRange()
@@ -66,8 +62,4 @@ export class SetrangeCommandDefinition
     db.set(key, new StringDataType(currentBuffer))
     transport.write(currentBuffer.length)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SetrangeCommandDefinition(), { db })
 }

@@ -1,4 +1,5 @@
 import { CommandMetadata } from './commanders/custom/commands/metadata'
+import { DB } from './commanders/custom/db'
 import { UserFacedError } from './core/errors'
 
 export interface DBCommandExecutor {
@@ -30,6 +31,18 @@ export interface Logger {
   debug(msg: unknown, metadata?: Record<string, unknown>): void
 }
 
+export interface CommandContext {
+  db: DB
+  discoveryService?: DiscoveryService
+  mySelfId?: string
+  executionContext?: ExecutionContext
+  commands?: Record<string, Command>
+  luaCommands?: Record<string, Command>
+  luaRuntime?: unknown
+  signal: AbortSignal
+  transport: Transport
+}
+
 export interface Command {
   /** Command metadata (arity, flags, key positions) */
   readonly metadata: CommandMetadata
@@ -43,12 +56,7 @@ export interface Command {
   /**
    * Execute command
    */
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-    transport: Transport,
-  ): CommandResult | void
+  run(rawCmd: Buffer, args: Buffer[], ctx: CommandContext): CommandResult | void
 }
 
 export type SlotRange = [number, number]

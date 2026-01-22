@@ -1,17 +1,13 @@
 import { WrongType, ExpectedFloat } from '../../../../../../core/errors'
 import { StringDataType } from '../../../../data-structures/string'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class IncrbyfloatCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string]>
-{
+export class IncrbyfloatCommand extends SchemaCommand<[Buffer, string]> {
   metadata = defineCommand('incrbyfloat', {
     arity: 3, // INCRBYFLOAT key increment
     flags: {
@@ -24,11 +20,11 @@ export class IncrbyfloatCommandDefinition
     categories: [CommandCategory.STRING],
   })
 
-  schema = t.tuple([t.key(), t.string()])
+  protected schema = t.tuple([t.key(), t.string()])
 
-  handler(
+  protected execute(
     [key, incrementStr]: [Buffer, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const increment = parseFloat(incrementStr)
     if (isNaN(increment)) {
@@ -49,8 +45,4 @@ export class IncrbyfloatCommandDefinition
     db.set(key, new StringDataType(Buffer.from(newValue.toString())))
     transport.write(Buffer.from(newValue.toString()))
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new IncrbyfloatCommandDefinition(), { db })
 }

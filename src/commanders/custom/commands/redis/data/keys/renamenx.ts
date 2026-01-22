@@ -1,15 +1,11 @@
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class RenamenxCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer]>
-{
+export class RenamenxCommand extends SchemaCommand<[Buffer, Buffer]> {
   metadata = defineCommand('renamenx', {
     arity: 3, // RENAMENX key newkey
     flags: {
@@ -22,11 +18,11 @@ export class RenamenxCommandDefinition
     categories: [CommandCategory.KEYS],
   })
 
-  schema = t.tuple([t.key(), t.key()])
+  protected schema = t.tuple([t.key(), t.key()])
 
-  handler(
+  protected execute(
     [key, newKey]: [Buffer, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
 
@@ -53,8 +49,4 @@ export class RenamenxCommandDefinition
 
     transport.write(1)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new RenamenxCommandDefinition(), { db })
 }

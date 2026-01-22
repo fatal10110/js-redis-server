@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class RpushxCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class RpushxCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
   metadata = defineCommand('rpushx', {
     arity: -3, // RPUSHX key element [element ...]
     flags: {
@@ -25,11 +21,11 @@ export class RpushxCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [key, firstValue, restValues]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const data = db.get(key)
 
@@ -51,8 +47,4 @@ export class RpushxCommandDefinition
 
     transport.write(data.llen())
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new RpushxCommandDefinition(), { db })
 }

@@ -1,17 +1,15 @@
 import { ExpectedFloat, WrongType } from '../../../../../../core/errors'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class ZrangebyscoreCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, string, string]>
-{
+export class ZrangebyscoreCommand extends SchemaCommand<
+  [Buffer, string, string]
+> {
   metadata = defineCommand('zrangebyscore', {
     arity: 4, // ZRANGEBYSCORE key min max
     flags: {
@@ -23,11 +21,11 @@ export class ZrangebyscoreCommandDefinition
     categories: [CommandCategory.ZSET],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.string()])
+  protected schema = t.tuple([t.key(), t.string(), t.string()])
 
-  handler(
+  protected execute(
     [key, minStr, maxStr]: [Buffer, string, string],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const min = parseFloat(minStr)
     const max = parseFloat(maxStr)
@@ -45,8 +43,4 @@ export class ZrangebyscoreCommandDefinition
     const result = existing.zrangebyscore(min, max)
     transport.write(result)
   }
-}
-
-export default function createZrangebyscore(db: DB) {
-  return createSchemaCommand(new ZrangebyscoreCommandDefinition(), { db })
 }

@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SpopCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class SpopCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('spop', {
     arity: 2, // SPOP key
     flags: {
@@ -26,9 +22,9 @@ export class SpopCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write(null)
@@ -43,8 +39,4 @@ export class SpopCommandDefinition
     }
     transport.write(member)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SpopCommandDefinition(), { db })
 }

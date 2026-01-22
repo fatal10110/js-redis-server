@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { ListDataType } from '../../../../data-structures/list'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class LremCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, number, Buffer]>
-{
+export class LremCommand extends SchemaCommand<[Buffer, number, Buffer]> {
   metadata = defineCommand('lrem', {
     arity: 4, // LREM key count element
     flags: {
@@ -23,11 +19,11 @@ export class LremCommandDefinition
     categories: [CommandCategory.LIST],
   })
 
-  schema = t.tuple([t.key(), t.integer(), t.string()])
+  protected schema = t.tuple([t.key(), t.integer(), t.string()])
 
-  handler(
+  protected execute(
     [key, count, value]: [Buffer, number, Buffer],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -43,8 +39,4 @@ export class LremCommandDefinition
     }
     transport.write(removed)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new LremCommandDefinition(), { db })
 }

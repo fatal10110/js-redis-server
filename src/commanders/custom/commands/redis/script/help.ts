@@ -1,15 +1,8 @@
-import { DB } from '../../../db'
 import { defineCommand, CommandCategory } from '../../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../schema'
+import { SchemaCommand, CommandContext } from '../../../schema/schema-command'
+import { t } from '../../../schema'
 
-export class ScriptHelpCommandDefinition
-  implements SchemaCommandRegistration<[]>
-{
+export class ScriptHelpCommand extends SchemaCommand<[]> {
   metadata = defineCommand('script|help', {
     arity: 1, // SCRIPT HELP
     flags: {
@@ -21,9 +14,9 @@ export class ScriptHelpCommandDefinition
     categories: [CommandCategory.SCRIPT],
   })
 
-  schema = t.tuple([])
+  protected schema = t.tuple([])
 
-  handler(_args: [], { transport }: SchemaCommandContext) {
+  protected execute(_args: [], { transport }: CommandContext) {
     const helpText = [
       'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
       'DEBUG <YES|SYNC|NO>',
@@ -41,8 +34,4 @@ export class ScriptHelpCommandDefinition
     ]
     transport.write(helpText)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new ScriptHelpCommandDefinition(), { db })
 }

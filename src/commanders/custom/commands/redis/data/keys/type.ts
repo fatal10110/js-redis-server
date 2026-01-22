@@ -3,18 +3,14 @@ import { HashDataType } from '../../../../data-structures/hash'
 import { ListDataType } from '../../../../data-structures/list'
 import { SetDataType } from '../../../../data-structures/set'
 import { SortedSetDataType } from '../../../../data-structures/zset'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class TypeCommandDefinition
-  implements SchemaCommandRegistration<[Buffer]>
-{
+export class TypeCommand extends SchemaCommand<[Buffer]> {
   metadata = defineCommand('type', {
     arity: 2, // TYPE key
     flags: {
@@ -27,9 +23,9 @@ export class TypeCommandDefinition
     categories: [CommandCategory.GENERIC],
   })
 
-  schema = t.tuple([t.key()])
+  protected schema = t.tuple([t.key()])
 
-  handler([key]: [Buffer], { db, transport }: SchemaCommandContext) {
+  protected execute([key]: [Buffer], { db, transport }: CommandContext) {
     const existing = db.get(key)
     if (existing === null) {
       transport.write('none')
@@ -57,8 +53,4 @@ export class TypeCommandDefinition
     }
     transport.write('unknown')
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new TypeCommandDefinition(), { db })
 }

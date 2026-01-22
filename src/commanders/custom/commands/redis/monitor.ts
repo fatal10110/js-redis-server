@@ -1,13 +1,8 @@
-import { DB } from '../../db'
 import { defineCommand, CommandCategory } from '../metadata'
-import {
-  createSchemaCommand,
-  SchemaCommandRegistration,
-  SchemaCommandContext,
-  t,
-} from '../../schema'
+import { SchemaCommand, CommandContext } from '../../schema/schema-command'
+import { t } from '../../schema'
 
-export class MonitorCommandDefinition implements SchemaCommandRegistration<[]> {
+export class MonitorCommand extends SchemaCommand<[]> {
   metadata = defineCommand('monitor', {
     arity: 1, // MONITOR
     flags: {
@@ -20,16 +15,12 @@ export class MonitorCommandDefinition implements SchemaCommandRegistration<[]> {
     categories: [CommandCategory.SERVER],
   })
 
-  schema = t.tuple([])
+  protected schema = t.tuple([])
 
-  handler(_args: [], ctx: SchemaCommandContext) {
+  protected execute(_args: [], ctx: CommandContext) {
     {
       ctx.transport.write('OK')
       return
     }
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new MonitorCommandDefinition(), { db })
 }

@@ -11,9 +11,3 @@ export type SchemaType =
   | { type: 'tuple'; items: SchemaType[] }
   | { type: 'variadic'; item: SchemaType }
   | { type: 'optional'; item: SchemaType }
-
-export interface SchemaCommandDefinition<TArgs = unknown, TContext = unknown> {
-  name: string
-  schema: SchemaType
-  handler: (args: TArgs, ctx: TContext) => Promise<unknown>
-}

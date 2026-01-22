@@ -1,17 +1,13 @@
 import { WrongType } from '../../../../../../core/errors'
 import { SetDataType } from '../../../../data-structures/set'
-import { DB } from '../../../../db'
 import { defineCommand, CommandCategory } from '../../../metadata'
 import {
-  createSchemaCommand,
-  SchemaCommandContext,
-  SchemaCommandRegistration,
-  t,
-} from '../../../../schema'
+  SchemaCommand,
+  CommandContext,
+} from '../../../../schema/schema-command'
+import { t } from '../../../../schema'
 
-export class SremCommandDefinition
-  implements SchemaCommandRegistration<[Buffer, Buffer, Buffer[]]>
-{
+export class SremCommand extends SchemaCommand<[Buffer, Buffer, Buffer[]]> {
   metadata = defineCommand('srem', {
     arity: -3, // SREM key member [member ...]
     flags: {
@@ -24,11 +20,11 @@ export class SremCommandDefinition
     categories: [CommandCategory.SET],
   })
 
-  schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
+  protected schema = t.tuple([t.key(), t.string(), t.variadic(t.string())])
 
-  handler(
+  protected execute(
     [key, firstMember, restMembers]: [Buffer, Buffer, Buffer[]],
-    { db, transport }: SchemaCommandContext,
+    { db, transport }: CommandContext,
   ) {
     const existing = db.get(key)
     if (existing === null) {
@@ -48,8 +44,4 @@ export class SremCommandDefinition
     }
     transport.write(removed)
   }
-}
-
-export default function (db: DB) {
-  return createSchemaCommand(new SremCommandDefinition(), { db })
 }
