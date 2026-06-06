@@ -1,6 +1,7 @@
 import type { ExecutionPolicy } from './index'
 import {
   RedisClusterDownError,
+  RedisCommandError,
   RedisCrossSlotError,
   RedisMovedError,
 } from '../redis-error'
@@ -30,6 +31,10 @@ export function createClusterPolicy(
           )
         }
         localNodeChecked = true
+      }
+
+      if (plan.definition.name === 'select') {
+        throw new RedisCommandError('SELECT is not allowed in cluster mode')
       }
 
       if (

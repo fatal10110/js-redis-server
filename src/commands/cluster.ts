@@ -3,7 +3,10 @@ import {
   type CommandDefinition,
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import { RedisCommandError } from '../core/redis-error'
+import {
+  UnknownClusterSubcommandError,
+  WrongNumberOfArgumentsError,
+} from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
@@ -32,24 +35,36 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
 
       switch (subcommand) {
         case 'slots':
+          expectClusterRestLength(args.rest, 'cluster|slots')
           return clusterSlots(topology)
         case 'shards':
+          expectClusterRestLength(args.rest, 'cluster|shards')
           return clusterShards(topology)
         case 'nodes':
+          expectClusterRestLength(args.rest, 'cluster|nodes')
           return clusterNodes(topology, localNodeId)
         case 'info':
+          expectClusterRestLength(args.rest, 'cluster|info')
           return clusterInfo(topology, localNodeId)
         case 'myid':
+          expectClusterRestLength(args.rest, 'cluster|myid')
           return RedisResult.create(
             RedisValue.bulkString(Buffer.from(localNodeId)),
           )
         default:
-          throw new RedisCommandError(
-            `ERR Unknown CLUSTER subcommand or wrong number of arguments for '${args.subcommand}'`,
-          )
+          throw new UnknownClusterSubcommandError(args.subcommand)
       }
     },
   })
+}
+
+function expectClusterRestLength(
+  rest: readonly Buffer[],
+  commandName: string,
+): void {
+  if (rest.length !== 0) {
+    throw new WrongNumberOfArgumentsError(commandName)
+  }
 }
 
 function masters(topology: RedisClusterTopology): RedisClusterNode[] {
