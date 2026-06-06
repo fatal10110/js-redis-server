@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
+import { assertDbSizeDelta, getTotalDbSize, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -69,51 +70,36 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(noneType, 'none')
   })
 
-  // TODO: Fix this test expects DB to be empty
-  test.skip('DBSIZE command', async () => {
-    // Helper function to get total dbsize across all nodes
-    const getTotalDbSize = async (): Promise<number> => {
-      const masterNodes = redisClient?.nodes('master') || []
-      if (masterNodes.length === 0) return 0
-
-      const sizes = await Promise.all(
-        masterNodes.map(async node => {
-          return await node.dbsize()
-        }),
-      )
-
-      return sizes.reduce((total, size) => total + size, 0)
+  test('DBSIZE command', async () => {
+    const tag = `{dbsize:${randomKey()}}`
+    const keys = {
+      string: `${tag}:string_key`,
+      hash: `${tag}:hash_key`,
+      list: `${tag}:list_key`,
+      set: `${tag}:set_key`,
+      zset: `${tag}:zset_key`,
+      expiring: `${tag}:expire_key1`,
     }
+    const allKeys = Object.values(keys)
+    const baseline = await getTotalDbSize(redisClient!)
 
-    // Test DBSIZE on empty database (after afterEach cleanup)
-    const initialSize = await getTotalDbSize()
-    assert.strictEqual(initialSize, 0)
+    try {
+      await redisClient?.set(keys.string, 'value')
+      await redisClient?.hset(keys.hash, 'field', 'value')
+      await redisClient?.lpush(keys.list, 'item')
+      await redisClient?.sadd(keys.set, 'member')
+      await redisClient?.zadd(keys.zset, 1, 'member')
+      await assertDbSizeDelta(redisClient!, baseline, 5)
 
-    // Set up test data of different types
-    await redisClient?.set('{test}string_key', 'value')
-    await redisClient?.hset('{test}hash_key', 'field', 'value')
-    await redisClient?.lpush('{test}list_key', 'item')
-    await redisClient?.sadd('{test}set_key', 'member')
-    await redisClient?.zadd('{test}zset_key', 1, 'member')
+      await redisClient?.set(keys.expiring, 'value')
+      await redisClient?.expire(keys.expiring, 3600)
+      await assertDbSizeDelta(redisClient!, baseline, 6)
 
-    // Test DBSIZE after adding keys
-    const sizeWithKeys = await getTotalDbSize()
-    assert.strictEqual(sizeWithKeys, 5)
-
-    // Add keys with expiration
-    await redisClient?.set('{test}expire_key1', 'value')
-    await redisClient?.expire('{test}expire_key1', 3600) // Will not expire during test
-
-    // DBSIZE should count non-expired keys
-    const sizeWithExpiration = await getTotalDbSize()
-    assert.strictEqual(sizeWithExpiration, 6) // 5 original + 1 non-expired
-
-    // Delete some keys
-    await redisClient?.del('{test}string_key', '{test}hash_key')
-
-    // Test DBSIZE after deletion
-    const sizeAfterDeletion = await getTotalDbSize()
-    assert.strictEqual(sizeAfterDeletion, 4) // 6 - 2 deleted keys
+      await redisClient?.del(keys.string, keys.hash)
+      await assertDbSizeDelta(redisClient!, baseline, 4)
+    } finally {
+      await redisClient?.del(...allKeys)
+    }
   })
 
   test('Key commands workflow - Data Type Validation', async () => {
@@ -299,129 +285,112 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(tenant2Users?.user1, 'charlie')
   })
 
-  // TODO: Fix this test expects DB to be empty
-  test.skip('DBSIZE workflow - Database Monitoring and Capacity Planning', async () => {
-    // Helper function to get total dbsize across all nodes
-    const getTotalDbSize = async (): Promise<number> => {
-      const masterNodes = redisClient?.nodes('master') || []
-      if (masterNodes.length === 0) return 0
+  test('DBSIZE workflow - Database Monitoring and Capacity Planning', async () => {
+    const tag = `{monitor:${randomKey()}}`
+    const createdKeys = [
+      `${tag}:config`,
+      `${tag}:app_version`,
+      `${tag}:popular_items`,
+      `${tag}:leaderboard`,
+      `${tag}:daily_stats`,
+    ]
 
-      const sizes = await Promise.all(
-        masterNodes.map(async node => {
-          return await node.dbsize()
-        }),
+    for (let i = 1; i <= 10; i++) {
+      createdKeys.push(
+        `${tag}:user:${i}`,
+        `${tag}:session:${i}`,
+        `${tag}:activity:${i}`,
       )
-
-      return sizes.reduce((total, size) => total + size, 0)
     }
 
-    // Simulate database monitoring scenario
+    const baseline = await getTotalDbSize(redisClient!)
 
-    // Start with empty database
-    const initialSize = await getTotalDbSize()
-    assert.strictEqual(initialSize, 0)
+    try {
+      await redisClient?.hset(
+        `${tag}:config`,
+        'max_users',
+        '1000',
+        'timeout',
+        '3600',
+      )
+      await redisClient?.set(`${tag}:app_version`, '1.2.3')
+      await assertDbSizeDelta(redisClient!, baseline, 2)
 
-    // Simulate application startup - loading configuration
-    await redisClient?.hset(
-      '{monitor}config',
-      'max_users',
-      '1000',
-      'timeout',
-      '3600',
-    )
-    await redisClient?.set('{monitor}app_version', '1.2.3')
-
-    const configSize = await getTotalDbSize()
-    assert.strictEqual(configSize, 2)
-
-    // Simulate user activity - creating sessions and cache
-    const userActivities: Array<Promise<number | string>> = []
-    for (let i = 1; i <= 10; i++) {
-      if (redisClient) {
+      const userActivities: Array<Promise<unknown>> = []
+      for (let i = 1; i <= 10; i++) {
         userActivities.push(
-          redisClient.hset(
-            `{monitor}user:${i}`,
+          redisClient!.hset(
+            `${tag}:user:${i}`,
             'name',
             `user${i}`,
             'status',
             'active',
           ),
-          redisClient.set(
-            `{monitor}session:${i}`,
+          redisClient!.set(
+            `${tag}:session:${i}`,
             `session_data_${i}`,
             'EX',
             3600,
           ),
-          redisClient.lpush(
-            `{monitor}activity:${i}`,
+          redisClient!.lpush(
+            `${tag}:activity:${i}`,
             'login',
             'view_page',
             'logout',
           ),
         )
       }
-    }
-    await Promise.all(userActivities)
+      await Promise.all(userActivities)
+      await assertDbSizeDelta(redisClient!, baseline, 32)
 
-    // Check database size after user activity
-    const activeSize = await getTotalDbSize()
-    assert.strictEqual(activeSize, 32) // 2 config + 30 user-related keys (10 users * 3 keys each)
+      await redisClient?.sadd(
+        `${tag}:popular_items`,
+        'item1',
+        'item2',
+        'item3',
+        'item4',
+        'item5',
+      )
+      await redisClient?.zadd(
+        `${tag}:leaderboard`,
+        100,
+        'player1',
+        200,
+        'player2',
+        150,
+        'player3',
+      )
+      await redisClient?.hset(
+        `${tag}:daily_stats`,
+        'visitors',
+        '500',
+        'sales',
+        '25',
+      )
+      await assertDbSizeDelta(redisClient!, baseline, 35)
 
-    // Simulate cache warming - adding frequently accessed data
-    await redisClient?.sadd(
-      '{monitor}popular_items',
-      'item1',
-      'item2',
-      'item3',
-      'item4',
-      'item5',
-    )
-    await redisClient?.zadd(
-      '{monitor}leaderboard',
-      100,
-      'player1',
-      200,
-      'player2',
-      150,
-      'player3',
-    )
-    await redisClient?.hset(
-      '{monitor}daily_stats',
-      'visitors',
-      '500',
-      'sales',
-      '25',
-    )
-
-    const cachedSize = await getTotalDbSize()
-    assert.strictEqual(cachedSize, 35) // Previous 32 + 3 cache keys
-
-    // Simulate cleanup - removing expired sessions (using DEL to simulate expiration)
-    const expiredSessions: Promise<number>[] = []
-    for (let i = 6; i <= 10; i++) {
-      if (redisClient) {
-        expiredSessions.push(redisClient.del(`{monitor}session:${i}`))
+      const expiredSessions: Promise<number>[] = []
+      for (let i = 6; i <= 10; i++) {
+        expiredSessions.push(redisClient!.del(`${tag}:session:${i}`))
       }
+      await Promise.all(expiredSessions)
+
+      const cleanedSize = await getTotalDbSize(redisClient!)
+      const cleanedDelta = cleanedSize - baseline
+      const capacityThreshold = 50
+      const currentUtilization = (cleanedDelta / capacityThreshold) * 100
+
+      assert.ok(
+        currentUtilization < 80,
+        'Database utilization should be under 80%',
+      )
+      assert.strictEqual(cleanedDelta, 30)
+
+      await redisClient?.del(`${tag}:daily_stats`)
+      await assertDbSizeDelta(redisClient!, baseline, 29)
+    } finally {
+      await redisClient?.del(...createdKeys)
     }
-    await Promise.all(expiredSessions)
-
-    const cleanedSize = await getTotalDbSize()
-    assert.strictEqual(cleanedSize, 30) // 35 - 5 expired sessions
-
-    // Database capacity check - alert if approaching limits
-    const capacityThreshold = 50
-    const currentUtilization = (cleanedSize / capacityThreshold) * 100
-
-    assert.ok(
-      currentUtilization < 80,
-      'Database utilization should be under 80%',
-    )
-    assert.strictEqual(cleanedSize, 30)
-
-    // Final cleanup simulation
-    await redisClient?.del('{monitor}daily_stats')
-    const finalSize = await getTotalDbSize()
-    assert.strictEqual(finalSize, 29)
   })
 
   test('EXPIRE and EXPIREAT commands', async () => {

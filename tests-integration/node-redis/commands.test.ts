@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import { RedisClusterType } from 'redis'
-import { randomKey } from '../utils'
+import { errorWithMessage, randomKey } from '../utils'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
 
@@ -46,12 +46,11 @@ describe(`Redis commands with node-redis (${testRunner.getBackendName()})`, () =
       await redisClient?.set(key1, 1)
       await redisClient?.set(key2, 2)
 
-      const [res] = await Promise.allSettled([redisClient?.mGet([key1, key2])])
-
-      assert.strictEqual(res.status, 'rejected')
-      assert.strictEqual(
-        res.reason.message,
-        "CROSSSLOT Keys in request don't hash to the same slot",
+      await assert.rejects(
+        () => redisClient?.mGet([key1, key2]),
+        errorWithMessage(
+          "CROSSSLOT Keys in request don't hash to the same slot",
+        ),
       )
     })
   })

@@ -12,6 +12,8 @@ import {
   createClusterPolicy,
   createRedisCommandExecutor,
 } from '../src'
+import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
+import { commandFrame } from './shared-test-helpers'
 
 describe('new script commands', () => {
   test('loads scripts into the server-wide script cache', async () => {
@@ -322,14 +324,6 @@ describe('new script commands', () => {
   })
 })
 
-function createSession() {
-  const server = new RedisServerState()
-  const executor = createRedisCommandExecutor()
-  const session = new ClientSession({ server, executor })
-
-  return { server, executor, session }
-}
-
 function createClusterSession() {
   const topology = new RedisClusterTopology([
     {
@@ -373,12 +367,4 @@ function findKeyOwnedBy(
 
 function scriptSha(script: Buffer): string {
   return crypto.createHash('sha1').update(script).digest('hex')
-}
-
-function commandFrame(...items: string[]): Buffer {
-  return Buffer.from(
-    `*${items.length}\r\n${items
-      .map(item => `$${Buffer.byteLength(item)}\r\n${item}\r\n`)
-      .join('')}`,
-  )
 }

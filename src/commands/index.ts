@@ -7,6 +7,7 @@ import { connectionCommands } from './connection'
 import { hashesCommands } from './hashes'
 import { keysCommands } from './keys'
 import { listsCommands } from './lists'
+import { scanCommands } from './scan'
 import { scriptsCommands } from './scripts'
 import { setsCommands } from './sets'
 import { stringsCommands } from './strings'
@@ -18,6 +19,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...transactionCommands,
   ...stringsCommands,
   ...keysCommands,
+  ...scanCommands,
   ...hashesCommands,
   ...listsCommands,
   ...setsCommands,
@@ -100,6 +102,14 @@ export {
   ttlCommand,
   typeCommand,
 } from './keys'
+export {
+  hscanCommand,
+  keysCommand,
+  scanCommand,
+  scanCommands,
+  sscanCommand,
+  zscanCommand,
+} from './scan'
 export {
   listsCommands,
   lindexCommand,

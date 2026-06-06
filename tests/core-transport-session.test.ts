@@ -3,7 +3,6 @@ import assert from 'node:assert'
 import {
   ClientSession,
   CommandExecutor,
-  createRedisCommandExecutor,
   createRedisCommandRegistry,
   InMemoryConnectionTransport,
   RedisResult,
@@ -14,7 +13,8 @@ import {
   t,
 } from '../src'
 import type { ResponseStream } from '../src'
-import type { CommandDefinition } from '../src'
+import { createRedisSessionHarness as createHarness } from './core-session-test-helpers'
+import { commandFrame } from './shared-test-helpers'
 
 describe('new transport-neutral session path', () => {
   test('runs commands through ClientSession with selected database state', async () => {
@@ -234,22 +234,6 @@ describe('new transport-neutral session path', () => {
   })
 })
 
-function createHarness(options?: {
-  databaseCount?: number
-  extraCommands?: readonly CommandDefinition[]
-}) {
-  const server = new RedisServerState({
-    databaseCount: options?.databaseCount ?? 1,
-  })
-  const registry = createRedisCommandRegistry(options?.extraCommands)
-  const executor = createRedisCommandExecutor({
-    extraCommands: options?.extraCommands,
-  })
-  const session = new ClientSession({ server, executor })
-
-  return { server, registry, executor, session }
-}
-
 const streamCommand = defineCommand({
   name: 'stream',
   schema: t.object({}),
@@ -272,14 +256,6 @@ function createSingleFrameStream(): ResponseStream {
     },
     close: () => {},
   }
-}
-
-function commandFrame(...items: string[]): Buffer {
-  return Buffer.from(
-    `*${items.length}\r\n${items
-      .map(item => `$${Buffer.byteLength(item)}\r\n${item}\r\n`)
-      .join('')}`,
-  )
 }
 
 function defer<TValue>() {

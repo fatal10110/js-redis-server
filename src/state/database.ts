@@ -12,6 +12,7 @@ import {
 } from './data-types'
 import {
   ExpirationState,
+  KeyspaceEntry,
   RedisKeyspace,
   SetOptions,
   WrongRedisTypeError,
@@ -156,6 +157,10 @@ export class RedisDatabase {
 
   size(): number {
     return this.keyspace.size()
+  }
+
+  entriesSnapshot(): KeyspaceEntry[] {
+    return this.keyspace.entriesSnapshot()
   }
 
   subscribe(listener: RedisMutationListener): Unsubscribe {

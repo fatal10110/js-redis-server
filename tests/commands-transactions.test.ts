@@ -9,6 +9,8 @@ import {
   Resp2SessionAdapter,
   createRedisCommandExecutor,
 } from '../src'
+import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
+import { commandFrame } from './shared-test-helpers'
 
 describe('new transaction commands', () => {
   test('queues commands in MULTI and executes them through EXEC', async () => {
@@ -233,22 +235,6 @@ describe('new transaction commands', () => {
   })
 })
 
-function createSession() {
-  const server = new RedisServerState()
-  const executor = createRedisCommandExecutor()
-  const session = new ClientSession({ server, executor })
-
-  return { server, executor, session }
-}
-
 function queued(): RedisResult {
   return RedisResult.create(RedisValue.simpleString('QUEUED'))
-}
-
-function commandFrame(...items: string[]): Buffer {
-  return Buffer.from(
-    `*${items.length}\r\n${items
-      .map(item => `$${Buffer.byteLength(item)}\r\n${item}\r\n`)
-      .join('')}`,
-  )
 }
