@@ -1,16 +1,3 @@
-// Core types
-export type {
-  Command,
-  CommandResult,
-  DBCommandExecutor,
-  ExecutionContext,
-  Logger,
-  Transport,
-  DiscoveryNode,
-  DiscoveryService,
-  ClusterCommanderFactory,
-} from './types'
-
 export type {
   CommandCapabilities,
   CommandExecutionResult,
@@ -181,9 +168,6 @@ export {
   watchCommand,
 } from './commands'
 
-// Errors
-export { UserFacedError, UnknownCommand } from './core/errors'
-
 // Transport
 export {
   Resp2CommandDecoder,
@@ -206,17 +190,3 @@ export {
   type RedisClusterNodeHandle,
   type RedisClusterOptions,
 } from './cluster'
-
-// Legacy commander factories (deprecated, kept for old tests)
-export {
-  createCustomCommander,
-  CustomCommanderFactory,
-} from './commanders/custom/commander'
-
-export { createCustomClusterCommander } from './commanders/custom/clusterCommander'
-
-// Legacy cluster network (deprecated)
-export { ClusterNetwork } from './core/cluster/network'
-
-// Database (for advanced usage)
-export { DB } from './commanders/custom/db'

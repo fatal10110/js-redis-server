@@ -1,6 +1,6 @@
 import { CorssSlot, MovedError } from '../../core/errors'
 import { Command, DiscoveryService } from '../../types'
-import { SlotValidator } from '../../core/transports/session-state'
+import type { SlotValidator } from '../../core/transports/session-types'
 import clusterKeySlot from 'cluster-key-slot'
 
 export class ClusterRouter implements SlotValidator {

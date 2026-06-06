@@ -8,7 +8,7 @@ import {
 import { createClusterCommands, createLuaCommands } from './commands/redis'
 import { DB } from './db'
 import { ClusterRouter } from './cluster-router'
-import { NormalState } from '../../core/transports/session-state'
+import { NormalState } from '../../core/transports/normal-state'
 import { BaseCommander } from './base-commander'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Socket } from 'net'

@@ -1,10 +1,8 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { ClusterRouter } from '../src/commanders/custom/cluster-router'
-import {
-  NormalState,
-  TransactionState,
-} from '../src/core/transports/session-state'
+import { NormalState } from '../src/core/transports/normal-state'
+import { TransactionState } from '../src/core/transports/transaction-state'
 import { RegistryCommandValidator } from '../src/core/transports/command-validator'
 import { CorssSlot, MovedError, UserFacedError } from '../src/core/errors'
 import type {

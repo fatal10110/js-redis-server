@@ -7,7 +7,7 @@ import { DB } from './db'
 import { createCommands, createLuaCommands } from './commands/redis'
 import { createLuaRuntime, LuaRuntime } from './lua-runtime'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
-import { NormalState } from '../../core/transports/session-state'
+import { NormalState } from '../../core/transports/normal-state'
 import { BaseCommander } from './base-commander'
 
 export async function createCustomCommander(

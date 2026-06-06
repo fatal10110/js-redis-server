@@ -5,7 +5,7 @@ import {
   ExpectedInteger,
   WrongNumberOfKeys,
 } from '../errors'
-import { CommandValidator } from './session-state'
+import type { CommandValidator } from './session-types'
 
 /**
  * Validates commands using the command registry.
