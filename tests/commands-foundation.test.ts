@@ -1,15 +1,13 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
-  ClientSession,
   InMemoryConnectionTransport,
   RedisResult,
-  RedisServerState,
   RedisValue,
   Resp2SessionAdapter,
-  createRedisCommandExecutor,
-  createRedisCommandRegistry,
 } from '../src'
+import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
+import { commandFrame } from './shared-test-helpers'
 
 describe('new foundation commands', () => {
   test('supports PING, SELECT, SET, and GET through the built-in registry', async () => {
@@ -317,22 +315,3 @@ describe('new foundation commands', () => {
     )
   })
 })
-
-function createSession(options?: { databaseCount?: number }) {
-  const server = new RedisServerState({
-    databaseCount: options?.databaseCount ?? 1,
-  })
-  const registry = createRedisCommandRegistry()
-  const executor = createRedisCommandExecutor()
-  const session = new ClientSession({ server, executor })
-
-  return { server, registry, executor, session }
-}
-
-function commandFrame(...items: string[]): Buffer {
-  return Buffer.from(
-    `*${items.length}\r\n${items
-      .map(item => `$${Buffer.byteLength(item)}\r\n${item}\r\n`)
-      .join('')}`,
-  )
-}

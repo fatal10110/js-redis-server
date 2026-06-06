@@ -3,6 +3,7 @@ import clusterKeySlot from 'cluster-key-slot'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
+import { errorWithMessage } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -101,14 +102,7 @@ describe('WATCH/UNWATCH', () => {
   it('WATCH should reject multiple keys in different slots', async () => {
     await assert.rejects(
       () => redisClient!.watch('watchkey3', 'watchkey4'),
-      err => {
-        assert.ok(err instanceof Error)
-        assert.match(
-          err.message,
-          /CROSSSLOT Keys in request don't hash to the same slot/,
-        )
-        return true
-      },
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
     )
   })
 

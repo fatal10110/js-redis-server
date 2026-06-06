@@ -1,11 +1,12 @@
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import assert from 'node:assert'
-import { RedisClusterType } from 'redis'
+import { MultiErrorReply, RedisClusterType } from 'redis'
+import { randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
-describe.skip('multi', () => {
+describe('multi', () => {
   let redisClient: RedisClusterType | undefined
 
   before(async () => {
@@ -18,12 +19,13 @@ describe.skip('multi', () => {
 
   test('Queue commands before execution without piplining', async () => {
     const anotherRedisClient = await testRunner.setupIoredisCluster()
+    const key = `{node-redis-multi:${randomKey()}}:queued`
 
     try {
       const multi = redisClient!.multi()
-      multi.set('myKey', 'myValue')
-      const anotherRes = await anotherRedisClient.get('myKey')
-      multi.get('myKey')
+      multi.set(key, 'myValue')
+      const anotherRes = await anotherRedisClient.get(key)
+      multi.get(key)
 
       const res = await multi.exec()
 
@@ -35,24 +37,33 @@ describe.skip('multi', () => {
       assert.strictEqual(second, 'myValue')
       assert.strictEqual(anotherRes, null)
     } finally {
+      await redisClient?.del(key)
       await anotherRedisClient.quit()
     }
   })
 
-  test('handle errors in multi', async () => {
-    const multi = redisClient!.multi()
-    multi.set('myKey', 'myValue')
-    multi.evalSha('abc')
-
-    let error
-
+  test('returns execution errors from EXEC replies', async () => {
+    const key = `{node-redis-multi:${randomKey()}}:error`
+    let error: MultiErrorReply | undefined
     try {
-      await multi.exec()
-    } catch (err) {
-      error = err
-    }
+      const multi = redisClient!.multi()
+      multi.set(key, 'myValue')
+      multi.evalSha('abc')
 
-    assert.ok(error)
-    assert.ok(error.message.includes('NOSCRIPT'))
+      try {
+        await multi.exec()
+      } catch (err) {
+        assert.ok(err instanceof MultiErrorReply)
+        error = err
+      }
+
+      assert.ok(error)
+      assert.deepStrictEqual(error.errorIndexes, [1])
+      assert.strictEqual(error.replies[0], 'OK')
+      assert.ok(error.replies[1] instanceof Error)
+      assert.match(error.replies[1].message, /NOSCRIPT/)
+    } finally {
+      await redisClient?.del(key)
+    }
   })
 })

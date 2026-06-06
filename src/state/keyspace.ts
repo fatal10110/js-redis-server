@@ -173,6 +173,24 @@ export class RedisKeyspace {
     return count
   }
 
+  entriesSnapshot(): KeyspaceEntry[] {
+    const entries: KeyspaceEntry[] = []
+
+    for (const entry of Array.from(this.entries.values())) {
+      if (this.evictIfExpired(entry)) {
+        continue
+      }
+
+      entries.push({
+        key: Buffer.from(entry.key),
+        value: cloneRedisDataValue(entry.value),
+        expiresAt: entry.expiresAt,
+      })
+    }
+
+    return entries
+  }
+
   private getLiveEntry(key: Buffer): KeyspaceEntry | null {
     const entry = this.entries.get(keyId(key))
     if (!entry) {

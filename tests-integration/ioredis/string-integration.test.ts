@@ -1,7 +1,8 @@
-import { test, describe, before, after, afterEach } from 'node:test'
+import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
+import { errorWithMessage } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -85,6 +86,16 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
       '{same}nonexistent',
     )
     assert.deepStrictEqual(values, ['value1', 'value2', null])
+  })
+
+  test('MGET cross-slot error', async () => {
+    await redisClient?.set('{mget-slot-a}key', 'value1')
+    await redisClient?.set('{mget-slot-b}key', 'value2')
+
+    await assert.rejects(
+      () => redisClient?.mget('{mget-slot-a}key', '{mget-slot-b}key'),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
   })
 
   test('MSET command', async () => {
