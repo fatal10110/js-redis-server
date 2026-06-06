@@ -48,7 +48,6 @@ export class CustomClusterCommanderFactory implements ClusterCommanderFactory {
       mySelfId,
       commands,
       luaCommands,
-      this.luaRuntime,
     )
   }
 
@@ -90,7 +89,6 @@ export class ClusterCommander implements DBCommandExecutor {
     private readonly mySelfId: string,
     private readonly commands: Record<string, Command>,
     private readonly luaCommands: Record<string, Command>,
-    private readonly luaRuntime: LuaRuntime,
   ) {
     this.router = new ClusterRouter(
       this.discoveryService,

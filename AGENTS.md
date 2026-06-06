@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Development Commands
 
@@ -316,6 +316,7 @@ Current repo state: grepai is installed, the watcher is running, and the index s
 ### Usage
 
 ```bash
+# Use English intent queries; combine with --json and --compact for agent-friendly output
 grepai search "user authentication flow" --json --compact --limit 10
 grepai search "error handling middleware" --json --compact
 grepai search "database connection pool" --json --compact
@@ -327,7 +328,7 @@ grepai search "API request validation" --json --compact
 - Use English queries for better semantic matching.
 - Describe intent, not implementation: "handles user login" instead of "func Login".
 - Be specific: "JWT token validation" is better than "token".
-- Prefer `--json` for machine-readable output and `--compact` when you only need file paths and scores.
+- Prefer `--json` for programmatic consumption and `--compact` when you only need file paths and scores.
 
 ### Call Graph Tracing
 
@@ -360,31 +361,40 @@ grepai trace graph "ValidateToken" --depth 3 --json
 
 ## OpenMemory - Durable Agent Memory
 
-Use OpenMemory as the persistent memory layer for stable context that should survive across turns and tasks.
+OpenMemory MCP is wired into this project. Server: `http://localhost:8080`. Use `openmemory_*` MCP tools directly — do not invent a custom persistence layer.
+
+**user_id convention**: always use `"artur"` for all memory operations in this project.
+
+### MCP Tools Available
+
+- `openmemory_store` — store a memory (text + user_id)
+- `openmemory_query` — semantic/keyword search
+- `openmemory_list` — list recent memories
+- `openmemory_get` — fetch by ID
+- `openmemory_delete` — remove by ID
+- `openmemory_reinforce` — boost salience of a recalled memory
 
 ### When to Use OpenMemory
 
-Use OpenMemory for:
-- durable user preferences and project preferences
-- recurring decisions, conventions, and constraints
-- long-lived task context that should be recalled later
-- summaries of completed work that are useful for future turns
+Store:
+- architectural decisions and the reasoning behind them
+- non-obvious bug root causes and fix patterns
+- recurring project conventions and constraints
+- summaries of completed phases/features
 
-Do not use OpenMemory for:
-- transient debugging notes
-- raw command output
-- speculative ideas that are likely to be discarded
-- secrets, credentials, or other sensitive data that should not be persisted
+Do not store:
+- transient debug notes or raw command output
+- speculative ideas likely to be discarded
+- secrets or credentials
 
-### How to Use It
+### Session Protocol
 
-1. Check OpenMemory for existing relevant context before asking the user to repeat stable preferences or project-specific facts.
-2. Write a memory after you confirm an enduring preference, decision, or project rule.
-3. Keep entries short, factual, and durable.
-4. Prefer storing the outcome or rule, not the full discussion.
+1. **Session start**: query OpenMemory for context relevant to the current task before asking the user to repeat anything.
+2. **After decisions**: store architectural choices, design constraints, and non-obvious patterns.
+3. **After bug fixes**: store root cause + fix pattern if non-obvious.
+4. Keep entries short, factual, and durable — outcome/rule, not full discussion.
 
 ### Practical Rules
 
-- Treat OpenMemory as the source of durable recall, not as a scratchpad.
-- If OpenMemory is unavailable, continue without it and do not block the task.
-- If the workspace has an OpenMemory MCP integration, use that integration instead of inventing a custom persistence layer.
+- If OpenMemory is unavailable, continue without it — do not block the task.
+- If the server is down, start it: `cd ~/workspace/OpenMemory && colima start && docker-compose up -d`

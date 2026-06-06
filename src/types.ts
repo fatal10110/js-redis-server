@@ -1,7 +1,9 @@
+import { Socket } from 'net'
 import { CommandMetadata } from './commanders/custom/commands/metadata'
 import { UserFacedError } from './core/errors'
 
 export interface DBCommandExecutor {
+  createAdapter(logger: Logger, socket: Socket): void
   shutdown(): Promise<void>
 }
 

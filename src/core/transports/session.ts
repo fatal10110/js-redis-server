@@ -1,5 +1,8 @@
 import { Command, CommandContext, CommandResult, Transport } from '../../types'
-import { CommandJob, RedisKernel } from '../../commanders/custom/redis-kernel'
+import {
+  CommandRequest,
+  RedisKernel,
+} from '../../commanders/custom/redis-kernel'
 import { SessionState } from './session-state'
 import { CapturingTransport } from './capturing-transport'
 import { UserFacedError } from '../errors'
@@ -12,7 +15,6 @@ import { UserFacedError } from '../errors'
 export class Session {
   private currentState: SessionState
   private static connectionCounter = 0
-  private jobCounter = 0
   private readonly connectionId: string
   private readonly commands: Record<string, Command>
   private luaCommands?: Record<string, Command>
@@ -49,67 +51,45 @@ export class Session {
 
     // Execute single command if needed
     if (transition.executeCommand) {
-      const jobId = `job-${++this.jobCounter}`
-      return new Promise((resolve, reject) => {
-        const job: CommandJob = {
-          id: jobId,
-          connectionId: this.connectionId,
-          request: {
-            ...transition.executeCommand!,
-            signal,
-          },
-          resolve,
-          reject,
-        }
-        this.kernel.submit(job)
-      })
+      const request = {
+        ...transition.executeCommand,
+        signal,
+      }
+      const turn = await this.kernel.waitTurn()
+      try {
+        this.executeCommand(
+          request.transport,
+          request.command,
+          request.args,
+          request.signal,
+        )
+      } finally {
+        turn.release()
+      }
+      return
     }
 
     // Execute batch (EXEC) if needed
     if (transition.executeBatch) {
-      const jobId = `job-${++this.jobCounter}`
-      return new Promise((resolve, reject) => {
-        const job: CommandJob = {
-          id: jobId,
-          connectionId: this.connectionId,
-          request: {
-            command: Buffer.from('__EXEC_BATCH__'),
-            args: [],
-            transport,
-            signal,
-          },
-          resolve,
-          reject,
-          batch: transition.executeBatch,
-        }
-        this.kernel.submit(job)
-      })
-    }
-  }
-
-  /**
-   * Execute a job (called by the kernel's handler).
-   * Handles both single commands and batched transactions.
-   */
-  async executeJob(job: CommandJob): Promise<void> {
-    // Handle batch execution (EXEC)
-    if (job.batch) {
-      this.executeBatch(job)
+      const turn = await this.kernel.waitTurn()
+      try {
+        this.executeBatch(transport, signal, transition.executeBatch)
+      } finally {
+        turn.release()
+      }
       return
     }
-
-    // Handle single command execution
-    const req = job.request
-    this.executeCommand(req.transport, req.command, req.args, req.signal)
   }
 
   /**
    * Execute a batch of commands atomically.
    * This is called when processing an EXEC command.
    */
-  private executeBatch(job: CommandJob): void {
-    const { transport, signal } = job.request
-    const batch = job.batch!
+  private executeBatch(
+    transport: Transport,
+    signal: AbortSignal,
+    batch: CommandRequest[],
+  ): void {
     const results: CommandResult[] = []
 
     // Execute all commands in the batch without yielding to other jobs
