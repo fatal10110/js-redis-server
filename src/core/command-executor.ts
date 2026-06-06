@@ -31,7 +31,7 @@ export class CommandExecutor {
     const definition = this.registry.get(commandName)
 
     if (!definition) {
-      throw new UnknownRedisCommandError(commandName, rawArgs)
+      throw new UnknownRedisCommandError(rawCommand, rawArgs)
     }
 
     return this.createPlan(definition, rawArgs)

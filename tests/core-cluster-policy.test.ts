@@ -7,6 +7,7 @@ import {
   RedisServerState,
   RedisValue,
   createClusterPolicy,
+  createClusterCommand,
   createRedisCommandExecutor,
 } from '../src'
 
@@ -112,6 +113,44 @@ describe('new cluster execution policy', () => {
       Buffer.from('two'),
     )
   })
+
+  test('matches Redis Cluster errors for CLUSTER arity and subcommands', async () => {
+    const { session } = createClusterHarness()
+
+    assert.deepStrictEqual(
+      await session.execute('cluster', []),
+      RedisResult.error(
+        "wrong number of arguments for 'cluster' command",
+        'ERR',
+      ),
+    )
+    assert.deepStrictEqual(
+      await session.execute('cluster', [Buffer.from('nope')]),
+      RedisResult.error("unknown subcommand 'nope'. Try CLUSTER HELP.", 'ERR'),
+    )
+
+    for (const subcommand of ['slots', 'shards', 'nodes', 'info', 'myid']) {
+      assert.deepStrictEqual(
+        await session.execute('cluster', [
+          Buffer.from(subcommand),
+          Buffer.from('extra'),
+        ]),
+        RedisResult.error(
+          `wrong number of arguments for 'cluster|${subcommand}' command`,
+          'ERR',
+        ),
+      )
+    }
+  })
+
+  test('rejects SELECT in cluster mode like Redis Cluster', async () => {
+    const { session } = createClusterHarness()
+
+    assert.deepStrictEqual(
+      await session.execute('select', [Buffer.from('1')]),
+      RedisResult.error('SELECT is not allowed in cluster mode', 'ERR'),
+    )
+  })
 })
 
 function createClusterHarness() {
@@ -133,6 +172,7 @@ function createClusterHarness() {
   ])
   const server = new RedisServerState({ clusterTopology: topology })
   const executor = createRedisCommandExecutor({
+    extraCommands: [createClusterCommand('local')],
     policies: [createClusterPolicy({ localNodeId: 'local' })],
   })
   const session = new ClientSession({ server, executor })

@@ -89,7 +89,7 @@ describe('new command executor core', () => {
     const executor = new CommandExecutor({ registry })
 
     const unknown = await executor.executeRaw(
-      'missing',
+      'MiSsInG',
       [Buffer.from('arg')],
       createContext(),
     )
@@ -97,7 +97,7 @@ describe('new command executor core', () => {
     assert.deepStrictEqual(
       unknown.value,
       RedisValue.error(
-        "unknown command 'missing', with args beginning with: arg",
+        "unknown command 'MiSsInG', with args beginning with: 'arg' ",
         'ERR',
       ),
     )

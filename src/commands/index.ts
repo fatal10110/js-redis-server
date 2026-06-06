@@ -50,6 +50,7 @@ export {
   selectCommand,
   connectionCommands,
 } from './connection'
+export { createClusterCommand } from './cluster'
 export {
   getCommand,
   setCommand,

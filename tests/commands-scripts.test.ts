@@ -209,14 +209,33 @@ describe('new script commands', () => {
         Buffer.from('debug'),
         Buffer.from('invalid'),
       ]),
-      RedisResult.error('syntax error', 'ERR'),
+      RedisResult.error('Use SCRIPT DEBUG YES/SYNC/NO', 'ERR'),
+    )
+    assert.deepStrictEqual(
+      await session.execute('script', [
+        Buffer.from('debug'),
+        Buffer.from('YES'),
+        Buffer.from('extra'),
+      ]),
+      RedisResult.error(
+        "wrong number of arguments for 'script|debug' command",
+        'ERR',
+      ),
     )
     assert.deepStrictEqual(
       await session.execute('script', [
         Buffer.from('flush'),
         Buffer.from('invalid'),
       ]),
-      RedisResult.error('syntax error', 'ERR'),
+      RedisResult.error('SCRIPT FLUSH only support SYNC|ASYNC option', 'ERR'),
+    )
+    assert.deepStrictEqual(
+      await session.execute('script', [
+        Buffer.from('flush'),
+        Buffer.from('SYNC'),
+        Buffer.from('extra'),
+      ]),
+      RedisResult.error('SCRIPT FLUSH only support SYNC|ASYNC option', 'ERR'),
     )
   })
 

@@ -71,6 +71,24 @@ export class UnknownScriptSubcommandError extends RedisCommandError {
   }
 }
 
+export class UnknownClusterSubcommandError extends RedisCommandError {
+  constructor(subcommand: string | Buffer) {
+    super(`unknown subcommand '${subcommand}'. Try CLUSTER HELP.`)
+  }
+}
+
+export class ScriptFlushOptionError extends RedisCommandError {
+  constructor() {
+    super('SCRIPT FLUSH only support SYNC|ASYNC option')
+  }
+}
+
+export class ScriptDebugModeError extends RedisCommandError {
+  constructor() {
+    super('Use SCRIPT DEBUG YES/SYNC/NO')
+  }
+}
+
 export class ScriptUnknownCommandError extends RedisCommandError {
   constructor(sha: string) {
     super(
@@ -123,35 +141,44 @@ export class TransactionDiscardedError extends RedisCommandError {
 
 export class IndexOutOfRangeError extends RedisCommandError {
   constructor() {
-    super('ERR index out of range')
+    super('index out of range')
   }
 }
 
 export class NoSuchKeyError extends RedisCommandError {
   constructor() {
-    super('ERR no such key')
+    super('no such key')
   }
 }
 
 export class HashValueNotIntegerError extends RedisCommandError {
   constructor() {
-    super('ERR hash value is not an integer')
+    super('hash value is not an integer')
   }
 }
 
 export class HashValueNotFloatError extends RedisCommandError {
   constructor() {
-    super('ERR hash value is not a float')
+    super('hash value is not a float')
   }
 }
 
 export class UnknownRedisCommandError extends RedisCommandError {
-  constructor(commandName: string, args: readonly Buffer[]) {
-    const argText = args.map(formatUnknownCommandArg).join(' ')
+  constructor(commandName: string | Buffer, args: readonly Buffer[]) {
+    const argText = args
+      .map(arg => `'${formatUnknownCommandArg(arg)}'`)
+      .join(' ')
+    const argsSuffix = argText.length > 0 ? `${argText} ` : ''
     super(
-      `unknown command '${commandName}', with args beginning with: ${argText}`,
+      `unknown command '${formatUnknownCommandName(commandName)}', with args beginning with: ${argsSuffix}`,
     )
   }
+}
+
+function formatUnknownCommandName(commandName: string | Buffer): string {
+  return typeof commandName === 'string'
+    ? commandName
+    : formatUnknownCommandArg(commandName)
 }
 
 function formatUnknownCommandArg(arg: Buffer): string {

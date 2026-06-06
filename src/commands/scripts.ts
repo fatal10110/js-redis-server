@@ -2,7 +2,8 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
   NoScriptError,
-  RedisSyntaxError,
+  ScriptDebugModeError,
+  ScriptFlushOptionError,
   UnknownScriptSubcommandError,
   WrongNumberOfKeysError,
   WrongNumberOfArgumentsError,
@@ -127,12 +128,12 @@ function scriptFlush(
   ctx: RedisExecutionContext,
 ): RedisResult {
   if (args.rest.length > 1) {
-    throw new WrongNumberOfArgumentsError('script|flush')
+    throw new ScriptFlushOptionError()
   }
 
   const mode = args.rest[0]?.toString().toUpperCase()
   if (mode !== undefined && mode !== 'ASYNC' && mode !== 'SYNC') {
-    throw new RedisSyntaxError()
+    throw new ScriptFlushOptionError()
   }
 
   ctx.server.scriptCache.flush()
@@ -148,7 +149,7 @@ function scriptDebug(args: ScriptArgs): RedisResult {
   expectRestLength(args, 'script|debug', 1)
   const mode = args.rest[0].toString().toUpperCase()
   if (mode !== 'YES' && mode !== 'SYNC' && mode !== 'NO') {
-    throw new RedisSyntaxError()
+    throw new ScriptDebugModeError()
   }
 
   return ok()
