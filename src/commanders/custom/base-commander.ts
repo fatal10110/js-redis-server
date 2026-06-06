@@ -4,7 +4,7 @@ import { RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
-import { NormalState } from '../../core/transports/session-state'
+import { NormalState } from '../../core/transports/normal-state'
 type InitialStateFactory = (validator: RegistryCommandValidator) => NormalState
 
 export class BaseCommander {

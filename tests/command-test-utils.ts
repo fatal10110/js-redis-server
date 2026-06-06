@@ -4,7 +4,7 @@ import { createCommands } from '../src/commanders/custom/commands/redis'
 import { Session } from '../src/core/transports/session'
 import { RedisKernel } from '../src/commanders/custom/redis-kernel'
 import { RegistryCommandValidator } from '../src/core/transports/command-validator'
-import { NormalState } from '../src/core/transports/session-state'
+import { NormalState } from '../src/core/transports/normal-state'
 import { createMockTransport } from './mock-transport'
 
 export function runCommand(

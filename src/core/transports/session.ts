@@ -3,7 +3,7 @@ import {
   CommandRequest,
   RedisKernel,
 } from '../../commanders/custom/redis-kernel'
-import { SessionState } from './session-state'
+import type { SessionState } from './session-types'
 import { CapturingTransport } from './capturing-transport'
 import { UserFacedError } from '../errors'
 
