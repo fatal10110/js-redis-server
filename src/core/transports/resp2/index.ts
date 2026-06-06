@@ -1,6 +1,16 @@
 import { AddressInfo, Server, Socket, createServer } from 'net'
 import { DBCommandExecutor, Logger } from '../../../types'
 
+export {
+  Resp2CommandDecoder,
+  Resp2ParseError,
+  type Resp2CommandFrame,
+} from './decoder'
+export {
+  Resp2SessionAdapter,
+  type Resp2SessionAdapterOptions,
+} from './session-adapter'
+
 export class Resp2Transport {
   public readonly server: Server
 
@@ -22,17 +32,7 @@ export class Resp2Transport {
   }
 
   private handleConnection(socket: Socket) {
-    // Phase 4: Delegate to adapter pattern
-    if ('createAdapter' in this.commandExecutor) {
-      const createAdapter = (this.commandExecutor as any).createAdapter.bind(
-        this.commandExecutor,
-      )
-      createAdapter(this.logger, socket)
-    } else {
-      throw new Error(
-        'CommandExecutor must implement createAdapter method for Phase 4 architecture',
-      )
-    }
+    this.commandExecutor.createAdapter(this.logger, socket)
   }
 
   listen(port?: number): Promise<void> {

@@ -3,20 +3,6 @@ import { Command, DiscoveryService } from '../../types'
 import { SlotValidator } from '../../core/transports/session-state'
 import clusterKeySlot from 'cluster-key-slot'
 
-/**
- * ClusterRouter implements schema-driven routing for Redis Cluster.
- *
- * This router sits between the Session and the Kernel, providing:
- * 1. Generic key extraction based on command metadata
- * 2. Automatic slot calculation
- * 3. Cross-slot validation
- * 4. MOVED error generation for topology mismatches
- *
- * Benefits:
- * - Zero boilerplate: New commands support Cluster automatically if their schema defines keys correctly
- * - Centralized logic: MOVED/ASK/CROSSSLOT logic exists in one place
- * - Performance: Non-cluster mode simply bypasses the slot check steps
- */
 export class ClusterRouter implements SlotValidator {
   constructor(
     private readonly discoveryService: DiscoveryService,

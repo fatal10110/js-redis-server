@@ -14,3 +14,4 @@ coverage/
 # Docker volumes and test data
 docker-data/
 redis-data/
+.grepai/

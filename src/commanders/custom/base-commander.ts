@@ -1,6 +1,6 @@
 import { Socket } from 'net'
 import { Command, Logger } from '../../types'
-import { CommandJob, RedisKernel } from './redis-kernel'
+import { RedisKernel } from './redis-kernel'
 import { RespAdapter } from '../../core/transports/resp2/adapter'
 import { Session } from '../../core/transports/session'
 import { RegistryCommandValidator } from '../../core/transports/command-validator'
@@ -18,7 +18,7 @@ export class BaseCommander {
     private readonly luaCommands?: Record<string, Command>,
   ) {
     this.validator = new RegistryCommandValidator(this.commands)
-    this.kernel = new RedisKernel(this.handleJob.bind(this))
+    this.kernel = new RedisKernel()
   }
 
   async shutdown(): Promise<void> {
@@ -49,13 +49,5 @@ export class BaseCommander {
     return new RespAdapter(logger, socket, session)
   }
 
-  private async handleJob(job: CommandJob): Promise<void> {
-    const session = this.sessions.get(job.connectionId)
-
-    if (!session) {
-      throw new Error(`Session not found for connection ${job.connectionId}`)
-    }
-
-    await session.executeJob(job)
-  }
+  // Session execution is now driven by awaiting kernel turns directly.
 }

@@ -1,6 +1,7 @@
-import { Resp2Transport } from './core/transports/resp2'
-import { createCustomCommander } from './commanders/custom/commander'
-import { ClusterNetwork } from './core/cluster/network'
+import { createRedisCommandExecutor } from './commands'
+import { Resp2Server } from './core/transports/resp2/server'
+import { buildRedisCluster } from './cluster'
+import { RedisServerState } from './state'
 import type { Logger } from './types'
 
 type Mode = 'single' | 'cluster'
@@ -156,19 +157,16 @@ General:
 async function runSingle(options: CliOptions, logger: Logger) {
   validatePort(options.port, 'port')
   logger.debug('Starting single server mode', { port: options.port })
-  const commanderFactory = await createCustomCommander(logger)
-  const transport = new Resp2Transport(
-    logger,
-    commanderFactory.createCommander(),
-  )
 
-  await transport.listen(options.port)
-  const address = transport.getAddress()
-  logger.info(`Single Redis server listening at ${address}`)
+  const state = new RedisServerState()
+  const executor = createRedisCommandExecutor()
+  const server = new Resp2Server({ server: state, executor, logger })
+
+  await server.listen(options.port)
+  logger.info(`Single Redis server listening at ${server.getAddress()}`)
 
   const shutdown = async () => {
-    await transport.close()
-    await commanderFactory.shutdown()
+    await server.close()
   }
 
   process.once('SIGINT', shutdown)
@@ -177,39 +175,27 @@ async function runSingle(options: CliOptions, logger: Logger) {
 
 async function runCluster(options: CliOptions, logger: Logger) {
   validatePort(options.basePort, 'base-port')
-  if (!Number.isInteger(options.masters) || options.masters < 1) {
-    throw new Error(`Invalid masters count ${options.masters}`)
-  }
-  if (!Number.isInteger(options.slaves) || options.slaves < 0) {
-    throw new Error(`Invalid slaves count ${options.slaves}`)
-  }
-  const totalNodes = options.masters * (options.slaves + 1)
-  if (options.basePort + totalNodes - 1 > 65535) {
-    throw new Error('Cluster base-port range exceeds 65535')
-  }
 
   logger.debug('Starting cluster mode', {
     masters: options.masters,
     slaves: options.slaves,
     basePort: options.basePort,
-    totalNodes,
   })
 
-  const network = new ClusterNetwork(logger)
-  await network.init({
+  const cluster = buildRedisCluster({
     masters: options.masters,
-    slaves: options.slaves,
+    replicasPerMaster: options.slaves,
     basePort: options.basePort,
+    logger,
   })
 
-  const nodes = network
-    .getAll()
-    .map(n => `${n.id} ${n.host}:${n.port}`)
-    .join(', ')
+  await cluster.listen()
+
+  const nodes = cluster.nodes.map(n => `${n.id} ${n.host}:${n.port}`).join(', ')
   logger.info(`Cluster nodes: ${nodes}`)
 
   const shutdown = async () => {
-    await network.shutdown()
+    await cluster.close()
   }
 
   process.once('SIGINT', shutdown)
@@ -232,19 +218,9 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-// Run when executed directly as CLI (ESM check)
-// For bin scripts, we check if this is the main module by comparing resolved paths
-import { fileURLToPath } from 'node:url'
-import { realpathSync } from 'node:fs'
-import { resolve } from 'node:path'
-
-// When used as a bin script (e.g., via npm link or global install),
-// process.argv[1] might be a symlink, so we resolve both paths
-const scriptPath = resolve(realpathSync(process.argv[1] || ''))
-const modulePath = resolve(fileURLToPath(import.meta.url))
-const isMain = scriptPath === modulePath
-
-if (isMain) {
+// Run when executed directly as CLI. Node resolves bin symlinks to realpath,
+// so require.main === module works for `npm link` / global installs too.
+if (require.main === module) {
   main().catch(err => {
     console.error(err)
     process.exitCode = 1
