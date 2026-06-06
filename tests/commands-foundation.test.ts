@@ -2,7 +2,6 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   ClientSession,
-  CommandExecutor,
   InMemoryConnectionTransport,
   RedisResult,
   RedisServerState,
@@ -37,6 +36,81 @@ describe('new foundation commands', () => {
     await session.execute('select', [Buffer.from('1')])
     assert.deepStrictEqual(
       await session.execute('get', [Buffer.from('key')]),
+      RedisResult.create(RedisValue.bulkString(null)),
+    )
+  })
+
+  test('supports client handshake commands used by Redis client libraries', async () => {
+    const { session } = createSession({ databaseCount: 2 })
+
+    const info = await session.execute('info', [])
+    assert.strictEqual(info.value.kind, 'bulk-string')
+    assert.notStrictEqual(info.value.value, null)
+    const infoText = info.value.value.toString()
+    assert.match(infoText, /loading:0/)
+    assert.match(infoText, /redis_mode:standalone/)
+    assert.match(infoText, /cluster_enabled:0/)
+
+    assert.deepStrictEqual(
+      await session.execute('client', [
+        Buffer.from('SETNAME'),
+        Buffer.from('ioredis'),
+      ]),
+      RedisResult.ok(),
+    )
+    assert.deepStrictEqual(
+      await session.execute('client', [Buffer.from('GETNAME')]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('ioredis'))),
+    )
+    assert.deepStrictEqual(
+      await session.execute('client', [
+        Buffer.from('SETINFO'),
+        Buffer.from('LIB-NAME'),
+        Buffer.from('ioredis'),
+      ]),
+      RedisResult.ok(),
+    )
+
+    const clientId = await session.execute('client', [Buffer.from('ID')])
+    assert.strictEqual(clientId.value.kind, 'integer')
+    assert.strictEqual(typeof clientId.value.value, 'number')
+    assert.ok(clientId.value.value > 0)
+
+    const hello = await session.execute('hello', [
+      Buffer.from('2'),
+      Buffer.from('SETNAME'),
+      Buffer.from('node-redis'),
+    ])
+    assert.strictEqual(hello.value.kind, 'array')
+    assert.deepStrictEqual(
+      hello.value.items[0],
+      RedisValue.bulkString(Buffer.from('server')),
+    )
+    assert.deepStrictEqual(
+      hello.value.items[1],
+      RedisValue.bulkString(Buffer.from('redis')),
+    )
+    assert.deepStrictEqual(
+      await session.execute('client', [Buffer.from('GETNAME')]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('node-redis'))),
+    )
+
+    assert.deepStrictEqual(
+      await session.execute('auth', [Buffer.from('secret')]),
+      RedisResult.error(
+        'AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?',
+        'ERR',
+      ),
+    )
+
+    await session.execute('select', [Buffer.from('1')])
+    assert.deepStrictEqual(
+      await session.execute('reset', []),
+      RedisResult.create(RedisValue.simpleString('RESET')),
+    )
+    assert.strictEqual(session.selectedDatabase, 0)
+    assert.deepStrictEqual(
+      await session.execute('client', [Buffer.from('GETNAME')]),
       RedisResult.create(RedisValue.bulkString(null)),
     )
   })

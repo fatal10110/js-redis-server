@@ -1,4 +1,5 @@
-import { Cluster } from 'ioredis'
+import { Cluster, Redis } from 'ioredis'
+import clusterKeySlot from 'cluster-key-slot'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
@@ -68,23 +69,25 @@ describe('WATCH/UNWATCH', () => {
     assert.strictEqual(result[1][1], 'transactional')
   })
 
-  it('WATCH should allow watching multiple keys', async () => {
+  it('WATCH should allow watching multiple keys in the same slot', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
+    const firstKey = 'watch:{multi}:3'
+    const secondKey = 'watch:{multi}:4'
 
     try {
       // Set initial values
-      await redisClient!.set('watchkey3', 'initial')
-      await redisClient!.set('watchkey4', 'initial')
+      await redisClient!.set(firstKey, 'initial')
+      await redisClient!.set(secondKey, 'initial')
 
       // Watch multiple keys
-      await redisClient!.watch('watchkey3', 'watchkey4')
+      await redisClient!.watch(firstKey, secondKey)
 
       // Modify one of the watched keys from another client
-      await anotherClient.set('watchkey4', 'modified')
+      await anotherClient.set(secondKey, 'modified')
 
       // Try to execute transaction
       const multi = redisClient!.multi()
-      multi.set('watchkey3', 'transactional')
+      multi.set(firstKey, 'transactional')
 
       const result = await multi.exec()
 
@@ -95,33 +98,54 @@ describe('WATCH/UNWATCH', () => {
     }
   })
 
+  it('WATCH should reject multiple keys in different slots', async () => {
+    await assert.rejects(
+      () => redisClient!.watch('watchkey3', 'watchkey4'),
+      err => {
+        assert.ok(err instanceof Error)
+        assert.match(
+          err.message,
+          /CROSSSLOT Keys in request don't hash to the same slot/,
+        )
+        return true
+      },
+    )
+  })
+
   it('UNWATCH should clear watched keys', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
+    const key = 'watchkey5'
+    let directClient: Redis | undefined
 
     try {
+      directClient = await connectToSlotOwner(redisClient!, key)
+
       // Set initial value
-      await redisClient!.set('watchkey5', 'initial')
+      await directClient.call('SET', key, 'initial')
 
       // Watch the key
-      await redisClient!.watch('watchkey5')
+      await directClient.call('WATCH', key)
 
       // Unwatch
-      await redisClient!.unwatch()
+      await directClient.call('UNWATCH')
 
       // Modify the key from another client
-      await anotherClient.set('watchkey5', 'modified')
+      await anotherClient.set(key, 'modified')
 
       // Execute transaction
-      const multi = redisClient!.multi()
-      multi.set('watchkey5', 'transactional')
-
-      const result = await multi.exec()
+      assert.strictEqual(await directClient.call('MULTI'), 'OK')
+      assert.strictEqual(
+        await directClient.call('SET', key, 'transactional'),
+        'QUEUED',
+      )
+      const result = await directClient.call('EXEC')
 
       // Transaction should succeed because we unwatched
       assert.notStrictEqual(result, null)
       assert.ok(Array.isArray(result))
-      assert.strictEqual(result[0][1], 'OK')
+      assert.strictEqual(result[0], 'OK')
     } finally {
+      directClient?.disconnect()
       await anotherClient.quit()
     }
   })
@@ -159,38 +183,45 @@ describe('WATCH/UNWATCH', () => {
 
   it('DISCARD should clear watched keys', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
+    const key = 'watchkey7'
+    let directClient: Redis | undefined
 
     try {
+      directClient = await connectToSlotOwner(redisClient!, key)
+
       // Set initial value
-      await redisClient!.set('watchkey7', 'initial')
+      await directClient.call('SET', key, 'initial')
 
       // Watch the key
-      await redisClient!.watch('watchkey7')
+      await directClient.call('WATCH', key)
 
       // Discard transaction
-      const multi1 = redisClient!.multi()
-      multi1.set('watchkey7', 'first')
-      await multi1.discard()
+      assert.strictEqual(await directClient.call('MULTI'), 'OK')
+      assert.strictEqual(await directClient.call('SET', key, 'first'), 'QUEUED')
+      assert.strictEqual(await directClient.call('DISCARD'), 'OK')
 
       // Modify the key from another client
-      await anotherClient.set('watchkey7', 'modified')
+      await anotherClient.set(key, 'modified')
 
       // Execute another transaction without WATCH
-      const multi2 = redisClient!.multi()
-      multi2.set('watchkey7', 'second')
-      const result = await multi2.exec()
+      assert.strictEqual(await directClient.call('MULTI'), 'OK')
+      assert.strictEqual(
+        await directClient.call('SET', key, 'second'),
+        'QUEUED',
+      )
+      const result = await directClient.call('EXEC')
 
       // Second transaction should succeed (watches cleared after DISCARD)
       assert.notStrictEqual(result, null)
       assert.ok(Array.isArray(result))
+      assert.strictEqual(result[0], 'OK')
     } finally {
+      directClient?.disconnect()
       await anotherClient.quit()
     }
   })
 
   it('WATCH inside MULTI should return error', async () => {
-    const multi = redisClient!.multi()
-
     // WATCH inside MULTI should fail
     // ioredis will throw when calling watch() on a pipeline/multi
     try {
@@ -203,3 +234,29 @@ describe('WATCH/UNWATCH', () => {
     }
   })
 })
+
+async function connectToSlotOwner(
+  cluster: Cluster,
+  key: string,
+): Promise<Redis> {
+  const slot = clusterKeySlot(key)
+  const slots = (await cluster.cluster('SLOTS')) as Array<
+    [number, number, [string, number]]
+  >
+
+  for (const [min, max, master] of slots) {
+    if (slot < min || slot > max) {
+      continue
+    }
+
+    const client = new Redis({
+      host: master[0],
+      port: master[1],
+      lazyConnect: true,
+    })
+    await client.connect()
+    return client
+  }
+
+  throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)
+}
