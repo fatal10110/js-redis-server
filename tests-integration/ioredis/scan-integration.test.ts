@@ -146,6 +146,17 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
         stripTag(await directClient.keys(`${tag}:[a\\-z]`), tag),
         ['-', 'a'],
       )
+      assert.deepStrictEqual(
+        stripTag(await directClient.keys(`${tag}:[a-]`), tag),
+        ['^', 'a'],
+      )
+      assert.deepStrictEqual(
+        stripTag(
+          await collectTopLevelScan(directClient, ['MATCH', `${tag}:[a-]`]),
+          tag,
+        ),
+        ['^', 'a'],
+      )
     } finally {
       await directClient.del(...keys)
       directClient.disconnect()

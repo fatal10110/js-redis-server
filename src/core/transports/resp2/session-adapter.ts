@@ -76,7 +76,12 @@ export class Resp2SessionAdapter {
   }
 
   private async writeRedisResult(result: RedisResult): Promise<void> {
-    await this.transport.write(encodeRedisResult(result, this.encoder))
+    await this.transport.write(
+      encodeRedisResult(result, {
+        ...this.encoder,
+        version: this.session.protocolVersion,
+      }),
+    )
 
     if (result.options?.close || result.options?.disconnect) {
       this.transport.close('command requested close')

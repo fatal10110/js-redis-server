@@ -4,8 +4,10 @@ import { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
 import { TestRunner } from '../test-config'
 import {
+  connectToEndpoint,
   connectToSlotOwner,
   errorWithMessage,
+  findSlotMasterAndReplica,
   findSlotOwner,
   randomKey,
 } from '../utils'
@@ -16,7 +18,9 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
   let redisClient: Cluster | undefined
 
   before(async () => {
-    redisClient = await testRunner.setupIoredisCluster('cluster-integration')
+    redisClient = await testRunner.setupIoredisCluster('cluster-integration', {
+      replicasPerMaster: 1,
+    })
   })
 
   after(async () => {
@@ -42,6 +46,31 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
       )
     } finally {
       directClient.disconnect()
+    }
+  })
+
+  test('direct replica connections redirect keyed commands to the master', async () => {
+    const key = `{replica:${randomKey()}}:key`
+    const { slot, master, replica } = await findSlotMasterAndReplica(
+      redisClient!,
+      key,
+    )
+    const masterClient = await connectToEndpoint(master)
+    const replicaClient = await connectToEndpoint(replica)
+    const movedError = errorWithMessage(
+      `MOVED ${slot} ${master.host}:${master.port}`,
+    )
+
+    try {
+      await masterClient.set(key, 'original')
+
+      await assert.rejects(() => replicaClient.get(key), movedError)
+      await assert.rejects(() => replicaClient.set(key, 'replica'), movedError)
+      assert.strictEqual(await masterClient.get(key), 'original')
+    } finally {
+      await masterClient.del(key)
+      masterClient.disconnect()
+      replicaClient.disconnect()
     }
   })
 

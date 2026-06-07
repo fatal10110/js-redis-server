@@ -74,15 +74,40 @@ describe('RESP encoder core', () => {
     )
   })
 
-  test('encodes RedisResult values and rejects RESP3 until implemented', () => {
+  test('encodes RedisResult values and RESP3-native shapes', () => {
     assert.deepStrictEqual(
       encodeRedisResult(RedisResult.ok()),
       Buffer.from('+OK\r\n'),
     )
 
-    assert.throws(
-      () => encodeRedisResult(RedisResult.ok(), { version: 3 }),
-      /RESP3 encoding is not implemented yet/,
+    assert.deepStrictEqual(
+      encodeRedisResult(RedisResult.ok(), { version: 3 }),
+      Buffer.from('+OK\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.null(), { version: 3 }),
+      Buffer.from('_\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.boolean(false), { version: 3 }),
+      Buffer.from('#f\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(
+        RedisValue.map([
+          [RedisValue.bulkString(Buffer.from('a')), RedisValue.integer(1)],
+          [RedisValue.bulkString(Buffer.from('b')), RedisValue.null()],
+        ]),
+        { version: 3 },
+      ),
+      Buffer.from('%2\r\n$1\r\na\r\n:1\r\n$1\r\nb\r\n_\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(
+        RedisValue.push('message', [RedisValue.bulkString(Buffer.from('x'))]),
+        { version: 3 },
+      ),
+      Buffer.from('>2\r\n$7\r\nmessage\r\n$1\r\nx\r\n'),
     )
   })
 })
