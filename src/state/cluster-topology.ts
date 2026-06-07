@@ -59,9 +59,14 @@ export class RedisClusterTopology {
     return undefined
   }
 
+  /**
+   * Returns whether the node is the master serving the slot. Replicas never
+   * own slots for routing purposes — keyed commands sent directly to a
+   * replica must redirect to the master via MOVED.
+   */
   nodeOwnsSlot(nodeId: string, slot: number): boolean {
     const node = this.getNode(nodeId)
-    return node ? nodeOwnsSlot(node, slot) : false
+    return node && node.role === 'master' ? nodeOwnsSlot(node, slot) : false
   }
 }
 
