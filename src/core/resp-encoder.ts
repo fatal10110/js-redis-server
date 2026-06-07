@@ -19,8 +19,8 @@ export function encodeRedisValue(
   options?: RespEncodeOptions,
 ): Buffer {
   const version = options?.version ?? 2
-  if (version !== 2) {
-    throw new Error('RESP3 encoding is not implemented yet')
+  if (version === 3) {
+    return encodeResp3(value)
   }
 
   return encodeResp2(value)
@@ -64,10 +64,72 @@ function encodeResp2(value: RedisValue): Buffer {
   }
 }
 
+function encodeResp3(value: RedisValue): Buffer {
+  switch (value.kind) {
+    case 'simple-string':
+      return Buffer.from(`+${value.value}\r\n`)
+    case 'bulk-string':
+      return encodeResp3BlobString(value.value)
+    case 'integer':
+      return Buffer.from(`:${value.value.toString()}\r\n`)
+    case 'double':
+      return Buffer.from(`,${formatNumber(value.value)}\r\n`)
+    case 'boolean':
+      return Buffer.from(value.value ? '#t\r\n' : '#f\r\n')
+    case 'big-number':
+      return Buffer.from(`(${value.value.toString()}\r\n`)
+    case 'verbatim':
+      return encodeResp3VerbatimString(value.format, value.value)
+    case 'array':
+      return encodeResp3Array(value.items)
+    case 'set':
+      return encodeResp3Set(value.items)
+    case 'map':
+      return encodeResp3Map(value.entries)
+    case 'push':
+      return encodeResp3Push(value.name, value.items)
+    case 'null':
+    case 'null-array':
+      return Buffer.from('_\r\n')
+    case 'error':
+      return Buffer.from(`-${formatError(value)}\r\n`)
+  }
+}
+
 function encodeArray(items: readonly RedisValue[]): Buffer {
   return Buffer.concat([
     Buffer.from(`*${items.length}\r\n`),
     ...items.map(item => encodeResp2(item)),
+  ])
+}
+
+function encodeResp3Array(items: readonly RedisValue[]): Buffer {
+  return Buffer.concat([
+    Buffer.from(`*${items.length}\r\n`),
+    ...items.map(item => encodeResp3(item)),
+  ])
+}
+
+function encodeResp3Set(items: readonly RedisValue[]): Buffer {
+  return Buffer.concat([
+    Buffer.from(`~${items.length}\r\n`),
+    ...items.map(item => encodeResp3(item)),
+  ])
+}
+
+function encodeResp3Map(entries: readonly [RedisValue, RedisValue][]): Buffer {
+  const frames: Buffer[] = [Buffer.from(`%${entries.length}\r\n`)]
+  for (const [key, value] of entries) {
+    frames.push(encodeResp3(key), encodeResp3(value))
+  }
+  return Buffer.concat(frames)
+}
+
+function encodeResp3Push(name: string, items: readonly RedisValue[]): Buffer {
+  return Buffer.concat([
+    Buffer.from(`>${items.length + 1}\r\n`),
+    encodeResp3BlobString(Buffer.from(name)),
+    ...items.map(item => encodeResp3(item)),
   ])
 }
 
@@ -79,6 +141,23 @@ function encodeBulkString(value: Buffer | null): Buffer {
   return Buffer.concat([
     Buffer.from(`$${value.length}\r\n`),
     value,
+    Buffer.from('\r\n'),
+  ])
+}
+
+function encodeResp3BlobString(value: Buffer | null): Buffer {
+  if (value === null) {
+    return Buffer.from('_\r\n')
+  }
+
+  return encodeBulkString(value)
+}
+
+function encodeResp3VerbatimString(format: string, value: Buffer): Buffer {
+  const payload = Buffer.concat([Buffer.from(`${format}:`), value])
+  return Buffer.concat([
+    Buffer.from(`=${payload.length}\r\n`),
+    payload,
     Buffer.from('\r\n'),
   ])
 }

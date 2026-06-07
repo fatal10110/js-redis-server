@@ -4,27 +4,48 @@ import { buildRedisCluster, RedisCluster } from '../src/cluster'
 
 export type TestBackend = 'mock' | 'real'
 
+export type IoredisClusterSetupOptions = {
+  masters?: number
+  replicasPerMaster?: number
+}
+
 export class TestRunner {
   readonly backend = (process.env.TEST_BACKEND as TestBackend) || 'mock'
-  private mockCluster: RedisCluster | null = null
+  private readonly mockClusters = new Map<string, RedisCluster>()
+  private activeMockCluster: RedisCluster | null = null
   private ioredisCluster: Cluster[] = []
   private nodeRedisCluster: RedisClusterType[] = []
 
-  private async ensureMockCluster(masters: number): Promise<RedisCluster> {
-    if (!this.mockCluster) {
-      this.mockCluster = buildRedisCluster({
-        masters,
-        replicasPerMaster: 0,
+  private async ensureMockCluster(
+    options: Required<IoredisClusterSetupOptions>,
+  ): Promise<RedisCluster> {
+    const key = mockClusterKey(options)
+    let cluster = this.mockClusters.get(key)
+    if (!cluster) {
+      cluster = buildRedisCluster({
+        masters: options.masters,
+        replicasPerMaster: options.replicasPerMaster,
         basePort: 0,
       })
-      await this.mockCluster.listen()
+      this.mockClusters.set(key, cluster)
+      await cluster.listen()
     }
-    return this.mockCluster
+
+    this.activeMockCluster = cluster
+    return cluster
   }
 
-  async setupIoredisCluster(prefix?: string): Promise<Cluster> {
+  async setupIoredisCluster(
+    prefix?: string,
+    options: IoredisClusterSetupOptions = {},
+  ): Promise<Cluster> {
+    const clusterOptions = {
+      masters: options.masters ?? 3,
+      replicasPerMaster: options.replicasPerMaster ?? 0,
+    }
+
     if (this.backend === 'mock') {
-      const mockCluster = await this.ensureMockCluster(3)
+      const mockCluster = await this.ensureMockCluster(clusterOptions)
 
       const cluster = new Redis.Cluster(
         [
@@ -72,7 +93,10 @@ export class TestRunner {
 
   async setupNodeRedisCluster() {
     if (this.backend === 'mock') {
-      const mockCluster = await this.ensureMockCluster(1)
+      const mockCluster = await this.ensureMockCluster({
+        masters: 1,
+        replicasPerMaster: 0,
+      })
 
       const redisClient = createCluster({
         rootNodes: mockCluster.nodes.map(node => ({
@@ -100,8 +124,8 @@ export class TestRunner {
   }
 
   getMockClusterPorts(): number[] {
-    if (this.mockCluster) {
-      return this.mockCluster.nodes.map(node => node.port)
+    if (this.activeMockCluster) {
+      return this.activeMockCluster.nodes.map(node => node.port)
     }
     return []
   }
@@ -129,11 +153,18 @@ export class TestRunner {
     }
 
     // Clean up mock cluster
-    await this.mockCluster?.close()
-    this.mockCluster = null
+    await Promise.all(
+      Array.from(this.mockClusters.values()).map(cluster => cluster.close()),
+    )
+    this.mockClusters.clear()
+    this.activeMockCluster = null
   }
 
   getBackendName(): string {
     return this.backend === 'mock' ? 'Mock Redis Server' : 'Real Redis Server'
   }
+}
+
+function mockClusterKey(options: Required<IoredisClusterSetupOptions>): string {
+  return `${options.masters}:${options.replicasPerMaster}`
 }
