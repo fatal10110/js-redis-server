@@ -1,5 +1,6 @@
 import assert from 'node:assert'
-import type { Cluster } from 'ioredis'
+import { Redis, type Cluster } from 'ioredis'
+import clusterKeySlot from 'cluster-key-slot'
 export {
   assertBufferSetsEqual,
   assertBuffersEqual,
@@ -28,4 +29,36 @@ export async function assertDbSizeDelta(
 ): Promise<void> {
   const size = await getTotalDbSize(redisClient)
   assert.strictEqual(size - baseline, expectedDelta)
+}
+
+export async function connectToSlotOwner(
+  cluster: Cluster,
+  key: string | Buffer,
+): Promise<Redis> {
+  const [host, port] = await findSlotOwner(cluster, key)
+  const client = new Redis({
+    host,
+    port,
+    lazyConnect: true,
+  })
+  await client.connect()
+  return client
+}
+
+export async function findSlotOwner(
+  cluster: Cluster,
+  key: string | Buffer,
+): Promise<[host: string, port: number]> {
+  const slot = clusterKeySlot(key)
+  const slots = (await cluster.cluster('SLOTS')) as Array<
+    [number, number, [string, number]]
+  >
+
+  for (const [min, max, master] of slots) {
+    if (slot >= min && slot <= max) {
+      return [master[0], master[1]]
+    }
+  }
+
+  throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)
 }

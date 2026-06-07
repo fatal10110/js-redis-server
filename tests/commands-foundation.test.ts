@@ -203,7 +203,7 @@ describe('new foundation commands', () => {
         Buffer.from('EX'),
         Buffer.from('0'),
       ]),
-      RedisResult.error('invalid expire time in set command', 'ERR'),
+      RedisResult.error("invalid expire time in 'set' command", 'ERR'),
     )
   })
 

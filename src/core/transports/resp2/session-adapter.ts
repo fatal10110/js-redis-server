@@ -5,7 +5,7 @@ import { encodeRedisResult } from '../../resp-encoder'
 import { isResponseStream } from '../../response-stream'
 import type { ExecutorResult } from '../../command-executor'
 import type { RespEncodeOptions } from '../../resp-encoder'
-import type { Logger } from '../../../types'
+import type { Logger } from '../../../logger'
 import type { ConnectionTransport } from '../connection-transport'
 import {
   Resp2CommandDecoder,

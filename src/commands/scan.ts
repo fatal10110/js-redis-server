@@ -229,7 +229,7 @@ function readOptionValue(
 
 function parseCursor(raw: Buffer): bigint {
   const value = raw.toString()
-  if (!/^\d+$/.test(value)) {
+  if (!/^-?\d+$/.test(value)) {
     throw new RedisCommandError('invalid cursor')
   }
 
@@ -290,7 +290,7 @@ function scanResult(
 }
 
 function normalizeScanCursor(cursor: bigint, itemCount: number): number {
-  if (cursor === 0n) {
+  if (cursor <= 0n) {
     return 0
   }
 

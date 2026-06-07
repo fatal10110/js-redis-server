@@ -2,7 +2,7 @@ import { createRedisCommandExecutor } from './commands'
 import { Resp2Server } from './core/transports/resp2/server'
 import { buildRedisCluster } from './cluster'
 import { RedisServerState } from './state'
-import type { Logger } from './types'
+import type { Logger } from './logger'
 
 type Mode = 'single' | 'cluster'
 

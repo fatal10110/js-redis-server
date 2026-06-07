@@ -50,12 +50,14 @@ export class TestRunner {
           port: p, // Real Redis cluster port
         })),
         {
-          slotsRefreshTimeout: 10000000,
+          // Keep timeouts bounded so a misconfigured or half-formed cluster
+          // fails fast instead of hanging the suite for hours.
+          slotsRefreshTimeout: 10000,
           lazyConnect: true,
           keyPrefix: prefix,
           redisOptions: {
-            commandTimeout: 10000000,
-            connectTimeout: 100000,
+            commandTimeout: 10000,
+            connectTimeout: 10000,
             offlineQueue: false,
             commandQueue: false,
           },

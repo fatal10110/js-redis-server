@@ -16,6 +16,7 @@ import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { array, ok } from './helpers'
+import { commandSubcommandInfo } from './introspection'
 
 type ScriptArgs = {
   subcommand: string
@@ -41,6 +42,35 @@ export const scriptCommand = defineCommand({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
+  introspection: {
+    arity: -2,
+    flags: ['admin', 'noscript'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+    subcommands: [
+      commandSubcommandInfo('script|debug', 3, {
+        categories: ['@slow', '@scripting'],
+      }),
+      commandSubcommandInfo('script|exists', -3, {
+        categories: ['@slow', '@scripting'],
+      }),
+      commandSubcommandInfo('script|flush', -2, {
+        categories: ['@slow', '@scripting'],
+      }),
+      commandSubcommandInfo('script|help', 2, {
+        categories: ['@slow', '@scripting'],
+      }),
+      commandSubcommandInfo('script|kill', 2, {
+        categories: ['@slow', '@scripting'],
+      }),
+      commandSubcommandInfo('script|load', 3, {
+        categories: ['@slow', '@scripting'],
+      }),
+    ],
+  },
   keys: () => [],
   execute: (args, ctx) => {
     switch (args.subcommand.toLowerCase()) {
@@ -142,7 +172,7 @@ function scriptFlush(
 
 function scriptKill(args: ScriptArgs): RedisResult {
   expectRestLength(args, 'script|kill', 0)
-  return ok()
+  return RedisResult.error('No scripts in execution right now.', 'NOTBUSY')
 }
 
 function scriptDebug(args: ScriptArgs): RedisResult {

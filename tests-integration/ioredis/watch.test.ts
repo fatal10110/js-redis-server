@@ -1,9 +1,8 @@
 import { Cluster, Redis } from 'ioredis'
-import clusterKeySlot from 'cluster-key-slot'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { errorWithMessage } from '../utils'
+import { connectToSlotOwner, errorWithMessage } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -228,29 +227,3 @@ describe('WATCH/UNWATCH', () => {
     }
   })
 })
-
-async function connectToSlotOwner(
-  cluster: Cluster,
-  key: string,
-): Promise<Redis> {
-  const slot = clusterKeySlot(key)
-  const slots = (await cluster.cluster('SLOTS')) as Array<
-    [number, number, [string, number]]
-  >
-
-  for (const [min, max, master] of slots) {
-    if (slot < min || slot > max) {
-      continue
-    }
-
-    const client = new Redis({
-      host: master[0],
-      port: master[1],
-      lazyConnect: true,
-    })
-    await client.connect()
-    return client
-  }
-
-  throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)
-}

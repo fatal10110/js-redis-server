@@ -160,7 +160,7 @@ describe('new script commands', () => {
     )
     assert.deepStrictEqual(
       await session.execute('script', [Buffer.from('kill')]),
-      RedisResult.ok(),
+      RedisResult.error('No scripts in execution right now.', 'NOTBUSY'),
     )
     assert.deepStrictEqual(
       await session.execute('script', [

@@ -457,6 +457,26 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(ttlNonExistent, -2)
   })
 
+  test('PERSIST removes expiration and EXPIRE 0 deletes the key', async () => {
+    const tag = `{persist:${randomKey()}}`
+    const persistentKey = `${tag}:persistent`
+    const deletedKey = `${tag}:deleted`
+
+    await redisClient?.set(persistentKey, 'value')
+    assert.strictEqual(await redisClient?.expire(persistentKey, 10), 1)
+    const expiringTtl = await redisClient!.ttl(persistentKey)
+    assert.ok(expiringTtl > 0 && expiringTtl <= 10)
+
+    assert.strictEqual(await redisClient?.persist(persistentKey), 1)
+    assert.strictEqual(await redisClient?.ttl(persistentKey), -1)
+    assert.strictEqual(await redisClient?.persist(persistentKey), 0)
+
+    await redisClient?.set(deletedKey, 'value')
+    assert.strictEqual(await redisClient?.expire(deletedKey, 0), 1)
+    assert.strictEqual(await redisClient?.exists(deletedKey), 0)
+    assert.strictEqual(await redisClient?.ttl(deletedKey), -2)
+  })
+
   test('Expiration workflow - Session Management', async () => {
     // Simulate session management with expiration
     const sessionId = '{session}user123'

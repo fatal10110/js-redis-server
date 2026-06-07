@@ -43,7 +43,7 @@ export class WrongTypeRedisError extends RedisCommandError {
 
 export class InvalidExpireTimeError extends RedisCommandError {
   constructor(commandName: string) {
-    super(`invalid expire time in ${commandName} command`)
+    super(`invalid expire time in '${commandName}' command`)
   }
 }
 

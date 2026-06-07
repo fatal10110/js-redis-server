@@ -47,6 +47,7 @@ export type { RedisResultOptions } from './core/redis-result'
 export type { RespEncodeOptions, RespVersion } from './core/resp-encoder'
 export type { ResponseStream } from './core/response-stream'
 export type { RedisTurnHandle, RedisTurnQueue } from './core/turn-queue'
+export type { Logger } from './logger'
 export type { ClientSessionOptions } from './core/client-session'
 export type {
   ConnectionTransport,
@@ -135,6 +136,7 @@ export {
   connectionCommands,
   createRedisCommandExecutor,
   createRedisCommandRegistry,
+  commandCommand,
   createClusterCommand,
   dbsizeCommand,
   delCommand,
@@ -179,7 +181,6 @@ export {
   Resp2CommandDecoder,
   Resp2ParseError,
   Resp2SessionAdapter,
-  Resp2Transport,
 } from './core/transports/resp2'
 export {
   Resp2Server,

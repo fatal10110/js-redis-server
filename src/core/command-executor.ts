@@ -23,6 +23,14 @@ export class CommandExecutor {
     this.policies = options.policies ?? []
   }
 
+  getCommandDefinition(name: string): CommandDefinition<unknown> | undefined {
+    return this.registry.get(name)
+  }
+
+  getCommandDefinitions(): readonly CommandDefinition<unknown>[] {
+    return this.registry.getAll()
+  }
+
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
     const commandName =
       typeof rawCommand === 'string'

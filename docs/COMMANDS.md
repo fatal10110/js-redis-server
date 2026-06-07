@@ -41,6 +41,22 @@ This document provides a detailed overview of Redis commands and their implement
   - [ ] `cluster` - Redis Cluster section
   - [ ] `keyspace` - Database related statistics
 
+#### COMMAND
+
+- [x] `COMMAND` - Return details for commands in the active registry
+- [x] `COMMAND COUNT` - Return the command count for the active registry
+- [x] `COMMAND LIST [FILTERBY PATTERN pattern|MODULE module]` - Return command names
+- [x] `COMMAND INFO [command-name ...]` - Return command metadata
+- [x] `COMMAND DOCS [command-name ...]` - Return command documentation
+- [x] `COMMAND GETKEYS command [arg ...]` - Extract keys through the command definition
+- [x] `COMMAND GETKEYSANDFLAGS command [arg ...]` - Extract keys with access flags
+- [x] `COMMAND HELP` - Return command help
+
+`COMMAND` is generated from registered command definitions and their
+introspection metadata. It should not carry a separate hardcoded list of Redis
+commands, so alternate Redis-version command registries can expose their own
+surface.
+
 #### CONFIG
 
 - [ ] `CONFIG GET parameter` - Get the value of a configuration parameter
