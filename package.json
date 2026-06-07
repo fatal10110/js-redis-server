@@ -1,6 +1,6 @@
 {
   "name": "js-redis-server",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "In-memory Redis-compatible server implementation in JavaScript, useful for testing and client-agnostic mocks",
   "keywords": [
     "redis",
