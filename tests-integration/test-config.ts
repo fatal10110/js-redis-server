@@ -1,28 +1,36 @@
 import { Redis, Cluster } from 'ioredis'
 import { createCluster, RedisClusterType } from 'redis'
-import { ClusterNetwork } from '../src/core/cluster/network'
+import { buildRedisCluster, RedisCluster } from '../src/cluster'
 
 export type TestBackend = 'mock' | 'real'
 
 export class TestRunner {
   readonly backend = (process.env.TEST_BACKEND as TestBackend) || 'mock'
-  private mockCluster: ClusterNetwork | null = null
+  private mockCluster: RedisCluster | null = null
   private ioredisCluster: Cluster[] = []
   private nodeRedisCluster: RedisClusterType[] = []
 
+  private async ensureMockCluster(masters: number): Promise<RedisCluster> {
+    if (!this.mockCluster) {
+      this.mockCluster = buildRedisCluster({
+        masters,
+        replicasPerMaster: 0,
+        basePort: 0,
+      })
+      await this.mockCluster.listen()
+    }
+    return this.mockCluster
+  }
+
   async setupIoredisCluster(prefix?: string): Promise<Cluster> {
     if (this.backend === 'mock') {
-      // Use mock server
-      if (!this.mockCluster) {
-        this.mockCluster = new ClusterNetwork(console)
-        await this.mockCluster.init({ masters: 3, slaves: 0 })
-      }
+      const mockCluster = await this.ensureMockCluster(3)
 
       const cluster = new Redis.Cluster(
         [
           {
             host: '127.0.0.1',
-            port: Array.from(this.mockCluster.getAll())[0].port,
+            port: mockCluster.nodes[0].port,
           },
         ],
         {
@@ -42,12 +50,14 @@ export class TestRunner {
           port: p, // Real Redis cluster port
         })),
         {
-          slotsRefreshTimeout: 10000000,
+          // Keep timeouts bounded so a misconfigured or half-formed cluster
+          // fails fast instead of hanging the suite for hours.
+          slotsRefreshTimeout: 10000,
           lazyConnect: true,
           keyPrefix: prefix,
           redisOptions: {
-            commandTimeout: 10000000,
-            connectTimeout: 100000,
+            commandTimeout: 10000,
+            connectTimeout: 10000,
             offlineQueue: false,
             commandQueue: false,
           },
@@ -62,18 +72,12 @@ export class TestRunner {
 
   async setupNodeRedisCluster() {
     if (this.backend === 'mock') {
-      // Use mock server
-      if (!this.mockCluster) {
-        this.mockCluster = new ClusterNetwork(console)
-        await this.mockCluster.init({ masters: 1, slaves: 0 })
-      }
+      const mockCluster = await this.ensureMockCluster(1)
 
       const redisClient = createCluster({
-        rootNodes: Array.from(this.mockCluster.getAll())
-          .map(node => node.port)
-          .map(port => ({
-            url: `redis://127.0.0.1:${port}`,
-          })),
+        rootNodes: mockCluster.nodes.map(node => ({
+          url: `redis://127.0.0.1:${node.port}`,
+        })),
       })
       await redisClient?.connect()
 
@@ -97,7 +101,7 @@ export class TestRunner {
 
   getMockClusterPorts(): number[] {
     if (this.mockCluster) {
-      return Array.from(this.mockCluster.getAll()).map(node => node.port)
+      return this.mockCluster.nodes.map(node => node.port)
     }
     return []
   }
@@ -125,7 +129,8 @@ export class TestRunner {
     }
 
     // Clean up mock cluster
-    await this.mockCluster?.shutdown()
+    await this.mockCluster?.close()
+    this.mockCluster = null
   }
 
   getBackendName(): string {

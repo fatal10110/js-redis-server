@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+.nyc_output
+package-lock.json
+docker-data
+redis-data
+.grepai

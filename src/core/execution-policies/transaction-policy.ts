@@ -1,0 +1,28 @@
+import type { ExecutionPolicy } from './index'
+import { RedisResult } from '../redis-result'
+import { RedisValue } from '../redis-value'
+
+export function createTransactionPolicy(): ExecutionPolicy {
+  return {
+    name: 'transaction',
+    beforeExecute(plan, ctx) {
+      if (ctx.session.mode !== 'transaction') {
+        return
+      }
+
+      if (plan.flags.includes('transaction')) {
+        return
+      }
+
+      if (plan.definition.capabilities?.pushOnly) {
+        ctx.session.markTransactionDirty()
+        return RedisResult.error(
+          `${plan.definition.name.toUpperCase()} is not allowed in transactions`,
+        )
+      }
+
+      ctx.session.queueTransaction(plan)
+      return RedisResult.create(RedisValue.simpleString('QUEUED'))
+    },
+  }
+}

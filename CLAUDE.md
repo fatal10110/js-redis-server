@@ -280,3 +280,111 @@ Recent architecture changes introduced execution contexts:
 - `TransactionExecutionContext` for MULTI/EXEC blocks
 - Each context can transition to another context based on commands
 - Allows for cleaner separation of transaction vs normal execution mode
+
+
+## grepai - Semantic Code Search
+
+**IMPORTANT: Use grepai as the primary tool for code exploration and semantic search.**
+
+### When to Use grepai (REQUIRED)
+
+Use `grepai search` instead of `grep`, `glob`, or `find` for:
+- Understanding what code does or where functionality lives
+- Finding implementations by intent (e.g., "authentication logic", "error handling")
+- Exploring unfamiliar parts of the codebase
+- Any search where you describe WHAT the code does rather than exact text
+
+### When to Use Standard Tools
+
+Use standard text tools only when you need:
+- Exact text matching (variable names, imports, specific strings)
+- File path patterns (e.g., `**/*.go`)
+
+### Fallback
+
+If grepai is unavailable, the index is empty, or the command errors, fall back to standard text search.
+
+### Setup / Health Check
+
+Before relying on grepai for exploration:
+1. Run `grepai status --no-ui`
+2. If the index is empty or stale, initialize or refresh it with `grepai init --yes`
+3. Make sure the watcher is running with `grepai watch`
+
+Current repo state: grepai is installed, the watcher is running, and the index should be checked before semantic search if results look incomplete.
+
+### Usage
+
+```bash
+grepai search "user authentication flow" --json --compact --limit 10
+grepai search "error handling middleware" --json --compact
+grepai search "database connection pool" --json --compact
+grepai search "API request validation" --json --compact
+```
+
+### Query Tips
+
+- Use English queries for better semantic matching.
+- Describe intent, not implementation: "handles user login" instead of "func Login".
+- Be specific: "JWT token validation" is better than "token".
+- Prefer `--json` for machine-readable output and `--compact` when you only need file paths and scores.
+
+### Call Graph Tracing
+
+Use `grepai trace` to understand function relationships:
+- Finding all callers of a function before modifying it
+- Understanding what functions are called by a given function
+- Visualizing the complete call graph around a symbol
+
+#### Trace Commands
+
+Use `--json` when you want machine-readable output.
+
+```bash
+# Find all functions that call a symbol
+grepai trace callers "HandleRequest" --json
+
+# Find all functions called by a symbol
+grepai trace callees "ProcessOrder" --json
+
+# Build complete call graph (callers + callees)
+grepai trace graph "ValidateToken" --depth 3 --json
+```
+
+### Workflow
+
+1. Start with `grepai search` to find relevant code by intent.
+2. Use `grepai trace` to understand callers, callees, and the surrounding call graph.
+3. Open the returned files to inspect the implementation details.
+4. Use exact-text search only when you already know the literal symbol or string you need.
+
+## OpenMemory - Durable Agent Memory
+
+Use OpenMemory as the persistent memory layer for stable context that should survive across turns and tasks.
+
+### When to Use OpenMemory
+
+Use OpenMemory for:
+- durable user preferences and project preferences
+- recurring decisions, conventions, and constraints
+- long-lived task context that should be recalled later
+- summaries of completed work that are useful for future turns
+
+Do not use OpenMemory for:
+- transient debugging notes
+- raw command output
+- speculative ideas that are likely to be discarded
+- secrets, credentials, or other sensitive data that should not be persisted
+
+### How to Use It
+
+1. Check OpenMemory for existing relevant context before asking the user to repeat stable preferences or project-specific facts.
+2. Write a memory after you confirm an enduring preference, decision, or project rule.
+3. Keep entries short, factual, and durable.
+4. Prefer storing the outcome or rule, not the full discussion.
+
+### Practical Rules
+
+- Treat OpenMemory as the source of durable recall, not as a scratchpad.
+- If OpenMemory is unavailable, continue without it and do not block the task.
+- If the workspace has an OpenMemory MCP integration, use that integration instead of inventing a custom persistence layer.
