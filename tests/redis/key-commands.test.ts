@@ -15,7 +15,7 @@ import { ExpireatCommand } from '../../src/commanders/custom/commands/redis/data
 import { FlushdbCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushdb'
 import { FlushallCommand } from '../../src/commanders/custom/commands/redis/data/keys/flushall'
 import { DbSizeCommand } from '../../src/commanders/custom/commands/redis/data/keys/dbsize'
-import { runCommand, createTestSession } from '../command-test-utils'
+import { runCommand } from '../command-test-utils'
 
 // Error imports
 import {

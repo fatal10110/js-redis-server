@@ -52,7 +52,11 @@ export class Resp2Transport {
   close(): Promise<void> {
     return new Promise((resolve, reject) =>
       this.server.close(err => {
-        err ? reject(err) : resolve()
+        if (err) {
+          reject(err)
+          return
+        }
+        resolve()
       }),
     )
   }

@@ -1,8 +1,5 @@
 import { EventEmitter } from 'node:events'
-import {
-  ReactiveDB,
-  ReactiveStoreEvent,
-} from '../src/core/transports/reactive-db'
+import { ReactiveDB } from '../src/core/transports/reactive-db'
 
 /**
  * Mock implementation of ReactiveDB for testing.

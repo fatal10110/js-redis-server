@@ -8,7 +8,7 @@ import { ScriptDebugCommand } from '../../src/commanders/custom/commands/redis/s
 import { ScriptHelpCommand } from '../../src/commanders/custom/commands/redis/script/help'
 import { WrongNumberOfArguments, RedisSyntaxError } from '../../src/core/errors'
 import { DB } from '../../src/commanders/custom/db'
-import { runCommand, createTestSession } from '../command-test-utils'
+import { runCommand } from '../command-test-utils'
 
 describe('Script Commands', () => {
   describe('SCRIPT LOAD command', () => {
@@ -147,7 +147,6 @@ describe('Script Commands', () => {
 
   describe('SCRIPT KILL command', () => {
     test('returns OK', async () => {
-      const db = new DB()
       const command = new ScriptKillCommand()
 
       const result = runCommand(command, 'SCRIPT', [])
@@ -158,7 +157,6 @@ describe('Script Commands', () => {
 
   describe('SCRIPT DEBUG command', () => {
     test('accepts valid debug modes', async () => {
-      const db = new DB()
       const command = new ScriptDebugCommand()
 
       const validModes = ['YES', 'SYNC', 'NO', 'yes', 'sync', 'no']
@@ -170,7 +168,6 @@ describe('Script Commands', () => {
     })
 
     test('throws error for invalid debug mode', async () => {
-      const db = new DB()
       const command = new ScriptDebugCommand()
 
       try {
@@ -182,7 +179,6 @@ describe('Script Commands', () => {
     })
 
     test('throws error when no mode provided', async () => {
-      const db = new DB()
       const command = new ScriptDebugCommand()
 
       try {
@@ -194,7 +190,6 @@ describe('Script Commands', () => {
     })
 
     test('throws error when too many arguments provided', async () => {
-      const db = new DB()
       const command = new ScriptDebugCommand()
 
       try {
@@ -211,7 +206,6 @@ describe('Script Commands', () => {
 
   describe('SCRIPT HELP command', () => {
     test('returns help text', async () => {
-      const db = new DB()
       const command = new ScriptHelpCommand()
 
       const result = runCommand(command, 'SCRIPT', [])
