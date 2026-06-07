@@ -17,6 +17,7 @@ In-memory Redis-compatible server implementation in JavaScript. Useful for testi
   - [As a CLI](#as-a-cli)
   - [CLI Options](#cli-options)
 - [Connecting Clients](#connecting-clients)
+  - [Protocol Version (RESP2 / RESP3)](#protocol-version-resp2--resp3)
   - [Connecting with ioredis](#connecting-with-ioredis)
   - [Connecting with node-redis](#connecting-with-node-redis)
   - [Using in Unit Tests](#using-in-unit-tests)
@@ -30,7 +31,7 @@ In-memory Redis-compatible server implementation in JavaScript. Useful for testi
 
 ## Features
 
-- **Redis-compatible protocol** - Works with any Redis client (ioredis, node-redis, etc.)
+- **RESP2 and RESP3 protocols** - Per-session version negotiation via `HELLO`
 - **Standalone and Cluster modes** - Run a single server or a full cluster
 - **Lua scripting support** - Execute Redis Lua scripts via WebAssembly
 - **No external dependencies** - Pure JavaScript, no Redis installation needed
@@ -137,6 +138,23 @@ await cluster.close()
 ## Connecting Clients
 
 You can connect to `js-redis-server` using any standard Redis client.
+
+### Protocol Version (RESP2 / RESP3)
+
+Each connection starts on RESP2 and can switch to RESP3 by sending `HELLO 3`
+(handled per-session, no server restart needed). Clients that support RESP3
+negotiate this automatically:
+
+```typescript
+import { createClient } from 'redis'
+
+// node-redis negotiates RESP3 via the `RESP` option
+const client = createClient({
+  url: 'redis://127.0.0.1:6379',
+  RESP: 3,
+})
+await client.connect()
+```
 
 ### Connecting with ioredis
 
@@ -344,8 +362,7 @@ npm run test:all
 
 For more details on the architecture, testing infrastructure, and command support, see:
 
-- [Architecture Overview](docs/ARCHITECTURE-REVIEW.md)
-- [Refactor & Modernization Plan](docs/ARCHITECTURE-REFACTOR-PLAN.md)
+- [Architecture](docs/ARCHITECTURE.md) — layers, command pipeline, execution policies, cluster routing, RESP2/RESP3, and diagrams
 - [Detailed Command Implementation Status](docs/COMMANDS.md)
 - [Integration Testing Infrastructure](docs/TEST-INTEGRATION.md)
 
