@@ -2,7 +2,7 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { integer, bulk, ok, array } from './helpers'
 import { RedisValue } from '../core/redis-value'
-import { IndexOutOfRangeError, WrongTypeRedisError } from '../core/redis-error'
+import { IndexOutOfRangeError } from '../core/redis-error'
 
 function resolveIndex(index: number, len: number): number {
   return index < 0 ? len + index : index

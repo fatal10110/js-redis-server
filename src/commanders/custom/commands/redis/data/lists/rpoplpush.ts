@@ -50,7 +50,7 @@ export class RpoplpushCommand extends SchemaCommand<[Buffer, Buffer]> {
     }
 
     // Get or create destination list
-    let destData = this.db.get(destination)
+    const destData = this.db.get(destination)
 
     if (destData === null) {
       const newList = new ListDataType()

@@ -33,7 +33,7 @@ function computeDiff(sets: Set<string>[]): Set<string> {
 
 function computeInter(sets: Set<string>[]): Set<string> {
   if (sets.length === 0) return new Set()
-  let result = new Set(sets[0])
+  const result = new Set(sets[0])
   for (let i = 1; i < sets.length; i++) {
     for (const m of result) {
       if (!sets[i].has(m)) result.delete(m)

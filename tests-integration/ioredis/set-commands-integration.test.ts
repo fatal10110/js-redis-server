@@ -1,4 +1,4 @@
-import { test, describe, before, after, afterEach } from 'node:test'
+import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'

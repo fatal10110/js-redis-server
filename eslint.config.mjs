@@ -15,6 +15,9 @@ const compat = new FlatCompat({
 })
 
 export default [
+  {
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.grepai/**'],
+  },
   ...compat.extends(
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
@@ -36,7 +39,16 @@ export default [
     },
 
     rules: {
-      '@typescript-eslint/no-unused-vars': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+      '@typescript-eslint/no-explicit-any': 'warn',
+      'prefer-const': ['error', { ignoreReadBeforeAssign: true }],
     },
   },
 ]

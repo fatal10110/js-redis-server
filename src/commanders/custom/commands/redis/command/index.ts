@@ -49,7 +49,7 @@ export class CommandInfoCommand extends SchemaCommand<[Buffer[]]> {
         return
       }
       case 'docs': {
-        ctx.transport.write(handleCommandDocs(args.slice(1), ctx))
+        ctx.transport.write(handleCommandDocs(args.slice(1)))
         return
       }
       case 'list': {
@@ -121,10 +121,7 @@ function handleCommandGetKeys(args: Buffer[], ctx: CommandContext): Buffer[] {
  * COMMAND DOCS [<cmd> ...] (Redis 7.0+)
  * Returns documentation for commands - stub implementation
  */
-function handleCommandDocs(
-  args: Buffer[],
-  ctx: CommandContext,
-): CommandResult[] {
+function handleCommandDocs(args: Buffer[]): CommandResult[] {
   if (args.length === 0) {
     // Return docs for all commands - stub with empty array
     return []

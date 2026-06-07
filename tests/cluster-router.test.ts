@@ -4,7 +4,7 @@ import { ClusterRouter } from '../src/commanders/custom/cluster-router'
 import { NormalState } from '../src/core/transports/normal-state'
 import { TransactionState } from '../src/core/transports/transaction-state'
 import { RegistryCommandValidator } from '../src/core/transports/command-validator'
-import { CorssSlot, MovedError, UserFacedError } from '../src/core/errors'
+import { CorssSlot, MovedError } from '../src/core/errors'
 import type {
   Command,
   CommandResult,
@@ -571,7 +571,7 @@ describe('TransactionState with slot validation', () => {
       Buffer.from('MULTI'),
       [],
     )
-    let state = transition.nextState
+    const state = transition.nextState
 
     // Try nested MULTI
     transition = state.handle(transport as any, Buffer.from('MULTI'), [])
