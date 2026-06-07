@@ -3,7 +3,6 @@
 dump.rdb
 .DS_Store
 dist
-package-lock.json
 node_modules
 
 # Test artifacts
@@ -14,3 +13,4 @@ coverage/
 # Docker volumes and test data
 docker-data/
 redis-data/
+.grepai/

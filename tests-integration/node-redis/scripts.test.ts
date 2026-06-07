@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
+import { errorWithMessage } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -95,18 +96,12 @@ describe(`Redis commands (${testRunner.getBackendName()})`, () => {
     test('matches Redis script error format', async () => {
       const script = "return redis.set('x', 1)"
       const sha = createHash('sha1').update(script).digest('hex')
-      let error: Error | undefined
 
-      try {
-        await redisClient?.eval(script, 0)
-      } catch (err) {
-        error = err instanceof Error ? err : new Error(String(err))
-      }
-
-      assert.ok(error)
-      assert.strictEqual(
-        error.message,
-        `ERR user_script:1: attempt to call field 'set' (a nil value) script: ${sha}, on @user_script:1.`,
+      await assert.rejects(
+        () => redisClient?.eval(script, 0),
+        errorWithMessage(
+          `ERR user_script:1: attempt to call field 'set' (a nil value) script: ${sha}, on @user_script:1.`,
+        ),
       )
     })
   })

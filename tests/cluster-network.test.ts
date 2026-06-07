@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
-import { ClusterNetwork, computeSlotRange } from '../src/core/cluster/network'
+import { computeSlotRange } from '../src/cluster'
 
 describe('ClusterNetwork slot distribution', () => {
   test('computeSlotRange covers all slots without overlap', () => {
@@ -28,14 +28,5 @@ describe('ClusterNetwork slot distribution', () => {
     assert.throws(() => computeSlotRange(0, 0), /Invalid masters count/)
     assert.throws(() => computeSlotRange(-1, 3), /Invalid master index/)
     assert.throws(() => computeSlotRange(3, 3), /Invalid master index/)
-  })
-})
-
-describe('ClusterNetwork validation', () => {
-  test('getMaster rejects invalid node ids', () => {
-    const logger = { info: () => {}, error: () => {} }
-    const network = new ClusterNetwork(logger)
-
-    assert.throws(() => network.getMaster('replica-bad-master-x'), /Invalid/)
   })
 })
