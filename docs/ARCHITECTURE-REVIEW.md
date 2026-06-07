@@ -19,9 +19,9 @@ the refactor findings, and the SCAN review notes.
 | ----------------------------------------------------- | ---------------------------------------- |
 | Typecheck (`tsc --noEmit`)                            | ✅ clean                                 |
 | Lint (`npm run lint`)                                 | ✅ 0 errors / 1 declaration-file warning |
-| Unit tests (`npm test`)                               | ✅ 92 pass / 0 fail (13 suites)          |
-| Integration, mock backend (new server + real clients) | ✅ 111 pass / 0 fail                     |
-| Integration, real Redis backend                       | ✅ 111 pass / 0 fail                     |
+| Unit tests (`npm test`)                               | ✅ 87 pass / 0 fail (12 suites)          |
+| Integration, mock backend (new server + real clients) | ✅ 141 pass / 0 fail                     |
+| Integration, real Redis backend                       | ✅ 141 pass / 0 fail                     |
 
 The P0 integration hang reported in the earlier findings is **resolved** by
 commit `b390d11` (client-handshake commands: HELLO/CLIENT/INFO/AUTH/RESET/
@@ -82,30 +82,41 @@ Follow-up checks:
 - `tests/cluster-network.test.ts` keeps slot-range coverage against the live
   `src/cluster.ts` module.
 
-### P2 — Replica nodes broken (latent: only when `replicasPerMaster > 0`)
+### P2 — Resolved: direct replica routing no longer diverges
 
-`src/cluster.ts:100-111` gives each replica its own **empty**
-`RedisServerState`, no replication, and shares the master's `slots` array by
-reference. So `nodeOwnsSlot(replica, slot)` is true →
-`src/core/execution-policies/cluster-policy.ts:87` accepts **reads and writes
-locally** instead of MOVED-ing to master. No READONLY handling.
+Replica topology entries no longer own slots locally. They still appear under
+their master in `CLUSTER SLOTS`/`CLUSTER SHARDS`, but direct keyed reads and
+writes to replicas now return `MOVED` to the master instead of reading/writing
+an empty independent state.
 
-- Read from replica → empty/wrong. Write to replica → silent divergence.
-- Tests use masters-only (default replicas 0) → never exercised.
+Coverage:
 
-Fix: replica must not own slots for writes (MOVED to master), gate reads behind
-READONLY, or implement real replication.
+- `tests-integration/ioredis/cluster-integration.test.ts` starts mock clusters
+  with one replica per master and compares direct replica `GET`/`SET` behavior
+  against real Redis.
+- `tests-integration/test-config.ts` can now host multiple mock cluster shapes
+  in one runner, which preserves existing node-redis/ioredis mixed tests.
 
-### P3 — RESP3 handshake lies
+Remaining replica work: `READONLY`/`READWRITE` and actual replicated reads are
+not implemented yet. That is a feature slice, not the silent-divergence bug
+above.
 
-`src/commands/connection.ts:382-391`: HELLO echoes `proto = requested version`.
-But the encoder throws on v3 (`src/core/resp-encoder.ts:22`), the adapter
-encoder is fixed at RESP2, and the session stores no version. `HELLO 3` →
-reply claims `proto:3` while the server keeps speaking RESP2 → a RESP3 client
-desyncs. Latent (test clients use RESP2).
+### P3 — Resolved: HELLO 3 switches to RESP3 replies
 
-Fix: reject `HELLO 3` with `NOPROTO` until a RESP3 encoder exists, OR implement
-RESP3 + a per-session version threaded into the encoder.
+`HELLO 3` now stores protocol version on the client session and the RESP
+adapter encodes replies with the session's active protocol. The RESP3 encoder
+covers the existing `RedisValue` model (`map`, `set`, `push`, null, bool,
+double, big number, verbatim, etc.).
+
+Coverage:
+
+- `tests-integration/ioredis/connection-integration.test.ts` uses a raw TCP
+  connection against both backends, sends `HELLO 3`, asserts a RESP3 map reply,
+  then asserts `CLIENT GETNAME` returns RESP3 null.
+
+Remaining RESP3 work: the request decoder still accepts the RESP2-compatible
+command frames clients normally send; RESP3-specific request frame extensions
+are not implemented.
 
 ### P4 — Defensive deep-clones on hot paths
 
@@ -137,8 +148,10 @@ that does not release the outer turn. Moot now (no blocking command is queueable
 - **COUNT applied after MATCH/TYPE filter** (`scan.ts:278-282`). Redis applies
   COUNT to buckets before MATCH, so real Redis can return an empty page with a
   nonzero cursor; this never does. Does not break `while cursor != 0` loops.
-- **Glob `[a-]` trailing dash** treated as a range (`scan.ts:414-431`); Redis
-  treats a trailing `-` as literal. Edge case.
+- **Glob `[a-]` trailing dash** was checked against real Redis and the earlier
+  review note was incorrect: Redis 7.0 treats it as a range from `]` through
+  `a`, so it matches `^` and `a` for the current fixture. The implementation
+  already matches this, and integration coverage now pins it.
 - Verified OK: live ref (no clone) for hscan/sscan/zscan; WRONGTYPE thrown;
   type filter `'zset'` matches TYPE output; cursor/count error messages match;
   huge-cursor termination; itemWidth 1/2 pagination; `['readonly','random']`
@@ -175,7 +188,9 @@ unused. RESP3 encoding absent (see P3).
 
 ## 6. Suggested priority
 
-1. **P3 HELLO-3 reject** — one-line correctness, cheap.
-2. **P4 perf** — keys-only snapshot; skip the clone for dirty-only watchers.
-3. **P2 replica semantics, P5, and Phase-4 features** (pub/sub, blocking,
-   streams, RESP3) — larger efforts.
+1. **P4 perf** — keys-only snapshot; skip the clone for dirty-only watchers.
+   This is safe to defer because behavior compatibility is the primary project
+   goal.
+2. **Replica READONLY/READWRITE** — support read scaling from replicas if the
+   mock is expected to handle clients configured with replica reads.
+3. **P5 and Phase-4 features** (pub/sub, blocking, streams) — larger efforts.

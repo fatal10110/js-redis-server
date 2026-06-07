@@ -2,6 +2,7 @@ import type { RedisDatabase, RedisServerState } from '../state'
 import type { CommandExecutor } from './command-executor'
 import type { CommandPlan } from './command-definition'
 import type { RedisResult } from './redis-result'
+import type { RespVersion } from './resp-encoder'
 
 export type ParkRequest<TValue> = {
   waitFor: Promise<TValue | null>
@@ -19,6 +20,8 @@ export interface RedisClientSession {
   readonly id: string
   readonly selectedDatabase: number
   readonly mode: ClientSessionMode
+  readonly protocolVersion: RespVersion
+  setProtocolVersion(version: RespVersion): void
   selectDatabase(database: number): void
   beginTransaction(): void
   queueTransaction(plan: CommandPlan): void

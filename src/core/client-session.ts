@@ -11,6 +11,7 @@ import {
 import { RedisCommandError } from './redis-error'
 import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
+import type { RespVersion } from './resp-encoder'
 import { type RedisTurnHandle, type RedisTurnQueue } from './turn-queue'
 import type { RedisDatabase, RedisServerState, Unsubscribe } from '../state'
 
@@ -48,6 +49,7 @@ export class ClientSession implements RedisClientSession {
   private readonly turnQueueOverride?: RedisTurnQueue
   private selectedDatabaseId: number
   private sessionMode: ClientSessionMode = 'normal'
+  private respVersion: RespVersion = 2
   private transactionPlans: CommandPlan[] = []
   private transactionDirty = false
   private readonly watches = new Map<string, WatchRegistration>()
@@ -79,8 +81,16 @@ export class ClientSession implements RedisClientSession {
     return this.sessionMode
   }
 
+  get protocolVersion(): RespVersion {
+    return this.respVersion
+  }
+
   get db(): RedisDatabase {
     return this.server.getDatabase(this.selectedDatabaseId)
+  }
+
+  setProtocolVersion(version: RespVersion): void {
+    this.respVersion = version
   }
 
   selectDatabase(database: number): void {

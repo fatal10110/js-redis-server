@@ -106,7 +106,7 @@ export function buildRedisCluster(options: RedisClusterOptions): RedisCluster {
         host,
         port: allocatePort(),
         masterId,
-        slots: topologyNodes[i].slots,
+        slots: [],
       })
     }
   }

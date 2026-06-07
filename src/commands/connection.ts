@@ -398,26 +398,30 @@ export const helloCommand = defineCommand({
   flags: ['readonly', 'admin'],
   keys: () => [],
   execute: (args, ctx) => {
-    const version = args.version ?? 2
+    const version =
+      args.version === undefined
+        ? ctx.session.protocolVersion
+        : args.version === 3
+          ? 3
+          : 2
     parseHelloOptions(ctx, args.args)
-    return RedisResult.create(
-      RedisValue.array([
-        value('server'),
-        value('redis'),
-        value('version'),
-        value(REDIS_VERSION),
-        value('proto'),
-        RedisValue.integer(version),
-        value('id'),
-        RedisValue.integer(getClientId(ctx.session)),
-        value('mode'),
-        value(redisMode(ctx)),
-        value('role'),
-        value('master'),
-        value('modules'),
-        RedisValue.array([]),
-      ]),
-    )
+    ctx.session.setProtocolVersion(version)
+
+    const fields: [RedisValue, RedisValue][] = [
+      [value('server'), value('redis')],
+      [value('version'), value(REDIS_VERSION)],
+      [value('proto'), RedisValue.integer(version)],
+      [value('id'), RedisValue.integer(getClientId(ctx.session))],
+      [value('mode'), value(redisMode(ctx))],
+      [value('role'), value('master')],
+      [value('modules'), RedisValue.array([])],
+    ]
+
+    if (version === 3) {
+      return RedisResult.create(RedisValue.map(fields))
+    }
+
+    return RedisResult.create(RedisValue.array(fields.flat()))
   },
 })
 
@@ -451,6 +455,7 @@ export const resetCommand = defineCommand({
     ctx.session.discardTransaction()
     ctx.session.unwatch()
     ctx.session.selectDatabase(0)
+    ctx.session.setProtocolVersion(2)
     return simpleString('RESET')
   },
 })
