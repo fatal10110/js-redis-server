@@ -8,7 +8,7 @@ import {
   RedisServerState,
   type RedisClusterNode,
 } from './state'
-import type { Logger } from './types'
+import type { Logger } from './logger'
 
 export type RedisClusterOptions = {
   masters: number

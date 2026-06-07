@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Redis Cluster using grokzen/redis-cluster
   redis-cluster:
@@ -15,8 +13,15 @@ services:
       # For Mac compatibility
       IP: 0.0.0.0
     healthcheck:
-      test: ['CMD', 'redis-cli', '-c', '-p', '30000', 'get a']
-      interval: 10s
+      # Only healthy once every slot is assigned and the cluster reports OK.
+      # `get a` answers before the cluster has finished forming, which lets
+      # clients connect to a half-built cluster and hang on slot lookups.
+      test:
+        [
+          'CMD-SHELL',
+          'redis-cli -p 30000 cluster info | grep -q cluster_state:ok',
+        ]
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 30
+      start_period: 20s

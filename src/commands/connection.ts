@@ -12,6 +12,7 @@ import {
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { array, bulk, integer, ok, simpleString } from './helpers'
+import { commandSubcommandInfo } from './introspection'
 
 const REDIS_VERSION = '7.4.4'
 
@@ -308,6 +309,24 @@ export const clientCommand = defineCommand({
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly', 'admin'],
+  introspection: {
+    arity: -2,
+    flags: [],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@connection'],
+    keySpecs: [],
+    subcommands: [
+      commandSubcommandInfo('client|id', 2),
+      commandSubcommandInfo('client|info', 2),
+      commandSubcommandInfo('client|list', 2),
+      commandSubcommandInfo('client|getname', 2),
+      commandSubcommandInfo('client|setname', 3),
+      commandSubcommandInfo('client|setinfo', 4),
+      commandSubcommandInfo('client|help', 2),
+    ],
+  },
   keys: () => [],
   execute: (args, ctx) => {
     const subcommand = args.subcommand.toLowerCase()

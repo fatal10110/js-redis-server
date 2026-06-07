@@ -1,7 +1,7 @@
 import { AddressInfo, Server, Socket, createServer } from 'net'
 import { ClientSession } from '../../client-session'
 import type { CommandExecutor } from '../../command-executor'
-import type { Logger } from '../../../types'
+import type { Logger } from '../../../logger'
 import type { RedisServerState } from '../../../state'
 import type { RespEncodeOptions } from '../../resp-encoder'
 import { SocketConnectionTransport } from '../socket-connection-transport'

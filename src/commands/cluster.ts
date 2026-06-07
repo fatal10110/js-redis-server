@@ -14,6 +14,7 @@ import {
   type RedisClusterNode,
   type RedisClusterTopology,
 } from '../state'
+import { commandSubcommandInfo } from './introspection'
 
 /**
  * Builds the CLUSTER command bound to a specific node id. Each cluster node
@@ -28,6 +29,32 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
       rest: t.variadic(t.bulk()),
     }),
     flags: ['admin'],
+    introspection: {
+      arity: -2,
+      flags: ['admin'],
+      firstKey: 0,
+      lastKey: 0,
+      keyStep: 0,
+      categories: ['@admin', '@slow', '@dangerous'],
+      keySpecs: [],
+      subcommands: [
+        commandSubcommandInfo('cluster|info', 2, {
+          categories: ['@admin', '@slow', '@dangerous'],
+        }),
+        commandSubcommandInfo('cluster|nodes', 2, {
+          categories: ['@admin', '@slow', '@dangerous'],
+        }),
+        commandSubcommandInfo('cluster|slots', 2, {
+          categories: ['@admin', '@slow', '@dangerous'],
+        }),
+        commandSubcommandInfo('cluster|shards', 2, {
+          categories: ['@admin', '@slow', '@dangerous'],
+        }),
+        commandSubcommandInfo('cluster|myid', 2, {
+          categories: ['@admin', '@slow', '@dangerous'],
+        }),
+      ],
+    },
     keys: () => [],
     execute: (args, ctx) => {
       const topology = ctx.server.clusterTopology

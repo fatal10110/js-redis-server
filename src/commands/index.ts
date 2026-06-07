@@ -3,6 +3,7 @@ import { CommandExecutor } from '../core/command-executor'
 import { CommandRegistry } from '../core/command-registry'
 import type { ExecutionPolicy } from '../core/execution-policies'
 import { createTransactionPolicy } from '../core/execution-policies'
+import { commandCommand } from './command'
 import { connectionCommands } from './connection'
 import { hashesCommands } from './hashes'
 import { keysCommands } from './keys'
@@ -16,6 +17,7 @@ import { zsetsCommands } from './zsets'
 
 export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...connectionCommands,
+  commandCommand,
   ...transactionCommands,
   ...stringsCommands,
   ...keysCommands,
@@ -53,6 +55,7 @@ export {
   connectionCommands,
 } from './connection'
 export { createClusterCommand } from './cluster'
+export { commandCommand } from './command'
 export {
   getCommand,
   setCommand,

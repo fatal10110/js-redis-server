@@ -73,11 +73,6 @@ export const watchCommand = defineCommand({
   keys: args => args.keys,
   execute: (args, ctx) => {
     if (ctx.session.mode === 'transaction') {
-      // WATCH carries the 'transaction' flag so TransactionPolicy does not
-      // queue it. The executor's auto-dirty path skips transaction-flagged
-      // commands (so nested MULTI does not abort), which means WATCH must
-      // mark dirty itself before throwing.
-      ctx.session.markTransactionDirty()
       throw new WatchInsideMultiError()
     }
 

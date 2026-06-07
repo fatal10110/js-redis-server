@@ -24,6 +24,45 @@ export type CommandCapabilities = {
   scriptKeys?: boolean
 }
 
+export type CommandKeySpec = {
+  flags: readonly string[]
+  beginSearchIndex: number
+  lastKey: number
+  keyStep: number
+  limit?: number
+  notes?: string
+}
+
+export type CommandDocumentation = {
+  summary: string
+  since?: string
+  group: string
+  complexity?: string
+  arguments?: readonly CommandDocumentationArgument[]
+}
+
+export type CommandDocumentationArgument = {
+  name: string
+  type: string
+  keySpecIndex?: number
+  token?: string
+  flags?: readonly string[]
+}
+
+export type CommandIntrospection = {
+  name?: string
+  arity: number
+  flags?: readonly string[]
+  firstKey?: number
+  lastKey?: number
+  keyStep?: number
+  categories?: readonly string[]
+  tips?: readonly string[]
+  keySpecs?: readonly CommandKeySpec[]
+  subcommands?: readonly CommandIntrospection[]
+  docs?: CommandDocumentation
+}
+
 export type CommandExecutionResult =
   | RedisResult
   | Promise<RedisResult>
@@ -34,6 +73,7 @@ export interface CommandDefinition<TArgs = unknown> {
   readonly schema: CommandSchema<TArgs>
   readonly flags: readonly CommandFlag[]
   readonly capabilities?: CommandCapabilities
+  readonly introspection?: CommandIntrospection
   keys(args: TArgs): readonly Buffer[]
   execute(args: TArgs, ctx: RedisExecutionContext): CommandExecutionResult
 }

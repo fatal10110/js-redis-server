@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage } from '../utils'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -288,5 +288,78 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
 
     const ttl = await redisClient?.ttl('multikey')
     assert.ok(ttl !== undefined && ttl > 0 && ttl <= 5)
+  })
+
+  test('SET KEEPTTL preserves the existing expiration', async () => {
+    const key = `{set-keepttl:${randomKey()}}:key`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await directClient.set(key, 'ttl', 'PX', 5000)
+      const originalTtl = await directClient.pttl(key)
+      assert.ok(originalTtl > 0 && originalTtl <= 5000)
+
+      assert.strictEqual(
+        await directClient.call('SET', key, 'kept', 'KEEPTTL'),
+        'OK',
+      )
+      assert.strictEqual(await directClient.get(key), 'kept')
+
+      const keptTtl = await directClient.pttl(key)
+      assert.ok(keptTtl > 0 && keptTtl <= originalTtl)
+    } finally {
+      await directClient.del(key)
+      directClient.disconnect()
+    }
+  })
+
+  test('SET and GET wrong-type and syntax errors match Redis', async () => {
+    const tag = `{set-errors:${randomKey()}}`
+    const listKey = `${tag}:list`
+    const stringKey = `${tag}:string`
+    const directClient = await connectToSlotOwner(redisClient!, listKey)
+
+    try {
+      await directClient.lpush(listKey, 'value')
+
+      await assert.rejects(
+        () => directClient.get(listKey),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () => directClient.call('SET', listKey, 'value', 'GET'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () => directClient.call('SET', stringKey, 'value', 'NX', 'XX'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => directClient.call('SET', stringKey, 'value', 'EX', '0'),
+        errorWithMessage("ERR invalid expire time in 'set' command"),
+      )
+    } finally {
+      await directClient.del(listKey, stringKey)
+      directClient.disconnect()
+    }
+  })
+
+  test('MGET returns null for keys holding non-string values', async () => {
+    const tag = `{mget-types:${randomKey()}}`
+    const stringKey = `${tag}:string`
+    const listKey = `${tag}:list`
+    const missingKey = `${tag}:missing`
+
+    await redisClient?.set(stringKey, 'A')
+    await redisClient?.lpush(listKey, 'B')
+
+    assert.deepStrictEqual(
+      await redisClient?.mget(stringKey, listKey, missingKey),
+      ['A', null, null],
+    )
   })
 })

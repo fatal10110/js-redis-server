@@ -24,6 +24,11 @@ import {
   parsePositiveExpireToken,
   requireNextOptionValue,
 } from './helpers'
+import {
+  commandDocs,
+  commandKeyArgument,
+  commandKeySpec,
+} from './introspection'
 
 type SetCondition = 'NX' | 'XX'
 
@@ -42,6 +47,18 @@ export const getCommand = defineCommand({
     key: t.key(),
   }),
   flags: ['readonly', 'fast'],
+  introspection: {
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@string', '@fast'],
+    keySpecs: [commandKeySpec(1, 0, 1, ['RO', 'access'])],
+    docs: commandDocs('Get the value of a key', 'string', [
+      commandKeyArgument('key', 0),
+    ]),
+  },
   keys: args => [args.key],
   execute: (args, ctx) => bulk(ensureStringOrMissing(ctx.db, args.key)),
 })
@@ -50,6 +67,23 @@ export const setCommand = defineCommand({
   name: 'set',
   schema: createSetSchema(),
   flags: ['write', 'denyoom'],
+  introspection: {
+    arity: -3,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string', '@slow'],
+    keySpecs: [
+      commandKeySpec(1, 0, 1, ['RW', 'access', 'update', 'variable_flags'], {
+        notes: 'RW and ACCESS due to the optional `GET` argument',
+      }),
+    ],
+    docs: commandDocs('Set the string value of a key', 'string', [
+      commandKeyArgument('key', 0),
+      { name: 'value', type: 'string' },
+    ]),
+  },
   keys: args => [args.key],
   execute: (args, ctx) => {
     const existingType = ctx.db.getType(args.key)
@@ -90,6 +124,19 @@ export const mgetCommand = defineCommand({
     keys: t.variadic(t.key(), { min: 1 }),
   }),
   flags: ['readonly'],
+  introspection: {
+    arity: -2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@read', '@string', '@fast'],
+    tips: ['request_policy:multi_shard'],
+    keySpecs: [commandKeySpec(1, -1, 1, ['RO', 'access'])],
+    docs: commandDocs('Get the values of all the given keys', 'string', [
+      commandKeyArgument('key', 0, { flags: ['multiple'] }),
+    ]),
+  },
   keys: args => args.keys,
   execute: (args, ctx) =>
     RedisResult.create(

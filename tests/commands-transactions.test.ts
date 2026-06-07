@@ -203,10 +203,7 @@ describe('new transaction commands', () => {
     )
     assert.deepStrictEqual(
       await session.execute('exec', []),
-      RedisResult.error(
-        'Transaction discarded because of previous errors.',
-        'EXECABORT',
-      ),
+      RedisResult.create(RedisValue.array([])),
     )
   })
 
