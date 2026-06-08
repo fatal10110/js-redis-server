@@ -16,19 +16,18 @@ import { RedisValue } from './redis-value'
 
 type LuaHostState = {
   ctx: RedisExecutionContext | null
-  sha: string
 }
 
 export type LuaReplyValue = ReplyValue
 
 export class RedisLuaRuntime {
-  private readonly hostState: LuaHostState = { ctx: null, sha: '' }
+  private readonly hostState: LuaHostState = { ctx: null }
   private readonly engine: LuaEngine
 
   constructor(module: LuaWasmModule) {
     this.engine = module.create({
-      redisCall: args => this.runRedisCommand(args, 'call'),
-      redisPcall: args => this.runRedisCommand(args, 'pcall'),
+      redisCall: args => this.runRedisCommand(args),
+      redisPcall: args => this.runRedisCommand(args),
       log: () => {},
     })
   }
@@ -38,32 +37,31 @@ export class RedisLuaRuntime {
     keys: readonly Buffer[],
     args: readonly Buffer[],
     ctx: RedisExecutionContext,
-    sha: string,
   ): ReplyValue {
     if (this.hostState.ctx) {
       throw new RedisCommandError('Lua runtime is already executing a script')
     }
 
     this.hostState.ctx = ctx
-    this.hostState.sha = sha
 
     try {
       return this.engine.evalWithArgs(script, [...keys], [...args])
     } finally {
       this.hostState.ctx = null
-      this.hostState.sha = ''
     }
   }
 
-  private runRedisCommand(args: Buffer[], mode: 'call' | 'pcall'): ReplyValue {
+  // Host callback for redis.call()/redis.pcall(). Both modes share the same
+  // dispatch: the engine decides whether an error aborts the script (call) or is
+  // returned as a value (pcall) and decorates it with the script sha accordingly.
+  private runRedisCommand(args: Buffer[]): ReplyValue {
     const ctx = this.hostState.ctx
     if (!ctx) {
       throw new Error('ERR Lua runtime is not initialized')
     }
-    const scriptSha = mode === 'call' ? this.hostState.sha : undefined
 
     if (args.length === 0) {
-      return redisErrorToLuaReply(new ScriptCallNoCommandError(), scriptSha)
+      return redisErrorToLuaReply(new ScriptCallNoCommandError())
     }
 
     let plan: CommandPlan
@@ -71,25 +69,22 @@ export class RedisLuaRuntime {
       plan = ctx.executor.plan(args[0], args.slice(1))
     } catch (err) {
       if (err instanceof UnknownRedisCommandError) {
-        return redisErrorToLuaReply(new ScriptUnknownCommandError(), scriptSha)
+        return redisErrorToLuaReply(new ScriptUnknownCommandError())
       }
 
       if (err instanceof RedisCommandError) {
-        return redisErrorToLuaReply(err, scriptSha)
+        return redisErrorToLuaReply(err)
       }
 
       throw err
     }
 
     if (plan.flags.includes('noscript')) {
-      return redisErrorToLuaReply(new ScriptUnknownCommandError(), scriptSha)
+      return redisErrorToLuaReply(new ScriptUnknownCommandError())
     }
 
     const result = ctx.executor.executePlanSync(plan, ctx)
-    return redisValueToLuaReply(
-      normalizeScriptCommandValue(result.value),
-      scriptSha,
-    )
+    return redisValueToLuaReply(normalizeScriptCommandValue(result.value))
   }
 }
 
@@ -127,16 +122,16 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   }
 
   if ('err' in value) {
-    return luaErrorToRedisValue(value.err.toString())
+    return RedisValue.error(
+      value.err.toString(),
+      value.code?.toString() ?? 'ERR',
+    )
   }
 
   return RedisValue.bulkString(Buffer.from(String(value)))
 }
 
-function redisValueToLuaReply(
-  value: RedisValue,
-  scriptSha?: string,
-): ReplyValue {
+function redisValueToLuaReply(value: RedisValue): ReplyValue {
   switch (value.kind) {
     case 'simple-string':
       return { ok: Buffer.from(value.value) }
@@ -153,29 +148,29 @@ function redisValueToLuaReply(
     case 'verbatim':
       return value.value
     case 'array':
-      return value.items.map(item => redisValueToLuaReply(item, scriptSha))
+      return value.items.map(redisValueToLuaReply)
     case 'set':
-      return value.items.map(item => redisValueToLuaReply(item, scriptSha))
+      return value.items.map(redisValueToLuaReply)
     case 'map':
       return value.entries.flatMap(([key, entryValue]) => [
-        redisValueToLuaReply(key, scriptSha),
-        redisValueToLuaReply(entryValue, scriptSha),
+        redisValueToLuaReply(key),
+        redisValueToLuaReply(entryValue),
       ])
     case 'push':
-      return [
-        Buffer.from(value.name),
-        ...value.items.map(item => redisValueToLuaReply(item, scriptSha)),
-      ]
+      return [Buffer.from(value.name), ...value.items.map(redisValueToLuaReply)]
     case 'null':
     case 'null-array':
       return null
     case 'error':
       return {
-        err: Buffer.from(formatRedisErrorValue(value, scriptSha)),
+        err: Buffer.from(value.message),
+        code: value.code ? Buffer.from(value.code) : undefined,
       }
   }
 }
 
+// A command run from a script cannot redirect the client, so a MOVED reply is
+// surfaced to the script as a generic error instead of a cluster redirect.
 function normalizeScriptCommandValue(value: RedisValue): RedisValue {
   if (value.kind === 'error' && value.code === 'MOVED') {
     return RedisValue.error(
@@ -187,56 +182,11 @@ function normalizeScriptCommandValue(value: RedisValue): RedisValue {
   return value
 }
 
-function redisErrorToLuaReply(
-  err: RedisCommandError,
-  scriptSha?: string,
-): ReplyValue {
+function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {
   return {
-    err: Buffer.from(
-      formatRedisError(scriptErrorMessage(err.message, scriptSha), err.code),
-    ),
+    err: Buffer.from(err.message),
+    code: Buffer.from(err.code),
   }
-}
-
-function luaErrorToRedisValue(message: string): RedisValue {
-  const match = /^([A-Z][A-Z0-9]*) (.+)$/.exec(message)
-  if (!match) {
-    return RedisValue.error(message, 'ERR')
-  }
-
-  return RedisValue.error(match[2], match[1])
-}
-
-function formatRedisErrorValue(
-  value: Extract<RedisValue, { kind: 'error' }>,
-  scriptSha?: string,
-): string {
-  return formatRedisError(
-    scriptErrorMessage(value.message, scriptSha),
-    value.code,
-  )
-}
-
-function scriptErrorMessage(message: string, scriptSha?: string): string {
-  if (!scriptSha) {
-    return message
-  }
-
-  return `${message} script: ${scriptSha}, on @user_script:1.`
-}
-
-function formatRedisError(message: string, code?: string): string {
-  const sanitizedMessage = sanitizeErrorText(message)
-  if (!code) {
-    return sanitizedMessage
-  }
-
-  const sanitizedCode = sanitizeErrorText(code)
-  if (sanitizedMessage.startsWith(`${sanitizedCode} `)) {
-    return sanitizedMessage
-  }
-
-  return `${sanitizedCode} ${sanitizedMessage}`
 }
 
 function formatNumber(value: number): string {
@@ -257,8 +207,4 @@ function formatNumber(value: number): string {
   }
 
   return value.toString()
-}
-
-function sanitizeErrorText(value: string): string {
-  return value.replace(/[\r\n]+/g, ' ')
 }
