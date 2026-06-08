@@ -133,3 +133,42 @@ the reply; `normalizeLuaReplyError`, `luaRuntimeError`, `normalizeRedisNoArgsErr
   `, on @user_script:1.`; cover with a lib test, not just here.
 - Existing behavior (obs 459) — call/pcall zero-arg messages already matched
   Redis via the regex hack; the lib fix must preserve that exact output.
+
+---
+
+## Implementation status (done)
+
+Shipped against `lua-redis-wasm` `1.3.0` (local source at
+`../redis-lua-wasm`, npm-linked into this repo; **not yet published**).
+
+Design refinement vs the plan: H1 decoration is driven by a new wire tag rather
+than threaded sha. The C abort paths (`luaL_loadbuffer` / `lua_pcall` failures in
+`eval` and `eval_with_args`) emit `REPLY_SCRIPT_ERROR = 0x06`; the engine
+decorates *only* that tag, so call-aborts get `script: <sha>, on @user_script:N.`
+while pcall error *values* the script returns stay clean. The script sha is the
+engine's own `computeSha1Hex` — the project passes none.
+
+- **H1 (done)** — lib owns all error decoration. `eval()` lost its `sha`
+  argument; no sha threading remains in the project.
+- **H2 (done)** — `ReplyValue` error is `{ err: Buffer; code?: Buffer }`.
+  `codec.ts` splits the leading code on decode and re-joins it on encode. The
+  project reads `code` directly; both `/^([A-Z][A-Z0-9]*) (.+)$/` regexes are
+  gone.
+- **H3 (done)** — zero-arg `redis.call()/pcall()` no longer short-circuits in C;
+  it is dispatched to the host with `[]`, so `ScriptCallNoCommandError` and the
+  call/pcall distinction come for free. `firstZeroArgRedisCallKind` /
+  `normalizeRedisNoArgsError` (source-regex hack) deleted.
+- **H4 (kept)** — `normalizeScriptCommandValue` (MOVED→generic) stays at the host
+  dispatch in `lua-runtime.ts`, which is already the right layer (the pure
+  translator no longer touches it); it no longer carries sha.
+- **H5 (no-op)** — error wire-formatting (code-prefix join + CRLF sanitize) is
+  already owned by `src/core/resp-encoder.ts`; the duplicate was simply removed
+  from `lua-runtime.ts`.
+
+Tests: lib 138/138 (incl. new zero-arg-delegation + decoration/code-split
+cases); project 89 unit + 152 mock integration green, including the exact
+contract in `tests-integration/ioredis/scripts.test.ts`.
+
+**Follow-up required:** publish `lua-redis-wasm@1.3.0` to the registry. Until
+then this repo only builds/tests via the local `npm link`; a fresh `npm install`
+resolves `^1.3.0` against a registry that still has `1.2.2`.

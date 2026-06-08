@@ -2,6 +2,7 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
   NoScriptError,
+  RedisCommandError,
   ScriptDebugModeError,
   ScriptFlushOptionError,
   UnknownScriptSubcommandError,
@@ -104,8 +105,9 @@ export const evalCommand = defineCommand<EvalArgs>({
   keys: evalKeys,
   execute: async (args, ctx) => {
     const { keys, argv } = splitEvalArgs(args)
-    const sha = ctx.server.scriptCache.load(args.script)
-    return runLuaScript(args.script, keys, argv, ctx, sha)
+    // Cache the script so a later EVALSHA can find it by digest.
+    ctx.server.scriptCache.load(args.script)
+    return runLuaScript(args.script, keys, argv, ctx)
   },
 })
 
@@ -126,7 +128,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
     }
 
     const { keys, argv } = splitEvalArgs(args)
-    return runLuaScript(script, keys, argv, ctx, args.sha)
+    return runLuaScript(script, keys, argv, ctx)
   },
 })
 
@@ -243,89 +245,18 @@ async function runLuaScript(
   keys: readonly Buffer[],
   argv: readonly Buffer[],
   ctx: RedisExecutionContext,
-  sha: string,
 ): Promise<RedisResult> {
   const runtime = await getDefaultRedisLuaRuntime()
 
   try {
-    const reply = runtime.eval(script, keys, argv, ctx, sha)
-    const normalized = normalizeLuaReplyError(reply, script, sha)
-    if (normalized) {
-      return normalized
-    }
-
+    const reply = runtime.eval(script, keys, argv, ctx)
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {
+    if (err instanceof RedisCommandError) {
+      return RedisResult.error(err.message, err.code)
+    }
+
     const message = err instanceof Error ? err.message : String(err)
-    return luaRuntimeError(message, script, sha)
-  }
-}
-
-function normalizeLuaReplyError(
-  reply: unknown,
-  script: Buffer,
-  sha: string,
-): RedisResult | null {
-  if (!reply || typeof reply !== 'object' || !('err' in reply)) {
-    return null
-  }
-
-  const rawMessage = (reply as { err: unknown }).err
-  const message = Buffer.isBuffer(rawMessage)
-    ? rawMessage.toString()
-    : String(rawMessage)
-  return normalizeRedisNoArgsError(message, script, sha)
-}
-
-function luaRuntimeError(
-  message: string,
-  script?: Buffer,
-  sha?: string,
-): RedisResult {
-  const normalized = normalizeRedisNoArgsError(message, script, sha)
-  if (normalized) {
-    return normalized
-  }
-
-  const match = /^([A-Z][A-Z0-9]*) (.+)$/.exec(message)
-  if (!match) {
     return RedisResult.error(message, 'ERR')
   }
-
-  return RedisResult.error(match[2], match[1])
-}
-
-function normalizeRedisNoArgsError(
-  message: string,
-  script?: Buffer,
-  sha?: string,
-): RedisResult | null {
-  if (!message.includes('ERR redis.call requires arguments') || !script) {
-    return null
-  }
-
-  const kind = firstZeroArgRedisCallKind(script.toString())
-  if (!kind) {
-    return null
-  }
-
-  const baseMessage =
-    'Please specify at least one argument for this redis lib call'
-  if (kind === 'pcall') {
-    return RedisResult.error(baseMessage, 'ERR')
-  }
-
-  return RedisResult.error(
-    `${baseMessage} script: ${sha}, on @user_script:1.`,
-    'ERR',
-  )
-}
-
-function firstZeroArgRedisCallKind(script: string): 'call' | 'pcall' | null {
-  const match = /\bredis\s*\.\s*(p?call)\s*\(\s*\)/.exec(script)
-  if (!match) {
-    return null
-  }
-
-  return match[1] === 'pcall' ? 'pcall' : 'call'
 }
