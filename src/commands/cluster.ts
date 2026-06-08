@@ -85,6 +85,34 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
   })
 }
 
+export function createClusterCommands(
+  localNodeId: string,
+): readonly CommandDefinition[] {
+  return [createClusterCommand(localNodeId), readonlyCommand, readwriteCommand]
+}
+
+export const readonlyCommand = defineCommand({
+  name: 'readonly',
+  schema: t.object({}),
+  flags: ['readonly', 'fast'],
+  keys: () => [],
+  execute: (_args, ctx) => {
+    ctx.session.setClusterReadOnly(true)
+    return RedisResult.ok()
+  },
+})
+
+export const readwriteCommand = defineCommand({
+  name: 'readwrite',
+  schema: t.object({}),
+  flags: ['readonly', 'fast'],
+  keys: () => [],
+  execute: (_args, ctx) => {
+    ctx.session.setClusterReadOnly(false)
+    return RedisResult.ok()
+  },
+})
+
 function expectClusterRestLength(
   rest: readonly Buffer[],
   commandName: string,

@@ -68,6 +68,31 @@ export class RedisClusterTopology {
     const node = this.getNode(nodeId)
     return node && node.role === 'master' ? nodeOwnsSlot(node, slot) : false
   }
+
+  /**
+   * Returns whether a node may serve a readonly command for the slot after the
+   * client enabled Redis Cluster READONLY mode. Masters may serve their own
+   * slots; replicas may serve slots owned by their configured master.
+   */
+  nodeCanServeReadonlySlot(nodeId: string, slot: number): boolean {
+    const node = this.getNode(nodeId)
+    if (!node) {
+      return false
+    }
+
+    if (node.role === 'master') {
+      return nodeOwnsSlot(node, slot)
+    }
+
+    if (!node.masterId) {
+      return false
+    }
+
+    const master = this.getNode(node.masterId)
+    return master && master.role === 'master'
+      ? nodeOwnsSlot(master, slot)
+      : false
+  }
 }
 
 function validateTopology(nodes: readonly RedisClusterNode[]): void {

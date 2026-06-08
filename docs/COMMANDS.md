@@ -129,6 +129,11 @@ surface.
 - [ ] `CLUSTER COUNTKEYSINSLOT slot` - Return the number of local keys in the specified hash slot
 - [ ] `CLUSTER GETKEYSINSLOT slot count` - Return local key names in the specified hash slot
 
+#### Cluster read mode
+
+- [x] `READONLY` - Allow read-only commands against a direct replica connection for slots served by its master
+- [x] `READWRITE` - Disable replica read mode on the current connection
+
 ### 6. Data Types and Commands
 
 #### Strings

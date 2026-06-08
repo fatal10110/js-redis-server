@@ -224,6 +224,7 @@ export class RedisKeyspace {
       database: this.database,
       key: entry.key,
       value: entry.value,
+      expiresAt: entry.expiresAt,
     })
   }
 }
