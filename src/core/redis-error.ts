@@ -32,6 +32,24 @@ export class ExpectedFloatError extends RedisCommandError {
   }
 }
 
+export class MinMaxNotFloatError extends RedisCommandError {
+  constructor() {
+    super('min or max is not a float')
+  }
+}
+
+export class PositiveCountError extends RedisCommandError {
+  constructor() {
+    super('value is out of range, must be positive')
+  }
+}
+
+export class OffsetOutOfRangeError extends RedisCommandError {
+  constructor() {
+    super('offset is out of range')
+  }
+}
+
 export class WrongTypeRedisError extends RedisCommandError {
   constructor() {
     super(
@@ -90,10 +108,8 @@ export class ScriptDebugModeError extends RedisCommandError {
 }
 
 export class ScriptUnknownCommandError extends RedisCommandError {
-  constructor(sha: string) {
-    super(
-      `Unknown Redis command called from script script: ${sha}, on @user_script:1.`,
-    )
+  constructor() {
+    super('Unknown Redis command called from script')
   }
 }
 

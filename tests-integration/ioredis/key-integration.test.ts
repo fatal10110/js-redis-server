@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { assertDbSizeDelta, getTotalDbSize, randomKey } from '../utils'
+import {
+  assertDbSizeDelta,
+  errorWithMessage,
+  getTotalDbSize,
+  randomKey,
+} from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -68,6 +73,41 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
 
     const noneType = await redisClient?.type('{test}nonexistent')
     assert.strictEqual(noneType, 'none')
+  })
+
+  test('Key command errors and past expiration match Redis', async () => {
+    const tag = `{key-errors:${randomKey()}}`
+    const key = `${tag}:key`
+    const renamed = `${tag}:renamed`
+    const missing = `${tag}:missing`
+
+    try {
+      await assert.rejects(
+        () => redisClient?.rename(missing, renamed),
+        errorWithMessage('ERR no such key'),
+      )
+      await assert.rejects(
+        () => redisClient?.renamenx(missing, renamed),
+        errorWithMessage('ERR no such key'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('EXPIRE', key, 'abc'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+
+      assert.strictEqual(await redisClient?.expireat(missing, -1), 0)
+      assert.strictEqual(await redisClient?.pexpireat(missing, -1), 0)
+
+      await redisClient?.set(key, 'value')
+      assert.strictEqual(await redisClient?.expireat(key, -1), 1)
+      assert.strictEqual(await redisClient?.exists(key), 0)
+
+      await redisClient?.set(key, 'value')
+      assert.strictEqual(await redisClient?.pexpireat(key, -1), 1)
+      assert.strictEqual(await redisClient?.exists(key), 0)
+    } finally {
+      await redisClient?.del(key, renamed, missing)
+    }
   })
 
   test('DBSIZE command', async () => {

@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
+import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -123,6 +124,63 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     const score2 = await redisClient?.zscore('zset6', 'member2')
     assert.strictEqual(score1, '35')
     assert.strictEqual(score2, '50')
+  })
+
+  test('Sorted set command errors match Redis', async () => {
+    const tag = `{zset-errors:${randomKey()}}`
+    const zsetKey = `${tag}:zset`
+    const stringKey = `${tag}:string`
+
+    try {
+      await redisClient?.zadd(zsetKey, 1, 'a')
+      await redisClient?.set(stringKey, 'value')
+
+      await assert.rejects(
+        () => redisClient?.zcard(stringKey),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZADD', zsetKey, 'abc', 'member'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZINCRBY', zsetKey, 'abc', 'a'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZRANGE', zsetKey, 'abc', '-1'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZRANGEBYSCORE', zsetKey, 'abc', '1'),
+        errorWithMessage('ERR min or max is not a float'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZREMRANGEBYSCORE', zsetKey, '0', 'abc'),
+        errorWithMessage('ERR min or max is not a float'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZCOUNT', zsetKey, 'abc', '1'),
+        errorWithMessage('ERR min or max is not a float'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZPOPMIN', zsetKey, 'abc'),
+        errorWithMessage('ERR value is out of range, must be positive'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZPOPMAX', zsetKey, '-1'),
+        errorWithMessage('ERR value is out of range, must be positive'),
+      )
+
+      assert.deepStrictEqual(
+        await redisClient?.call('ZPOPMIN', zsetKey, '0'),
+        [],
+      )
+    } finally {
+      await redisClient?.del(zsetKey, stringKey)
+    }
   })
 
   test('ZREM command', async () => {
