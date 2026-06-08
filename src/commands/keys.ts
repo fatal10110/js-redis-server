@@ -1,6 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import { InvalidExpireTimeError, NoSuchKeyError } from '../core/redis-error'
+import { NoSuchKeyError } from '../core/redis-error'
 import type { RedisDatabase } from '../state'
 import {
   integer,
@@ -169,7 +169,6 @@ export const expireatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (args.timestamp < 0) throw new InvalidExpireTimeError('expireat')
     if (ctx.db.getType(args.key) === null) return integer(0)
     const expiresAt = args.timestamp * 1000
     if (expiresAt <= Date.now()) {
@@ -186,7 +185,6 @@ export const pexpireatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (args.timestamp < 0) throw new InvalidExpireTimeError('pexpireat')
     if (ctx.db.getType(args.key) === null) return integer(0)
     if (args.timestamp <= Date.now()) {
       ctx.db.delete(args.key)

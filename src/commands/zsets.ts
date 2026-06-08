@@ -2,6 +2,8 @@ import { defineCommand } from '../core/command-definition'
 import { t, type ParseContext } from '../core/command-schema'
 import {
   ExpectedFloatError,
+  MinMaxNotFloatError,
+  PositiveCountError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
@@ -24,6 +26,25 @@ function parseFloatArg(s: string): number {
   const n = Number(s)
   if (!Number.isFinite(n)) throw new ExpectedFloatError()
   return n
+}
+
+function parseScoreBoundArg(s: string): number {
+  const n = Number(s)
+  if (!Number.isFinite(n)) throw new MinMaxNotFloatError()
+  return n
+}
+
+function parsePopCountArg(s: string): number {
+  if (!/^-?\d+$/.test(s)) {
+    throw new PositiveCountError()
+  }
+
+  const count = Number(s)
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new PositiveCountError()
+  }
+
+  return count
 }
 
 type ZaddPair = { score: number; member: Buffer }
@@ -235,8 +256,8 @@ export const zrangebyscoreCommand = defineCommand({
   flags: ['readonly'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseFloatArg(args.min)
-    const max = parseFloatArg(args.max)
+    const min = parseScoreBoundArg(args.min)
+    const max = parseScoreBoundArg(args.max)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const items: RedisValue[] = []
@@ -255,8 +276,8 @@ export const zremrangebyscoreCommand = defineCommand({
   flags: ['write'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseFloatArg(args.min)
-    const max = parseFloatArg(args.max)
+    const min = parseScoreBoundArg(args.min)
+    const max = parseScoreBoundArg(args.max)
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
       for (const [hex, entry] of zset.members) {
@@ -282,8 +303,8 @@ export const zcountCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseFloatArg(args.min)
-    const max = parseFloatArg(args.max)
+    const min = parseScoreBoundArg(args.min)
+    const max = parseScoreBoundArg(args.max)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return integer(0)
     let count = 0
@@ -296,7 +317,7 @@ export const zcountCommand = defineCommand({
 
 export const zpopminCommand = defineCommand({
   name: 'zpopmin',
-  schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
+  schema: t.object({ key: t.key(), count: t.optional(zpopCountSchema()) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -325,7 +346,7 @@ export const zpopminCommand = defineCommand({
 
 export const zpopmaxCommand = defineCommand({
   name: 'zpopmax',
-  schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
+  schema: t.object({ key: t.key(), count: t.optional(zpopCountSchema()) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -351,6 +372,20 @@ export const zpopmaxCommand = defineCommand({
     return array(items)
   },
 })
+
+function zpopCountSchema() {
+  return t.custom<number>((input, index, ctx) => {
+    const token = input[index]
+    if (!token) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+
+    return {
+      value: parsePopCountArg(token.toString()),
+      nextIndex: index + 1,
+    }
+  })
+}
 
 export const zsetsCommands = [
   zaddCommand,

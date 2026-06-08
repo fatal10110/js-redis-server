@@ -1,5 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
+import { createHash } from 'node:crypto'
 import { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
 import { TestRunner } from '../test-config'
@@ -44,6 +45,31 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
           )
           return true
         },
+      )
+    } finally {
+      directClient.disconnect()
+    }
+  })
+
+  test('Lua redis.call and redis.pcall non-local key errors match Redis', async () => {
+    const { localKey, remoteKey } = await findDifferentNodeKeys(redisClient!)
+    const directClient = await connectToSlotOwner(redisClient!, localKey)
+    const callScript = "return redis.call('get', ARGV[1])"
+    const callSha = createHash('sha1').update(callScript).digest('hex')
+
+    try {
+      await assert.rejects(
+        () => directClient.eval(callScript, 0, remoteKey),
+        errorWithMessage(
+          `ERR Script attempted to access a non local key in a cluster node script: ${callSha}, on @user_script:1.`,
+        ),
+      )
+      await assert.rejects(
+        () =>
+          directClient.eval("return redis.pcall('get', ARGV[1])", 0, remoteKey),
+        errorWithMessage(
+          'ERR Script attempted to access a non local key in a cluster node',
+        ),
       )
     } finally {
       directClient.disconnect()
