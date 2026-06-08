@@ -19,9 +19,9 @@ the refactor findings, and the SCAN review notes.
 | ----------------------------------------------------- | ---------------------------------------- |
 | Typecheck (`tsc --noEmit`)                            | ✅ clean                                 |
 | Lint (`npm run lint`)                                 | ✅ 0 errors / 1 declaration-file warning |
-| Unit tests (`npm test`)                               | ✅ 87 pass / 0 fail (12 suites)          |
-| Integration, mock backend (new server + real clients) | ✅ 141 pass / 0 fail                     |
-| Integration, real Redis backend                       | ✅ 141 pass / 0 fail                     |
+| Unit tests (`npm test`)                               | ✅ 88 pass / 0 fail (12 suites)          |
+| Integration, mock backend (new server + real clients) | ✅ 143 pass / 0 fail                     |
+| Integration, real Redis backend                       | ✅ 143 pass / 0 fail                     |
 
 The P0 integration hang reported in the earlier findings is **resolved** by
 commit `b390d11` (client-handshake commands: HELLO/CLIENT/INFO/AUTH/RESET/
@@ -97,9 +97,10 @@ Coverage:
 - `tests-integration/test-config.ts` can now host multiple mock cluster shapes
   in one runner, which preserves existing node-redis/ioredis mixed tests.
 
-Remaining replica work: `READONLY`/`READWRITE` and actual replicated reads are
-not implemented yet. That is a feature slice, not the silent-divergence bug
-above.
+`READONLY`/`READWRITE` are now implemented as connection-local cluster read
+mode. Replica databases receive master mutation events through a replication
+link, with a configurable mock delay hook (`replicaUpdateDelayMs`) for future
+lag simulation.
 
 ### P3 — Resolved: HELLO 3 switches to RESP3 replies
 
@@ -172,7 +173,7 @@ that does not release the outer turn. Moot now (no blocking command is queueable
 **Not ported (Phase 4):** Pub/Sub (`RedisPubSubBroker` exists, unwired),
 blocking `BLPOP/BRPOP/WAIT` (park infra exists, no command), streams
 (placeholder type). `ResponseStream` + `pushOnly` capability scaffolded but
-unused. RESP3 encoding absent (see P3).
+unused.
 
 ---
 
@@ -181,16 +182,17 @@ unused. RESP3 encoding absent (see P3).
 - `createNoopParkHandler` returns the default handler — misnomer
   (`src/core/redis-context.ts`).
 - `SessionDirective` union + `'subscribed'` session mode declared, never used.
-- `reset` resets db/watch/tx but not protocol version (no version state to
-  reset).
+- `RESET` now resets db/watch/tx, RESP protocol version, and cluster read mode.
 
 ---
 
 ## 6. Suggested priority
 
-1. **P4 perf** — keys-only snapshot; skip the clone for dirty-only watchers.
+1. **Pub/Sub** — wire `RedisPubSubBroker`, `SUBSCRIBE`/`UNSUBSCRIBE`,
+   `PSUBSCRIBE`/`PUNSUBSCRIBE`, and `PUBLISH` through `ResponseStream`.
+2. **Blocking commands** — land `BLPOP`/`BRPOP` on top of `ctx.park`, then
+   address the EXEC park-context note before any blocking command can run in a
+   transaction.
+3. **P4 perf** — keys-only snapshot; skip the clone for dirty-only watchers.
    This is safe to defer because behavior compatibility is the primary project
    goal.
-2. **Replica READONLY/READWRITE** — support read scaling from replicas if the
-   mock is expected to handle clients configured with replica reads.
-3. **P5 and Phase-4 features** (pub/sub, blocking, streams) — larger efforts.

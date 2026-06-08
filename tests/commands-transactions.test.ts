@@ -6,8 +6,11 @@ import {
   RedisResult,
   RedisServerState,
   RedisValue,
+  type ResponseStream,
   Resp2SessionAdapter,
   createRedisCommandExecutor,
+  defineCommand,
+  t,
 } from '../src'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
@@ -111,6 +114,30 @@ describe('new transaction commands', () => {
     assert.strictEqual(
       server.getDatabase(0).getString(Buffer.from('key')),
       null,
+    )
+  })
+
+  test('queues push-only commands in MULTI', async () => {
+    const streamCommand = defineCommand({
+      name: 'subscribe',
+      schema: t.object({
+        channel: t.bulk(),
+      }),
+      flags: ['pubsub'],
+      capabilities: { pushOnly: true },
+      keys: () => [],
+      execute: () => createSingleFrameStream(),
+    })
+    const server = new RedisServerState()
+    const executor = createRedisCommandExecutor({
+      extraCommands: [streamCommand],
+    })
+    const session = new ClientSession({ server, executor })
+
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    assert.deepStrictEqual(
+      await session.execute('subscribe', [Buffer.from('updates')]),
+      queued(),
     )
   })
 
@@ -234,4 +261,19 @@ describe('new transaction commands', () => {
 
 function queued(): RedisResult {
   return RedisResult.create(RedisValue.simpleString('QUEUED'))
+}
+
+function createSingleFrameStream(): ResponseStream {
+  return {
+    kind: 'response-stream',
+    closed: Promise.resolve(),
+    frames: async function* () {
+      yield RedisResult.create(
+        RedisValue.push('message', [
+          RedisValue.bulkString(Buffer.from('updates')),
+        ]),
+      )
+    },
+    close: () => {},
+  }
 }

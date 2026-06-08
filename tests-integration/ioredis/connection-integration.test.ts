@@ -91,6 +91,23 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
 
       connection.write(commandFrame('CLIENT', 'GETNAME'))
       assert.strictEqual(await connection.readFrame(), null)
+
+      connection.write(commandFrame('HELLO'))
+      const repeatedHello = await connection.readFrame()
+      assert.ok(repeatedHello instanceof Map)
+      assert.strictEqual(respNumber(respMapGet(repeatedHello, 'proto')), 3)
+
+      connection.write(commandFrame('RESET'))
+      assert.deepStrictEqual(
+        await connection.readRawFrame(),
+        Buffer.from('+RESET\r\n'),
+      )
+
+      connection.write(commandFrame('CLIENT', 'GETNAME'))
+      assert.deepStrictEqual(
+        await connection.readRawFrame(),
+        Buffer.from('$-1\r\n'),
+      )
     } finally {
       connection.close()
     }
@@ -192,11 +209,23 @@ class RawRedisConnection {
   }
 
   async readFrame(): Promise<RespWireValue> {
+    return (await this.readParsedFrame()).value
+  }
+
+  async readRawFrame(): Promise<Buffer> {
+    return (await this.readParsedFrame()).raw
+  }
+
+  private async readParsedFrame(): Promise<{
+    raw: Buffer
+    value: RespWireValue
+  }> {
     while (true) {
       const parsed = parseRespFrame(this.buffered, 0)
       if (parsed.complete) {
+        const raw = Buffer.from(this.buffered.subarray(0, parsed.nextIndex))
         this.buffered = this.buffered.subarray(parsed.nextIndex)
-        return parsed.value
+        return { raw, value: parsed.value }
       }
 
       if (this.error) {

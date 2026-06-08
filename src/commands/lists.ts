@@ -2,7 +2,7 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { integer, bulk, ok, array } from './helpers'
 import { RedisValue } from '../core/redis-value'
-import { IndexOutOfRangeError } from '../core/redis-error'
+import { IndexOutOfRangeError, NoSuchKeyError } from '../core/redis-error'
 
 function resolveIndex(index: number, len: number): number {
   return index < 0 ? len + index : index
@@ -183,7 +183,7 @@ export const lsetCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const list = ctx.db.getList(args.key)
-    if (!list) throw new IndexOutOfRangeError()
+    if (!list) throw new NoSuchKeyError()
 
     const idx = resolveIndex(args.index, list.values.length)
     if (idx < 0 || idx >= list.values.length) throw new IndexOutOfRangeError()

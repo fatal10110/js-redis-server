@@ -9,6 +9,7 @@ import {
   ExpectedFloatError,
   ExpectedIntegerError,
   InvalidExpireTimeError,
+  OffsetOutOfRangeError,
   RedisSyntaxError,
   WrongTypeRedisError,
   WrongNumberOfArgumentsError,
@@ -384,7 +385,7 @@ export const setrangeCommand = defineCommand({
   name: 'setrange',
   schema: t.object({
     key: t.key(),
-    offset: t.integer({ min: 0 }),
+    offset: createSetrangeOffsetSchema(),
     value: t.key(),
   }),
   flags: ['write', 'denyoom'],
@@ -598,6 +599,22 @@ function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
       return { value: pairs, nextIndex: cursor }
     },
   )
+}
+
+function createSetrangeOffsetSchema(): CommandSchema<number> {
+  return t.custom((input, index, ctx) => {
+    const token = input[index]
+    if (!token) {
+      throwWrongArity(ctx.commandName)
+    }
+
+    const offset = parseIntegerToken(token)
+    if (offset < 0) {
+      throw new OffsetOutOfRangeError()
+    }
+
+    return { value: offset, nextIndex: index + 1 }
+  })
 }
 
 function createGetexSchema(): CommandSchema<GetexArgs> {

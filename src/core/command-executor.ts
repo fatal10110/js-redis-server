@@ -7,6 +7,11 @@ import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
 
+/**
+ * The result of running a command: either a finished {@link RedisResult} or a
+ * long-lived {@link ResponseStream} (e.g. SUBSCRIBE / MONITOR) whose frames the
+ * transport drains over time.
+ */
 export type ExecutorResult = RedisResult | ResponseStream
 
 export type CommandExecutorOptions = {
@@ -14,6 +19,27 @@ export type CommandExecutorOptions = {
   policies?: readonly ExecutionPolicy[]
 }
 
+/**
+ * Central command pipeline shared by every client session.
+ *
+ * Responsibilities:
+ *  1. Resolve a raw command name to a {@link CommandDefinition} (case-insensitive).
+ *  2. Parse raw argument buffers into typed args and extract routing keys,
+ *     producing a {@link CommandPlan}.
+ *  3. Run the configured {@link ExecutionPolicy} chain around the command's own
+ *     `execute`, giving policies (transaction, cluster, ...) a chance to
+ *     short-circuit, rewrite, or wrap the result.
+ *
+ * Two execution paths exist on purpose:
+ *  - {@link executePlan} / {@link executeRaw} — async, used for real network
+ *    clients; may return a {@link ResponseStream} and may await async commands.
+ *  - {@link executePlanSync} — synchronous mirror used by the Lua runtime, where
+ *    `redis.call` must complete in a single tick. Streams and promises are
+ *    rejected rather than awaited.
+ *
+ * The executor is stateless per-call: all mutable state lives on the
+ * {@link RedisExecutionContext} (and the session it carries).
+ */
 export class CommandExecutor {
   private readonly registry: CommandRegistry
   private readonly policies: readonly ExecutionPolicy[]
@@ -31,6 +57,12 @@ export class CommandExecutor {
     return this.registry.getAll()
   }
 
+  /**
+   * Resolve a raw command + args into a {@link CommandPlan} without executing it.
+   * The command name is matched case-insensitively against the registry.
+   *
+   * @throws {UnknownRedisCommandError} if no command is registered under the name.
+   */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
     const commandName =
       typeof rawCommand === 'string'
@@ -45,6 +77,16 @@ export class CommandExecutor {
     return this.createPlan(definition, rawArgs)
   }
 
+  /**
+   * Plan and execute a raw command in one step — the normal entry point for a
+   * network client.
+   *
+   * Errors thrown during *planning* (unknown command, arity/parse failures) are
+   * caught here and converted into a RESP error reply. Such a failure also marks
+   * any open MULTI transaction dirty so a later EXEC is aborted, matching Redis:
+   * a command that cannot even be parsed must not silently vanish from the queue.
+   * Execution-time errors are handled inside {@link executePlan}.
+   */
   async executeRaw(
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
@@ -62,6 +104,22 @@ export class CommandExecutor {
     }
   }
 
+  /**
+   * Run a pre-built plan through the full async pipeline.
+   *
+   * Order of operations:
+   *  1. `beforeExecute` for each policy. The first policy that returns a result
+   *     short-circuits execution (e.g. the transaction policy queues the command
+   *     and returns "+QUEUED"; the cluster policy returns a MOVED/CROSSSLOT
+   *     error). A short-circuit error during MULTI also dirties the transaction.
+   *  2. The command's own `execute`.
+   *  3. If a {@link ResponseStream} is produced, run it through every policy's
+   *     `onStream` hook; otherwise await the value and run it through every
+   *     `afterExecute` hook (each may replace the result).
+   *
+   * Execution-time {@link RedisCommandError}s become RESP error replies (and
+   * dirty an open transaction when appropriate). Non-Redis errors propagate.
+   */
   async executePlan(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
@@ -113,6 +171,17 @@ export class CommandExecutor {
     }
   }
 
+  /**
+   * Synchronous counterpart to {@link executePlan}, used by the Lua runtime for
+   * `redis.call` / `redis.pcall`. Lua expects each nested command to resolve
+   * immediately, so anything that would require awaiting — a command that
+   * returns a promise, a {@link ResponseStream}, or an async policy hook — is
+   * rejected with a {@link RedisCommandError} instead of being awaited (see
+   * {@link assertSyncCommandResult} / {@link assertSyncPolicyResult}).
+   *
+   * The policy chain and transaction-dirty handling otherwise mirror the async
+   * path exactly.
+   */
   executePlanSync(plan: CommandPlan, ctx: RedisExecutionContext): RedisResult {
     try {
       for (const policy of this.policies) {
@@ -157,6 +226,12 @@ export class CommandExecutor {
     }
   }
 
+  /**
+   * Build a {@link CommandPlan} from a resolved definition: parse the raw buffers
+   * against the command's schema (may throw arity/type errors) and extract the
+   * routing keys used for cluster slot validation. Flags are copied onto the plan
+   * so policies can inspect them without re-resolving the definition.
+   */
   private createPlan<TArgs>(
     definition: CommandDefinition<TArgs>,
     rawArgs: readonly Buffer[],
@@ -173,6 +248,13 @@ export class CommandExecutor {
   }
 }
 
+/**
+ * A policy's `onStream` hook may return an object that is both a
+ * {@link ResponseStream} and thenable (e.g. an async wrapper). Callers `await`
+ * the executor result, and awaiting a thenable stream would unwrap it into its
+ * resolved value, breaking streaming. This re-wraps such a stream in a plain,
+ * non-thenable object so it survives the surrounding `await` untouched.
+ */
 function ensureNonThenableStream(stream: ResponseStream): ResponseStream {
   if (!('then' in stream)) {
     return stream
@@ -188,6 +270,12 @@ function ensureNonThenableStream(stream: ResponseStream): ResponseStream {
   }
 }
 
+/**
+ * Guard for the synchronous (Lua) path: a command's result must be a ready
+ * {@link RedisResult}. Streaming commands and async commands are not callable
+ * from scripts, so a stream is closed and both cases are surfaced as a
+ * script-facing {@link RedisCommandError}.
+ */
 function assertSyncCommandResult(
   plan: CommandPlan,
   result: ReturnType<CommandDefinition['execute']>,
@@ -208,6 +296,11 @@ function assertSyncCommandResult(
   return result
 }
 
+/**
+ * Same idea as {@link assertSyncCommandResult} but for policy hooks: an async
+ * hook result cannot be awaited on the Lua path, so it is rejected with a
+ * descriptive {@link RedisCommandError} naming the offending policy and hook.
+ */
 function assertSyncPolicyResult<TValue>(
   policyName: string,
   hookName: string,
@@ -234,6 +327,11 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   return typeof (value as { then?: unknown }).then === 'function'
 }
 
+/**
+ * True when a policy short-circuit returned an error while queuing a command in
+ * MULTI — i.e. the command was rejected at queue time. Redis aborts the whole
+ * transaction on EXEC in that case, so the session must be marked dirty.
+ */
 function isTransactionQueueError(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
@@ -242,6 +340,13 @@ function isTransactionQueueError(
   return shouldDirtyTransaction(plan, ctx) && result.value.kind === 'error'
 }
 
+/**
+ * Whether an error on this plan should dirty the current transaction.
+ *
+ * Only meaningful while the session is in `transaction` mode. Commands flagged
+ * `transaction` are the control commands themselves (MULTI/EXEC/DISCARD/WATCH);
+ * their errors must not abort the transaction, so they are excluded.
+ */
 function shouldDirtyTransaction(
   plan: CommandPlan,
   ctx: RedisExecutionContext,

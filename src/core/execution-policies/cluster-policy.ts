@@ -51,7 +51,15 @@ export function createClusterPolicy(
         transactionSlots.delete(ctx.session)
       }
 
-      const slot = validateClusterSlot(topology, options.localNodeId, plan.keys)
+      const slot = validateClusterSlot(
+        topology,
+        options.localNodeId,
+        plan.keys,
+        {
+          allowReplicaRead:
+            ctx.session.clusterReadOnly && plan.flags.includes('readonly'),
+        },
+      )
 
       if (slot === null || ctx.session.mode !== 'transaction') {
         return
@@ -74,6 +82,7 @@ function validateClusterSlot(
   topology: RedisClusterTopology,
   localNodeId: string,
   keys: readonly Buffer[],
+  options: { allowReplicaRead?: boolean } = {},
 ): number | null {
   const slot = topology.calculateSlotForKeys(keys)
   if (slot === null) {
@@ -85,6 +94,13 @@ function validateClusterSlot(
   }
 
   if (topology.nodeOwnsSlot(localNodeId, slot)) {
+    return slot
+  }
+
+  if (
+    options.allowReplicaRead &&
+    topology.nodeCanServeReadonlySlot(localNodeId, slot)
+  ) {
     return slot
   }
 

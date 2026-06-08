@@ -27,8 +27,8 @@ export class RedisLuaRuntime {
 
   constructor(module: LuaWasmModule) {
     this.engine = module.create({
-      redisCall: args => this.runRedisCommand(args),
-      redisPcall: args => this.runRedisCommand(args),
+      redisCall: args => this.runRedisCommand(args, 'call'),
+      redisPcall: args => this.runRedisCommand(args, 'pcall'),
       log: () => {},
     })
   }
@@ -55,14 +55,15 @@ export class RedisLuaRuntime {
     }
   }
 
-  private runRedisCommand(args: Buffer[]): ReplyValue {
+  private runRedisCommand(args: Buffer[], mode: 'call' | 'pcall'): ReplyValue {
     const ctx = this.hostState.ctx
     if (!ctx) {
       throw new Error('ERR Lua runtime is not initialized')
     }
+    const scriptSha = mode === 'call' ? this.hostState.sha : undefined
 
     if (args.length === 0) {
-      return redisErrorToLuaReply(new ScriptCallNoCommandError())
+      return redisErrorToLuaReply(new ScriptCallNoCommandError(), scriptSha)
     }
 
     let plan: CommandPlan
@@ -70,26 +71,25 @@ export class RedisLuaRuntime {
       plan = ctx.executor.plan(args[0], args.slice(1))
     } catch (err) {
       if (err instanceof UnknownRedisCommandError) {
-        return redisErrorToLuaReply(
-          new ScriptUnknownCommandError(this.hostState.sha),
-        )
+        return redisErrorToLuaReply(new ScriptUnknownCommandError(), scriptSha)
       }
 
       if (err instanceof RedisCommandError) {
-        return redisErrorToLuaReply(err)
+        return redisErrorToLuaReply(err, scriptSha)
       }
 
       throw err
     }
 
     if (plan.flags.includes('noscript')) {
-      return redisErrorToLuaReply(
-        new ScriptUnknownCommandError(this.hostState.sha),
-      )
+      return redisErrorToLuaReply(new ScriptUnknownCommandError(), scriptSha)
     }
 
     const result = ctx.executor.executePlanSync(plan, ctx)
-    return redisValueToLuaReply(result.value)
+    return redisValueToLuaReply(
+      normalizeScriptCommandValue(result.value),
+      scriptSha,
+    )
   }
 }
 
@@ -133,7 +133,10 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   return RedisValue.bulkString(Buffer.from(String(value)))
 }
 
-function redisValueToLuaReply(value: RedisValue): ReplyValue {
+function redisValueToLuaReply(
+  value: RedisValue,
+  scriptSha?: string,
+): ReplyValue {
   switch (value.kind) {
     case 'simple-string':
       return { ok: Buffer.from(value.value) }
@@ -150,29 +153,48 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
     case 'verbatim':
       return value.value
     case 'array':
-      return value.items.map(redisValueToLuaReply)
+      return value.items.map(item => redisValueToLuaReply(item, scriptSha))
     case 'set':
-      return value.items.map(redisValueToLuaReply)
+      return value.items.map(item => redisValueToLuaReply(item, scriptSha))
     case 'map':
       return value.entries.flatMap(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        redisValueToLuaReply(key, scriptSha),
+        redisValueToLuaReply(entryValue, scriptSha),
       ])
     case 'push':
-      return [Buffer.from(value.name), ...value.items.map(redisValueToLuaReply)]
+      return [
+        Buffer.from(value.name),
+        ...value.items.map(item => redisValueToLuaReply(item, scriptSha)),
+      ]
     case 'null':
     case 'null-array':
       return null
     case 'error':
       return {
-        err: Buffer.from(formatRedisErrorValue(value)),
+        err: Buffer.from(formatRedisErrorValue(value, scriptSha)),
       }
   }
 }
 
-function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {
+function normalizeScriptCommandValue(value: RedisValue): RedisValue {
+  if (value.kind === 'error' && value.code === 'MOVED') {
+    return RedisValue.error(
+      'Script attempted to access a non local key in a cluster node',
+      'ERR',
+    )
+  }
+
+  return value
+}
+
+function redisErrorToLuaReply(
+  err: RedisCommandError,
+  scriptSha?: string,
+): ReplyValue {
   return {
-    err: Buffer.from(formatRedisError(err.message, err.code)),
+    err: Buffer.from(
+      formatRedisError(scriptErrorMessage(err.message, scriptSha), err.code),
+    ),
   }
 }
 
@@ -187,8 +209,20 @@ function luaErrorToRedisValue(message: string): RedisValue {
 
 function formatRedisErrorValue(
   value: Extract<RedisValue, { kind: 'error' }>,
+  scriptSha?: string,
 ): string {
-  return formatRedisError(value.message, value.code)
+  return formatRedisError(
+    scriptErrorMessage(value.message, scriptSha),
+    value.code,
+  )
+}
+
+function scriptErrorMessage(message: string, scriptSha?: string): string {
+  if (!scriptSha) {
+    return message
+  }
+
+  return `${message} script: ${scriptSha}, on @user_script:1.`
 }
 
 function formatRedisError(message: string, code?: string): string {

@@ -1,12 +1,15 @@
 import { createRedisCommandExecutor } from './commands'
-import { createClusterCommand } from './commands/cluster'
+import { createClusterCommands } from './commands/cluster'
 import { createClusterPolicy } from './core/execution-policies'
 import { Resp2Server } from './core/transports/resp2/server'
 import {
   REDIS_CLUSTER_SLOT_COUNT,
+  RedisDatabase,
   RedisClusterTopology,
   RedisServerState,
   type RedisClusterNode,
+  type RedisMutationEvent,
+  type Unsubscribe,
 } from './state'
 import type { Logger } from './logger'
 
@@ -16,6 +19,7 @@ export type RedisClusterOptions = {
   basePort: number
   host?: string
   databasesPerNode?: number
+  replicaUpdateDelayMs?: number
   logger?: Pick<Logger, 'error'>
 }
 
@@ -32,15 +36,18 @@ export class RedisCluster {
   readonly nodes: readonly RedisClusterNodeHandle[]
 
   private readonly servers: Resp2Server[]
+  private readonly replicationLinks: ReplicationLink[]
 
   constructor(
     topology: RedisClusterTopology,
     nodes: readonly RedisClusterNodeHandle[],
     servers: readonly Resp2Server[],
+    replicationLinks: readonly ReplicationLink[],
   ) {
     this.topology = topology
     this.nodes = nodes
     this.servers = [...servers]
+    this.replicationLinks = [...replicationLinks]
   }
 
   async listen(): Promise<void> {
@@ -59,6 +66,9 @@ export class RedisCluster {
   }
 
   async close(): Promise<void> {
+    for (const link of this.replicationLinks) {
+      link.close()
+    }
     await Promise.all(this.servers.map(server => server.close()))
   }
 
@@ -115,14 +125,23 @@ export function buildRedisCluster(options: RedisClusterOptions): RedisCluster {
 
   const handles: RedisClusterNodeHandle[] = []
   const servers: Resp2Server[] = []
+  const replicationLinks: ReplicationLink[] = []
+  const nodeStates = createClusterNodeStates(
+    topologyNodes,
+    topology,
+    options.databasesPerNode ?? 1,
+    options.replicaUpdateDelayMs ?? 0,
+    replicationLinks,
+  )
 
   for (const node of topologyNodes) {
-    const state = new RedisServerState({
-      databaseCount: options.databasesPerNode ?? 1,
-      clusterTopology: topology,
-    })
+    const state = nodeStates.get(node.id)
+    if (!state) {
+      throw new Error(`Missing state for cluster node ${node.id}`)
+    }
+
     const executor = createRedisCommandExecutor({
-      extraCommands: [createClusterCommand(node.id)],
+      extraCommands: createClusterCommands(node.id),
       policies: [createClusterPolicy({ localNodeId: node.id, topology })],
     })
     const server = new Resp2Server({
@@ -141,7 +160,7 @@ export function buildRedisCluster(options: RedisClusterOptions): RedisCluster {
     servers.push(server)
   }
 
-  return new RedisCluster(topology, handles, servers)
+  return new RedisCluster(topology, handles, servers, replicationLinks)
 }
 
 export function computeSlotRange(
@@ -182,5 +201,133 @@ function validateOptions(options: RedisClusterOptions): void {
     options.basePort > 65535
   ) {
     throw new Error(`Invalid basePort ${options.basePort}`)
+  }
+  if (
+    options.replicaUpdateDelayMs !== undefined &&
+    (!Number.isInteger(options.replicaUpdateDelayMs) ||
+      options.replicaUpdateDelayMs < 0)
+  ) {
+    throw new Error(
+      `Invalid replicaUpdateDelayMs ${options.replicaUpdateDelayMs}`,
+    )
+  }
+}
+
+type ReplicationLink = {
+  close(): void
+}
+
+function createClusterNodeStates(
+  nodes: readonly RedisClusterNode[],
+  topology: RedisClusterTopology,
+  databaseCount: number,
+  replicaUpdateDelayMs: number,
+  replicationLinks: ReplicationLink[],
+): Map<string, RedisServerState> {
+  const states = new Map<string, RedisServerState>()
+
+  for (const node of nodes) {
+    states.set(
+      node.id,
+      new RedisServerState({
+        databaseCount,
+        clusterTopology: topology,
+      }),
+    )
+  }
+
+  for (const node of nodes) {
+    if (node.role !== 'replica') {
+      continue
+    }
+
+    const master = node.masterId ? states.get(node.masterId) : undefined
+    const replica = states.get(node.id)
+    if (!master || !replica) {
+      throw new Error(`Replica ${node.id} references missing master state`)
+    }
+
+    replicationLinks.push(
+      ...createReplicationLinks(master, replica, replicaUpdateDelayMs),
+    )
+  }
+
+  return states
+}
+
+function createReplicationLinks(
+  master: RedisServerState,
+  replica: RedisServerState,
+  delayMs: number,
+): ReplicationLink[] {
+  return master.databases.map((masterDb, index) => {
+    const replicaDb = replica.getDatabase(index)
+    syncDatabase(masterDb, replicaDb)
+    return new DatabaseReplicationLink(masterDb, replicaDb, delayMs)
+  })
+}
+
+function syncDatabase(master: RedisDatabase, replica: RedisDatabase): void {
+  replica.flush()
+  for (const entry of master.entriesSnapshot()) {
+    replica.set(entry.key, entry.value, { expiresAt: entry.expiresAt })
+  }
+}
+
+class DatabaseReplicationLink implements ReplicationLink {
+  private readonly unsubscribe: Unsubscribe
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>()
+
+  constructor(
+    master: RedisDatabase,
+    private readonly replica: RedisDatabase,
+    private readonly delayMs: number,
+  ) {
+    this.unsubscribe = master.subscribe(event => this.replicate(event))
+  }
+
+  close(): void {
+    this.unsubscribe()
+    for (const timer of this.timers) {
+      clearTimeout(timer)
+    }
+    this.timers.clear()
+  }
+
+  private replicate(event: RedisMutationEvent): void {
+    if (this.delayMs === 0) {
+      applyReplicationEvent(this.replica, event)
+      return
+    }
+
+    const timer = setTimeout(() => {
+      this.timers.delete(timer)
+      applyReplicationEvent(this.replica, event)
+    }, this.delayMs)
+    this.timers.add(timer)
+  }
+}
+
+function applyReplicationEvent(
+  replica: RedisDatabase,
+  event: RedisMutationEvent,
+): void {
+  switch (event.type) {
+    case 'write':
+      replica.set(event.key, event.value, { expiresAt: event.expiresAt })
+      return
+    case 'delete':
+    case 'evict':
+      replica.delete(event.key)
+      return
+    case 'expire':
+      replica.expire(event.key, event.expiresAt)
+      return
+    case 'persist':
+      replica.persist(event.key)
+      return
+    case 'flush':
+      replica.flush()
+      return
   }
 }
