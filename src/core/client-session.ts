@@ -50,6 +50,7 @@ export class ClientSession implements RedisClientSession {
   private selectedDatabaseId: number
   private sessionMode: ClientSessionMode = 'normal'
   private respVersion: RespVersion = 2
+  private clusterReadOnlyMode = false
   private transactionPlans: CommandPlan[] = []
   private transactionDirty = false
   private readonly watches = new Map<string, WatchRegistration>()
@@ -85,12 +86,20 @@ export class ClientSession implements RedisClientSession {
     return this.respVersion
   }
 
+  get clusterReadOnly(): boolean {
+    return this.clusterReadOnlyMode
+  }
+
   get db(): RedisDatabase {
     return this.server.getDatabase(this.selectedDatabaseId)
   }
 
   setProtocolVersion(version: RespVersion): void {
     this.respVersion = version
+  }
+
+  setClusterReadOnly(value: boolean): void {
+    this.clusterReadOnlyMode = value
   }
 
   selectDatabase(database: number): void {
@@ -260,6 +269,7 @@ export class ClientSession implements RedisClientSession {
     this.transactionPlans = []
     this.transactionDirty = false
     this.sessionMode = 'normal'
+    this.clusterReadOnlyMode = false
   }
 
   private createTurnAwareParkHandler(turnAccess: TurnAccess): ParkHandler {
