@@ -126,6 +126,29 @@ export async function findSlotMasterAndReplica(
   throw new Error(`No Redis Cluster replica found for slot ${slot}`)
 }
 
+export async function eventually<TValue>(
+  callback: () => Promise<TValue>,
+  options: { retries?: number; retryDelayMs?: number } = {},
+): Promise<TValue> {
+  const retries = options.retries ?? 20
+  const retryDelayMs = options.retryDelayMs ?? 100
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await callback()
+    } catch (err) {
+      lastError = err
+    }
+
+    if (attempt < retries) {
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs))
+    }
+  }
+
+  throw lastError
+}
+
 function endpointFromClusterSlotsNode(node: ClusterSlotsNode): RedisEndpoint {
   return {
     host: String(node[0]),

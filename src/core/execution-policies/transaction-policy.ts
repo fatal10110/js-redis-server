@@ -14,13 +14,6 @@ export function createTransactionPolicy(): ExecutionPolicy {
         return
       }
 
-      if (plan.definition.capabilities?.pushOnly) {
-        ctx.session.markTransactionDirty()
-        return RedisResult.error(
-          `${plan.definition.name.toUpperCase()} is not allowed in transactions`,
-        )
-      }
-
       ctx.session.queueTransaction(plan)
       return RedisResult.create(RedisValue.simpleString('QUEUED'))
     },

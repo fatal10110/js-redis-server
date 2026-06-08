@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
+import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -113,6 +114,36 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     // Get multiple random members
     const randoms = await redisClient?.srandmember('set6', 2)
     assert.strictEqual(randoms?.length, 2)
+  })
+
+  test('Set command errors match Redis', async () => {
+    const tag = `{set-errors:${randomKey()}}`
+    const setKey = `${tag}:set`
+    const stringKey = `${tag}:string`
+
+    try {
+      await redisClient?.sadd(setKey, 'a')
+      await redisClient?.set(stringKey, 'value')
+
+      await assert.rejects(
+        () => redisClient?.sadd(stringKey, 'a'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () => redisClient?.call('SRANDMEMBER', setKey, 'abc'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => redisClient?.smove(setKey, stringKey, 'a'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+    } finally {
+      await redisClient?.del(setKey, stringKey)
+    }
   })
 
   test('SDIFF command', async () => {

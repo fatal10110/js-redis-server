@@ -456,6 +456,7 @@ export const resetCommand = defineCommand({
     ctx.session.unwatch()
     ctx.session.selectDatabase(0)
     ctx.session.setProtocolVersion(2)
+    ctx.session.setClusterReadOnly(false)
     return simpleString('RESET')
   },
 })

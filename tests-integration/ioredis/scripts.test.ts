@@ -104,6 +104,67 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         ),
       )
     })
+
+    test('redis.call and redis.pcall error replies match Redis', async () => {
+      const tag = `{script-reply-errors:${randomKey()}}`
+      const listKey = `${tag}:list`
+      const directClient = await connectToSlotOwner(redisClient!, listKey)
+      const unknownCallScript = "return redis.call('nosuchcommand')"
+      const unknownCallSha = createHash('sha1')
+        .update(unknownCallScript)
+        .digest('hex')
+      const wrongTypeCallScript = "return redis.call('get', KEYS[1])"
+      const wrongTypeCallSha = createHash('sha1')
+        .update(wrongTypeCallScript)
+        .digest('hex')
+      const noArgsCallScript = 'return redis.call()'
+      const noArgsCallSha = createHash('sha1')
+        .update(noArgsCallScript)
+        .digest('hex')
+
+      try {
+        await directClient.lpush(listKey, 'value')
+
+        await assert.rejects(
+          () => directClient.eval(unknownCallScript, 0),
+          errorWithMessage(
+            `ERR Unknown Redis command called from script script: ${unknownCallSha}, on @user_script:1.`,
+          ),
+        )
+        await assert.rejects(
+          () => directClient.eval("return redis.pcall('nosuchcommand')", 0),
+          errorWithMessage('ERR Unknown Redis command called from script'),
+        )
+        await assert.rejects(
+          () => directClient.eval(wrongTypeCallScript, 1, listKey),
+          errorWithMessage(
+            `WRONGTYPE Operation against a key holding the wrong kind of value script: ${wrongTypeCallSha}, on @user_script:1.`,
+          ),
+        )
+        await assert.rejects(
+          () =>
+            directClient.eval("return redis.pcall('get', KEYS[1])", 1, listKey),
+          errorWithMessage(
+            'WRONGTYPE Operation against a key holding the wrong kind of value',
+          ),
+        )
+        await assert.rejects(
+          () => directClient.eval(noArgsCallScript, 0),
+          errorWithMessage(
+            `ERR Please specify at least one argument for this redis lib call script: ${noArgsCallSha}, on @user_script:1.`,
+          ),
+        )
+        await assert.rejects(
+          () => directClient.eval('return redis.pcall()', 0),
+          errorWithMessage(
+            'ERR Please specify at least one argument for this redis lib call',
+          ),
+        )
+      } finally {
+        await directClient.del(listKey)
+        directClient.disconnect()
+      }
+    })
   })
 
   test('SCRIPT LOAD, EXISTS, EVALSHA, and FLUSH use the node script cache', async () => {

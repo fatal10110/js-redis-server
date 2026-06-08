@@ -54,7 +54,12 @@ export {
   selectCommand,
   connectionCommands,
 } from './connection'
-export { createClusterCommand } from './cluster'
+export {
+  createClusterCommand,
+  createClusterCommands,
+  readonlyCommand,
+  readwriteCommand,
+} from './cluster'
 export { commandCommand } from './command'
 export {
   getCommand,

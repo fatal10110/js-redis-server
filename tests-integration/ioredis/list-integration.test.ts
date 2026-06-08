@@ -2,6 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -104,6 +105,45 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
     // Verify full list
     const all = await redisClient?.lrange('list6', 0, -1)
     assert.deepStrictEqual(all, ['c', 'newb', 'a'])
+  })
+
+  test('List command errors match Redis', async () => {
+    const tag = `{list-errors:${randomKey()}}`
+    const listKey = `${tag}:list`
+    const stringKey = `${tag}:string`
+    const directClient = await connectToSlotOwner(redisClient!, listKey)
+
+    try {
+      await directClient.set(stringKey, 'value')
+
+      await assert.rejects(
+        () => directClient.lrange(stringKey, 0, -1),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () => directClient.call('LSET', `${tag}:missing`, '0', 'x'),
+        errorWithMessage('ERR no such key'),
+      )
+
+      await directClient.rpush(listKey, 'a')
+      await assert.rejects(
+        () => directClient.lset(listKey, 2, 'x'),
+        errorWithMessage('ERR index out of range'),
+      )
+      await assert.rejects(
+        () => directClient.call('LINDEX', listKey, 'abc'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient.call('LRANGE', listKey, 'abc', '1'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+    } finally {
+      await directClient.del(listKey, stringKey, `${tag}:missing`)
+      directClient.disconnect()
+    }
   })
 
   test('LREM command', async () => {

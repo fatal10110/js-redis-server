@@ -291,16 +291,16 @@ describe('new script commands', () => {
 
   test('runs redis.call through cluster policy inside Lua', async () => {
     const { session, topology } = createClusterSession()
+    const script = Buffer.from('return redis.call("get", ARGV[1])')
     const key = findKeyOwnedBy(topology, 'remote')
-    const slot = topology.calculateSlot(key)
+    const sha = scriptSha(script)
 
     assert.deepStrictEqual(
-      await session.execute('eval', [
-        Buffer.from('return redis.call("get", ARGV[1])'),
-        Buffer.from('0'),
-        key,
-      ]),
-      RedisResult.error(`${slot} 127.0.0.1:7001`, 'MOVED'),
+      await session.execute('eval', [script, Buffer.from('0'), key]),
+      RedisResult.error(
+        `Script attempted to access a non local key in a cluster node script: ${sha}, on @user_script:1.`,
+        'ERR',
+      ),
     )
   })
 

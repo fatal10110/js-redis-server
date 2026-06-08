@@ -6,6 +6,7 @@ export type RedisMutationEvent =
       database: number
       key: Buffer
       value: RedisDataValue
+      expiresAt?: number
     }
   | {
       type: 'delete'

@@ -249,18 +249,83 @@ async function runLuaScript(
 
   try {
     const reply = runtime.eval(script, keys, argv, ctx, sha)
+    const normalized = normalizeLuaReplyError(reply, script, sha)
+    if (normalized) {
+      return normalized
+    }
+
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return luaRuntimeError(message)
+    return luaRuntimeError(message, script, sha)
   }
 }
 
-function luaRuntimeError(message: string): RedisResult {
+function normalizeLuaReplyError(
+  reply: unknown,
+  script: Buffer,
+  sha: string,
+): RedisResult | null {
+  if (!reply || typeof reply !== 'object' || !('err' in reply)) {
+    return null
+  }
+
+  const rawMessage = (reply as { err: unknown }).err
+  const message = Buffer.isBuffer(rawMessage)
+    ? rawMessage.toString()
+    : String(rawMessage)
+  return normalizeRedisNoArgsError(message, script, sha)
+}
+
+function luaRuntimeError(
+  message: string,
+  script?: Buffer,
+  sha?: string,
+): RedisResult {
+  const normalized = normalizeRedisNoArgsError(message, script, sha)
+  if (normalized) {
+    return normalized
+  }
+
   const match = /^([A-Z][A-Z0-9]*) (.+)$/.exec(message)
   if (!match) {
     return RedisResult.error(message, 'ERR')
   }
 
   return RedisResult.error(match[2], match[1])
+}
+
+function normalizeRedisNoArgsError(
+  message: string,
+  script?: Buffer,
+  sha?: string,
+): RedisResult | null {
+  if (!message.includes('ERR redis.call requires arguments') || !script) {
+    return null
+  }
+
+  const kind = firstZeroArgRedisCallKind(script.toString())
+  if (!kind) {
+    return null
+  }
+
+  const baseMessage =
+    'Please specify at least one argument for this redis lib call'
+  if (kind === 'pcall') {
+    return RedisResult.error(baseMessage, 'ERR')
+  }
+
+  return RedisResult.error(
+    `${baseMessage} script: ${sha}, on @user_script:1.`,
+    'ERR',
+  )
+}
+
+function firstZeroArgRedisCallKind(script: string): 'call' | 'pcall' | null {
+  const match = /\bredis\s*\.\s*(p?call)\s*\(\s*\)/.exec(script)
+  if (!match) {
+    return null
+  }
+
+  return match[1] === 'pcall' ? 'pcall' : 'call'
 }
