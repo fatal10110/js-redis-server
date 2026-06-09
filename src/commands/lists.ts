@@ -385,7 +385,13 @@ async function blockingListPop(
       timeoutMs: remaining,
       signal: ctx.signal,
     })
-    for (const unsub of unsubs) unsub()
+    for (const unsub of unsubs) {
+      try {
+        unsub()
+      } catch {
+        // ignore errors from individual unsubscribers so all are attempted
+      }
+    }
 
     if (woken === null) return RedisResult.create(RedisValue.nullArray())
 
