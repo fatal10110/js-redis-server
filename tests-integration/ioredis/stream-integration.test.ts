@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage, randomKey } from '../utils'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -170,5 +170,225 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const key = randomKey()
     assert.strictEqual(await redisClient?.xlen(key), 0)
     assert.deepStrictEqual(await redisClient?.xrange(key, '-', '+'), [])
+  })
+
+  // XTRIM
+
+  test('XTRIM MAXLEN removes oldest entries and returns removed count', async () => {
+    const key = randomKey()
+    await redisClient!.xadd(key, '1-1', 'f', 'v')
+    await redisClient!.xadd(key, '2-1', 'f', 'v')
+    await redisClient!.xadd(key, '3-1', 'f', 'v')
+
+    assert.strictEqual(await redisClient!.xtrim(key, 'MAXLEN', 2), 1)
+    assert.deepStrictEqual(await redisClient!.xrange(key, '-', '+'), [
+      ['2-1', ['f', 'v']],
+      ['3-1', ['f', 'v']],
+    ])
+  })
+
+  test('XTRIM MAXLEN with ~ (approximate) accepts the flag and returns an integer', async () => {
+    // Real Redis uses radix-tree node boundaries for ~; on a tiny stream it may not
+    // trim at all. We only assert the command succeeds and returns a non-negative int.
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+      await node.xadd(key, '2-1', 'f', 'v')
+      await node.xadd(key, '3-1', 'f', 'v')
+
+      const removed = (await node.call(
+        'XTRIM',
+        key,
+        'MAXLEN',
+        '~',
+        '2',
+      )) as number
+      assert.ok(typeof removed === 'number' && removed >= 0)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XTRIM MINID removes entries with id below threshold', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-0', 'f', 'v')
+      await node.xadd(key, '2-0', 'f', 'v')
+      await node.xadd(key, '3-0', 'f', 'v')
+
+      assert.strictEqual(await node.call('XTRIM', key, 'MINID', '2-0'), 1)
+      assert.deepStrictEqual(await node.xrange(key, '-', '+'), [
+        ['2-0', ['f', 'v']],
+        ['3-0', ['f', 'v']],
+      ])
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XTRIM on missing key returns 0 without creating it', async () => {
+    const key = randomKey()
+    assert.strictEqual(await redisClient!.xtrim(key, 'MAXLEN', 5), 0)
+    assert.strictEqual(await redisClient!.exists(key), 0)
+  })
+
+  test('XTRIM MAXLEN no-op when stream is within limit', async () => {
+    const key = randomKey()
+    await redisClient!.xadd(key, '1-1', 'f', 'v')
+    await redisClient!.xadd(key, '2-1', 'f', 'v')
+
+    assert.strictEqual(await redisClient!.xtrim(key, 'MAXLEN', 5), 0)
+    assert.strictEqual(await redisClient!.xlen(key), 2)
+  })
+
+  // XADD with NOMKSTREAM and MAXLEN options
+
+  test('XADD NOMKSTREAM returns null when key does not exist', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      const result = await node.call('XADD', key, 'NOMKSTREAM', '1-1', 'f', 'v')
+      assert.strictEqual(result, null)
+      assert.strictEqual(await node.exists(key), 0)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XADD NOMKSTREAM appends to an existing stream normally', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+      const result = await node.call('XADD', key, 'NOMKSTREAM', '2-1', 'g', 'w')
+      assert.strictEqual(result, '2-1')
+      assert.strictEqual(await node.xlen(key), 2)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XADD MAXLEN trims oldest entries after append', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+      await node.xadd(key, '2-1', 'f', 'v')
+      await node.xadd(key, '3-1', 'f', 'v')
+      await node.call('XADD', key, 'MAXLEN', '2', '4-1', 'f', 'v')
+      assert.deepStrictEqual(await node.xrange(key, '-', '+'), [
+        ['3-1', ['f', 'v']],
+        ['4-1', ['f', 'v']],
+      ])
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  // XREAD
+
+  test('XREAD returns entries after the given id', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', '1')
+      await node.xadd(key, '2-1', 'f', '2')
+      await node.xadd(key, '3-1', 'f', '3')
+
+      const result = (await node.xread('STREAMS', key, '1-1')) as [
+        string,
+        [string, string[]][],
+      ][]
+      assert.ok(Array.isArray(result))
+      assert.strictEqual(result.length, 1)
+      assert.strictEqual(result[0][0], key)
+      assert.deepStrictEqual(result[0][1], [
+        ['2-1', ['f', '2']],
+        ['3-1', ['f', '3']],
+      ])
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XREAD COUNT limits the number of returned entries', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', '1')
+      await node.xadd(key, '2-1', 'f', '2')
+      await node.xadd(key, '3-1', 'f', '3')
+
+      const result = (await node.xread('COUNT', 1, 'STREAMS', key, '0-0')) as [
+        string,
+        [string, string[]][],
+      ][]
+      assert.ok(Array.isArray(result))
+      assert.strictEqual(result[0][1].length, 1)
+      assert.strictEqual(result[0][1][0][0], '1-1')
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XREAD returns null when no new entries exist for the given id', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', '1')
+      const result = await node.xread('STREAMS', key, '1-1')
+      assert.strictEqual(result, null)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XREAD with $ id returns null (no entries after current last)', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', '1')
+      const result = await node.xread('STREAMS', key, '$')
+      assert.strictEqual(result, null)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XREAD on a missing key returns null', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      const result = await node.xread('STREAMS', key, '0-0')
+      assert.strictEqual(result, null)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XREAD from multiple streams on same slot returns combined results', async () => {
+    // Use hashtag to pin both keys to the same cluster slot.
+    const tag = Math.random().toString(36).substring(2, 8)
+    const key1 = `{${tag}}s1`
+    const key2 = `{${tag}}s2`
+    const node = await connectToSlotOwner(redisClient!, key1)
+    try {
+      await node.xadd(key1, '1-1', 'a', '1')
+      await node.xadd(key2, '2-1', 'b', '2')
+
+      const result = (await node.xread(
+        'STREAMS',
+        key1,
+        key2,
+        '0-0',
+        '0-0',
+      )) as [string, [string, string[]][]][]
+      assert.ok(Array.isArray(result))
+      assert.strictEqual(result.length, 2)
+    } finally {
+      node.disconnect()
+    }
   })
 })
