@@ -1,7 +1,12 @@
 import { defineCommand } from '../core/command-definition'
-import { t, type ParseContext } from '../core/command-schema'
+import {
+  SchemaMismatchError,
+  t,
+  type ParseContext,
+} from '../core/command-schema'
 import {
   InvalidStreamIdError,
+  RedisSyntaxError,
   StreamIdEqualOrSmallerError,
   StreamIdNotGreaterThanZeroError,
   WrongNumberOfArgumentsError,
@@ -144,16 +149,86 @@ function createStreamFieldsSchema() {
   )
 }
 
+// Trim specification shared by XADD and XTRIM.
+type TrimSpec =
+  | { strategy: 'maxlen'; count: bigint; approximate: boolean }
+  | { strategy: 'minid'; minId: StreamId; approximate: boolean }
+
+function createTrimSpecSchema() {
+  return t.custom<TrimSpec>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      if (index >= input.length) throw new SchemaMismatchError()
+
+      const keyword = input[index].toString().toUpperCase()
+      if (keyword !== 'MAXLEN' && keyword !== 'MINID')
+        throw new SchemaMismatchError()
+
+      let cursor = index + 1
+      let approximate = false
+      if (cursor < input.length && input[cursor].toString() === '~') {
+        approximate = true
+        cursor++
+      }
+
+      const rawValue = input[cursor]?.toString()
+      if (rawValue === undefined)
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      cursor++
+
+      if (keyword === 'MAXLEN') {
+        const count = parseUint64(rawValue)
+        if (count === null) throw new RedisSyntaxError()
+        return {
+          value: { strategy: 'maxlen', count, approximate },
+          nextIndex: cursor,
+        }
+      } else {
+        const minId = parseExactId(rawValue)
+        return {
+          value: { strategy: 'minid', minId, approximate },
+          nextIndex: cursor,
+        }
+      }
+    },
+  )
+}
+
+function applyTrim(stream: RedisStreamData, spec: TrimSpec): number {
+  if (spec.strategy === 'maxlen') {
+    const removeCount = stream.entries.length - Number(spec.count)
+    if (removeCount <= 0) return 0
+    stream.entries.splice(0, removeCount)
+    return removeCount
+  } else {
+    let i = 0
+    while (
+      i < stream.entries.length &&
+      compareStreamId(stream.entries[i].id, spec.minId) < 0
+    ) {
+      i++
+    }
+    if (i === 0) return 0
+    stream.entries.splice(0, i)
+    return i
+  }
+}
+
 export const xaddCommand = defineCommand({
   name: 'xadd',
   schema: t.object({
     key: t.key(),
+    nomkstream: t.optional(t.keyword('NOMKSTREAM')),
+    trim: t.optional(createTrimSpecSchema()),
     id: t.string(),
     fields: createStreamFieldsSchema(),
   }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    if (args.nomkstream !== undefined && ctx.db.getType(args.key) === null) {
+      return bulk(null)
+    }
+
     const id = ctx.db.updateStream(args.key, stream => {
       const next = resolveXaddId(args.id, stream.lastId)
 
@@ -169,6 +244,11 @@ export const xaddCommand = defineCommand({
 
       stream.entries.push({ id: next, fields: args.fields })
       stream.lastId = next
+
+      if (args.trim !== undefined) {
+        applyTrim(stream, args.trim)
+      }
+
       return next
     })
 
@@ -301,6 +381,121 @@ export const xdelCommand = defineCommand({
   },
 })
 
+export const xtrimCommand = defineCommand({
+  name: 'xtrim',
+  schema: t.object({
+    key: t.key(),
+    trim: createTrimSpecSchema(),
+  }),
+  flags: ['write'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    if (ctx.db.getType(args.key) === null) {
+      return integer(0)
+    }
+    const removed = ctx.db.updateStream(args.key, stream =>
+      applyTrim(stream, args.trim),
+    )
+    return integer(removed)
+  },
+})
+
+// XREAD [COUNT count] STREAMS key [key ...] id [id ...]
+// `$` means "start after the stream's current last id" (returns nothing on a non-blocking call).
+type XreadStream = { key: Buffer; afterId: StreamId | '$' }
+
+function createXreadSchema() {
+  return t.custom<{ count: number | null; streams: XreadStream[] }>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      let cursor = index
+      let count: number | null = null
+
+      // Optional COUNT <n>
+      if (
+        cursor < input.length &&
+        input[cursor].toString().toUpperCase() === 'COUNT'
+      ) {
+        cursor++
+        const raw = input[cursor]?.toString()
+        if (raw === undefined)
+          throw new WrongNumberOfArgumentsError(ctx.commandName)
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 0) throw new RedisSyntaxError()
+        count = n
+        cursor++
+      }
+
+      // Required STREAMS keyword
+      if (
+        cursor >= input.length ||
+        input[cursor].toString().toUpperCase() !== 'STREAMS'
+      ) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      cursor++
+
+      // Remaining tokens: first half = keys, second half = ids
+      const remaining = input.length - cursor
+      if (remaining === 0 || remaining % 2 !== 0) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const half = remaining / 2
+      const streams: XreadStream[] = []
+      for (let i = 0; i < half; i++) {
+        const key = input[cursor + i]
+        const idTok = input[cursor + half + i].toString()
+        const afterId: StreamId | '$' =
+          idTok === '$' ? '$' : parseExactId(idTok)
+        streams.push({ key, afterId })
+      }
+
+      return { value: { count, streams }, nextIndex: input.length }
+    },
+  )
+}
+
+export const xreadCommand = defineCommand({
+  name: 'xread',
+  schema: t.object({ args: createXreadSchema() }),
+  flags: ['readonly'],
+  keys: args => args.args.streams.map(s => s.key),
+  execute: (args, ctx) => {
+    const { count, streams } = args.args
+    const results: RedisValue[] = []
+
+    for (const { key, afterId } of streams) {
+      const stream = ctx.db.getStream(key)
+      if (!stream) continue
+
+      // $ = use stream's current last id; a non-blocking call will return nothing for it
+      const startId: StreamId = afterId === '$' ? stream.lastId : afterId
+
+      const entries: RedisValue[] = []
+      for (const entry of stream.entries) {
+        if (compareStreamId(entry.id, startId) > 0) {
+          entries.push(entryToReply(entry.id, entry.fields))
+          if (count !== null && count > 0 && entries.length >= count) break
+        }
+      }
+
+      if (entries.length > 0) {
+        results.push(
+          RedisValue.array([
+            RedisValue.bulkString(key),
+            RedisValue.array(entries),
+          ]),
+        )
+      }
+    }
+
+    if (results.length === 0) {
+      return bulk(null)
+    }
+    return array(results)
+  },
+})
+
 // Optional `COUNT <n>` tail for XRANGE/XREVRANGE. Returns null when absent.
 function createCountSchema() {
   return t.custom<number | null>(
@@ -330,4 +525,6 @@ export const streamsCommands = [
   xrangeCommand,
   xrevrangeCommand,
   xdelCommand,
+  xtrimCommand,
+  xreadCommand,
 ]

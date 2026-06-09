@@ -38,7 +38,7 @@ class MissingInputError extends Error {
   }
 }
 
-class SchemaMismatchError extends Error {
+export class SchemaMismatchError extends Error {
   constructor() {
     super('schema mismatch')
   }
