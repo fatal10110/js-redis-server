@@ -218,8 +218,16 @@ export class ClientSession implements RedisClientSession {
     // deadlock because no other session could produce the wakeup write. Override
     // park so any blocking command queued in MULTI behaves non-blocking (returns
     // null immediately), matching real Redis BLPOP-inside-MULTI semantics.
-    const noBlockCtx = {
+    //
+    // `db` is exposed as a live getter, not a snapshot: a queued `SELECT N` runs
+    // mid-EXEC and updates `selectedDatabaseId`, so every later command must see
+    // the newly selected database (issue #94).
+    const liveDb = () => this.db
+    const noBlockCtx: RedisExecutionContext = {
       ...this.createExecutionContext(),
+      get db() {
+        return liveDb()
+      },
       park: async () => null,
     }
 

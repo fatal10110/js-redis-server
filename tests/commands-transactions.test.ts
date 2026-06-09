@@ -166,6 +166,40 @@ describe('new transaction commands', () => {
     )
   })
 
+  test('SELECT inside MULTI switches the DB for later queued commands', async () => {
+    const { session, server } = createSession({ databaseCount: 2 })
+
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    assert.deepStrictEqual(
+      await session.execute('select', [Buffer.from('1')]),
+      queued(),
+    )
+    assert.deepStrictEqual(
+      await session.execute('set', [Buffer.from('key'), Buffer.from('value')]),
+      queued(),
+    )
+
+    assert.deepStrictEqual(
+      await session.execute('exec', []),
+      RedisResult.create(
+        RedisValue.array([
+          RedisValue.simpleString('OK'),
+          RedisValue.simpleString('OK'),
+        ]),
+      ),
+    )
+
+    // SET must land in DB 1 (selected mid-EXEC), not the pre-SELECT DB 0.
+    assert.strictEqual(
+      server.getDatabase(0).getString(Buffer.from('key')),
+      null,
+    )
+    assert.deepStrictEqual(
+      server.getDatabase(1).getString(Buffer.from('key')),
+      Buffer.from('value'),
+    )
+  })
+
   test('WATCH aborts EXEC with a null transaction result', async () => {
     const server = new RedisServerState()
     const executor = createRedisCommandExecutor()
