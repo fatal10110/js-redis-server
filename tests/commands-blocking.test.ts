@@ -177,4 +177,71 @@ describe('XREAD BLOCK (unit)', () => {
       1,
     )
   })
+
+  test('XREAD COUNT is per-stream: each stream returns up to COUNT entries independently', async () => {
+    const { session } = createHarness()
+    await session.execute('xadd', buf('a', '1-1', 'f', 'v'))
+    await session.execute('xadd', buf('a', '2-1', 'f', 'v'))
+    await session.execute('xadd', buf('a', '3-1', 'f', 'v'))
+    await session.execute('xadd', buf('b', '1-1', 'f', 'v'))
+    await session.execute('xadd', buf('b', '2-1', 'f', 'v'))
+    await session.execute('xadd', buf('b', '3-1', 'f', 'v'))
+
+    const result = await session.execute(
+      'xread',
+      buf('COUNT', '2', 'STREAMS', 'a', 'b', '0-0', '0-0'),
+    )
+
+    assert.ok(result instanceof RedisResult)
+    const streams = (result.value as { kind: 'array'; items: RedisValue[] })
+      .items
+    assert.strictEqual(streams.length, 2, 'both streams returned')
+
+    for (const streamResult of streams) {
+      const entries = (streamResult as { kind: 'array'; items: RedisValue[] })
+        .items[1]
+      assert.strictEqual(
+        (entries as { kind: 'array'; items: RedisValue[] }).items.length,
+        2,
+        'COUNT=2 is applied per-stream',
+      )
+    }
+  })
+})
+
+describe('BLPOP thundering herd (unit)', () => {
+  test('single push delivers to exactly one of two concurrent waiters', async () => {
+    const { server, executor } = createHarness()
+    const s1 = new ClientSession({ server, executor })
+    const s2 = new ClientSession({ server, executor })
+    const s3 = new ClientSession({ server, executor })
+
+    // Two waiters with short timeout so the loser doesn't hang the suite
+    const block1 = s1.execute('blpop', buf('k', '0.3'))
+    const block2 = s2.execute('blpop', buf('k', '0.3'))
+    await yieldToEventLoop()
+
+    // Single push — only one waiter should win
+    await s3.execute('lpush', buf('k', 'prize'))
+
+    const [r1, r2] = (await Promise.all([block1, block2])) as RedisResult[]
+
+    const expected = arrayResult(['k', 'prize'])
+    const isWinner = (r: RedisResult) => {
+      try {
+        assert.deepStrictEqual(r, expected)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const winners = [r1, r2].filter(isWinner)
+    assert.strictEqual(winners.length, 1, 'exactly one waiter gets the value')
+    assert.deepStrictEqual(
+      [r1, r2].filter(r => !isWinner(r))[0],
+      nullArrayResult(),
+      'the other waiter times out',
+    )
+  })
 })
