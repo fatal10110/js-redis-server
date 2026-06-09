@@ -1,0 +1,180 @@
+import { describe, test } from 'node:test'
+import assert from 'node:assert'
+import { ClientSession, RedisResult, RedisValue } from '../src'
+import { createRedisSessionHarness as createHarness } from './core-session-test-helpers'
+
+function buf(...tokens: string[]): Buffer[] {
+  return tokens.map(t => Buffer.from(t))
+}
+
+function arrayResult(items: (string | null)[]): RedisResult {
+  return RedisResult.create(
+    RedisValue.array(
+      items.map(s => RedisValue.bulkString(s === null ? null : Buffer.from(s))),
+    ),
+  )
+}
+
+function nullArrayResult(): RedisResult {
+  return RedisResult.create(RedisValue.nullArray())
+}
+
+// Drain all pending microtasks so blocking commands reach their parked state.
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
+describe('blocking list commands (unit)', () => {
+  test('BLPOP returns immediately when list is non-empty', async () => {
+    const { session } = createHarness()
+    await session.execute('lpush', buf('k', 'v1'))
+    const result = await session.execute('blpop', buf('k', '0'))
+    assert.deepStrictEqual(result, arrayResult(['k', 'v1']))
+  })
+
+  test('BLPOP checks keys in order and pops first non-empty', async () => {
+    const { session } = createHarness()
+    await session.execute('lpush', buf('b', 'second'))
+    const result = await session.execute('blpop', buf('a', 'b', '0'))
+    assert.deepStrictEqual(result, arrayResult(['b', 'second']))
+  })
+
+  test('BLPOP timeout returns nil array', async () => {
+    const { session } = createHarness()
+    const result = await session.execute('blpop', buf('empty', '0.05'))
+    assert.deepStrictEqual(result, nullArrayResult())
+  })
+
+  test('BLPOP blocks then returns when LPUSH arrives from another session', async () => {
+    const { server, executor } = createHarness()
+    const session1 = new ClientSession({ server, executor })
+    const session2 = new ClientSession({ server, executor })
+
+    const blockPromise = session1.execute('blpop', buf('mylist', '5'))
+    await yieldToEventLoop()
+
+    await session2.execute('lpush', buf('mylist', 'hello'))
+    const result = await blockPromise
+    assert.deepStrictEqual(result, arrayResult(['mylist', 'hello']))
+  })
+
+  test('BLPOP multiple keys: unblocks on first key that receives data', async () => {
+    const { server, executor } = createHarness()
+    const session1 = new ClientSession({ server, executor })
+    const session2 = new ClientSession({ server, executor })
+
+    const blockPromise = session1.execute('blpop', buf('a', 'b', 'c', '5'))
+    await yieldToEventLoop()
+
+    await session2.execute('lpush', buf('b', 'found'))
+    const result = await blockPromise
+    assert.deepStrictEqual(result, arrayResult(['b', 'found']))
+  })
+
+  test('BRPOP returns immediately when list is non-empty (pops from right)', async () => {
+    const { session } = createHarness()
+    await session.execute('rpush', buf('k', 'first', 'last'))
+    const result = await session.execute('brpop', buf('k', '0'))
+    assert.deepStrictEqual(result, arrayResult(['k', 'last']))
+  })
+
+  test('BRPOP blocks then returns when RPUSH arrives from another session', async () => {
+    const { server, executor } = createHarness()
+    const session1 = new ClientSession({ server, executor })
+    const session2 = new ClientSession({ server, executor })
+
+    const blockPromise = session1.execute('brpop', buf('mylist', '5'))
+    await yieldToEventLoop()
+
+    await session2.execute('rpush', buf('mylist', 'world'))
+    const result = await blockPromise
+    assert.deepStrictEqual(result, arrayResult(['mylist', 'world']))
+  })
+
+  test('BRPOP timeout returns nil array', async () => {
+    const { session } = createHarness()
+    const result = await session.execute('brpop', buf('empty', '0.05'))
+    assert.deepStrictEqual(result, nullArrayResult())
+  })
+})
+
+describe('XREAD BLOCK (unit)', () => {
+  test('XREAD BLOCK returns immediately when entries already exist after id', async () => {
+    const { session } = createHarness()
+    await session.execute('xadd', buf('s', '1-1', 'f', 'v'))
+    const result = await session.execute(
+      'xread',
+      buf('BLOCK', '0', 'STREAMS', 's', '0-0'),
+    )
+    assert.ok(result instanceof RedisResult)
+    assert.strictEqual(result.value.kind, 'array')
+  })
+
+  test('XREAD BLOCK with $ on non-empty stream blocks on new entries only', async () => {
+    const { server, executor } = createHarness()
+    const session1 = new ClientSession({ server, executor })
+    const session2 = new ClientSession({ server, executor })
+
+    await session1.execute('xadd', buf('s', '1-1', 'f', 'v'))
+
+    const blockPromise = session1.execute(
+      'xread',
+      buf('BLOCK', '5000', 'STREAMS', 's', '$'),
+    )
+    await yieldToEventLoop()
+
+    await session2.execute('xadd', buf('s', '2-1', 'f', 'v2'))
+    const result = await blockPromise
+
+    assert.ok(result instanceof RedisResult)
+    assert.strictEqual(result.value.kind, 'array')
+  })
+
+  test('XREAD BLOCK timeout returns nil', async () => {
+    const { session } = createHarness()
+    const result = await session.execute(
+      'xread',
+      buf('BLOCK', '50', 'STREAMS', 's', '$'),
+    )
+    assert.deepStrictEqual(
+      result,
+      RedisResult.create(RedisValue.bulkString(null)),
+    )
+  })
+
+  test('XREAD non-blocking still works (no BLOCK option)', async () => {
+    const { session } = createHarness()
+    await session.execute('xadd', buf('s', '1-1', 'f', 'v'))
+    const result = await session.execute('xread', buf('STREAMS', 's', '0-0'))
+    assert.ok(result instanceof RedisResult)
+    assert.strictEqual(result.value.kind, 'array')
+  })
+
+  test('XREAD BLOCK with COUNT limits results', async () => {
+    const { server, executor } = createHarness()
+    const session1 = new ClientSession({ server, executor })
+    const session2 = new ClientSession({ server, executor })
+
+    const blockPromise = session1.execute(
+      'xread',
+      buf('BLOCK', '5000', 'COUNT', '1', 'STREAMS', 's', '$'),
+    )
+    await yieldToEventLoop()
+
+    await session2.execute('xadd', buf('s', '1-1', 'f', 'v1'))
+    await session2.execute('xadd', buf('s', '2-1', 'f', 'v2'))
+    const result = await blockPromise
+
+    assert.ok(result instanceof RedisResult)
+    assert.strictEqual(result.value.kind, 'array')
+    const streamResults = (
+      result.value as { kind: 'array'; items: RedisValue[] }
+    ).items
+    const entries = (streamResults[0] as { kind: 'array'; items: RedisValue[] })
+      .items[1]
+    assert.strictEqual(
+      (entries as { kind: 'array'; items: RedisValue[] }).items.length,
+      1,
+    )
+  })
+})

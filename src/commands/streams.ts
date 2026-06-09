@@ -12,6 +12,8 @@ import {
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import { RedisValue } from '../core/redis-value'
+import { RedisResult } from '../core/redis-result'
+import type { RedisExecutionContext } from '../core/redis-context'
 import type { RedisStreamData, StreamId } from '../state/data-types'
 import { array, bulk, integer } from './helpers'
 
@@ -405,16 +407,19 @@ export const xtrimCommand = defineCommand({
 type XreadStream = { key: Buffer; afterId: StreamId | '$' }
 
 function createXreadSchema() {
-  return t.custom<{ count: number | null; streams: XreadStream[] }>(
-    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
-      let cursor = index
-      let count: number | null = null
+  return t.custom<{
+    count: number | null
+    blockMs: number | null
+    streams: XreadStream[]
+  }>((input: readonly Buffer[], index: number, ctx: ParseContext) => {
+    let cursor = index
+    let count: number | null = null
+    let blockMs: number | null = null
 
-      // Optional COUNT <n>
-      if (
-        cursor < input.length &&
-        input[cursor].toString().toUpperCase() === 'COUNT'
-      ) {
+    // Optional COUNT <n> and BLOCK <ms> in any order
+    while (cursor < input.length) {
+      const token = input[cursor].toString().toUpperCase()
+      if (token === 'COUNT') {
         cursor++
         const raw = input[cursor]?.toString()
         if (raw === undefined)
@@ -423,76 +428,146 @@ function createXreadSchema() {
         if (!Number.isInteger(n) || n < 0) throw new RedisSyntaxError()
         count = n
         cursor++
+      } else if (token === 'BLOCK') {
+        cursor++
+        const raw = input[cursor]?.toString()
+        if (raw === undefined)
+          throw new WrongNumberOfArgumentsError(ctx.commandName)
+        const ms = Number(raw)
+        if (!Number.isInteger(ms) || ms < 0) throw new RedisSyntaxError()
+        blockMs = ms
+        cursor++
+      } else {
+        break
       }
+    }
 
-      // Required STREAMS keyword
-      if (
-        cursor >= input.length ||
-        input[cursor].toString().toUpperCase() !== 'STREAMS'
-      ) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
+    // Required STREAMS keyword
+    if (
+      cursor >= input.length ||
+      input[cursor].toString().toUpperCase() !== 'STREAMS'
+    ) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+    cursor++
+
+    // Remaining tokens: first half = keys, second half = ids
+    const remaining = input.length - cursor
+    if (remaining === 0 || remaining % 2 !== 0) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+
+    const half = remaining / 2
+    const streams: XreadStream[] = []
+    for (let i = 0; i < half; i++) {
+      const key = input[cursor + i]
+      const idTok = input[cursor + half + i].toString()
+      const afterId: StreamId | '$' = idTok === '$' ? '$' : parseExactId(idTok)
+      streams.push({ key, afterId })
+    }
+
+    return { value: { count, blockMs, streams }, nextIndex: input.length }
+  })
+}
+
+type ResolvedXreadStream = { key: Buffer; afterId: StreamId }
+
+function readStreamEntries(
+  streams: ResolvedXreadStream[],
+  count: number | null,
+  ctx: RedisExecutionContext,
+): RedisResult | null {
+  const results: RedisValue[] = []
+
+  for (const { key, afterId } of streams) {
+    const stream = ctx.db.getStream(key)
+    if (!stream) continue
+
+    const entries: RedisValue[] = []
+    for (const entry of stream.entries) {
+      if (compareStreamId(entry.id, afterId) > 0) {
+        entries.push(entryToReply(entry.id, entry.fields))
+        if (count !== null && count > 0 && entries.length >= count) break
       }
-      cursor++
+    }
 
-      // Remaining tokens: first half = keys, second half = ids
-      const remaining = input.length - cursor
-      if (remaining === 0 || remaining % 2 !== 0) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
+    if (entries.length > 0) {
+      results.push(
+        RedisValue.array([
+          RedisValue.bulkString(key),
+          RedisValue.array(entries),
+        ]),
+      )
+    }
+  }
 
-      const half = remaining / 2
-      const streams: XreadStream[] = []
-      for (let i = 0; i < half; i++) {
-        const key = input[cursor + i]
-        const idTok = input[cursor + half + i].toString()
-        const afterId: StreamId | '$' =
-          idTok === '$' ? '$' : parseExactId(idTok)
-        streams.push({ key, afterId })
-      }
+  return results.length > 0
+    ? RedisResult.create(RedisValue.array(results))
+    : null
+}
 
-      return { value: { count, streams }, nextIndex: input.length }
-    },
-  )
+async function blockingXread(
+  streams: ResolvedXreadStream[],
+  count: number | null,
+  blockMs: number,
+  ctx: RedisExecutionContext,
+): Promise<RedisResult> {
+  const timeoutMs = blockMs === 0 ? undefined : blockMs
+  const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined
+  const keys = streams.map(s => s.key)
+
+  while (true) {
+    const remaining =
+      deadline !== undefined ? Math.max(0, deadline - Date.now()) : undefined
+    if (remaining === 0) return bulk(null)
+
+    let wake!: (v: true) => void
+    const waitFor = new Promise<true>(resolve => {
+      wake = () => resolve(true)
+    })
+
+    const unsubs = keys.map(key =>
+      ctx.db.subscribeKey(key, event => {
+        if (event.type === 'write') wake(true)
+      }),
+    )
+
+    const woken = await ctx.park({
+      waitFor,
+      timeoutMs: remaining,
+      signal: ctx.signal,
+    })
+    for (const unsub of unsubs) unsub()
+
+    if (woken === null) return bulk(null)
+
+    const result = readStreamEntries(streams, count, ctx)
+    if (result) return result
+  }
 }
 
 export const xreadCommand = defineCommand({
   name: 'xread',
   schema: t.object({ args: createXreadSchema() }),
-  flags: ['readonly'],
+  flags: ['readonly', 'noscript'],
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {
-    const { count, streams } = args.args
-    const results: RedisValue[] = []
+    const { count, blockMs, streams } = args.args
 
-    for (const { key, afterId } of streams) {
-      const stream = ctx.db.getStream(key)
-      if (!stream) continue
+    // Resolve '$' to the stream's current last ID before any blocking,
+    // so entries added after this call (not before) are returned.
+    const resolved: ResolvedXreadStream[] = streams.map(s => ({
+      key: s.key,
+      afterId:
+        s.afterId === '$'
+          ? (ctx.db.getStream(s.key)?.lastId ?? MIN_ID)
+          : s.afterId,
+    }))
 
-      // $ = use stream's current last id; a non-blocking call will return nothing for it
-      const startId: StreamId = afterId === '$' ? stream.lastId : afterId
+    const immediate = readStreamEntries(resolved, count, ctx)
+    if (immediate || blockMs === null) return immediate ?? bulk(null)
 
-      const entries: RedisValue[] = []
-      for (const entry of stream.entries) {
-        if (compareStreamId(entry.id, startId) > 0) {
-          entries.push(entryToReply(entry.id, entry.fields))
-          if (count !== null && count > 0 && entries.length >= count) break
-        }
-      }
-
-      if (entries.length > 0) {
-        results.push(
-          RedisValue.array([
-            RedisValue.bulkString(key),
-            RedisValue.array(entries),
-          ]),
-        )
-      }
-    }
-
-    if (results.length === 0) {
-      return bulk(null)
-    }
-    return array(results)
+    return blockingXread(resolved, count, blockMs, ctx)
   },
 })
 
