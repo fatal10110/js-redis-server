@@ -47,116 +47,99 @@ npm run clean:redis
 
 ## Architecture Overview
 
+For full diagrams and a request-lifecycle walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — keep it in sync with any structural change.
+
 ### Core Architecture Pattern
 
-This is a Redis-compatible server implementation that supports both standalone and cluster modes. The architecture uses a **commander pattern** where commands are executed through a pipeline:
+Redis-compatible server (standalone + cluster modes) built as a layered pipeline. The **same** `CommandExecutor` pipeline drives standalone mode, cluster mode, `MULTI`/`EXEC` transactions, and Lua `EVAL` alike, so routing, queueing, and command semantics never diverge:
 
-1. **Transport Layer** - Handles RESP protocol encoding/decoding
-2. **Commander Layer** - Routes commands and manages execution context
-3. **DB Layer** - Manages in-memory data structures
-4. **Command Layer** - Individual command implementations
+1. **Transport Layer** - Frames RESP bytes on/off the wire (`SocketConnectionTransport` / `InMemoryConnectionTransport`)
+2. **Session Layer** - Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys (`ClientSession`)
+3. **Execution Layer** - Looks up commands, parses args, extracts routing keys, runs composable policies (`CommandExecutor`, `CommandRegistry`, `ExecutionPolicy`)
+4. **Command Layer** - Pure `(args, ctx) → RedisResult` implementations grouped by data type ([src/commands/](src/commands/))
+5. **State Layer** - In-memory keyspace, mutation events, cluster topology, script cache, pub/sub ([src/state/](src/state/))
 
 ### Key Components
 
-#### 1. DB ([src/commanders/custom/db.ts](src/commanders/custom/db.ts))
+#### 1. RedisServerState & RedisDatabase ([src/state/server-state.ts](src/state/server-state.ts), [src/state/database.ts](src/state/database.ts))
 
-- Central in-memory data store using three Maps:
-  - `mapping`: string → Buffer (key lookup)
-  - `data`: Buffer → DataTypes (actual data)
-  - `timings`: Buffer → number (expiration timestamps)
-  - `scriptsStore`: string → Buffer (Lua scripts by SHA)
-- Handles key expiration via lazy eviction in `tryEvict()`
-- All data operations go through this class
+- `RedisServerState` owns one or more `RedisDatabase` instances plus server-wide state: cluster topology, Lua script cache, pub/sub broker
+- Each `RedisDatabase` wraps a `RedisKeyspace` ([src/state/keyspace.ts](src/state/keyspace.ts)): a `Map<keyId, KeyspaceEntry>` of byte-safe `Buffer` keys → typed `RedisDataValue`s with an optional `expiresAt`
+- Expiration is lazy — `getLiveEntry` evicts expired keys on read and emits an `evict` mutation event so `WATCH` sees expiry like a real delete
+- Every mutation flows through `RedisMutationBus` ([src/state/mutation-events.ts](src/state/mutation-events.ts)), which clones values before fan-out (drives `WATCH` today, keyspace notifications later)
+- `FLUSHALL`/`FLUSHDB` clear keyspace data but **not** the script cache — only `SCRIPT FLUSH` does
 
-#### 2. Commander Types
+#### 2. CommandExecutor & ExecutionPolicy ([src/core/command-executor.ts](src/core/command-executor.ts), [src/core/execution-policies/](src/core/execution-policies/))
 
-**Commander** ([src/commanders/custom/commander.ts](src/commanders/custom/commander.ts))
+- `CommandExecutor.plan()` resolves a `CommandDefinition` from the `CommandRegistry`, parses raw `Buffer` args through the command's `schema`, and extracts routing keys via `definition.keys(args)` — producing a shared `CommandPlan`
+- `executePlan` is the normal async path (supports `ResponseStream` + `afterExecute`/`onStream` rewriting); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async or stream
+- An `ExecutionPolicy` wraps every command with optional `beforeExecute` (can short-circuit: queue/redirect/reject), `afterExecute` (rewrite the result), and `onStream` (wrap a streaming result) hooks
+- `TransactionPolicy` ([src/core/execution-policies/transaction-policy.ts](src/core/execution-policies/transaction-policy.ts)) is always appended last; `ClusterPolicy` ([src/core/execution-policies/cluster-policy.ts](src/core/execution-policies/cluster-policy.ts)) is prepended only for cluster nodes — order matters because cluster routing must validate (and possibly redirect/reject) **before** a command is queued into a transaction
+- There is no separate "cluster commander" type — cluster mode is the same `Resp2Server` + `CommandExecutor`, configured with one extra `CLUSTER` command and a `ClusterPolicy` bound to that node's id ([src/cluster.ts](src/cluster.ts))
 
-- Standalone Redis mode
-- Simple command execution without clustering logic
-- Handles MULTI/EXEC transactions via `TransactionCommand`
-- Creates commands via `createCommands()` factory
+#### 3. Command Architecture ([src/commands/](src/commands/))
 
-**ClusterCommander** ([src/commanders/custom/clusterCommander.ts](src/commanders/custom/clusterCommander.ts))
-
-- Cluster mode implementation
-- Validates slot ownership before executing commands
-- Throws `MovedError` to redirect clients to correct nodes
-- Uses `cluster-key-slot` to determine which node owns a key
-- Handles cross-slot validation (throws `CorssSlot` error)
-- Creates commands via `createClusterCommands()` factory
-
-#### 3. Command Architecture
-
-Commands are organized by Redis data type:
-
-- **Strings**: [src/commanders/custom/commands/redis/data/strings/](src/commanders/custom/commands/redis/data/strings/)
-- **Hashes**: [src/commanders/custom/commands/redis/data/hashes/](src/commanders/custom/commands/redis/data/hashes/)
-- **Lists**: [src/commanders/custom/commands/redis/data/lists/](src/commanders/custom/commands/redis/data/lists/)
-- **Sets**: [src/commanders/custom/commands/redis/data/sets/](src/commanders/custom/commands/redis/data/sets/)
-- **Sorted Sets**: [src/commanders/custom/commands/redis/data/zsets/](src/commanders/custom/commands/redis/data/zsets/)
-- **Keys**: [src/commanders/custom/commands/redis/data/keys/](src/commanders/custom/commands/redis/data/keys/)
-
-Each command implements the `Command` interface:
+Commands are grouped by Redis data type/concern: `strings`, `hashes`, `lists`, `sets`, `zsets`, `keys`, `scan`, `scripts`, `transactions`, `connection`, `cluster`, `introspection`. Each is a `CommandDefinition` ([src/core/command-definition.ts](src/core/command-definition.ts)) built via `defineCommand`:
 
 ```typescript
-interface Command {
-  getKeys(rawCmd: Buffer, args: Buffer[]): Buffer[] // Extract keys for cluster routing
-  run(
-    rawCmd: Buffer,
-    args: Buffer[],
-    signal: AbortSignal,
-  ): Promise<CommandResult>
+interface CommandDefinition<TArgs> {
+  readonly name: string
+  readonly schema: CommandSchema<TArgs> // arity/syntax — single source of truth, parsed via `t`
+  readonly flags: readonly CommandFlag[] // 'readonly' | 'write' | 'transaction' | 'noscript' | ...
+  keys(args: TArgs): readonly Buffer[] // routing keys for cluster slot calculation
+  execute(
+    args: TArgs,
+    ctx: RedisExecutionContext,
+  ): RedisResult | Promise<RedisResult> | ResponseStream
 }
 ```
 
-#### 4. Data Structures
+Commands are pure `(args, ctx) → RedisResult` — they never touch the transport. That is what lets the *exact same* command run standalone, inside a cluster node, inside `MULTI`/`EXEC`, and inside a Lua script without rewrites.
 
-Custom implementations in [src/commanders/custom/data-structures/](src/commanders/custom/data-structures/):
+#### 4. Data Structures ([src/state/data-types.ts](src/state/data-types.ts))
 
-- `StringDataType` - String values
-- `HashDataType` - Hash maps
-- `ListDataType` - Doubly-linked lists
-- `SetDataType` - Set implementation
-- `SortedSetDataType` - Sorted sets with scores
-- `StreamDataType` - Stream data structure (future)
+`RedisDataValue` is a typed union: `string`, `hash`, `list`, `set`, `zset`, `stream` (stream is currently a minimal stub — no entry storage, ID tracking, or consumer groups yet).
 
-#### 5. Transaction Support (MULTI/EXEC)
+#### 5. Transaction Support (MULTI/EXEC/WATCH)
 
-- Implemented via `TransactionCommand` class
-- Commands are queued during MULTI state
-- Executed atomically on EXEC
-- DISCARD cancels transaction
-- Cluster mode validates slots during transaction execution
+- `ClientSession` ([src/core/client-session.ts](src/core/client-session.ts)) tracks transaction mode, queues already-parsed `CommandPlan`s, and replays them through the normal `executePlan` path on `EXEC`
+- `TransactionPolicy` intercepts queued commands in `beforeExecute` and replies `+QUEUED` — parsing and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at **queue time**, not at `EXEC` time
+- `WATCH` subscribes to per-key mutation events on the database; any write/delete/evict on a watched key marks the session dirty, checked via `isWatchDirty()` before `EXEC` runs the queue
+- In cluster mode, the slot of the *first* keyed command queued is pinned per-session so every subsequent queued command must hash to the same slot
+- `DISCARD` cancels a transaction; `EXECABORT` is returned if the queue itself is dirty (e.g. an unknown command was queued)
 
 #### 6. Dual Backend System
 
-The test suite supports two backends via `TEST_BACKEND` environment variable:
+The integration test suite supports two backends via `TEST_BACKEND` (see [tests-integration/test-config.ts](tests-integration/test-config.ts)):
 
-- `mock`: Uses `ioredis-mock` (fast, no external dependencies)
-- `real`: Uses actual Redis cluster (validates real-world compatibility)
+- `mock` (default): spins up an in-process mock cluster via `buildRedisCluster` — fast, no external dependencies
+- `real`: uses an actual Redis cluster (validates real-world compatibility)
 
 Integration tests live in [tests-integration/](tests-integration/) with subdirectories for `ioredis/` and `node-redis/` clients.
 
+### Concurrency Model
+
+Each `RedisDatabase` owns a `SerialTurnQueue` ([src/core/turn-queue.ts](src/core/turn-queue.ts)). Every `session.execute()` waits for a turn before reaching the executor, so commands within one database run to completion one at a time — mirroring single-threaded Redis semantics (sessions on different databases run independently). `RedisExecutionContext` carries a `park` handler ([src/core/redis-context.ts](src/core/redis-context.ts)) so a command can release its turn while waiting on something and re-acquire one with priority once it resolves — plumbing for future blocking commands (`BLPOP`, `WAIT`, `XREAD BLOCK`, ...); no shipped command uses it yet.
+
 ### Type System
 
-Core types in [src/types.ts](src/types.ts):
+Core protocol/result types live in [src/core/redis-value.ts](src/core/redis-value.ts), [src/core/redis-result.ts](src/core/redis-result.ts), and [src/core/response-stream.ts](src/core/response-stream.ts):
 
-- `DBCommandExecutor` - Interface for command execution
-- `Command` - Individual command interface
-- `CommandResult` - Response with optional close flag
-- `Transport` - RESP protocol writer
-- `DiscoveryService` - Cluster node discovery
-- `ClusterCommanderFactory` - Creates commanders for cluster nodes
+- `RedisValue` - protocol-agnostic reply union (`simple-string`, `bulk-string`, `integer`, `array`, `map`, `error`, ...), encoded to RESP2/RESP3 wire bytes by [src/core/resp-encoder.ts](src/core/resp-encoder.ts)
+- `RedisResult` - command outcome wrapper returned by `execute()`
+- `ResponseStream` - streaming/push-style replies
+- `CommandDefinition` / `CommandPlan` / `CommandSchema` - command shape, parsed invocation, and arg-parsing ([src/core/command-definition.ts](src/core/command-definition.ts), [src/core/command-schema.ts](src/core/command-schema.ts))
+- `RedisExecutionContext` - per-call context (`db`, `server`, `session`, `executor`, `signal`, `park`) ([src/core/redis-context.ts](src/core/redis-context.ts))
 
 ### Error Handling
 
-Custom errors in [src/core/errors.ts](src/core/errors.ts):
+Custom errors in [src/core/redis-error.ts](src/core/redis-error.ts), all extending `RedisCommandError`:
 
-- `UserFacedError` - Base class for client-visible errors
-- `UnknownCommand` - Command not found
-- `MovedError` - Cluster redirect (MOVED response)
-- `CorssSlot` - Cross-slot operation in cluster mode
+- `UnknownRedisCommandError` - command not found
+- `RedisMovedError` - cluster redirect (`-MOVED` response)
+- `RedisCrossSlotError` - cross-slot operation in cluster mode (`-CROSSSLOT`)
+- `RedisClusterDownError` - slot unassigned (`-CLUSTERDOWN`)
+- `WrongTypeRedisError`, `WrongNumberOfArgumentsError`, `RedisSyntaxError`, `NoScriptError`, `ExecWithoutMultiError`, ... - command-specific client-visible errors
 - Error responses follow RESP protocol format
 
 ## Code Style & Conventions
@@ -255,31 +238,22 @@ describe('MyFeature', () => {
 
 ## Adding New Commands
 
-1. Create command file in appropriate directory (e.g., `src/commanders/custom/commands/redis/data/strings/mycommand.ts`)
-2. Implement `Command` interface with `getKeys()` and `run()` methods
-3. Add to command factory in [src/commanders/custom/commands/redis/index.ts](src/commanders/custom/commands/redis/index.ts)
-4. Add tests in [tests/](tests/) directory
-5. Consider adding to filtered command sets:
-   - `createReadonlyCommands()` - Safe for replicas
-   - `createMultiCommands()` - Allowed in transactions
+1. Implement a `CommandDefinition` — `name`, `schema` (via `t` from [src/core/command-schema.ts](src/core/command-schema.ts)), `flags`, `keys(args)`, and `execute(args, ctx)` — using `defineCommand` ([src/core/command-definition.ts](src/core/command-definition.ts)) in the matching [src/commands/<type>.ts](src/commands/) file
+2. Register it in [src/commands/index.ts](src/commands/index.ts) (and re-export it if other modules need direct access)
+3. Add unit tests in [tests/](tests/); add integration coverage under [tests-integration/](tests-integration/) if it has client-visible wire behavior worth checking against a real client
+4. Set `flags` correctly — `'readonly'` marks it safe for replicas, `'noscript'` excludes it from Lua, `'transaction'` controls MULTI/EXEC eligibility
+
+Because commands are pure `(args, ctx) → RedisResult` functions that never touch the transport, a correctly-implemented command automatically works standalone, in a cluster, inside `MULTI`/`EXEC`, and inside Lua — no special-casing needed.
 
 ## Cluster Slot Routing
 
 When implementing commands that operate on keys:
 
-1. Implement `getKeys()` to extract all keys from arguments
-2. `ClusterCommander` uses `cluster-key-slot` to determine slot ownership
-3. If command accesses multiple keys, all must hash to same slot (or throw `CorssSlot`)
-4. If slot is not owned by current node, throw `MovedError` with correct node info
-
-## Transaction Execution Context
-
-Recent architecture changes introduced execution contexts:
-
-- `ExecutionContext` interface for stateful command execution
-- `TransactionExecutionContext` for MULTI/EXEC blocks
-- Each context can transition to another context based on commands
-- Allows for cleaner separation of transaction vs normal execution mode
+1. Implement `keys(args)` to extract all routing keys from the parsed arguments
+2. `ClusterPolicy` computes a slot for those keys via `RedisClusterTopology.calculateSlotForKeys` ([src/state/cluster-topology.ts](src/state/cluster-topology.ts))
+3. If the keys span ≥2 slots, it throws `RedisCrossSlotError` (`-CROSSSLOT`)
+4. If the slot is owned by another master, it throws `RedisMovedError` (`-MOVED (slot) (host):(port)`); if the slot is unassigned, `RedisClusterDownError` (`-CLUSTERDOWN`)
+5. Replicas never "own" a slot for routing — a keyed command sent directly to a replica is redirected to its master
 
 
 ## grepai - Semantic Code Search
