@@ -532,16 +532,20 @@ async function blockingXread(
       }),
     )
 
-    const woken = await ctx.park({
-      waitFor,
-      timeoutMs: remaining,
-      signal: ctx.signal,
-    })
-    for (const unsub of unsubs) {
-      try {
-        unsub()
-      } catch {
-        // ignore errors from individual unsubscribers so all are attempted
+    let woken: boolean | null
+    try {
+      woken = await ctx.park({
+        waitFor,
+        timeoutMs: remaining,
+        signal: ctx.signal,
+      })
+    } finally {
+      for (const unsub of unsubs) {
+        try {
+          unsub()
+        } catch {
+          // ignore errors from individual unsubscribers so all are attempted
+        }
       }
     }
 
@@ -555,7 +559,7 @@ async function blockingXread(
 export const xreadCommand = defineCommand({
   name: 'xread',
   schema: t.object({ args: createXreadSchema() }),
-  flags: ['readonly', 'noscript'],
+  flags: ['readonly'],
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {
     const { count, blockMs, streams } = args.args
