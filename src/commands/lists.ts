@@ -380,16 +380,20 @@ async function blockingListPop(
       }),
     )
 
-    const woken = await ctx.park({
-      waitFor,
-      timeoutMs: remaining,
-      signal: ctx.signal,
-    })
-    for (const unsub of unsubs) {
-      try {
-        unsub()
-      } catch {
-        // ignore errors from individual unsubscribers so all are attempted
+    let woken: boolean | null
+    try {
+      woken = await ctx.park({
+        waitFor,
+        timeoutMs: remaining,
+        signal: ctx.signal,
+      })
+    } finally {
+      for (const unsub of unsubs) {
+        try {
+          unsub()
+        } catch {
+          // ignore errors from individual unsubscribers so all are attempted
+        }
       }
     }
 

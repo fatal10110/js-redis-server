@@ -209,6 +209,44 @@ describe('XREAD BLOCK (unit)', () => {
   })
 })
 
+describe('blocking commands inside MULTI/EXEC (unit)', () => {
+  test('BLPOP inside MULTI/EXEC returns nil array immediately (non-blocking)', async () => {
+    const { session } = createHarness()
+    await session.execute('multi', buf())
+    await session.execute('blpop', buf('nokey', '5'))
+    const result = await session.execute('exec', buf())
+    // EXEC array has one entry: nil array from non-blocking BLPOP
+    assert.strictEqual(result.value.kind, 'array')
+    const execItems = (result.value as { kind: 'array'; items: RedisResult[] })
+      .items
+    assert.strictEqual(execItems.length, 1)
+    assert.deepStrictEqual(
+      execItems[0],
+      RedisValue.nullArray(),
+      'BLPOP in MULTI returns nil array without blocking',
+    )
+  })
+
+  test('XREAD BLOCK inside MULTI/EXEC returns nil immediately (non-blocking)', async () => {
+    const { session } = createHarness()
+    await session.execute('multi', buf())
+    await session.execute(
+      'xread',
+      buf('BLOCK', '5000', 'STREAMS', 'nostream', '$'),
+    )
+    const result = await session.execute('exec', buf())
+    assert.strictEqual(result.value.kind, 'array')
+    const execItems = (result.value as { kind: 'array'; items: RedisResult[] })
+      .items
+    assert.strictEqual(execItems.length, 1)
+    assert.deepStrictEqual(
+      execItems[0],
+      RedisValue.bulkString(null),
+      'XREAD BLOCK in MULTI returns null without blocking',
+    )
+  })
+})
+
 describe('BLPOP thundering herd (unit)', () => {
   test('single push delivers to exactly one of two concurrent waiters', async () => {
     const { server, executor } = createHarness()
