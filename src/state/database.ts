@@ -3,12 +3,14 @@ import {
   createListData,
   createSetData,
   createSortedSetData,
+  createStreamData,
   createStringData,
   type RedisDataValue,
   type RedisHashData,
   type RedisListData,
   type RedisSetData,
   type RedisSortedSetData,
+  type RedisStreamData,
 } from './data-types'
 import {
   ExpirationState,
@@ -99,6 +101,10 @@ export class RedisDatabase {
     return this.getTyped<RedisSortedSetData>(key, 'zset')
   }
 
+  getStream(key: Buffer): RedisStreamData | null {
+    return this.getTyped<RedisStreamData>(key, 'stream')
+  }
+
   updateHash<TResult>(
     key: Buffer,
     mutator: (hash: RedisHashData) => TResult,
@@ -125,6 +131,13 @@ export class RedisDatabase {
     mutator: (zset: RedisSortedSetData) => TResult,
   ): TResult {
     return this.updateTyped(key, 'zset', createSortedSetData, mutator)
+  }
+
+  updateStream<TResult>(
+    key: Buffer,
+    mutator: (stream: RedisStreamData) => TResult,
+  ): TResult {
+    return this.updateTyped(key, 'stream', createStreamData, mutator)
   }
 
   private getTyped<TValue extends RedisDataValue>(
