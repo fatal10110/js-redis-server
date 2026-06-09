@@ -167,6 +167,26 @@ export class NoSuchKeyError extends RedisCommandError {
   }
 }
 
+export class InvalidStreamIdError extends RedisCommandError {
+  constructor() {
+    super('Invalid stream ID specified as stream command argument')
+  }
+}
+
+export class StreamIdEqualOrSmallerError extends RedisCommandError {
+  constructor() {
+    super(
+      'The ID specified in XADD is equal or smaller than the target stream top item',
+    )
+  }
+}
+
+export class StreamIdNotGreaterThanZeroError extends RedisCommandError {
+  constructor() {
+    super('The ID specified in XADD must be greater than 0-0')
+  }
+}
+
 export class HashValueNotIntegerError extends RedisCommandError {
   constructor() {
     super('hash value is not an integer')

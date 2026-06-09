@@ -41,8 +41,23 @@ export type RedisSortedSetMember = {
   score: number
 }
 
+export type StreamId = {
+  ms: bigint
+  seq: bigint
+}
+
+export type RedisStreamEntry = {
+  id: StreamId
+  // Flat [field1, value1, field2, value2, ...], as Redis stores and replies.
+  fields: Buffer[]
+}
+
 export type RedisStreamData = {
   type: 'stream'
+  // Entries kept in ascending id order (append-only; ids are monotonic).
+  entries: RedisStreamEntry[]
+  // Highest id ever added; drives `*` / `ms-*` id generation. 0-0 when empty.
+  lastId: StreamId
 }
 
 export type RedisDataValue =
@@ -99,7 +114,14 @@ export function cloneRedisDataValue(value: RedisDataValue): RedisDataValue {
         ),
       }
     case 'stream':
-      return { type: 'stream' }
+      return {
+        type: 'stream',
+        entries: value.entries.map(entry => ({
+          id: { ms: entry.id.ms, seq: entry.id.seq },
+          fields: entry.fields.map(part => Buffer.from(part)),
+        })),
+        lastId: { ms: value.lastId.ms, seq: value.lastId.seq },
+      }
   }
 }
 
@@ -121,4 +143,8 @@ export function createSetData(): RedisSetData {
 
 export function createSortedSetData(): RedisSortedSetData {
   return { type: 'zset', members: new Map() }
+}
+
+export function createStreamData(): RedisStreamData {
+  return { type: 'stream', entries: [], lastId: { ms: 0n, seq: 0n } }
 }
