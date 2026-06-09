@@ -11,6 +11,7 @@ import { listsCommands } from './lists'
 import { scanCommands } from './scan'
 import { scriptsCommands } from './scripts'
 import { setsCommands } from './sets'
+import { streamsCommands } from './streams'
 import { stringsCommands } from './strings'
 import { transactionCommands } from './transactions'
 import { zsetsCommands } from './zsets'
@@ -26,6 +27,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...listsCommands,
   ...setsCommands,
   ...zsetsCommands,
+  ...streamsCommands,
   ...scriptsCommands,
 ]
 
