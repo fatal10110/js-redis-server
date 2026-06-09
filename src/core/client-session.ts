@@ -214,15 +214,21 @@ export class ClientSession implements RedisClientSession {
   ): Promise<RedisResult> {
     const values: RedisValue[] = []
 
+    // Blocking commands must not park while the EXEC turn is held — that would
+    // deadlock because no other session could produce the wakeup write. Override
+    // park so any blocking command queued in MULTI behaves non-blocking (returns
+    // null immediately), matching real Redis BLPOP-inside-MULTI semantics.
+    const noBlockCtx = {
+      ...this.createExecutionContext(),
+      park: async () => null,
+    }
+
     for (const plan of plans) {
       if (this.signal.aborted) {
         throw createAbortError()
       }
 
-      const result = await this.executor.executePlan(
-        plan,
-        this.createExecutionContext(),
-      )
+      const result = await this.executor.executePlan(plan, noBlockCtx)
 
       if (result instanceof RedisResult) {
         values.push(result.value)
