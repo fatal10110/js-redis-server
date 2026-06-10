@@ -218,18 +218,7 @@ export class ClientSession implements RedisClientSession {
     // deadlock because no other session could produce the wakeup write. Override
     // park so any blocking command queued in MULTI behaves non-blocking (returns
     // null immediately), matching real Redis BLPOP-inside-MULTI semantics.
-    //
-    // `db` is exposed as a live getter, not a snapshot: a queued `SELECT N` runs
-    // mid-EXEC and updates `selectedDatabaseId`, so every later command must see
-    // the newly selected database (issue #94).
-    const liveDb = () => this.db
-    const noBlockCtx: RedisExecutionContext = {
-      ...this.createExecutionContext(),
-      get db() {
-        return liveDb()
-      },
-      park: async () => null,
-    }
+    const noBlockCtx = this.createExecutionContext(undefined, async () => null)
 
     for (const plan of plans) {
       if (this.signal.aborted) {
@@ -336,16 +325,28 @@ export class ClientSession implements RedisClientSession {
    * waiting; without one (e.g. nested transaction execution) the plain park
    * handler is used.
    */
-  createExecutionContext(turnAccess?: TurnAccess): RedisExecutionContext {
+  createExecutionContext(
+    turnAccess?: TurnAccess,
+    parkOverride?: ParkHandler,
+  ): RedisExecutionContext {
+    // `db` is a live getter, not a snapshot: a queued `SELECT N` runs mid-EXEC
+    // and updates `selectedDatabaseId`, so every command must resolve the
+    // currently selected database at access time, not at context-build time
+    // (issue #94). Arrow keeps `this` bound to the session without aliasing.
+    const resolveDb = () => this.db
     return {
-      db: this.db,
+      get db() {
+        return resolveDb()
+      },
       server: this.server,
       session: this,
       executor: this.executor,
       signal: this.signal,
-      park: turnAccess
-        ? this.createTurnAwareParkHandler(turnAccess)
-        : this.parkHandler,
+      park:
+        parkOverride ??
+        (turnAccess
+          ? this.createTurnAwareParkHandler(turnAccess)
+          : this.parkHandler),
     }
   }
 
