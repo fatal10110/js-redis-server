@@ -381,6 +381,11 @@ export const getrangeCommand = defineCommand({
   },
 })
 
+export const substrCommand = defineCommand({
+  ...getrangeCommand,
+  name: 'substr',
+})
+
 export const setrangeCommand = defineCommand({
   name: 'setrange',
   schema: t.object({
@@ -452,6 +457,7 @@ export const stringsCommands = [
   msetCommand,
   msetnxCommand,
   getrangeCommand,
+  substrCommand,
   setrangeCommand,
   getexCommand,
 ]

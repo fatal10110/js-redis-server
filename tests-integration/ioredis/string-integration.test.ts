@@ -155,6 +155,33 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(nullValue, null)
   })
 
+  test('SUBSTR aliases GETRANGE', async () => {
+    const tag = `{substr:${randomKey()}}`
+    const key = `${tag}:key`
+    const missingKey = `${tag}:missing`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await directClient.set(key, 'abcdef')
+
+      assert.strictEqual(
+        await directClient.call('SUBSTR', key, '1', '3'),
+        'bcd',
+      )
+      assert.strictEqual(
+        await directClient.call('SUBSTR', key, '-3', '-1'),
+        'def',
+      )
+      assert.strictEqual(
+        await directClient.call('SUBSTR', missingKey, '0', '1'),
+        '',
+      )
+    } finally {
+      await directClient.del(key, missingKey)
+      directClient.disconnect()
+    }
+  })
+
   test('String commands workflow', async () => {
     // Create a session counter with user data
     await redisClient?.set('{user1001}name', 'Alice')

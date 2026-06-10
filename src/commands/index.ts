@@ -82,6 +82,7 @@ export {
   msetCommand,
   msetnxCommand,
   getrangeCommand,
+  substrCommand,
   setrangeCommand,
   getexCommand,
   stringsCommands,
