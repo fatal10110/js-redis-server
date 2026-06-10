@@ -166,6 +166,84 @@ describe('new transaction commands', () => {
     )
   })
 
+  test('SELECT inside MULTI switches the DB for later queued commands', async () => {
+    const { session, server } = createSession({ databaseCount: 2 })
+
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    assert.deepStrictEqual(
+      await session.execute('select', [Buffer.from('1')]),
+      queued(),
+    )
+    assert.deepStrictEqual(
+      await session.execute('set', [Buffer.from('key'), Buffer.from('value')]),
+      queued(),
+    )
+
+    assert.deepStrictEqual(
+      await session.execute('exec', []),
+      RedisResult.create(
+        RedisValue.array([
+          RedisValue.simpleString('OK'),
+          RedisValue.simpleString('OK'),
+        ]),
+      ),
+    )
+
+    // SET must land in DB 1 (selected mid-EXEC), not the pre-SELECT DB 0.
+    assert.strictEqual(
+      server.getDatabase(0).getString(Buffer.from('key')),
+      null,
+    )
+    assert.deepStrictEqual(
+      server.getDatabase(1).getString(Buffer.from('key')),
+      Buffer.from('value'),
+    )
+  })
+
+  test('EXEC acquires the target DB turn after a queued SELECT switches DBs', async () => {
+    const { session, server } = createSession({ databaseCount: 2 })
+    const key = Buffer.from('key')
+
+    // Externally hold DB 1's serialization turn so the transaction's post-SELECT
+    // SET cannot run until we release it — proving EXEC hands the turn off to
+    // DB 1's queue rather than writing unserialized.
+    const blocker = await server.getDatabase(1).turnQueue.waitTurn()
+
+    await session.execute('multi', [])
+    await session.execute('select', [Buffer.from('1')])
+    await session.execute('set', [key, Buffer.from('value')])
+
+    let execSettled = false
+    const execPromise = session.execute('exec', []).then(result => {
+      execSettled = true
+      return result
+    })
+
+    // Let the EXEC run up to the handoff; it must be parked waiting for DB 1.
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.strictEqual(execSettled, false, 'EXEC should block on DB 1 turn')
+    assert.strictEqual(server.getDatabase(1).getString(key), null)
+
+    // Releasing DB 1's turn lets EXEC acquire it and finish the SET.
+    blocker.release()
+    const result = await execPromise
+
+    assert.strictEqual(execSettled, true)
+    assert.deepStrictEqual(
+      result,
+      RedisResult.create(
+        RedisValue.array([
+          RedisValue.simpleString('OK'),
+          RedisValue.simpleString('OK'),
+        ]),
+      ),
+    )
+    assert.deepStrictEqual(
+      server.getDatabase(1).getString(key),
+      Buffer.from('value'),
+    )
+  })
+
   test('WATCH aborts EXEC with a null transaction result', async () => {
     const server = new RedisServerState()
     const executor = createRedisCommandExecutor()
