@@ -1,6 +1,14 @@
 import { Redis, Cluster } from 'ioredis'
 import { createCluster, RedisClusterType } from 'redis'
+import { spawn, ChildProcess } from 'node:child_process'
+import { createServer, AddressInfo } from 'node:net'
+import { setTimeout as delay } from 'node:timers/promises'
 import { buildRedisCluster, RedisCluster } from '../src/cluster'
+import {
+  Resp2Server,
+  RedisServerState,
+  createRedisCommandExecutor,
+} from '../src'
 
 export type TestBackend = 'mock' | 'real'
 
@@ -15,6 +23,9 @@ export class TestRunner {
   private activeMockCluster: RedisCluster | null = null
   private ioredisCluster: Cluster[] = []
   private nodeRedisCluster: RedisClusterType[] = []
+  private standaloneServers: Resp2Server[] = []
+  private standaloneProcs: ChildProcess[] = []
+  private ioredisStandalone: Redis[] = []
 
   private async ensureMockCluster(
     options: Required<IoredisClusterSetupOptions>,
@@ -123,6 +134,60 @@ export class TestRunner {
     }
   }
 
+  /**
+   * Connect an ioredis client to a single standalone server (non-cluster).
+   *
+   * Standalone-only behavior — multiple logical databases and SELECT — cannot
+   * be exercised through the cluster harness (cluster mode rejects SELECT), so
+   * this path serves tests that need a real SELECT-capable server.
+   *
+   *  - mock: spin up an in-process Resp2Server with 16 databases
+   *  - real: spawn a real `redis-server` child on a free port (also 16 DBs)
+   */
+  async setupIoredisStandalone(): Promise<Redis> {
+    const port =
+      this.backend === 'mock'
+        ? await this.startMockStandalone()
+        : await this.startRealStandalone()
+
+    const client = new Redis({ host: '127.0.0.1', port, lazyConnect: true })
+    await client.connect()
+    this.ioredisStandalone.push(client)
+    return client
+  }
+
+  private async startMockStandalone(): Promise<number> {
+    const state = new RedisServerState({ databaseCount: 16 })
+    const executor = createRedisCommandExecutor()
+    const server = new Resp2Server({ server: state, executor })
+    await server.listen(0)
+    this.standaloneServers.push(server)
+    return server.getPort()
+  }
+
+  private async startRealStandalone(): Promise<number> {
+    // CI (and anyone running docker-compose.test.yml) provides a standalone
+    // Redis whose host port is published via REDIS_STANDALONE_PORT — connect to
+    // it instead of spawning, since the runner has no redis-server binary.
+    const configuredPort = process.env.REDIS_STANDALONE_PORT
+    if (configuredPort) {
+      const port = Number(configuredPort)
+      await waitForRedis(port)
+      return port
+    }
+
+    // Local dev fallback: spawn our own redis-server child on a free port.
+    const port = await freePort()
+    const proc = spawn(
+      'redis-server',
+      ['--port', String(port), '--save', '', '--appendonly', 'no'],
+      { stdio: 'ignore' },
+    )
+    this.standaloneProcs.push(proc)
+    await waitForRedis(port)
+    return port
+  }
+
   getMockClusterPorts(): number[] {
     if (this.activeMockCluster) {
       return this.activeMockCluster.nodes.map(node => node.port)
@@ -152,6 +217,22 @@ export class TestRunner {
       await cluster.close()
     }
 
+    // Clean up standalone ioredis clients
+    for (const client of this.ioredisStandalone) {
+      client.disconnect()
+    }
+    this.ioredisStandalone = []
+
+    // Clean up in-process standalone servers (mock backend)
+    await Promise.all(this.standaloneServers.map(server => server.close()))
+    this.standaloneServers = []
+
+    // Kill spawned redis-server children (real backend)
+    for (const proc of this.standaloneProcs) {
+      proc.kill('SIGKILL')
+    }
+    this.standaloneProcs = []
+
     // Clean up mock cluster
     await Promise.all(
       Array.from(this.mockClusters.values()).map(cluster => cluster.close()),
@@ -167,4 +248,48 @@ export class TestRunner {
 
 function mockClusterKey(options: Required<IoredisClusterSetupOptions>): string {
   return `${options.masters}:${options.replicasPerMaster}`
+}
+
+/** Grab an OS-assigned free TCP port (used to launch a real redis-server). */
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.once('error', reject)
+    srv.listen(0, () => {
+      const port = (srv.address() as AddressInfo).port
+      srv.close(() => resolve(port))
+    })
+  })
+}
+
+/** Poll a freshly spawned redis-server until it answers PING (or time out). */
+async function waitForRedis(port: number): Promise<void> {
+  const deadline = Date.now() + 10000
+  let lastError: unknown
+  while (Date.now() < deadline) {
+    const probe = new Redis({
+      host: '127.0.0.1',
+      port,
+      lazyConnect: true,
+      retryStrategy: () => null,
+      maxRetriesPerRequest: 1,
+    })
+    // Swallow connection-refused noise while the server is still booting.
+    probe.on('error', () => {})
+    try {
+      await probe.connect()
+      const pong = await probe.ping()
+      probe.disconnect()
+      if (pong === 'PONG') {
+        return
+      }
+    } catch (err) {
+      lastError = err
+      probe.disconnect()
+      await delay(100)
+    }
+  }
+  throw new Error(
+    `standalone redis-server on ${port} did not become ready: ${String(lastError)}`,
+  )
 }

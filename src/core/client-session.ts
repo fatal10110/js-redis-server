@@ -70,6 +70,12 @@ export class ClientSession implements RedisClientSession {
   private readonly signalSource?: AbortController
   private readonly parkHandler: ParkHandler
   private readonly turnQueueOverride?: RedisTurnQueue
+  /**
+   * The turn handle of the command currently executing on this session,
+   * exposed so {@link executeTransaction} can hand the turn off to another
+   * database's queue when a queued SELECT switches databases mid-EXEC.
+   */
+  private activeTurnAccess?: TurnAccess
   private selectedDatabaseId: number
   private sessionMode: ClientSessionMode = 'normal'
   private respVersion: RespVersion = 2
@@ -218,14 +224,22 @@ export class ClientSession implements RedisClientSession {
     // deadlock because no other session could produce the wakeup write. Override
     // park so any blocking command queued in MULTI behaves non-blocking (returns
     // null immediately), matching real Redis BLPOP-inside-MULTI semantics.
-    const noBlockCtx = {
-      ...this.createExecutionContext(),
-      park: async () => null,
-    }
+    const noBlockCtx = this.createExecutionContext(undefined, async () => null)
+    let currentDbId = this.selectedDatabaseId
 
     for (const plan of plans) {
       if (this.signal.aborted) {
         throw createAbortError()
+      }
+
+      // A queued SELECT on a previous iteration may have switched databases.
+      // Move the held turn onto the now-selected database's queue so its
+      // keyspace stays serialized against other sessions (#94 follow-up). Only
+      // one turn is ever held at a time (release-then-acquire), so this cannot
+      // deadlock even if two transactions select databases in opposite orders.
+      if (this.selectedDatabaseId !== currentDbId) {
+        await this.handoffTurnToSelectedDb()
+        currentDbId = this.selectedDatabaseId
       }
 
       const result = await this.executor.executePlan(plan, noBlockCtx)
@@ -242,6 +256,29 @@ export class ClientSession implements RedisClientSession {
     }
 
     return RedisResult.create(RedisValue.array(values))
+  }
+
+  /**
+   * Release the currently held serialization turn and acquire a fresh one on
+   * the selected database's queue. Called when a queued SELECT switches
+   * databases mid-EXEC so subsequent commands run under the correct
+   * per-database turn (see {@link executeTransaction}).
+   *
+   * No-op when a fixed turn-queue override is in force (a single queue already
+   * serializes every database) or when no managed turn is active.
+   */
+  private async handoffTurnToSelectedDb(): Promise<void> {
+    if (this.turnQueueOverride) {
+      return
+    }
+    const turnAccess = this.activeTurnAccess
+    if (!turnAccess) {
+      return
+    }
+
+    turnAccess.get()?.release()
+    const nextTurn = await this.db.turnQueue.waitTurn()
+    turnAccess.set(nextTurn)
   }
 
   /**
@@ -307,16 +344,18 @@ export class ClientSession implements RedisClientSession {
 
     const turnQueue = this.turnQueueOverride ?? this.db.turnQueue
     let turn: RedisTurnHandle | undefined = await turnQueue.waitTurn()
+    const turnAccess: TurnAccess = {
+      get: () => turn,
+      set: nextTurn => {
+        turn = nextTurn
+      },
+    }
+    this.activeTurnAccess = turnAccess
     try {
-      const ctx = this.createExecutionContext({
-        get: () => turn,
-        set: nextTurn => {
-          turn = nextTurn
-        },
-      })
-
+      const ctx = this.createExecutionContext(turnAccess)
       return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
+      this.activeTurnAccess = undefined
       turn?.release()
     }
   }
@@ -328,16 +367,28 @@ export class ClientSession implements RedisClientSession {
    * waiting; without one (e.g. nested transaction execution) the plain park
    * handler is used.
    */
-  createExecutionContext(turnAccess?: TurnAccess): RedisExecutionContext {
+  createExecutionContext(
+    turnAccess?: TurnAccess,
+    parkOverride?: ParkHandler,
+  ): RedisExecutionContext {
+    // `db` is a live getter, not a snapshot: a queued `SELECT N` runs mid-EXEC
+    // and updates `selectedDatabaseId`, so every command must resolve the
+    // currently selected database at access time, not at context-build time
+    // (issue #94). Arrow keeps `this` bound to the session without aliasing.
+    const resolveDb = () => this.db
     return {
-      db: this.db,
+      get db() {
+        return resolveDb()
+      },
       server: this.server,
       session: this,
       executor: this.executor,
       signal: this.signal,
-      park: turnAccess
-        ? this.createTurnAwareParkHandler(turnAccess)
-        : this.parkHandler,
+      park:
+        parkOverride ??
+        (turnAccess
+          ? this.createTurnAwareParkHandler(turnAccess)
+          : this.parkHandler),
     }
   }
 
