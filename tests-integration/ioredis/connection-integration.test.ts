@@ -97,6 +97,18 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
       assert.ok(repeatedHello instanceof Map)
       assert.strictEqual(respNumber(respMapGet(repeatedHello, 'proto')), 3)
 
+      connection.write(commandFrame('CLIENT', 'INFO'))
+      assert.match(
+        respText(await connection.readFrame()),
+        /(?:^| )resp=3(?: |\n)/,
+      )
+
+      connection.write(commandFrame('CLIENT', 'LIST'))
+      assert.match(
+        respText(await connection.readFrame()),
+        /(?:^| )resp=3(?: |\n)/,
+      )
+
       connection.write(commandFrame('RESET'))
       assert.deepStrictEqual(
         await connection.readRawFrame(),
