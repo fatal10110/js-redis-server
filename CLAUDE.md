@@ -170,7 +170,6 @@ if (option) {
 
 - Prefer `for...of` with `Object.entries()` over `for...in`
 - Use traditional `for` loops for index-based iteration
-- Avoid array methods in performance-critical code paths
 
 ```typescript
 // Good
@@ -186,11 +185,7 @@ for (let i = 0; i < args.length; i++) {
 
 ### Performance Considerations
 
-1. Minimize object allocations in hot paths
-2. Avoid unnecessary string conversions
-3. Use efficient data structures
-4. Cache frequently accessed values
-5. Break early when possible
+Performance is **not** a priority — this is a mocking library for tests, not a production datastore. Prefer correctness, Redis compatibility, and code clarity over micro-optimizations. Defensive cloning, extra allocations, and readable-but-slower constructs are all acceptable. Only treat performance as a problem if it makes test suites impractically slow.
 
 ## Testing Requirements
 
