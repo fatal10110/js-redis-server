@@ -210,7 +210,7 @@ function formatClientLine(
     'cmd=client',
     'user=default',
     'redir=-1',
-    'resp=2',
+    `resp=${session.protocolVersion}`,
   ]
 
   if (libName !== undefined) {
