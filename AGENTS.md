@@ -94,7 +94,7 @@ interface CommandDefinition<TArgs> {
 }
 ```
 
-Commands are pure `(args, ctx) → RedisResult` — they never touch the transport. That is what lets the *exact same* command run standalone, inside a cluster node, inside `MULTI`/`EXEC`, and inside a Lua script without rewrites.
+Commands are pure `(args, ctx) → RedisResult` — they never touch the transport. That is what lets the _exact same_ command run standalone, inside a cluster node, inside `MULTI`/`EXEC`, and inside a Lua script without rewrites.
 
 #### 4. Data Structures ([src/state/data-types.ts](src/state/data-types.ts))
 
@@ -105,7 +105,7 @@ Commands are pure `(args, ctx) → RedisResult` — they never touch the transpo
 - `ClientSession` ([src/core/client-session.ts](src/core/client-session.ts)) tracks transaction mode, queues already-parsed `CommandPlan`s, and replays them through the normal `executePlan` path on `EXEC`
 - `TransactionPolicy` intercepts queued commands in `beforeExecute` and replies `+QUEUED` — parsing and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at **queue time**, not at `EXEC` time
 - `WATCH` subscribes to per-key mutation events on the database; any write/delete/evict on a watched key marks the session dirty, checked via `isWatchDirty()` before `EXEC` runs the queue
-- In cluster mode, the slot of the *first* keyed command queued is pinned per-session so every subsequent queued command must hash to the same slot
+- In cluster mode, the slot of the _first_ keyed command queued is pinned per-session so every subsequent queued command must hash to the same slot
 - `DISCARD` cancels a transaction; `EXECABORT` is returned if the queue itself is dirty (e.g. an unknown command was queued)
 
 #### 6. Dual Backend System
@@ -339,8 +339,6 @@ grepai trace graph "ValidateToken" --depth 3 --json
 ## OpenMemory - Durable Agent Memory
 
 OpenMemory MCP is wired into this project. Server: `http://localhost:8080`. Use `openmemory_*` MCP tools directly — do not invent a custom persistence layer.
-
-**user_id convention**: always use `"artur"` for all memory operations in this project.
 
 ### MCP Tools Available
 
