@@ -166,6 +166,17 @@ export class TestRunner {
   }
 
   private async startRealStandalone(): Promise<number> {
+    // CI (and anyone running docker-compose.test.yml) provides a standalone
+    // Redis whose host port is published via REDIS_STANDALONE_PORT — connect to
+    // it instead of spawning, since the runner has no redis-server binary.
+    const configuredPort = process.env.REDIS_STANDALONE_PORT
+    if (configuredPort) {
+      const port = Number(configuredPort)
+      await waitForRedis(port)
+      return port
+    }
+
+    // Local dev fallback: spawn our own redis-server child on a free port.
     const port = await freePort()
     const proc = spawn(
       'redis-server',
