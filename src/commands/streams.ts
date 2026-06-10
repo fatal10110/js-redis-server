@@ -5,6 +5,7 @@ import {
   type ParseContext,
 } from '../core/command-schema'
 import {
+  ExpectedIntegerError,
   InvalidStreamIdError,
   RedisSyntaxError,
   StreamIdEqualOrSmallerError,
@@ -597,7 +598,7 @@ function createCountSchema() {
       }
       const value = Number(raw.toString())
       if (!Number.isInteger(value)) {
-        throw new InvalidStreamIdError()
+        throw new ExpectedIntegerError()
       }
       return { value, nextIndex: index + 2 }
     },
