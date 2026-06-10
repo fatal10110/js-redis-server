@@ -112,6 +112,28 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  test('XRANGE and XREVRANGE reject non-integer COUNT values', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'a', '1')
+
+      const invalidCount = errorWithMessage(
+        'ERR value is not an integer or out of range',
+      )
+      await assert.rejects(
+        () => node.call('XRANGE', key, '-', '+', 'COUNT', 'abc'),
+        invalidCount,
+      )
+      await assert.rejects(
+        () => node.call('XREVRANGE', key, '+', '-', 'COUNT', 'abc'),
+        invalidCount,
+      )
+    } finally {
+      node.disconnect()
+    }
+  })
+
   test('XREVRANGE returns entries in descending order', async () => {
     const key = randomKey()
     await redisClient?.xadd(key, '1-1', 'a', '1')
