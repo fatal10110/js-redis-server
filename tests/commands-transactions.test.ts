@@ -166,6 +166,48 @@ describe('new transaction commands', () => {
     )
   })
 
+  test('keeps non-RedisCommandError runtime failures as EXEC array elements', async () => {
+    const crashCommand = defineCommand({
+      name: 'crash',
+      schema: t.object({}),
+      flags: ['write'],
+      keys: () => [],
+      execute: () => {
+        throw new TypeError('boom')
+      },
+    })
+    const server = new RedisServerState()
+    const executor = createRedisCommandExecutor({
+      extraCommands: [crashCommand],
+    })
+    const session = new ClientSession({ server, executor })
+
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    assert.deepStrictEqual(
+      await session.execute('set', [Buffer.from('key'), Buffer.from('value')]),
+      queued(),
+    )
+    assert.deepStrictEqual(await session.execute('crash', []), queued())
+    assert.deepStrictEqual(
+      await session.execute('get', [Buffer.from('key')]),
+      queued(),
+    )
+
+    // The crashing command must not abandon the partial results array — EXEC
+    // always returns exactly N elements, the failing slot becomes an error, and
+    // later queued commands still run.
+    assert.deepStrictEqual(
+      await session.execute('exec', []),
+      RedisResult.create(
+        RedisValue.array([
+          RedisValue.simpleString('OK'),
+          RedisValue.error('boom'),
+          RedisValue.bulkString(Buffer.from('value')),
+        ]),
+      ),
+    )
+  })
+
   test('SELECT inside MULTI switches the DB for later queued commands', async () => {
     const { session, server } = createSession({ databaseCount: 2 })
 
