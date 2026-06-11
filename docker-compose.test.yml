@@ -40,3 +40,28 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+
+  # Password-protected standalone Redis (requirepass). The default password-less
+  # services cannot exercise AUTH/NOAUTH enforcement, so auth integration tests
+  # connect here. The harness uses it when REDIS_STANDALONE_AUTH_PORT is set;
+  # see tests-integration/test-config.ts (STANDALONE_AUTH_PASSWORD).
+  redis-standalone-auth:
+    image: redis:7.2
+    command:
+      [
+        'redis-server',
+        '--requirepass',
+        'testpass',
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ]
+    ports:
+      - '6400:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-p', '6379', '-a', 'testpass', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
