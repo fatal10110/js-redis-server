@@ -4,6 +4,7 @@ import { CommandRegistry } from '../core/command-registry'
 import type { ExecutionPolicy } from '../core/execution-policies'
 import { createTransactionPolicy } from '../core/execution-policies'
 import { commandCommand } from './command'
+import { configCommands } from './config'
 import { connectionCommands } from './connection'
 import { hashesCommands } from './hashes'
 import { keysCommands } from './keys'
@@ -19,6 +20,7 @@ import { zsetsCommands } from './zsets'
 export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...connectionCommands,
   commandCommand,
+  ...configCommands,
   ...transactionCommands,
   ...stringsCommands,
   ...keysCommands,
@@ -63,6 +65,7 @@ export {
   readwriteCommand,
 } from './cluster'
 export { commandCommand } from './command'
+export { configCommand, configCommands } from './config'
 export {
   getCommand,
   setCommand,
