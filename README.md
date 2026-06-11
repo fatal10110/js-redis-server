@@ -308,7 +308,7 @@ buildRedisCluster(options: RedisClusterOptions): RedisCluster
 `DEL`, `EXISTS`, `EXPIRE`, `EXPIREAT`, `KEYS`, `PERSIST`, `PEXPIRE`, `PEXPIREAT`, `PTTL`, `RENAME`, `RENAMENX`, `SCAN`, `TTL`, `TYPE`
 
 ### Server
-`DBSIZE`, `FLUSHALL`, `FLUSHDB`, `INFO`, `PING`, `QUIT`
+`CONFIG GET`, `CONFIG SET`, `DBSIZE`, `FLUSHALL`, `FLUSHDB`, `INFO`, `PING`, `QUIT`
 
 ### Transactions
 `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
