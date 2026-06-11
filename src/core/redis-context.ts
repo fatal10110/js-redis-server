@@ -22,6 +22,8 @@ export interface RedisClientSession {
   readonly mode: ClientSessionMode
   readonly protocolVersion: RespVersion
   readonly clusterReadOnly: boolean
+  readonly isAuthenticated: boolean
+  setAuthenticated(value: boolean): void
   setProtocolVersion(version: RespVersion): void
   setClusterReadOnly(value: boolean): void
   selectDatabase(database: number): void

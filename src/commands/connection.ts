@@ -5,9 +5,12 @@ import type {
   RedisExecutionContext,
 } from '../core/redis-context'
 import {
+  NoAuthError,
+  NoPasswordConfiguredError,
   RedisCommandError,
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
+  WrongPassError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -223,6 +226,41 @@ function formatClientLine(
   return `${fields.join(' ')}\n`
 }
 
+const HELLO_NOAUTH_MESSAGE =
+  'HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time'
+
+/**
+ * Authenticate `username`/`password` against the server's `requirepass` (the
+ * two-argument `AUTH <user> <pass>` / `HELLO ... AUTH <user> <pass>` form). On
+ * success the session is marked authenticated.
+ *
+ *  - With `requirepass` set: only `default` + the matching password succeeds;
+ *    anything else is WRONGPASS.
+ *  - Without `requirepass`: the `default` user is `nopass`, so any password for
+ *    `default` succeeds (no-op); any other username is WRONGPASS.
+ */
+function authenticateUser(
+  ctx: RedisExecutionContext,
+  username: string,
+  password: Buffer,
+): void {
+  const requirepass = ctx.server.requirepass
+
+  if (!requirepass) {
+    if (username !== 'default') {
+      throw new WrongPassError()
+    }
+    ctx.session.setAuthenticated(true)
+    return
+  }
+
+  if (username !== 'default' || password.toString() !== requirepass) {
+    throw new WrongPassError()
+  }
+
+  ctx.session.setAuthenticated(true)
+}
+
 function parseHelloOptions(
   ctx: RedisExecutionContext,
   args: readonly Buffer[],
@@ -235,9 +273,9 @@ function parseHelloOptions(
         throw new RedisSyntaxError()
       }
 
-      throw new RedisCommandError(
-        'AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?',
-      )
+      authenticateUser(ctx, args[i + 1].toString(), args[i + 2])
+      i += 2
+      continue
     }
 
     if (option === 'setname') {
@@ -405,6 +443,13 @@ export const helloCommand = defineCommand({
           ? 3
           : 2
     parseHelloOptions(ctx, args.args)
+
+    // A password-protected server rejects HELLO unless the client is already
+    // authenticated or authenticates inline via the AUTH option above.
+    if (ctx.server.requirepass && !ctx.session.isAuthenticated) {
+      throw new NoAuthError(HELLO_NOAUTH_MESSAGE)
+    }
+
     ctx.session.setProtocolVersion(version)
 
     const fields: [RedisValue, RedisValue][] = [
@@ -432,14 +477,23 @@ export const authCommand = defineCommand({
   }),
   flags: ['readonly', 'admin'],
   keys: () => [],
-  execute: args => {
+  execute: (args, ctx) => {
     if (args.args.length !== 1 && args.args.length !== 2) {
       throw new WrongNumberOfArgumentsError('auth')
     }
 
-    throw new RedisCommandError(
-      'AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?',
-    )
+    // Single-arg AUTH targets the default user. When no password is configured
+    // Redis answers with a dedicated hint instead of authenticating.
+    if (args.args.length === 1) {
+      if (!ctx.server.requirepass) {
+        throw new NoPasswordConfiguredError()
+      }
+      authenticateUser(ctx, 'default', args.args[0])
+      return ok()
+    }
+
+    authenticateUser(ctx, args.args[0].toString(), args.args[1])
+    return ok()
   },
 })
 
@@ -457,6 +511,7 @@ export const resetCommand = defineCommand({
     ctx.session.selectDatabase(0)
     ctx.session.setProtocolVersion(2)
     ctx.session.setClusterReadOnly(false)
+    ctx.session.setAuthenticated(false)
     return simpleString('RESET')
   },
 })

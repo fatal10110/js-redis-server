@@ -17,8 +17,15 @@ This document provides a detailed overview of Redis commands and their implement
 
 #### AUTH
 
-- [ ] `AUTH password` - Authenticate to the server
-- [ ] `AUTH username password` - Authenticate to the server with username and password
+- [x] `AUTH password` - Authenticate to the server
+- [x] `AUTH username password` - Authenticate to the server with username and password
+
+> With no `requirepass` configured the default user is `nopass`: single-arg
+> `AUTH` returns the "no password configured" error, while `AUTH default <pass>`
+> is a no-op `OK` (any other username is `WRONGPASS`). When `requirepass` is set,
+> connections start unauthenticated and every command except `AUTH`/`HELLO`/
+> `RESET`/`QUIT` is rejected with `NOAUTH Authentication required.` until a
+> correct `AUTH` (or `HELLO ... AUTH`) succeeds.
 
 #### SELECT
 

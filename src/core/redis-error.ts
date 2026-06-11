@@ -20,6 +20,29 @@ export class RedisSyntaxError extends RedisCommandError {
   }
 }
 
+/** `AUTH <password>` (single-arg) when the server has no `requirepass` set. */
+export class NoPasswordConfiguredError extends RedisCommandError {
+  constructor() {
+    super(
+      'AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?',
+    )
+  }
+}
+
+/** Wrong username/password pair on AUTH or HELLO AUTH. */
+export class WrongPassError extends RedisCommandError {
+  constructor() {
+    super('invalid username-password pair or user is disabled.', 'WRONGPASS')
+  }
+}
+
+/** A command was issued before authenticating on a password-protected server. */
+export class NoAuthError extends RedisCommandError {
+  constructor(message = 'Authentication required.') {
+    super(message, 'NOAUTH')
+  }
+}
+
 export class ExpectedIntegerError extends RedisCommandError {
   constructor() {
     super('value is not an integer or out of range')

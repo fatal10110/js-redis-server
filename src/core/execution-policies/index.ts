@@ -28,5 +28,6 @@ export interface ExecutionPolicy {
 }
 
 export { createTransactionPolicy } from './transaction-policy'
+export { createAuthPolicy } from './auth-policy'
 export type { ClusterPolicyOptions } from './cluster-policy'
 export { createClusterPolicy } from './cluster-policy'
