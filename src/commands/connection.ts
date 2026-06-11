@@ -230,6 +230,14 @@ const HELLO_NOAUTH_MESSAGE =
   'HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time'
 
 /**
+ * The only user this server knows about. Redis' `requirepass` is the password of
+ * the built-in `default` user; without an ACL system (no `ACL SETUSER`) it is
+ * the sole valid username — any other is rejected with WRONGPASS. Replace this
+ * constant with a real user lookup if/when ACL support lands.
+ */
+const DEFAULT_ACL_USER = 'default'
+
+/**
  * Authenticate `username`/`password` against the server's `requirepass` (the
  * two-argument `AUTH <user> <pass>` / `HELLO ... AUTH <user> <pass>` form). On
  * success the session is marked authenticated.
@@ -247,14 +255,14 @@ function authenticateUser(
   const requirepass = ctx.server.requirepass
 
   if (!requirepass) {
-    if (username !== 'default') {
+    if (username !== DEFAULT_ACL_USER) {
       throw new WrongPassError()
     }
     ctx.session.setAuthenticated(true)
     return
   }
 
-  if (username !== 'default' || password.toString() !== requirepass) {
+  if (username !== DEFAULT_ACL_USER || password.toString() !== requirepass) {
     throw new WrongPassError()
   }
 
@@ -488,7 +496,7 @@ export const authCommand = defineCommand({
       if (!ctx.server.requirepass) {
         throw new NoPasswordConfiguredError()
       }
-      authenticateUser(ctx, 'default', args.args[0])
+      authenticateUser(ctx, DEFAULT_ACL_USER, args.args[0])
       return ok()
     }
 
