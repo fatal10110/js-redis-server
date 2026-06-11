@@ -170,7 +170,6 @@ if (option) {
 
 - Prefer `for...of` with `Object.entries()` over `for...in`
 - Use traditional `for` loops for index-based iteration
-- Avoid array methods in performance-critical code paths
 
 ```typescript
 // Good
@@ -186,11 +185,7 @@ for (let i = 0; i < args.length; i++) {
 
 ### Performance Considerations
 
-1. Minimize object allocations in hot paths
-2. Avoid unnecessary string conversions
-3. Use efficient data structures
-4. Cache frequently accessed values
-5. Break early when possible
+Performance is **not** a priority — this is a mocking library for tests, not a production datastore. Prefer correctness, Redis compatibility, and code clarity over micro-optimizations. Defensive cloning, extra allocations, and readable-but-slower constructs are all acceptable. Only treat performance as a problem if it makes test suites impractically slow.
 
 ## Testing Requirements
 
@@ -338,7 +333,7 @@ grepai trace graph "ValidateToken" --depth 3 --json
 
 ## OpenMemory - Durable Agent Memory
 
-OpenMemory MCP is wired into this project. Server: `http://localhost:8080`. Use `openmemory_*` MCP tools directly — do not invent a custom persistence layer.
+OpenMemory MCP is wired into this project as the persistent memory layer for stable context that should survive across turns and tasks. Server: `http://localhost:8080`. Always use `openmemory_*` MCP tools directly — do not invent a custom persistence layer.
 
 ### MCP Tools Available
 
@@ -356,6 +351,7 @@ Store:
 - architectural decisions and the reasoning behind them
 - non-obvious bug root causes and fix patterns
 - recurring project conventions and constraints
+- durable user/project preferences and long-lived task context
 - summaries of completed phases/features
 
 Do not store:
@@ -373,5 +369,6 @@ Do not store:
 
 ### Practical Rules
 
+- Always use this OpenMemory integration instead of inventing a custom persistence layer.
 - If OpenMemory is unavailable, continue without it — do not block the task.
 - If the server is down, start it: `cd ~/workspace/OpenMemory && colima start && docker-compose up -d`

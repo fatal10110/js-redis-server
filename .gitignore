@@ -1,5 +1,6 @@
 .vscode
 .cursor
+.claude/
 dump.rdb
 .DS_Store
 dist
