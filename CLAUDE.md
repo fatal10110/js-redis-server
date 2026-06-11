@@ -329,31 +329,42 @@ grepai trace graph "ValidateToken" --depth 3 --json
 
 ## OpenMemory - Durable Agent Memory
 
-Use OpenMemory as the persistent memory layer for stable context that should survive across turns and tasks.
+OpenMemory MCP is wired into this project as the persistent memory layer for stable context that should survive across turns and tasks. Server: `http://localhost:8080`. Always use `openmemory_*` MCP tools directly — do not invent a custom persistence layer.
+
+### MCP Tools Available
+
+- `openmemory_store` — store a memory (text + user_id)
+- `openmemory_query` — semantic/keyword search
+- `openmemory_list` — list recent memories
+- `openmemory_get` — fetch by ID
+- `openmemory_delete` — remove by ID
+- `openmemory_reinforce` — boost salience of a recalled memory
 
 ### When to Use OpenMemory
 
-Use OpenMemory for:
-- durable user preferences and project preferences
-- recurring decisions, conventions, and constraints
-- long-lived task context that should be recalled later
-- summaries of completed work that are useful for future turns
+Store:
 
-Do not use OpenMemory for:
-- transient debugging notes
-- raw command output
-- speculative ideas that are likely to be discarded
-- secrets, credentials, or other sensitive data that should not be persisted
+- architectural decisions and the reasoning behind them
+- non-obvious bug root causes and fix patterns
+- recurring project conventions and constraints
+- durable user/project preferences and long-lived task context
+- summaries of completed phases/features
 
-### How to Use It
+Do not store:
 
-1. Check OpenMemory for existing relevant context before asking the user to repeat stable preferences or project-specific facts.
-2. Write a memory after you confirm an enduring preference, decision, or project rule.
-3. Keep entries short, factual, and durable.
-4. Prefer storing the outcome or rule, not the full discussion.
+- transient debug notes or raw command output
+- speculative ideas likely to be discarded
+- secrets or credentials
+
+### Session Protocol
+
+1. **Session start**: query OpenMemory for context relevant to the current task before asking the user to repeat anything.
+2. **After decisions**: store architectural choices, design constraints, and non-obvious patterns.
+3. **After bug fixes**: store root cause + fix pattern if non-obvious.
+4. Keep entries short, factual, and durable — outcome/rule, not full discussion.
 
 ### Practical Rules
 
-- Treat OpenMemory as the source of durable recall, not as a scratchpad.
-- If OpenMemory is unavailable, continue without it and do not block the task.
-- If the workspace has an OpenMemory MCP integration, use that integration instead of inventing a custom persistence layer.
+- Always use this OpenMemory integration instead of inventing a custom persistence layer.
+- If OpenMemory is unavailable, continue without it — do not block the task.
+- If the server is down, start it: `cd ~/workspace/OpenMemory && colima start && docker-compose up -d`
