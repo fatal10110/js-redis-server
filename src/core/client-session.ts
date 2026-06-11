@@ -251,7 +251,21 @@ export class ClientSession implements RedisClientSession {
         currentDbId = this.selectedDatabaseId
       }
 
-      const result = await this.executor.executePlan(plan, noBlockCtx)
+      // executePlan converts RedisCommandErrors into error results, but a
+      // command whose execute() throws an unexpected runtime error (TypeError,
+      // etc.) would otherwise propagate out and abandon the partial results
+      // array. Real Redis always replies with an N-element EXEC array, so trap
+      // the failure into this command's slot and keep running the rest (#83).
+      let result: Awaited<ReturnType<typeof this.executor.executePlan>>
+      try {
+        result = await this.executor.executePlan(plan, noBlockCtx)
+      } catch (err) {
+        if (this.signal.aborted) {
+          throw err
+        }
+        values.push(RedisValue.error((err as Error).message))
+        continue
+      }
 
       if (result instanceof RedisResult) {
         values.push(result.value)
