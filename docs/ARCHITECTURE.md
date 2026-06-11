@@ -223,7 +223,7 @@ sequenceDiagram
 
     Cl->>CS: EXEC
     CS->>CE: executeRaw(EXEC, [], ctx)
-    Note over CE,CS: WATCH dirty → discard, reply *-1<br/>queue dirty (e.g. unknown cmd) → discard, EXECABORT
+    Note over CE,CS: WATCH dirty → discard, reply *-1<br/>queue dirty (e.g. unknown cmd) → discard, EXECABORT<br/>EXEC itself malformed (e.g. `EXEC foo`) → discard immediately,<br/>EXECABORT "Transaction discarded because of: &lt;reason&gt;"
     CE->>CS: drainTransaction() → plans[]
     CS->>CS: executeTransaction(plans)<br/>runs each plan through the executor, in order
     CS-->>Cl: array of per-command replies

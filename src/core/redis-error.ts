@@ -155,6 +155,13 @@ export class TransactionDiscardedError extends RedisCommandError {
   }
 }
 
+/** EXEC itself is malformed (e.g. wrong arity) — discards the transaction immediately. */
+export class ExecCommandAbortError extends RedisCommandError {
+  constructor(reason: string) {
+    super(`Transaction discarded because of: ${reason}`, 'EXECABORT')
+  }
+}
+
 export class IndexOutOfRangeError extends RedisCommandError {
   constructor() {
     super('index out of range')

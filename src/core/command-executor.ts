@@ -2,7 +2,12 @@ import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
 import { parseCommandArgs } from './command-schema'
 import type { ExecutionPolicy } from './execution-policies'
-import { RedisCommandError, UnknownRedisCommandError } from './redis-error'
+import {
+  ExecCommandAbortError,
+  RedisCommandError,
+  UnknownRedisCommandError,
+  WrongNumberOfArgumentsError,
+} from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
@@ -64,10 +69,7 @@ export class CommandExecutor {
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
-    const commandName =
-      typeof rawCommand === 'string'
-        ? rawCommand.toLowerCase()
-        : rawCommand.toString().toLowerCase()
+    const commandName = CommandExecutor.normalizeCommandName(rawCommand)
     const definition = this.registry.get(commandName)
 
     if (!definition) {
@@ -96,12 +98,32 @@ export class CommandExecutor {
       return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
+        // EXEC itself with bad arity (e.g. `EXEC foo`) discards the
+        // transaction immediately and replies EXECABORT, matching Redis'
+        // execCommandAbort — distinct from a *queued* command's arity error,
+        // which only dirties the transaction for a later, well-formed EXEC.
+        if (
+          err instanceof WrongNumberOfArgumentsError &&
+          ctx.session.mode === 'transaction' &&
+          CommandExecutor.normalizeCommandName(rawCommand) === 'exec'
+        ) {
+          ctx.session.discardTransaction()
+          const abortError = new ExecCommandAbortError(err.message)
+          return RedisResult.error(abortError.message, abortError.code)
+        }
+
         ctx.session.markTransactionDirty()
         return RedisResult.error(err.message, err.code)
       }
 
       throw err
     }
+  }
+
+  private static normalizeCommandName(rawCommand: Buffer | string): string {
+    return typeof rawCommand === 'string'
+      ? rawCommand.toLowerCase()
+      : rawCommand.toString().toLowerCase()
   }
 
   /**

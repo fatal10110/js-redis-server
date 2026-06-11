@@ -109,6 +109,30 @@ describe('multi', () => {
     }
   })
 
+  test('EXEC with wrong arity aborts the transaction with EXECABORT', async () => {
+    const key = `{exec-arity:${randomKey()}}:key`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      assert.strictEqual(await directClient.call('MULTI'), 'OK')
+      assert.strictEqual(await directClient.call('SET', key, 'value'), 'QUEUED')
+      await assert.rejects(
+        () => directClient.call('EXEC', 'foo'),
+        errorWithMessage(
+          "EXECABORT Transaction discarded because of: wrong number of arguments for 'exec' command",
+        ),
+      )
+
+      // Session must be back in normal mode: this SET runs immediately
+      // instead of being queued, and the queued SET above never ran.
+      assert.strictEqual(await directClient.call('SET', key, 'value2'), 'OK')
+      assert.strictEqual(await directClient.get(key), 'value2')
+    } finally {
+      await directClient.del(key)
+      directClient.disconnect()
+    }
+  })
+
   test('UNWATCH is queued in MULTI and returns OK from EXEC', async () => {
     const key = `{unwatch:${randomKey()}}:key`
     const directClient = await connectToSlotOwner(redisClient!, key)
