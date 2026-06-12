@@ -12,6 +12,9 @@ import {
 
 export type TestBackend = 'mock' | 'real'
 
+/** Password used by the password-protected standalone server (see setupIoredisStandaloneAuth). */
+export const STANDALONE_AUTH_PASSWORD = 'testpass'
+
 export type IoredisClusterSetupOptions = {
   masters?: number
   replicasPerMaster?: number
@@ -165,6 +168,79 @@ export class TestRunner {
     return server.getPort()
   }
 
+  /**
+   * Connect an ioredis client to a password-protected standalone server.
+   *
+   * The client is deliberately created WITHOUT a password so tests can drive
+   * AUTH / NOAUTH / WRONGPASS sequencing explicitly. Authenticate from the test
+   * with `client.call('AUTH', STANDALONE_AUTH_PASSWORD)`.
+   *
+   *  - mock: in-process Resp2Server configured with `requirepass`
+   *  - real: connect to REDIS_STANDALONE_AUTH_PORT (docker-compose service), or
+   *    spawn a local `redis-server --requirepass` child as a dev fallback
+   */
+  async setupIoredisStandaloneAuth(): Promise<Redis> {
+    const port =
+      this.backend === 'mock'
+        ? await this.startMockStandaloneAuth()
+        : await this.startRealStandaloneAuth()
+
+    const client = new Redis({
+      host: '127.0.0.1',
+      port,
+      lazyConnect: true,
+      // Skip ioredis' INFO ready-check; an unauthenticated connection cannot
+      // run it, and the test drives AUTH manually.
+      enableReadyCheck: false,
+      maxRetriesPerRequest: 1,
+    })
+    // Swallow NOAUTH noise from ioredis' own connect-time CLIENT SETINFO probes.
+    client.on('error', () => {})
+    await client.connect()
+    this.ioredisStandalone.push(client)
+    return client
+  }
+
+  private async startMockStandaloneAuth(): Promise<number> {
+    const state = new RedisServerState({
+      databaseCount: 16,
+      requirepass: STANDALONE_AUTH_PASSWORD,
+    })
+    const executor = createRedisCommandExecutor()
+    const server = new Resp2Server({ server: state, executor })
+    await server.listen(0)
+    this.standaloneServers.push(server)
+    return server.getPort()
+  }
+
+  private async startRealStandaloneAuth(): Promise<number> {
+    const configuredPort = process.env.REDIS_STANDALONE_AUTH_PORT
+    if (configuredPort) {
+      const port = Number(configuredPort)
+      await waitForRedis(port, STANDALONE_AUTH_PASSWORD)
+      return port
+    }
+
+    const port = await freePort()
+    const proc = spawn(
+      'redis-server',
+      [
+        '--port',
+        String(port),
+        '--requirepass',
+        STANDALONE_AUTH_PASSWORD,
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ],
+      { stdio: 'ignore' },
+    )
+    this.standaloneProcs.push(proc)
+    await waitForRedis(port, STANDALONE_AUTH_PASSWORD)
+    return port
+  }
+
   private async startRealStandalone(): Promise<number> {
     // CI (and anyone running docker-compose.test.yml) provides a standalone
     // Redis whose host port is published via REDIS_STANDALONE_PORT — connect to
@@ -263,13 +339,14 @@ function freePort(): Promise<number> {
 }
 
 /** Poll a freshly spawned redis-server until it answers PING (or time out). */
-async function waitForRedis(port: number): Promise<void> {
+async function waitForRedis(port: number, password?: string): Promise<void> {
   const deadline = Date.now() + 10000
   let lastError: unknown
   while (Date.now() < deadline) {
     const probe = new Redis({
       host: '127.0.0.1',
       port,
+      password,
       lazyConnect: true,
       retryStrategy: () => null,
       maxRetriesPerRequest: 1,

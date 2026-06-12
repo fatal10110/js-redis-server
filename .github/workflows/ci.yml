@@ -94,6 +94,8 @@ jobs:
           # Points the harness at the standalone service for SELECT/multi-DB
           # tests that cluster mode cannot serve (see test-config.ts).
           REDIS_STANDALONE_PORT: 6399
+          # Password-protected standalone for AUTH/NOAUTH enforcement tests.
+          REDIS_STANDALONE_AUTH_PORT: 6400
         run: npm run test:integration:real
 
       - name: Stop Redis (cluster + standalone)

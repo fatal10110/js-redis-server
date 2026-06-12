@@ -2,7 +2,10 @@ import type { CommandDefinition } from '../core/command-definition'
 import { CommandExecutor } from '../core/command-executor'
 import { CommandRegistry } from '../core/command-registry'
 import type { ExecutionPolicy } from '../core/execution-policies'
-import { createTransactionPolicy } from '../core/execution-policies'
+import {
+  createAuthPolicy,
+  createTransactionPolicy,
+} from '../core/execution-policies'
 import { commandCommand } from './command'
 import { configCommands } from './config'
 import { connectionCommands } from './connection'
@@ -48,7 +51,11 @@ export function createRedisCommandExecutor(options?: {
 }): CommandExecutor {
   return new CommandExecutor({
     registry: createRedisCommandRegistry(options?.extraCommands),
-    policies: [...(options?.policies ?? []), createTransactionPolicy()],
+    policies: [
+      createAuthPolicy(),
+      ...(options?.policies ?? []),
+      createTransactionPolicy(),
+    ],
   })
 }
 

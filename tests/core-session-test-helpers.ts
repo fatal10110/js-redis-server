@@ -9,9 +9,11 @@ import type { CommandDefinition } from '../src'
 export function createRedisSessionHarness(options?: {
   databaseCount?: number
   extraCommands?: readonly CommandDefinition[]
+  requirepass?: string
 }) {
   const server = new RedisServerState({
     databaseCount: options?.databaseCount ?? 1,
+    requirepass: options?.requirepass,
   })
   const registry = createRedisCommandRegistry(options?.extraCommands)
   const executor = createRedisCommandExecutor({

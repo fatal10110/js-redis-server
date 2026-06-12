@@ -97,8 +97,12 @@ export {
   NoSuchKeyError,
   HashValueNotIntegerError,
   HashValueNotFloatError,
+  NoAuthError,
+  NoPasswordConfiguredError,
+  WrongPassError,
 } from './core/redis-error'
 export {
+  createAuthPolicy,
   createClusterPolicy,
   createTransactionPolicy,
 } from './core/execution-policies'
