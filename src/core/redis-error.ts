@@ -136,6 +136,12 @@ export class ScriptUnknownCommandError extends RedisCommandError {
   }
 }
 
+export class ScriptNotAllowedCommandError extends RedisCommandError {
+  constructor() {
+    super('This Redis command is not allowed from script')
+  }
+}
+
 export class ScriptCallNoCommandError extends RedisCommandError {
   constructor() {
     super('Please specify at least one argument for this redis lib call')

@@ -269,10 +269,18 @@ function authenticateUser(
   ctx.session.setAuthenticated(true)
 }
 
+/**
+ * Parse HELLO's option list. AUTH is processed inline (it can unlock the
+ * connection), but SETNAME is only collected as `pendingName` — it must not be
+ * applied until the caller has cleared the NOAUTH gate, so a HELLO that fails on
+ * a password-protected server leaves connection state untouched.
+ */
 function parseHelloOptions(
   ctx: RedisExecutionContext,
   args: readonly Buffer[],
-) {
+): { pendingName?: Buffer } {
+  let pendingName: Buffer | undefined
+
   for (let i = 0; i < args.length; i++) {
     const option = args[i].toString().toLowerCase()
 
@@ -291,13 +299,15 @@ function parseHelloOptions(
         throw new RedisSyntaxError()
       }
 
-      clientNames.set(ctx.session, args[i + 1])
+      pendingName = args[i + 1]
       i++
       continue
     }
 
     throw new RedisSyntaxError()
   }
+
+  return { pendingName }
 }
 
 export const pingCommand = defineCommand({
@@ -441,7 +451,7 @@ export const helloCommand = defineCommand({
     version: t.optional(t.integer({ min: 2, max: 3 })),
     args: t.variadic(t.bulk()),
   }),
-  flags: ['readonly', 'admin'],
+  flags: ['admin', 'noscript'],
   keys: () => [],
   execute: (args, ctx) => {
     const version =
@@ -450,12 +460,18 @@ export const helloCommand = defineCommand({
         : args.version === 3
           ? 3
           : 2
-    parseHelloOptions(ctx, args.args)
+    const { pendingName } = parseHelloOptions(ctx, args.args)
 
     // A password-protected server rejects HELLO unless the client is already
-    // authenticated or authenticates inline via the AUTH option above.
+    // authenticated or authenticates inline via the AUTH option above. The gate
+    // runs before any SETNAME side effect is applied, so a failed HELLO leaves
+    // connection state untouched.
     if (ctx.server.requirepass && !ctx.session.isAuthenticated) {
       throw new NoAuthError(HELLO_NOAUTH_MESSAGE)
+    }
+
+    if (pendingName !== undefined) {
+      clientNames.set(ctx.session, pendingName)
     }
 
     ctx.session.setProtocolVersion(version)
@@ -483,7 +499,7 @@ export const authCommand = defineCommand({
   schema: t.object({
     args: t.variadic(t.bulk()),
   }),
-  flags: ['readonly', 'admin'],
+  flags: ['admin', 'noscript'],
   keys: () => [],
   execute: (args, ctx) => {
     if (args.args.length !== 1 && args.args.length !== 2) {

@@ -54,6 +54,26 @@ describe(`AUTH enforcement with requirepass (${testRunner.getBackendName()})`, (
     )
   })
 
+  test('a rejected HELLO does not apply SETNAME before authentication', async () => {
+    // HELLO option side effects (SETNAME) must not mutate connection state when
+    // the command fails the NOAUTH gate on a password-protected server.
+    await assert.rejects(
+      () => client!.call('HELLO', '2', 'SETNAME', 'leaked') as Promise<unknown>,
+      errorWithMessage(
+        'NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time',
+      ),
+    )
+
+    // Authenticate, then confirm the failed SETNAME never stuck.
+    assert.strictEqual(
+      await client!.call('AUTH', 'default', STANDALONE_AUTH_PASSWORD),
+      'OK',
+    )
+    const name = await client!.call('CLIENT', 'GETNAME')
+    assert.notStrictEqual(name, 'leaked')
+    assert.ok(name === null || name === '')
+  })
+
   test('two-arg AUTH default <password> unlocks the connection', async () => {
     assert.strictEqual(
       await client!.call('AUTH', 'default', STANDALONE_AUTH_PASSWORD),

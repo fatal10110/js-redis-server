@@ -165,6 +165,32 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         directClient.disconnect()
       }
     })
+
+    test('AUTH and HELLO are rejected from scripts (noscript)', async () => {
+      const tag = `{noscript:${randomKey()}}`
+      const directClient = await connectToSlotOwner(redisClient!, tag)
+      const authScript = "return redis.call('AUTH', 'whatever')"
+      const authSha = createHash('sha1').update(authScript).digest('hex')
+      const helloScript = "return redis.call('HELLO', '3')"
+      const helloSha = createHash('sha1').update(helloScript).digest('hex')
+
+      try {
+        await assert.rejects(
+          () => directClient.eval(authScript, 0),
+          errorWithMessage(
+            `ERR This Redis command is not allowed from script script: ${authSha}, on @user_script:1.`,
+          ),
+        )
+        await assert.rejects(
+          () => directClient.eval(helloScript, 0),
+          errorWithMessage(
+            `ERR This Redis command is not allowed from script script: ${helloSha}, on @user_script:1.`,
+          ),
+        )
+      } finally {
+        directClient.disconnect()
+      }
+    })
   })
 
   test('SCRIPT LOAD, EXISTS, EVALSHA, and FLUSH use the node script cache', async () => {
