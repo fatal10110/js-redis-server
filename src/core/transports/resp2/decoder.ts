@@ -3,6 +3,11 @@ export type Resp2CommandFrame = {
   args: Buffer[]
 }
 
+export type Resp2DecodeResult = {
+  frames: Resp2CommandFrame[]
+  error?: Resp2ParseError
+}
+
 export class Resp2ParseError extends Error {
   constructor(message: string) {
     super(message)
@@ -18,25 +23,36 @@ type ParseOutcome =
 export class Resp2CommandDecoder {
   private buffered = Buffer.alloc(0)
 
-  push(chunk: Buffer): Resp2CommandFrame[] {
+  push(chunk: Buffer): Resp2DecodeResult {
     this.buffered = Buffer.concat([this.buffered, chunk])
     const frames: Resp2CommandFrame[] = []
     let cursor = 0
+    let error: Resp2ParseError | undefined
 
-    while (cursor < this.buffered.length) {
-      const outcome = this.parseFrame(cursor)
-      if (outcome.kind === 'incomplete') {
-        break
-      }
+    try {
+      while (cursor < this.buffered.length) {
+        const outcome = this.parseFrame(cursor)
+        if (outcome.kind === 'incomplete') {
+          break
+        }
 
-      if (outcome.kind === 'frame') {
-        frames.push(outcome.frame)
+        if (outcome.kind === 'frame') {
+          frames.push(outcome.frame)
+        }
+        cursor = outcome.nextIndex
       }
-      cursor = outcome.nextIndex
+    } catch (err) {
+      if (!(err instanceof Resp2ParseError)) {
+        throw err
+      }
+      // Surface the protocol error alongside the frames already parsed from
+      // earlier in this pipeline so the caller can respond to the valid
+      // commands before reporting the error and closing the connection.
+      error = err
     }
 
     this.buffered = this.buffered.subarray(cursor)
-    return frames
+    return { frames, error }
   }
 
   private parseFrame(index: number): ParseOutcome {
