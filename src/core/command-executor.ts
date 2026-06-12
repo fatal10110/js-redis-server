@@ -198,8 +198,11 @@ export class CommandExecutor {
    * `redis.call` / `redis.pcall`. Lua expects each nested command to resolve
    * immediately, so anything that would require awaiting — a command that
    * returns a promise, a {@link ResponseStream}, or an async policy hook — is
-   * rejected with a {@link RedisCommandError} instead of being awaited (see
-   * {@link assertSyncCommandResult} / {@link assertSyncPolicyResult}).
+   * rejected with a {@link RedisCommandError} instead of being awaited. Async
+   * command definitions are rejected before invocation so they cannot leave
+   * orphaned work running after the script error (see
+   * {@link assertSyncCommandDefinition}, {@link assertSyncCommandResult}, and
+   * {@link assertSyncPolicyResult}).
    *
    * The policy chain and transaction-dirty handling otherwise mirror the async
    * path exactly.
@@ -221,6 +224,7 @@ export class CommandExecutor {
         }
       }
 
+      assertSyncCommandDefinition(plan)
       const rawResult = plan.definition.execute(plan.args, ctx)
       const result = assertSyncCommandResult(plan, rawResult)
 
@@ -318,6 +322,16 @@ function assertSyncCommandResult(
   return result
 }
 
+function assertSyncCommandDefinition(plan: CommandPlan): void {
+  if (!isAsyncFunction(plan.definition.execute)) {
+    return
+  }
+
+  throw new RedisCommandError(
+    `${plan.definition.name.toUpperCase()} cannot run asynchronously from scripts`,
+  )
+}
+
 /**
  * Same idea as {@link assertSyncCommandResult} but for policy hooks: an async
  * hook result cannot be awaited on the Lua path, so it is rejected with a
@@ -347,6 +361,12 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   }
 
   return typeof (value as { then?: unknown }).then === 'function'
+}
+
+function isAsyncFunction(value: unknown): boolean {
+  return (
+    typeof value === 'function' && value.constructor?.name === 'AsyncFunction'
+  )
 }
 
 /**
