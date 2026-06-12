@@ -79,6 +79,7 @@ export class ClientSession implements RedisClientSession {
   private selectedDatabaseId: number
   private sessionMode: ClientSessionMode = 'normal'
   private respVersion: RespVersion = 2
+  private authenticated = false
   /** Set by READONLY, cleared by READWRITE/RESET; lets a replica serve reads. */
   private clusterReadOnlyMode = false
   /** Commands buffered between MULTI and EXEC, in submission order. */
@@ -122,6 +123,14 @@ export class ClientSession implements RedisClientSession {
 
   get clusterReadOnly(): boolean {
     return this.clusterReadOnlyMode
+  }
+
+  get isAuthenticated(): boolean {
+    return this.authenticated
+  }
+
+  setAuthenticated(value: boolean): void {
+    this.authenticated = value
   }
 
   /** The live database object for the currently selected index. */

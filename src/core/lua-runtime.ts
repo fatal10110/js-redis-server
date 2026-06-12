@@ -8,6 +8,7 @@ import type { CommandPlan } from './command-definition'
 import {
   RedisCommandError,
   ScriptCallNoCommandError,
+  ScriptNotAllowedCommandError,
   ScriptUnknownCommandError,
   UnknownRedisCommandError,
 } from './redis-error'
@@ -80,7 +81,7 @@ export class RedisLuaRuntime {
     }
 
     if (plan.flags.includes('noscript')) {
-      return redisErrorToLuaReply(new ScriptUnknownCommandError())
+      return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
     }
 
     const result = ctx.executor.executePlanSync(plan, ctx)

@@ -8,6 +8,12 @@ export type RedisServerStateOptions = {
   clusterTopology?: RedisClusterTopology
   pubsubBroker?: RedisPubSubBroker
   scriptCache?: RedisScriptCache
+  /**
+   * Optional server password (Redis `requirepass`). When set, connections start
+   * unauthenticated and must `AUTH` before running most commands. When unset,
+   * the default user is `nopass` and no authentication is enforced.
+   */
+  requirepass?: string
 }
 
 export class RedisServerState {
@@ -15,8 +21,10 @@ export class RedisServerState {
   readonly scriptCache: RedisScriptCache
   readonly pubsubBroker: RedisPubSubBroker
   readonly clusterTopology: RedisClusterTopology
+  readonly requirepass?: string
 
   constructor(options?: RedisServerStateOptions) {
+    this.requirepass = options?.requirepass
     const databaseCount = options?.databaseCount ?? 1
     if (!Number.isInteger(databaseCount) || databaseCount < 1) {
       throw new Error(`Invalid database count ${databaseCount}`)

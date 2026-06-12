@@ -79,6 +79,7 @@ graph TD
     subgraph "Execution layer"
         CE[CommandExecutor]
         CR[CommandRegistry]
+        AP[AuthPolicy]
         TP[TransactionPolicy]
         CP[ClusterPolicy]
     end
@@ -193,13 +194,17 @@ afterExecute(plan, ctx, result) // can rewrite the result
 onStream(plan, ctx, stream) // can wrap/replace a streaming result
 ```
 
-[`createRedisCommandExecutor`](../src/commands/index.ts#L41) always appends
+[`createRedisCommandExecutor`](../src/commands/index.ts#L41) always prepends
+[`AuthPolicy`](../src/core/execution-policies/auth-policy.ts) first and appends
 [`TransactionPolicy`](../src/core/execution-policies/transaction-policy.ts)
 last; [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts) is
-prepended only for cluster nodes (see [`buildRedisCluster`](../src/cluster.ts#L70)).
-Order matters: cluster routing must validate (and possibly redirect/reject)
-**before** a command is queued into a transaction — exactly like real Redis
-Cluster validates `CROSSSLOT` at queue time.
+inserted between them only for cluster nodes (see [`buildRedisCluster`](../src/cluster.ts#L70)).
+Order matters: `AuthPolicy` rejects unauthenticated clients with `NOAUTH`
+before any routing or queueing happens (only `AUTH`/`HELLO`/`RESET`/`QUIT` pass
+when `requirepass` is set and the session is unauthenticated), and cluster
+routing must validate (and possibly redirect/reject) **before** a command is
+queued into a transaction — exactly like real Redis Cluster validates
+`CROSSSLOT` at queue time.
 
 ### Transactions — MULTI / EXEC / WATCH
 
