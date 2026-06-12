@@ -176,8 +176,8 @@ surface.
 - [x] `RPUSH key element [element ...]` - Append one or more elements
 - [x] `LPUSHX key element [element ...]` - Prepend, only if the key already exists
 - [x] `RPUSHX key element [element ...]` - Append, only if the key already exists
-- [x] `LPOP key` - Remove and return the first element
-- [x] `RPOP key` - Remove and return the last element
+- [x] `LPOP key [count]` - Remove and return the first element, or up to `count` elements
+- [x] `RPOP key [count]` - Remove and return the last element, or up to `count` elements
 - [x] `LLEN key` - Return the length of the list
 - [x] `LRANGE key start stop` - Get a range of elements
 - [x] `LINDEX key index` - Get an element by index
@@ -190,7 +190,6 @@ surface.
 
 #### Not implemented
 
-- [ ] `LPOP key [count]` / `RPOP key [count]` - count argument not supported (single-element pop only)
 - [ ] `LPOS`
 - [ ] `LINSERT`
 - [ ] `LMOVE` / `BLMOVE`

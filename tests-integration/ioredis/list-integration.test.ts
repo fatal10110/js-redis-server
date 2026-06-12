@@ -51,6 +51,49 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(empty, null)
   })
 
+  test('LPOP and RPOP support count argument', async () => {
+    const tag = `{list-pop-count:${randomKey()}}`
+    const listKey = `${tag}:values`
+    const directClient = await connectToSlotOwner(redisClient!, listKey)
+
+    try {
+      await directClient.del(listKey)
+      await directClient.rpush(listKey, 'a', 'b', 'c', 'd')
+
+      const leftValues = await directClient.call('LPOP', listKey, '2')
+      assert.deepStrictEqual(leftValues, ['a', 'b'])
+
+      const rightValue = await directClient.call('RPOP', listKey, '1')
+      assert.deepStrictEqual(rightValue, ['d'])
+
+      const remaining = await directClient.lrange(listKey, 0, -1)
+      assert.deepStrictEqual(remaining, ['c'])
+
+      const drained = await directClient.call('RPOP', listKey, '5')
+      assert.deepStrictEqual(drained, ['c'])
+      assert.strictEqual(await directClient.exists(listKey), 0)
+
+      const empty = await directClient.call('LPOP', listKey, '1')
+      assert.strictEqual(empty, null)
+
+      await directClient.rpush(listKey, 'x', 'y')
+      const zeroCount = await directClient.call('LPOP', listKey, '0')
+      assert.deepStrictEqual(zeroCount, [])
+      assert.deepStrictEqual(await directClient.lrange(listKey, 0, -1), [
+        'x',
+        'y',
+      ])
+
+      await assert.rejects(
+        () => directClient.call('LPOP', listKey, '-1'),
+        errorWithMessage('ERR value is out of range, must be positive'),
+      )
+    } finally {
+      await directClient.del(listKey)
+      directClient.disconnect()
+    }
+  })
+
   test('LLEN command', async () => {
     // Empty list
     const len1 = await redisClient?.llen('emptylist')
