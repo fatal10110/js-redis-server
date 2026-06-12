@@ -6,6 +6,7 @@ import { RedisResult } from '../core/redis-result'
 import {
   IndexOutOfRangeError,
   NoSuchKeyError,
+  PositiveCountError,
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
@@ -45,6 +46,48 @@ function listRemove(values: Buffer[], count: number, element: Buffer): number {
     }
   }
   return removed
+}
+
+function popList(
+  args: { key: Buffer; count?: number },
+  ctx: RedisExecutionContext,
+  side: 'left' | 'right',
+): RedisResult {
+  const count = args.count
+  if (count !== undefined && count < 0) {
+    throw new PositiveCountError()
+  }
+
+  const list = ctx.db.getList(args.key)
+  if (!list || list.values.length === 0) {
+    return count === undefined
+      ? bulk(null)
+      : RedisResult.create(RedisValue.nullArray())
+  }
+
+  if (count === undefined) {
+    const result = ctx.db.updateList(args.key, list => {
+      const value = side === 'left' ? list.values.shift() : list.values.pop()
+      return { value: value ?? null, empty: list.values.length === 0 }
+    })
+    if (result.empty) ctx.db.delete(args.key)
+    return bulk(result.value)
+  }
+
+  if (count === 0) {
+    return array([])
+  }
+
+  const result = ctx.db.updateList(args.key, list => {
+    const values =
+      side === 'left'
+        ? list.values.splice(0, count)
+        : list.values.splice(Math.max(0, list.values.length - count))
+    return { values, empty: list.values.length === 0 }
+  })
+  if (result.empty) ctx.db.delete(args.key)
+
+  return array(result.values.map(value => RedisValue.bulkString(value)))
 }
 
 export const lpushCommand = defineCommand({
@@ -89,40 +132,22 @@ export const lpopCommand = defineCommand({
   name: 'lpop',
   schema: t.object({
     key: t.key(),
+    count: t.optional(t.integer()),
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => {
-    const list = ctx.db.getList(args.key)
-    if (!list || list.values.length === 0) return bulk(null)
-
-    const result = ctx.db.updateList(args.key, list => {
-      const value = list.values.shift() ?? null
-      return { value, empty: list.values.length === 0 }
-    })
-    if (result.empty) ctx.db.delete(args.key)
-    return bulk(result.value)
-  },
+  execute: (args, ctx) => popList(args, ctx, 'left'),
 })
 
 export const rpopCommand = defineCommand({
   name: 'rpop',
   schema: t.object({
     key: t.key(),
+    count: t.optional(t.integer()),
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => {
-    const list = ctx.db.getList(args.key)
-    if (!list || list.values.length === 0) return bulk(null)
-
-    const result = ctx.db.updateList(args.key, list => {
-      const value = list.values.pop() ?? null
-      return { value, empty: list.values.length === 0 }
-    })
-    if (result.empty) ctx.db.delete(args.key)
-    return bulk(result.value)
-  },
+  execute: (args, ctx) => popList(args, ctx, 'right'),
 })
 
 export const llenCommand = defineCommand({
