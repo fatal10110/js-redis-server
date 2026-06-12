@@ -66,10 +66,17 @@ surface.
 
 #### CONFIG
 
-- [ ] `CONFIG GET parameter` - Get the value of a configuration parameter
-- [ ] `CONFIG SET parameter value` - Set a configuration parameter
+- [x] `CONFIG GET parameter [parameter ...]` - Get the value of one or more configuration parameters (glob patterns supported)
+- [x] `CONFIG SET parameter value [parameter value ...]` - Set one or more configuration parameters
 - [ ] `CONFIG RESETSTAT` - Reset the stats returned by INFO
 - [ ] `CONFIG REWRITE` - Rewrite the configuration file
+
+`CONFIG GET`/`CONFIG SET` operate on a per-server in-memory store seeded with
+plausible hardcoded defaults (the parameters client libraries commonly probe at
+connection time) — there is no real configuration subsystem behind them.
+`CONFIG SET` only accepts parameters already present in that default set and
+stores the value as-is without applying it anywhere; `CONFIG GET` returns
+whatever is currently stored, glob-matched against the requested patterns.
 
 #### DBSIZE
 
