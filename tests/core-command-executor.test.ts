@@ -303,6 +303,42 @@ describe('new command executor core', () => {
     )
   })
 
+  test('does not start async command definitions in sync execution', async () => {
+    let started = false
+    let mutatedAfterError = false
+    const registry = new CommandRegistry()
+    registry.register(
+      defineCommand({
+        name: 'async-write',
+        schema: t.object({}),
+        flags: ['write'],
+        keys: () => [],
+        execute: async () => {
+          started = true
+          await Promise.resolve()
+          mutatedAfterError = true
+          return RedisResult.ok()
+        },
+      }),
+    )
+
+    const executor = new CommandExecutor({ registry })
+
+    assert.deepStrictEqual(
+      executor.executePlanSync(
+        executor.plan('async-write', []),
+        createContext(executor),
+      ),
+      RedisResult.error(
+        'ASYNC-WRITE cannot run asynchronously from scripts',
+        'ERR',
+      ),
+    )
+    await Promise.resolve()
+    assert.strictEqual(started, false)
+    assert.strictEqual(mutatedAfterError, false)
+  })
+
   test('supports response streams and stream policy hooks', async () => {
     const stream: ResponseStream = {
       kind: 'response-stream',
