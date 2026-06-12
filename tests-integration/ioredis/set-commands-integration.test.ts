@@ -100,6 +100,50 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(empty, null)
   })
 
+  test('SPOP command with count', async () => {
+    const key = `{spop-count:${randomKey()}}:set`
+    const missingKey = `${key}:missing`
+
+    try {
+      await redisClient?.sadd(key, 'a', 'b', 'c', 'd')
+
+      const poppedOne = await redisClient?.spop(key, 1)
+      assert.ok(Array.isArray(poppedOne))
+      assert.strictEqual(poppedOne.length, 1)
+      assert.ok(['a', 'b', 'c', 'd'].includes(poppedOne[0]))
+
+      const cardAfterOne = await redisClient?.scard(key)
+      assert.strictEqual(cardAfterOne, 3)
+
+      const poppedRest = await redisClient?.spop(key, 10)
+      assert.ok(Array.isArray(poppedRest))
+      assert.strictEqual(poppedRest.length, 3)
+      assert.deepStrictEqual([...poppedOne, ...poppedRest].sort(), [
+        'a',
+        'b',
+        'c',
+        'd',
+      ])
+
+      const missing = await redisClient?.spop(missingKey, 2)
+      assert.deepStrictEqual(missing, [])
+
+      await redisClient?.sadd(key, 'remaining')
+      const zero = await redisClient?.spop(key, 0)
+      assert.deepStrictEqual(zero, [])
+
+      const cardAfterZero = await redisClient?.scard(key)
+      assert.strictEqual(cardAfterZero, 1)
+
+      await assert.rejects(
+        () => redisClient?.call('SPOP', key, '-1'),
+        errorWithMessage('ERR value is out of range, must be positive'),
+      )
+    } finally {
+      await redisClient?.del(key, missingKey)
+    }
+  })
+
   test('SRANDMEMBER command', async () => {
     await redisClient?.sadd('set6', 'a', 'b', 'c')
 

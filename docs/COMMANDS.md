@@ -202,7 +202,7 @@ surface.
 - [x] `SCARD key` - Get the number of members in a set
 - [x] `SMEMBERS key` - Get all members in a set
 - [x] `SISMEMBER key member` - Determine if a value is a member of a set
-- [x] `SPOP key` - Remove and return a random member
+- [x] `SPOP key [count]` - Remove and return one or more random members
 - [x] `SRANDMEMBER key [count]` - Get one or more random members without removing them
 - [x] `SMOVE source destination member` - Move a member between sets
 - [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference
@@ -212,7 +212,6 @@ surface.
 
 #### Not implemented
 
-- [ ] `SPOP key count` - count argument not supported (single-element pop only)
 - [ ] `SMISMEMBER key member [member ...]`
 - [ ] `SINTERCARD`
 

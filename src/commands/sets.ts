@@ -2,7 +2,7 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { integer, bulk, array } from './helpers'
 import { RedisValue } from '../core/redis-value'
-import { WrongTypeRedisError } from '../core/redis-error'
+import { PositiveCountError, WrongTypeRedisError } from '../core/redis-error'
 import type { RedisDatabase } from '../state'
 
 // ---------------------------------------------------------------------------
@@ -167,28 +167,58 @@ export const sismemberCommand = defineCommand({
 })
 
 // ---------------------------------------------------------------------------
-// SPOP key
+// SPOP key [count]
 // ---------------------------------------------------------------------------
 
 export const spopCommand = defineCommand({
   name: 'spop',
-  schema: t.object({ key: t.key() }),
+  schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
   flags: ['write', 'random', 'fast', 'noscript'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    if (args.count !== undefined && args.count < 0) {
+      throw new PositiveCountError()
+    }
+
     const type = ctx.db.getType(args.key)
-    if (type === null) return bulk(null)
+    if (type === null) return args.count === undefined ? bulk(null) : array([])
     if (type !== 'set') throw new WrongTypeRedisError()
+
+    if (args.count === undefined) {
+      const result = ctx.db.updateSet(args.key, set => {
+        if (set.members.size === 0)
+          return { member: null as Buffer | null, empty: false }
+        const entries = Array.from(set.members.entries())
+        const [hex, member] =
+          entries[Math.floor(Math.random() * entries.length)]
+        set.members.delete(hex)
+        return { member, empty: set.members.size === 0 }
+      })
+      if (result.empty) ctx.db.delete(args.key)
+      return bulk(result.member)
+    }
+
+    if (args.count === 0) return array([])
+
     const result = ctx.db.updateSet(args.key, set => {
       if (set.members.size === 0)
-        return { member: null as Buffer | null, empty: false }
+        return { members: [] as Buffer[], empty: true }
       const entries = Array.from(set.members.entries())
-      const [hex, member] = entries[Math.floor(Math.random() * entries.length)]
-      set.members.delete(hex)
-      return { member, empty: set.members.size === 0 }
+      const size = Math.min(args.count!, entries.length)
+      const members: Buffer[] = []
+
+      for (let i = 0; i < size; i++) {
+        const j = i + Math.floor(Math.random() * (entries.length - i))
+        ;[entries[i], entries[j]] = [entries[j], entries[i]]
+        const [hex, member] = entries[i]
+        set.members.delete(hex)
+        members.push(member)
+      }
+
+      return { members, empty: set.members.size === 0 }
     })
     if (result.empty) ctx.db.delete(args.key)
-    return bulk(result.member)
+    return array(result.members.map(member => RedisValue.bulkString(member)))
   },
 })
 
