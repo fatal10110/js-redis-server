@@ -37,12 +37,20 @@ export class Resp2SessionAdapter {
   async run(): Promise<void> {
     try {
       for await (const chunk of this.transport.read()) {
-        const frames = this.decoder.push(chunk)
+        const { frames, error } = this.decoder.push(chunk)
         for (const frame of frames) {
           await this.handleFrame(frame)
           if (this.transport.signal.aborted) {
             return
           }
+        }
+
+        if (error) {
+          // Valid frames before the bad one have already been answered above;
+          // now report the protocol error and close, matching real Redis.
+          await this.writeError(error)
+          this.transport.close('resp2 protocol error')
+          return
         }
       }
     } catch (err) {

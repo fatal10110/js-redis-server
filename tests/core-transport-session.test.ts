@@ -113,6 +113,33 @@ describe('new transport-neutral session path', () => {
     assert.strictEqual(transport.getWrittenBuffer().toString(), '+OK\r\n')
   })
 
+  test('flushes responses for valid pipelined frames before a protocol error', async () => {
+    const { session } = createHarness()
+    const transport = new InMemoryConnectionTransport()
+    const adapter = new Resp2SessionAdapter({ transport, session })
+    const running = adapter.run()
+
+    // A single TCP write: two valid commands followed by a malformed frame
+    // (bulk length is not numeric). Real Redis replies to the valid commands
+    // first, then sends the protocol error and closes the connection.
+    transport.feed(
+      Buffer.concat([
+        commandFrame('SET', 'key', 'value'),
+        commandFrame('GET', 'key'),
+        Buffer.from('*1\r\n$abc\r\n'),
+      ]),
+    )
+    transport.endRead()
+
+    await running
+
+    assert.strictEqual(
+      transport.getWrittenBuffer().toString(),
+      '+OK\r\n$5\r\nvalue\r\n-ERR Protocol error: invalid bulk length\r\n',
+    )
+    assert.strictEqual(transport.signal.aborted, true)
+  })
+
   test('drains ResponseStream frames through the same adapter', async () => {
     const { session } = createHarness({ extraCommands: [streamCommand] })
     const transport = new InMemoryConnectionTransport()
