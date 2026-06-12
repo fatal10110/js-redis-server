@@ -159,6 +159,22 @@ export class TestRunner {
     return client
   }
 
+  /**
+   * Return a TCP port for a single standalone server, WITHOUT attaching any
+   * client. Raw-TCP integration tests open their own bare socket against this
+   * port to exercise wire-level behavior real clients can't produce (inline
+   * commands, malformed frames, exact response bytes).
+   *
+   *  - mock: spin up an in-process Resp2Server with 16 databases
+   *  - real: connect to REDIS_STANDALONE_PORT (docker-compose), or spawn a
+   *    local redis-server child as a dev fallback
+   */
+  async setupRawStandalone(): Promise<number> {
+    return this.backend === 'mock'
+      ? this.startMockStandalone()
+      : this.startRealStandalone()
+  }
+
   private async startMockStandalone(): Promise<number> {
     const state = new RedisServerState({ databaseCount: 16 })
     const executor = createRedisCommandExecutor()
