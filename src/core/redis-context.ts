@@ -41,6 +41,14 @@ export interface RedisClientSession {
   watch(keys: readonly Buffer[]): void
   unwatch(): void
   isWatchDirty(): boolean
+  readonly pubsubChannelCount: number
+  readonly pubsubPatternCount: number
+  readonly pubsubSubscriptionCount: number
+  subscribePubSubChannels(channels: readonly Buffer[]): RedisResult[]
+  unsubscribePubSubChannels(channels: readonly Buffer[]): RedisResult[]
+  subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
+  unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
+  resetPubSub(): void
 }
 
 export interface RedisExecutionContext {

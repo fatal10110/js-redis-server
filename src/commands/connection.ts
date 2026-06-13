@@ -201,9 +201,9 @@ function formatClientLine(
     `db=${ctx.session.selectedDatabase}`,
     'age=0',
     'idle=0',
-    'flags=N',
-    'sub=0',
-    'psub=0',
+    `flags=${session.mode === 'subscribed' ? 'P' : 'N'}`,
+    `sub=${session.pubsubChannelCount}`,
+    `psub=${session.pubsubPatternCount}`,
     'multi=-1',
     'qbuf=0',
     'qbuf-free=0',
@@ -321,9 +321,17 @@ export const pingCommand = defineCommand({
   schema: t.object({
     message: t.optional(t.bulk()),
   }),
-  flags: ['readonly', 'fast'],
+  flags: ['readonly', 'fast', 'subscribed'],
   keys: () => [],
-  execute: args => {
+  execute: (args, ctx) => {
+    if (ctx.session.mode === 'subscribed') {
+      return RedisResult.create(
+        RedisValue.push('pong', [
+          RedisValue.bulkString(Buffer.from(args.message ?? '')),
+        ]),
+      )
+    }
+
     if (args.message) {
       return bulk(args.message)
     }
@@ -335,7 +343,7 @@ export const pingCommand = defineCommand({
 export const quitCommand = defineCommand({
   name: 'quit',
   schema: t.object({}),
-  flags: ['readonly', 'fast'],
+  flags: ['readonly', 'fast', 'subscribed'],
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
@@ -530,12 +538,13 @@ export const authCommand = defineCommand({
 export const resetCommand = defineCommand({
   name: 'reset',
   schema: t.object({}),
-  flags: ['admin'],
+  flags: ['admin', 'subscribed'],
   keys: () => [],
   execute: (_args, ctx) => {
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
+    ctx.session.resetPubSub()
     ctx.session.discardTransaction()
     ctx.session.unwatch()
     ctx.session.selectDatabase(0)
