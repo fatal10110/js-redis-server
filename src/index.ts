@@ -100,6 +100,9 @@ export {
   NoAuthError,
   NoPasswordConfiguredError,
   WrongPassError,
+  ZaddGtLtNxConflictError,
+  ZaddIncrPairError,
+  ZaddNxXxConflictError,
 } from './core/redis-error'
 export {
   createAuthPolicy,
