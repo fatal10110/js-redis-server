@@ -223,11 +223,11 @@ with `GT` or `LT`.
 
 ## 8. Sorted Set Commands
 
-- [x] `ZADD key [NX | XX] [GT | LT] [CH] [INCR] score member [score member ...]` - Add or update members with scores
+- [x] `ZADD key [NX | XX] [GT | LT] [CH] [INCR] score member [score member ...]` - Add or update members with scores (`inf`, `+inf`, and `-inf` score tokens supported)
 - [x] `ZREM key member [member ...]` - Remove one or more members
 - [x] `ZCARD key` - Get the number of members
 - [x] `ZSCORE key member` - Get the score of a member
-- [x] `ZINCRBY key increment member` - Increment the score of a member
+- [x] `ZINCRBY key increment member` - Increment the score of a member (`inf`, `+inf`, and `-inf` increments supported; NaN results rejected)
 - [x] `ZRANK key member` - Get the index of a member, lowest score first
 - [x] `ZREVRANK key member` - Get the index of a member, highest score first
 - [x] `ZRANGE key start stop [WITHSCORES]` - Return a range of members by index
@@ -241,6 +241,7 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
+- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
 - [ ] `ZRANGE`/`ZREVRANGE` do not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes
 - [ ] `ZRANGEBYSCORE` does not support `WITHSCORES` or `LIMIT offset count`
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option

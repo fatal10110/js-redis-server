@@ -20,6 +20,12 @@ export function integer(value: number | bigint): RedisResult {
   return RedisResult.create(RedisValue.integer(value))
 }
 
+export function scoreBuffer(score: number): Buffer {
+  if (score === Infinity) return Buffer.from('inf')
+  if (score === -Infinity) return Buffer.from('-inf')
+  return Buffer.from(score.toString())
+}
+
 export function simpleString(value: string): RedisResult {
   return RedisResult.create(RedisValue.simpleString(value))
 }

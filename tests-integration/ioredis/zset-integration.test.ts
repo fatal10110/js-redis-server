@@ -207,6 +207,78 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     assert.strictEqual(score2, '50')
   })
 
+  test('sorted set commands accept and return Redis infinity score tokens', async () => {
+    const tag = `{zset-infinity:${randomKey()}}`
+    const zincrbyKey = `${tag}:zincrby`
+    const zaddKey = `${tag}:zadd`
+
+    try {
+      assert.strictEqual(await redisClient?.zadd(zincrbyKey, 5, 'finite'), 1)
+      assert.strictEqual(
+        await redisClient?.zincrby(zincrbyKey, '+INF', 'positive'),
+        'inf',
+      )
+      assert.strictEqual(
+        await redisClient?.zincrby(zincrbyKey, '-inf', 'negative'),
+        '-inf',
+      )
+
+      assert.strictEqual(
+        await redisClient?.zscore(zincrbyKey, 'positive'),
+        'inf',
+      )
+      assert.strictEqual(
+        await redisClient?.zscore(zincrbyKey, 'negative'),
+        '-inf',
+      )
+      await assert.rejects(
+        () => redisClient?.zincrby(zincrbyKey, '-inf', 'positive'),
+        errorWithMessage('ERR resulting score is not a number (NaN)'),
+      )
+      assert.strictEqual(
+        await redisClient?.zscore(zincrbyKey, 'positive'),
+        'inf',
+      )
+      assert.deepStrictEqual(
+        await redisClient?.zrange(zincrbyKey, 0, -1, 'WITHSCORES'),
+        ['negative', '-inf', 'finite', '5', 'positive', 'inf'],
+      )
+      assert.deepStrictEqual(await redisClient?.zpopmin(zincrbyKey), [
+        'negative',
+        '-inf',
+      ])
+      assert.deepStrictEqual(await redisClient?.zpopmax(zincrbyKey), [
+        'positive',
+        'inf',
+      ])
+
+      assert.strictEqual(
+        await redisClient?.zadd(
+          zaddKey,
+          '+inf',
+          'positive',
+          '-INF',
+          'negative',
+        ),
+        2,
+      )
+      assert.strictEqual(await redisClient?.zscore(zaddKey, 'positive'), 'inf')
+      assert.strictEqual(await redisClient?.zscore(zaddKey, 'negative'), '-inf')
+
+      const zscan = await redisClient?.zscan(zaddKey, '0')
+      assert.ok(zscan)
+      const [, zscanItems] = zscan
+      const scannedScores = new Map<string, string>()
+      for (let i = 0; i < zscanItems.length; i += 2) {
+        scannedScores.set(zscanItems[i], zscanItems[i + 1])
+      }
+      assert.strictEqual(scannedScores.get('positive'), 'inf')
+      assert.strictEqual(scannedScores.get('negative'), '-inf')
+    } finally {
+      await redisClient?.del(zincrbyKey, zaddKey)
+    }
+  })
+
   test('Sorted set command errors match Redis', async () => {
     const tag = `{zset-errors:${randomKey()}}`
     const zsetKey = `${tag}:zset`
@@ -228,6 +300,10 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
       )
       await assert.rejects(
         () => redisClient?.call('ZINCRBY', zsetKey, 'abc', 'a'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZINCRBY', zsetKey, 'nan', 'a'),
         errorWithMessage('ERR value is not a valid float'),
       )
       await assert.rejects(
