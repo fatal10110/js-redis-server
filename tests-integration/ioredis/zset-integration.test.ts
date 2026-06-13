@@ -183,6 +183,48 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     }
   })
 
+  test('score range commands support infinite and exclusive bounds', async () => {
+    const zsetKey = `{zset-score-bounds:${randomKey()}}`
+
+    try {
+      await redisClient?.zadd(
+        zsetKey,
+        0,
+        'zero',
+        1,
+        'one',
+        2,
+        'two',
+        3,
+        'three',
+      )
+
+      assert.deepStrictEqual(
+        await redisClient?.zrangebyscore(zsetKey, '-inf', '+inf'),
+        ['zero', 'one', 'two', 'three'],
+      )
+      assert.deepStrictEqual(
+        await redisClient?.zrangebyscore(zsetKey, '(1', '3'),
+        ['two', 'three'],
+      )
+      assert.deepStrictEqual(
+        await redisClient?.zrangebyscore(zsetKey, '1', '(3'),
+        ['one', 'two'],
+      )
+      assert.strictEqual(await redisClient?.zcount(zsetKey, '(1', '+inf'), 2)
+      assert.strictEqual(
+        await redisClient?.zremrangebyscore(zsetKey, '-inf', '(2'),
+        2,
+      )
+      assert.deepStrictEqual(await redisClient?.zrange(zsetKey, 0, -1), [
+        'two',
+        'three',
+      ])
+    } finally {
+      await redisClient?.del(zsetKey)
+    }
+  })
+
   test('ZREM command', async () => {
     await redisClient?.zadd('zset7', 1, 'one', 2, 'two', 3, 'three', 4, 'four')
 
