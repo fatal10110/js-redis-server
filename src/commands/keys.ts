@@ -7,7 +7,7 @@ import {
   RedisSyntaxError,
   SameObjectError,
 } from '../core/redis-error'
-import type { RedisDatabase } from '../state'
+import type { ExpirationState, RedisDatabase } from '../state'
 import {
   integer,
   ok,
@@ -163,15 +163,39 @@ export const pexpiretimeCommand = defineCommand({
   },
 })
 
+type ExpireCondition = 'NX' | 'XX' | 'GT' | 'LT'
+
+const expireConditionSchema = t.custom<ExpireCondition | undefined>(
+  (input, index) => {
+    if (index >= input.length) {
+      return { value: undefined, nextIndex: index }
+    }
+
+    const condition = input[index]!.toString().toUpperCase()
+    if (
+      condition === 'NX' ||
+      condition === 'XX' ||
+      condition === 'GT' ||
+      condition === 'LT'
+    ) {
+      return { value: condition, nextIndex: index + 1 }
+    }
+
+    throw new RedisSyntaxError()
+  },
+)
+
 export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
     key: t.key(),
     seconds: t.integer(),
+    condition: expireConditionSchema,
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => expireKey(ctx.db, args.key, args.seconds, 1000),
+  execute: (args, ctx) =>
+    expireKey(ctx.db, args.key, args.seconds, 1000, args.condition),
 })
 
 export const pexpireCommand = defineCommand({
@@ -179,10 +203,12 @@ export const pexpireCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     milliseconds: t.integer(),
+    condition: expireConditionSchema,
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => expireKey(ctx.db, args.key, args.milliseconds, 1),
+  execute: (args, ctx) =>
+    expireKey(ctx.db, args.key, args.milliseconds, 1, args.condition),
 })
 
 export const persistCommand = defineCommand({
@@ -219,32 +245,29 @@ export const flushallCommand = defineCommand({
 
 export const expireatCommand = defineCommand({
   name: 'expireat',
-  schema: t.object({ key: t.key(), timestamp: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    timestamp: t.integer(),
+    condition: expireConditionSchema,
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (ctx.db.getType(args.key) === null) return integer(0)
-    const expiresAt = args.timestamp * 1000
-    if (expiresAt <= Date.now()) {
-      ctx.db.delete(args.key)
-      return integer(1)
-    }
-    return integer(ctx.db.expire(args.key, expiresAt) ? 1 : 0)
+    return expireAtKey(ctx.db, args.key, args.timestamp * 1000, args.condition)
   },
 })
 
 export const pexpireatCommand = defineCommand({
   name: 'pexpireat',
-  schema: t.object({ key: t.key(), timestamp: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    timestamp: t.integer(),
+    condition: expireConditionSchema,
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (ctx.db.getType(args.key) === null) return integer(0)
-    if (args.timestamp <= Date.now()) {
-      ctx.db.delete(args.key)
-      return integer(1)
-    }
-    return integer(ctx.db.expire(args.key, args.timestamp) ? 1 : 0)
+    return expireAtKey(ctx.db, args.key, args.timestamp, args.condition)
   },
 })
 
@@ -411,14 +434,59 @@ function expireKey(
   key: Buffer,
   duration: number,
   multiplier: number,
+  condition?: ExpireCondition,
 ) {
-  if (db.getType(key) === null) {
+  const now = Date.now()
+  return expireAtKey(db, key, now + duration * multiplier, condition, now)
+}
+
+function expireAtKey(
+  db: RedisDatabase,
+  key: Buffer,
+  expiresAt: number,
+  condition?: ExpireCondition,
+  now = Date.now(),
+) {
+  const expiration = db.getExpiration(key)
+  if (expiration.kind === 'missing') {
     return integer(0)
   }
 
-  if (duration <= 0) {
+  if (!shouldApplyExpireCondition(expiration, expiresAt, condition)) {
+    return integer(0)
+  }
+
+  if (expiresAt <= now) {
     return integer(db.delete(key) ? 1 : 0)
   }
 
-  return integer(db.expire(key, Date.now() + duration * multiplier) ? 1 : 0)
+  return integer(db.expire(key, expiresAt) ? 1 : 0)
+}
+
+function shouldApplyExpireCondition(
+  expiration: Exclude<ExpirationState, { kind: 'missing' }>,
+  expiresAt: number,
+  condition?: ExpireCondition,
+): boolean {
+  if (condition === undefined) {
+    return true
+  }
+
+  if (condition === 'NX') {
+    return expiration.kind === 'persistent'
+  }
+
+  if (condition === 'XX') {
+    return expiration.kind === 'expires'
+  }
+
+  if (condition === 'GT') {
+    return expiration.kind === 'expires' && expiresAt > expiration.expiresAt
+  }
+
+  if (expiration.kind === 'persistent') {
+    return true
+  }
+
+  return expiresAt < expiration.expiresAt
 }
