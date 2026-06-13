@@ -17,6 +17,13 @@ function bulkResult(s: string | null): RedisResult {
   )
 }
 
+function xreadReplyEntries(result: RedisResult, streamIndex = 0): RedisValue[] {
+  assert.strictEqual(result.value.kind, 'map-pairs')
+  const [, entries] = result.value.entries[streamIndex]
+  assert.strictEqual(entries.kind, 'array')
+  return entries.items
+}
+
 describe('stream commands (unit)', () => {
   // XTRIM MAXLEN
 
@@ -177,13 +184,7 @@ describe('stream commands (unit)', () => {
     const result = await session.execute('xread', buf('STREAMS', 's', '1-1'))
     assert.ok(result.value !== null)
     // Should return entries 2-1 and 3-1 only.
-    const streamEntries = (
-      (
-        (result.value as { items: RedisValue[] }).items[0] as {
-          items: RedisValue[]
-        }
-      ).items[1] as { items: RedisValue[] }
-    ).items
+    const streamEntries = xreadReplyEntries(result)
     assert.strictEqual(streamEntries.length, 2)
   })
 
@@ -198,13 +199,7 @@ describe('stream commands (unit)', () => {
       buf('COUNT', '1', 'STREAMS', 's', '0-0'),
     )
     assert.ok(result.value !== null)
-    const streamEntries = (
-      (
-        (result.value as { items: RedisValue[] }).items[0] as {
-          items: RedisValue[]
-        }
-      ).items[1] as { items: RedisValue[] }
-    ).items
+    const streamEntries = xreadReplyEntries(result)
     assert.strictEqual(streamEntries.length, 1)
   })
 
@@ -246,7 +241,7 @@ describe('stream commands (unit)', () => {
       buf('STREAMS', 's1', 's2', '0-0', '0-0'),
     )
     assert.ok(result.value !== null)
-    const streams = (result.value as { items: RedisValue[] }).items
-    assert.strictEqual(streams.length, 2)
+    assert.strictEqual(result.value.kind, 'map-pairs')
+    assert.strictEqual(result.value.entries.length, 2)
   })
 })

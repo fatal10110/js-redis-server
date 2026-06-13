@@ -90,19 +90,11 @@ function configGet(
   const bulk = (text: string): RedisValue =>
     RedisValue.bulkString(Buffer.from(text))
 
-  if (ctx.session.protocolVersion === 3) {
-    const entries: [RedisValue, RedisValue][] = []
-    for (const [name, value] of matched) {
-      entries.push([bulk(name), bulk(value)])
-    }
-    return RedisResult.create(RedisValue.map(entries))
-  }
-
-  const flat: RedisValue[] = []
+  const entries: [RedisValue, RedisValue][] = []
   for (const [name, value] of matched) {
-    flat.push(bulk(name), bulk(value))
+    entries.push([bulk(name), bulk(value)])
   }
-  return RedisResult.create(RedisValue.array(flat))
+  return RedisResult.create(RedisValue.map(entries))
 }
 
 function configSet(

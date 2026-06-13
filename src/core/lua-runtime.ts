@@ -157,6 +157,11 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
         redisValueToLuaReply(key),
         redisValueToLuaReply(entryValue),
       ])
+    case 'map-pairs':
+      return value.entries.map(([key, entryValue]) => [
+        redisValueToLuaReply(key),
+        redisValueToLuaReply(entryValue),
+      ])
     case 'push':
       return [Buffer.from(value.name), ...value.items.map(redisValueToLuaReply)]
     case 'null':

@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage } from '../utils'
+import { commandFrame, errorWithMessage } from '../utils'
+import {
+  RawRedisConnection,
+  respMapGet,
+  respText,
+} from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
 
@@ -117,6 +122,36 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
       'NOSUCHCOMMAND',
     )) as unknown[]
     assert.deepStrictEqual(unknownDocs, [])
+  })
+
+  test('COMMAND DOCS returns RESP3 maps after HELLO 3', async () => {
+    const port = testRunner.getClusterPorts()[0]
+    assert.notStrictEqual(port, undefined)
+    const connection = await RawRedisConnection.connect('127.0.0.1', port!)
+
+    try {
+      connection.write(commandFrame('HELLO', '3'))
+      assert.ok((await connection.readFrame()) instanceof Map)
+
+      connection.write(commandFrame('COMMAND', 'DOCS', 'GET'))
+      const reply = await connection.readFrame()
+      assert.ok(reply instanceof Map)
+
+      const getDocs = respMapGet(reply, 'get')
+      assert.ok(getDocs instanceof Map)
+      assert.strictEqual(
+        respText(respMapGet(getDocs, 'summary')),
+        'Get the value of a key',
+      )
+      assert.strictEqual(respText(respMapGet(getDocs, 'group')), 'string')
+
+      const args = respMapGet(getDocs, 'arguments')
+      assert.ok(Array.isArray(args))
+      assert.ok(args[0] instanceof Map)
+      assert.strictEqual(respText(respMapGet(args[0], 'name')), 'key')
+    } finally {
+      connection.close()
+    }
   })
 
   test('COMMAND GETKEYS and GETKEYSANDFLAGS use command key extraction', async () => {

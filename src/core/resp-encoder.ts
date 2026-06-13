@@ -50,6 +50,12 @@ function encodeResp2(value: RedisValue): Buffer {
       return encodeArray(
         value.entries.flatMap(([key, entryValue]) => [key, entryValue]),
       )
+    case 'map-pairs':
+      return encodeArray(
+        value.entries.map(([key, entryValue]) =>
+          RedisValue.array([key, entryValue]),
+        ),
+      )
     case 'push':
       return encodeArray([
         { kind: 'bulk-string', value: Buffer.from(value.name) },
@@ -85,6 +91,8 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'set':
       return encodeResp3Set(value.items)
     case 'map':
+      return encodeResp3Map(value.entries)
+    case 'map-pairs':
       return encodeResp3Map(value.entries)
     case 'push':
       return encodeResp3Push(value.name, value.items)

@@ -164,16 +164,16 @@ function commandDocsSubcommand(
           .map(name => findCommandInfo(ctx, name.toString()))
           .filter((info): info is CommandInfo => info !== null)
 
-  const items: RedisValue[] = []
+  const entries: [RedisValue, RedisValue][] = []
   for (const info of infos) {
     if (!info.docs) {
       continue
     }
 
-    items.push(bulkString(info.name), formatDocs(info.docs))
+    entries.push([bulkString(info.name), formatDocs(info.docs)])
   }
 
-  return RedisResult.create(RedisValue.array(items))
+  return RedisResult.create(RedisValue.map(entries))
 }
 
 function commandGetKeys(
@@ -417,52 +417,55 @@ function formatKeySpec(spec: CommandKeySpec): RedisValue {
 }
 
 function formatDocs(docs: CommandDocumentation): RedisValue {
-  const items: RedisValue[] = [bulkString('summary'), bulkString(docs.summary)]
+  const entries: [RedisValue, RedisValue][] = [
+    [bulkString('summary'), bulkString(docs.summary)],
+  ]
 
   if (docs.since) {
-    items.push(bulkString('since'), bulkString(docs.since))
+    entries.push([bulkString('since'), bulkString(docs.since)])
   }
 
-  items.push(bulkString('group'), bulkString(docs.group))
+  entries.push([bulkString('group'), bulkString(docs.group)])
 
   if (docs.complexity) {
-    items.push(bulkString('complexity'), bulkString(docs.complexity))
+    entries.push([bulkString('complexity'), bulkString(docs.complexity)])
   }
 
   if (docs.arguments) {
-    items.push(
+    entries.push([
       bulkString('arguments'),
       RedisValue.array(docs.arguments.map(formatDocsArgument)),
-    )
+    ])
   }
 
-  return RedisValue.array(items)
+  return RedisValue.map(entries)
 }
 
 function formatDocsArgument(arg: CommandDocumentationArgument): RedisValue {
-  const items: RedisValue[] = [
-    bulkString('name'),
-    bulkString(arg.name),
-    bulkString('type'),
-    bulkString(arg.type),
+  const entries: [RedisValue, RedisValue][] = [
+    [bulkString('name'), bulkString(arg.name)],
+    [bulkString('type'), bulkString(arg.type)],
   ]
 
   if (arg.keySpecIndex !== undefined) {
-    items.push(
+    entries.push([
       bulkString('key_spec_index'),
       RedisValue.integer(arg.keySpecIndex),
-    )
+    ])
   }
 
   if (arg.token) {
-    items.push(bulkString('token'), bulkString(arg.token))
+    entries.push([bulkString('token'), bulkString(arg.token)])
   }
 
   if (arg.flags) {
-    items.push(bulkString('flags'), RedisValue.array(arg.flags.map(bulkString)))
+    entries.push([
+      bulkString('flags'),
+      RedisValue.array(arg.flags.map(bulkString)),
+    ])
   }
 
-  return RedisValue.array(items)
+  return RedisValue.map(entries)
 }
 
 function keyAccessFlags(definition: CommandDefinition<unknown>): RedisValue[] {

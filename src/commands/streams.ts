@@ -478,7 +478,7 @@ function readStreamEntries(
   count: number | null,
   ctx: RedisExecutionContext,
 ): RedisResult | null {
-  const results: RedisValue[] = []
+  const results: [RedisValue, RedisValue][] = []
 
   for (const { key, afterId } of streams) {
     const stream = ctx.db.getStream(key)
@@ -493,17 +493,12 @@ function readStreamEntries(
     }
 
     if (entries.length > 0) {
-      results.push(
-        RedisValue.array([
-          RedisValue.bulkString(key),
-          RedisValue.array(entries),
-        ]),
-      )
+      results.push([RedisValue.bulkString(key), RedisValue.array(entries)])
     }
   }
 
   return results.length > 0
-    ? RedisResult.create(RedisValue.array(results))
+    ? RedisResult.create(RedisValue.mapPairs(results))
     : null
 }
 

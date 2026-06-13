@@ -347,11 +347,14 @@ inline arguments) for the request side.
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
 union (`simple-string`, `bulk-string`, `integer`, `double`, `boolean`,
-`big-number`, `verbatim`, `array`, `set`, `map`, `push`, `null`, `error`, ...)
+`big-number`, `verbatim`, `array`, `set`, `map`, `map-pairs`, `push`, `null`, `error`, ...)
 to either RESP2 or RESP3 wire bytes. Each connection starts on RESP2; sending
-`HELLO 3` switches that single session to RESP3 — `RedisValue.map`/`set`/`double`/
-`boolean`/`bigNumber`/`push` then encode as their native RESP3 types (`%`, `~`,
-`,`, `#`, `(`, `>`) instead of being downgraded to arrays/bulk-strings. See the
+`HELLO 3` switches that single session to RESP3 — `RedisValue.map`/`mapPairs`/
+`set`/`double`/`boolean`/`bigNumber`/`push` then encode as their native RESP3
+types (`%`, `%`, `~`, `,`, `#`, `(`, `>`) instead of being downgraded to
+arrays/bulk-strings. `map` downgrades to a flat RESP2 key/value array, while
+`mapPairs` downgrades to a RESP2 array of `[key, value]` pairs for commands like
+`XREAD`. See the
 [README's protocol-version section](../README.md#protocol-version-resp2--resp3)
 for the client-facing view of this negotiation.
 

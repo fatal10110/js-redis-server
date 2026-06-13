@@ -53,7 +53,7 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 - [x] `COMMAND COUNT` - Return the command count for the active registry
 - [x] `COMMAND LIST [FILTERBY PATTERN pattern|MODULE module]` - Return command names
 - [x] `COMMAND INFO [command-name ...]` - Return command metadata
-- [x] `COMMAND DOCS [command-name ...]` - Return command documentation
+- [x] `COMMAND DOCS [command-name ...]` - Return command documentation (RESP3 maps / RESP2 flat arrays)
 - [x] `COMMAND GETKEYS command [arg ...]` - Extract keys through the command definition
 - [x] `COMMAND GETKEYSANDFLAGS command [arg ...]` - Extract keys with access flags
 - [x] `COMMAND HELP` - Return command help
@@ -155,7 +155,7 @@ surface.
 - [x] `HGET key field` - Get the value of a hash field
 - [x] `HMSET key field value [field value ...]` - Set multiple hash fields (deprecated, use HSET)
 - [x] `HMGET key field [field ...]` - Get the values of multiple hash fields
-- [x] `HGETALL key` - Get all fields and values in a hash
+- [x] `HGETALL key` - Get all fields and values in a hash (RESP3 map / RESP2 flat array)
 - [x] `HDEL key field [field ...]` - Delete one or more hash fields
 - [x] `HEXISTS key field` - Determine if a hash field exists
 - [x] `HKEYS key` - Get all fields in a hash
@@ -254,7 +254,7 @@ surface.
 - [x] `XREVRANGE key end start [COUNT count]` - Return entries in descending ID order
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
 - [x] `XTRIM key MAXLEN|MINID [~] threshold` - Trim a stream to a size or minimum ID
-- [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]` - Read entries, optionally blocking for new ones
+- [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs)
 
 #### Notes / gaps vs. real Redis
 
@@ -316,7 +316,7 @@ flags are enforced inside `redis.call`/`redis.pcall`.
 - [x] `CLUSTER INFO` - Provides info about Redis Cluster node state
 - [x] `CLUSTER NODES` - Get the cluster config for the node
 - [x] `CLUSTER SLOTS` - Get array of slot ranges with assigned nodes
-- [x] `CLUSTER SHARDS` - Get array of shards with their slot ranges and nodes
+- [x] `CLUSTER SHARDS` - Get array of shards with their slot ranges and nodes (RESP3 maps / RESP2 flat arrays)
 - [x] `CLUSTER MYID` - Return the node's own ID
 - [x] `READONLY` - Allow read-only commands against a direct replica connection for slots served by its master
 - [x] `READWRITE` - Disable replica read mode on the current connection

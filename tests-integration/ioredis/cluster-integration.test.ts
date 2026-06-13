@@ -5,6 +5,7 @@ import { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
 import { TestRunner } from '../test-config'
 import {
+  commandFrame,
   connectToEndpoint,
   connectToSlotOwner,
   eventually,
@@ -13,6 +14,12 @@ import {
   findSlotOwner,
   randomKey,
 } from '../utils'
+import {
+  RawRedisConnection,
+  respMapGet,
+  respNumber,
+  respText,
+} from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
 
@@ -256,6 +263,35 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
       }
     } finally {
       directClient.disconnect()
+    }
+  })
+
+  test('CLUSTER SHARDS returns RESP3 maps after HELLO 3', async () => {
+    const port = testRunner.getClusterPorts()[0]
+    assert.notStrictEqual(port, undefined)
+    const connection = await RawRedisConnection.connect('127.0.0.1', port!)
+
+    try {
+      connection.write(commandFrame('HELLO', '3'))
+      assert.ok((await connection.readFrame()) instanceof Map)
+
+      connection.write(commandFrame('CLUSTER', 'SHARDS'))
+      const reply = await connection.readFrame()
+      assert.ok(Array.isArray(reply))
+      assert.ok(reply.length > 0)
+
+      const shard = reply[0]
+      assert.ok(shard instanceof Map)
+      assert.ok(Array.isArray(respMapGet(shard, 'slots')))
+
+      const nodes = respMapGet(shard, 'nodes')
+      assert.ok(Array.isArray(nodes))
+      assert.ok(nodes[0] instanceof Map)
+      assert.ok(respText(respMapGet(nodes[0], 'id')).length > 0)
+      assert.ok(respNumber(respMapGet(nodes[0], 'port')) > 0)
+      assert.match(respText(respMapGet(nodes[0], 'role')), /^(master|replica)$/)
+    } finally {
+      connection.close()
     }
   })
 })
