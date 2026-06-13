@@ -200,6 +200,8 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
     )
     const script = 'return ARGV[1]'
     const sha = createHash('sha1').update(script).digest('hex')
+    const upperSha = sha.toUpperCase()
+    const mixedSha = `${sha.slice(0, 20).toUpperCase()}${sha.slice(20)}`
     const missingSha = createHash('sha1')
       .update('return "missing"')
       .digest('hex')
@@ -210,7 +212,25 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         await directClient.call('SCRIPT', 'EXISTS', sha, missingSha),
         [1, 0],
       )
+      assert.deepStrictEqual(
+        await directClient.call(
+          'SCRIPT',
+          'EXISTS',
+          upperSha,
+          mixedSha,
+          missingSha.toUpperCase(),
+        ),
+        [1, 1, 0],
+      )
       assert.strictEqual(await directClient.evalsha(sha, 0, 'cached'), 'cached')
+      assert.strictEqual(
+        await directClient.evalsha(upperSha, 0, 'cached-uppercase'),
+        'cached-uppercase',
+      )
+      assert.strictEqual(
+        await directClient.evalsha(mixedSha, 0, 'cached-mixed-case'),
+        'cached-mixed-case',
+      )
 
       assert.strictEqual(
         await directClient.call('SCRIPT', 'FLUSH', 'SYNC'),
@@ -220,7 +240,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         0,
       ])
       await assert.rejects(
-        () => directClient.evalsha(sha, 0, 'cached'),
+        () => directClient.evalsha(upperSha, 0, 'cached'),
         errorWithMessage('NOSCRIPT No matching script. Please use EVAL.'),
       )
     } finally {
