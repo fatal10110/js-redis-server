@@ -92,6 +92,7 @@ surface.
 ## 3. Generic Key Commands
 
 - [x] `DEL key [key ...]` - Delete one or more keys
+- [x] `UNLINK key [key ...]` - Delete one or more keys without blocking (same as `DEL` in this mock)
 - [x] `EXISTS key [key ...]` - Determine how many of the given keys exist
 - [x] `TYPE key` - Return the type of the value stored at key
 - [x] `RENAME key newkey` - Rename a key
@@ -116,7 +117,7 @@ surface.
 - [ ] `RANDOMKEY`
 - [ ] `COPY` / `MOVE`
 - [ ] `DUMP` / `RESTORE`
-- [ ] `TOUCH` / `UNLINK`
+- [ ] `TOUCH`
 - [ ] `SORT` / `SORT_RO`
 - [ ] `WAIT`
 - [ ] `MIGRATE`
