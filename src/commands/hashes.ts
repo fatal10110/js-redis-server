@@ -90,13 +90,17 @@ export const hdelCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    const existingHash = ctx.db.getHash(args.key)
+    if (!existingHash) return integer(0)
+
     let deleted = 0
-    ctx.db.updateHash(args.key, hash => {
+    const remaining = ctx.db.updateHash(args.key, hash => {
       for (const field of args.fields) {
         if (hash.fields.delete(field.toString('hex'))) deleted++
       }
+      return hash.fields.size
     })
-    if (deleted > 0 && (ctx.db.getHash(args.key)?.fields.size ?? 0) === 0) {
+    if (remaining === 0) {
       ctx.db.delete(args.key)
     }
     return integer(deleted)
