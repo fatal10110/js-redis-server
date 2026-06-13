@@ -79,6 +79,24 @@ export class ZaddGtLtNxConflictError extends RedisCommandError {
   }
 }
 
+export class ExpireNxXxGtLtConflictError extends RedisCommandError {
+  constructor() {
+    super('NX and XX, GT or LT options at the same time are not compatible')
+  }
+}
+
+export class ExpireGtLtConflictError extends RedisCommandError {
+  constructor() {
+    super('GT and LT options at the same time are not compatible')
+  }
+}
+
+export class UnsupportedOptionError extends RedisCommandError {
+  constructor(option: string) {
+    super(`Unsupported option ${option}`)
+  }
+}
+
 export class ZaddIncrPairError extends RedisCommandError {
   constructor() {
     super('INCR option supports a single increment-element pair')

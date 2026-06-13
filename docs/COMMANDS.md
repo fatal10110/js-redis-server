@@ -106,13 +106,15 @@ surface.
 - [x] `TTL key` - Get the time to live for a key in seconds
 - [x] `PTTL key` - Get the time to live for a key in milliseconds
 - [x] `PERSIST key` - Remove the existing timeout on a key
-- [x] `EXPIRE key seconds` - Set a key's time to live in seconds
-- [x] `PEXPIRE key milliseconds` - Set a key's time to live in milliseconds
-- [x] `EXPIREAT key unix-time-seconds` - Set the expiration as a UNIX timestamp
-- [x] `PEXPIREAT key unix-time-milliseconds` - Set the expiration as a UNIX timestamp in milliseconds
+- [x] `EXPIRE key seconds [NX | XX | GT | LT]` - Set a key's time to live in seconds, optionally only when the current expiry state matches the condition
+- [x] `PEXPIRE key milliseconds [NX | XX | GT | LT]` - Set a key's time to live in milliseconds, optionally only when the current expiry state matches the condition
+- [x] `EXPIREAT key unix-time-seconds [NX | XX | GT | LT]` - Set the expiration as a UNIX timestamp, optionally only when the current expiry state matches the condition
+- [x] `PEXPIREAT key unix-time-milliseconds [NX | XX | GT | LT]` - Set the expiration as a UNIX timestamp in milliseconds, optionally only when the current expiry state matches the condition
 - [x] `EXPIRETIME key` - Get the absolute Unix expiration time in seconds
 - [x] `PEXPIRETIME key` - Get the absolute Unix expiration time in milliseconds
-- [ ] `NX | XX | GT | LT` conditional flags on `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` - not implemented (any extra argument is a wrong-arity error)
+
+`NX`, `GT`, and `LT` follow Redis' mutual-exclusion rules; `XX` can be combined
+with `GT` or `LT`.
 
 #### Not implemented
 
