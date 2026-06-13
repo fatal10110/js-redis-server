@@ -106,6 +106,7 @@ export {
   watchCommand,
 } from './transactions'
 export {
+  copyCommand,
   dbsizeCommand,
   delCommand,
   existsCommand,

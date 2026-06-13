@@ -97,6 +97,7 @@ surface.
 - [x] `TYPE key` - Return the type of the value stored at key
 - [x] `RENAME key newkey` - Rename a key
 - [x] `RENAMENX key newkey` - Rename a key only if the new key does not exist
+- [x] `COPY source destination [DB destination-db] [REPLACE]` - Copy a key's value (and TTL) to a destination, optionally into another database; returns `0` if the destination exists without `REPLACE`
 - [x] `KEYS pattern` - Find all keys matching a glob pattern
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Incrementally iterate the keyspace (see [Scan Family](#10-scan-family))
 
@@ -117,7 +118,7 @@ surface.
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ`
 - [ ] `RANDOMKEY`
-- [ ] `COPY` / `MOVE`
+- [ ] `MOVE`
 - [ ] `DUMP` / `RESTORE`
 - [ ] `TOUCH`
 - [ ] `SORT` / `SORT_RO`
