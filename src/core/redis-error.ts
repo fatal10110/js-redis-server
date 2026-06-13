@@ -55,6 +55,12 @@ export class ExpectedFloatError extends RedisCommandError {
   }
 }
 
+export class ResultingScoreNaNError extends RedisCommandError {
+  constructor() {
+    super('resulting score is not a number (NaN)')
+  }
+}
+
 export class MinMaxNotFloatError extends RedisCommandError {
   constructor() {
     super('min or max is not a float')
