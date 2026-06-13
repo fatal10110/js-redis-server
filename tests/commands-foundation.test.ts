@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
+  connectionCommands,
   InMemoryConnectionTransport,
   RedisResult,
   RedisValue,
@@ -112,6 +113,34 @@ describe('new foundation commands', () => {
       await session.execute('client', [Buffer.from('GETNAME')]),
       RedisResult.create(RedisValue.bulkString(null)),
     )
+  })
+
+  test('reports Pub/Sub subscription counts in CLIENT INFO and LIST', () => {
+    const { session } = createSession()
+    const clientCommand = connectionCommands.find(command => {
+      return command.name === 'client'
+    })
+    assert.ok(clientCommand)
+
+    session.subscribePubSubChannels([Buffer.from('updates')])
+    session.subscribePubSubPatterns([Buffer.from('events:*')])
+
+    const ctx = session.createExecutionContext()
+    const info = clientCommand.execute({ subcommand: 'info', args: [] }, ctx)
+    assert.ok(info instanceof RedisResult)
+    assert.strictEqual(info.value.kind, 'bulk-string')
+    assert.notStrictEqual(info.value.value, null)
+    assert.match(info.value.value.toString(), /(?:^| )sub=1(?: |\n)/)
+    assert.match(info.value.value.toString(), /(?:^| )psub=1(?: |\n)/)
+
+    const list = clientCommand.execute({ subcommand: 'list', args: [] }, ctx)
+    assert.ok(list instanceof RedisResult)
+    assert.strictEqual(list.value.kind, 'bulk-string')
+    assert.notStrictEqual(list.value.value, null)
+    assert.match(list.value.value.toString(), /(?:^| )sub=1(?: |\n)/)
+    assert.match(list.value.value.toString(), /(?:^| )psub=1(?: |\n)/)
+
+    session.close()
   })
 
   test('implements SET condition, GET, expiration, and KEEPTTL options', async () => {

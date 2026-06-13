@@ -88,6 +88,22 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     assert.deepStrictEqual(await subscriber.readFrame(), null)
   })
 
+  test('allows QUIT while subscribed', async () => {
+    const conn = await connect()
+    const channel = `raw-quit:${randomKey()}`
+
+    conn.write(commandFrame('SUBSCRIBE', channel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'subscribe',
+      channel,
+      1,
+    ])
+
+    conn.write(commandFrame('QUIT'))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+OK\r\n'))
+    assert.deepStrictEqual(await conn.readUntilClose(), Buffer.alloc(0))
+  })
+
   test('emits one acknowledgement per channel in multi-channel commands', async () => {
     const conn = await connect()
     const first = `raw-multi:${randomKey()}:1`
