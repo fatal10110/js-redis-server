@@ -109,6 +109,8 @@ surface.
 - [x] `PEXPIRE key milliseconds` - Set a key's time to live in milliseconds
 - [x] `EXPIREAT key unix-time-seconds` - Set the expiration as a UNIX timestamp
 - [x] `PEXPIREAT key unix-time-milliseconds` - Set the expiration as a UNIX timestamp in milliseconds
+- [x] `EXPIRETIME key` - Get the absolute Unix expiration time in seconds
+- [x] `PEXPIRETIME key` - Get the absolute Unix expiration time in milliseconds
 - [ ] `NX | XX | GT | LT` conditional flags on `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` - not implemented (any extra argument is a wrong-arity error)
 
 #### Not implemented

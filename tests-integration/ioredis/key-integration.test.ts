@@ -515,6 +515,44 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(ttlNonExistent, -2)
   })
 
+  test('EXPIRETIME and PEXPIRETIME return absolute expiry, -1, -2', async () => {
+    const tag = `{exptime:${randomKey()}}`
+    const withTtl = `${tag}:withttl`
+    const noTtl = `${tag}:nottl`
+    const missing = `${tag}:missing`
+
+    // Key with a TTL set via SET ... EX 100
+    const before = Math.floor(Date.now() / 1000)
+    await redisClient?.set(withTtl, 'value', 'EX', 100)
+    const after = Math.floor(Date.now() / 1000)
+
+    const expiretime = await redisClient!.expiretime(withTtl)
+    // Absolute Unix expiry in seconds ≈ now + 100 (±2s for clock skew/rounding)
+    assert.ok(
+      expiretime >= before + 98 && expiretime <= after + 102,
+      `EXPIRETIME ${expiretime} not in [${before + 98}, ${after + 102}]`,
+    )
+
+    const pexpiretime = await redisClient!.pexpiretime(withTtl)
+    // Absolute Unix expiry in milliseconds
+    assert.ok(
+      pexpiretime >= (before + 98) * 1000 &&
+        pexpiretime <= (after + 102) * 1000,
+      `PEXPIRETIME ${pexpiretime} not in ms range`,
+    )
+    // PEXPIRETIME should be the millisecond form of EXPIRETIME
+    assert.strictEqual(Math.floor(pexpiretime / 1000), expiretime)
+
+    // Key without a TTL → -1
+    await redisClient?.set(noTtl, 'value')
+    assert.strictEqual(await redisClient?.expiretime(noTtl), -1)
+    assert.strictEqual(await redisClient?.pexpiretime(noTtl), -1)
+
+    // Missing key → -2
+    assert.strictEqual(await redisClient?.expiretime(missing), -2)
+    assert.strictEqual(await redisClient?.pexpiretime(missing), -2)
+  })
+
   test('PERSIST removes expiration and EXPIRE 0 deletes the key', async () => {
     const tag = `{persist:${randomKey()}}`
     const persistentKey = `${tag}:persistent`

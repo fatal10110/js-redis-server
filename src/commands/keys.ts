@@ -114,6 +114,48 @@ export const pttlCommand = defineCommand({
   },
 })
 
+export const expiretimeCommand = defineCommand({
+  name: 'expiretime',
+  schema: t.object({
+    key: t.key(),
+  }),
+  flags: ['readonly', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    const expiration = ctx.db.getExpiration(args.key)
+    if (expiration.kind === 'missing') {
+      return integer(-2)
+    }
+
+    if (expiration.kind === 'persistent') {
+      return integer(-1)
+    }
+
+    return integer(Math.floor(expiration.expiresAt / 1000))
+  },
+})
+
+export const pexpiretimeCommand = defineCommand({
+  name: 'pexpiretime',
+  schema: t.object({
+    key: t.key(),
+  }),
+  flags: ['readonly', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    const expiration = ctx.db.getExpiration(args.key)
+    if (expiration.kind === 'missing') {
+      return integer(-2)
+    }
+
+    if (expiration.kind === 'persistent') {
+      return integer(-1)
+    }
+
+    return integer(expiration.expiresAt)
+  },
+})
+
 export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
@@ -257,6 +299,8 @@ export const keysCommands = [
   dbsizeCommand,
   ttlCommand,
   pttlCommand,
+  expiretimeCommand,
+  pexpiretimeCommand,
   expireCommand,
   pexpireCommand,
   persistCommand,
