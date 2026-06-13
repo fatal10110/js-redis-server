@@ -35,6 +35,87 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     assert.strictEqual(card, 3)
   })
 
+  test('ZADD option flags match Redis', async () => {
+    const zsetKey = `{zadd-options:${randomKey()}}`
+
+    try {
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'NX', 1, 'one'), 1)
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'NX', 2, 'one'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '1')
+
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'XX', 2, 'one'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '2')
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'XX', 3, 'two'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'two'), null)
+
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'GT', 1, 'one'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '2')
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'GT', 3, 'one'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '3')
+
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'LT', 4, 'one'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '3')
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'LT', 2, 'one'), 0)
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '2')
+
+      assert.strictEqual(
+        await redisClient?.zadd(zsetKey, 'CH', 2, 'one', 4, 'two'),
+        1,
+      )
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'CH', 5, 'two'), 1)
+      assert.strictEqual(await redisClient?.zadd(zsetKey, 'CH', 5, 'two'), 0)
+
+      assert.strictEqual(
+        await redisClient?.zadd(zsetKey, 'INCR', 2.5, 'one'),
+        '4.5',
+      )
+      assert.strictEqual(await redisClient?.zscore(zsetKey, 'one'), '4.5')
+      assert.strictEqual(
+        await redisClient?.zadd(zsetKey, 'NX', 'INCR', 1, 'one'),
+        null,
+      )
+      assert.strictEqual(
+        await redisClient?.zadd(zsetKey, 'XX', 'INCR', 1, 'missing'),
+        null,
+      )
+    } finally {
+      await redisClient?.del(zsetKey)
+    }
+  })
+
+  test('ZADD option syntax errors match Redis', async () => {
+    const zsetKey = `{zadd-option-errors:${randomKey()}}`
+
+    try {
+      await assert.rejects(
+        () => redisClient?.zadd(zsetKey, 'NX', 'XX', 1, 'one'),
+        errorWithMessage(
+          'ERR XX and NX options at the same time are not compatible',
+        ),
+      )
+      await assert.rejects(
+        () => redisClient?.zadd(zsetKey, 'GT', 'LT', 1, 'one'),
+        errorWithMessage(
+          'ERR GT, LT, and/or NX options at the same time are not compatible',
+        ),
+      )
+      await assert.rejects(
+        () => redisClient?.zadd(zsetKey, 'NX', 'GT', 1, 'one'),
+        errorWithMessage(
+          'ERR GT, LT, and/or NX options at the same time are not compatible',
+        ),
+      )
+      await assert.rejects(
+        () => redisClient?.zadd(zsetKey, 'INCR', 1, 'one', 2, 'two'),
+        errorWithMessage(
+          'ERR INCR option supports a single increment-element pair',
+        ),
+      )
+    } finally {
+      await redisClient?.del(zsetKey)
+    }
+  })
+
   test('ZSCORE command', async () => {
     await redisClient?.zadd('zset2', 15, 'member1', 25, 'member2')
 
