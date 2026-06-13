@@ -23,7 +23,7 @@ In-memory Redis-compatible server implementation in JavaScript. Useful for testi
   - [Using in Unit Tests](#using-in-unit-tests)
 - [Cluster Mode](#cluster-mode)
 - [API Reference](#api-reference)
-- [Supported Commands](#supported-commands)
+- [Supported Commands](docs/COMMANDS.md)
 - [Requirements](#requirements)
 - [Development](#development)
 - [Contributing](#contributing)
@@ -287,40 +287,6 @@ buildRedisCluster(options: RedisClusterOptions): RedisCluster
 | `databasesPerNode` | `number` | `1` | Number of databases per cluster node. |
 | `logger` | `Pick<Logger, 'error'>` | `undefined` | Optional logger. |
 
-## Supported Commands
-
-### Strings
-`APPEND`, `DECR`, `DECRBY`, `GET`, `GETDEL`, `GETEX`, `GETRANGE`, `GETSET`, `INCR`, `INCRBY`, `INCRBYFLOAT`, `MGET`, `MSET`, `MSETNX`, `PSETEX`, `SET`, `SETEX`, `SETNX`, `SETRANGE`, `STRLEN`
-
-### Hashes
-`HDEL`, `HEXISTS`, `HGET`, `HGETALL`, `HINCRBY`, `HINCRBYFLOAT`, `HKEYS`, `HLEN`, `HMGET`, `HMSET`, `HSCAN`, `HSET`, `HSETNX`, `HSTRLEN`, `HVALS`
-
-### Lists
-`LINDEX`, `LLEN`, `LPOP`, `LPUSH`, `LPUSHX`, `LRANGE`, `LREM`, `LSET`, `LTRIM`, `RPOP`, `RPOPLPUSH`, `RPUSH`, `RPUSHX`
-
-### Sets
-`SADD`, `SCARD`, `SDIFF`, `SDIFFSTORE`, `SINTER`, `SINTERSTORE`, `SISMEMBER`, `SMEMBERS`, `SMOVE`, `SPOP`, `SRANDMEMBER`, `SREM`, `SSCAN`, `SUNION`, `SUNIONSTORE`
-
-### Sorted Sets
-`ZADD`, `ZCARD`, `ZCOUNT`, `ZINCRBY`, `ZPOPMAX`, `ZPOPMIN`, `ZRANGE`, `ZRANGEBYSCORE`, `ZRANK`, `ZREM`, `ZREMRANGEBYSCORE`, `ZREVRANGE`, `ZREVRANK`, `ZSCAN`, `ZSCORE`
-
-### Keys
-`COPY`, `DEL`, `EXISTS`, `EXPIRE`, `EXPIREAT`, `EXPIRETIME`, `KEYS`, `PERSIST`, `PEXPIRE`, `PEXPIREAT`, `PEXPIRETIME`, `PTTL`, `RENAME`, `RENAMENX`, `SCAN`, `TTL`, `TYPE`, `UNLINK`
-
-### Server
-`CONFIG GET`, `CONFIG SET`, `DBSIZE`, `FLUSHALL`, `FLUSHDB`, `INFO`, `PING`, `QUIT`
-
-### Transactions
-`MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
-
-### Scripting
-`EVAL`, `EVALSHA`, `SCRIPT LOAD`, `SCRIPT EXISTS`, `SCRIPT FLUSH`
-
-### Cluster
-`CLUSTER INFO`, `CLUSTER MYID`, `CLUSTER NODES`, `CLUSTER SHARDS`, `CLUSTER SLOTS`
-
-### Connection
-`AUTH`, `CLIENT`, `HELLO`, `RESET`, `SELECT`
 
 ## Requirements
 
