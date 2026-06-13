@@ -34,14 +34,17 @@ export const execCommand = defineCommand({
       throw new ExecWithoutMultiError()
     }
 
-    if (ctx.session.isWatchDirty()) {
-      ctx.session.discardTransaction()
-      return RedisResult.create(RedisValue.nullArray())
-    }
-
+    // Real Redis prioritises CLIENT_DIRTY_EXEC over CLIENT_DIRTY_CAS: a bad
+    // command in the queue aborts with -EXECABORT regardless of WATCH state.
+    // The (nil) CAS-abort reply is only returned when the queue itself is clean.
     if (ctx.session.isTransactionDirty()) {
       ctx.session.discardTransaction()
       throw new TransactionDiscardedError()
+    }
+
+    if (ctx.session.isWatchDirty()) {
+      ctx.session.discardTransaction()
+      return RedisResult.create(RedisValue.nullArray())
     }
 
     const plans = ctx.session.drainTransaction()
