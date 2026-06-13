@@ -8,6 +8,8 @@ import {
   ExpectedIntegerError,
   InvalidStreamIdError,
   RedisSyntaxError,
+  StreamElementTooLargeError,
+  StreamIdExhaustedError,
   StreamIdEqualOrSmallerError,
   StreamIdNotGreaterThanZeroError,
   WrongNumberOfArgumentsError,
@@ -67,12 +69,22 @@ function resolveXaddId(spec: string, lastId: StreamId): StreamId {
 function nextAutoId(lastId: StreamId): StreamId {
   const now = BigInt(Date.now())
   if (now > lastId.ms) return { ms: now, seq: 0n }
-  return { ms: lastId.ms, seq: lastId.seq + 1n }
+  if (lastId.seq < MAX_UINT64) return { ms: lastId.ms, seq: lastId.seq + 1n }
+  if (lastId.ms < MAX_UINT64) return { ms: lastId.ms + 1n, seq: 0n }
+
+  throw new StreamIdExhaustedError()
 }
 
 function nextSeqForMs(ms: bigint, lastId: StreamId): StreamId {
   if (ms > lastId.ms) return { ms, seq: 0n }
-  // Same ms (or smaller, which is rejected later by the monotonicity check).
+  if (ms < lastId.ms) {
+    return { ms, seq: lastId.seq === MAX_UINT64 ? MAX_UINT64 : lastId.seq + 1n }
+  }
+  if (lastId.seq === MAX_UINT64) {
+    if (ms === MAX_UINT64) throw new StreamIdExhaustedError()
+    throw new StreamElementTooLargeError()
+  }
+
   return { ms, seq: lastId.seq + 1n }
 }
 

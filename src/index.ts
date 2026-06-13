@@ -84,6 +84,8 @@ export {
   ScriptCallNoCommandError,
   ScriptFlushOptionError,
   ScriptUnknownCommandError,
+  StreamElementTooLargeError,
+  StreamIdExhaustedError,
   RedisSyntaxError,
   TransactionDiscardedError,
   UnknownClusterSubcommandError,

@@ -255,6 +255,20 @@ export class StreamIdNotGreaterThanZeroError extends RedisCommandError {
   }
 }
 
+export class StreamElementTooLargeError extends RedisCommandError {
+  constructor() {
+    super('Elements are too large to be stored')
+  }
+}
+
+export class StreamIdExhaustedError extends RedisCommandError {
+  constructor() {
+    super(
+      'The stream has exhausted the last possible ID, unable to add more items',
+    )
+  }
+}
+
 export class HashValueNotIntegerError extends RedisCommandError {
   constructor() {
     super('hash value is not an integer')
