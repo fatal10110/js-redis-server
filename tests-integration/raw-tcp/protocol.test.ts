@@ -101,6 +101,30 @@ describe(`Raw TCP protocol integration (${testRunner.getBackendName()})`, () => 
     assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+PONG\r\n'))
   })
 
+  test('applies pipelined command effects before later commands', async () => {
+    const conn = await connect()
+    const key = randomKey()
+
+    conn.write(
+      Buffer.concat([
+        commandFrame('SET', key, '1'),
+        commandFrame('INCR', key),
+        commandFrame('GET', key),
+        commandFrame('DEL', key),
+        commandFrame('GET', key),
+      ]),
+    )
+
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+OK\r\n'))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from(':2\r\n'))
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('$1\r\n2\r\n'),
+    )
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from(':1\r\n'))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('$-1\r\n'))
+  })
+
   test('returns a null bulk string for a missing key', async () => {
     const conn = await connect()
 
