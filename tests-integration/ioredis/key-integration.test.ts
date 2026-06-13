@@ -4,6 +4,7 @@ import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
 import {
   assertDbSizeDelta,
+  connectToSlotOwner,
   errorWithMessage,
   getTotalDbSize,
   randomKey,
@@ -484,6 +485,200 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       futureTimestamp,
     )
     assert.strictEqual(expireatNonExistent, 0)
+  })
+
+  test('EXPIRE family supports conditional expiry options', async () => {
+    const tag = `{expire-options:${randomKey()}}`
+    const expireKey = `${tag}:expire`
+    const pexpireKey = `${tag}:pexpire`
+    const expireatKey = `${tag}:expireat`
+    const pexpireatKey = `${tag}:pexpireat`
+    const duplicateOptionKey = `${tag}:duplicate`
+    const missing = `${tag}:missing`
+    const directClient = await connectToSlotOwner(redisClient!, expireKey)
+
+    try {
+      await directClient.set(expireKey, 'value')
+      assert.strictEqual(
+        await directClient.call('EXPIRE', expireKey, 120, 'GT'),
+        0,
+      )
+      assert.strictEqual(await directClient.ttl(expireKey), -1)
+      assert.strictEqual(
+        await directClient.call('EXPIRE', expireKey, 120, 'LT'),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call('EXPIRE', expireKey, 60, 'GT'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call('EXPIRE', expireKey, 240, 'GT'),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call('EXPIRE', expireKey, 300, 'LT'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call('EXPIRE', expireKey, 120, 'LT'),
+        1,
+      )
+      const expireTtl = await directClient.ttl(expireKey)
+      assert.ok(expireTtl > 0 && expireTtl <= 120)
+
+      await directClient.set(pexpireKey, 'value')
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 120_000, 'XX'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 120_000, 'NX'),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 240_000, 'NX'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 240_000, 'XX'),
+        1,
+      )
+      const pexpireTtl = await directClient.pttl(pexpireKey)
+      assert.ok(pexpireTtl > 120_000 && pexpireTtl <= 240_000)
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 300_000, 'XX', 'GT'),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 100_000, 'XX', 'LT'),
+        1,
+      )
+
+      await directClient.set(duplicateOptionKey, 'value')
+      assert.strictEqual(
+        await directClient.call('EXPIRE', duplicateOptionKey, 30, 'NX', 'NX'),
+        1,
+      )
+
+      await directClient.set(expireatKey, 'value')
+      const nowSeconds = Math.floor(Date.now() / 1000)
+      assert.strictEqual(
+        await directClient.call(
+          'EXPIREAT',
+          expireatKey,
+          nowSeconds + 120,
+          'NX',
+        ),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call(
+          'EXPIREAT',
+          expireatKey,
+          nowSeconds + 240,
+          'GT',
+        ),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call(
+          'EXPIREAT',
+          expireatKey,
+          nowSeconds + 300,
+          'LT',
+        ),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call(
+          'EXPIREAT',
+          expireatKey,
+          nowSeconds + 120,
+          'LT',
+        ),
+        1,
+      )
+
+      await directClient.set(pexpireatKey, 'value')
+      const nowMilliseconds = Date.now()
+      assert.strictEqual(
+        await directClient.call(
+          'PEXPIREAT',
+          pexpireatKey,
+          nowMilliseconds + 120_000,
+          'XX',
+        ),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call(
+          'PEXPIREAT',
+          pexpireatKey,
+          nowMilliseconds + 120_000,
+          'NX',
+        ),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call(
+          'PEXPIREAT',
+          pexpireatKey,
+          nowMilliseconds + 240_000,
+          'XX',
+        ),
+        1,
+      )
+
+      assert.strictEqual(
+        await directClient.call('EXPIRE', missing, 10, 'NX'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', missing, 10, 'XX'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call('EXPIREAT', missing, nowSeconds + 10, 'GT'),
+        0,
+      )
+      assert.strictEqual(
+        await directClient.call(
+          'PEXPIREAT',
+          missing,
+          nowMilliseconds + 10_000,
+          'LT',
+        ),
+        0,
+      )
+
+      await assert.rejects(
+        () => directClient.call('EXPIRE', expireKey, 10, 'BOGUS'),
+        errorWithMessage('ERR Unsupported option BOGUS'),
+      )
+      await assert.rejects(
+        () => directClient.call('EXPIRE', expireKey, 10, 'NX', 'XX'),
+        errorWithMessage(
+          'ERR NX and XX, GT or LT options at the same time are not compatible',
+        ),
+      )
+      await assert.rejects(
+        () => directClient.call('EXPIRE', expireKey, 10, 'GT', 'LT'),
+        errorWithMessage(
+          'ERR GT and LT options at the same time are not compatible',
+        ),
+      )
+    } finally {
+      await directClient.del(
+        expireKey,
+        pexpireKey,
+        expireatKey,
+        pexpireatKey,
+        duplicateOptionKey,
+        missing,
+      )
+      directClient.disconnect()
+    }
   })
 
   test('TTL integration with EXPIRE and EXPIREAT', async () => {

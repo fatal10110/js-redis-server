@@ -2,12 +2,15 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
   DbIndexOutOfRangeError,
+  ExpireGtLtConflictError,
+  ExpireNxXxGtLtConflictError,
   ExpectedIntegerError,
   NoSuchKeyError,
   RedisSyntaxError,
   SameObjectError,
+  UnsupportedOptionError,
 } from '../core/redis-error'
-import type { RedisDatabase } from '../state'
+import type { ExpirationState, RedisDatabase } from '../state'
 import {
   integer,
   ok,
@@ -163,15 +166,80 @@ export const pexpiretimeCommand = defineCommand({
   },
 })
 
+type ExpireCondition = 'NX' | 'XX'
+type ExpireComparison = 'GT' | 'LT'
+type ExpireOptions = {
+  condition?: ExpireCondition
+  comparison?: ExpireComparison
+}
+
+const expireOptionsSchema = t.custom<ExpireOptions>((input, index) => {
+  const options: ExpireOptions = {}
+  let cursor = index
+
+  while (cursor < input.length) {
+    const token = input[cursor]!.toString()
+    const option = token.toUpperCase()
+
+    if (option === 'NX') {
+      if (options.condition === 'XX' || options.comparison !== undefined) {
+        throw new ExpireNxXxGtLtConflictError()
+      }
+      options.condition = 'NX'
+      cursor += 1
+      continue
+    }
+
+    if (option === 'XX') {
+      if (options.condition === 'NX') {
+        throw new ExpireNxXxGtLtConflictError()
+      }
+      options.condition = 'XX'
+      cursor += 1
+      continue
+    }
+
+    if (option === 'GT') {
+      if (options.condition === 'NX') {
+        throw new ExpireNxXxGtLtConflictError()
+      }
+      if (options.comparison === 'LT') {
+        throw new ExpireGtLtConflictError()
+      }
+      options.comparison = 'GT'
+      cursor += 1
+      continue
+    }
+
+    if (option === 'LT') {
+      if (options.condition === 'NX') {
+        throw new ExpireNxXxGtLtConflictError()
+      }
+      if (options.comparison === 'GT') {
+        throw new ExpireGtLtConflictError()
+      }
+      options.comparison = 'LT'
+      cursor += 1
+      continue
+    }
+
+    throw new UnsupportedOptionError(token)
+  }
+
+  return { value: options, nextIndex: cursor }
+})
+
 export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
     key: t.key(),
     seconds: t.integer(),
+    options: expireOptionsSchema,
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => expireKey(ctx.db, args.key, args.seconds, 1000),
+  execute: (args, ctx) =>
+    expireKey(ctx.db, args.key, args.seconds, 1000, args.options),
 })
 
 export const pexpireCommand = defineCommand({
@@ -179,10 +247,12 @@ export const pexpireCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     milliseconds: t.integer(),
+    options: expireOptionsSchema,
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => expireKey(ctx.db, args.key, args.milliseconds, 1),
+  execute: (args, ctx) =>
+    expireKey(ctx.db, args.key, args.milliseconds, 1, args.options),
 })
 
 export const persistCommand = defineCommand({
@@ -219,32 +289,29 @@ export const flushallCommand = defineCommand({
 
 export const expireatCommand = defineCommand({
   name: 'expireat',
-  schema: t.object({ key: t.key(), timestamp: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    timestamp: t.integer(),
+    options: expireOptionsSchema,
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (ctx.db.getType(args.key) === null) return integer(0)
-    const expiresAt = args.timestamp * 1000
-    if (expiresAt <= Date.now()) {
-      ctx.db.delete(args.key)
-      return integer(1)
-    }
-    return integer(ctx.db.expire(args.key, expiresAt) ? 1 : 0)
+    return expireAtKey(ctx.db, args.key, args.timestamp * 1000, args.options)
   },
 })
 
 export const pexpireatCommand = defineCommand({
   name: 'pexpireat',
-  schema: t.object({ key: t.key(), timestamp: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    timestamp: t.integer(),
+    options: expireOptionsSchema,
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (ctx.db.getType(args.key) === null) return integer(0)
-    if (args.timestamp <= Date.now()) {
-      ctx.db.delete(args.key)
-      return integer(1)
-    }
-    return integer(ctx.db.expire(args.key, args.timestamp) ? 1 : 0)
+    return expireAtKey(ctx.db, args.key, args.timestamp, args.options)
   },
 })
 
@@ -411,14 +478,59 @@ function expireKey(
   key: Buffer,
   duration: number,
   multiplier: number,
+  options: ExpireOptions,
 ) {
-  if (db.getType(key) === null) {
+  const now = Date.now()
+  return expireAtKey(db, key, now + duration * multiplier, options, now)
+}
+
+function expireAtKey(
+  db: RedisDatabase,
+  key: Buffer,
+  expiresAt: number,
+  options: ExpireOptions,
+  now = Date.now(),
+) {
+  const expiration = db.getExpiration(key)
+  if (expiration.kind === 'missing') {
     return integer(0)
   }
 
-  if (duration <= 0) {
+  if (!shouldApplyExpireOptions(expiration, expiresAt, options)) {
+    return integer(0)
+  }
+
+  if (expiresAt <= now) {
     return integer(db.delete(key) ? 1 : 0)
   }
 
-  return integer(db.expire(key, Date.now() + duration * multiplier) ? 1 : 0)
+  return integer(db.expire(key, expiresAt) ? 1 : 0)
+}
+
+function shouldApplyExpireOptions(
+  expiration: Exclude<ExpirationState, { kind: 'missing' }>,
+  expiresAt: number,
+  options: ExpireOptions,
+): boolean {
+  if (options.condition === 'NX') {
+    return expiration.kind === 'persistent'
+  }
+
+  if (options.condition === 'XX' && expiration.kind !== 'expires') {
+    return false
+  }
+
+  if (options.comparison === 'GT') {
+    return expiration.kind === 'expires' && expiresAt > expiration.expiresAt
+  }
+
+  if (options.comparison !== 'LT') {
+    return true
+  }
+
+  if (expiration.kind === 'persistent') {
+    return true
+  }
+
+  return expiresAt < expiration.expiresAt
 }
