@@ -221,6 +221,20 @@ export class NoSuchKeyError extends RedisCommandError {
   }
 }
 
+/** `COPY src dst` (and `SELECT`) when source and destination resolve to the same object. */
+export class SameObjectError extends RedisCommandError {
+  constructor() {
+    super('source and destination objects are the same')
+  }
+}
+
+/** A database index outside `0 .. databaseCount - 1` (e.g. `COPY ... DB 99`, `SELECT 99`). */
+export class DbIndexOutOfRangeError extends RedisCommandError {
+  constructor() {
+    super('DB index is out of range')
+  }
+}
+
 export class InvalidStreamIdError extends RedisCommandError {
   constructor() {
     super('Invalid stream ID specified as stream command argument')

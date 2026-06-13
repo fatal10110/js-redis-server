@@ -1,6 +1,12 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import { NoSuchKeyError } from '../core/redis-error'
+import {
+  DbIndexOutOfRangeError,
+  ExpectedIntegerError,
+  NoSuchKeyError,
+  RedisSyntaxError,
+  SameObjectError,
+} from '../core/redis-error'
 import type { RedisDatabase } from '../state'
 import {
   integer,
@@ -292,6 +298,92 @@ export const renamenxCommand = defineCommand({
   },
 })
 
+type CopyOptions = { db?: number; replace: boolean }
+
+/**
+ * Parses the trailing `[DB destination-db] [REPLACE]` options of COPY. Like
+ * real Redis the options may appear in any order and repeat (last DB wins).
+ */
+const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
+  let cursor = index
+  let db: number | undefined
+  let replace = false
+
+  while (cursor < input.length) {
+    const token = input[cursor].toString().toUpperCase()
+
+    if (token === 'REPLACE') {
+      replace = true
+      cursor += 1
+      continue
+    }
+
+    if (token === 'DB') {
+      const raw = input[cursor + 1]
+      if (!raw) throw new RedisSyntaxError()
+
+      const text = raw.toString()
+      if (!/^-?\d+$/.test(text)) throw new ExpectedIntegerError()
+
+      const value = Number(text)
+      if (!Number.isSafeInteger(value)) throw new ExpectedIntegerError()
+
+      db = value
+      cursor += 2
+      continue
+    }
+
+    throw new RedisSyntaxError()
+  }
+
+  return { value: { db, replace }, nextIndex: cursor }
+})
+
+export const copyCommand = defineCommand({
+  name: 'copy',
+  schema: t.object({
+    source: t.key(),
+    destination: t.key(),
+    options: copyOptionsSchema,
+  }),
+  flags: ['write'],
+  keys: args => [args.source, args.destination],
+  execute: (args, ctx) => {
+    const { source, destination, options } = args
+
+    let targetDb = ctx.db
+    if (options.db !== undefined) {
+      if (options.db < 0 || options.db >= ctx.server.databases.length) {
+        throw new DbIndexOutOfRangeError()
+      }
+      targetDb = ctx.server.getDatabase(options.db)
+    }
+
+    if (targetDb.id === ctx.db.id && source.equals(destination)) {
+      throw new SameObjectError()
+    }
+
+    const value = ctx.db.get(source)
+    if (!value) return integer(0)
+
+    if (!options.replace && targetDb.getType(destination) !== null) {
+      return integer(0)
+    }
+
+    const expiration = ctx.db.getExpiration(source)
+    const expiresAt =
+      expiration.kind === 'expires' ? expiration.expiresAt : undefined
+
+    targetDb.set(
+      destination,
+      value,
+      expiresAt !== undefined ? { expiresAt } : undefined,
+    )
+
+    return integer(1)
+  },
+})
+
 export const keysCommands = [
   delCommand,
   unlinkCommand,
@@ -311,6 +403,7 @@ export const keysCommands = [
   pexpireatCommand,
   renameCommand,
   renamenxCommand,
+  copyCommand,
 ]
 
 function expireKey(
