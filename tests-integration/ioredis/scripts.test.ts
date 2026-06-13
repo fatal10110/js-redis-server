@@ -191,6 +191,57 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         directClient.disconnect()
       }
     })
+
+    test('transaction control commands are rejected from scripts (noscript)', async () => {
+      const tag = `{noscript:${randomKey()}}`
+      const directClient = await connectToSlotOwner(redisClient!, tag)
+      const cases: Array<{ script: string; keys: string[] }> = [
+        { script: "return redis.call('multi')", keys: [] },
+        { script: "return redis.call('exec')", keys: [] },
+        { script: "return redis.call('discard')", keys: [] },
+        { script: "return redis.call('unwatch')", keys: [] },
+        { script: "return redis.call('watch', KEYS[1])", keys: [tag] },
+      ]
+
+      try {
+        for (const { script, keys } of cases) {
+          const sha = createHash('sha1').update(script).digest('hex')
+          await assert.rejects(
+            () => directClient.eval(script, keys.length, ...keys),
+            errorWithMessage(
+              `ERR This Redis command is not allowed from script script: ${sha}, on @user_script:1.`,
+            ),
+          )
+        }
+      } finally {
+        directClient.disconnect()
+      }
+    })
+
+    test('a rejected multi from a script leaves no session-state side effects', async () => {
+      const tag = `{noscript:${randomKey()}}`
+      const directClient = await connectToSlotOwner(redisClient!, tag)
+      const script = "return redis.call('multi')"
+
+      try {
+        await assert.rejects(() => directClient.eval(script, 0))
+
+        // The session must NOT be stuck in transaction mode: a normal command
+        // executes immediately ("OK"), it is not queued ("QUEUED").
+        assert.strictEqual(await directClient.set(tag, 'v'), 'OK')
+        assert.strictEqual(await directClient.get(tag), 'v')
+
+        // A real transaction still works on the same connection.
+        const txn = await directClient.multi().set(tag, 'v2').get(tag).exec()
+        assert.deepStrictEqual(txn, [
+          [null, 'OK'],
+          [null, 'v2'],
+        ])
+      } finally {
+        await directClient.del(tag)
+        directClient.disconnect()
+      }
+    })
   })
 
   test('SCRIPT LOAD, EXISTS, EVALSHA, and FLUSH use the node script cache', async () => {
