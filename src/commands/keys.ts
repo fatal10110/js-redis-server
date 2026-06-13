@@ -30,6 +30,11 @@ export const delCommand = defineCommand({
   },
 })
 
+export const unlinkCommand = defineCommand({
+  ...delCommand,
+  name: 'unlink',
+})
+
 export const existsCommand = defineCommand({
   name: 'exists',
   schema: t.object({
@@ -246,6 +251,7 @@ export const renamenxCommand = defineCommand({
 
 export const keysCommands = [
   delCommand,
+  unlinkCommand,
   existsCommand,
   typeCommand,
   dbsizeCommand,

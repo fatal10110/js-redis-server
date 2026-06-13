@@ -110,6 +110,24 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('UNLINK command removes keys and returns the deleted count', async () => {
+    const tag = `{unlink:${randomKey()}}`
+    const first = `${tag}:first`
+    const second = `${tag}:second`
+    const missing = `${tag}:missing`
+
+    try {
+      await redisClient?.set(first, 'one')
+      await redisClient?.set(second, 'two')
+
+      assert.strictEqual(await redisClient?.unlink(first, second, missing), 2)
+      assert.strictEqual(await redisClient?.exists(first, second, missing), 0)
+      assert.strictEqual(await redisClient?.unlink(first, missing), 0)
+    } finally {
+      await redisClient?.del(first, second, missing)
+    }
+  })
+
   test('DBSIZE command', async () => {
     const tag = `{dbsize:${randomKey()}}`
     const keys = {
