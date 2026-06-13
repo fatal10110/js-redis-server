@@ -80,6 +80,7 @@ export {
   RedisCrossSlotError,
   RedisCommandError,
   RedisMovedError,
+  ResultingScoreNaNError,
   ScriptDebugModeError,
   ScriptCallNoCommandError,
   ScriptFlushOptionError,

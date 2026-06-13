@@ -8,7 +8,7 @@ import {
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { RedisDataTypeName } from '../state'
-import { array } from './helpers'
+import { array, scoreBuffer } from './helpers'
 
 type ScanOptions = {
   cursor: bigint
@@ -121,7 +121,7 @@ export const zscanCommand = defineCommand({
       }
 
       items.push(RedisValue.bulkString(entry.member))
-      items.push(RedisValue.bulkString(Buffer.from(entry.score.toString())))
+      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
     }
 
     return scanResult(items, args, 2)

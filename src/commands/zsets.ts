@@ -4,6 +4,7 @@ import {
   ExpectedFloatError,
   MinMaxNotFloatError,
   PositiveCountError,
+  ResultingScoreNaNError,
   WrongNumberOfArgumentsError,
   ZaddGtLtNxConflictError,
   ZaddIncrPairError,
@@ -16,7 +17,7 @@ import type {
   RedisSortedSetData,
   RedisSortedSetMember,
 } from '../state/data-types'
-import { bulk, integer, array } from './helpers'
+import { bulk, integer, array, scoreBuffer } from './helpers'
 
 function getSortedMembers(zset: RedisSortedSetData): RedisSortedSetMember[] {
   return Array.from(zset.members.values()).sort((a, b) =>
@@ -27,9 +28,19 @@ function getSortedMembers(zset: RedisSortedSetData): RedisSortedSetMember[] {
 }
 
 function parseFloatArg(s: string): number {
+  const normalized = s.toLowerCase()
+  if (normalized === 'inf' || normalized === '+inf') return Infinity
+  if (normalized === '-inf') return -Infinity
+
   const n = Number(s)
   if (!Number.isFinite(n)) throw new ExpectedFloatError()
   return n
+}
+
+function assertValidResultingScore(score: number) {
+  if (Number.isNaN(score)) {
+    throw new ResultingScoreNaNError()
+  }
 }
 
 type ScoreBound = { value: number; exclusive: boolean }
@@ -179,8 +190,7 @@ function parseZaddPairs(
       throw new WrongNumberOfArgumentsError(ctx.commandName)
     }
 
-    const score = Number(scoreToken.toString())
-    if (!Number.isFinite(score)) throw new ExpectedFloatError()
+    const score = parseFloatArg(scoreToken.toString())
 
     pairs.push({ score, member: memberToken })
     cursor += 2
@@ -219,6 +229,7 @@ export const zaddCommand = defineCommand({
         const hex = member.toString('hex')
         const existing = zset.members.get(hex)
         const nextScore = (existing?.score ?? 0) + score
+        assertValidResultingScore(nextScore)
 
         if (!shouldApplyZaddUpdate(existing, nextScore, args.options)) {
           return null
@@ -228,7 +239,7 @@ export const zaddCommand = defineCommand({
         return nextScore
       })
       deleteSortedSetIfEmpty(ctx.db, args.key)
-      return bulk(newScore === null ? null : Buffer.from(newScore.toString()))
+      return bulk(newScore === null ? null : scoreBuffer(newScore))
     }
 
     const changed = ctx.db.updateSortedSet(args.key, zset => {
@@ -332,7 +343,7 @@ export const zscoreCommand = defineCommand({
     if (!zset) return bulk(null)
     const entry = zset.members.get(args.member.toString('hex'))
     if (!entry) return bulk(null)
-    return bulk(Buffer.from(entry.score.toString()))
+    return bulk(scoreBuffer(entry.score))
   },
 })
 
@@ -347,10 +358,11 @@ export const zincrbyCommand = defineCommand({
       const hex = args.member.toString('hex')
       const existing = zset.members.get(hex)
       const score = (existing?.score ?? 0) + inc
+      assertValidResultingScore(score)
       zset.members.set(hex, { member: args.member, score })
       return score
     })
-    return bulk(Buffer.from(newScore.toString()))
+    return bulk(scoreBuffer(newScore))
   },
 })
 
@@ -377,7 +389,7 @@ export const zrangeCommand = defineCommand({
     for (const entry of slice) {
       items.push(RedisValue.bulkString(entry.member))
       if (args.withScores) {
-        items.push(RedisValue.bulkString(Buffer.from(entry.score.toString())))
+        items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
       }
     }
     return array(items)
@@ -407,7 +419,7 @@ export const zrevrangeCommand = defineCommand({
     for (const entry of slice) {
       items.push(RedisValue.bulkString(entry.member))
       if (args.withScores) {
-        items.push(RedisValue.bulkString(Buffer.from(entry.score.toString())))
+        items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
       }
     }
     return array(items)
@@ -502,7 +514,7 @@ export const zpopminCommand = defineCommand({
     const items: RedisValue[] = []
     for (const entry of toRemove) {
       items.push(RedisValue.bulkString(entry.member))
-      items.push(RedisValue.bulkString(Buffer.from(entry.score.toString())))
+      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
     }
     return array(items)
   },
@@ -531,7 +543,7 @@ export const zpopmaxCommand = defineCommand({
     const items: RedisValue[] = []
     for (const entry of toRemove) {
       items.push(RedisValue.bulkString(entry.member))
-      items.push(RedisValue.bulkString(Buffer.from(entry.score.toString())))
+      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
     }
     return array(items)
   },
