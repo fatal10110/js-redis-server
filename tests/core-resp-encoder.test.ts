@@ -63,6 +63,16 @@ describe('RESP encoder core', () => {
 
     assert.deepStrictEqual(
       encodeRedisValue(
+        RedisValue.mapPairs([
+          [RedisValue.bulkString(Buffer.from('a')), RedisValue.integer(1)],
+          [RedisValue.bulkString(Buffer.from('b')), RedisValue.boolean(true)],
+        ]),
+      ),
+      Buffer.from('*2\r\n*2\r\n$1\r\na\r\n:1\r\n*2\r\n$1\r\nb\r\n:1\r\n'),
+    )
+
+    assert.deepStrictEqual(
+      encodeRedisValue(
         RedisValue.push('message', [RedisValue.bulkString(Buffer.from('x'))]),
       ),
       Buffer.from('*2\r\n$7\r\nmessage\r\n$1\r\nx\r\n'),
@@ -95,6 +105,16 @@ describe('RESP encoder core', () => {
     assert.deepStrictEqual(
       encodeRedisValue(
         RedisValue.map([
+          [RedisValue.bulkString(Buffer.from('a')), RedisValue.integer(1)],
+          [RedisValue.bulkString(Buffer.from('b')), RedisValue.null()],
+        ]),
+        { version: 3 },
+      ),
+      Buffer.from('%2\r\n$1\r\na\r\n:1\r\n$1\r\nb\r\n_\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(
+        RedisValue.mapPairs([
           [RedisValue.bulkString(Buffer.from('a')), RedisValue.integer(1)],
           [RedisValue.bulkString(Buffer.from('b')), RedisValue.null()],
         ]),

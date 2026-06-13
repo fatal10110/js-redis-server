@@ -2,7 +2,17 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage, randomKey } from '../utils'
+import {
+  commandFrame,
+  errorWithMessage,
+  findSlotOwner,
+  randomKey,
+} from '../utils'
+import {
+  RawRedisConnection,
+  respMapGet,
+  respText,
+} from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
 
@@ -64,6 +74,33 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
 
     const all = await redisClient?.hgetall('hash3')
     assert.deepStrictEqual(all, { field1: 'value1', field2: 'value2' })
+  })
+
+  test('HGETALL returns a RESP3 map after HELLO 3', async () => {
+    assert.ok(redisClient)
+
+    const key = `{hash-resp3:${randomKey()}}:hash`
+    const [host, port] = await findSlotOwner(redisClient, key)
+    const connection = await RawRedisConnection.connect(host, port)
+
+    try {
+      connection.write(commandFrame('HELLO', '3'))
+      assert.ok((await connection.readFrame()) instanceof Map)
+
+      connection.write(
+        commandFrame('HSET', key, 'field1', 'value1', 'field2', 'value2'),
+      )
+      assert.strictEqual(await connection.readFrame(), 2)
+
+      connection.write(commandFrame('HGETALL', key))
+      const reply = await connection.readFrame()
+      assert.ok(reply instanceof Map)
+      assert.strictEqual(respText(respMapGet(reply, 'field1')), 'value1')
+      assert.strictEqual(respText(respMapGet(reply, 'field2')), 'value2')
+    } finally {
+      connection.close()
+      await redisClient.del(key)
+    }
   })
 
   test('HKEYS and HVALS commands', async () => {

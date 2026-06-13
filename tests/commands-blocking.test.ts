@@ -19,6 +19,13 @@ function nullArrayResult(): RedisResult {
   return RedisResult.create(RedisValue.nullArray())
 }
 
+function xreadReplyEntries(result: RedisResult, streamIndex = 0): RedisValue[] {
+  assert.strictEqual(result.value.kind, 'map-pairs')
+  const [, entries] = result.value.entries[streamIndex]
+  assert.strictEqual(entries.kind, 'array')
+  return entries.items
+}
+
 // Drain all pending microtasks so blocking commands reach their parked state.
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => setImmediate(resolve))
@@ -107,7 +114,7 @@ describe('XREAD BLOCK (unit)', () => {
       buf('BLOCK', '0', 'STREAMS', 's', '0-0'),
     )
     assert.ok(result instanceof RedisResult)
-    assert.strictEqual(result.value.kind, 'array')
+    assert.strictEqual(result.value.kind, 'map-pairs')
   })
 
   test('XREAD BLOCK with $ on non-empty stream blocks on new entries only', async () => {
@@ -127,7 +134,7 @@ describe('XREAD BLOCK (unit)', () => {
     const result = await blockPromise
 
     assert.ok(result instanceof RedisResult)
-    assert.strictEqual(result.value.kind, 'array')
+    assert.strictEqual(result.value.kind, 'map-pairs')
   })
 
   test('XREAD BLOCK timeout returns nil', async () => {
@@ -147,7 +154,7 @@ describe('XREAD BLOCK (unit)', () => {
     await session.execute('xadd', buf('s', '1-1', 'f', 'v'))
     const result = await session.execute('xread', buf('STREAMS', 's', '0-0'))
     assert.ok(result instanceof RedisResult)
-    assert.strictEqual(result.value.kind, 'array')
+    assert.strictEqual(result.value.kind, 'map-pairs')
   })
 
   test('XREAD BLOCK with COUNT limits results', async () => {
@@ -166,16 +173,7 @@ describe('XREAD BLOCK (unit)', () => {
     const result = await blockPromise
 
     assert.ok(result instanceof RedisResult)
-    assert.strictEqual(result.value.kind, 'array')
-    const streamResults = (
-      result.value as { kind: 'array'; items: RedisValue[] }
-    ).items
-    const entries = (streamResults[0] as { kind: 'array'; items: RedisValue[] })
-      .items[1]
-    assert.strictEqual(
-      (entries as { kind: 'array'; items: RedisValue[] }).items.length,
-      1,
-    )
+    assert.strictEqual(xreadReplyEntries(result).length, 1)
   })
 
   test('XREAD COUNT is per-stream: each stream returns up to COUNT entries independently', async () => {
@@ -193,15 +191,12 @@ describe('XREAD BLOCK (unit)', () => {
     )
 
     assert.ok(result instanceof RedisResult)
-    const streams = (result.value as { kind: 'array'; items: RedisValue[] })
-      .items
-    assert.strictEqual(streams.length, 2, 'both streams returned')
+    assert.strictEqual(result.value.kind, 'map-pairs')
+    assert.strictEqual(result.value.entries.length, 2, 'both streams returned')
 
-    for (const streamResult of streams) {
-      const entries = (streamResult as { kind: 'array'; items: RedisValue[] })
-        .items[1]
+    for (let i = 0; i < result.value.entries.length; i++) {
       assert.strictEqual(
-        (entries as { kind: 'array'; items: RedisValue[] }).items.length,
+        xreadReplyEntries(result, i).length,
         2,
         'COUNT=2 is applied per-stream',
       )
