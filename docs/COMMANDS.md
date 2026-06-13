@@ -226,9 +226,9 @@ surface.
 - [x] `ZREVRANK key member` - Get the index of a member, highest score first
 - [x] `ZRANGE key start stop [WITHSCORES]` - Return a range of members by index
 - [x] `ZREVRANGE key start stop [WITHSCORES]` - Return a range of members by index, high to low
-- [x] `ZRANGEBYSCORE key min max` - Return members with scores between min and max
-- [x] `ZREMRANGEBYSCORE key min max` - Remove members with scores between min and max
-- [x] `ZCOUNT key min max` - Count members with scores between min and max
+- [x] `ZRANGEBYSCORE key min max` - Return members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
+- [x] `ZREMRANGEBYSCORE key min max` - Remove members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
+- [x] `ZCOUNT key min max` - Count members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZPOPMIN key [count]` - Remove and return members with the lowest scores
 - [x] `ZPOPMAX key [count]` - Remove and return members with the highest scores
 - [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate members and scores (see [Scan Family](#10-scan-family))
@@ -237,7 +237,6 @@ surface.
 
 - [ ] `ZADD` does not support `NX`, `XX`, `GT`, `LT`, `CH`, or `INCR` - only plain `score member` pairs
 - [ ] `ZRANGE`/`ZREVRANGE` do not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes
-- [ ] `ZRANGEBYSCORE`/`ZREMRANGEBYSCORE`/`ZCOUNT` `min`/`max` must be plain numbers - `-inf`/`+inf` and exclusive `(score` syntax are **not** supported and throw `ERR min or max is not a float`
 - [ ] `ZRANGEBYSCORE` does not support `WITHSCORES` or `LIMIT offset count`
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
 

@@ -28,10 +28,27 @@ function parseFloatArg(s: string): number {
   return n
 }
 
-function parseScoreBoundArg(s: string): number {
-  const n = Number(s)
+type ScoreBound = { value: number; exclusive: boolean }
+
+function parseScoreBoundArg(s: string): ScoreBound {
+  const exclusive = s.startsWith('(')
+  const raw = exclusive ? s.slice(1) : s
+
+  if (raw.length === 0) throw new MinMaxNotFloatError()
+
+  const normalized = raw.toLowerCase()
+  if (normalized === '+inf') return { value: Infinity, exclusive }
+  if (normalized === '-inf') return { value: -Infinity, exclusive }
+
+  const n = Number(raw)
   if (!Number.isFinite(n)) throw new MinMaxNotFloatError()
-  return n
+  return { value: n, exclusive }
+}
+
+function scoreWithinBounds(score: number, min: ScoreBound, max: ScoreBound) {
+  if (min.exclusive ? score <= min.value : score < min.value) return false
+  if (max.exclusive ? score >= max.value : score > max.value) return false
+  return true
 }
 
 function parsePopCountArg(s: string): number {
@@ -262,7 +279,7 @@ export const zrangebyscoreCommand = defineCommand({
     if (!zset) return array([])
     const items: RedisValue[] = []
     for (const entry of getSortedMembers(zset)) {
-      if (entry.score >= min && entry.score <= max) {
+      if (scoreWithinBounds(entry.score, min, max)) {
         items.push(RedisValue.bulkString(entry.member))
       }
     }
@@ -281,7 +298,7 @@ export const zremrangebyscoreCommand = defineCommand({
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
       for (const [hex, entry] of zset.members) {
-        if (entry.score >= min && entry.score <= max) {
+        if (scoreWithinBounds(entry.score, min, max)) {
           zset.members.delete(hex)
           removed++
         }
@@ -309,7 +326,7 @@ export const zcountCommand = defineCommand({
     if (!zset) return integer(0)
     let count = 0
     for (const entry of zset.members.values()) {
-      if (entry.score >= min && entry.score <= max) count++
+      if (scoreWithinBounds(entry.score, min, max)) count++
     }
     return integer(count)
   },
