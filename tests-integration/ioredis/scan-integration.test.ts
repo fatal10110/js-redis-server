@@ -175,11 +175,12 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.deepStrictEqual(result.values, expected)
 
       if (testRunner.backend === 'mock') {
+        // Multi-step traversal across COUNT batches. We can't assert an exact
+        // page partition or empty-page positions: top-level SCAN sweeps the
+        // whole node keyspace, so keys from other tests sharing the node (the
+        // suite runs files concurrently) consume COUNT budget and shift which
+        // page each hit lands on. `values` stays exact because MATCH filters.
         assert.ok(result.iterations > Math.ceil(expected.length / 2))
-        assert.deepStrictEqual(
-          result.pages.map(page => stripTag(page, tag)),
-          [['hit:0', 'hit:1'], [], ['hit:2'], ['hit:3', 'hit:4'], ['hit:5']],
-        )
       }
     } finally {
       await directClient.del(...keys)
