@@ -107,6 +107,128 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('SCAN MATCH advances across non-matching COUNT batches', async () => {
+    const tag = `{scan-sparse:${randomKey()}}`
+    const keys: string[] = []
+    const matchingKey = `${tag}:hit:only`
+    const directClient = await connectToSlotOwner(redisClient!, matchingKey)
+
+    try {
+      for (let i = 0; i < 300; i++) {
+        keys.push(`${tag}:miss:${i}`)
+      }
+      keys.push(matchingKey)
+
+      const pipeline = directClient.pipeline()
+      for (const key of keys) {
+        pipeline.set(key, '1')
+      }
+      await pipeline.exec()
+
+      const result = await collectTopLevelScanWithIterations(directClient, [
+        'MATCH',
+        `${tag}:hit:*`,
+        'COUNT',
+        '1',
+      ])
+
+      assert.deepStrictEqual(result.values, [matchingKey])
+      assert.ok(result.iterations > result.values.length)
+    } finally {
+      await directClient.del(...keys)
+      directClient.disconnect()
+    }
+  })
+
+  test('SCAN MATCH handles interleaved matching and non-matching batches', async () => {
+    const tag = `{scan-interleaved:${randomKey()}}`
+    const names = [
+      'hit:0',
+      'hit:1',
+      'miss:0',
+      'miss:1',
+      'hit:2',
+      'miss:2',
+      'hit:3',
+      'hit:4',
+      'miss:3',
+      'hit:5',
+    ]
+    const keys = names.map(name => `${tag}:${name}`)
+    const expected = keys.filter(key => key.includes(':hit:')).sort()
+    const directClient = await connectToSlotOwner(redisClient!, keys[0])
+
+    try {
+      const pipeline = directClient.pipeline()
+      for (const key of keys) {
+        pipeline.set(key, '1')
+      }
+      await pipeline.exec()
+
+      const result = await collectTopLevelScanWithIterations(directClient, [
+        'MATCH',
+        `${tag}:hit:*`,
+        'COUNT',
+        '2',
+      ])
+
+      assert.deepStrictEqual(result.values, expected)
+
+      if (testRunner.backend === 'mock') {
+        assert.ok(result.iterations > Math.ceil(expected.length / 2))
+        assert.deepStrictEqual(
+          result.pages.map(page => stripTag(page, tag)),
+          [['hit:0', 'hit:1'], [], ['hit:2'], ['hit:3', 'hit:4'], ['hit:5']],
+        )
+      }
+    } finally {
+      await directClient.del(...keys)
+      directClient.disconnect()
+    }
+  })
+
+  test('SCAN TYPE advances across non-matching type COUNT batches', async () => {
+    const tag = `{scan-type-sparse:${randomKey()}}`
+    const keys: string[] = []
+    const matchingKey = `${tag}:zset:only`
+    const directClient = await connectToSlotOwner(redisClient!, matchingKey)
+
+    try {
+      const pipeline = directClient.pipeline()
+      for (let i = 0; i < 100; i++) {
+        const stringKey = `${tag}:string:${i}`
+        const hashKey = `${tag}:hash:${i}`
+        const setKey = `${tag}:set:${i}`
+        const listKey = `${tag}:list:${i}`
+
+        keys.push(stringKey, hashKey, setKey, listKey)
+        pipeline.set(stringKey, '1')
+        pipeline.hset(hashKey, 'field', 'value')
+        pipeline.sadd(setKey, 'member')
+        pipeline.rpush(listKey, 'member')
+      }
+
+      keys.push(matchingKey)
+      pipeline.zadd(matchingKey, 1, 'member')
+      await pipeline.exec()
+
+      const result = await collectTopLevelScanWithIterations(directClient, [
+        'MATCH',
+        `${tag}:*`,
+        'TYPE',
+        'zset',
+        'COUNT',
+        '1',
+      ])
+
+      assert.deepStrictEqual(result.values, [matchingKey])
+      assert.ok(result.iterations > result.values.length)
+    } finally {
+      await directClient.del(...keys)
+      directClient.disconnect()
+    }
+  })
+
   test('KEYS matches Redis glob pattern semantics', async () => {
     const tag = `{scan-glob:${randomKey()}}`
     const names = ['a', 'a*', 'a/.', 'a/b', 'b', 'c', '{a,b}', '^', '-']
@@ -304,6 +426,53 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
     assertBufferSetsEqual(zscan[1], [rawZsetMember, Buffer.from('1')])
   })
 
+  test('keyed scan MATCH advances across non-matching COUNT batches', async () => {
+    const tag = `{scan-sparse-keyed:${randomKey()}}`
+    const hashKey = `${tag}:hash`
+    const setKey = `${tag}:set`
+    const zsetKey = `${tag}:zset`
+    const hashArgs: string[] = []
+    const setMembers: string[] = []
+    const zsetArgs: string[] = []
+
+    for (let i = 0; i < 600; i++) {
+      hashArgs.push(`miss:${i}`, `value:${i}`)
+      setMembers.push(`miss:${i}`)
+      zsetArgs.push(i.toString(), `miss:${i}`)
+    }
+
+    hashArgs.push('hit:only', 'value:only')
+    setMembers.push('hit:only')
+    zsetArgs.push('601', 'hit:only')
+
+    try {
+      await redisClient!.hset(hashKey, ...hashArgs)
+      await redisClient!.sadd(setKey, ...setMembers)
+      await redisClient!.zadd(zsetKey, ...zsetArgs)
+
+      const hashResult = await collectHashScan(hashKey, 1, ['MATCH', 'hit:*'])
+      assert.deepStrictEqual(sortedEntries(hashResult.entries), [
+        ['hit:only', 'value:only'],
+      ])
+      assert.ok(hashResult.iterations > hashResult.entries.size)
+
+      const setResult = await collectSetScan(setKey, 1, ['MATCH', 'hit:*'])
+      assert.deepStrictEqual(sortedValues(setResult.members), ['hit:only'])
+      assert.ok(setResult.iterations > setResult.members.size)
+
+      const zsetResult = await collectSortedSetScan(zsetKey, 1, [
+        'MATCH',
+        'hit:*',
+      ])
+      assert.deepStrictEqual(sortedEntries(zsetResult.entries), [
+        ['hit:only', '601'],
+      ])
+      assert.ok(zsetResult.iterations > zsetResult.entries.size)
+    } finally {
+      await redisClient!.del(hashKey, setKey, zsetKey)
+    }
+  })
+
   test('scan COUNT errors match Redis', async () => {
     const key = taggedKey('errors')
     await redisClient?.hset(key, 'field', 'value')
@@ -345,6 +514,7 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
   async function collectHashScan(
     key: string,
     count: number,
+    options: Array<string | Buffer> = [],
   ): Promise<{ entries: Map<string, string>; iterations: number }> {
     const entries = new Map<string, string>()
     let cursor = '0'
@@ -356,6 +526,7 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
         cursor,
         'COUNT',
         count,
+        ...options,
       )
       assert.strictEqual(items.length % 2, 0)
 
@@ -374,6 +545,7 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
   async function collectSetScan(
     key: string,
     count: number,
+    options: Array<string | Buffer> = [],
   ): Promise<{ members: Set<string>; iterations: number }> {
     const members = new Set<string>()
     let cursor = '0'
@@ -385,6 +557,7 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
         cursor,
         'COUNT',
         count,
+        ...options,
       )
 
       for (const item of items) {
@@ -402,6 +575,7 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
   async function collectSortedSetScan(
     key: string,
     count: number,
+    options: Array<string | Buffer> = [],
   ): Promise<{ entries: Map<string, string>; iterations: number }> {
     const entries = new Map<string, string>()
     let cursor = '0'
@@ -413,6 +587,7 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
         cursor,
         'COUNT',
         count,
+        ...options,
       )
       assert.strictEqual(items.length % 2, 0)
 
@@ -441,7 +616,16 @@ async function collectTopLevelScan(
   client: Redis,
   options: Array<string | Buffer>,
 ): Promise<string[]> {
+  const result = await collectTopLevelScanWithIterations(client, options)
+  return result.values.sort()
+}
+
+async function collectTopLevelScanWithIterations(
+  client: Redis,
+  options: Array<string | Buffer>,
+): Promise<{ values: string[]; iterations: number; pages: string[][] }> {
   const values: string[] = []
+  const pages: string[][] = []
   let cursor = '0'
   let iterations = 0
 
@@ -451,12 +635,13 @@ async function collectTopLevelScan(
       string[],
     ]
     values.push(...items)
+    pages.push(items)
     cursor = nextCursor
     iterations++
     assert.ok(iterations < 1000)
   } while (cursor !== '0')
 
-  return values.sort()
+  return { values: values.sort(), iterations, pages }
 }
 
 async function collectTopLevelScanBuffers(
