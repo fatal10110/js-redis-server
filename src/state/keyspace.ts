@@ -134,21 +134,37 @@ export class RedisKeyspace {
     createValue: () => TValue,
     mutator: (value: TValue) => TResult,
   ): TResult {
-    let entry = this.getLiveEntry(key)
+    const existing = this.getLiveEntry(key)
 
-    if (!entry) {
-      entry = {
-        key: Buffer.from(key),
-        value: createValue(),
-      }
-      this.entries.set(keyId(key), entry)
+    if (existing && existing.value.type !== expectedType) {
+      throw new WrongRedisTypeError(expectedType, existing.value.type)
     }
 
-    if (entry.value.type !== expectedType) {
-      throw new WrongRedisTypeError(expectedType, entry.value.type)
+    // For a new key, mutate a not-yet-committed entry: if the mutator throws,
+    // the keyspace is left untouched (no ghost empty collection persists).
+    const entry: KeyspaceEntry = existing ?? {
+      key: Buffer.from(key),
+      value: createValue(),
     }
 
     const result = mutator(entry.value as TValue)
+    const id = keyId(key)
+
+    // Centralized "delete the key when its collection is empty" rule, so each
+    // command no longer has to remember to clean up emptied hashes/lists/etc.
+    if (isEmptyCollection(entry.value)) {
+      if (existing) {
+        this.entries.delete(id)
+        this.mutations.emit({
+          type: 'delete',
+          database: this.database,
+          key: entry.key,
+        })
+      }
+      return result
+    }
+
+    this.entries.set(id, entry)
     this.emitWrite(entry)
     return result
   }
@@ -231,4 +247,23 @@ export class RedisKeyspace {
 
 function keyId(key: Buffer): string {
   return key.toString('hex')
+}
+
+// A collection-typed value is "empty" when it holds no elements; such keys are
+// deleted from the keyspace (matching real Redis). Strings are always a real
+// value (even ""), and empty streams persist (e.g. XGROUP CREATE MKSTREAM), so
+// neither is ever auto-deleted here.
+function isEmptyCollection(value: RedisDataValue): boolean {
+  switch (value.type) {
+    case 'hash':
+      return value.fields.size === 0
+    case 'list':
+      return value.values.length === 0
+    case 'set':
+    case 'zset':
+      return value.members.size === 0
+    case 'string':
+    case 'stream':
+      return false
+  }
 }
