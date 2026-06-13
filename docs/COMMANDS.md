@@ -302,6 +302,10 @@ Parsing and key extraction (and therefore early `CROSSSLOT`/`MOVED` errors in
 cluster mode) happen at queue time, not at `EXEC` time. `EXECABORT` is
 returned if the queue is dirty (e.g. an unknown command was queued).
 
+All five transaction-control commands are flagged `noscript` (rejected from
+Lua with the standard script error), matching real Redis — a script cannot
+flip its session into transaction mode or register a `WATCH`.
+
 ## 12. Scripting Commands
 
 - [x] `EVAL script numkeys [key ...] [arg ...]` - Execute a Lua script
