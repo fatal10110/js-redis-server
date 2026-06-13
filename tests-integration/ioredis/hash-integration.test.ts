@@ -160,8 +160,10 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('HDEL command', async () => {
+    const key = `{hdel:${randomKey()}}:hash`
+
     await redisClient?.hset(
-      'hash7',
+      key,
       'field1',
       'value1',
       'field2',
@@ -171,16 +173,32 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
     )
 
     // Delete single field
-    const del1 = await redisClient?.hdel('hash7', 'field1')
+    const del1 = await redisClient?.hdel(key, 'field1')
     assert.strictEqual(del1, 1)
 
     // Delete multiple fields
-    const del2 = await redisClient?.hdel('hash7', 'field2', 'field3')
+    const del2 = await redisClient?.hdel(key, 'field2', 'field3')
     assert.strictEqual(del2, 2)
 
-    // Verify hash is empty
-    const len = await redisClient?.hlen('hash7')
+    // Verify hash is removed after its last field is deleted.
+    const len = await redisClient?.hlen(key)
     assert.strictEqual(len, 0)
+    assert.strictEqual(await redisClient?.exists(key), 0)
+    assert.strictEqual(await redisClient?.type(key), 'none')
+  })
+
+  test('HDEL on a missing key does not create an empty hash', async () => {
+    const key = `{hdel-missing:${randomKey()}}:hash`
+
+    assert.strictEqual(await redisClient?.hdel(key, 'field1'), 0)
+    assert.strictEqual(await redisClient?.exists(key), 0)
+    assert.strictEqual(await redisClient?.type(key), 'none')
+
+    await redisClient?.hset(key, 'field1', 'value1')
+    assert.strictEqual(await redisClient?.hdel(key, 'field1'), 1)
+    assert.strictEqual(await redisClient?.hdel(key, 'field1'), 0)
+    assert.strictEqual(await redisClient?.exists(key), 0)
+    assert.strictEqual(await redisClient?.type(key), 'none')
   })
 
   test('HINCRBY command', async () => {
