@@ -10,12 +10,12 @@ export class RedisScriptCache {
   }
 
   get(sha: string): Buffer | null {
-    const script = this.scripts.get(sha)
+    const script = this.scripts.get(normalizeSha(sha))
     return script ? Buffer.from(script) : null
   }
 
   exists(sha: string): boolean {
-    return this.scripts.has(sha)
+    return this.scripts.has(normalizeSha(sha))
   }
 
   existsAll(shas: readonly string[]): boolean[] {
@@ -29,4 +29,8 @@ export class RedisScriptCache {
   size(): number {
     return this.scripts.size
   }
+}
+
+function normalizeSha(sha: string): string {
+  return sha.toLowerCase()
 }
