@@ -122,6 +122,7 @@ export {
   renamenxCommand,
   ttlCommand,
   typeCommand,
+  unlinkCommand,
 } from './keys'
 export {
   hscanCommand,
