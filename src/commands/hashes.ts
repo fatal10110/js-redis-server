@@ -5,6 +5,7 @@ import {
   HashValueNotIntegerError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
+import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { bulk, integer, ok, array } from './helpers'
 
@@ -140,13 +141,11 @@ export const hgetallCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const hash = ctx.db.getHash(args.key)
-    if (!hash) return array([])
-    const items: RedisValue[] = []
-    for (const { field, value } of hash.fields.values()) {
-      items.push(RedisValue.bulkString(field))
-      items.push(RedisValue.bulkString(value))
+    const entries: [RedisValue, RedisValue][] = []
+    for (const { field, value } of hash?.fields.values() ?? []) {
+      entries.push([RedisValue.bulkString(field), RedisValue.bulkString(value)])
     }
-    return array(items)
+    return RedisResult.create(RedisValue.map(entries))
   },
 })
 

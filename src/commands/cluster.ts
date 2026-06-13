@@ -172,30 +172,48 @@ function clusterShards(topology: RedisClusterTopology): RedisResult {
     }
 
     const shardNodes = [master, ...replicasOf(topology, master.id)].map(node =>
-      RedisValue.array([
-        RedisValue.bulkString(Buffer.from('id')),
-        RedisValue.bulkString(Buffer.from(node.id)),
-        RedisValue.bulkString(Buffer.from('port')),
-        RedisValue.integer(node.port),
-        RedisValue.bulkString(Buffer.from('ip')),
-        RedisValue.bulkString(Buffer.from(node.host)),
-        RedisValue.bulkString(Buffer.from('endpoint')),
-        RedisValue.bulkString(Buffer.from(node.host)),
-        RedisValue.bulkString(Buffer.from('role')),
-        RedisValue.bulkString(Buffer.from(node.role)),
-        RedisValue.bulkString(Buffer.from('replication-offset')),
-        RedisValue.integer(0),
-        RedisValue.bulkString(Buffer.from('health')),
-        RedisValue.bulkString(Buffer.from('online')),
+      RedisValue.map([
+        [
+          RedisValue.bulkString(Buffer.from('id')),
+          RedisValue.bulkString(Buffer.from(node.id)),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('port')),
+          RedisValue.integer(node.port),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('ip')),
+          RedisValue.bulkString(Buffer.from(node.host)),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('endpoint')),
+          RedisValue.bulkString(Buffer.from(node.host)),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('role')),
+          RedisValue.bulkString(Buffer.from(node.role)),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('replication-offset')),
+          RedisValue.integer(0),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('health')),
+          RedisValue.bulkString(Buffer.from('online')),
+        ],
       ]),
     )
 
     shards.push(
-      RedisValue.array([
-        RedisValue.bulkString(Buffer.from('slots')),
-        RedisValue.array(slotRanges),
-        RedisValue.bulkString(Buffer.from('nodes')),
-        RedisValue.array(shardNodes),
+      RedisValue.map([
+        [
+          RedisValue.bulkString(Buffer.from('slots')),
+          RedisValue.array(slotRanges),
+        ],
+        [
+          RedisValue.bulkString(Buffer.from('nodes')),
+          RedisValue.array(shardNodes),
+        ],
       ]),
     )
   }

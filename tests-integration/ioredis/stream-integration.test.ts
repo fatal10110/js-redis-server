@@ -2,7 +2,18 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
+import {
+  commandFrame,
+  connectToSlotOwner,
+  errorWithMessage,
+  findSlotOwner,
+  randomKey,
+} from '../utils'
+import {
+  RawRedisConnection,
+  respMapGet,
+  respText,
+} from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
 
@@ -332,6 +343,42 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       ])
     } finally {
       node.disconnect()
+    }
+  })
+
+  test('XREAD returns a RESP3 map after HELLO 3', async () => {
+    assert.ok(redisClient)
+
+    const key = `{stream-resp3:${randomKey()}}:stream`
+    const [host, port] = await findSlotOwner(redisClient, key)
+    const connection = await RawRedisConnection.connect(host, port)
+
+    try {
+      connection.write(commandFrame('HELLO', '3'))
+      assert.ok((await connection.readFrame()) instanceof Map)
+
+      connection.write(commandFrame('XADD', key, '*', 'field1', 'value1'))
+      assert.match(respText(await connection.readFrame()), /^\d+-\d+$/)
+
+      connection.write(commandFrame('XREAD', 'STREAMS', key, '0-0'))
+      const reply = await connection.readFrame()
+      assert.ok(reply instanceof Map)
+
+      const entries = respMapGet(reply, key)
+      assert.ok(Array.isArray(entries))
+      assert.strictEqual(entries.length, 1)
+
+      const entry = entries[0]
+      assert.ok(Array.isArray(entry))
+      assert.strictEqual(entry.length, 2)
+      assert.match(respText(entry[0]), /^\d+-\d+$/)
+      assert.deepStrictEqual(
+        (entry[1] as unknown[]).map(value => respText(value)),
+        ['field1', 'value1'],
+      )
+    } finally {
+      connection.close()
+      await redisClient.del(key)
     }
   })
 

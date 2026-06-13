@@ -9,6 +9,7 @@ export type RedisValue =
   | { kind: 'array'; items: RedisValue[] }
   | { kind: 'set'; items: RedisValue[] }
   | { kind: 'map'; entries: [RedisValue, RedisValue][] }
+  | { kind: 'map-pairs'; entries: [RedisValue, RedisValue][] }
   | { kind: 'push'; name: string; items: RedisValue[] }
   | { kind: 'null' }
   | { kind: 'null-array' }
@@ -36,6 +37,10 @@ export const RedisValue = {
   set: (items: RedisValue[]): RedisValue => ({ kind: 'set', items }),
   map: (entries: [RedisValue, RedisValue][]): RedisValue => ({
     kind: 'map',
+    entries,
+  }),
+  mapPairs: (entries: [RedisValue, RedisValue][]): RedisValue => ({
+    kind: 'map-pairs',
     entries,
   }),
   push: (name: string, items: RedisValue[]): RedisValue => ({
