@@ -24,6 +24,19 @@ type KeyedScanOptions = {
   count?: number
 }
 
+type ScanResultOptions = {
+  cursor: bigint
+  match?: Buffer
+  count?: number
+  type?: string
+}
+
+type ScanItem = {
+  matchValue: Buffer
+  values: RedisValue[]
+  type?: RedisDataTypeName
+}
+
 export const keysCommand = defineCommand({
   name: 'keys',
   schema: t.object({
@@ -46,13 +59,13 @@ export const scanCommand = defineCommand({
   flags: ['readonly', 'random'],
   keys: () => [],
   execute: (args, ctx) => {
-    const items = ctx.db
-      .entriesSnapshot()
-      .filter(entry => matchesPattern(entry.key, args.match))
-      .filter(entry => matchesType(entry.value.type, args.type))
-      .map(entry => RedisValue.bulkString(entry.key))
+    const items = ctx.db.entriesSnapshot().map(entry => ({
+      matchValue: entry.key,
+      values: [RedisValue.bulkString(entry.key)],
+      type: entry.value.type,
+    }))
 
-    return scanResult(items, args, 1)
+    return scanResult(items, args)
   },
 })
 
@@ -64,20 +77,18 @@ export const hscanCommand = defineCommand({
   execute: (args, ctx) => {
     const hash = ctx.db.getHash(args.key)
     if (!hash) {
-      return scanResult([], args, 2)
+      return scanResult([], args)
     }
 
-    const items: RedisValue[] = []
+    const items: ScanItem[] = []
     for (const { field, value } of hash.fields.values()) {
-      if (!matchesPattern(field, args.match)) {
-        continue
-      }
-
-      items.push(RedisValue.bulkString(field))
-      items.push(RedisValue.bulkString(value))
+      items.push({
+        matchValue: field,
+        values: [RedisValue.bulkString(field), RedisValue.bulkString(value)],
+      })
     }
 
-    return scanResult(items, args, 2)
+    return scanResult(items, args)
   },
 })
 
@@ -89,17 +100,18 @@ export const sscanCommand = defineCommand({
   execute: (args, ctx) => {
     const set = ctx.db.getSet(args.key)
     if (!set) {
-      return scanResult([], args, 1)
+      return scanResult([], args)
     }
 
-    const items: RedisValue[] = []
+    const items: ScanItem[] = []
     for (const member of set.members.values()) {
-      if (matchesPattern(member, args.match)) {
-        items.push(RedisValue.bulkString(member))
-      }
+      items.push({
+        matchValue: member,
+        values: [RedisValue.bulkString(member)],
+      })
     }
 
-    return scanResult(items, args, 1)
+    return scanResult(items, args)
   },
 })
 
@@ -111,20 +123,21 @@ export const zscanCommand = defineCommand({
   execute: (args, ctx) => {
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) {
-      return scanResult([], args, 2)
+      return scanResult([], args)
     }
 
-    const items: RedisValue[] = []
+    const items: ScanItem[] = []
     for (const entry of zset.members.values()) {
-      if (!matchesPattern(entry.member, args.match)) {
-        continue
-      }
-
-      items.push(RedisValue.bulkString(entry.member))
-      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
+      items.push({
+        matchValue: entry.member,
+        values: [
+          RedisValue.bulkString(entry.member),
+          RedisValue.bulkString(scoreBuffer(entry.score)),
+        ],
+      })
     }
 
-    return scanResult(items, args, 2)
+    return scanResult(items, args)
   },
 })
 
@@ -254,14 +267,6 @@ function parseCount(raw: Buffer): number {
   return parsed
 }
 
-function matchesType(type: RedisDataTypeName, filter?: string): boolean {
-  if (filter === undefined) {
-    return true
-  }
-
-  return type === filter
-}
-
 function matchesPattern(value: Buffer, pattern?: Buffer): boolean {
   if (pattern === undefined) {
     return true
@@ -271,22 +276,37 @@ function matchesPattern(value: Buffer, pattern?: Buffer): boolean {
 }
 
 function scanResult(
-  items: RedisValue[],
-  options: Pick<ScanOptions, 'cursor' | 'count'>,
-  itemWidth: 1 | 2,
+  items: ScanItem[],
+  options: ScanResultOptions,
 ): RedisResult {
-  const itemCount = Math.ceil(items.length / itemWidth)
+  const itemCount = items.length
   const startItem = normalizeScanCursor(options.cursor, itemCount)
   const pageSize = options.count ?? DEFAULT_SCAN_COUNT
   const endItem = Math.min(itemCount, startItem + pageSize)
   const nextCursor = endItem >= itemCount ? 0 : endItem
+  const page = items
+    .slice(startItem, endItem)
+    .filter(item => matchesScanItem(item, options))
+    .flatMap(item => item.values)
 
   return RedisResult.create(
     RedisValue.array([
       RedisValue.bulkString(Buffer.from(nextCursor.toString())),
-      RedisValue.array(items.slice(startItem * itemWidth, endItem * itemWidth)),
+      RedisValue.array(page),
     ]),
   )
+}
+
+function matchesScanItem(item: ScanItem, options: ScanResultOptions): boolean {
+  if (!matchesPattern(item.matchValue, options.match)) {
+    return false
+  }
+
+  if (options.type !== undefined && item.type !== options.type) {
+    return false
+  }
+
+  return true
 }
 
 function normalizeScanCursor(cursor: bigint, itemCount: number): number {
