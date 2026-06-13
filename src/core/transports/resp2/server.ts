@@ -2,7 +2,7 @@ import { AddressInfo, Server, Socket, createServer } from 'net'
 import { ClientSession } from '../../client-session'
 import type { CommandExecutor } from '../../command-executor'
 import type { Logger } from '../../../logger'
-import type { RedisServerState } from '../../../state'
+import type { RedisClusterNodeRole, RedisServerState } from '../../../state'
 import type { RespEncodeOptions } from '../../resp-encoder'
 import { SocketConnectionTransport } from '../socket-connection-transport'
 import { Resp2SessionAdapter } from './session-adapter'
@@ -12,6 +12,7 @@ export type Resp2ServerOptions = {
   executor: CommandExecutor
   logger?: Pick<Logger, 'error'>
   encoder?: RespEncodeOptions
+  nodeRole?: RedisClusterNodeRole
 }
 
 export class Resp2Server {
@@ -21,6 +22,7 @@ export class Resp2Server {
   private readonly executor: CommandExecutor
   private readonly logger?: Pick<Logger, 'error'>
   private readonly encoder?: RespEncodeOptions
+  private readonly nodeRole?: RedisClusterNodeRole
   private readonly adapters = new Set<Resp2SessionAdapter>()
 
   constructor(options: Resp2ServerOptions) {
@@ -28,6 +30,7 @@ export class Resp2Server {
     this.executor = options.executor
     this.logger = options.logger
     this.encoder = options.encoder
+    this.nodeRole = options.nodeRole
 
     this.server = createServer({ keepAlive: true })
       .on('error', err => this.logger?.error(err))
@@ -85,6 +88,7 @@ export class Resp2Server {
     const session = new ClientSession({
       server: this.state,
       executor: this.executor,
+      nodeRole: this.nodeRole,
     })
     const adapter = new Resp2SessionAdapter({
       transport,

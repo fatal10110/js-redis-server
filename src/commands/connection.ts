@@ -482,7 +482,7 @@ export const helloCommand = defineCommand({
       [value('proto'), RedisValue.integer(version)],
       [value('id'), RedisValue.integer(getClientId(ctx.session))],
       [value('mode'), value(redisMode(ctx))],
-      [value('role'), value('master')],
+      [value('role'), value(ctx.nodeRole ?? 'master')],
       [value('modules'), RedisValue.array([])],
     ]
 

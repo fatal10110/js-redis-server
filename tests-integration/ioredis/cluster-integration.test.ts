@@ -101,6 +101,27 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
     }
   })
 
+  test('HELLO reports master and replica roles for direct node connections', async () => {
+    const key = `{hello-role:${randomKey()}}:probe`
+    const { master, replica } = await findSlotMasterAndReplica(
+      redisClient!,
+      key,
+    )
+    const masterClient = await connectToEndpoint(master)
+    const replicaClient = await connectToEndpoint(replica)
+
+    try {
+      const masterHello = (await masterClient.call('HELLO', '2')) as unknown[]
+      const replicaHello = (await replicaClient.call('HELLO', '2')) as unknown[]
+
+      assertHelloEntry(masterHello, 'role', 'master')
+      assertHelloEntry(replicaHello, 'role', 'replica')
+    } finally {
+      masterClient.disconnect()
+      replicaClient.disconnect()
+    }
+  })
+
   test('READONLY lets direct replica connections serve readonly commands for master slots', async () => {
     const tag = `readonly:${randomKey()}`
     const key = `{${tag}}:key`
@@ -277,4 +298,14 @@ async function findDifferentNodeKeys(cluster: Cluster): Promise<{
   }
 
   throw new Error('Could not find keys owned by different cluster nodes')
+}
+
+function assertHelloEntry(
+  reply: unknown[],
+  key: string,
+  expected: string | number,
+): void {
+  const index = reply.indexOf(key)
+  assert.notStrictEqual(index, -1)
+  assert.strictEqual(reply[index + 1], expected)
 }
