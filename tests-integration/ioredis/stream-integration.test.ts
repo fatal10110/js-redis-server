@@ -16,6 +16,7 @@ import {
 } from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
+const MAX_UINT64 = '18446744073709551615'
 
 describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -54,6 +55,36 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const key = randomKey()
     assert.strictEqual(await redisClient?.xadd(key, '5-*', 'f', 'v'), '5-0')
     assert.strictEqual(await redisClient?.xadd(key, '5-*', 'f', 'v'), '5-1')
+  })
+
+  test('XADD handles auto-generated ids when the sequence overflows', async () => {
+    const taggedKey = `{${randomKey()}}`
+    const fixedMsKey = `${taggedKey}:fixed-ms`
+    const autoKey = `${taggedKey}:auto`
+    const node = await connectToSlotOwner(redisClient!, fixedMsKey)
+    const futureMs = BigInt(Date.now()) + 60_000n
+
+    try {
+      assert.strictEqual(
+        await node.call('XADD', fixedMsKey, `7-${MAX_UINT64}`, 'f', 'v'),
+        `7-${MAX_UINT64}`,
+      )
+      await assert.rejects(
+        () => node.call('XADD', fixedMsKey, '7-*', 'f', 'v'),
+        errorWithMessage('ERR Elements are too large to be stored'),
+      )
+
+      assert.strictEqual(
+        await node.call('XADD', autoKey, `${futureMs}-${MAX_UINT64}`, 'f', 'v'),
+        `${futureMs}-${MAX_UINT64}`,
+      )
+      assert.strictEqual(
+        await node.call('XADD', autoKey, '*', 'f', 'v'),
+        `${futureMs + 1n}-0`,
+      )
+    } finally {
+      node.disconnect()
+    }
   })
 
   test('XADD rejects ids equal to or smaller than the top item', async () => {
