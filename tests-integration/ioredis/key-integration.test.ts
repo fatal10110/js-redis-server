@@ -540,8 +540,8 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         pexpiretime <= (after + 102) * 1000,
       `PEXPIRETIME ${pexpiretime} not in ms range`,
     )
-    // PEXPIRETIME should be the millisecond form of EXPIRETIME
-    assert.strictEqual(Math.floor(pexpiretime / 1000), expiretime)
+    // EXPIRETIME is PEXPIRETIME rounded to the nearest second (Redis: (ms+500)/1000)
+    assert.strictEqual(Math.round(pexpiretime / 1000), expiretime)
 
     // Key without a TTL → -1
     await redisClient?.set(noTtl, 'value')
@@ -551,6 +551,46 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     // Missing key → -2
     assert.strictEqual(await redisClient?.expiretime(missing), -2)
     assert.strictEqual(await redisClient?.pexpiretime(missing), -2)
+
+    // Type-agnostic: works on any keyed type, not just strings (no WRONGTYPE)
+    const listKey = `${tag}:list`
+    await redisClient?.rpush(listKey, 'a', 'b')
+    await redisClient?.expire(listKey, 100)
+    const listExpiretime = await redisClient!.expiretime(listKey)
+    assert.ok(
+      listExpiretime >= before + 98 && listExpiretime <= after + 102,
+      `EXPIRETIME on list ${listExpiretime} not in expected range`,
+    )
+    assert.strictEqual(
+      Math.round((await redisClient!.pexpiretime(listKey)) / 1000),
+      listExpiretime,
+    )
+
+    // Wrong arity → error (no key, and extra args)
+    await assert.rejects(
+      () => redisClient!.call('EXPIRETIME'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'expiretime' command",
+      ),
+    )
+    await assert.rejects(
+      () => redisClient!.call('EXPIRETIME', withTtl, 'extra'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'expiretime' command",
+      ),
+    )
+    await assert.rejects(
+      () => redisClient!.call('PEXPIRETIME'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'pexpiretime' command",
+      ),
+    )
+    await assert.rejects(
+      () => redisClient!.call('PEXPIRETIME', withTtl, 'extra'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'pexpiretime' command",
+      ),
+    )
   })
 
   test('PERSIST removes expiration and EXPIRE 0 deletes the key', async () => {

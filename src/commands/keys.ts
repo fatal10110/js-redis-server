@@ -131,7 +131,8 @@ export const expiretimeCommand = defineCommand({
       return integer(-1)
     }
 
-    return integer(Math.floor(expiration.expiresAt / 1000))
+    // Redis rounds to the nearest second ((ms+500)/1000), not floor.
+    return integer(Math.round(expiration.expiresAt / 1000))
   },
 })
 
