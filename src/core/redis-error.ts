@@ -67,6 +67,24 @@ export class PositiveCountError extends RedisCommandError {
   }
 }
 
+export class ZaddNxXxConflictError extends RedisCommandError {
+  constructor() {
+    super('XX and NX options at the same time are not compatible')
+  }
+}
+
+export class ZaddGtLtNxConflictError extends RedisCommandError {
+  constructor() {
+    super('GT, LT, and/or NX options at the same time are not compatible')
+  }
+}
+
+export class ZaddIncrPairError extends RedisCommandError {
+  constructor() {
+    super('INCR option supports a single increment-element pair')
+  }
+}
+
 export class OffsetOutOfRangeError extends RedisCommandError {
   constructor() {
     super('offset is out of range')

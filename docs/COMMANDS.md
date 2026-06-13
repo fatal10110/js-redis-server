@@ -217,7 +217,7 @@ surface.
 
 ## 8. Sorted Set Commands
 
-- [x] `ZADD key score member [score member ...]` - Add or update members with scores
+- [x] `ZADD key [NX | XX] [GT | LT] [CH] [INCR] score member [score member ...]` - Add or update members with scores
 - [x] `ZREM key member [member ...]` - Remove one or more members
 - [x] `ZCARD key` - Get the number of members
 - [x] `ZSCORE key member` - Get the score of a member
@@ -235,7 +235,6 @@ surface.
 
 #### Notes / gaps vs. real Redis
 
-- [ ] `ZADD` does not support `NX`, `XX`, `GT`, `LT`, `CH`, or `INCR` - only plain `score member` pairs
 - [ ] `ZRANGE`/`ZREVRANGE` do not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes
 - [ ] `ZRANGEBYSCORE` does not support `WITHSCORES` or `LIMIT offset count`
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
