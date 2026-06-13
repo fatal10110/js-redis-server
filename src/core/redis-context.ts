@@ -1,4 +1,8 @@
-import type { RedisDatabase, RedisServerState } from '../state'
+import type {
+  RedisClusterNodeRole,
+  RedisDatabase,
+  RedisServerState,
+} from '../state'
 import type { CommandExecutor } from './command-executor'
 import type { CommandPlan } from './command-definition'
 import type { RedisResult } from './redis-result'
@@ -44,6 +48,7 @@ export interface RedisExecutionContext {
   readonly server: RedisServerState
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
+  readonly nodeRole?: RedisClusterNodeRole
   readonly signal: AbortSignal
   park: ParkHandler
 }

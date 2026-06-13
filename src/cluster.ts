@@ -148,6 +148,7 @@ export function buildRedisCluster(options: RedisClusterOptions): RedisCluster {
       server: state,
       executor,
       logger: options.logger,
+      nodeRole: node.role,
     })
 
     handles.push({

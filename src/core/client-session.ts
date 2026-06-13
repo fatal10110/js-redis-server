@@ -13,13 +13,19 @@ import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
 import type { RespVersion } from './resp-encoder'
 import { type RedisTurnHandle, type RedisTurnQueue } from './turn-queue'
-import type { RedisDatabase, RedisServerState, Unsubscribe } from '../state'
+import type {
+  RedisClusterNodeRole,
+  RedisDatabase,
+  RedisServerState,
+  Unsubscribe,
+} from '../state'
 
 export type ClientSessionOptions = {
   id?: string
   server: RedisServerState
   executor: CommandExecutor
   database?: number
+  nodeRole?: RedisClusterNodeRole
   signal?: AbortSignal
   park?: ParkHandler
   turnQueue?: RedisTurnQueue
@@ -68,6 +74,7 @@ export class ClientSession implements RedisClientSession {
 
   private readonly executor: CommandExecutor
   private readonly signalSource?: AbortController
+  private readonly nodeRole?: RedisClusterNodeRole
   private readonly parkHandler: ParkHandler
   private readonly turnQueueOverride?: RedisTurnQueue
   /**
@@ -96,6 +103,7 @@ export class ClientSession implements RedisClientSession {
     this.server = options.server
     this.executor = options.executor
     this.selectedDatabaseId = options.database ?? 0
+    this.nodeRole = options.nodeRole
     this.parkHandler = options.park ?? createDefaultParkHandler()
     this.turnQueueOverride = options.turnQueue
 
@@ -406,6 +414,7 @@ export class ClientSession implements RedisClientSession {
       server: this.server,
       session: this,
       executor: this.executor,
+      ...(this.nodeRole ? { nodeRole: this.nodeRole } : {}),
       signal: this.signal,
       park:
         parkOverride ??
