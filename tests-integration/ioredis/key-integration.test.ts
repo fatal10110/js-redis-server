@@ -493,6 +493,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     const pexpireKey = `${tag}:pexpire`
     const expireatKey = `${tag}:expireat`
     const pexpireatKey = `${tag}:pexpireat`
+    const duplicateOptionKey = `${tag}:duplicate`
     const missing = `${tag}:missing`
     const directClient = await connectToSlotOwner(redisClient!, expireKey)
 
@@ -545,6 +546,20 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       const pexpireTtl = await directClient.pttl(pexpireKey)
       assert.ok(pexpireTtl > 120_000 && pexpireTtl <= 240_000)
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 300_000, 'XX', 'GT'),
+        1,
+      )
+      assert.strictEqual(
+        await directClient.call('PEXPIRE', pexpireKey, 100_000, 'XX', 'LT'),
+        1,
+      )
+
+      await directClient.set(duplicateOptionKey, 'value')
+      assert.strictEqual(
+        await directClient.call('EXPIRE', duplicateOptionKey, 30, 'NX', 'NX'),
+        1,
+      )
 
       await directClient.set(expireatKey, 'value')
       const nowSeconds = Math.floor(Date.now() / 1000)
@@ -639,13 +654,19 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
 
       await assert.rejects(
         () => directClient.call('EXPIRE', expireKey, 10, 'BOGUS'),
-        (error: unknown) =>
-          error instanceof Error && error.message.startsWith('ERR '),
+        errorWithMessage('ERR Unsupported option BOGUS'),
       )
       await assert.rejects(
         () => directClient.call('EXPIRE', expireKey, 10, 'NX', 'XX'),
-        (error: unknown) =>
-          error instanceof Error && error.message.startsWith('ERR '),
+        errorWithMessage(
+          'ERR NX and XX, GT or LT options at the same time are not compatible',
+        ),
+      )
+      await assert.rejects(
+        () => directClient.call('EXPIRE', expireKey, 10, 'GT', 'LT'),
+        errorWithMessage(
+          'ERR GT and LT options at the same time are not compatible',
+        ),
       )
     } finally {
       await directClient.del(
@@ -653,6 +674,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         pexpireKey,
         expireatKey,
         pexpireatKey,
+        duplicateOptionKey,
         missing,
       )
       directClient.disconnect()

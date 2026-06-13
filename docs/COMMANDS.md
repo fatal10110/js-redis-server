@@ -113,6 +113,9 @@ surface.
 - [x] `EXPIRETIME key` - Get the absolute Unix expiration time in seconds
 - [x] `PEXPIRETIME key` - Get the absolute Unix expiration time in milliseconds
 
+`NX`, `GT`, and `LT` follow Redis' mutual-exclusion rules; `XX` can be combined
+with `GT` or `LT`.
+
 #### Not implemented
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ`
