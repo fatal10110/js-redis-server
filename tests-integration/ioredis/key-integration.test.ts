@@ -515,6 +515,84 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(ttlNonExistent, -2)
   })
 
+  test('EXPIRETIME and PEXPIRETIME return absolute expiry, -1, -2', async () => {
+    const tag = `{exptime:${randomKey()}}`
+    const withTtl = `${tag}:withttl`
+    const noTtl = `${tag}:nottl`
+    const missing = `${tag}:missing`
+
+    // Key with a TTL set via SET ... EX 100
+    const before = Math.floor(Date.now() / 1000)
+    await redisClient?.set(withTtl, 'value', 'EX', 100)
+    const after = Math.floor(Date.now() / 1000)
+
+    const expiretime = await redisClient!.expiretime(withTtl)
+    // Absolute Unix expiry in seconds ≈ now + 100 (±2s for clock skew/rounding)
+    assert.ok(
+      expiretime >= before + 98 && expiretime <= after + 102,
+      `EXPIRETIME ${expiretime} not in [${before + 98}, ${after + 102}]`,
+    )
+
+    const pexpiretime = await redisClient!.pexpiretime(withTtl)
+    // Absolute Unix expiry in milliseconds
+    assert.ok(
+      pexpiretime >= (before + 98) * 1000 &&
+        pexpiretime <= (after + 102) * 1000,
+      `PEXPIRETIME ${pexpiretime} not in ms range`,
+    )
+    // EXPIRETIME is PEXPIRETIME rounded to the nearest second (Redis: (ms+500)/1000)
+    assert.strictEqual(Math.round(pexpiretime / 1000), expiretime)
+
+    // Key without a TTL → -1
+    await redisClient?.set(noTtl, 'value')
+    assert.strictEqual(await redisClient?.expiretime(noTtl), -1)
+    assert.strictEqual(await redisClient?.pexpiretime(noTtl), -1)
+
+    // Missing key → -2
+    assert.strictEqual(await redisClient?.expiretime(missing), -2)
+    assert.strictEqual(await redisClient?.pexpiretime(missing), -2)
+
+    // Type-agnostic: works on any keyed type, not just strings (no WRONGTYPE)
+    const listKey = `${tag}:list`
+    await redisClient?.rpush(listKey, 'a', 'b')
+    await redisClient?.expire(listKey, 100)
+    const listExpiretime = await redisClient!.expiretime(listKey)
+    assert.ok(
+      listExpiretime >= before + 98 && listExpiretime <= after + 102,
+      `EXPIRETIME on list ${listExpiretime} not in expected range`,
+    )
+    assert.strictEqual(
+      Math.round((await redisClient!.pexpiretime(listKey)) / 1000),
+      listExpiretime,
+    )
+
+    // Wrong arity → error (no key, and extra args)
+    await assert.rejects(
+      () => redisClient!.call('EXPIRETIME'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'expiretime' command",
+      ),
+    )
+    await assert.rejects(
+      () => redisClient!.call('EXPIRETIME', withTtl, 'extra'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'expiretime' command",
+      ),
+    )
+    await assert.rejects(
+      () => redisClient!.call('PEXPIRETIME'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'pexpiretime' command",
+      ),
+    )
+    await assert.rejects(
+      () => redisClient!.call('PEXPIRETIME', withTtl, 'extra'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'pexpiretime' command",
+      ),
+    )
+  })
+
   test('PERSIST removes expiration and EXPIRE 0 deletes the key', async () => {
     const tag = `{persist:${randomKey()}}`
     const persistentKey = `${tag}:persistent`

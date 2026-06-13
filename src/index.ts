@@ -157,6 +157,8 @@ export {
   evalshaCommand,
   execCommand,
   expireCommand,
+  expiretimeCommand,
+  pexpiretimeCommand,
   flushallCommand,
   flushdbCommand,
   getCommand,

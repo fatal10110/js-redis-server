@@ -111,6 +111,8 @@ export {
   existsCommand,
   expireCommand,
   expireatCommand,
+  expiretimeCommand,
+  pexpiretimeCommand,
   flushallCommand,
   flushdbCommand,
   keysCommands,
