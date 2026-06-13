@@ -12,7 +12,7 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 - [x] `QUIT` - Close the connection
 - [x] `SELECT index` - Change the selected database
 - [x] `RESET` - Reset connection state (auth, MULTI/WATCH, RESP version, db, cluster read-only flag, client name) to defaults
-- [x] `HELLO [protover [AUTH username password] [SETNAME clientname]]` - Switch protocol (RESP2/3), optionally authenticate and set the connection name in one round trip
+- [x] `HELLO [protover [AUTH username password] [SETNAME clientname]]` - Switch protocol (RESP2/3), optionally authenticate and set the connection name in one round trip; reports the current cluster node role
 
 #### AUTH
 
