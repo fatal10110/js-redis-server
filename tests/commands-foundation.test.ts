@@ -48,6 +48,7 @@ describe('new foundation commands', () => {
     assert.match(infoText, /loading:0/)
     assert.match(infoText, /redis_mode:standalone/)
     assert.match(infoText, /cluster_enabled:0/)
+    assert.doesNotMatch(infoText, /^cluster_state:/m)
 
     assert.deepStrictEqual(
       await session.execute('client', [

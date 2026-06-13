@@ -133,12 +133,18 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
       'used_cpu_sys_children:0.00',
       'used_cpu_user_children:0.00',
     ],
-    cluster: () => [
-      '# Cluster',
-      `cluster_enabled:${clustered ? 1 : 0}`,
-      `cluster_state:${clustered ? 'ok' : 'fail'}`,
-      `cluster_slots_assigned:${clustered ? 16384 : 0}`,
-    ],
+    cluster: () => {
+      if (!clustered) {
+        return ['# Cluster', 'cluster_enabled:0']
+      }
+
+      return [
+        '# Cluster',
+        'cluster_enabled:1',
+        'cluster_state:ok',
+        'cluster_slots_assigned:16384',
+      ]
+    },
     commandstats: () => ['# Commandstats'],
     latencystats: () => ['# Latencystats'],
     errorstats: () => ['# Errorstats'],
