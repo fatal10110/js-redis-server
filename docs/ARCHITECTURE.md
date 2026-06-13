@@ -228,7 +228,7 @@ sequenceDiagram
 
     Cl->>CS: EXEC
     CS->>CE: executeRaw(EXEC, [], ctx)
-    Note over CE,CS: WATCH dirty → discard, reply *-1<br/>queue dirty (e.g. unknown cmd) → discard, EXECABORT<br/>EXEC itself malformed (e.g. `EXEC foo`) → discard immediately,<br/>EXECABORT "Transaction discarded because of: &lt;reason&gt;"
+    Note over CE,CS: queue dirty (e.g. unknown cmd) → discard, EXECABORT<br/>(takes precedence over WATCH)<br/>else WATCH dirty → discard, reply *-1<br/>EXEC itself malformed (e.g. `EXEC foo`) → discard immediately,<br/>EXECABORT "Transaction discarded because of: &lt;reason&gt;"
     CE->>CS: drainTransaction() → plans[]
     CS->>CS: executeTransaction(plans)<br/>runs each plan through the executor, in order
     CS-->>Cl: array of per-command replies
@@ -245,9 +245,12 @@ which reuses the normal `executePlan` path per command.
 
 `WATCH` subscribes to per-key mutation events on the database
 ([`ClientSession.watch`](../src/core/client-session.ts#L185)); any write,
-delete, or lazy-eviction on a watched key marks the session dirty, and `EXEC`
-checks `isWatchDirty()` before running the queue (see
-[State & data model](#state--data-model) for how mutation events propagate).
+delete, or lazy-eviction on a watched key marks the session dirty. Before
+running the queue `EXEC` checks `isTransactionDirty()` first — a bad queued
+command aborts with `EXECABORT` regardless of WATCH state — then
+`isWatchDirty()`, which replies `*-1` only when the queue is otherwise clean
+(matching real Redis `CLIENT_DIRTY_EXEC` over `CLIENT_DIRTY_CAS` precedence;
+see [State & data model](#state--data-model) for how mutation events propagate).
 
 ### Cluster routing
 
