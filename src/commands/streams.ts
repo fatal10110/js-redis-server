@@ -294,6 +294,13 @@ function entryToReply(id: StreamId, fields: Buffer[]): RedisValue {
   ])
 }
 
+function deletedEntryToReply(id: StreamId): RedisValue {
+  return RedisValue.array([
+    RedisValue.bulkString(Buffer.from(formatStreamId(id))),
+    RedisValue.bulkString(null),
+  ])
+}
+
 type FieldList = Buffer[]
 
 // Parses the trailing `field value [field value ...]` of XADD into a flat
@@ -1108,8 +1115,11 @@ function readGroupEntries(
           if (compareStreamId(pending.id, id) <= 0) continue
 
           const entry = findEntry(stream, pending.id)
-          if (!entry) continue
-          replies.push(entryToReply(entry.id, entry.fields))
+          replies.push(
+            entry
+              ? entryToReply(entry.id, entry.fields)
+              : deletedEntryToReply(pending.id),
+          )
 
           if (count !== null && count > 0 && replies.length >= count) break
         }
@@ -1118,7 +1128,7 @@ function readGroupEntries(
       return replies
     })
 
-    if (entries.length > 0) {
+    if (entries.length > 0 || id !== '>') {
       results.push([bulkString(key), RedisValue.array(entries)])
     }
   }
@@ -1839,17 +1849,17 @@ function streamInfoReply(
     return fields
   }
 
-  const entryLimit = count ?? stream.entries.length
+  const fullCount = count ?? 10
   fields.push(
     RedisValue.array(
       Array.from(stream.groups.values(), group =>
-        fullGroupInfoReply(stream, group),
+        fullGroupInfoReply(stream, group, fullCount),
       ),
     ),
     bulkString('entries'),
     RedisValue.array(
       stream.entries
-        .slice(0, entryLimit)
+        .slice(0, fullCount)
         .map(entry => entryToReply(entry.id, entry.fields)),
     ),
   )
@@ -1877,6 +1887,7 @@ function groupInfoReply(stream: RedisStreamData) {
 function fullGroupInfoReply(
   stream: RedisStreamData,
   group: RedisStreamConsumerGroup,
+  count: number,
 ): RedisValue {
   return RedisValue.array([
     bulkString('name'),
@@ -1891,17 +1902,19 @@ function fullGroupInfoReply(
     integerValue(group.pending.size),
     bulkString('pending'),
     RedisValue.array(
-      pendingEntriesSorted(group).map(pending =>
-        RedisValue.array([
-          streamIdValue(pending.id),
-          bulkString(
-            group.consumers.get(pending.consumerId)?.name ??
-              Buffer.from(pending.consumerId, 'hex'),
-          ),
-          integerValue(Math.max(0, Date.now() - pending.deliveredAt)),
-          integerValue(pending.deliveryCount),
-        ]),
-      ),
+      pendingEntriesSorted(group)
+        .slice(0, count)
+        .map(pending =>
+          RedisValue.array([
+            streamIdValue(pending.id),
+            bulkString(
+              group.consumers.get(pending.consumerId)?.name ??
+                Buffer.from(pending.consumerId, 'hex'),
+            ),
+            integerValue(Math.max(0, Date.now() - pending.deliveredAt)),
+            integerValue(pending.deliveryCount),
+          ]),
+        ),
     ),
     bulkString('consumers'),
     RedisValue.array(

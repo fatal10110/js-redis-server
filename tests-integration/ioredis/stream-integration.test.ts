@@ -708,6 +708,75 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('XREADGROUP history keeps deleted pending entries visible', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', '1')
+      await node.xadd(key, '2-2', 'f', '2')
+      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
+      await node.call(
+        'XREADGROUP',
+        'GROUP',
+        'workers',
+        'alice',
+        'COUNT',
+        '10',
+        'STREAMS',
+        key,
+        '>',
+      )
+      assert.strictEqual(await node.xdel(key, '1-1'), 1)
+
+      assert.deepStrictEqual(
+        await node.call(
+          'XREADGROUP',
+          'GROUP',
+          'workers',
+          'alice',
+          'STREAMS',
+          key,
+          '0',
+        ),
+        [
+          [
+            key,
+            [
+              ['1-1', null],
+              ['2-2', ['f', '2']],
+            ],
+          ],
+        ],
+      )
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XREADGROUP history returns an empty per-key list for consumers with no pending entries', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', '1')
+      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
+
+      assert.deepStrictEqual(
+        await node.call(
+          'XREADGROUP',
+          'GROUP',
+          'workers',
+          'alice',
+          'STREAMS',
+          key,
+          '0',
+        ),
+        [[key, []]],
+      )
+    } finally {
+      node.disconnect()
+    }
+  })
+
   test('XINFO reports stream, group, and consumer metadata', async () => {
     const key = randomKey()
     const node = await connectToSlotOwner(redisClient!, key)
@@ -761,6 +830,47 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(consumersInfo.length, 1)
       assert.strictEqual(kvArrayGet(consumersInfo[0], 'name'), 'alice')
       assert.strictEqual(kvArrayGet(consumersInfo[0], 'pending'), 1)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XINFO STREAM FULL defaults to 10 stream entries and PEL rows', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      for (let i = 1; i <= 12; i++) {
+        await node.xadd(key, `${i}-0`, 'f', `${i}`)
+      }
+      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
+      await node.call(
+        'XREADGROUP',
+        'GROUP',
+        'workers',
+        'alice',
+        'COUNT',
+        '12',
+        'STREAMS',
+        key,
+        '>',
+      )
+
+      const streamInfo = (await node.call(
+        'XINFO',
+        'STREAM',
+        key,
+        'FULL',
+      )) as unknown[]
+      const entries = kvArrayGet(streamInfo, 'entries') as unknown[][]
+      assert.strictEqual(entries.length, 10)
+      assert.strictEqual(entries[0][0], '1-0')
+      assert.strictEqual(entries[9][0], '10-0')
+
+      const groups = kvArrayGet(streamInfo, 'groups') as unknown[][]
+      const pending = kvArrayGet(groups[0], 'pending') as unknown[][]
+      assert.strictEqual(pending.length, 10)
+      assert.strictEqual(pending[0][0], '1-0')
+      assert.strictEqual(pending[9][0], '10-0')
     } finally {
       node.disconnect()
     }
