@@ -1,9 +1,10 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
-import { Cluster } from 'ioredis'
+import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../test-config'
 import {
   commandFrame,
+  connectToSlotOwner,
   errorWithMessage,
   findSlotOwner,
   randomKey,
@@ -111,6 +112,137 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
 
     const vals = await redisClient?.hvals('hash4')
     assert.deepStrictEqual(vals?.sort(), ['value1', 'value2'])
+  })
+
+  test('HRANDFIELD command matches Redis', async () => {
+    const tag = `{hrandfield:${randomKey()}}`
+    const hashKey = `${tag}:hash`
+    const missingKey = `${tag}:missing`
+    const stringKey = `${tag}:string`
+    const expected = new Map([
+      ['field1', 'value1'],
+      ['field2', 'value2'],
+      ['field3', 'value3'],
+    ])
+    let directClient: Redis | undefined
+
+    function assertField(value: unknown): string {
+      assert.strictEqual(typeof value, 'string')
+      assert.ok(expected.has(value))
+      return value
+    }
+
+    function assertFieldArray(value: unknown, length: number): string[] {
+      assert.ok(Array.isArray(value))
+      assert.strictEqual(value.length, length)
+      for (const field of value) assertField(field)
+      return value as string[]
+    }
+
+    function assertFieldValuePairs(value: unknown, pairCount: number): void {
+      assert.ok(Array.isArray(value))
+      assert.strictEqual(value.length, pairCount * 2)
+      for (let i = 0; i < value.length; i += 2) {
+        const field = assertField(value[i])
+        assert.strictEqual(value[i + 1], expected.get(field))
+      }
+    }
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, hashKey)
+      await directClient.hset(
+        hashKey,
+        'field1',
+        'value1',
+        'field2',
+        'value2',
+        'field3',
+        'value3',
+      )
+
+      assertField(await directClient.call('HRANDFIELD', hashKey))
+      assert.strictEqual(
+        await directClient.call('HRANDFIELD', missingKey),
+        null,
+      )
+
+      const twoFields = assertFieldArray(
+        await directClient.call('HRANDFIELD', hashKey, '2'),
+        2,
+      )
+      assert.strictEqual(new Set(twoFields).size, 2)
+
+      const allFields = assertFieldArray(
+        await directClient.call('HRANDFIELD', hashKey, '10'),
+        3,
+      )
+      assert.strictEqual(new Set(allFields).size, 3)
+
+      assertFieldArray(await directClient.call('HRANDFIELD', hashKey, '-5'), 5)
+      assert.deepStrictEqual(
+        await directClient.call('HRANDFIELD', hashKey, '0'),
+        [],
+      )
+      assert.deepStrictEqual(
+        await directClient.call('HRANDFIELD', missingKey, '2'),
+        [],
+      )
+
+      assertFieldValuePairs(
+        await directClient.call('HRANDFIELD', hashKey, '2', 'WITHVALUES'),
+        2,
+      )
+      assertFieldValuePairs(
+        await directClient.call('HRANDFIELD', hashKey, '-4', 'withvalues'),
+        4,
+      )
+      assert.deepStrictEqual(
+        await directClient.call('HRANDFIELD', missingKey, '2', 'WITHVALUES'),
+        [],
+      )
+
+      await directClient.set(stringKey, 'value')
+      await assert.rejects(
+        () => directClient?.call('HRANDFIELD', stringKey),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+
+      await assert.rejects(
+        () => directClient?.call('HRANDFIELD'),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'hrandfield' command",
+        ),
+      )
+      await assert.rejects(
+        () => directClient?.call('HRANDFIELD', hashKey, 'abc'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient?.call('HRANDFIELD', hashKey, 'WITHVALUES'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient?.call('HRANDFIELD', hashKey, '1', 'BAD'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call(
+            'HRANDFIELD',
+            hashKey,
+            '1',
+            'WITHVALUES',
+            'WITHVALUES',
+          ),
+        errorWithMessage('ERR syntax error'),
+      )
+    } finally {
+      await directClient?.del(hashKey, missingKey, stringKey)
+      directClient?.disconnect()
+    }
   })
 
   test('HLEN command', async () => {

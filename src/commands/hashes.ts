@@ -3,13 +3,19 @@ import { t, type ParseContext } from '../core/command-schema'
 import {
   HashValueNotFloatError,
   HashValueNotIntegerError,
+  RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { bulk, integer, ok, array } from './helpers'
+import { bulk, integer, ok, array, parseIntegerToken } from './helpers'
 
 type FieldValuePair = { field: Buffer; value: Buffer }
+type HrandfieldArgs = {
+  key: Buffer
+  count: number | undefined
+  withValues: boolean
+}
 
 function createFieldValuePairsSchema() {
   return t.custom<FieldValuePair[]>(
@@ -34,6 +40,83 @@ function createFieldValuePairsSchema() {
       return { value: pairs, nextIndex: cursor }
     },
   )
+}
+
+function createHrandfieldSchema() {
+  return t.custom<HrandfieldArgs>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      const key = input[index]
+      if (!key) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      let cursor = index + 1
+      if (cursor >= input.length) {
+        return {
+          value: { key, count: undefined, withValues: false },
+          nextIndex: cursor,
+        }
+      }
+
+      const count = parseIntegerToken(input[cursor])
+      cursor++
+
+      let withValues = false
+      if (cursor < input.length) {
+        if (input[cursor].toString().toUpperCase() !== 'WITHVALUES') {
+          throw new RedisSyntaxError()
+        }
+
+        withValues = true
+        cursor++
+      }
+
+      if (cursor !== input.length) {
+        throw new RedisSyntaxError()
+      }
+
+      return { value: { key, count, withValues }, nextIndex: cursor }
+    },
+  )
+}
+
+function randomHashEntries<TValue>(entries: TValue[], count: number): TValue[] {
+  if (count === 0) return []
+
+  if (count > 0) {
+    const limit = Math.min(count, entries.length)
+    const pool = entries.slice()
+    const result: TValue[] = []
+
+    for (let i = 0; i < limit; i++) {
+      const j = i + Math.floor(Math.random() * (pool.length - i))
+      ;[pool[i], pool[j]] = [pool[j], pool[i]]
+      result.push(pool[i])
+    }
+
+    return result
+  }
+
+  const result: TValue[] = []
+  for (let i = 0; i < Math.abs(count); i++) {
+    result.push(entries[Math.floor(Math.random() * entries.length)])
+  }
+
+  return result
+}
+
+function hashEntriesReply(
+  entries: FieldValuePair[],
+  withValues: boolean,
+): RedisValue[] {
+  if (!withValues) {
+    return entries.map(({ field }) => RedisValue.bulkString(field))
+  }
+
+  return entries.flatMap(({ field, value }) => [
+    RedisValue.bulkString(field),
+    RedisValue.bulkString(value),
+  ])
 }
 
 export const hsetCommand = defineCommand({
@@ -185,6 +268,29 @@ export const hvalsCommand = defineCommand({
   },
 })
 
+export const hrandfieldCommand = defineCommand({
+  name: 'hrandfield',
+  schema: createHrandfieldSchema(),
+  flags: ['readonly', 'random', 'noscript'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    const hash = ctx.db.getHash(args.key)
+    if (!hash || hash.fields.size === 0) {
+      return args.count === undefined ? bulk(null) : array([])
+    }
+
+    const entries = Array.from(hash.fields.values())
+    if (args.count === undefined) {
+      const entry = entries[Math.floor(Math.random() * entries.length)]
+      return bulk(entry.field)
+    }
+
+    return array(
+      hashEntriesReply(randomHashEntries(entries, args.count), args.withValues),
+    )
+  },
+})
+
 export const hlenCommand = defineCommand({
   name: 'hlen',
   schema: t.object({ key: t.key() }),
@@ -292,6 +398,7 @@ export const hashesCommands = [
   hgetallCommand,
   hkeysCommand,
   hvalsCommand,
+  hrandfieldCommand,
   hlenCommand,
   hexistsCommand,
   hincrbyCommand,
