@@ -341,12 +341,18 @@ flags are enforced inside `redis.call`/`redis.pcall`.
 
 ## 14. Pub/Sub Commands
 
-- [ ] `PUBLISH channel message`
-- [ ] `SUBSCRIBE` / `UNSUBSCRIBE` / `PSUBSCRIBE` / `PUNSUBSCRIBE` / `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH`
-- [ ] `PUBSUB CHANNELS|NUMSUB|NUMPAT`
+- [x] `PUBLISH channel message`
+- [x] `SUBSCRIBE` / `UNSUBSCRIBE`
+- [x] `PSUBSCRIBE` / `PUNSUBSCRIBE`
+- [x] `PUBSUB CHANNELS|NUMSUB|NUMPAT`
+- [x] `PUBSUB SHARDCHANNELS|SHARDNUMSUB` - Present for Redis 7 command compatibility; returns empty shard pub/sub state because sharded Pub/Sub subscriptions are not implemented yet.
 
-> The mutation-event bus used internally for `WATCH` is unrelated to client
-> pub/sub; no pub/sub command module exists yet.
+- [ ] `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH`
+
+Subscribed connections enforce Redis' restricted command mode: only subscribe,
+unsubscribe, `PING`, `RESET`, and `QUIT` are accepted until all subscriptions
+are removed. Pub/Sub state is process-local to the `RedisServerState` instance;
+cluster-wide fan-out between separate mock cluster nodes is not implemented.
 
 ## 15. Persistence Commands
 

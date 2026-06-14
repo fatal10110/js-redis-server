@@ -31,7 +31,13 @@ export { RedisKeyspace, WrongRedisTypeError } from './keyspace'
 
 export { RedisDatabase } from './database'
 export { RedisScriptCache } from './script-cache'
-export { RedisPubSubBroker } from './pubsub-broker'
+export {
+  RedisPubSubBroker,
+  type RedisPubSubMessage,
+  type RedisPubSubMessageListener,
+  type RedisPubSubPatternMessage,
+  type RedisPubSubPatternMessageListener,
+} from './pubsub-broker'
 export type { RedisClusterNode, RedisClusterNodeRole } from './cluster-topology'
 export {
   REDIS_CLUSTER_SLOT_COUNT,
