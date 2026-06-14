@@ -26,6 +26,7 @@ function createContext(executor?: CommandExecutor): RedisExecutionContext {
       selectedDatabase: 0,
       mode: 'normal',
       protocolVersion: 2,
+      usesSubscribedReplyMode: false,
       clusterReadOnly: false,
       setProtocolVersion: () => {},
       setClusterReadOnly: () => {},

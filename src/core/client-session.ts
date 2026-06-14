@@ -47,6 +47,11 @@ type WatchRegistration = {
   unsubscribe: Unsubscribe
 }
 
+type PubSubRegistration = {
+  value: Buffer
+  unsubscribe: Unsubscribe
+}
+
 /**
  * Per-connection server state and the concrete {@link RedisClientSession}.
  *
@@ -97,6 +102,11 @@ export class ClientSession implements RedisClientSession {
   private readonly watches = new Map<string, WatchRegistration>()
   /** Subset of watched keys mutated since WATCH — non-empty fails the next EXEC. */
   private readonly dirtyWatches = new Set<string>()
+  private readonly pubsubChannels = new Map<string, PubSubRegistration>()
+  private readonly pubsubPatterns = new Map<string, PubSubRegistration>()
+  private readonly pushQueue: RedisResult[] = []
+  private readonly pushWaiters = new Set<() => void>()
+  private pushQueueClosed = false
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
@@ -129,12 +139,28 @@ export class ClientSession implements RedisClientSession {
     return this.respVersion
   }
 
+  get usesSubscribedReplyMode(): boolean {
+    return this.sessionMode === 'subscribed' && this.respVersion === 2
+  }
+
   get clusterReadOnly(): boolean {
     return this.clusterReadOnlyMode
   }
 
   get isAuthenticated(): boolean {
     return this.authenticated
+  }
+
+  get pubsubChannelCount(): number {
+    return this.pubsubChannels.size
+  }
+
+  get pubsubPatternCount(): number {
+    return this.pubsubPatterns.size
+  }
+
+  get pubsubSubscriptionCount(): number {
+    return this.pubsubChannelCount + this.pubsubPatternCount
   }
 
   setAuthenticated(value: boolean): void {
@@ -355,6 +381,199 @@ export class ClientSession implements RedisClientSession {
     return this.dirtyWatches.size > 0
   }
 
+  subscribePubSubChannels(channels: readonly Buffer[]): RedisResult[] {
+    const frames: RedisResult[] = []
+
+    for (const channel of channels) {
+      const key = pubsubId(channel)
+      if (!this.pubsubChannels.has(key)) {
+        const subscribedChannel = Buffer.from(channel)
+        const unsubscribe = this.server.pubsubBroker.subscribe(
+          subscribedChannel,
+          message => {
+            this.enqueuePush(
+              pubsubFrame('message', [
+                RedisValue.bulkString(Buffer.from(message.channel)),
+                RedisValue.bulkString(Buffer.from(message.message)),
+              ]),
+            )
+          },
+        )
+
+        this.pubsubChannels.set(key, {
+          value: subscribedChannel,
+          unsubscribe,
+        })
+      }
+
+      this.refreshPubSubMode()
+      frames.push(
+        pubsubFrame('subscribe', [
+          RedisValue.bulkString(Buffer.from(channel)),
+          RedisValue.integer(this.pubsubSubscriptionCount),
+        ]),
+      )
+    }
+
+    return frames
+  }
+
+  unsubscribePubSubChannels(channels: readonly Buffer[]): RedisResult[] {
+    const targets =
+      channels.length > 0
+        ? channels
+        : Array.from(
+            this.pubsubChannels.values(),
+            entry => entry.value,
+          ).reverse()
+
+    if (targets.length === 0) {
+      this.refreshPubSubMode()
+      return [
+        pubsubFrame('unsubscribe', [
+          RedisValue.bulkString(null),
+          RedisValue.integer(this.pubsubSubscriptionCount),
+        ]),
+      ]
+    }
+
+    const frames: RedisResult[] = []
+    for (const channel of targets) {
+      const key = pubsubId(channel)
+      const existing = this.pubsubChannels.get(key)
+      if (existing) {
+        existing.unsubscribe()
+        this.pubsubChannels.delete(key)
+      }
+
+      this.refreshPubSubMode()
+      frames.push(
+        pubsubFrame('unsubscribe', [
+          RedisValue.bulkString(Buffer.from(channel)),
+          RedisValue.integer(this.pubsubSubscriptionCount),
+        ]),
+      )
+    }
+
+    return frames
+  }
+
+  subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[] {
+    const frames: RedisResult[] = []
+
+    for (const pattern of patterns) {
+      const key = pubsubId(pattern)
+      if (!this.pubsubPatterns.has(key)) {
+        const subscribedPattern = Buffer.from(pattern)
+        const unsubscribe = this.server.pubsubBroker.psubscribe(
+          subscribedPattern,
+          message => {
+            this.enqueuePush(
+              pubsubFrame('pmessage', [
+                RedisValue.bulkString(Buffer.from(message.pattern)),
+                RedisValue.bulkString(Buffer.from(message.channel)),
+                RedisValue.bulkString(Buffer.from(message.message)),
+              ]),
+            )
+          },
+        )
+
+        this.pubsubPatterns.set(key, {
+          value: subscribedPattern,
+          unsubscribe,
+        })
+      }
+
+      this.refreshPubSubMode()
+      frames.push(
+        pubsubFrame('psubscribe', [
+          RedisValue.bulkString(Buffer.from(pattern)),
+          RedisValue.integer(this.pubsubSubscriptionCount),
+        ]),
+      )
+    }
+
+    return frames
+  }
+
+  unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[] {
+    const targets =
+      patterns.length > 0
+        ? patterns
+        : Array.from(
+            this.pubsubPatterns.values(),
+            entry => entry.value,
+          ).reverse()
+
+    if (targets.length === 0) {
+      this.refreshPubSubMode()
+      return [
+        pubsubFrame('punsubscribe', [
+          RedisValue.bulkString(null),
+          RedisValue.integer(this.pubsubSubscriptionCount),
+        ]),
+      ]
+    }
+
+    const frames: RedisResult[] = []
+    for (const pattern of targets) {
+      const key = pubsubId(pattern)
+      const existing = this.pubsubPatterns.get(key)
+      if (existing) {
+        existing.unsubscribe()
+        this.pubsubPatterns.delete(key)
+      }
+
+      this.refreshPubSubMode()
+      frames.push(
+        pubsubFrame('punsubscribe', [
+          RedisValue.bulkString(Buffer.from(pattern)),
+          RedisValue.integer(this.pubsubSubscriptionCount),
+        ]),
+      )
+    }
+
+    return frames
+  }
+
+  resetPubSub(): void {
+    for (const subscription of this.pubsubChannels.values()) {
+      subscription.unsubscribe()
+    }
+    for (const subscription of this.pubsubPatterns.values()) {
+      subscription.unsubscribe()
+    }
+
+    this.pubsubChannels.clear()
+    this.pubsubPatterns.clear()
+    this.refreshPubSubMode()
+  }
+
+  enqueuePush(result: RedisResult): void {
+    if (this.pushQueueClosed || this.signal.aborted) {
+      return
+    }
+
+    this.pushQueue.push(result)
+    this.wakePushWaiters()
+  }
+
+  async *readPushes(signal: AbortSignal): AsyncIterable<RedisResult> {
+    while (!signal.aborted && !this.signal.aborted) {
+      const frame = this.pushQueue.shift()
+      if (frame) {
+        yield frame
+        continue
+      }
+
+      if (this.pushQueueClosed) {
+        return
+      }
+
+      await this.waitForPush(signal)
+    }
+  }
+
   /**
    * Public entry point for executing one client command.
    *
@@ -428,6 +647,8 @@ export class ClientSession implements RedisClientSession {
   close(): void {
     this.signalSource?.abort()
     this.unwatch()
+    this.resetPubSub()
+    this.closePushQueue()
     this.transactionPlans = []
     this.transactionDirty = false
     this.sessionMode = 'normal'
@@ -467,10 +688,63 @@ export class ClientSession implements RedisClientSession {
       return parkedValue
     }
   }
+
+  private refreshPubSubMode(): void {
+    if (this.pubsubSubscriptionCount > 0) {
+      this.sessionMode = 'subscribed'
+      return
+    }
+
+    if (this.sessionMode === 'subscribed') {
+      this.sessionMode = 'normal'
+    }
+  }
+
+  private waitForPush(signal: AbortSignal): Promise<void> {
+    if (signal.aborted || this.signal.aborted || this.pushQueueClosed) {
+      return Promise.resolve()
+    }
+
+    return new Promise(resolve => {
+      const cleanup = () => {
+        this.pushWaiters.delete(waiter)
+        signal.removeEventListener('abort', waiter)
+        this.signal.removeEventListener('abort', waiter)
+      }
+      const waiter = () => {
+        cleanup()
+        resolve()
+      }
+
+      this.pushWaiters.add(waiter)
+      signal.addEventListener('abort', waiter, { once: true })
+      this.signal.addEventListener('abort', waiter, { once: true })
+    })
+  }
+
+  private closePushQueue(): void {
+    this.pushQueueClosed = true
+    this.pushQueue.length = 0
+    this.wakePushWaiters()
+  }
+
+  private wakePushWaiters(): void {
+    for (const waiter of Array.from(this.pushWaiters)) {
+      waiter()
+    }
+  }
 }
 
 function watchId(database: number, key: Buffer): string {
   return `${database}:${key.toString('hex')}`
+}
+
+function pubsubId(value: Buffer): string {
+  return value.toString('hex')
+}
+
+function pubsubFrame(name: string, items: RedisValue[]): RedisResult {
+  return RedisResult.create(RedisValue.push(name, items))
 }
 
 function createAbortError(): Error {

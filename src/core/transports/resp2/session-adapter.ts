@@ -26,6 +26,7 @@ export class Resp2SessionAdapter {
   private readonly session: ClientSession
   private readonly logger?: Pick<Logger, 'error'>
   private readonly encoder?: RespEncodeOptions
+  private writeChain: Promise<void> = Promise.resolve()
 
   constructor(options: Resp2SessionAdapterOptions) {
     this.transport = options.transport
@@ -35,6 +36,8 @@ export class Resp2SessionAdapter {
   }
 
   async run(): Promise<void> {
+    const pushWriter = this.writeSessionPushes()
+
     try {
       for await (const chunk of this.transport.read()) {
         const { frames, error } = this.decoder.push(chunk)
@@ -60,6 +63,7 @@ export class Resp2SessionAdapter {
       }
     } finally {
       this.session.close()
+      await pushWriter
     }
   }
 
@@ -84,15 +88,35 @@ export class Resp2SessionAdapter {
   }
 
   private async writeRedisResult(result: RedisResult): Promise<void> {
-    await this.transport.write(
-      encodeRedisResult(result, {
-        ...this.encoder,
-        version: this.session.protocolVersion,
-      }),
-    )
+    const write = async () => {
+      await this.transport.write(
+        encodeRedisResult(result, {
+          ...this.encoder,
+          version: this.session.protocolVersion,
+        }),
+      )
 
-    if (result.options?.close || result.options?.disconnect) {
-      this.transport.close('command requested close')
+      if (result.options?.close || result.options?.disconnect) {
+        this.transport.close('command requested close')
+      }
+    }
+
+    this.writeChain = this.writeChain.catch(() => {}).then(write)
+    await this.writeChain
+  }
+
+  private async writeSessionPushes(): Promise<void> {
+    try {
+      for await (const frame of this.session.readPushes(
+        this.transport.signal,
+      )) {
+        await this.writeRedisResult(frame)
+      }
+    } catch (err) {
+      if (!this.transport.signal.aborted) {
+        this.logger?.error(err)
+        this.transport.close('resp2 push writer error')
+      }
     }
   }
 
