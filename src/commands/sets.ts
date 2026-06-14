@@ -234,6 +234,26 @@ export const sismemberCommand = defineCommand({
 })
 
 // ---------------------------------------------------------------------------
+// SMISMEMBER key member [member ...]
+// ---------------------------------------------------------------------------
+
+export const smismemberCommand = defineCommand({
+  name: 'smismember',
+  schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
+  flags: ['readonly', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    const set = ctx.db.getSet(args.key)
+
+    return array(
+      args.members.map(member =>
+        RedisValue.integer(set?.members.has(member.toString('hex')) ? 1 : 0),
+      ),
+    )
+  },
+})
+
+// ---------------------------------------------------------------------------
 // SPOP key [count]
 // ---------------------------------------------------------------------------
 
@@ -542,6 +562,7 @@ export const setsCommands = [
   scardCommand,
   smembersCommand,
   sismemberCommand,
+  smismemberCommand,
   spopCommand,
   srandmemberCommand,
   sdiffCommand,

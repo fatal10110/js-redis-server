@@ -62,6 +62,62 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(is2, 0)
   })
 
+  test('SMISMEMBER command matches Redis', async () => {
+    const tag = `{smismember:${randomKey()}}`
+    const setKey = `${tag}:set`
+    const missingKey = `${tag}:missing`
+    const stringKey = `${tag}:string`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, setKey)
+      await directClient.sadd(setKey, 'member1', 'member2')
+
+      const result = await directClient.call(
+        'SMISMEMBER',
+        setKey,
+        'member1',
+        'missing',
+        'member2',
+        'member1',
+      )
+      assert.deepStrictEqual(result, [1, 0, 1, 1])
+
+      const missing = await directClient.call(
+        'SMISMEMBER',
+        missingKey,
+        'member1',
+        'member2',
+      )
+      assert.deepStrictEqual(missing, [0, 0])
+
+      await directClient.set(stringKey, 'value')
+      await assert.rejects(
+        () => directClient?.call('SMISMEMBER', stringKey, 'member1'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+
+      await assert.rejects(
+        () => directClient?.call('SMISMEMBER'),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'smismember' command",
+        ),
+      )
+      await assert.rejects(
+        () => directClient?.call('SMISMEMBER', setKey),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'smismember' command",
+        ),
+      )
+    } finally {
+      await directClient?.del(setKey, missingKey, stringKey)
+      directClient?.disconnect()
+    }
+  })
+
   test('SREM command', async () => {
     await redisClient?.sadd('set4', 'a', 'b', 'c', 'd')
 
