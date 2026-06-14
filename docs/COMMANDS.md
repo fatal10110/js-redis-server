@@ -261,21 +261,25 @@ with `GT` or `LT`.
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
 - [x] `XTRIM key MAXLEN|MINID [~] threshold` - Trim a stream to a size or minimum ID
 - [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs)
+- [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER ...` - Manage stream consumer groups and consumers
+- [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery
+- [x] `XACK key group ID [ID ...]` - Acknowledge pending stream entries
+- [x] `XPENDING key group [[IDLE min-idle-time] start end count [consumer]]` - Inspect pending stream entries
+- [x] `XCLAIM key group consumer min-idle-time ID [ID ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID] [LASTID id]` - Claim pending entries for another consumer
+- [x] `XAUTOCLAIM key group consumer min-idle-time start [COUNT count] [JUSTID]` - Claim idle pending entries automatically
+- [x] `XINFO STREAM key [FULL [COUNT count]]` - Inspect stream metadata, entries, groups, and PEL details
+- [x] `XINFO GROUPS key` - List stream consumer groups
+- [x] `XINFO CONSUMERS key group` - List consumers in a group
 
 #### Notes / gaps vs. real Redis
 
 - [ ] `XADD`/`XTRIM` trim specs do not support `LIMIT count`
-- [ ] `XREAD` does not support the `GROUP` consumer-group form
+- [ ] Stream radix-tree statistics in `XINFO STREAM` are approximated for mock compatibility rather than mirroring Redis internals
 
 #### Not implemented
 
-- [ ] Consumer groups: `XGROUP`, `XREADGROUP`, `XACK`, `XCLAIM`, `XAUTOCLAIM`, `XPENDING`
-- [ ] `XINFO STREAM|GROUPS|CONSUMERS`
 - [ ] `XSETID`
 - [ ] `XMSET` / `XCOPY`
-
-> `RedisStreamData` is currently a minimal stub - entries are stored, but
-> there is no consumer-group state.
 
 ## 10. Scan Family
 

@@ -98,7 +98,7 @@ Commands are pure `(args, ctx) → RedisResult` — they never touch the transpo
 
 #### 4. Data Structures ([src/state/data-types.ts](src/state/data-types.ts))
 
-`RedisDataValue` is a typed union: `string`, `hash`, `list`, `set`, `zset`, `stream` (stream is currently a minimal stub — no entry storage, ID tracking, or consumer groups yet).
+`RedisDataValue` is a typed union: `string`, `hash`, `list`, `set`, `zset`, `stream` (stream values store entries, generated/deleted ID metadata, consumer groups, pending-entry lists, and consumer idle metadata).
 
 #### 5. Transaction Support (MULTI/EXEC/WATCH)
 
