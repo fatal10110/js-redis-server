@@ -788,6 +788,70 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  test('TTL rounds to nearest second like real Redis (#59)', async () => {
+    const tag = `{ttlround:${randomKey()}}`
+
+    // Issue #59 repro: SET k v PX 1500 → TTL must round to 1, not 2.
+    // Real Redis rounds (ms+500)/1000 (round-half-up); the bug used Math.ceil.
+    // Settle a few ms so PTTL clears the exact .5 boundary deterministically.
+    const reproKey = `${tag}:repro`
+    await redisClient!.set(reproKey, 'v', 'PX', 1500)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    assert.strictEqual(
+      await redisClient!.ttl(reproKey),
+      1,
+      'TTL of PX 1500 must round to 1 (Math.ceil regression gives 2)',
+    )
+
+    // PTTL reports raw milliseconds, never rounded.
+    const pttl = await redisClient!.pttl(reproKey)
+    assert.ok(pttl > 1000 && pttl <= 1500, `PTTL should be raw ms, got ${pttl}`)
+
+    // Fractional part < 0.5 rounds down — catches a Math.ceil regression.
+    const downKey = `${tag}:down`
+    await redisClient!.set(downKey, 'v', 'PX', 1200)
+    assert.strictEqual(await redisClient!.ttl(downKey), 1)
+
+    // Fractional part >= 0.5 rounds up — catches a Math.floor "fix".
+    const upKey = `${tag}:up`
+    await redisClient!.set(upKey, 'v', 'PX', 1900)
+    assert.strictEqual(await redisClient!.ttl(upKey), 2)
+
+    const up2Key = `${tag}:up2`
+    await redisClient!.set(up2Key, 'v', 'PX', 2900)
+    assert.strictEqual(await redisClient!.ttl(up2Key), 3)
+
+    // Sentinels: missing key → -2, persistent key → -1.
+    assert.strictEqual(await redisClient!.ttl(`${tag}:missing`), -2)
+    const persistKey = `${tag}:persist`
+    await redisClient!.set(persistKey, 'v')
+    assert.strictEqual(await redisClient!.ttl(persistKey), -1)
+
+    // TTL is type-agnostic: works on non-string keys without WRONGTYPE.
+    const listKey = `${tag}:list`
+    await redisClient!.rpush(listKey, 'a')
+    await redisClient!.pexpire(listKey, 1900)
+    assert.strictEqual(await redisClient!.ttl(listKey), 2)
+
+    // Wrong arity → error.
+    await assert.rejects(
+      () => redisClient!.call('TTL'),
+      errorWithMessage("ERR wrong number of arguments for 'ttl' command"),
+    )
+    await assert.rejects(
+      () => redisClient!.call('TTL', reproKey, 'extra'),
+      errorWithMessage("ERR wrong number of arguments for 'ttl' command"),
+    )
+    await assert.rejects(
+      () => redisClient!.call('PTTL'),
+      errorWithMessage("ERR wrong number of arguments for 'pttl' command"),
+    )
+    await assert.rejects(
+      () => redisClient!.call('PTTL', reproKey, 'extra'),
+      errorWithMessage("ERR wrong number of arguments for 'pttl' command"),
+    )
+  })
+
   test('PERSIST removes expiration and EXPIRE 0 deletes the key', async () => {
     const tag = `{persist:${randomKey()}}`
     const persistentKey = `${tag}:persistent`
