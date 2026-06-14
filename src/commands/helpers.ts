@@ -55,7 +55,9 @@ export function typeName(type: RedisDataTypeName | null): string {
 }
 
 export function ttlSeconds(expiresAt: number): number {
-  return Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+  // Redis rounds remaining time to the nearest second ((ms+500)/1000),
+  // not ceil/floor — matches EXPIRETIME and real TTL behavior.
+  return Math.max(0, Math.round((expiresAt - Date.now()) / 1000))
 }
 
 export function ttlMilliseconds(expiresAt: number): number {
