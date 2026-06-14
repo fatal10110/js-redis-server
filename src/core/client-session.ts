@@ -139,6 +139,10 @@ export class ClientSession implements RedisClientSession {
     return this.respVersion
   }
 
+  get usesSubscribedReplyMode(): boolean {
+    return this.sessionMode === 'subscribed' && this.respVersion === 2
+  }
+
   get clusterReadOnly(): boolean {
     return this.clusterReadOnlyMode
   }

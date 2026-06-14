@@ -25,6 +25,7 @@ export interface RedisClientSession {
   readonly selectedDatabase: number
   readonly mode: ClientSessionMode
   readonly protocolVersion: RespVersion
+  readonly usesSubscribedReplyMode: boolean
   readonly clusterReadOnly: boolean
   readonly isAuthenticated: boolean
   setAuthenticated(value: boolean): void
