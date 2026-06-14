@@ -13,7 +13,7 @@ import { ok } from './helpers'
 export const multiCommand = defineCommand({
   name: 'multi',
   schema: t.object({}),
-  flags: ['readonly', 'fast', 'transaction'],
+  flags: ['readonly', 'fast', 'transaction', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     ctx.session.beginTransaction()
@@ -27,7 +27,7 @@ export const execCommand = defineCommand({
   // EXEC inherits flags from queued commands at runtime. The flag list here
   // only marks it as transaction-control so policies do not treat it as a
   // normal write/read command.
-  flags: ['transaction'],
+  flags: ['transaction', 'noscript'],
   keys: () => [],
   execute: async (_args, ctx) => {
     if (ctx.session.mode !== 'transaction') {
@@ -55,7 +55,7 @@ export const execCommand = defineCommand({
 export const discardCommand = defineCommand({
   name: 'discard',
   schema: t.object({}),
-  flags: ['readonly', 'fast', 'transaction'],
+  flags: ['readonly', 'fast', 'transaction', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     if (ctx.session.mode !== 'transaction') {
@@ -72,7 +72,7 @@ export const watchCommand = defineCommand({
   schema: t.object({
     keys: t.variadic(t.key(), { min: 1 }),
   }),
-  flags: ['readonly', 'fast', 'transaction'],
+  flags: ['readonly', 'fast', 'transaction', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {
     if (ctx.session.mode === 'transaction') {
@@ -87,7 +87,7 @@ export const watchCommand = defineCommand({
 export const unwatchCommand = defineCommand({
   name: 'unwatch',
   schema: t.object({}),
-  flags: ['readonly', 'fast'],
+  flags: ['readonly', 'fast', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     ctx.session.unwatch()
