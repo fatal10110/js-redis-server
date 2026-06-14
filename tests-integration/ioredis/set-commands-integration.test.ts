@@ -1,8 +1,8 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
-import { Cluster } from 'ioredis'
+import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage, randomKey } from '../utils'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -60,6 +60,62 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
 
     const is2 = await redisClient?.sismember('set3', 'nonexistent')
     assert.strictEqual(is2, 0)
+  })
+
+  test('SMISMEMBER command matches Redis', async () => {
+    const tag = `{smismember:${randomKey()}}`
+    const setKey = `${tag}:set`
+    const missingKey = `${tag}:missing`
+    const stringKey = `${tag}:string`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, setKey)
+      await directClient.sadd(setKey, 'member1', 'member2')
+
+      const result = await directClient.call(
+        'SMISMEMBER',
+        setKey,
+        'member1',
+        'missing',
+        'member2',
+        'member1',
+      )
+      assert.deepStrictEqual(result, [1, 0, 1, 1])
+
+      const missing = await directClient.call(
+        'SMISMEMBER',
+        missingKey,
+        'member1',
+        'member2',
+      )
+      assert.deepStrictEqual(missing, [0, 0])
+
+      await directClient.set(stringKey, 'value')
+      await assert.rejects(
+        () => directClient?.call('SMISMEMBER', stringKey, 'member1'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+
+      await assert.rejects(
+        () => directClient?.call('SMISMEMBER'),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'smismember' command",
+        ),
+      )
+      await assert.rejects(
+        () => directClient?.call('SMISMEMBER', setKey),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'smismember' command",
+        ),
+      )
+    } finally {
+      await directClient?.del(setKey, missingKey, stringKey)
+      directClient?.disconnect()
+    }
   })
 
   test('SREM command', async () => {
@@ -208,6 +264,118 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(inter?.length, 2)
     assert.ok(inter?.includes('b'))
     assert.ok(inter?.includes('c'))
+  })
+
+  test('SINTERCARD command matches Redis', async () => {
+    const tag = `{sintercard:${randomKey()}}`
+    const setA = `${tag}:a`
+    const setB = `${tag}:b`
+    const setC = `${tag}:c`
+    const missing = `${tag}:missing`
+    const stringKey = `${tag}:string`
+    const crossSlotKey = `sintercard-cross:${randomKey()}`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, setA)
+
+      await directClient.sadd(setA, 'a', 'b', 'c', 'd')
+      await directClient.sadd(setB, 'b', 'c', 'd', 'e')
+      await directClient.sadd(setC, 'c', 'd', 'f')
+
+      const count = await directClient.call('SINTERCARD', '3', setA, setB, setC)
+      assert.strictEqual(count, 2)
+
+      const limited = await directClient.call(
+        'SINTERCARD',
+        '3',
+        setA,
+        setB,
+        setC,
+        'LIMIT',
+        '1',
+      )
+      assert.strictEqual(limited, 1)
+
+      const unlimited = await directClient.call(
+        'SINTERCARD',
+        '2',
+        setA,
+        setB,
+        'LIMIT',
+        '0',
+      )
+      assert.strictEqual(unlimited, 3)
+
+      const withMissing = await directClient.call(
+        'SINTERCARD',
+        '2',
+        setA,
+        missing,
+      )
+      assert.strictEqual(withMissing, 0)
+
+      await directClient.set(stringKey, 'value')
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '2', setA, stringKey),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '2', setA, crossSlotKey),
+        errorWithMessage(
+          "CROSSSLOT Keys in request don't hash to the same slot",
+        ),
+      )
+
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD'),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'sintercard' command",
+        ),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', 'two', setA),
+        errorWithMessage('ERR numkeys should be greater than 0'),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '0', setA),
+        errorWithMessage('ERR numkeys should be greater than 0'),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '2', setA),
+        errorWithMessage(
+          "ERR Number of keys can't be greater than number of args",
+        ),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '1', setA, setB),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '1', setA, 'LIMIT'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '1', setA, 'LIMIT', 'abc'),
+        errorWithMessage("ERR LIMIT can't be negative"),
+      )
+      await assert.rejects(
+        () => directClient?.call('SINTERCARD', '1', setA, 'LIMIT', '-1'),
+        errorWithMessage("ERR LIMIT can't be negative"),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call('SINTERCARD', '1', setA, 'LIMIT', '1', 'LIMIT'),
+        errorWithMessage('ERR syntax error'),
+      )
+    } finally {
+      await directClient?.del(setA, setB, setC, missing, stringKey)
+      directClient?.disconnect()
+    }
   })
 
   test('SUNION command', async () => {

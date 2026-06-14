@@ -208,18 +208,16 @@ with `GT` or `LT`.
 - [x] `SCARD key` - Get the number of members in a set
 - [x] `SMEMBERS key` - Get all members in a set
 - [x] `SISMEMBER key member` - Determine if a value is a member of a set
+- [x] `SMISMEMBER key member [member ...]` - Determine membership for multiple values
 - [x] `SPOP key [count]` - Remove and return one or more random members
 - [x] `SRANDMEMBER key [count]` - Get one or more random members without removing them
 - [x] `SMOVE source destination member` - Move a member between sets
 - [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference
 - [x] `SINTER key [key ...]` / `SINTERSTORE destination key [key ...]` - Set intersection
+- [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
 - [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
 
-#### Not implemented
-
-- [ ] `SMISMEMBER key member [member ...]`
-- [ ] `SINTERCARD`
 
 ## 8. Sorted Set Commands
 
