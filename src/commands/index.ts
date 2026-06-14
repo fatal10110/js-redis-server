@@ -192,6 +192,7 @@ export {
   sinterCommand,
   sinterstoreCommand,
   sismemberCommand,
+  smismemberCommand,
   smembersCommand,
   smoveCommand,
   spopCommand,
