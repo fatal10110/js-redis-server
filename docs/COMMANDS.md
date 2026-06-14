@@ -169,11 +169,11 @@ with `GT` or `LT`.
 - [x] `HSTRLEN key field` - Get the length of the value of a hash field
 - [x] `HINCRBY key field increment` - Increment the integer value of a hash field
 - [x] `HINCRBYFLOAT key field increment` - Increment the float value of a hash field
+- [x] `HRANDFIELD key [count [WITHVALUES]]` - Return one or more random hash fields, optionally with values
 - [x] `HSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate hash fields and values (see [Scan Family](#10-scan-family))
 
 #### Not implemented
 
-- [ ] `HRANDFIELD key [count [WITHVALUES]]`
 - [ ] `HEXPIRE` / `HPEXPIRE` / `HEXPIREAT` / `HPEXPIREAT` / `HPERSIST` / `HTTL` / `HPTTL` / `HGETDEL` / `HGETEX` (Redis 7.4 hash-field-TTL family)
 
 ## 6. List Commands

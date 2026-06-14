@@ -178,6 +178,7 @@ export {
   hlenCommand,
   hmgetCommand,
   hmsetCommand,
+  hrandfieldCommand,
   hsetnxCommand,
   hsetCommand,
   hstrlenCommand,
