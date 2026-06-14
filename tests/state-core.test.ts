@@ -1,7 +1,11 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import { RedisServerState, WrongTypeRedisError, createStringData } from '../src'
-import type { RedisDataValue, RedisMutationEvent } from '../src'
+import type {
+  RedisDataValue,
+  RedisMonitorCommandEvent,
+  RedisMutationEvent,
+} from '../src'
 
 describe('new Redis state core', () => {
   test('keeps script cache separate from database flush', () => {
@@ -147,7 +151,71 @@ describe('new Redis state core', () => {
 
     assert.deepStrictEqual(calls, ['first', 'second'])
   })
+
+  test('monitor command events are cloned and listener subscriptions are tracked', () => {
+    const server = new RedisServerState()
+    const firstEvents: RedisMonitorCommandEvent[] = []
+    const secondEvents: RedisMonitorCommandEvent[] = []
+    let secondCalls = 0
+    let unsubscribeSecond: (() => void) | undefined
+
+    const unsubscribeFirst = server.monitorFeed.subscribe(event => {
+      firstEvents.push(cloneMonitorEventForTest(event))
+      event.command.write('x')
+      event.args[0].write('y')
+      unsubscribeSecond?.()
+    })
+    unsubscribeSecond = server.monitorFeed.subscribe(event => {
+      secondCalls++
+      secondEvents.push(cloneMonitorEventForTest(event))
+      event.args[1].write('z')
+    })
+
+    assert.strictEqual(server.monitorFeed.subscriberCount, 2)
+
+    const command = Buffer.from('SET')
+    const key = Buffer.from('key')
+    const value = Buffer.from('value')
+
+    server.monitorFeed.publish({
+      timestampMs: 1234,
+      database: 2,
+      clientId: 'client-1',
+      clientAddress: '127.0.0.1:5000',
+      command,
+      args: [key, value],
+    })
+
+    assert.strictEqual(secondCalls, 1)
+    assert.strictEqual(server.monitorFeed.subscriberCount, 1)
+    assert.deepStrictEqual(command, Buffer.from('SET'))
+    assert.deepStrictEqual(key, Buffer.from('key'))
+    assert.deepStrictEqual(value, Buffer.from('value'))
+    assert.deepStrictEqual(firstEvents[0].command, Buffer.from('SET'))
+    assert.deepStrictEqual(firstEvents[0].args, [
+      Buffer.from('key'),
+      Buffer.from('value'),
+    ])
+    assert.deepStrictEqual(secondEvents[0].command, Buffer.from('SET'))
+    assert.deepStrictEqual(secondEvents[0].args, [
+      Buffer.from('key'),
+      Buffer.from('value'),
+    ])
+
+    unsubscribeFirst()
+    assert.strictEqual(server.monitorFeed.subscriberCount, 0)
+  })
 })
+
+function cloneMonitorEventForTest(
+  event: RedisMonitorCommandEvent,
+): RedisMonitorCommandEvent {
+  return {
+    ...event,
+    command: Buffer.from(event.command),
+    args: event.args.map(arg => Buffer.from(arg)),
+  }
+}
 
 function assertListValues(value: RedisDataValue | null, expected: string[]) {
   if (!value || value.type !== 'list') {

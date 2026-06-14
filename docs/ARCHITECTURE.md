@@ -57,7 +57,9 @@ to the connection's [`ClientSession`](../src/core/client-session.ts). The
 session asks the [`CommandExecutor`](../src/core/command-executor.ts) to look
 up and run it; the executor returns a `RedisResult` (or a `ResponseStream` for
 streaming replies), which the session adapter encodes back to wire bytes using
-the protocol version (`RESP2`/`RESP3`) negotiated for that connection.
+the protocol version (`RESP2`/`RESP3`) negotiated for that connection. After a
+client command completes, `ClientSession` publishes a cloned command event to
+the server-level monitor feed when `MONITOR` clients are listening.
 
 ## Layers
 
@@ -85,7 +87,7 @@ graph TD
     end
 
     subgraph "Command layer — src/commands/*"
-        CMD["strings · hashes · lists · sets · zsets<br/>keys · scan · scripts · transactions<br/>connection · cluster · introspection"]
+        CMD["strings · hashes · lists · sets · zsets<br/>keys · scan · scripts · transactions<br/>connection · monitor · cluster · introspection"]
     end
 
     subgraph "State layer — src/state/*"
@@ -96,6 +98,7 @@ graph TD
         CT[RedisClusterTopology]
         SCC[RedisScriptCache]
         PB[RedisPubSubBroker]
+        MF[RedisMonitorFeed]
     end
 
     ST & IT --> SA
@@ -113,6 +116,7 @@ graph TD
     SS --> CT
     SS --> SCC
     SS --> PB
+    SS --> MF
     RD --> KS
     KS --> MB
 ```
@@ -123,7 +127,7 @@ graph TD
 | **Session** | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts) |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute` | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts) |
 | **Command** | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type | [`src/commands/`](../src/commands/) |
-| **State** | In-memory keyspace, mutation events, cluster topology, script cache, pub/sub | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts), [`RedisKeyspace`](../src/state/keyspace.ts) |
+| **State** | In-memory keyspace, mutation events, cluster topology, script cache, pub/sub, monitor feed | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts), [`RedisKeyspace`](../src/state/keyspace.ts) |
 
 Commands never touch the transport — they return a `RedisResult` (or a
 `ResponseStream` for push-style replies) and let the executor/session/adapter
@@ -286,6 +290,7 @@ flowchart LR
     SS --> CT[RedisClusterTopology]
     SS --> SCC["RedisScriptCache<br/>(server-wide, survives FLUSHALL)"]
     SS --> PB[RedisPubSubBroker]
+    SS --> MF[RedisMonitorFeed]
 
     RD0 --> KS[RedisKeyspace]
     KS --> ME["Map&lt;keyId, KeyspaceEntry&gt;<br/>{ key, value, expiresAt? }"]
@@ -302,7 +307,10 @@ is server-wide rather than per-DB: the cluster topology, the Lua
 [`RedisScriptCache`](../src/state/script-cache.ts) (so `FLUSHALL`/`FLUSHDB`
 clear keyspace data but **not** cached scripts — only `SCRIPT FLUSH` does),
 and the [`RedisPubSubBroker`](../src/state/pubsub-broker.ts) used by client
-Pub/Sub commands for channel and pattern fan-out within that server state.
+Pub/Sub commands for channel and pattern fan-out within that server state, plus
+the [`RedisMonitorFeed`](../src/state/monitor-feed.ts) used by `MONITOR` to
+fan out cloned command events without any command writing directly to a
+transport.
 
 Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 `Map<keyId, KeyspaceEntry>` holding byte-safe `Buffer` keys and typed

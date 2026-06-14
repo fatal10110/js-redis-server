@@ -22,6 +22,7 @@ import type {
 
 export type ClientSessionOptions = {
   id?: string
+  clientAddress?: string
   server: RedisServerState
   executor: CommandExecutor
   database?: number
@@ -73,6 +74,7 @@ export class ClientSession implements RedisClientSession {
   private static nextId = 0
 
   readonly id: string
+  readonly clientAddress?: string
   readonly server: RedisServerState
   /** Aborted when the connection closes; threaded into every command's ctx. */
   readonly signal: AbortSignal
@@ -107,9 +109,11 @@ export class ClientSession implements RedisClientSession {
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
   private pushQueueClosed = false
+  private readonly responseStreamCleanups = new Set<() => void>()
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
+    this.clientAddress = options.clientAddress
     this.server = options.server
     this.executor = options.executor
     this.selectedDatabaseId = options.database ?? 0
@@ -549,6 +553,22 @@ export class ClientSession implements RedisClientSession {
     this.refreshPubSubMode()
   }
 
+  registerResponseStreamCleanup(cleanup: () => void): Unsubscribe {
+    this.responseStreamCleanups.add(cleanup)
+    return () => {
+      this.responseStreamCleanups.delete(cleanup)
+    }
+  }
+
+  resetResponseStreams(): void {
+    const cleanups = Array.from(this.responseStreamCleanups)
+    this.responseStreamCleanups.clear()
+
+    for (const cleanup of cleanups) {
+      cleanup()
+    }
+  }
+
   enqueuePush(result: RedisResult): void {
     if (this.pushQueueClosed || this.signal.aborted) {
       return
@@ -603,7 +623,9 @@ export class ClientSession implements RedisClientSession {
     this.activeTurnAccess = turnAccess
     try {
       const ctx = this.createExecutionContext(turnAccess)
-      return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
+      const result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
+      this.publishMonitorEvent(rawCommand, rawArgs, this.selectedDatabaseId)
+      return result
     } finally {
       this.activeTurnAccess = undefined
       turn?.release()
@@ -645,6 +667,7 @@ export class ClientSession implements RedisClientSession {
 
   /** Tear down the session: abort in-flight work and reset all per-connection state. */
   close(): void {
+    this.resetResponseStreams()
     this.signalSource?.abort()
     this.unwatch()
     this.resetPubSub()
@@ -733,6 +756,30 @@ export class ClientSession implements RedisClientSession {
       waiter()
     }
   }
+
+  private publishMonitorEvent(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+    database: number,
+  ): void {
+    if (this.server.monitorFeed.subscriberCount === 0) {
+      return
+    }
+
+    const command = normalizeMonitorCommand(rawCommand)
+    if (command === 'monitor') {
+      return
+    }
+
+    this.server.monitorFeed.publish({
+      timestampMs: Date.now(),
+      database,
+      clientId: this.id,
+      clientAddress: this.clientAddress,
+      command: Buffer.from(command),
+      args: rawArgs.map(arg => Buffer.from(arg)),
+    })
+  }
 }
 
 function watchId(database: number, key: Buffer): string {
@@ -751,4 +798,10 @@ function createAbortError(): Error {
   const err = new Error('The operation was aborted')
   err.name = 'AbortError'
   return err
+}
+
+function normalizeMonitorCommand(rawCommand: Buffer | string): string {
+  return typeof rawCommand === 'string'
+    ? rawCommand.toLowerCase()
+    : rawCommand.toString().toLowerCase()
 }

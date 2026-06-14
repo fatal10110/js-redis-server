@@ -89,6 +89,7 @@ export class Resp2Server {
       server: this.state,
       executor: this.executor,
       nodeRole: this.nodeRole,
+      clientAddress: formatSocketAddress(socket),
     })
     const adapter = new Resp2SessionAdapter({
       transport,
@@ -103,4 +104,27 @@ export class Resp2Server {
       .catch(err => this.logger?.error(err))
       .finally(() => this.adapters.delete(adapter))
   }
+}
+
+function formatSocketAddress(socket: Socket): string | undefined {
+  const address = normalizeSocketAddress(socket.remoteAddress)
+  if (!address || socket.remotePort === undefined) {
+    return address
+  }
+
+  return `${address}:${socket.remotePort}`
+}
+
+function normalizeSocketAddress(
+  address: string | undefined,
+): string | undefined {
+  if (address === '::1') {
+    return '127.0.0.1'
+  }
+
+  if (address?.startsWith('::ffff:')) {
+    return address.slice('::ffff:'.length)
+  }
+
+  return address
 }

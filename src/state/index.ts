@@ -26,6 +26,12 @@ export type {
 } from './mutation-events'
 export { RedisMutationBus } from './mutation-events'
 
+export type {
+  RedisMonitorCommandEvent,
+  RedisMonitorCommandListener,
+} from './monitor-feed'
+export { RedisMonitorFeed } from './monitor-feed'
+
 export type { ExpirationState, KeyspaceEntry, SetOptions } from './keyspace'
 export { RedisKeyspace, WrongRedisTypeError } from './keyspace'
 

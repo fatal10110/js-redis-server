@@ -47,6 +47,15 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
   - [x] `default` / `all` - returns the default section set
   - [ ] Real per-command/error/latency stats are not tracked
 
+#### MONITOR
+
+- [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
+
+`MONITOR` is implemented as a long-lived `ResponseStream` backed by a
+server-level command event feed. Monitor lines include an epoch timestamp, the
+selected DB, the client address/identity when available, and quoted command
+arguments. `MONITOR` is flagged `noscript` and is rejected from Lua.
+
 #### COMMAND
 
 - [x] `COMMAND` - Return details for commands in the active registry

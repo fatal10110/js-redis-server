@@ -22,6 +22,7 @@ export type ClientSessionMode = 'normal' | 'transaction' | 'subscribed'
 
 export interface RedisClientSession {
   readonly id: string
+  readonly clientAddress?: string
   readonly selectedDatabase: number
   readonly mode: ClientSessionMode
   readonly protocolVersion: RespVersion
@@ -50,6 +51,8 @@ export interface RedisClientSession {
   subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
   unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
+  registerResponseStreamCleanup(cleanup: () => void): () => void
+  resetResponseStreams(): void
 }
 
 export interface RedisExecutionContext {

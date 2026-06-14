@@ -544,6 +544,7 @@ export const resetCommand = defineCommand({
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
+    ctx.session.resetResponseStreams()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
     ctx.session.unwatch()
