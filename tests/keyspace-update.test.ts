@@ -7,11 +7,15 @@ import {
 } from '../src/state/mutation-events'
 import {
   createHashData,
+  createListData,
   createSetData,
+  createSortedSetData,
   createStreamData,
   createStringData,
   type RedisHashData,
+  type RedisListData,
   type RedisSetData,
+  type RedisSortedSetData,
   type RedisStreamData,
   type RedisStringData,
 } from '../src/state/data-types'
@@ -66,6 +70,58 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
     keyspace.update<RedisHashData, void>(key, 'hash', createHashData, hash => {
       hash.fields.delete('f')
     })
+
+    assert.strictEqual(keyspace.get(key), null)
+    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(events.length, 1)
+    assert.strictEqual(events[0]!.type, 'delete')
+  })
+
+  test('emptying an existing list deletes the key and emits a single delete event', () => {
+    const { keyspace, events } = setup()
+    const key = Buffer.from('l')
+
+    keyspace.update<RedisListData, void>(key, 'list', createListData, list => {
+      list.values.push(Buffer.from('a'))
+    })
+    assert.strictEqual(keyspace.getType(key), 'list')
+    events.length = 0
+
+    // e.g. LTRIM that removes every element
+    keyspace.update<RedisListData, void>(key, 'list', createListData, list => {
+      list.values.length = 0
+    })
+
+    assert.strictEqual(keyspace.get(key), null)
+    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(events.length, 1)
+    assert.strictEqual(events[0]!.type, 'delete')
+  })
+
+  test('emptying an existing zset deletes the key and emits a single delete event', () => {
+    const { keyspace, events } = setup()
+    const key = Buffer.from('z')
+
+    keyspace.update<RedisSortedSetData, void>(
+      key,
+      'zset',
+      createSortedSetData,
+      zset => {
+        zset.members.set('m', { member: Buffer.from('m'), score: 1 })
+      },
+    )
+    assert.strictEqual(keyspace.getType(key), 'zset')
+    events.length = 0
+
+    // e.g. ZREM that removes the last member
+    keyspace.update<RedisSortedSetData, void>(
+      key,
+      'zset',
+      createSortedSetData,
+      zset => {
+        zset.members.delete('m')
+      },
+    )
 
     assert.strictEqual(keyspace.get(key), null)
     assert.strictEqual(keyspace.getType(key), null)

@@ -1,5 +1,5 @@
 import { Cluster } from 'ioredis'
-import { after, before, describe, it } from 'node:test'
+import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
 
@@ -26,7 +26,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
     await testRunner.cleanup()
   })
 
-  it('no-op HDEL on a non-existent key must not invalidate a WATCH on that key', async () => {
+  test('no-op HDEL on a non-existent key must not invalidate a WATCH on that key', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
     const key = 'ghost:hdel'
 
@@ -54,7 +54,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
     }
   })
 
-  it('no-op SREM on a non-existent key must not invalidate a WATCH on that key', async () => {
+  test('no-op SREM on a non-existent key must not invalidate a WATCH on that key', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
     const key = 'ghost:srem'
 
@@ -76,7 +76,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
     }
   })
 
-  it('emptying a hash via HDEL deletes the key (no phantom empty hash persists)', async () => {
+  test('emptying a hash via HDEL deletes the key (no phantom empty hash persists)', async () => {
     const key = 'cleanup:hash'
 
     await redisClient!.del(key)
@@ -89,7 +89,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
     assert.strictEqual(await redisClient!.type(key), 'none')
   })
 
-  it('emptying an EXISTING watched collection still invalidates the WATCH', async () => {
+  test('emptying an EXISTING watched collection still invalidates the WATCH', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
     const key = 'cleanup:watch:existing'
 
