@@ -208,6 +208,12 @@ export class LimitCantBeNegativeError extends RedisCommandError {
   }
 }
 
+export class InvalidLexRangeError extends RedisCommandError {
+  constructor() {
+    super('min or max not valid string range item')
+  }
+}
+
 export class NoScriptError extends RedisCommandError {
   constructor() {
     super('No matching script. Please use EVAL.', 'NOSCRIPT')
