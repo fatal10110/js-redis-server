@@ -207,6 +207,23 @@ export {
   scriptsCommands,
 } from './scripts'
 export {
+  xackCommand,
+  xaddCommand,
+  xautoclaimCommand,
+  xclaimCommand,
+  xdelCommand,
+  xgroupCommand,
+  xinfoCommand,
+  xlenCommand,
+  xpendingCommand,
+  xreadCommand,
+  xreadgroupCommand,
+  xrevrangeCommand,
+  xrangeCommand,
+  streamsCommands,
+  xtrimCommand,
+} from './streams'
+export {
   zsetsCommands,
   zaddCommand,
   zremCommand,

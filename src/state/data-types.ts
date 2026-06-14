@@ -52,12 +52,36 @@ export type RedisStreamEntry = {
   fields: Buffer[]
 }
 
+export type RedisStreamConsumer = {
+  name: Buffer
+  seenAt: number
+  activeAt: number | null
+}
+
+export type RedisStreamPendingEntry = {
+  id: StreamId
+  consumerId: string
+  deliveredAt: number
+  deliveryCount: number
+}
+
+export type RedisStreamConsumerGroup = {
+  name: Buffer
+  lastDeliveredId: StreamId
+  entriesRead: number | null
+  consumers: Map<string, RedisStreamConsumer>
+  pending: Map<string, RedisStreamPendingEntry>
+}
+
 export type RedisStreamData = {
   type: 'stream'
   // Entries kept in ascending id order (append-only; ids are monotonic).
   entries: RedisStreamEntry[]
   // Highest id ever added; drives `*` / `ms-*` id generation. 0-0 when empty.
   lastId: StreamId
+  entriesAdded: number
+  maxDeletedEntryId: StreamId
+  groups: Map<string, RedisStreamConsumerGroup>
 }
 
 export type RedisDataValue =
@@ -121,6 +145,45 @@ export function cloneRedisDataValue(value: RedisDataValue): RedisDataValue {
           fields: entry.fields.map(part => Buffer.from(part)),
         })),
         lastId: { ms: value.lastId.ms, seq: value.lastId.seq },
+        entriesAdded: value.entriesAdded,
+        maxDeletedEntryId: {
+          ms: value.maxDeletedEntryId.ms,
+          seq: value.maxDeletedEntryId.seq,
+        },
+        groups: new Map(
+          Array.from(value.groups, ([id, group]) => [
+            id,
+            {
+              name: Buffer.from(group.name),
+              lastDeliveredId: {
+                ms: group.lastDeliveredId.ms,
+                seq: group.lastDeliveredId.seq,
+              },
+              entriesRead: group.entriesRead,
+              consumers: new Map(
+                Array.from(group.consumers, ([consumerId, consumer]) => [
+                  consumerId,
+                  {
+                    name: Buffer.from(consumer.name),
+                    seenAt: consumer.seenAt,
+                    activeAt: consumer.activeAt,
+                  },
+                ]),
+              ),
+              pending: new Map(
+                Array.from(group.pending, ([pendingId, pending]) => [
+                  pendingId,
+                  {
+                    id: { ms: pending.id.ms, seq: pending.id.seq },
+                    consumerId: pending.consumerId,
+                    deliveredAt: pending.deliveredAt,
+                    deliveryCount: pending.deliveryCount,
+                  },
+                ]),
+              ),
+            },
+          ]),
+        ),
       }
   }
 }
@@ -146,5 +209,12 @@ export function createSortedSetData(): RedisSortedSetData {
 }
 
 export function createStreamData(): RedisStreamData {
-  return { type: 'stream', entries: [], lastId: { ms: 0n, seq: 0n } }
+  return {
+    type: 'stream',
+    entries: [],
+    lastId: { ms: 0n, seq: 0n },
+    entriesAdded: 0,
+    maxDeletedEntryId: { ms: 0n, seq: 0n },
+    groups: new Map(),
+  }
 }

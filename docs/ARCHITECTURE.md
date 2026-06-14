@@ -307,7 +307,9 @@ Pub/Sub commands for channel and pattern fan-out within that server state.
 Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 `Map<keyId, KeyspaceEntry>` holding byte-safe `Buffer` keys and typed
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
-`set`, `zset`, `stream`). Expiration is **lazy** — `getLiveEntry` calls
+`set`, `zset`, `stream`). Stream values store ordered entries plus consumer
+groups, per-group pending-entry lists, and consumer idle metadata. Expiration is
+**lazy** — `getLiveEntry` calls
 [`evictIfExpired`](../src/state/keyspace.ts#L207) on read, deleting and
 emitting an `evict` mutation event so `WATCH` observes expiry exactly like a
 real delete. Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
