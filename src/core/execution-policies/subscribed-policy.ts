@@ -5,7 +5,10 @@ export function createSubscribedModePolicy(): ExecutionPolicy {
   return {
     name: 'subscribed-mode',
     beforeExecute(plan, ctx) {
-      if (ctx.session.mode !== 'subscribed') {
+      if (
+        ctx.session.mode !== 'subscribed' ||
+        ctx.session.protocolVersion !== 2
+      ) {
         return
       }
 

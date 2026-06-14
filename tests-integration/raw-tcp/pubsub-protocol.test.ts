@@ -5,6 +5,8 @@ import { commandFrame, randomKey } from '../utils'
 import {
   RawRedisConnection,
   type RespWireValue,
+  respMapGet,
+  respNumber,
   respText,
 } from './raw-connection'
 
@@ -64,6 +66,39 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
 
     conn.write(commandFrame('SET', 'after-unsubscribe', 'ok'))
     assert.deepStrictEqual(await conn.readFrame(), 'OK')
+  })
+
+  test('RESP3 subscribed clients can run commands and use normal PING replies', async () => {
+    const conn = await connect()
+    const channel = `raw-resp3-pubsub:${randomKey()}`
+
+    conn.write(commandFrame('HELLO', '3'))
+    const hello = await conn.readFrame()
+    assert.ok(hello instanceof Map)
+    assert.strictEqual(respNumber(respMapGet(hello, 'proto')), 3)
+
+    conn.write(commandFrame('SUBSCRIBE', channel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'subscribe',
+      channel,
+      1,
+    ])
+
+    conn.write(commandFrame('GET', 'missing'))
+    assert.strictEqual(await conn.readFrame(), null)
+
+    conn.write(commandFrame('PING'))
+    assert.strictEqual(await conn.readFrame(), 'PONG')
+
+    conn.write(commandFrame('PING', 'hello'))
+    assert.strictEqual(respText(await conn.readFrame()), 'hello')
+
+    conn.write(commandFrame('UNSUBSCRIBE', channel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'unsubscribe',
+      channel,
+      0,
+    ])
   })
 
   test('RESET exits subscribed mode and removes all subscriptions', async () => {

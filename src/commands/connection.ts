@@ -324,7 +324,10 @@ export const pingCommand = defineCommand({
   flags: ['readonly', 'fast', 'subscribed'],
   keys: () => [],
   execute: (args, ctx) => {
-    if (ctx.session.mode === 'subscribed') {
+    if (
+      ctx.session.mode === 'subscribed' &&
+      ctx.session.protocolVersion === 2
+    ) {
       return RedisResult.create(
         RedisValue.push('pong', [
           RedisValue.bulkString(Buffer.from(args.message ?? '')),
