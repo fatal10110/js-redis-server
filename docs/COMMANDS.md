@@ -233,6 +233,10 @@ with `GT` or `LT`.
 - [x] `ZRANGEBYSCORE key min max` - Return members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZREMRANGEBYSCORE key min max` - Remove members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZCOUNT key min max` - Count members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
+- [x] `ZRANGEBYLEX key min max [LIMIT offset count]` - Return members within a lexicographic range (`-`, `+`, and inclusive `[member`/exclusive `(member` bounds supported)
+- [x] `ZREVRANGEBYLEX key max min [LIMIT offset count]` - Return members within a lexicographic range, high to low
+- [x] `ZLEXCOUNT key min max` - Count members within a lexicographic range
+- [x] `ZREMRANGEBYLEX key min max` - Remove members within a lexicographic range
 - [x] `ZPOPMIN key [count]` - Remove and return members with the lowest scores
 - [x] `ZPOPMAX key [count]` - Remove and return members with the highest scores
 - [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate members and scores (see [Scan Family](#10-scan-family))
@@ -246,7 +250,7 @@ with `GT` or `LT`.
 
 #### Not implemented
 
-- [ ] `ZRANGEBYLEX` / `ZREVRANGEBYSCORE` / `ZREVRANGEBYLEX` / `ZLEXCOUNT` / `ZREMRANGEBYRANK` / `ZREMRANGEBYLEX`
+- [ ] `ZREVRANGEBYSCORE` / `ZREMRANGEBYRANK`
 - [ ] `ZUNIONSTORE` / `ZINTERSTORE` / `ZDIFFSTORE` / `ZUNION` / `ZINTER` / `ZDIFF` / `ZINTERCARD`
 - [ ] `ZMSCORE` / `ZRANDMEMBER` / `ZRANGESTORE` / `ZMPOP` / `BZPOPMIN` / `BZPOPMAX` / `BZMPOP`
 
