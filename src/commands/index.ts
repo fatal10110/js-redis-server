@@ -190,6 +190,7 @@ export {
   sdiffCommand,
   sdiffstoreCommand,
   sinterCommand,
+  sintercardCommand,
   sinterstoreCommand,
   sismemberCommand,
   smembersCommand,

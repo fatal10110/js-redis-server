@@ -2,7 +2,15 @@ import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { integer, bulk, array } from './helpers'
 import { RedisValue } from '../core/redis-value'
-import { PositiveCountError, WrongTypeRedisError } from '../core/redis-error'
+import {
+  LimitCantBeNegativeError,
+  NumKeysGreaterThanZeroError,
+  PositiveCountError,
+  RedisSyntaxError,
+  WrongNumberOfArgumentsError,
+  WrongNumberOfKeysError,
+  WrongTypeRedisError,
+} from '../core/redis-error'
 import type { RedisDatabase } from '../state'
 
 // ---------------------------------------------------------------------------
@@ -67,6 +75,65 @@ function storeSetResult(
   })
   return hexSet.size
 }
+
+function parseSintercardCount(token: Buffer): number {
+  const count = Number(token.toString())
+  if (!Number.isSafeInteger(count) || count <= 0) {
+    throw new NumKeysGreaterThanZeroError()
+  }
+
+  return count
+}
+
+function parseSintercardLimit(token: Buffer): number {
+  const limit = Number(token.toString())
+  if (!Number.isSafeInteger(limit) || limit < 0) {
+    throw new LimitCantBeNegativeError()
+  }
+
+  return limit
+}
+
+const sintercardSchema = t.custom<{
+  keys: Buffer[]
+  limit: number
+}>((input, _index, ctx) => {
+  if (input.length < 2) {
+    throw new WrongNumberOfArgumentsError(ctx.commandName)
+  }
+
+  const keyCount = parseSintercardCount(input[0])
+  if (keyCount > input.length - 1) {
+    throw new WrongNumberOfKeysError()
+  }
+
+  const keys = input.slice(1, 1 + keyCount)
+  let cursor = 1 + keyCount
+  let limit = 0
+
+  if (cursor >= input.length) {
+    return { value: { keys, limit }, nextIndex: cursor }
+  }
+
+  const option = input[cursor].toString().toUpperCase()
+  if (option !== 'LIMIT') {
+    throw new RedisSyntaxError()
+  }
+
+  cursor++
+  if (cursor >= input.length) {
+    throw new RedisSyntaxError()
+  }
+
+  limit = parseSintercardLimit(input[cursor])
+  cursor++
+
+  if (cursor !== input.length) {
+    throw new RedisSyntaxError()
+  }
+
+  return { value: { keys, limit }, nextIndex: cursor }
+})
 
 // ---------------------------------------------------------------------------
 // SADD key member [member ...]
@@ -311,6 +378,23 @@ export const sinterCommand = defineCommand({
 })
 
 // ---------------------------------------------------------------------------
+// SINTERCARD numkeys key [key ...] [LIMIT limit]
+// ---------------------------------------------------------------------------
+
+export const sintercardCommand = defineCommand({
+  name: 'sintercard',
+  schema: sintercardSchema,
+  flags: ['readonly'],
+  keys: args => args.keys,
+  execute: (args, ctx) => {
+    const sets = args.keys.map(k => getSetMembers(ctx.db, k))
+    const count = computeInter(sets).size
+    if (args.limit > 0) return integer(Math.min(count, args.limit))
+    return integer(count)
+  },
+})
+
+// ---------------------------------------------------------------------------
 // SUNION key [key ...]
 // ---------------------------------------------------------------------------
 
@@ -462,6 +546,7 @@ export const setsCommands = [
   srandmemberCommand,
   sdiffCommand,
   sinterCommand,
+  sintercardCommand,
   sunionCommand,
   smoveCommand,
   sdiffstoreCommand,

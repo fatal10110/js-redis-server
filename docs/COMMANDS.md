@@ -213,13 +213,13 @@ with `GT` or `LT`.
 - [x] `SMOVE source destination member` - Move a member between sets
 - [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference
 - [x] `SINTER key [key ...]` / `SINTERSTORE destination key [key ...]` - Set intersection
+- [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
 - [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
 
 #### Not implemented
 
 - [ ] `SMISMEMBER key member [member ...]`
-- [ ] `SINTERCARD`
 
 ## 8. Sorted Set Commands
 
