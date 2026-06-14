@@ -196,6 +196,18 @@ export class WrongNumberOfKeysError extends RedisCommandError {
   }
 }
 
+export class NumKeysGreaterThanZeroError extends RedisCommandError {
+  constructor() {
+    super('numkeys should be greater than 0')
+  }
+}
+
+export class LimitCantBeNegativeError extends RedisCommandError {
+  constructor() {
+    super(`LIMIT can't be negative`)
+  }
+}
+
 export class NoScriptError extends RedisCommandError {
   constructor() {
     super('No matching script. Please use EVAL.', 'NOSCRIPT')
