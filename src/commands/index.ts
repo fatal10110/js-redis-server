@@ -4,6 +4,7 @@ import { CommandRegistry } from '../core/command-registry'
 import type { ExecutionPolicy } from '../core/execution-policies'
 import {
   createAuthPolicy,
+  createSubscribedModePolicy,
   createTransactionPolicy,
 } from '../core/execution-policies'
 import { commandCommand } from './command'
@@ -12,6 +13,7 @@ import { connectionCommands } from './connection'
 import { hashesCommands } from './hashes'
 import { keysCommands } from './keys'
 import { listsCommands } from './lists'
+import { pubsubCommands } from './pubsub'
 import { scanCommands } from './scan'
 import { scriptsCommands } from './scripts'
 import { setsCommands } from './sets'
@@ -32,6 +34,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...listsCommands,
   ...setsCommands,
   ...zsetsCommands,
+  ...pubsubCommands,
   ...streamsCommands,
   ...scriptsCommands,
 ]
@@ -53,6 +56,7 @@ export function createRedisCommandExecutor(options?: {
     registry: createRedisCommandRegistry(options?.extraCommands),
     policies: [
       createAuthPolicy(),
+      createSubscribedModePolicy(),
       ...(options?.policies ?? []),
       createTransactionPolicy(),
     ],
@@ -153,6 +157,15 @@ export {
   rpushCommand,
   rpushxCommand,
 } from './lists'
+export {
+  publishCommand,
+  psubscribeCommand,
+  pubsubCommand,
+  pubsubCommands,
+  punsubscribeCommand,
+  subscribeCommand,
+  unsubscribeCommand,
+} from './pubsub'
 export {
   hashesCommands,
   hexistsCommand,

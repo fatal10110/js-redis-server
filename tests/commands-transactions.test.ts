@@ -119,7 +119,7 @@ describe('new transaction commands', () => {
 
   test('queues push-only commands in MULTI', async () => {
     const streamCommand = defineCommand({
-      name: 'subscribe',
+      name: 'fake-subscribe',
       schema: t.object({
         channel: t.bulk(),
       }),
@@ -136,7 +136,7 @@ describe('new transaction commands', () => {
 
     assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
     assert.deepStrictEqual(
-      await session.execute('subscribe', [Buffer.from('updates')]),
+      await session.execute('fake-subscribe', [Buffer.from('updates')]),
       queued(),
     )
   })

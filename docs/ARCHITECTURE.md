@@ -301,7 +301,8 @@ flowchart LR
 is server-wide rather than per-DB: the cluster topology, the Lua
 [`RedisScriptCache`](../src/state/script-cache.ts) (so `FLUSHALL`/`FLUSHDB`
 clear keyspace data but **not** cached scripts — only `SCRIPT FLUSH` does),
-and the (currently stubbed) [`RedisPubSubBroker`](../src/state/pubsub-broker.ts).
+and the [`RedisPubSubBroker`](../src/state/pubsub-broker.ts) used by client
+Pub/Sub commands for channel and pattern fan-out within that server state.
 
 Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 `Map<keyId, KeyspaceEntry>` holding byte-safe `Buffer` keys and typed
