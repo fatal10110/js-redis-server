@@ -54,7 +54,9 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 `MONITOR` is implemented as a long-lived `ResponseStream` backed by a
 server-level command event feed. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
-arguments. `MONITOR` is flagged `noscript` and is rejected from Lua.
+arguments. Unknown commands and arity/syntax failures are not emitted; commands
+that parse successfully but return execution errors are emitted, matching Redis.
+`MONITOR` is flagged `noscript` and is rejected from Lua.
 
 #### COMMAND
 

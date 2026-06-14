@@ -58,8 +58,10 @@ session asks the [`CommandExecutor`](../src/core/command-executor.ts) to look
 up and run it; the executor returns a `RedisResult` (or a `ResponseStream` for
 streaming replies), which the session adapter encodes back to wire bytes using
 the protocol version (`RESP2`/`RESP3`) negotiated for that connection. After a
-client command completes, `ClientSession` publishes a cloned command event to
-the server-level monitor feed when `MONITOR` clients are listening.
+client command resolves to a valid command plan, `ClientSession` publishes a
+cloned command event to the server-level monitor feed when `MONITOR` clients are
+listening. Unknown commands and arity/syntax failures are skipped; execution
+errors from successfully planned commands are still published, matching Redis.
 
 ## Layers
 

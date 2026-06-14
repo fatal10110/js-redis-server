@@ -86,6 +86,38 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('skips unknown and unparsed commands but monitors execution errors', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const key = `monitor:${randomKey()}`
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('NOEXISTS', 'arg'))
+    assert.match(respText(await actor.readFrame()), /^ERR unknown command/)
+
+    actor.write(commandFrame('GET'))
+    assert.strictEqual(
+      respText(await actor.readFrame()),
+      "ERR wrong number of arguments for 'get' command",
+    )
+
+    actor.write(commandFrame('SET', key, 'hello'))
+    assert.deepStrictEqual(await actor.readRawFrame(), Buffer.from('+OK\r\n'))
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['SET', key, 'hello'],
+    })
+
+    actor.write(commandFrame('LPOP', key))
+    assert.match(respText(await actor.readFrame()), /^WRONGTYPE/)
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['LPOP', key],
+    })
+  })
+
   test('rejects invalid MONITOR arity and Lua usage', async () => {
     const conn = await connect()
 

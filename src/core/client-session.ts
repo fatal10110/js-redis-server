@@ -623,9 +623,15 @@ export class ClientSession implements RedisClientSession {
     this.activeTurnAccess = turnAccess
     try {
       const ctx = this.createExecutionContext(turnAccess)
-      const result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
-      this.publishMonitorEvent(rawCommand, rawArgs, this.selectedDatabaseId)
-      return result
+      const execution = await this.executor.executeRawWithPlan(
+        rawCommand,
+        rawArgs,
+        ctx,
+      )
+      if (execution.plan) {
+        this.publishMonitorEvent(rawCommand, rawArgs, this.selectedDatabaseId)
+      }
+      return execution.result
     } finally {
       this.activeTurnAccess = undefined
       turn?.release()
@@ -766,8 +772,8 @@ export class ClientSession implements RedisClientSession {
       return
     }
 
-    const command = normalizeMonitorCommand(rawCommand)
-    if (command === 'monitor') {
+    const command = monitorCommandBuffer(rawCommand)
+    if (equalsAscii(command, 'monitor')) {
       return
     }
 
@@ -776,7 +782,7 @@ export class ClientSession implements RedisClientSession {
       database,
       clientId: this.id,
       clientAddress: this.clientAddress,
-      command: Buffer.from(command),
+      command,
       args: rawArgs.map(arg => Buffer.from(arg)),
     })
   }
@@ -800,8 +806,12 @@ function createAbortError(): Error {
   return err
 }
 
-function normalizeMonitorCommand(rawCommand: Buffer | string): string {
+function monitorCommandBuffer(rawCommand: Buffer | string): Buffer {
   return typeof rawCommand === 'string'
-    ? rawCommand.toLowerCase()
-    : rawCommand.toString().toLowerCase()
+    ? Buffer.from(rawCommand)
+    : Buffer.from(rawCommand)
+}
+
+function equalsAscii(value: Buffer, expected: string): boolean {
+  return value.toString().toLowerCase() === expected
 }

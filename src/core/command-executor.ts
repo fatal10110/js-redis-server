@@ -19,6 +19,11 @@ import { isResponseStream, ResponseStream } from './response-stream'
  */
 export type ExecutorResult = RedisResult | ResponseStream
 
+export type RawExecutionResult = {
+  result: ExecutorResult
+  plan?: CommandPlan
+}
+
 export type CommandExecutorOptions = {
   registry: CommandRegistry
   policies?: readonly ExecutionPolicy[]
@@ -94,26 +99,22 @@ export class CommandExecutor {
     rawArgs: readonly Buffer[],
     ctx: RedisExecutionContext,
   ): Promise<ExecutorResult> {
+    return (await this.executeRawWithPlan(rawCommand, rawArgs, ctx)).result
+  }
+
+  async executeRawWithPlan(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+    ctx: RedisExecutionContext,
+  ): Promise<RawExecutionResult> {
     try {
-      return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
+      const plan = this.plan(rawCommand, rawArgs)
+      return { plan, result: await this.executePlan(plan, ctx) }
     } catch (err) {
       if (err instanceof RedisCommandError) {
-        // EXEC itself with bad arity (e.g. `EXEC foo`) discards the
-        // transaction immediately and replies EXECABORT, matching Redis'
-        // execCommandAbort — distinct from a *queued* command's arity error,
-        // which only dirties the transaction for a later, well-formed EXEC.
-        if (
-          err instanceof WrongNumberOfArgumentsError &&
-          ctx.session.mode === 'transaction' &&
-          CommandExecutor.normalizeCommandName(rawCommand) === 'exec'
-        ) {
-          ctx.session.discardTransaction()
-          const abortError = new ExecCommandAbortError(err.message)
-          return RedisResult.error(abortError.message, abortError.code)
+        return {
+          result: this.rawCommandErrorResult(err, rawCommand, ctx),
         }
-
-        ctx.session.markTransactionDirty()
-        return RedisResult.error(err.message, err.code)
       }
 
       throw err
@@ -124,6 +125,29 @@ export class CommandExecutor {
     return typeof rawCommand === 'string'
       ? rawCommand.toLowerCase()
       : rawCommand.toString().toLowerCase()
+  }
+
+  private rawCommandErrorResult(
+    err: RedisCommandError,
+    rawCommand: Buffer | string,
+    ctx: RedisExecutionContext,
+  ): RedisResult {
+    // EXEC itself with bad arity (e.g. `EXEC foo`) discards the transaction
+    // immediately and replies EXECABORT, matching Redis' execCommandAbort —
+    // distinct from a *queued* command's arity error, which only dirties the
+    // transaction for a later, well-formed EXEC.
+    if (
+      err instanceof WrongNumberOfArgumentsError &&
+      ctx.session.mode === 'transaction' &&
+      CommandExecutor.normalizeCommandName(rawCommand) === 'exec'
+    ) {
+      ctx.session.discardTransaction()
+      const abortError = new ExecCommandAbortError(err.message)
+      return RedisResult.error(abortError.message, abortError.code)
+    }
+
+    ctx.session.markTransactionDirty()
+    return RedisResult.error(err.message, err.code)
   }
 
   /**
