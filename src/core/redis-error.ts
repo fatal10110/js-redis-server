@@ -234,6 +234,12 @@ export class NumKeysGreaterThanZeroError extends RedisCommandError {
   }
 }
 
+export class CountGreaterThanZeroError extends RedisCommandError {
+  constructor() {
+    super('count should be greater than 0')
+  }
+}
+
 export class LimitCantBeNegativeError extends RedisCommandError {
   constructor() {
     super(`LIMIT can't be negative`)
