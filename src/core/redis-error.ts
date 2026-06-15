@@ -93,6 +93,18 @@ export class LposMaxlenNegativeError extends RedisCommandError {
   }
 }
 
+export class TimeoutNotFloatError extends RedisCommandError {
+  constructor() {
+    super('timeout is not a float or out of range')
+  }
+}
+
+export class TimeoutNegativeError extends RedisCommandError {
+  constructor() {
+    super('timeout is negative')
+  }
+}
+
 export class ZaddNxXxConflictError extends RedisCommandError {
   constructor() {
     super('XX and NX options at the same time are not compatible')

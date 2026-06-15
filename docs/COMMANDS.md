@@ -211,11 +211,11 @@ with `GT` or `LT`.
 - [x] `LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]` - Return the index(es) of matching elements
 - [x] `BLPOP key [key ...] timeout` - Blocking left pop
 - [x] `BRPOP key [key ...] timeout` - Blocking right pop
+- [x] `BLMOVE source destination LEFT | RIGHT LEFT | RIGHT timeout` - Blocking variant of `LMOVE`
 
 #### Not implemented
 
 - [ ] `LINSERT`
-- [ ] `BLMOVE`
 - [ ] `LMPOP` / `BLMPOP`
 
 ## 7. Set Commands
