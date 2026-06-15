@@ -264,6 +264,20 @@ export class InvalidLexRangeError extends RedisCommandError {
   }
 }
 
+export class ZrangeLimitWithoutByError extends RedisCommandError {
+  constructor() {
+    super(
+      'syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX',
+    )
+  }
+}
+
+export class ZrangeWithScoresByLexError extends RedisCommandError {
+  constructor() {
+    super('syntax error, WITHSCORES not supported in combination with BYLEX')
+  }
+}
+
 export class NoScriptError extends RedisCommandError {
   constructor() {
     super('No matching script. Please use EVAL.', 'NOSCRIPT')

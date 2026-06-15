@@ -246,8 +246,10 @@ with `GT` or `LT`.
 - [x] `ZINCRBY key increment member` - Increment the score of a member (`inf`, `+inf`, and `-inf` increments supported; NaN results rejected)
 - [x] `ZRANK key member` - Get the index of a member, lowest score first
 - [x] `ZREVRANK key member` - Get the index of a member, highest score first
-- [x] `ZRANGE key start stop [WITHSCORES]` - Return a range of members by index
+- [x] `ZRANGE key min max [BYSCORE | BYLEX] [REV] [LIMIT offset count] [WITHSCORES]` - Return a range of members by index, score, or lexicographic range, optionally reversed
 - [x] `ZREVRANGE key start stop [WITHSCORES]` - Return a range of members by index, high to low
+- [x] `ZMSCORE key member [member ...]` - Get the scores of multiple members (nil per missing member)
+- [x] `ZRANDMEMBER key [count [WITHSCORES]]` - Get one or more random members, optionally with their scores
 - [x] `ZRANGEBYSCORE key min max` - Return members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZREMRANGEBYSCORE key min max` - Remove members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZCOUNT key min max` - Count members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
@@ -262,7 +264,7 @@ with `GT` or `LT`.
 #### Notes / gaps vs. real Redis
 
 - Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
-- [ ] `ZRANGE`/`ZREVRANGE` do not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes
+- [ ] `ZREVRANGE` does not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes; use `ZRANGE ... REV` instead
 - [ ] `ZRANGEBYSCORE` does not support `WITHSCORES` or `LIMIT offset count`
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
 
@@ -270,7 +272,7 @@ with `GT` or `LT`.
 
 - [ ] `ZREVRANGEBYSCORE` / `ZREMRANGEBYRANK`
 - [ ] `ZUNIONSTORE` / `ZINTERSTORE` / `ZDIFFSTORE` / `ZUNION` / `ZINTER` / `ZDIFF` / `ZINTERCARD`
-- [ ] `ZMSCORE` / `ZRANDMEMBER` / `ZRANGESTORE` / `ZMPOP` / `BZPOPMIN` / `BZPOPMAX` / `BZMPOP`
+- [ ] `ZRANGESTORE` / `ZMPOP` / `BZPOPMIN` / `BZPOPMAX` / `BZMPOP`
 
 ## 9. Stream Commands
 
