@@ -280,6 +280,72 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('XTRIM MAXLEN with ~ accepts LIMIT count', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+      await node.xadd(key, '2-1', 'f', 'v')
+      await node.xadd(key, '3-1', 'f', 'v')
+
+      const removed = (await node.call(
+        'XTRIM',
+        key,
+        'MAXLEN',
+        '~',
+        '2',
+        'LIMIT',
+        '1',
+      )) as number
+      assert.ok(typeof removed === 'number' && removed >= 0)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XTRIM LIMIT validates approximate trim syntax', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+      await node.xadd(key, '2-1', 'f', 'v')
+      await node.xadd(key, '3-1', 'f', 'v')
+
+      await assert.rejects(
+        () => node.call('XTRIM', key, 'MAXLEN', '2', 'LIMIT', '1'),
+        errorWithMessage(
+          'ERR syntax error, LIMIT cannot be used without the special ~ option',
+        ),
+      )
+      await assert.rejects(
+        () => node.call('XTRIM', key, 'MAXLEN', '~', '2', 'LIMIT'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => node.call('XTRIM', key, 'MAXLEN', '~', '2', 'LIMIT', 'abc'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => node.call('XTRIM', key, 'MAXLEN', '~', '2', 'LIMIT', '-1'),
+        errorWithMessage('ERR The LIMIT argument must be >= 0.'),
+      )
+      const removed = (await node.call(
+        'XTRIM',
+        key,
+        'MAXLEN',
+        '~',
+        '2',
+        'LIMIT',
+        '1',
+        'LIMIT',
+        '1',
+      )) as number
+      assert.ok(typeof removed === 'number' && removed >= 0)
+    } finally {
+      node.disconnect()
+    }
+  })
+
   test('XTRIM MINID removes entries with id below threshold', async () => {
     const key = randomKey()
     const node = await connectToSlotOwner(redisClient!, key)
@@ -352,6 +418,87 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         ['3-1', ['f', 'v']],
         ['4-1', ['f', 'v']],
       ])
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XADD MAXLEN with ~ accepts LIMIT count before generated id', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+      await node.xadd(key, '2-1', 'f', 'v')
+      await node.xadd(key, '3-1', 'f', 'v')
+
+      const id = (await node.call(
+        'XADD',
+        key,
+        'MAXLEN',
+        '~',
+        '2',
+        'LIMIT',
+        '1',
+        '*',
+        'f',
+        'v',
+      )) as string
+      assert.match(id, /^\d+-\d+$/)
+
+      const duplicateLimitId = (await node.call(
+        'XADD',
+        key,
+        'MAXLEN',
+        '~',
+        '2',
+        'LIMIT',
+        '1',
+        'limit',
+        '1',
+        '*',
+        'f',
+        'v',
+      )) as string
+      assert.match(duplicateLimitId, /^\d+-\d+$/)
+    } finally {
+      node.disconnect()
+    }
+  })
+
+  test('XADD LIMIT validates approximate trim syntax before id', async () => {
+    const key = randomKey()
+    const node = await connectToSlotOwner(redisClient!, key)
+    try {
+      await node.xadd(key, '1-1', 'f', 'v')
+
+      await assert.rejects(
+        () =>
+          node.call('XADD', key, 'MAXLEN', '2', 'LIMIT', '1', '*', 'f', 'v'),
+        errorWithMessage(
+          'ERR syntax error, LIMIT cannot be used without the special ~ option',
+        ),
+      )
+      await assert.rejects(
+        () =>
+          node.call('XADD', key, 'MAXLEN', '~', '2', 'LIMIT', '*', 'f', 'v'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () =>
+          node.call(
+            'XADD',
+            key,
+            'MAXLEN',
+            '~',
+            '2',
+            'LIMIT',
+            '-1',
+            '*',
+            'f',
+            'v',
+          ),
+        errorWithMessage('ERR The LIMIT argument must be >= 0.'),
+      )
     } finally {
       node.disconnect()
     }

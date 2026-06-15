@@ -272,12 +272,12 @@ with `GT` or `LT`.
 
 ## 9. Stream Commands
 
-- [x] `XADD key [NOMKSTREAM] [MAXLEN|MINID [~] threshold] <ID|*> field value [field value ...]` - Append an entry to a stream
+- [x] `XADD key [NOMKSTREAM] [MAXLEN|MINID [~] threshold [LIMIT count]] <ID|*> field value [field value ...]` - Append an entry to a stream
 - [x] `XLEN key` - Return the number of entries
 - [x] `XRANGE key start end [COUNT count]` - Return entries in ascending ID order
 - [x] `XREVRANGE key end start [COUNT count]` - Return entries in descending ID order
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
-- [x] `XTRIM key MAXLEN|MINID [~] threshold` - Trim a stream to a size or minimum ID
+- [x] `XTRIM key MAXLEN|MINID [~] threshold [LIMIT count]` - Trim a stream to a size or minimum ID
 - [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs)
 - [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER ...` - Manage stream consumer groups and consumers
 - [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery
@@ -291,7 +291,7 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- [ ] `XADD`/`XTRIM` trim specs do not support `LIMIT count`
+- `LIMIT count` is accepted on approximate (`~`) `XADD`/`XTRIM` trim specs for Redis-compatible parsing; the mock treats it as a trimming hint.
 - [ ] Stream radix-tree statistics in `XINFO STREAM` are approximated for mock compatibility rather than mirroring Redis internals
 
 #### Not implemented
