@@ -207,14 +207,15 @@ with `GT` or `LT`.
 - [x] `LREM key count element` - Remove elements matching a value
 - [x] `LTRIM key start stop` - Trim a list to the specified range
 - [x] `RPOPLPUSH source destination` - Pop from one list and push to another
+- [x] `LMOVE source destination LEFT | RIGHT LEFT | RIGHT` - Atomically pop from one end of a list and push to either end of another
+- [x] `LPOS key element [RANK rank] [COUNT count] [MAXLEN maxlen]` - Return the index(es) of matching elements
 - [x] `BLPOP key [key ...] timeout` - Blocking left pop
 - [x] `BRPOP key [key ...] timeout` - Blocking right pop
 
 #### Not implemented
 
-- [ ] `LPOS`
 - [ ] `LINSERT`
-- [ ] `LMOVE` / `BLMOVE`
+- [ ] `BLMOVE`
 - [ ] `LMPOP` / `BLMPOP`
 
 ## 7. Set Commands

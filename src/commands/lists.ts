@@ -1,10 +1,13 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import { integer, bulk, ok, array } from './helpers'
+import { integer, bulk, ok, array, parseIntegerToken } from './helpers'
 import { RedisValue } from '../core/redis-value'
 import { RedisResult } from '../core/redis-result'
 import {
   IndexOutOfRangeError,
+  LposCountNegativeError,
+  LposMaxlenNegativeError,
+  LposRankZeroError,
   NoSuchKeyError,
   PositiveCountError,
   RedisSyntaxError,
@@ -355,6 +358,148 @@ export const rpoplpushCommand = defineCommand({
   },
 })
 
+type LposArgs = {
+  key: Buffer
+  element: Buffer
+  rank: number
+  count?: number
+  maxlen: number
+}
+
+export const lposCommand = defineCommand({
+  name: 'lpos',
+  schema: t.custom<LposArgs>((input, index, ctx) => {
+    const key = input[index]
+    const element = input[index + 1]
+    if (!key || !element) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+
+    let rank = 1
+    let count: number | undefined
+    let maxlen = 0
+    let cursor = index + 2
+
+    while (cursor < input.length) {
+      const option = input[cursor].toString().toUpperCase()
+      const valueToken = input[cursor + 1]
+      if (!valueToken) {
+        throw new RedisSyntaxError()
+      }
+
+      if (option === 'RANK') {
+        rank = parseIntegerToken(valueToken)
+        if (rank === 0) throw new LposRankZeroError()
+      } else if (option === 'COUNT') {
+        count = parseIntegerToken(valueToken)
+        if (count < 0) throw new LposCountNegativeError()
+      } else if (option === 'MAXLEN') {
+        maxlen = parseIntegerToken(valueToken)
+        if (maxlen < 0) throw new LposMaxlenNegativeError()
+      } else {
+        throw new RedisSyntaxError()
+      }
+
+      cursor += 2
+    }
+
+    return { value: { key, element, rank, count, maxlen }, nextIndex: cursor }
+  }),
+  flags: ['readonly'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    const hasCount = args.count !== undefined
+    const list = ctx.db.getList(args.key)
+    if (!list || list.values.length === 0) {
+      return hasCount ? array([]) : bulk(null)
+    }
+
+    const target = args.element.toString('binary')
+    const forward = args.rank > 0
+    const step = forward ? 1 : -1
+    const len = list.values.length
+    // count===0 means "return all matches"; absent means "return first only"
+    const limit = hasCount ? (args.count === 0 ? Infinity : args.count!) : 1
+
+    const results: number[] = []
+    let toSkip = Math.abs(args.rank) - 1
+    let comparisons = 0
+
+    for (let i = forward ? 0 : len - 1; i >= 0 && i < len; i += step) {
+      if (args.maxlen !== 0 && comparisons >= args.maxlen) break
+      comparisons++
+      if (list.values[i].toString('binary') !== target) continue
+
+      if (toSkip > 0) {
+        toSkip--
+        continue
+      }
+      results.push(i)
+      if (results.length >= limit) break
+    }
+
+    if (!hasCount) {
+      return results.length === 0 ? bulk(null) : integer(results[0])
+    }
+    return array(results.map(idx => RedisValue.integer(idx)))
+  },
+})
+
+function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
+  return t.custom<'left' | 'right'>((input, index, ctx) => {
+    const token = input[index]
+    if (!token) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+
+    const direction = token.toString().toUpperCase()
+    if (direction !== 'LEFT' && direction !== 'RIGHT') {
+      throw new RedisSyntaxError()
+    }
+
+    return {
+      value: direction === 'LEFT' ? 'left' : 'right',
+      nextIndex: index + 1,
+    }
+  })
+}
+
+export const lmoveCommand = defineCommand({
+  name: 'lmove',
+  schema: t.object({
+    source: t.key(),
+    destination: t.key(),
+    fromDirection: moveDirection(),
+    toDirection: moveDirection(),
+  }),
+  flags: ['write', 'denyoom'],
+  keys: args => [args.source, args.destination],
+  execute: (args, ctx) => {
+    const sourceList = ctx.db.getList(args.source)
+    if (!sourceList || sourceList.values.length === 0) return bulk(null)
+
+    // Validate destination type before mutating the source
+    ctx.db.getList(args.destination)
+
+    const popped = ctx.db.updateList(args.source, list => {
+      const value =
+        (args.fromDirection === 'left'
+          ? list.values.shift()
+          : list.values.pop()) ?? null
+      return { value, empty: list.values.length === 0 }
+    })
+    if (popped.empty) ctx.db.delete(args.source)
+    if (popped.value === null) return bulk(null)
+
+    ctx.db.updateList(args.destination, list => {
+      if (args.toDirection === 'left') list.values.unshift(popped.value!)
+      else list.values.push(popped.value!)
+    })
+
+    return bulk(popped.value)
+  },
+})
+
 function tryListPop(
   keys: readonly Buffer[],
   side: 'left' | 'right',
@@ -481,6 +626,8 @@ export const listsCommands = [
   lpushxCommand,
   rpushxCommand,
   rpoplpushCommand,
+  lposCommand,
+  lmoveCommand,
   blpopCommand,
   brpopCommand,
 ]
