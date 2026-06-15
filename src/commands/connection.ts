@@ -185,20 +185,17 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
   return `${lines.join('\r\n')}\r\n`
 }
 
-function formatClientLine(
-  ctx: RedisExecutionContext,
-  session: RedisClientSession,
-): string {
+function formatClientLine(session: RedisClientSession): string {
   const name = clientNames.get(session)?.toString() ?? ''
   const libName = clientLibraryNames.get(session)?.toString()
   const libVersion = clientLibraryVersions.get(session)?.toString()
   const fields = [
     `id=${getClientId(session)}`,
-    'addr=127.0.0.1:0',
+    `addr=${session.clientAddress ?? '127.0.0.1:0'}`,
     'laddr=127.0.0.1:6379',
     'fd=0',
     `name=${name}`,
-    `db=${ctx.session.selectedDatabase}`,
+    `db=${session.selectedDatabase}`,
     'age=0',
     'idle=0',
     `flags=${session.mode === 'subscribed' ? 'P' : 'N'}`,
@@ -462,12 +459,13 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'info') {
       expectArgCount('client|info', args.args, 0)
-      return bulk(Buffer.from(formatClientLine(ctx, ctx.session)))
+      return bulk(Buffer.from(formatClientLine(ctx.session)))
     }
 
     if (subcommand === 'list') {
       expectArgCount('client|list', args.args, 0)
-      return bulk(Buffer.from(formatClientLine(ctx, ctx.session)))
+      const lines = ctx.server.getConnectedClients().map(formatClientLine)
+      return bulk(Buffer.from(lines.join('')))
     }
 
     if (subcommand === 'help') {

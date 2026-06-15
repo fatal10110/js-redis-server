@@ -33,7 +33,8 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 - [x] `CLIENT SETNAME connection-name` - Set the connection name
 - [x] `CLIENT SETINFO LIB-NAME|LIB-VER value` - Record client library metadata
 - [x] `CLIENT ID` - Return the connection's ID
-- [x] `CLIENT INFO` / `CLIENT LIST` - Return a single `key=value` line for the current connection
+- [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
+- [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
 - [x] `CLIENT HELP` - Return subcommand help
 - [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-EVICT`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 

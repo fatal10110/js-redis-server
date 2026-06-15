@@ -111,6 +111,7 @@ export class ClientSession implements RedisClientSession {
   private readonly pushWaiters = new Set<() => void>()
   private pushQueueClosed = false
   private readonly responseStreamCleanups = new Set<() => void>()
+  private unregisterClientSession?: Unsubscribe
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
@@ -130,6 +131,7 @@ export class ClientSession implements RedisClientSession {
     }
 
     this.server.getDatabase(this.selectedDatabaseId)
+    this.unregisterClientSession = this.server.registerClientSession(this)
   }
 
   get selectedDatabase(): number {
@@ -668,6 +670,8 @@ export class ClientSession implements RedisClientSession {
 
   /** Tear down the session: abort in-flight work and reset all per-connection state. */
   close(): void {
+    this.unregisterClientSession?.()
+    this.unregisterClientSession = undefined
     this.resetResponseStreams()
     this.signalSource?.abort()
     this.unwatch()
