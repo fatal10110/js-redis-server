@@ -240,6 +240,18 @@ export class LimitCantBeNegativeError extends RedisCommandError {
   }
 }
 
+export class StreamLimitRequiresApproxError extends RedisCommandError {
+  constructor() {
+    super('syntax error, LIMIT cannot be used without the special ~ option')
+  }
+}
+
+export class StreamLimitNegativeError extends RedisCommandError {
+  constructor() {
+    super('The LIMIT argument must be >= 0.')
+  }
+}
+
 export class InvalidLexRangeError extends RedisCommandError {
   constructor() {
     super('min or max not valid string range item')

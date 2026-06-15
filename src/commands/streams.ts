@@ -10,6 +10,8 @@ import {
   NoSuchKeyError,
   RedisCommandError,
   RedisSyntaxError,
+  StreamLimitNegativeError,
+  StreamLimitRequiresApproxError,
   StreamElementTooLargeError,
   StreamIdExhaustedError,
   StreamIdEqualOrSmallerError,
@@ -329,8 +331,31 @@ function createStreamFieldsSchema() {
 
 // Trim specification shared by XADD and XTRIM.
 type TrimSpec =
-  | { strategy: 'maxlen'; count: bigint; approximate: boolean }
-  | { strategy: 'minid'; minId: StreamId; approximate: boolean }
+  | {
+      strategy: 'maxlen'
+      count: bigint
+      approximate: boolean
+      limit: bigint | null
+    }
+  | {
+      strategy: 'minid'
+      minId: StreamId
+      approximate: boolean
+      limit: bigint | null
+    }
+
+function parseTrimLimit(raw: string): bigint {
+  if (/^-\d+$/.test(raw)) {
+    throw new StreamLimitNegativeError()
+  }
+
+  const value = parseUint64(raw)
+  if (value === null) {
+    throw new ExpectedIntegerError()
+  }
+
+  return value
+}
 
 function createTrimSpecSchema() {
   return t.custom<TrimSpec>(
@@ -353,20 +378,35 @@ function createTrimSpecSchema() {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       cursor++
 
+      let trim: TrimSpec
       if (keyword === 'MAXLEN') {
         const count = parseUint64(rawValue)
         if (count === null) throw new RedisSyntaxError()
-        return {
-          value: { strategy: 'maxlen', count, approximate },
-          nextIndex: cursor,
-        }
+        trim = { strategy: 'maxlen', count, approximate, limit: null }
       } else {
         const minId = parseExactId(rawValue)
-        return {
-          value: { strategy: 'minid', minId, approximate },
-          nextIndex: cursor,
-        }
+        trim = { strategy: 'minid', minId, approximate, limit: null }
       }
+
+      while (cursor < input.length) {
+        if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
+          break
+        }
+
+        if (!approximate) {
+          throw new StreamLimitRequiresApproxError()
+        }
+
+        const rawLimit = input[cursor + 1]?.toString()
+        if (rawLimit === undefined) {
+          throw new RedisSyntaxError()
+        }
+
+        trim.limit = parseTrimLimit(rawLimit)
+        cursor += 2
+      }
+
+      return { value: trim, nextIndex: cursor }
     },
   )
 }
