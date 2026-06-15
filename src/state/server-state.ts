@@ -1,8 +1,10 @@
 import { RedisClusterTopology } from './cluster-topology'
 import { RedisDatabase } from './database'
 import { RedisMonitorFeed } from './monitor-feed'
+import type { Unsubscribe } from './mutation-events'
 import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
+import type { RedisClientSession } from '../core/redis-context'
 
 export type RedisServerStateOptions = {
   databaseCount?: number
@@ -25,6 +27,7 @@ export class RedisServerState {
   readonly pubsubBroker: RedisPubSubBroker
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
+  private readonly clientSessions = new Set<RedisClientSession>()
 
   constructor(options?: RedisServerStateOptions) {
     this.requirepass = options?.requirepass
@@ -51,6 +54,15 @@ export class RedisServerState {
     }
 
     return database
+  }
+
+  registerClientSession(session: RedisClientSession): Unsubscribe {
+    this.clientSessions.add(session)
+    return () => this.clientSessions.delete(session)
+  }
+
+  getConnectedClients(): readonly RedisClientSession[] {
+    return [...this.clientSessions]
   }
 
   /**
