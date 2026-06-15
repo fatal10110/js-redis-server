@@ -56,8 +56,12 @@ server-level command event feed. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
 arguments. Unknown commands and arity/syntax failures are not emitted; commands
 that parse successfully but return execution errors are emitted, matching Redis.
-Cluster `MOVED` redirects are not emitted because the command is not executed on
-that node. `MONITOR` is flagged `noscript` and is rejected from Lua.
+Cluster redirects and pre-execution cluster errors are not emitted because the
+command is not executed on that node. Commands with monitor skip metadata are
+skipped, authentication credentials are redacted, commands replayed by `EXEC` are
+emitted once when the transaction runs, and Lua `redis.call` / `redis.pcall`
+commands are emitted with the `lua` source. `MONITOR` is flagged `noscript` and
+is rejected from Lua.
 
 #### COMMAND
 
@@ -229,7 +233,6 @@ with `GT` or `LT`.
 - [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
 - [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
-
 
 ## 8. Sorted Set Commands
 

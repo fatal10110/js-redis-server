@@ -11,6 +11,7 @@ import {
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
+import type { RedisMonitorCommandEvent } from '../state'
 
 /**
  * The result of running a command: either a finished {@link RedisResult} or a
@@ -81,7 +82,7 @@ export class CommandExecutor {
       throw new UnknownRedisCommandError(rawCommand, rawArgs)
     }
 
-    return this.createPlan(definition, rawArgs)
+    return this.createPlan(definition, rawCommand, rawArgs)
   }
 
   /**
@@ -170,6 +171,17 @@ export class CommandExecutor {
     plan: CommandPlan,
     ctx: RedisExecutionContext,
   ): Promise<ExecutorResult> {
+    const monitorCtx = createMonitorDeferredContext(ctx)
+    const result = await this.executePlanInternal(plan, monitorCtx)
+    publishMonitorEvent(plan, monitorCtx, result)
+    flushDeferredMonitorEvents(monitorCtx)
+    return result
+  }
+
+  private async executePlanInternal(
+    plan: CommandPlan,
+    ctx: RedisExecutionContext,
+  ): Promise<ExecutorResult> {
     try {
       for (const policy of this.policies) {
         const policyResult = await policy.beforeExecute?.(plan, ctx)
@@ -232,6 +244,17 @@ export class CommandExecutor {
    * path exactly.
    */
   executePlanSync(plan: CommandPlan, ctx: RedisExecutionContext): RedisResult {
+    const monitorCtx = createMonitorDeferredContext(ctx)
+    const result = this.executePlanSyncInternal(plan, monitorCtx)
+    publishMonitorEvent(plan, monitorCtx, result)
+    flushDeferredMonitorEvents(monitorCtx)
+    return result
+  }
+
+  private executePlanSyncInternal(
+    plan: CommandPlan,
+    ctx: RedisExecutionContext,
+  ): RedisResult {
     try {
       for (const policy of this.policies) {
         const policyResult = assertSyncPolicyResult(
@@ -284,6 +307,7 @@ export class CommandExecutor {
    */
   private createPlan<TArgs>(
     definition: CommandDefinition<TArgs>,
+    rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
   ): CommandPlan<TArgs> {
     const args = parseCommandArgs(definition.schema, rawArgs, definition.name)
@@ -294,9 +318,140 @@ export class CommandExecutor {
       args,
       keys,
       flags: definition.flags,
+      rawCommand: Buffer.from(rawCommand),
+      rawArgs: rawArgs.map(arg => Buffer.from(arg)),
     }
   }
 }
+
+function publishMonitorEvent(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  result: ExecutorResult,
+): void {
+  if (!shouldPublishMonitorEvent(plan, ctx, result)) {
+    return
+  }
+
+  const event: RedisMonitorCommandEvent = {
+    timestampMs: Date.now(),
+    database: ctx.session.selectedDatabase,
+    clientId: ctx.session.id,
+    clientAddress: ctx.monitor?.clientAddress ?? ctx.session.clientAddress,
+    command: Buffer.from(plan.rawCommand),
+    args: redactMonitorArgs(plan),
+  }
+
+  if (ctx.monitor?.defer && ctx.monitor.deferredEvents) {
+    ctx.monitor.deferredEvents.push(event)
+    return
+  }
+
+  ctx.server.monitorFeed.publish(event)
+}
+
+function createMonitorDeferredContext(
+  ctx: RedisExecutionContext,
+): RedisExecutionContext {
+  if (ctx.monitor?.disabled || ctx.monitor?.defer) {
+    return ctx
+  }
+
+  if (ctx.server.monitorFeed.subscriberCount === 0) {
+    return ctx
+  }
+
+  return {
+    get db() {
+      return ctx.db
+    },
+    server: ctx.server,
+    session: ctx.session,
+    executor: ctx.executor,
+    ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
+    monitor: {
+      ...ctx.monitor,
+      deferredEvents: [],
+    },
+    signal: ctx.signal,
+    park: ctx.park,
+  }
+}
+
+function flushDeferredMonitorEvents(ctx: RedisExecutionContext): void {
+  const events = ctx.monitor?.deferredEvents
+  if (!events || ctx.monitor?.defer) {
+    return
+  }
+
+  for (const event of events) {
+    ctx.server.monitorFeed.publish(event)
+  }
+
+  events.length = 0
+}
+
+function shouldPublishMonitorEvent(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  result: ExecutorResult,
+): boolean {
+  if (ctx.monitor?.disabled) {
+    return false
+  }
+
+  if (ctx.server.monitorFeed.subscriberCount === 0) {
+    return false
+  }
+
+  if (plan.definition.monitor?.skip) {
+    return false
+  }
+
+  if (!(result instanceof RedisResult)) {
+    return true
+  }
+
+  if (isQueuedTransactionCommand(plan, ctx, result)) {
+    return false
+  }
+
+  if (
+    result.value.kind === 'error' &&
+    CLUSTER_PRE_EXECUTION_ERROR_CODES.has(result.value.code ?? '')
+  ) {
+    return false
+  }
+
+  return true
+}
+
+function isQueuedTransactionCommand(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  result: RedisResult,
+): boolean {
+  return (
+    ctx.session.mode === 'transaction' &&
+    !plan.flags.includes('transaction') &&
+    result.value.kind === 'simple-string' &&
+    result.value.value === 'QUEUED'
+  )
+}
+
+function redactMonitorArgs(plan: CommandPlan): Buffer[] {
+  const args =
+    plan.definition.monitor?.redactArgs?.(plan.rawArgs) ?? plan.rawArgs
+  return args.map(arg => Buffer.from(arg))
+}
+
+const CLUSTER_PRE_EXECUTION_ERROR_CODES = new Set([
+  'ASK',
+  'CLUSTERDOWN',
+  'CROSSSLOT',
+  'MOVED',
+  'TRYAGAIN',
+])
 
 /**
  * A policy's `onStream` hook may return an object that is both a

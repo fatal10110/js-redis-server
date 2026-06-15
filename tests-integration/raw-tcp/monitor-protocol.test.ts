@@ -88,6 +88,31 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('escapes binary command arguments like Redis', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const key = Buffer.from(`monitor-binary:${randomKey()}`)
+    const value = Buffer.from([
+      0x00, 0x07, 0x08, 0x09, 0x0a, 0x0d, 0x1f, 0x20, 0x22, 0x5c, 0x7e, 0x7f,
+      0x80, 0xff,
+    ])
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(binaryCommandFrame('SET', key, value))
+    assert.deepStrictEqual(await actor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    const rawLine = await monitor.readRawFrame()
+    assert.strictEqual(rawLine[0], '+'.charCodeAt(0))
+    const line = rawLine.toString().slice(1, -2)
+    const expectedValue = String.raw`\x00\a\b\t\n\r\x1f \"\\~\x7f\x80\xff`
+    assert.ok(
+      line.endsWith(` "SET" "${key.toString()}" "${expectedValue}"`),
+      `unexpected monitor line: ${line}`,
+    )
+  })
+
   test('skips unknown and unparsed commands but monitors execution errors', async () => {
     const monitor = await connect()
     const actor = await connect()
@@ -120,11 +145,17 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     })
   })
 
-  test('skips cluster commands redirected with MOVED', async () => {
+  test('skips cluster commands rejected before local execution', async () => {
     const cluster = await testRunner.setupIoredisCluster('monitor-moved')
     const directPort = testRunner.getClusterPorts()[0]
     assert.notStrictEqual(directPort, undefined)
     const remoteKey = await findKeyNotOwnedByPort(cluster, directPort!)
+    const crossSlotKeyA = '{monitor-crossslot-a}'
+    const crossSlotKeyB = '{monitor-crossslot-b}'
+    assert.notStrictEqual(
+      clusterKeySlot(crossSlotKeyA),
+      clusterKeySlot(crossSlotKeyB),
+    )
     const monitor = await connect(directPort)
     const actor = await connect(directPort)
 
@@ -134,11 +165,132 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     actor.write(commandFrame('GET', remoteKey))
     assert.match(respText(await actor.readFrame()), /^MOVED\b/)
 
+    actor.write(commandFrame('MGET', crossSlotKeyA, crossSlotKeyB))
+    assert.match(respText(await actor.readFrame()), /^CROSSSLOT\b/)
+
     actor.write(commandFrame('PING'))
     assert.deepStrictEqual(await actor.readRawFrame(), Buffer.from('+PONG\r\n'))
     assertMonitorLine(respText(await monitor.readFrame()), {
       database: 0,
       argv: ['PING'],
+    })
+  })
+
+  test('redacts authentication credentials', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('AUTH', 'secret'))
+    assert.match(
+      respText(await actor.readFrame()),
+      /^ERR AUTH <password> called without any password configured/,
+    )
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['AUTH', '(redacted)'],
+    })
+
+    actor.write(commandFrame('AUTH', 'default', 'secret'))
+    assert.deepStrictEqual(await actor.readRawFrame(), Buffer.from('+OK\r\n'))
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['AUTH', '(redacted)', '(redacted)'],
+    })
+
+    actor.write(commandFrame('HELLO', '2', 'AUTH', 'default', 'secret'))
+    assert.ok(Array.isArray(await actor.readFrame()))
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['HELLO', '2', 'AUTH', '(redacted)', '(redacted)'],
+    })
+  })
+
+  test('skips monitor-hidden commands without hiding INFO or CLIENT', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('CONFIG', 'GET', 'maxmemory'))
+    await actor.readFrame()
+
+    actor.write(commandFrame('INFO', 'server'))
+    await actor.readFrame()
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['INFO', 'server'],
+    })
+
+    actor.write(commandFrame('CLIENT', 'GETNAME'))
+    await actor.readFrame()
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['CLIENT', 'GETNAME'],
+    })
+  })
+
+  test('emits Lua redis.call commands with a lua monitor source', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const key = `monitor-lua:${randomKey()}`
+    const script = `redis.call("set", "${key}", "v"); return redis.call("get", "${key}")`
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('EVAL', script, '0'))
+    assert.deepStrictEqual(await actor.readFrame(), Buffer.from('v'))
+
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['EVAL', script, '0'],
+    })
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      source: 'lua',
+      argv: ['set', key, 'v'],
+    })
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      source: 'lua',
+      argv: ['get', key],
+    })
+  })
+
+  test('monitors transaction commands once in client order', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const key = `monitor-tx:${randomKey()}`
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('MULTI'))
+    assert.deepStrictEqual(await actor.readRawFrame(), Buffer.from('+OK\r\n'))
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['MULTI'],
+    })
+
+    actor.write(commandFrame('SET', key, 'v'))
+    assert.deepStrictEqual(
+      await actor.readRawFrame(),
+      Buffer.from('+QUEUED\r\n'),
+    )
+
+    actor.write(commandFrame('EXEC'))
+    assert.deepStrictEqual(await actor.readFrame(), ['OK'])
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['SET', key, 'v'],
+    })
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['EXEC'],
     })
   })
 
@@ -161,14 +313,21 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
 
 function assertMonitorLine(
   line: string,
-  expected: { database: number; argv: string[] },
+  expected: { database: number; argv: string[]; source?: string | RegExp },
 ): void {
-  const match = /^(\d+\.\d{6}) \[(\d+) ([^\]]+)\] (.+)$/.exec(line)
+  const match =
+    /^(\d+\.\d{6}) \[(\d+) ((?:\[[^\]]+\]:\d+)|[^\]]+)\] (.+)$/.exec(line)
   assert.ok(match, `unexpected monitor line: ${line}`)
 
   assert.ok(Number.isFinite(Number(match[1])))
   assert.strictEqual(Number(match[2]), expected.database)
-  assert.match(match[3], /^(?:\d{1,3}\.){3}\d{1,3}:\d+$/)
+  if (typeof expected.source === 'string') {
+    assert.strictEqual(match[3], expected.source)
+  } else if (expected.source) {
+    assert.match(match[3], expected.source)
+  } else {
+    assert.match(match[3], /^(?:(?:\d{1,3}\.){3}\d{1,3}|\[[^\]]+\]):\d+$/)
+  }
   assert.deepStrictEqual(parseMonitorArgv(match[4]), expected.argv)
 }
 
@@ -210,6 +369,17 @@ function parseMonitorArgv(text: string): string[] {
   }
 
   return values
+}
+
+function binaryCommandFrame(...items: Array<string | Buffer>): Buffer {
+  const parts = [Buffer.from(`*${items.length}\r\n`)]
+
+  for (const item of items) {
+    const value = Buffer.isBuffer(item) ? item : Buffer.from(item)
+    parts.push(Buffer.from(`$${value.length}\r\n`), value, Buffer.from('\r\n'))
+  }
+
+  return Buffer.concat(parts)
 }
 
 type ClusterSlotsReply = Array<

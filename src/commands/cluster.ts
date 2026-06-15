@@ -3,6 +3,7 @@ import {
   type CommandDefinition,
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
+import { formatHostPort } from '../core/network-address'
 import {
   UnknownClusterSubcommandError,
   WrongNumberOfArgumentsError,
@@ -29,6 +30,9 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
       rest: t.variadic(t.bulk()),
     }),
     flags: ['admin'],
+    monitor: {
+      skip: true,
+    },
     introspection: {
       arity: -2,
       flags: ['admin'],
@@ -245,7 +249,7 @@ function formatNodeLine(
   localNodeId: string,
   configEpoch: number,
 ): string {
-  const connection = `${node.host}:${node.port}@${node.port}`
+  const connection = `${formatHostPort(node.host, node.port)}@${node.port}`
   const myself = node.id === localNodeId ? 'myself,' : ''
   const roleField =
     node.role === 'master' ? 'master -' : `slave ${node.masterId}`

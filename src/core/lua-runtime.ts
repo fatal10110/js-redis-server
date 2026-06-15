@@ -84,8 +84,32 @@ export class RedisLuaRuntime {
       return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
     }
 
-    const result = ctx.executor.executePlanSync(plan, ctx)
+    const result = ctx.executor.executePlanSync(
+      plan,
+      createLuaMonitorContext(ctx),
+    )
     return redisValueToLuaReply(normalizeScriptCommandValue(result.value))
+  }
+}
+
+function createLuaMonitorContext(
+  ctx: RedisExecutionContext,
+): RedisExecutionContext {
+  return {
+    get db() {
+      return ctx.db
+    },
+    server: ctx.server,
+    session: ctx.session,
+    executor: ctx.executor,
+    ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
+    monitor: {
+      ...ctx.monitor,
+      defer: true,
+      clientAddress: 'lua',
+    },
+    signal: ctx.signal,
+    park: ctx.park,
   }
 }
 

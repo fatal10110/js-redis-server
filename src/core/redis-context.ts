@@ -1,6 +1,7 @@
 import type {
   RedisClusterNodeRole,
   RedisDatabase,
+  RedisMonitorCommandEvent,
   RedisServerState,
 } from '../state'
 import type { CommandExecutor } from './command-executor'
@@ -19,6 +20,13 @@ export type ParkHandler = <TValue>(
 ) => Promise<TValue | null>
 
 export type ClientSessionMode = 'normal' | 'transaction' | 'subscribed'
+
+export type RedisMonitorContext = {
+  readonly disabled?: boolean
+  readonly defer?: boolean
+  readonly clientAddress?: string
+  readonly deferredEvents?: RedisMonitorCommandEvent[]
+}
 
 export interface RedisClientSession {
   readonly id: string
@@ -61,6 +69,7 @@ export interface RedisExecutionContext {
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
   readonly nodeRole?: RedisClusterNodeRole
+  readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal
   park: ParkHandler
 }

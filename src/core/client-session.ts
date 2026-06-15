@@ -7,6 +7,7 @@ import {
   type ParkRequest,
   type RedisClientSession,
   type RedisExecutionContext,
+  type RedisMonitorContext,
 } from './redis-context'
 import { RedisCommandError } from './redis-error'
 import { RedisResult } from './redis-result'
@@ -623,15 +624,7 @@ export class ClientSession implements RedisClientSession {
     this.activeTurnAccess = turnAccess
     try {
       const ctx = this.createExecutionContext(turnAccess)
-      const execution = await this.executor.executeRawWithPlan(
-        rawCommand,
-        rawArgs,
-        ctx,
-      )
-      if (execution.plan && shouldPublishMonitorResult(execution.result)) {
-        this.publishMonitorEvent(rawCommand, rawArgs, this.selectedDatabaseId)
-      }
-      return execution.result
+      return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
       this.activeTurnAccess = undefined
       turn?.release()
@@ -648,6 +641,7 @@ export class ClientSession implements RedisClientSession {
   createExecutionContext(
     turnAccess?: TurnAccess,
     parkOverride?: ParkHandler,
+    monitor?: RedisMonitorContext,
   ): RedisExecutionContext {
     // `db` is a live getter, not a snapshot: a queued `SELECT N` runs mid-EXEC
     // and updates `selectedDatabaseId`, so every command must resolve the
@@ -662,6 +656,7 @@ export class ClientSession implements RedisClientSession {
       session: this,
       executor: this.executor,
       ...(this.nodeRole ? { nodeRole: this.nodeRole } : {}),
+      ...(monitor ? { monitor } : {}),
       signal: this.signal,
       park:
         parkOverride ??
@@ -762,30 +757,6 @@ export class ClientSession implements RedisClientSession {
       waiter()
     }
   }
-
-  private publishMonitorEvent(
-    rawCommand: Buffer | string,
-    rawArgs: readonly Buffer[],
-    database: number,
-  ): void {
-    if (this.server.monitorFeed.subscriberCount === 0) {
-      return
-    }
-
-    const command = monitorCommandBuffer(rawCommand)
-    if (equalsAscii(command, 'monitor')) {
-      return
-    }
-
-    this.server.monitorFeed.publish({
-      timestampMs: Date.now(),
-      database,
-      clientId: this.id,
-      clientAddress: this.clientAddress,
-      command,
-      args: rawArgs.map(arg => Buffer.from(arg)),
-    })
-  }
 }
 
 function watchId(database: number, key: Buffer): string {
@@ -804,22 +775,4 @@ function createAbortError(): Error {
   const err = new Error('The operation was aborted')
   err.name = 'AbortError'
   return err
-}
-
-function monitorCommandBuffer(rawCommand: Buffer | string): Buffer {
-  return typeof rawCommand === 'string'
-    ? Buffer.from(rawCommand)
-    : Buffer.from(rawCommand)
-}
-
-function shouldPublishMonitorResult(result: ExecutorResult): boolean {
-  if (!(result instanceof RedisResult)) {
-    return true
-  }
-
-  return result.value.kind !== 'error' || result.value.code !== 'MOVED'
-}
-
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
 }

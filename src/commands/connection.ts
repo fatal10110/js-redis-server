@@ -316,6 +316,38 @@ function parseHelloOptions(
   return { pendingName }
 }
 
+function redactAllMonitorArgs(args: readonly Buffer[]): Buffer[] {
+  return args.map(redactedMonitorArg)
+}
+
+function redactHelloMonitorArgs(rawArgs: readonly Buffer[]): Buffer[] {
+  const args = rawArgs.map(arg => Buffer.from(arg))
+  for (let i = 0; i < args.length; i++) {
+    if (!equalsAscii(args[i], 'auth')) {
+      continue
+    }
+
+    redactMonitorArgAt(args, i + 1)
+    redactMonitorArgAt(args, i + 2)
+    i += 2
+  }
+  return args
+}
+
+function redactMonitorArgAt(args: Buffer[], index: number): void {
+  if (index < args.length) {
+    args[index] = redactedMonitorArg()
+  }
+}
+
+function redactedMonitorArg(): Buffer {
+  return Buffer.from('(redacted)')
+}
+
+function equalsAscii(value: Buffer, expected: string): boolean {
+  return value.toString().toLowerCase() === expected
+}
+
 export const pingCommand = defineCommand({
   name: 'ping',
   schema: t.object({
@@ -465,7 +497,10 @@ export const helloCommand = defineCommand({
     version: t.optional(t.integer({ min: 2, max: 3 })),
     args: t.variadic(t.bulk()),
   }),
-  flags: ['admin', 'noscript'],
+  flags: ['noscript'],
+  monitor: {
+    redactArgs: redactHelloMonitorArgs,
+  },
   keys: () => [],
   execute: (args, ctx) => {
     const version =
@@ -513,7 +548,10 @@ export const authCommand = defineCommand({
   schema: t.object({
     args: t.variadic(t.bulk()),
   }),
-  flags: ['admin', 'noscript'],
+  flags: ['noscript'],
+  monitor: {
+    redactArgs: redactAllMonitorArgs,
+  },
   keys: () => [],
   execute: (args, ctx) => {
     if (args.args.length !== 1 && args.args.length !== 2) {

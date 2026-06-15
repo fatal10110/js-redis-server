@@ -11,6 +11,9 @@ export const monitorCommand = defineCommand({
   name: 'monitor',
   schema: t.object({}),
   flags: ['admin', 'noscript'],
+  monitor: {
+    skip: true,
+  },
   introspection: {
     arity: 1,
     flags: ['admin', 'noscript', 'loading', 'stale'],
@@ -140,6 +143,16 @@ function formatMonitorArgument(value: Buffer): string {
       continue
     }
 
+    if (byte === BELL) {
+      result += '\\a'
+      continue
+    }
+
+    if (byte === BACKSPACE) {
+      result += '\\b'
+      continue
+    }
+
     if (byte >= 0x20 && byte <= 0x7e) {
       result += String.fromCharCode(byte)
       continue
@@ -177,7 +190,9 @@ function waitForFrame(
   })
 }
 
+const BACKSPACE = '\b'.charCodeAt(0)
 const BACKSLASH = '\\'.charCodeAt(0)
+const BELL = '\u0007'.charCodeAt(0)
 const CARRIAGE_RETURN = '\r'.charCodeAt(0)
 const DOUBLE_QUOTE = '"'.charCodeAt(0)
 const LINE_FEED = '\n'.charCodeAt(0)
