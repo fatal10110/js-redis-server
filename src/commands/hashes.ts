@@ -1,5 +1,5 @@
 import { defineCommand } from '../core/command-definition'
-import { t, type ParseContext } from '../core/command-schema'
+import { isIntegerToken, t, type ParseContext } from '../core/command-schema'
 import {
   HashValueNotFloatError,
   HashValueNotIntegerError,
@@ -326,7 +326,7 @@ export const hincrbyCommand = defineCommand({
       let current = 0
       if (entry) {
         const raw = entry.value.toString()
-        if (!/^-?\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+        if (!isIntegerToken(raw) || !Number.isSafeInteger(Number(raw))) {
           throw new HashValueNotIntegerError()
         }
         current = Number(raw)
