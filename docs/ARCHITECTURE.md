@@ -349,10 +349,9 @@ carries a `park` handler
 ([`createDefaultParkHandler`](../src/core/redis-context.ts#L47)): a command can
 release its turn while waiting on something, then re-acquire one with priority
 once it resolves — without deadlocking the queue. This is the plumbing the
-[refactor](../src/core/redis-context.ts) was designed around for future
-blocking commands (`BLPOP`, `WAIT`, `XREAD BLOCK`, ...); no shipped command
-uses it yet, but the contract already exists so adding one won't require
-touching the session or queue.
+[refactor](../src/core/redis-context.ts) was designed around for blocking
+commands. `BLPOP`, `BRPOP`, `BLMOVE`, `BLMPOP`, and `XREAD BLOCK` use this
+contract without special session or queue code.
 
 ## Protocol & transports (RESP2 / RESP3)
 

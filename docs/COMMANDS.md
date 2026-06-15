@@ -212,11 +212,12 @@ with `GT` or `LT`.
 - [x] `BLPOP key [key ...] timeout` - Blocking left pop
 - [x] `BRPOP key [key ...] timeout` - Blocking right pop
 - [x] `BLMOVE source destination LEFT | RIGHT LEFT | RIGHT timeout` - Blocking variant of `LMOVE`
+- [x] `LMPOP numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Pop from the first non-empty list
+- [x] `BLMPOP timeout numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Blocking variant of `LMPOP`
 
 #### Not implemented
 
 - [ ] `LINSERT`
-- [ ] `LMPOP` / `BLMPOP`
 
 ## 7. Set Commands
 

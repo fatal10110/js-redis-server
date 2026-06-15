@@ -69,6 +69,7 @@ export { CommandRegistry } from './core/command-registry'
 export { defineCommand } from './core/command-definition'
 export { t, parseCommandArgs } from './core/command-schema'
 export {
+  CountGreaterThanZeroError,
   ExpectedFloatError,
   ExpectedIntegerError,
   DiscardWithoutMultiError,
