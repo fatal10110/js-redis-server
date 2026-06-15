@@ -11,6 +11,8 @@ import {
   NoSuchKeyError,
   PositiveCountError,
   RedisSyntaxError,
+  TimeoutNegativeError,
+  TimeoutNotFloatError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import type { RedisExecutionContext } from '../core/redis-context'
@@ -464,6 +466,38 @@ function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
   })
 }
 
+// Non-blocking LMOVE core. Returns a bulk-string result on success, or `null`
+// when the source is empty/missing (the caller decides whether to block).
+function tryListMove(
+  source: Buffer,
+  destination: Buffer,
+  fromDirection: 'left' | 'right',
+  toDirection: 'left' | 'right',
+  db: RedisDatabase,
+): RedisResult | null {
+  const sourceList = db.getList(source)
+  if (!sourceList || sourceList.values.length === 0) return null
+
+  // Validate destination type before mutating the source
+  db.getList(destination)
+
+  const popped = db.updateList(source, list => {
+    const value =
+      (fromDirection === 'left' ? list.values.shift() : list.values.pop()) ??
+      null
+    return { value, empty: list.values.length === 0 }
+  })
+  if (popped.empty) db.delete(source)
+  if (popped.value === null) return null
+
+  db.updateList(destination, list => {
+    if (toDirection === 'left') list.values.unshift(popped.value!)
+    else list.values.push(popped.value!)
+  })
+
+  return bulk(popped.value)
+}
+
 export const lmoveCommand = defineCommand({
   name: 'lmove',
   schema: t.object({
@@ -474,30 +508,14 @@ export const lmoveCommand = defineCommand({
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.source, args.destination],
-  execute: (args, ctx) => {
-    const sourceList = ctx.db.getList(args.source)
-    if (!sourceList || sourceList.values.length === 0) return bulk(null)
-
-    // Validate destination type before mutating the source
-    ctx.db.getList(args.destination)
-
-    const popped = ctx.db.updateList(args.source, list => {
-      const value =
-        (args.fromDirection === 'left'
-          ? list.values.shift()
-          : list.values.pop()) ?? null
-      return { value, empty: list.values.length === 0 }
-    })
-    if (popped.empty) ctx.db.delete(args.source)
-    if (popped.value === null) return bulk(null)
-
-    ctx.db.updateList(args.destination, list => {
-      if (args.toDirection === 'left') list.values.unshift(popped.value!)
-      else list.values.push(popped.value!)
-    })
-
-    return bulk(popped.value)
-  },
+  execute: (args, ctx) =>
+    tryListMove(
+      args.source,
+      args.destination,
+      args.fromDirection,
+      args.toDirection,
+      ctx.db,
+    ) ?? bulk(null),
 })
 
 function tryListPop(
@@ -612,6 +630,123 @@ export const brpopCommand = defineCommand({
   },
 })
 
+function parseMoveDirection(token: Buffer | undefined): 'left' | 'right' {
+  if (!token) throw new RedisSyntaxError()
+  const direction = token.toString().toUpperCase()
+  if (direction === 'LEFT') return 'left'
+  if (direction === 'RIGHT') return 'right'
+  throw new RedisSyntaxError()
+}
+
+function parseTimeout(token: Buffer): number {
+  const value = Number(token.toString())
+  if (isNaN(value)) throw new TimeoutNotFloatError()
+  if (value < 0) throw new TimeoutNegativeError()
+  return value
+}
+
+async function blockingListMove(
+  source: Buffer,
+  destination: Buffer,
+  fromDirection: 'left' | 'right',
+  toDirection: 'left' | 'right',
+  timeoutSecs: number,
+  ctx: RedisExecutionContext,
+): Promise<RedisResult> {
+  const timeoutMs =
+    timeoutSecs === 0 ? undefined : Math.ceil(timeoutSecs * 1000)
+  const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined
+
+  while (true) {
+    const remaining =
+      deadline !== undefined ? Math.max(0, deadline - Date.now()) : undefined
+    // BLMOVE/BRPOPLPUSH reply with a null array (`*-1`) on timeout, unlike the
+    // bulk-string reply on success.
+    if (remaining === 0) return RedisResult.create(RedisValue.nullArray())
+
+    let wake!: (v: true) => void
+    const waitFor = new Promise<true>(resolve => {
+      wake = () => resolve(true)
+    })
+
+    const unsub = ctx.db.subscribeKey(source, event => {
+      if (event.type === 'write') wake(true)
+    })
+
+    let woken: boolean | null
+    try {
+      woken = await ctx.park({
+        waitFor,
+        timeoutMs: remaining,
+        signal: ctx.signal,
+      })
+    } finally {
+      try {
+        unsub()
+      } catch {
+        // ignore unsubscribe errors so cleanup always completes
+      }
+    }
+
+    if (woken === null) return RedisResult.create(RedisValue.nullArray())
+
+    const result = tryListMove(
+      source,
+      destination,
+      fromDirection,
+      toDirection,
+      ctx.db,
+    )
+    if (result) return result
+  }
+}
+
+type BlmoveArgs = {
+  source: Buffer
+  destination: Buffer
+  fromDirection: 'left' | 'right'
+  toDirection: 'left' | 'right'
+  timeout: number
+}
+
+export const blmoveCommand = defineCommand({
+  name: 'blmove',
+  schema: t.custom<BlmoveArgs>((input, index, ctx) => {
+    if (input.length - index !== 5) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+    const source = input[index]
+    const destination = input[index + 1]
+    const fromDirection = parseMoveDirection(input[index + 2])
+    const toDirection = parseMoveDirection(input[index + 3])
+    const timeout = parseTimeout(input[index + 4])
+    return {
+      value: { source, destination, fromDirection, toDirection, timeout },
+      nextIndex: input.length,
+    }
+  }),
+  flags: ['write', 'noscript'],
+  keys: args => [args.source, args.destination],
+  execute: (args, ctx) => {
+    const immediate = tryListMove(
+      args.source,
+      args.destination,
+      args.fromDirection,
+      args.toDirection,
+      ctx.db,
+    )
+    if (immediate) return immediate
+    return blockingListMove(
+      args.source,
+      args.destination,
+      args.fromDirection,
+      args.toDirection,
+      args.timeout,
+      ctx,
+    )
+  },
+})
+
 export const listsCommands = [
   lpushCommand,
   rpushCommand,
@@ -628,6 +763,7 @@ export const listsCommands = [
   rpoplpushCommand,
   lposCommand,
   lmoveCommand,
+  blmoveCommand,
   blpopCommand,
   brpopCommand,
 ]

@@ -144,6 +144,7 @@ export {
 } from './scan'
 export {
   listsCommands,
+  blmoveCommand,
   blpopCommand,
   brpopCommand,
   lindexCommand,
