@@ -137,7 +137,7 @@ graph TD
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
 | **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
-| **State**     | In-memory keyspace, mutation events, cluster topology, script cache, pub/sub, monitor feed                         | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts), [`RedisKeyspace`](../src/state/keyspace.ts)                                                                                                                                                                                       |
+| **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts), [`RedisKeyspace`](../src/state/keyspace.ts)                                                                                                                                                                                       |
 
 Commands never touch the transport — they return a `RedisResult` (or a
 `ResponseStream` for push-style replies) and let the executor/session/adapter
@@ -316,11 +316,11 @@ flowchart LR
 is server-wide rather than per-DB: the cluster topology, the Lua
 [`RedisScriptCache`](../src/state/script-cache.ts) (so `FLUSHALL`/`FLUSHDB`
 clear keyspace data but **not** cached scripts — only `SCRIPT FLUSH` does),
-and the [`RedisPubSubBroker`](../src/state/pubsub-broker.ts) used by client
-Pub/Sub commands for channel and pattern fan-out within that server state, plus
-the [`RedisMonitorFeed`](../src/state/monitor-feed.ts) used by `MONITOR` to
-fan out cloned command events without any command writing directly to a
-transport.
+a registry of connected client sessions for `CLIENT LIST`, and the
+[`RedisPubSubBroker`](../src/state/pubsub-broker.ts) used by client Pub/Sub
+commands for channel and pattern fan-out within that server state, plus the
+[`RedisMonitorFeed`](../src/state/monitor-feed.ts) used by `MONITOR` to fan out
+cloned command events without any command writing directly to a transport.
 
 Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 `Map<keyId, KeyspaceEntry>` holding byte-safe `Buffer` keys and typed

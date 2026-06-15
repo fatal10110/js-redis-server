@@ -5,6 +5,7 @@ import { TestRunner } from '../test-config'
 import {
   commandFrame,
   connectToSlotOwner,
+  eventually,
   errorWithMessage,
   randomKey,
 } from '../utils'
@@ -63,6 +64,39 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
 
     const list = (await directClient?.call('CLIENT', 'LIST')) as string
     assert.match(list, new RegExp(`name=${name}`))
+  })
+
+  test('CLIENT LIST reports all active clients on the connected node', async () => {
+    const key = `{client-list:${randomKey()}}:probe`
+    const primary = await connectToSlotOwner(redisClient!, key)
+    const secondary = await connectToSlotOwner(redisClient!, key)
+    const primaryName = `primary-${randomKey()}`
+    const secondaryName = `secondary-${randomKey()}`
+
+    try {
+      assert.strictEqual(
+        await primary.call('CLIENT', 'SETNAME', primaryName),
+        'OK',
+      )
+      assert.strictEqual(
+        await secondary.call('CLIENT', 'SETNAME', secondaryName),
+        'OK',
+      )
+
+      const list = (await primary.call('CLIENT', 'LIST')) as string
+      assert.match(list, new RegExp(`name=${primaryName}`))
+      assert.match(list, new RegExp(`name=${secondaryName}`))
+
+      secondary.disconnect()
+      await eventually(async () => {
+        const updated = (await primary.call('CLIENT', 'LIST')) as string
+        assert.match(updated, new RegExp(`name=${primaryName}`))
+        assert.doesNotMatch(updated, new RegExp(`name=${secondaryName}`))
+      })
+    } finally {
+      primary.disconnect()
+      secondary.disconnect()
+    }
   })
 
   test('HELLO can set the connection name and reports cluster mode', async () => {
