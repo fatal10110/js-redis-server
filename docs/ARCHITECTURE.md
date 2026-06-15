@@ -62,6 +62,8 @@ client command resolves to a valid command plan, `ClientSession` publishes a
 cloned command event to the server-level monitor feed when `MONITOR` clients are
 listening. Unknown commands and arity/syntax failures are skipped; execution
 errors from successfully planned commands are still published, matching Redis.
+Cluster `MOVED` redirects are skipped because the command is not executed on
+that node.
 
 ## Layers
 

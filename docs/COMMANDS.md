@@ -56,7 +56,8 @@ server-level command event feed. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
 arguments. Unknown commands and arity/syntax failures are not emitted; commands
 that parse successfully but return execution errors are emitted, matching Redis.
-`MONITOR` is flagged `noscript` and is rejected from Lua.
+Cluster `MOVED` redirects are not emitted because the command is not executed on
+that node. `MONITOR` is flagged `noscript` and is rejected from Lua.
 
 #### COMMAND
 

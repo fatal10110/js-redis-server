@@ -1,5 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
+import type { Cluster } from 'ioredis'
+import clusterKeySlot from 'cluster-key-slot'
 import { TestRunner } from '../test-config'
 import { commandFrame, randomKey } from '../utils'
 import {
@@ -27,8 +29,8 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     await testRunner.cleanup()
   })
 
-  async function connect(): Promise<RawRedisConnection> {
-    const connection = await RawRedisConnection.connect('127.0.0.1', port)
+  async function connect(targetPort = port): Promise<RawRedisConnection> {
+    const connection = await RawRedisConnection.connect('127.0.0.1', targetPort)
     connections.push(connection)
     return connection
   }
@@ -118,6 +120,28 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('skips cluster commands redirected with MOVED', async () => {
+    const cluster = await testRunner.setupIoredisCluster('monitor-moved')
+    const directPort = testRunner.getClusterPorts()[0]
+    assert.notStrictEqual(directPort, undefined)
+    const remoteKey = await findKeyNotOwnedByPort(cluster, directPort!)
+    const monitor = await connect(directPort)
+    const actor = await connect(directPort)
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('GET', remoteKey))
+    assert.match(respText(await actor.readFrame()), /^MOVED\b/)
+
+    actor.write(commandFrame('PING'))
+    assert.deepStrictEqual(await actor.readRawFrame(), Buffer.from('+PONG\r\n'))
+    assertMonitorLine(respText(await monitor.readFrame()), {
+      database: 0,
+      argv: ['PING'],
+    })
+  })
+
   test('rejects invalid MONITOR arity and Lua usage', async () => {
     const conn = await connect()
 
@@ -186,4 +210,38 @@ function parseMonitorArgv(text: string): string[] {
   }
 
   return values
+}
+
+type ClusterSlotsReply = Array<
+  [min: number, max: number, master: [host: string, port: number]]
+>
+
+async function findKeyNotOwnedByPort(
+  cluster: Cluster,
+  port: number,
+): Promise<string> {
+  const slots = (await cluster.cluster('SLOTS')) as ClusterSlotsReply
+
+  for (let i = 0; i < 10_000; i++) {
+    const key = `{monitor-moved-${i}}`
+    const owner = findSlotOwner(slots, clusterKeySlot(key))
+    if (owner?.[1] !== port) {
+      return key
+    }
+  }
+
+  assert.fail(`Could not find a key outside port ${port}`)
+}
+
+function findSlotOwner(
+  slots: ClusterSlotsReply,
+  slot: number,
+): [host: string, port: number] | undefined {
+  for (const [min, max, master] of slots) {
+    if (slot >= min && slot <= max) {
+      return master
+    }
+  }
+
+  return undefined
 }

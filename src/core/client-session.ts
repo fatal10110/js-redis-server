@@ -628,7 +628,7 @@ export class ClientSession implements RedisClientSession {
         rawArgs,
         ctx,
       )
-      if (execution.plan) {
+      if (execution.plan && shouldPublishMonitorResult(execution.result)) {
         this.publishMonitorEvent(rawCommand, rawArgs, this.selectedDatabaseId)
       }
       return execution.result
@@ -810,6 +810,14 @@ function monitorCommandBuffer(rawCommand: Buffer | string): Buffer {
   return typeof rawCommand === 'string'
     ? Buffer.from(rawCommand)
     : Buffer.from(rawCommand)
+}
+
+function shouldPublishMonitorResult(result: ExecutorResult): boolean {
+  if (!(result instanceof RedisResult)) {
+    return true
+  }
+
+  return result.value.kind !== 'error' || result.value.code !== 'MOVED'
 }
 
 function equalsAscii(value: Buffer, expected: string): boolean {
