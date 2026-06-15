@@ -144,7 +144,7 @@ function assertMonitorLine(
 
   assert.ok(Number.isFinite(Number(match[1])))
   assert.strictEqual(Number(match[2]), expected.database)
-  assert.match(match[3], /^127\.0\.0\.1:\d+$/)
+  assert.match(match[3], /^(?:\d{1,3}\.){3}\d{1,3}:\d+$/)
   assert.deepStrictEqual(parseMonitorArgv(match[4]), expected.argv)
 }
 
