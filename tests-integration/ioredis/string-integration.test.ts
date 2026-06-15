@@ -378,17 +378,46 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
   test('String numeric and expiration errors match Redis', async () => {
     const tag = `{string-errors:${randomKey()}}`
     const stringKey = `${tag}:string`
+    const leadingZeroKey = `${tag}:leading-zero`
+    const negativeLeadingZeroKey = `${tag}:negative-leading-zero`
+    const zeroKey = `${tag}:zero`
+    const negativeZeroKey = `${tag}:negative-zero`
     const directClient = await connectToSlotOwner(redisClient!, stringKey)
 
     try {
       await directClient.set(stringKey, 'not-a-number')
+      await directClient.set(leadingZeroKey, '007')
+      await directClient.set(negativeLeadingZeroKey, '-01')
+      await directClient.set(zeroKey, '0')
+      await directClient.set(negativeZeroKey, '-0')
 
       await assert.rejects(
         () => directClient.incr(stringKey),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
+        () => directClient.incr(leadingZeroKey),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient.decr(negativeLeadingZeroKey),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      assert.strictEqual(await directClient.incr(zeroKey), 1)
+      await assert.rejects(
+        () => directClient.incr(negativeZeroKey),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
         () => directClient.call('INCRBY', stringKey, 'abc'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient.call('INCRBY', stringKey, '01'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient.call('DECRBY', stringKey, '-01'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
@@ -404,6 +433,16 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage("ERR invalid expire time in 'setex' command"),
       )
       await assert.rejects(
+        () =>
+          directClient.call(
+            'SETEX',
+            `${tag}:setex-leading-zero`,
+            '01',
+            'value',
+          ),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
         () => directClient.call('PSETEX', `${tag}:psetex`, '0', 'value'),
         errorWithMessage("ERR invalid expire time in 'psetex' command"),
       )
@@ -416,7 +455,16 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR syntax error'),
       )
     } finally {
-      await directClient.del(stringKey, `${tag}:setex`, `${tag}:psetex`)
+      await directClient.del(
+        stringKey,
+        leadingZeroKey,
+        negativeLeadingZeroKey,
+        zeroKey,
+        negativeZeroKey,
+        `${tag}:setex`,
+        `${tag}:setex-leading-zero`,
+        `${tag}:psetex`,
+      )
       directClient.disconnect()
     }
   })

@@ -364,7 +364,17 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
 
     try {
       await redisClient?.set(stringKey, 'value')
-      await redisClient?.hset(hashKey, 'integer', 'abc', 'float', 'abc')
+      await redisClient?.hset(
+        hashKey,
+        'integer',
+        'abc',
+        'float',
+        'abc',
+        'leading-zero',
+        '007',
+        'negative-zero',
+        '-0',
+      )
 
       await assert.rejects(
         () => redisClient?.hget(stringKey, 'field'),
@@ -381,7 +391,19 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
+        () => redisClient?.call('HINCRBY', hashKey, 'integer', '01'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
         () => redisClient?.hincrby(hashKey, 'integer', 1),
+        errorWithMessage('ERR hash value is not an integer'),
+      )
+      await assert.rejects(
+        () => redisClient?.hincrby(hashKey, 'leading-zero', 1),
+        errorWithMessage('ERR hash value is not an integer'),
+      )
+      await assert.rejects(
+        () => redisClient?.hincrby(hashKey, 'negative-zero', 1),
         errorWithMessage('ERR hash value is not an integer'),
       )
       await assert.rejects(
