@@ -73,6 +73,26 @@ export class PositiveCountError extends RedisCommandError {
   }
 }
 
+export class LposRankZeroError extends RedisCommandError {
+  constructor() {
+    super(
+      "RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list",
+    )
+  }
+}
+
+export class LposCountNegativeError extends RedisCommandError {
+  constructor() {
+    super("COUNT can't be negative")
+  }
+}
+
+export class LposMaxlenNegativeError extends RedisCommandError {
+  constructor() {
+    super("MAXLEN can't be negative")
+  }
+}
+
 export class ZaddNxXxConflictError extends RedisCommandError {
   constructor() {
     super('XX and NX options at the same time are not compatible')
