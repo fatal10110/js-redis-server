@@ -32,6 +32,8 @@ type InferShape<TShape extends SchemaShape> = {
   [K in keyof TShape]: InferSchema<TShape[K]>
 }
 
+const INTEGER_TOKEN_PATTERN = /^(0|-?[1-9]\d*)$/
+
 class MissingInputError extends Error {
   constructor() {
     super('missing input')
@@ -82,6 +84,10 @@ function keywordMatches(actual: Buffer, expected: string): boolean {
   return actual.toString().toUpperCase() === expected.toUpperCase()
 }
 
+export function isIntegerToken(raw: string): boolean {
+  return INTEGER_TOKEN_PATTERN.test(raw)
+}
+
 function makeSchema<TValue>(
   parse: CommandSchema<TValue>['parse'],
 ): CommandSchema<TValue> {
@@ -114,7 +120,7 @@ export const t = {
   integer(options?: { min?: number; max?: number }): CommandSchema<number> {
     return makeSchema((input, index) => {
       const raw = readToken(input, index).toString()
-      if (!/^-?\d+$/.test(raw)) {
+      if (!isIntegerToken(raw)) {
         throw new ExpectedIntegerError()
       }
 
@@ -138,7 +144,7 @@ export const t = {
   bigInteger(options?: { min?: bigint; max?: bigint }): CommandSchema<bigint> {
     return makeSchema((input, index) => {
       const raw = readToken(input, index).toString()
-      if (!/^-?\d+$/.test(raw)) {
+      if (!isIntegerToken(raw)) {
         throw new ExpectedIntegerError()
       }
 

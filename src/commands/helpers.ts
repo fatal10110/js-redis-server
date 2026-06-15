@@ -1,5 +1,6 @@
 import { RedisValue } from '../core/redis-value'
 import { RedisResult } from '../core/redis-result'
+import { isIntegerToken } from '../core/command-schema'
 import {
   ExpectedIntegerError,
   InvalidExpireTimeError,
@@ -66,7 +67,7 @@ export function ttlMilliseconds(expiresAt: number): number {
 
 export function parseIntegerToken(token: Buffer): number {
   const raw = token.toString()
-  if (!/^-?\d+$/.test(raw)) {
+  if (!isIntegerToken(raw)) {
     throw new ExpectedIntegerError()
   }
 
