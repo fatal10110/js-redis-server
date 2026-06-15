@@ -1,6 +1,7 @@
 import type {
   RedisClusterNodeRole,
   RedisDatabase,
+  RedisMonitorCommandEvent,
   RedisServerState,
 } from '../state'
 import type { CommandExecutor } from './command-executor'
@@ -20,8 +21,16 @@ export type ParkHandler = <TValue>(
 
 export type ClientSessionMode = 'normal' | 'transaction' | 'subscribed'
 
+export type RedisMonitorContext = {
+  readonly disabled?: boolean
+  readonly defer?: boolean
+  readonly clientAddress?: string
+  readonly deferredEvents?: RedisMonitorCommandEvent[]
+}
+
 export interface RedisClientSession {
   readonly id: string
+  readonly clientAddress?: string
   readonly selectedDatabase: number
   readonly mode: ClientSessionMode
   readonly protocolVersion: RespVersion
@@ -50,6 +59,8 @@ export interface RedisClientSession {
   subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
   unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
+  registerResponseStreamCleanup(cleanup: () => void): () => void
+  resetResponseStreams(): void
 }
 
 export interface RedisExecutionContext {
@@ -58,6 +69,7 @@ export interface RedisExecutionContext {
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
   readonly nodeRole?: RedisClusterNodeRole
+  readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal
   park: ParkHandler
 }

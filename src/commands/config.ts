@@ -132,6 +132,9 @@ export const configCommand = defineCommand({
     args: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
+  monitor: {
+    skip: true,
+  },
   introspection: {
     arity: -2,
     flags: [],

@@ -154,6 +154,29 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('COMMAND DOCS argument flags use RESP status strings for redis-cli', async () => {
+    const port = testRunner.getClusterPorts()[0]
+    assert.notStrictEqual(port, undefined)
+    const connection = await RawRedisConnection.connect('127.0.0.1', port!)
+
+    try {
+      connection.write(commandFrame('COMMAND', 'DOCS', 'MGET'))
+      const reply = await connection.readFrame()
+      assert.ok(Array.isArray(reply))
+
+      const docs = resp2MapGet(reply, 'mget')
+      assert.ok(Array.isArray(docs))
+      const args = resp2MapGet(docs, 'arguments')
+      assert.ok(Array.isArray(args))
+      assert.ok(Array.isArray(args[0]))
+
+      const flags = resp2MapGet(args[0], 'flags')
+      assert.deepStrictEqual(flags, ['multiple'])
+    } finally {
+      connection.close()
+    }
+  })
+
   test('COMMAND GETKEYS and GETKEYSANDFLAGS use command key extraction', async () => {
     const tag = '{command-getkeys}'
     const keys = [`${tag}:a`, `${tag}:b`, `${tag}:c`]
@@ -240,4 +263,14 @@ function assertMapEntry(
   const index = values.indexOf(key)
   assert.notStrictEqual(index, -1)
   assert.strictEqual(values[index + 1], expected)
+}
+
+function resp2MapGet(values: unknown[], key: string): unknown {
+  for (let i = 0; i < values.length; i += 2) {
+    if (respText(values[i]) === key) {
+      return values[i + 1]
+    }
+  }
+
+  assert.fail(`Missing RESP2 map key ${key}`)
 }

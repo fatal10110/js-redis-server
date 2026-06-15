@@ -4,6 +4,7 @@ import type { CommandExecutor } from '../../command-executor'
 import type { Logger } from '../../../logger'
 import type { RedisClusterNodeRole, RedisServerState } from '../../../state'
 import type { RespEncodeOptions } from '../../resp-encoder'
+import { formatHostPort, formatSocketAddressParts } from '../../network-address'
 import { SocketConnectionTransport } from '../socket-connection-transport'
 import { Resp2SessionAdapter } from './session-adapter'
 
@@ -72,7 +73,7 @@ export class Resp2Server {
       throw new Error('Server not listening')
     }
     const info = address as AddressInfo
-    return `127.0.0.1:${info.port}`
+    return formatHostPort('127.0.0.1', info.port)
   }
 
   getPort(): number {
@@ -89,6 +90,10 @@ export class Resp2Server {
       server: this.state,
       executor: this.executor,
       nodeRole: this.nodeRole,
+      clientAddress: formatSocketAddressParts(
+        socket.remoteAddress,
+        socket.remotePort,
+      ),
     })
     const adapter = new Resp2SessionAdapter({
       transport,
