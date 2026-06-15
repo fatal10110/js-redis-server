@@ -3,6 +3,8 @@ import assert from 'node:assert'
 import {
   connectionCommands,
   InMemoryConnectionTransport,
+  isResponseStream,
+  monitorCommand,
   RedisResult,
   RedisValue,
   Resp2SessionAdapter,
@@ -141,6 +143,48 @@ describe('new foundation commands', () => {
     assert.match(list.value.value.toString(), /(?:^| )psub=1(?: |\n)/)
 
     session.close()
+  })
+
+  test('MONITOR returns a stream and unsubscribes when closed', async () => {
+    const { session, server } = createSession()
+    const result = await session.execute('monitor', [])
+
+    assert.ok(isResponseStream(result))
+    assert.strictEqual(server.monitorFeed.subscriberCount, 1)
+
+    const iterator = result
+      .frames(new AbortController().signal)
+      [Symbol.asyncIterator]()
+    assert.deepStrictEqual(await iterator.next(), {
+      done: false,
+      value: RedisResult.ok(),
+    })
+
+    result.close('test complete')
+    await result.closed
+    assert.deepStrictEqual(await iterator.next(), {
+      done: true,
+      value: undefined,
+    })
+    assert.strictEqual(server.monitorFeed.subscriberCount, 0)
+
+    assert.strictEqual(monitorCommand.name, 'monitor')
+  })
+
+  test('RESET closes active MONITOR streams', async () => {
+    const { session, server } = createSession()
+    const result = await session.execute('monitor', [])
+
+    assert.ok(isResponseStream(result))
+    assert.strictEqual(server.monitorFeed.subscriberCount, 1)
+
+    assert.deepStrictEqual(
+      await session.execute('reset', []),
+      RedisResult.create(RedisValue.simpleString('RESET')),
+    )
+    await result.closed
+
+    assert.strictEqual(server.monitorFeed.subscriberCount, 0)
   })
 
   test('implements SET condition, GET, expiration, and KEEPTTL options', async () => {

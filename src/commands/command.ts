@@ -461,7 +461,7 @@ function formatDocsArgument(arg: CommandDocumentationArgument): RedisValue {
   if (arg.flags) {
     entries.push([
       bulkString('flags'),
-      RedisValue.array(arg.flags.map(bulkString)),
+      RedisValue.array(arg.flags.map(simpleString)),
     ])
   }
 
@@ -535,6 +535,10 @@ function equalsAscii(value: Buffer, expected: string): boolean {
 
 function bulkString(value: string): RedisValue {
   return bulk(Buffer.from(value))
+}
+
+function simpleString(value: string): RedisValue {
+  return RedisValue.simpleString(value)
 }
 
 function bulk(value: Buffer | null): RedisValue {

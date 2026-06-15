@@ -47,6 +47,22 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
   - [x] `default` / `all` - returns the default section set
   - [ ] Real per-command/error/latency stats are not tracked
 
+#### MONITOR
+
+- [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
+
+`MONITOR` is implemented as a long-lived `ResponseStream` backed by a
+server-level command event feed. Monitor lines include an epoch timestamp, the
+selected DB, the client address/identity when available, and quoted command
+arguments. Unknown commands and arity/syntax failures are not emitted; commands
+that parse successfully but return execution errors are emitted, matching Redis.
+Cluster redirects and pre-execution cluster errors are not emitted because the
+command is not executed on that node. Commands with monitor skip metadata are
+skipped, authentication credentials are redacted, commands replayed by `EXEC` are
+emitted once when the transaction runs, and Lua `redis.call` / `redis.pcall`
+commands are emitted with the `lua` source. `MONITOR` is flagged `noscript` and
+is rejected from Lua.
+
 #### COMMAND
 
 - [x] `COMMAND` - Return details for commands in the active registry
@@ -217,7 +233,6 @@ with `GT` or `LT`.
 - [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
 - [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
-
 
 ## 8. Sorted Set Commands
 

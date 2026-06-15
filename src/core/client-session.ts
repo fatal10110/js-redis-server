@@ -7,6 +7,7 @@ import {
   type ParkRequest,
   type RedisClientSession,
   type RedisExecutionContext,
+  type RedisMonitorContext,
 } from './redis-context'
 import { RedisCommandError } from './redis-error'
 import { RedisResult } from './redis-result'
@@ -22,6 +23,7 @@ import type {
 
 export type ClientSessionOptions = {
   id?: string
+  clientAddress?: string
   server: RedisServerState
   executor: CommandExecutor
   database?: number
@@ -73,6 +75,7 @@ export class ClientSession implements RedisClientSession {
   private static nextId = 0
 
   readonly id: string
+  readonly clientAddress?: string
   readonly server: RedisServerState
   /** Aborted when the connection closes; threaded into every command's ctx. */
   readonly signal: AbortSignal
@@ -107,9 +110,11 @@ export class ClientSession implements RedisClientSession {
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
   private pushQueueClosed = false
+  private readonly responseStreamCleanups = new Set<() => void>()
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
+    this.clientAddress = options.clientAddress
     this.server = options.server
     this.executor = options.executor
     this.selectedDatabaseId = options.database ?? 0
@@ -549,6 +554,22 @@ export class ClientSession implements RedisClientSession {
     this.refreshPubSubMode()
   }
 
+  registerResponseStreamCleanup(cleanup: () => void): Unsubscribe {
+    this.responseStreamCleanups.add(cleanup)
+    return () => {
+      this.responseStreamCleanups.delete(cleanup)
+    }
+  }
+
+  resetResponseStreams(): void {
+    const cleanups = Array.from(this.responseStreamCleanups)
+    this.responseStreamCleanups.clear()
+
+    for (const cleanup of cleanups) {
+      cleanup()
+    }
+  }
+
   enqueuePush(result: RedisResult): void {
     if (this.pushQueueClosed || this.signal.aborted) {
       return
@@ -620,6 +641,7 @@ export class ClientSession implements RedisClientSession {
   createExecutionContext(
     turnAccess?: TurnAccess,
     parkOverride?: ParkHandler,
+    monitor?: RedisMonitorContext,
   ): RedisExecutionContext {
     // `db` is a live getter, not a snapshot: a queued `SELECT N` runs mid-EXEC
     // and updates `selectedDatabaseId`, so every command must resolve the
@@ -634,6 +656,7 @@ export class ClientSession implements RedisClientSession {
       session: this,
       executor: this.executor,
       ...(this.nodeRole ? { nodeRole: this.nodeRole } : {}),
+      ...(monitor ? { monitor } : {}),
       signal: this.signal,
       park:
         parkOverride ??
@@ -645,6 +668,7 @@ export class ClientSession implements RedisClientSession {
 
   /** Tear down the session: abort in-flight work and reset all per-connection state. */
   close(): void {
+    this.resetResponseStreams()
     this.signalSource?.abort()
     this.unwatch()
     this.resetPubSub()

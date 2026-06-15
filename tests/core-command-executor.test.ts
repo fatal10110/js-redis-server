@@ -199,6 +199,93 @@ describe('new command executor core', () => {
     )
   })
 
+  test('uses monitor metadata instead of admin flags for visibility', async () => {
+    const registry = new CommandRegistry()
+    registry.register(
+      defineCommand({
+        name: 'info',
+        schema: t.object({}),
+        flags: ['readonly', 'admin'],
+        keys: () => [],
+        execute: () =>
+          RedisResult.create(RedisValue.bulkString(Buffer.from(''))),
+      }),
+    )
+    registry.register(
+      defineCommand({
+        name: 'config',
+        schema: t.object({}),
+        flags: ['admin'],
+        monitor: { skip: true },
+        keys: () => [],
+        execute: () => RedisResult.ok(),
+      }),
+    )
+
+    const executor = new CommandExecutor({ registry })
+    const ctx = createContext(executor)
+    const commands: string[] = []
+    ctx.server.monitorFeed.subscribe(event => {
+      commands.push(event.command.toString())
+    })
+
+    await executor.executeRaw('INFO', [], ctx)
+    await executor.executeRaw('CONFIG', [], ctx)
+
+    assert.deepStrictEqual(commands, ['INFO'])
+  })
+
+  test('skips monitor events for cluster pre-execution errors', async () => {
+    const clusterErrorCodes = [
+      'ASK',
+      'CLUSTERDOWN',
+      'CROSSSLOT',
+      'MOVED',
+      'TRYAGAIN',
+    ]
+
+    for (const code of clusterErrorCodes) {
+      const registry = new CommandRegistry()
+      registry.register(
+        defineCommand({
+          name: 'get',
+          schema: t.object({
+            key: t.key(),
+          }),
+          flags: ['readonly'],
+          keys: args => [args.key],
+          execute: () => assert.fail('cluster policy should short-circuit'),
+        }),
+      )
+
+      const executor = new CommandExecutor({
+        registry,
+        policies: [
+          {
+            name: 'cluster',
+            beforeExecute: () => {
+              throw new RedisCommandError('cluster failure', code)
+            },
+          },
+        ],
+      })
+      const ctx = createContext(executor)
+      const commands: string[] = []
+      ctx.server.monitorFeed.subscribe(event => {
+        commands.push(event.command.toString())
+      })
+
+      const result = await executor.executeRaw('GET', [Buffer.from('key')], ctx)
+
+      assert.ok(result instanceof RedisResult)
+      assert.deepStrictEqual(
+        result.value,
+        RedisValue.error('cluster failure', code),
+      )
+      assert.deepStrictEqual(commands, [])
+    }
+  })
+
   test('supports open command registration and explicit overrides', () => {
     const registry = new CommandRegistry()
     const first = defineCommand({

@@ -24,6 +24,11 @@ export type CommandCapabilities = {
   scriptKeys?: boolean
 }
 
+export type CommandMonitorMetadata = {
+  skip?: boolean
+  redactArgs?: (rawArgs: readonly Buffer[]) => readonly Buffer[]
+}
+
 export type CommandKeySpec = {
   flags: readonly string[]
   beginSearchIndex: number
@@ -73,6 +78,7 @@ export interface CommandDefinition<TArgs = unknown> {
   readonly schema: CommandSchema<TArgs>
   readonly flags: readonly CommandFlag[]
   readonly capabilities?: CommandCapabilities
+  readonly monitor?: CommandMonitorMetadata
   readonly introspection?: CommandIntrospection
   keys(args: TArgs): readonly Buffer[]
   execute(args: TArgs, ctx: RedisExecutionContext): CommandExecutionResult
@@ -83,6 +89,8 @@ export type CommandPlan<TArgs = unknown> = {
   args: TArgs
   keys: readonly Buffer[]
   flags: readonly CommandFlag[]
+  rawCommand: Buffer
+  rawArgs: readonly Buffer[]
 }
 
 export function defineCommand<TArgs>(

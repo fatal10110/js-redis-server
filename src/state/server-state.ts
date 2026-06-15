@@ -1,11 +1,13 @@
 import { RedisClusterTopology } from './cluster-topology'
 import { RedisDatabase } from './database'
+import { RedisMonitorFeed } from './monitor-feed'
 import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
 
 export type RedisServerStateOptions = {
   databaseCount?: number
   clusterTopology?: RedisClusterTopology
+  monitorFeed?: RedisMonitorFeed
   pubsubBroker?: RedisPubSubBroker
   scriptCache?: RedisScriptCache
   /**
@@ -19,6 +21,7 @@ export type RedisServerStateOptions = {
 export class RedisServerState {
   readonly databases: RedisDatabase[]
   readonly scriptCache: RedisScriptCache
+  readonly monitorFeed: RedisMonitorFeed
   readonly pubsubBroker: RedisPubSubBroker
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
@@ -35,6 +38,7 @@ export class RedisServerState {
       (_, index) => new RedisDatabase(index),
     )
     this.scriptCache = options?.scriptCache ?? new RedisScriptCache()
+    this.monitorFeed = options?.monitorFeed ?? new RedisMonitorFeed()
     this.pubsubBroker = options?.pubsubBroker ?? new RedisPubSubBroker()
     this.clusterTopology =
       options?.clusterTopology ?? new RedisClusterTopology()

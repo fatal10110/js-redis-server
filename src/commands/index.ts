@@ -13,6 +13,7 @@ import { connectionCommands } from './connection'
 import { hashesCommands } from './hashes'
 import { keysCommands } from './keys'
 import { listsCommands } from './lists'
+import { monitorCommands } from './monitor'
 import { pubsubCommands } from './pubsub'
 import { scanCommands } from './scan'
 import { scriptsCommands } from './scripts'
@@ -27,6 +28,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   commandCommand,
   ...configCommands,
   ...transactionCommands,
+  ...monitorCommands,
   ...stringsCommands,
   ...keysCommands,
   ...scanCommands,
@@ -69,6 +71,7 @@ export {
   selectCommand,
   connectionCommands,
 } from './connection'
+export { monitorCommand, monitorCommands } from './monitor'
 export {
   createClusterCommand,
   createClusterCommands,
