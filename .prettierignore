@@ -6,3 +6,4 @@ package-lock.json
 docker-data
 redis-data
 .grepai
+.md
