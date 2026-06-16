@@ -106,6 +106,43 @@ surface.
 > `FLUSHALL`/`FLUSHDB` clear keyspace data but **not** the Lua script cache -
 > only `SCRIPT FLUSH` does.
 
+#### TIME
+
+- [ ] `TIME` - Return the current server time as a two-element array `[unix-time-seconds, microseconds]`
+
+#### MEMORY
+
+- [ ] `MEMORY USAGE key [SAMPLES count]` - Estimate memory consumption of a key in bytes
+- [ ] `MEMORY DOCTOR` - Return a memory health report
+- [ ] `MEMORY MALLOC-STATS` - Return allocator internal stats
+- [ ] `MEMORY PURGE` - Attempt to free unused memory
+- [ ] `MEMORY STATS` - Return a breakdown of memory allocation
+- [ ] `MEMORY HELP`
+
+#### SLOWLOG
+
+- [ ] `SLOWLOG GET [count]` - Return the slow-log entries
+- [ ] `SLOWLOG LEN` - Return the number of entries in the slow log
+- [ ] `SLOWLOG RESET` - Clear the slow log
+- [ ] `SLOWLOG HELP`
+
+#### LATENCY
+
+- [ ] `LATENCY LATEST` - Return the latest samples for all event types
+- [ ] `LATENCY HISTORY event` - Return latency history for a given event
+- [ ] `LATENCY RESET [event ...]` - Reset latency data
+
+#### DEBUG
+
+- [ ] `DEBUG SLEEP seconds` - Block the server for the given number of seconds (useful for timeout testing)
+- [ ] `DEBUG RELOAD` - Save and reload the RDB in-process
+- [ ] `DEBUG OBJECT key` - Return internal encoding and refcount metadata for a key
+- [ ] `DEBUG JMAP` - Force a GC cycle
+
+#### LOLWUT
+
+- [ ] `LOLWUT [VERSION version]` - Return a version-specific ASCII art rendering
+
 ## 3. Generic Key Commands
 
 - [x] `DEL key [key ...]` - Delete one or more keys
@@ -135,7 +172,7 @@ with `GT` or `LT`.
 
 #### Not implemented
 
-- [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ`
+- [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
 - [ ] `RANDOMKEY`
 - [ ] `MOVE`
 - [ ] `DUMP` / `RESTORE`
@@ -308,8 +345,7 @@ with `GT` or `LT`.
 
 #### Not implemented
 
-- [ ] `XSETID`
-- [ ] `XMSET` / `XCOPY`
+- [ ] `XSETID key last-id [ENTRIESADDED entries-added]` - Set the last-delivered ID and optionally the entries-added counter for a stream
 
 ## 10. Scan Family
 
@@ -355,6 +391,23 @@ flip its session into transaction mode or register a `WATCH`.
 and policies as normal commands, so every command's `noscript`/`readonly`
 flags are enforced inside `redis.call`/`redis.pcall`.
 
+#### Not implemented
+
+- [ ] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
+- [ ] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
+- [ ] `FUNCTION LOAD [REPLACE] function-code` - Load a library of functions
+- [ ] `FUNCTION DELETE library-name` - Delete a function library
+- [ ] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
+- [ ] `FUNCTION STATS` - Return runtime stats for the running script and loaded libraries
+- [ ] `FUNCTION DUMP` - Dump all function libraries to a binary payload
+- [ ] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
+- [ ] `FUNCTION FLUSH [ASYNC|SYNC]` - Delete all function libraries
+- [ ] `FUNCTION HELP`
+
+> Redis Functions (Redis 7.0) are a named, persistent alternative to ad-hoc `EVAL` Lua scripts.
+> They are stored in named libraries and survive flushes/restarts, unlike `EVAL` scripts.
+> `FCALL` / `FCALL_RO` are the call sites; the `FUNCTION` family manages the library registry.
+
 ## 13. Cluster Commands
 
 - [x] `CLUSTER INFO` - Provides info about Redis Cluster node state
@@ -390,9 +443,28 @@ cluster-wide fan-out between separate mock cluster nodes is not implemented.
 
 ## 15. Persistence Commands
 
-- [ ] `SAVE` / `BGSAVE` / `BGREWRITEAOF`
-- [ ] `LASTSAVE`
-- [ ] `SHUTDOWN [NOSAVE|SAVE]`
+- [ ] `SAVE` - Synchronously save the dataset to disk
+- [ ] `BGSAVE [SCHEDULE]` - Asynchronously save the dataset to disk in the background
+- [ ] `BGREWRITEAOF` - Asynchronously rewrite the append-only file
+- [ ] `LASTSAVE` - Return the Unix timestamp of the last successful save
+- [ ] `SHUTDOWN [NOSAVE|SAVE|ABORT]` - Synchronously save and shut down the server
+
+## 16. ACL Commands
+
+All `ACL` subcommands are unimplemented. The auth system (`requirepass` / `AUTH`) is functional;
+the full multi-user ACL layer (Redis 6.0+) is not.
+
+- [ ] `ACL WHOAMI` - Return the username of the current connection
+- [ ] `ACL LIST` - List all user accounts in the ACL config format
+- [ ] `ACL USERS` - Return a list of all usernames
+- [ ] `ACL GETUSER username` - Return the full ACL definition for a user
+- [ ] `ACL SETUSER username [rule ...]` - Create or modify a user and set rules
+- [ ] `ACL DELUSER username [username ...]` - Delete one or more users
+- [ ] `ACL CAT [category]` - List ACL categories or the commands in a given category
+- [ ] `ACL LOG [count | RESET]` - Return or clear the ACL security-event log
+- [ ] `ACL SAVE` - Save the current ACL rules to the `aclfile`
+- [ ] `ACL LOAD` - Reload ACL rules from the `aclfile`
+- [ ] `ACL HELP`
 
 ## Implementation Notes
 
