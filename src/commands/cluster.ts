@@ -249,14 +249,16 @@ function formatNodeLine(
   localNodeId: string,
   configEpoch: number,
 ): string {
-  const connection = `${formatHostPort(node.host, node.port)}@${node.port}`
+  const connection = `${formatHostPort(node.host, node.port)}@${node.port + 10000}`
   const myself = node.id === localNodeId ? 'myself,' : ''
   const roleField =
     node.role === 'master' ? 'master -' : `slave ${node.masterId}`
   const ping = `0 ${Date.now()}`
   const slots =
     node.role === 'master'
-      ? node.slots.map(([min, max]) => ` ${min}-${max}`).join('')
+      ? node.slots
+          .map(([min, max]) => (min === max ? ` ${min}` : ` ${min}-${max}`))
+          .join('')
       : ''
   return `${node.id} ${connection} ${myself}${roleField} ${ping} ${configEpoch} connected${slots}\n`
 }
