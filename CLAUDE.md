@@ -331,9 +331,11 @@ grepai trace graph "ValidateToken" --depth 3 --json
 
 OpenMemory MCP is wired into this project as the persistent memory layer for stable context that should survive across turns and tasks. Server: `http://localhost:8080`. Always use `openmemory_*` MCP tools directly — do not invent a custom persistence layer.
 
+Do **not** pass a `user_id` (or any tenant/owner argument) to `openmemory_*` tools. The tenant is resolved automatically from the configured API key — overriding it routes memories to the wrong tenant.
+
 ### MCP Tools Available
 
-- `openmemory_store` — store a memory (text + user_id)
+- `openmemory_store` — store a memory (text only; tenant comes from the API key)
 - `openmemory_query` — semantic/keyword search
 - `openmemory_list` — list recent memories
 - `openmemory_get` — fetch by ID
