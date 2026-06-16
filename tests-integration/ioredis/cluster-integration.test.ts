@@ -294,6 +294,28 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
       connection.close()
     }
   })
+
+  test('CLUSTER NODES reports bus port as client port + 10000', async () => {
+    const port = testRunner.getClusterPorts()[0]
+    assert.notStrictEqual(port, undefined)
+    const connection = await RawRedisConnection.connect('127.0.0.1', port!)
+
+    try {
+      connection.write(commandFrame('CLUSTER', 'NODES'))
+      const text = respText(await connection.readFrame())
+      const lines = text.split('\n').filter(line => line.trim().length > 0)
+      assert.ok(lines.length > 0)
+
+      for (const line of lines) {
+        const address = line.split(' ')[1]
+        const match = address.match(/^(.+):(\d+)@(\d+)$/)
+        assert.ok(match, `address field malformed: ${address}`)
+        assert.strictEqual(Number(match[3]), Number(match[2]) + 10000)
+      }
+    } finally {
+      connection.close()
+    }
+  })
 })
 
 async function findKeyOwnedByDifferentMaster(
