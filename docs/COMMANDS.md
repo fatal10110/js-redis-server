@@ -260,6 +260,13 @@ with `GT` or `LT`.
 - [x] `ZPOPMIN key [count]` - Remove and return members with the lowest scores
 - [x] `ZPOPMAX key [count]` - Remove and return members with the highest scores
 - [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate members and scores (see [Scan Family](#10-scan-family))
+- [x] `ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]` - Union of sorted sets (or plain sets, scored 1) into destination; empty result deletes destination
+- [x] `ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]` - Intersection of sorted sets into destination; empty result deletes destination
+- [x] `ZDIFFSTORE destination numkeys key [key ...]` - Difference of sorted sets into destination; empty result deletes destination
+- [x] `ZUNION numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [WITHSCORES]` - Union of sorted sets without storing the result
+- [x] `ZINTER numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX] [WITHSCORES]` - Intersection of sorted sets without storing the result
+- [x] `ZDIFF numkeys key [key ...] [WITHSCORES]` - Difference of sorted sets without storing the result
+- [x] `ZINTERCARD numkeys key [key ...] [LIMIT limit]` - Count members in the intersection of sorted sets (LIMIT 0 means no cap)
 
 #### Notes / gaps vs. real Redis
 
@@ -271,7 +278,6 @@ with `GT` or `LT`.
 #### Not implemented
 
 - [ ] `ZREVRANGEBYSCORE` / `ZREMRANGEBYRANK`
-- [ ] `ZUNIONSTORE` / `ZINTERSTORE` / `ZDIFFSTORE` / `ZUNION` / `ZINTER` / `ZDIFF` / `ZINTERCARD`
 - [ ] `ZRANGESTORE` / `ZMPOP` / `BZPOPMIN` / `BZPOPMAX` / `BZMPOP`
 
 ## 9. Stream Commands

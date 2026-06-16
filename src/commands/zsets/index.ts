@@ -17,6 +17,15 @@ import {
   zrevrangebylexCommand,
 } from './zrangebylex'
 import { zpopmaxCommand, zpopminCommand } from './zpop'
+import {
+  zdiffCommand,
+  zdiffstoreCommand,
+  zintercardCommand,
+  zinterCommand,
+  zinterstoreCommand,
+  zunionCommand,
+  zunionstoreCommand,
+} from './zsetops'
 
 export const zsetsCommands = [
   zaddCommand,
@@ -39,6 +48,13 @@ export const zsetsCommands = [
   zremrangebylexCommand,
   zpopminCommand,
   zpopmaxCommand,
+  zunionstoreCommand,
+  zinterstoreCommand,
+  zdiffstoreCommand,
+  zunionCommand,
+  zinterCommand,
+  zdiffCommand,
+  zintercardCommand,
 ]
 
 export {
@@ -62,4 +78,11 @@ export {
   zremrangebylexCommand,
   zpopminCommand,
   zpopmaxCommand,
+  zunionstoreCommand,
+  zinterstoreCommand,
+  zdiffstoreCommand,
+  zunionCommand,
+  zinterCommand,
+  zdiffCommand,
+  zintercardCommand,
 }
