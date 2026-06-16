@@ -148,6 +148,7 @@ surface.
 - [x] `DEL key [key ...]` - Delete one or more keys
 - [x] `UNLINK key [key ...]` - Delete one or more keys without blocking (same as `DEL` in this mock)
 - [x] `EXISTS key [key ...]` - Determine how many of the given keys exist
+- [x] `TOUCH key [key ...]` - Count the given keys that exist without changing key values
 - [x] `TYPE key` - Return the type of the value stored at key
 - [x] `RANDOMKEY` - Return a random key from the selected database, or nil when empty
 - [x] `RENAME key newkey` - Rename a key
@@ -176,7 +177,6 @@ with `GT` or `LT`.
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
 - [ ] `MOVE`
 - [ ] `DUMP` / `RESTORE`
-- [ ] `TOUCH`
 - [ ] `SORT` / `SORT_RO`
 - [ ] `WAIT`
 - [ ] `MIGRATE`

@@ -64,6 +64,25 @@ export const existsCommand = defineCommand({
   },
 })
 
+export const touchCommand = defineCommand({
+  name: 'touch',
+  schema: t.object({
+    keys: t.variadic(t.key(), { min: 1 }),
+  }),
+  flags: ['readonly', 'fast'],
+  keys: args => args.keys,
+  execute: (args, ctx) => {
+    let count = 0
+    for (const key of args.keys) {
+      if (ctx.db.getType(key) !== null) {
+        count += 1
+      }
+    }
+
+    return integer(count)
+  },
+})
+
 export const typeCommand = defineCommand({
   name: 'type',
   schema: t.object({
@@ -501,6 +520,7 @@ export const keysCommands = [
   delCommand,
   unlinkCommand,
   existsCommand,
+  touchCommand,
   typeCommand,
   dbsizeCommand,
   randomkeyCommand,

@@ -131,6 +131,7 @@ export {
   randomkeyCommand,
   renameCommand,
   renamenxCommand,
+  touchCommand,
   ttlCommand,
   typeCommand,
   unlinkCommand,
