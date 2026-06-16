@@ -730,6 +730,79 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('EXPIREAT/PEXPIREAT past timestamp respects conditional flags (#72)', async () => {
+    // Regression for #72: when the target timestamp is in the past, the
+    // immediate delete must run *only* if the NX/XX/GT/LT condition permits the
+    // update. A forbidding condition leaves the key (and its TTL) untouched.
+    const tag = `{expire-past:${randomKey()}}`
+    const ttlKey = `${tag}:ttl`
+    const persistentKey = `${tag}:persistent`
+    const directClient = await connectToSlotOwner(redisClient!, ttlKey)
+
+    // Past timestamps: year 2001, well before now.
+    const pastSeconds = 1_000_000_000
+    const pastMilliseconds = 1_000_000_000_000
+
+    // Each case: prepares the key, runs EXPIREAT/PEXPIREAT past + flag, asserts
+    // the return value and whether the key survived — matching real Redis.
+    const expectCondition = async (
+      command: 'EXPIREAT' | 'PEXPIREAT',
+      flag: string,
+      prepare: 'ttl' | 'persistent',
+      expectedReturn: number,
+      shouldSurvive: boolean,
+    ) => {
+      const key = prepare === 'ttl' ? ttlKey : persistentKey
+      const past = command === 'EXPIREAT' ? pastSeconds : pastMilliseconds
+
+      await directClient.set(key, 'value')
+      if (prepare === 'ttl') {
+        await directClient.expire(key, 100)
+      }
+
+      const result = await directClient.call(command, key, past, flag)
+      assert.strictEqual(
+        result,
+        expectedReturn,
+        `${command} past ${flag} on ${prepare} key should return ${expectedReturn}`,
+      )
+      assert.strictEqual(
+        await directClient.exists(key),
+        shouldSurvive ? 1 : 0,
+        `${command} past ${flag} on ${prepare} key should ${shouldSurvive ? 'keep' : 'delete'} the key`,
+      )
+      if (shouldSurvive && prepare === 'ttl') {
+        const ttl = await directClient.ttl(key)
+        assert.ok(
+          ttl > 0 && ttl <= 100,
+          `${command} past ${flag} must leave the original TTL intact, got ${ttl}`,
+        )
+      }
+      await directClient.del(key)
+    }
+
+    try {
+      // Key has a TTL.
+      await expectCondition('EXPIREAT', 'NX', 'ttl', 0, true) // NX: TTL exists -> no-op
+      await expectCondition('EXPIREAT', 'GT', 'ttl', 0, true) // GT: past < future -> no-op
+      await expectCondition('EXPIREAT', 'XX', 'ttl', 1, false) // XX: TTL exists -> delete
+      await expectCondition('EXPIREAT', 'LT', 'ttl', 1, false) // LT: past < future -> delete
+
+      // Key is persistent (no TTL).
+      await expectCondition('EXPIREAT', 'XX', 'persistent', 0, true) // XX: no TTL -> no-op
+      await expectCondition('EXPIREAT', 'NX', 'persistent', 1, false) // NX: no TTL -> delete
+      await expectCondition('EXPIREAT', 'GT', 'persistent', 0, true) // GT vs persistent -> no-op
+      await expectCondition('EXPIREAT', 'LT', 'persistent', 1, false) // LT vs persistent -> delete
+
+      // PEXPIREAT shares the same code path — spot-check both outcomes.
+      await expectCondition('PEXPIREAT', 'NX', 'ttl', 0, true)
+      await expectCondition('PEXPIREAT', 'XX', 'ttl', 1, false)
+    } finally {
+      await directClient.del(ttlKey, persistentKey)
+      directClient.disconnect()
+    }
+  })
+
   test('TTL integration with EXPIRE and EXPIREAT', async () => {
     // Set up keys with different expiration methods
     await redisClient?.set('{test}ttl1', 'value1')
