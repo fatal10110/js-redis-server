@@ -130,6 +130,7 @@ export {
   pttlCommand,
   renameCommand,
   renamenxCommand,
+  touchCommand,
   ttlCommand,
   typeCommand,
   unlinkCommand,

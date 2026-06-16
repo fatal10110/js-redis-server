@@ -48,6 +48,55 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(existsMultiple, 3) // 3 out of 4 keys exist
   })
 
+  test('TOUCH command counts live keys without mutating keyspace', async () => {
+    const tag = `{touch:${randomKey()}}`
+    const stringKey = `${tag}:string`
+    const hashKey = `${tag}:hash`
+    const expiringKey = `${tag}:expired`
+    const missingKey = `${tag}:missing`
+    const crossSlotA = `{touch-cross-a:${randomKey()}}:key`
+    const crossSlotB = `{touch-cross-b:${randomKey()}}:key`
+    const directClient = await connectToSlotOwner(redisClient!, stringKey)
+
+    try {
+      await directClient.set(stringKey, 'value')
+      await directClient.hset(hashKey, 'field', 'value')
+      await directClient.set(expiringKey, 'value', 'PX', 1)
+      await new Promise(resolve => setTimeout(resolve, 20))
+
+      assert.strictEqual(
+        await directClient.call(
+          'TOUCH',
+          stringKey,
+          hashKey,
+          missingKey,
+          expiringKey,
+        ),
+        2,
+      )
+      assert.strictEqual(
+        await directClient.exists(stringKey, hashKey, expiringKey),
+        2,
+      )
+      assert.strictEqual(await directClient.type(hashKey), 'hash')
+      assert.strictEqual(await directClient.call('TOUCH', missingKey), 0)
+
+      await assert.rejects(
+        () => directClient.call('TOUCH'),
+        errorWithMessage("ERR wrong number of arguments for 'touch' command"),
+      )
+      await assert.rejects(
+        () => directClient.call('TOUCH', crossSlotA, crossSlotB),
+        errorWithMessage(
+          "CROSSSLOT Keys in request don't hash to the same slot",
+        ),
+      )
+    } finally {
+      await directClient.del(stringKey, hashKey, expiringKey, missingKey)
+      directClient.disconnect()
+    }
+  })
+
   test('TYPE command', async () => {
     // Set up test data of different types
     await redisClient?.set('{test}string_key', 'value')
