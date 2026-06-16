@@ -2,7 +2,7 @@ import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { integer } from '../helpers'
 import { requireStreamGroup } from './groups'
-import { parseExactId, streamIdKey } from './ids'
+import { parseExactId } from './ids'
 
 export const xackCommand = defineCommand({
   name: 'xack',
@@ -17,12 +17,8 @@ export const xackCommand = defineCommand({
     const ids = args.ids.map(parseExactId)
     requireStreamGroup(ctx.db.getStream(args.key), args.key, args.group)
     const acknowledged = ctx.db.updateStream(args.key, stream => {
-      const group = requireStreamGroup(stream, args.key, args.group)
-      let count = 0
-      for (const id of ids) {
-        if (group.pending.delete(streamIdKey(id))) count++
-      }
-      return count
+      const group = requireStreamGroup(stream.value, args.key, args.group)
+      return stream.ack(group, ids)
     })
     return integer(acknowledged)
   },

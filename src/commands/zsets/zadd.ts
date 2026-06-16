@@ -155,8 +155,7 @@ export const zaddCommand = defineCommand({
     if (args.options.incr) {
       const [{ score, member }] = args.pairs
       const newScore = ctx.db.updateSortedSet(args.key, zset => {
-        const hex = member.toString('hex')
-        const existing = zset.members.get(hex)
+        const existing = zset.getMember(member)
         const nextScore = (existing?.score ?? 0) + score
         assertValidResultingScore(nextScore)
 
@@ -164,18 +163,17 @@ export const zaddCommand = defineCommand({
           return null
         }
 
-        zset.members.set(hex, { member, score: nextScore })
+        zset.setScore(member, nextScore)
         return nextScore
       })
       deleteSortedSetIfEmpty(ctx.db, args.key)
       return bulk(newScore === null ? null : scoreBuffer(newScore))
     }
 
-    const changed = ctx.db.updateSortedSet(args.key, zset => {
+    const replyCount = ctx.db.updateSortedSet(args.key, zset => {
       let count = 0
       for (const { score, member } of args.pairs) {
-        const hex = member.toString('hex')
-        const existing = zset.members.get(hex)
+        const existing = zset.getMember(member)
 
         if (!shouldApplyZaddUpdate(existing, score, args.options)) {
           continue
@@ -185,11 +183,11 @@ export const zaddCommand = defineCommand({
           if (!existing || existing.score !== score) count++
         }
 
-        zset.members.set(hex, { member, score })
+        zset.setScore(member, score)
       }
       return count
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
-    return integer(changed)
+    return integer(replyCount)
   },
 })

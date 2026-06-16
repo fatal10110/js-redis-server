@@ -43,17 +43,15 @@ export function tryListMove(
   db.getList(destination)
 
   const popped = db.updateList(source, list => {
-    const value =
-      (fromDirection === 'left' ? list.values.shift() : list.values.pop()) ??
-      null
-    return { value, empty: list.values.length === 0 }
+    const value = list.pop(fromDirection)
+    return { value, empty: list.length === 0 }
   })
   if (popped.empty) db.delete(source)
   if (popped.value === null) return null
 
   db.updateList(destination, list => {
-    if (toDirection === 'left') list.values.unshift(popped.value!)
-    else list.values.push(popped.value!)
+    if (toDirection === 'left') list.pushLeft([popped.value!])
+    else list.pushRight([popped.value!])
   })
 
   return bulk(popped.value)
@@ -75,14 +73,14 @@ export const rpoplpushCommand = defineCommand({
     ctx.db.getList(args.destination)
 
     const value = ctx.db.updateList(args.source, list => {
-      const val = list.values.pop() ?? null
-      return { val, empty: list.values.length === 0 }
+      const val = list.pop('right')
+      return { val, empty: list.length === 0 }
     })
     if (value.empty) ctx.db.delete(args.source)
     if (value.val === null) return bulk(null)
 
     ctx.db.updateList(args.destination, list => {
-      list.values.unshift(value.val!)
+      list.pushLeft([value.val!])
     })
 
     return bulk(value.val)

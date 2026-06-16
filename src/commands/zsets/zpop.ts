@@ -49,7 +49,7 @@ export const zpopminCommand = defineCommand({
     if (toRemove.length === 0) return array([])
     ctx.db.updateSortedSet(args.key, z => {
       for (const entry of toRemove) {
-        z.members.delete(entry.member.toString('hex'))
+        z.deleteMember(entry.member)
       }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
@@ -76,7 +76,7 @@ export const zpopmaxCommand = defineCommand({
     if (toRemove.length === 0) return array([])
     ctx.db.updateSortedSet(args.key, z => {
       for (const entry of toRemove) {
-        z.members.delete(entry.member.toString('hex'))
+        z.deleteMember(entry.member)
       }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)

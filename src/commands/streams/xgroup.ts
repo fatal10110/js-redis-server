@@ -161,11 +161,11 @@ export const xgroupCommand = defineCommand({
 
       ctx.db.updateStream(command.key, stream => {
         const groupId = bufferId(command.group)
-        if (stream.groups.has(groupId)) {
+        if (stream.value.groups.has(groupId)) {
           throw new BusyStreamGroupError()
         }
 
-        stream.groups.set(groupId, {
+        stream.addGroup(groupId, {
           name: Buffer.from(command.group),
           lastDeliveredId: cloneStreamId(lastDeliveredId),
           entriesRead: command.entriesRead,
@@ -183,12 +183,17 @@ export const xgroupCommand = defineCommand({
         command.group,
       )
       ctx.db.updateStream(command.key, stream => {
-        const group = requireStreamGroup(stream, command.key, command.group)
+        const group = requireStreamGroup(
+          stream.value,
+          command.key,
+          command.group,
+        )
         group.lastDeliveredId =
           command.id === '$'
             ? cloneStreamId(stream.lastId)
             : cloneStreamId(command.id)
         group.entriesRead = command.entriesRead
+        stream.forceWrite()
       })
       return ok()
     }
@@ -197,9 +202,9 @@ export const xgroupCommand = defineCommand({
       const stream = ctx.db.getStream(command.key)
       if (!stream) return integer(0)
 
-      const removed = ctx.db.updateStream(command.key, writable =>
-        writable.groups.delete(bufferId(command.group)),
-      )
+      const removed = ctx.db.updateStream(command.key, writable => {
+        return writable.deleteGroup(bufferId(command.group))
+      })
       return integer(removed ? 1 : 0)
     }
 
@@ -210,16 +215,17 @@ export const xgroupCommand = defineCommand({
         command.group,
       )
       const created = ctx.db.updateStream(command.key, stream => {
-        const group = requireStreamGroup(stream, command.key, command.group)
+        const group = requireStreamGroup(
+          stream.value,
+          command.key,
+          command.group,
+        )
         const consumerId = bufferId(command.consumer)
-        if (group.consumers.has(consumerId)) return false
-
-        group.consumers.set(consumerId, {
+        return stream.addConsumer(group, consumerId, {
           name: Buffer.from(command.consumer),
           seenAt: Date.now(),
           activeAt: null,
         })
-        return true
       })
       return integer(created ? 1 : 0)
     }
@@ -230,17 +236,9 @@ export const xgroupCommand = defineCommand({
       command.group,
     )
     const deleted = ctx.db.updateStream(command.key, stream => {
-      const group = requireStreamGroup(stream, command.key, command.group)
+      const group = requireStreamGroup(stream.value, command.key, command.group)
       const consumerId = bufferId(command.consumer)
-      if (!group.consumers.delete(consumerId)) return 0
-
-      let removedPending = 0
-      for (const [pendingId, pending] of Array.from(group.pending)) {
-        if (pending.consumerId !== consumerId) continue
-        group.pending.delete(pendingId)
-        removedPending++
-      }
-      return removedPending
+      return stream.deleteConsumer(group, consumerId)
     })
     return integer(deleted)
   },

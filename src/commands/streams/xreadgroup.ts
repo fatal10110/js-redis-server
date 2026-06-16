@@ -123,7 +123,8 @@ function readGroupEntries(
 
   for (const { key, id } of streams) {
     const entries = ctx.db.updateStream(key, stream => {
-      const group = requireStreamGroup(stream, key, groupName, 'XREADGROUP')
+      const value = stream.value
+      const group = requireStreamGroup(value, key, groupName, 'XREADGROUP')
       const consumer = ensureConsumer(group, consumerName, now)
       consumer.activeAt = now
 
@@ -131,7 +132,7 @@ function readGroupEntries(
       const replies: RedisValue[] = []
 
       if (id === '>') {
-        for (const entry of stream.entries) {
+        for (const entry of value.entries) {
           if (compareStreamId(entry.id, group.lastDeliveredId) <= 0) continue
 
           replies.push(entryToReply(entry.id, entry.fields))
@@ -154,7 +155,7 @@ function readGroupEntries(
           if (pending.consumerId !== consumerId) continue
           if (compareStreamId(pending.id, id) <= 0) continue
 
-          const entry = findEntry(stream, pending.id)
+          const entry = findEntry(value, pending.id)
           replies.push(
             entry
               ? entryToReply(entry.id, entry.fields)
@@ -165,6 +166,7 @@ function readGroupEntries(
         }
       }
 
+      stream.forceWrite()
       return replies
     })
 

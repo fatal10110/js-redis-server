@@ -155,9 +155,9 @@ export const zremrangebyscoreCommand = defineCommand({
     const max = parseScoreBoundArg(args.max)
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
-      for (const [hex, entry] of zset.members) {
+      for (const [hex, entry] of zset.entries()) {
         if (scoreWithinBounds(entry.score, min, max)) {
-          zset.members.delete(hex)
+          zset.deleteMemberId(hex)
           removed++
         }
       }
@@ -187,7 +187,7 @@ export const zremrangebyrankCommand = defineCommand({
     let removed = 0
     ctx.db.updateSortedSet(args.key, set => {
       for (const hex of toRemove) {
-        if (set.members.delete(hex)) removed++
+        if (set.deleteMemberId(hex)) removed++
       }
     })
     if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)

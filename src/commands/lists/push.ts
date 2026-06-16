@@ -11,12 +11,7 @@ export const lpushCommand = defineCommand({
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const len = ctx.db.updateList(args.key, list => {
-      for (const val of args.values) {
-        list.values.unshift(val)
-      }
-      return list.values.length
-    })
+    const len = ctx.db.updateList(args.key, list => list.pushLeft(args.values))
     return integer(len)
   },
 })
@@ -30,12 +25,7 @@ export const rpushCommand = defineCommand({
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const len = ctx.db.updateList(args.key, list => {
-      for (const val of args.values) {
-        list.values.push(val)
-      }
-      return list.values.length
-    })
+    const len = ctx.db.updateList(args.key, list => list.pushRight(args.values))
     return integer(len)
   },
 })
@@ -52,12 +42,7 @@ export const lpushxCommand = defineCommand({
     const list = ctx.db.getList(args.key)
     if (!list) return integer(0)
 
-    const len = ctx.db.updateList(args.key, list => {
-      for (const val of args.values) {
-        list.values.unshift(val)
-      }
-      return list.values.length
-    })
+    const len = ctx.db.updateList(args.key, list => list.pushLeft(args.values))
     return integer(len)
   },
 })
@@ -74,12 +59,7 @@ export const rpushxCommand = defineCommand({
     const list = ctx.db.getList(args.key)
     if (!list) return integer(0)
 
-    const len = ctx.db.updateList(args.key, list => {
-      for (const val of args.values) {
-        list.values.push(val)
-      }
-      return list.values.length
-    })
+    const len = ctx.db.updateList(args.key, list => list.pushRight(args.values))
     return integer(len)
   },
 })

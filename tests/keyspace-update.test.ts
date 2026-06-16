@@ -50,10 +50,44 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
 
     // e.g. HDEL on a non-existent key: there is nothing to remove, the
     // collection stays empty, so the key must never appear.
-    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, () => {})
+    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, () => {
+      // no change
+    })
 
     assert.strictEqual(keyspace.get(key), null)
     assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(events.length, 0)
+  })
+
+  test('a no-op mutation on an existing collection emits no event', () => {
+    const { keyspace, events } = setup()
+    const key = Buffer.from('h')
+
+    keyspace.update<RedisHashData, void>(
+      key,
+      'hash',
+      createHashData,
+      (hash, tracker) => {
+        hash.fields.set('f', {
+          field: Buffer.from('f'),
+          value: Buffer.from('v'),
+        })
+        tracker.markChanged()
+      },
+    )
+    events.length = 0
+
+    keyspace.update<RedisHashData, number>(
+      key,
+      'hash',
+      createHashData,
+      hash => {
+        const deleted = hash.fields.delete('missing') ? 1 : 0
+        return deleted
+      },
+    )
+
+    assert.strictEqual(keyspace.getType(key), 'hash')
     assert.strictEqual(events.length, 0)
   })
 
@@ -61,15 +95,30 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
     const { keyspace, events } = setup()
     const key = Buffer.from('h')
 
-    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, hash => {
-      hash.fields.set('f', { field: Buffer.from('f'), value: Buffer.from('v') })
-    })
+    keyspace.update<RedisHashData, void>(
+      key,
+      'hash',
+      createHashData,
+      (hash, tracker) => {
+        hash.fields.set('f', {
+          field: Buffer.from('f'),
+          value: Buffer.from('v'),
+        })
+        tracker.markChanged()
+      },
+    )
     assert.strictEqual(keyspace.getType(key), 'hash')
     events.length = 0
 
-    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, hash => {
-      hash.fields.delete('f')
-    })
+    keyspace.update<RedisHashData, void>(
+      key,
+      'hash',
+      createHashData,
+      (hash, tracker) => {
+        hash.fields.delete('f')
+        tracker.markChanged()
+      },
+    )
 
     assert.strictEqual(keyspace.get(key), null)
     assert.strictEqual(keyspace.getType(key), null)
@@ -81,16 +130,28 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
     const { keyspace, events } = setup()
     const key = Buffer.from('l')
 
-    keyspace.update<RedisListData, void>(key, 'list', createListData, list => {
-      list.values.push(Buffer.from('a'))
-    })
+    keyspace.update<RedisListData, void>(
+      key,
+      'list',
+      createListData,
+      (list, tracker) => {
+        list.values.push(Buffer.from('a'))
+        tracker.markChanged()
+      },
+    )
     assert.strictEqual(keyspace.getType(key), 'list')
     events.length = 0
 
     // e.g. LTRIM that removes every element
-    keyspace.update<RedisListData, void>(key, 'list', createListData, list => {
-      list.values.length = 0
-    })
+    keyspace.update<RedisListData, void>(
+      key,
+      'list',
+      createListData,
+      (list, tracker) => {
+        list.values.length = 0
+        tracker.markChanged()
+      },
+    )
 
     assert.strictEqual(keyspace.get(key), null)
     assert.strictEqual(keyspace.getType(key), null)
@@ -106,8 +167,9 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       key,
       'zset',
       createSortedSetData,
-      zset => {
+      (zset, tracker) => {
         zset.members.set('m', { member: Buffer.from('m'), score: 1 })
+        tracker.markChanged()
       },
     )
     assert.strictEqual(keyspace.getType(key), 'zset')
@@ -118,8 +180,9 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       key,
       'zset',
       createSortedSetData,
-      zset => {
+      (zset, tracker) => {
         zset.members.delete('m')
+        tracker.markChanged()
       },
     )
 
@@ -133,9 +196,15 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
     const { keyspace, events } = setup()
     const key = Buffer.from('s')
 
-    keyspace.update<RedisSetData, void>(key, 'set', createSetData, set => {
-      set.members.set('m', Buffer.from('m'))
-    })
+    keyspace.update<RedisSetData, void>(
+      key,
+      'set',
+      createSetData,
+      (set, tracker) => {
+        set.members.set('m', Buffer.from('m'))
+        tracker.markChanged()
+      },
+    )
 
     assert.strictEqual(keyspace.getType(key), 'set')
     assert.strictEqual(events.length, 1)
@@ -150,8 +219,9 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       key,
       'string',
       () => createStringData(Buffer.alloc(0)),
-      str => {
+      (str, tracker) => {
         str.value = Buffer.alloc(0)
+        tracker.markChanged()
       },
     )
 
@@ -166,8 +236,9 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       key,
       'stream',
       createStreamData,
-      () => {
+      (_stream, tracker) => {
         // Create the stream without adding entries (e.g. XGROUP CREATE MKSTREAM).
+        tracker.markChanged()
       },
     )
 

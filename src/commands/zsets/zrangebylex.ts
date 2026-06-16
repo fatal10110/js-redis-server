@@ -76,9 +76,9 @@ export const zremrangebylexCommand = defineCommand({
     const max = parseLexBoundArg(args.max)
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
-      for (const [hex, entry] of zset.members) {
+      for (const [hex, entry] of zset.entries()) {
         if (lexMemberWithinBounds(entry.member, min, max)) {
-          zset.members.delete(hex)
+          zset.deleteMemberId(hex)
           removed++
         }
       }
