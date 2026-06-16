@@ -182,10 +182,25 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), null)
   })
 
-  test('SELECT is rejected in cluster mode', async () => {
+  test('SELECT 0 is allowed in cluster mode (no-op DB switch)', async () => {
+    assert.strictEqual(await directClient?.select(0), 'OK')
+  })
+
+  test('SELECT of a non-zero DB is rejected in cluster mode', async () => {
     await assert.rejects(
       () => directClient?.select(1),
       errorWithMessage('ERR SELECT is not allowed in cluster mode'),
+    )
+    await assert.rejects(
+      () => directClient?.select(99),
+      errorWithMessage('ERR SELECT is not allowed in cluster mode'),
+    )
+  })
+
+  test('SELECT with a non-integer index is a value error in cluster mode', async () => {
+    await assert.rejects(
+      () => directClient?.call('SELECT', 'abc'),
+      errorWithMessage('ERR value is not an integer or out of range'),
     )
   })
 })
