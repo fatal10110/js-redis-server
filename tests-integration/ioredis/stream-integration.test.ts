@@ -257,9 +257,9 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     ])
   })
 
-  test('XTRIM MAXLEN with ~ (approximate) accepts the flag and returns an integer', async () => {
-    // Real Redis uses radix-tree node boundaries for ~; on a tiny stream it may not
-    // trim at all. We only assert the command succeeds and returns a non-negative int.
+  test('XTRIM MAXLEN with ~ (approximate) does not exact-trim tiny streams', async () => {
+    // Real Redis uses radix-tree node boundaries for ~; on a tiny stream it
+    // keeps entries above the threshold instead of trimming exactly to it.
     const key = randomKey()
     const node = await connectToSlotOwner(redisClient!, key)
     try {
@@ -274,7 +274,13 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         '~',
         '2',
       )) as number
-      assert.ok(typeof removed === 'number' && removed >= 0)
+      assert.strictEqual(removed, 0)
+      assert.strictEqual(await node.xlen(key), 3)
+      assert.deepStrictEqual(await node.xrange(key, '-', '+'), [
+        ['1-1', ['f', 'v']],
+        ['2-1', ['f', 'v']],
+        ['3-1', ['f', 'v']],
+      ])
     } finally {
       node.disconnect()
     }
