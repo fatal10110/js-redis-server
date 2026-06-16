@@ -98,7 +98,9 @@ export function createTrimSpecSchema() {
 
 export function applyTrim(stream: RedisStreamData, spec: TrimSpec): number {
   if (spec.strategy === 'maxlen') {
-    const removeCount = stream.entries.length - Number(spec.count)
+    const targetLength = spec.approximate ? spec.count + 1n : spec.count
+    const removeCountBigint = BigInt(stream.entries.length) - targetLength
+    const removeCount = removeCountBigint > 0n ? Number(removeCountBigint) : 0
     if (removeCount <= 0) return 0
     for (const entry of stream.entries.slice(0, removeCount)) {
       updateMaxDeletedId(stream, entry.id)
@@ -114,6 +116,10 @@ export function applyTrim(stream: RedisStreamData, spec: TrimSpec): number {
       i++
     }
     if (i === 0) return 0
+    if (spec.approximate) {
+      i--
+      if (i === 0) return 0
+    }
     for (const entry of stream.entries.slice(0, i)) {
       updateMaxDeletedId(stream, entry.id)
     }
