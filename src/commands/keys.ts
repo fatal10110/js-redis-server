@@ -265,9 +265,33 @@ export const persistCommand = defineCommand({
   execute: (args, ctx) => integer(ctx.db.persist(args.key) ? 1 : 0),
 })
 
+// FLUSHDB/FLUSHALL accept an optional ASYNC|SYNC modifier (Redis 4.0+). The
+// keyspace is in-memory, so the flush is synchronous regardless — the keyword is
+// parsed for compatibility and otherwise ignored. Anything other than a single
+// ASYNC|SYNC token is a syntax error (matching real Redis), so the whole tail is
+// validated here rather than relying on the generic leftover-arg check, which
+// would surface a wrong-number-of-arguments error instead.
+const flushModeSchema = t.custom<'async' | 'sync' | undefined>(
+  (input, index) => {
+    const remaining = input.length - index
+    if (remaining === 0) {
+      return { value: undefined, nextIndex: index }
+    }
+
+    if (remaining === 1) {
+      const token = input[index].toString().toLowerCase()
+      if (token === 'async' || token === 'sync') {
+        return { value: token, nextIndex: index + 1 }
+      }
+    }
+
+    throw new RedisSyntaxError()
+  },
+)
+
 export const flushdbCommand = defineCommand({
   name: 'flushdb',
-  schema: t.object({}),
+  schema: t.object({ mode: flushModeSchema }),
   flags: ['write'],
   keys: () => [],
   execute: (_args, ctx) => {
@@ -278,7 +302,7 @@ export const flushdbCommand = defineCommand({
 
 export const flushallCommand = defineCommand({
   name: 'flushall',
-  schema: t.object({}),
+  schema: t.object({ mode: flushModeSchema }),
   flags: ['write'],
   keys: () => [],
   execute: (_args, ctx) => {
