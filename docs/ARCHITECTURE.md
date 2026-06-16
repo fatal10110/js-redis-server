@@ -405,8 +405,8 @@ genuinely partitioned) but **sharing** the topology object, registered with:
 
 There is no separate "cluster commander" type — cluster mode is the same
 `Resp2Server` + `CommandExecutor` core, configured with one extra command and
-one extra policy. `SELECT` is rejected in cluster mode (Redis Cluster only
-exposes database 0).
+one extra policy. `SELECT 0` is accepted as a no-op in cluster mode (Redis
+Cluster only exposes database 0); any non-zero index is rejected.
 
 ## Lua scripting
 
