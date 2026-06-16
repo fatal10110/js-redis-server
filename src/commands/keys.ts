@@ -324,6 +324,11 @@ export const renameCommand = defineCommand({
     const value = ctx.db.get(args.key)
     if (!value) throw new NoSuchKeyError()
 
+    // Renaming a key to itself is a true no-op in Redis: it replies +OK
+    // without touching the keyspace, so it must not emit a mutation event
+    // that would invalidate a WATCH on the key.
+    if (args.key.equals(args.newKey)) return ok()
+
     const expiration = ctx.db.getExpiration(args.key)
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
