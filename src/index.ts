@@ -184,6 +184,7 @@ export {
   pingCommand,
   pttlCommand,
   quitCommand,
+  randomkeyCommand,
   readonlyCommand,
   readwriteCommand,
   redisCommandDefinitions,

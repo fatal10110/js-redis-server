@@ -128,6 +128,7 @@ export {
   pexpireCommand,
   pexpireatCommand,
   pttlCommand,
+  randomkeyCommand,
   renameCommand,
   renamenxCommand,
   ttlCommand,
