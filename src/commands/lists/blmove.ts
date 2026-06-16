@@ -1,5 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
+import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { bulk } from '../helpers'
@@ -70,12 +71,16 @@ async function blockingListMove(
 
 export const blmoveCommand = defineCommand({
   name: 'blmove',
-  schema: t.custom<BlmoveArgs>((input, index) => {
+  schema: t.custom<BlmoveArgs>((input, index, ctx) => {
     const source = input[index]
     const destination = input[index + 1]
+    if (!source || !destination)
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
     const fromDirection = parseMoveDirection(input[index + 2])
     const toDirection = parseMoveDirection(input[index + 3])
-    const timeout = parseTimeout(input[index + 4])
+    const timeoutToken = input[index + 4]
+    if (!timeoutToken) throw new WrongNumberOfArgumentsError(ctx.commandName)
+    const timeout = parseTimeout(timeoutToken)
     return {
       value: { source, destination, fromDirection, toDirection, timeout },
       nextIndex: index + 5,
