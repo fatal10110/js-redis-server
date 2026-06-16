@@ -303,7 +303,7 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- `LIMIT count` is accepted on approximate (`~`) `XADD`/`XTRIM` trim specs for Redis-compatible parsing; the mock treats it as a trimming hint.
+- Approximate (`~`) `XADD`/`XTRIM` trim specs use a simplified mock heuristic that may leave one extra eligible entry; `LIMIT count` is accepted for Redis-compatible parsing and treated as a trimming hint.
 - [ ] Stream radix-tree statistics in `XINFO STREAM` are approximated for mock compatibility rather than mirroring Redis internals
 
 #### Not implemented

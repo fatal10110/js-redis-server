@@ -43,14 +43,12 @@ describe('stream commands (unit)', () => {
     )
   })
 
-  test('XTRIM MAXLEN ~ (approximate) trims exactly in this implementation', async () => {
-    // Our mock uses exact trimming even for ~; this test pins that contract.
-    // The integration test against real Redis only asserts the flag is accepted
-    // (real Redis may defer trimming on small streams).
+  test('XTRIM MAXLEN ~ (approximate) leaves one extra entry when possible', async () => {
     const { session } = createSession()
     await session.execute('xadd', buf('s', '1-1', 'f', 'v'))
     await session.execute('xadd', buf('s', '2-1', 'f', 'v'))
     await session.execute('xadd', buf('s', '3-1', 'f', 'v'))
+    await session.execute('xadd', buf('s', '4-1', 'f', 'v'))
 
     assert.deepStrictEqual(
       await session.execute('xtrim', buf('s', 'MAXLEN', '~', '2')),
@@ -58,7 +56,7 @@ describe('stream commands (unit)', () => {
     )
     assert.deepStrictEqual(
       await session.execute('xlen', buf('s')),
-      intResult(2),
+      intResult(3),
     )
   })
 
@@ -78,14 +76,14 @@ describe('stream commands (unit)', () => {
     )
   })
 
-  test('XTRIM MINID ~ trims exactly in this implementation', async () => {
+  test('XTRIM MINID ~ (approximate) leaves one eligible entry when possible', async () => {
     const { session } = createSession()
     await session.execute('xadd', buf('s', '1-0', 'f', 'v'))
     await session.execute('xadd', buf('s', '2-0', 'f', 'v'))
     await session.execute('xadd', buf('s', '3-0', 'f', 'v'))
 
     assert.deepStrictEqual(
-      await session.execute('xtrim', buf('s', 'MINID', '~', '2-0')),
+      await session.execute('xtrim', buf('s', 'MINID', '~', '3-0')),
       intResult(1),
     )
     assert.deepStrictEqual(
@@ -171,6 +169,19 @@ describe('stream commands (unit)', () => {
       ).value.toString(),
     )
     assert.deepStrictEqual(ids, ['3-1', '4-1'])
+  })
+
+  test('XADD MAXLEN ~ (approximate) leaves one extra entry when possible', async () => {
+    const { session } = createSession()
+    await session.execute('xadd', buf('s', '1-1', 'f', 'v'))
+    await session.execute('xadd', buf('s', '2-1', 'f', 'v'))
+    await session.execute('xadd', buf('s', '3-1', 'f', 'v'))
+    await session.execute('xadd', buf('s', 'MAXLEN', '~', '2', '4-1', 'f', 'v'))
+
+    assert.deepStrictEqual(
+      await session.execute('xlen', buf('s')),
+      intResult(3),
+    )
   })
 
   // XREAD
