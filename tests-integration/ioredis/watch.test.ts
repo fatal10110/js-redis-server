@@ -1,8 +1,8 @@
 import { Cluster, Redis } from 'ioredis'
-import { after, before, describe, it } from 'node:test'
+import { after, before, describe, it, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { connectToSlotOwner, errorWithMessage } from '../utils'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -224,6 +224,158 @@ describe('WATCH/UNWATCH', () => {
     } catch (err) {
       // Expected to fail
       assert.ok(err)
+    }
+  })
+
+  test('no-op collection mutations should not dirty watched keys', async () => {
+    const cases: Array<{
+      name: string
+      initialize(client: Redis, key: string): Promise<unknown>
+      mutate(client: Redis, key: string): Promise<unknown>
+      expectedNoopReply: unknown
+    }> = [
+      {
+        name: 'HDEL missing field',
+        initialize: (client, key) => client.call('HSET', key, 'field', 'value'),
+        mutate: (client, key) => client.call('HDEL', key, 'missing'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'HSETNX existing field',
+        initialize: (client, key) => client.call('HSET', key, 'field', 'value'),
+        mutate: (client, key) => client.call('HSETNX', key, 'field', 'other'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'LREM missing value',
+        initialize: (client, key) => client.call('RPUSH', key, 'one', 'two'),
+        mutate: (client, key) => client.call('LREM', key, 0, 'missing'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'SREM missing member',
+        initialize: (client, key) => client.call('SADD', key, 'member'),
+        mutate: (client, key) => client.call('SREM', key, 'missing'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'ZREM missing member',
+        initialize: (client, key) => client.call('ZADD', key, 1, 'member'),
+        mutate: (client, key) => client.call('ZREM', key, 'missing'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'ZADD XX missing member',
+        initialize: (client, key) => client.call('ZADD', key, 1, 'member'),
+        mutate: (client, key) => client.call('ZADD', key, 'XX', 2, 'missing'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'XDEL missing id',
+        initialize: (client, key) =>
+          client.call('XADD', key, '1-0', 'field', 'value'),
+        mutate: (client, key) => client.call('XDEL', key, '2-0'),
+        expectedNoopReply: 0,
+      },
+      {
+        name: 'XTRIM no removed entries',
+        initialize: (client, key) =>
+          client.call('XADD', key, '1-0', 'field', 'value'),
+        mutate: (client, key) => client.call('XTRIM', key, 'MAXLEN', 10),
+        expectedNoopReply: 0,
+      },
+    ]
+
+    for (const item of cases) {
+      const key = `watch:{noop:${randomKey()}}`
+      const directClient = await connectToSlotOwner(redisClient!, key)
+
+      try {
+        await directClient.call('DEL', key)
+        await item.initialize(directClient, key)
+
+        assert.strictEqual(await directClient.call('WATCH', key), 'OK')
+        assert.strictEqual(
+          await item.mutate(directClient, key),
+          item.expectedNoopReply,
+          item.name,
+        )
+
+        assert.strictEqual(await directClient.call('MULTI'), 'OK')
+        assert.strictEqual(
+          await directClient.call('SET', key, 'after'),
+          'QUEUED',
+        )
+
+        const result = await directClient.call('EXEC')
+        assert.deepStrictEqual(result, ['OK'], item.name)
+      } finally {
+        await directClient.call('UNWATCH').catch(() => undefined)
+        await directClient.call('DEL', key).catch(() => undefined)
+        directClient.disconnect()
+      }
+    }
+  })
+
+  test('identical store writes should dirty watched destination keys', async () => {
+    const cases: Array<{
+      name: string
+      initialize(client: Redis, key: string): Promise<unknown>
+      store(client: Redis, key: string): Promise<unknown>
+      expectedStoreReply: unknown
+    }> = [
+      {
+        name: 'SINTERSTORE identical set',
+        initialize: async (client, key) => {
+          await client.call('SADD', `${key}:source`, 'a', 'b', 'c')
+          await client.call('SINTERSTORE', key, `${key}:source`)
+        },
+        store: (client, key) =>
+          client.call('SINTERSTORE', key, `${key}:source`),
+        expectedStoreReply: 3,
+      },
+      {
+        name: 'ZINTERSTORE identical sorted set',
+        initialize: async (client, key) => {
+          await client.call('ZADD', `${key}:source`, 1, 'a', 2, 'b')
+          await client.call('ZINTERSTORE', key, 1, `${key}:source`)
+        },
+        store: (client, key) =>
+          client.call('ZINTERSTORE', key, 1, `${key}:source`),
+        expectedStoreReply: 2,
+      },
+    ]
+
+    for (const item of cases) {
+      const key = `watch:{store:${randomKey()}}`
+      const directClient = await connectToSlotOwner(redisClient!, key)
+
+      try {
+        await directClient.call('DEL', key, `${key}:source`)
+        await item.initialize(directClient, key)
+
+        assert.strictEqual(await directClient.call('WATCH', key), 'OK')
+        assert.strictEqual(
+          await item.store(directClient, key),
+          item.expectedStoreReply,
+          item.name,
+        )
+
+        assert.strictEqual(await directClient.call('MULTI'), 'OK')
+        assert.strictEqual(
+          await directClient.call('SET', key, 'after'),
+          'QUEUED',
+        )
+
+        const result = await directClient.call('EXEC')
+        assert.strictEqual(result, null, item.name)
+      } finally {
+        await directClient.call('UNWATCH').catch(() => undefined)
+        await directClient
+          .call('DEL', key, `${key}:source`)
+          .catch(() => undefined)
+        directClient.disconnect()
+      }
     }
   })
 })

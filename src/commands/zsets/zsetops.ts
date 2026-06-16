@@ -172,8 +172,7 @@ function storeResult(
     return 0
   }
   db.updateSortedSet(destination, zset => {
-    zset.members.clear()
-    for (const [hex, member] of members) zset.members.set(hex, member)
+    zset.replaceMembers(members, { forceDirty: true })
   })
   return members.size
 }

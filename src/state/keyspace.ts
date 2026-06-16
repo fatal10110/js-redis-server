@@ -21,6 +21,10 @@ export type SetOptions = {
   keepTtl?: boolean
 }
 
+export type KeyspaceMutationTracker = {
+  markChanged(): void
+}
+
 export class WrongRedisTypeError extends Error {
   constructor(
     public readonly expected: RedisDataTypeName,
@@ -132,7 +136,7 @@ export class RedisKeyspace {
     key: Buffer,
     expectedType: TValue['type'],
     createValue: () => TValue,
-    mutator: (value: TValue) => TResult,
+    mutator: (value: TValue, tracker: KeyspaceMutationTracker) => TResult,
   ): TResult {
     const existing = this.getLiveEntry(key)
 
@@ -147,8 +151,19 @@ export class RedisKeyspace {
       value: createValue(),
     }
 
-    const result = mutator(entry.value as TValue)
+    let changed = false
+    const tracker: KeyspaceMutationTracker = {
+      markChanged: () => {
+        changed = true
+      },
+    }
+
+    const result = mutator(entry.value as TValue, tracker)
     const id = keyId(key)
+
+    if (!changed) {
+      return result
+    }
 
     // Centralized "delete the key when its collection is empty" rule, so each
     // command no longer has to remember to clean up emptied hashes/lists/etc.

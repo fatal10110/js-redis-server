@@ -67,11 +67,7 @@ function storeSetResult(
     return 0
   }
   db.updateSet(destKey, set => {
-    set.members.clear()
-    for (const hex of hexSet) {
-      const buf = bufferMap.get(hex)!
-      set.members.set(hex, buf)
-    }
+    set.replaceMembers(hexSet, bufferMap, { forceDirty: true })
   })
   return hexSet.size
 }
@@ -148,11 +144,7 @@ export const saddCommand = defineCommand({
     const added = ctx.db.updateSet(args.key, set => {
       let count = 0
       for (const member of args.members) {
-        const hex = member.toString('hex')
-        if (!set.members.has(hex)) {
-          count++
-          set.members.set(hex, member)
-        }
+        if (set.addMember(member)) count++
       }
       return count
     })
@@ -174,7 +166,7 @@ export const sremCommand = defineCommand({
     let removed = 0
     ctx.db.updateSet(args.key, set => {
       for (const member of args.members) {
-        if (set.members.delete(member.toString('hex'))) removed++
+        if (set.deleteMember(member)) removed++
       }
     })
     if (removed > 0 && (ctx.db.getSet(args.key)?.members.size ?? 0) === 0) {
@@ -273,13 +265,13 @@ export const spopCommand = defineCommand({
 
     if (args.count === undefined) {
       const result = ctx.db.updateSet(args.key, set => {
-        if (set.members.size === 0)
+        if (set.size === 0)
           return { member: null as Buffer | null, empty: false }
-        const entries = Array.from(set.members.entries())
+        const entries = set.randomMemberEntries()
         const [hex, member] =
           entries[Math.floor(Math.random() * entries.length)]
-        set.members.delete(hex)
-        return { member, empty: set.members.size === 0 }
+        set.deleteMemberId(hex)
+        return { member, empty: set.size === 0 }
       })
       if (result.empty) ctx.db.delete(args.key)
       return bulk(result.member)
@@ -288,9 +280,8 @@ export const spopCommand = defineCommand({
     if (args.count === 0) return array([])
 
     const result = ctx.db.updateSet(args.key, set => {
-      if (set.members.size === 0)
-        return { members: [] as Buffer[], empty: true }
-      const entries = Array.from(set.members.entries())
+      if (set.size === 0) return { members: [] as Buffer[], empty: true }
+      const entries = set.randomMemberEntries()
       const size = Math.min(args.count!, entries.length)
       const members: Buffer[] = []
 
@@ -298,11 +289,11 @@ export const spopCommand = defineCommand({
         const j = i + Math.floor(Math.random() * (entries.length - i))
         ;[entries[i], entries[j]] = [entries[j], entries[i]]
         const [hex, member] = entries[i]
-        set.members.delete(hex)
+        set.deleteMemberId(hex)
         members.push(member)
       }
 
-      return { members, empty: set.members.size === 0 }
+      return { members, empty: set.size === 0 }
     })
     if (result.empty) ctx.db.delete(args.key)
     return array(result.members.map(member => RedisValue.bulkString(member)))
@@ -448,8 +439,6 @@ export const smoveCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.source, args.destination],
   execute: (args, ctx) => {
-    const hex = args.member.toString('hex')
-
     const sourceType = ctx.db.getType(args.source)
     if (sourceType === null) return integer(0)
     if (sourceType !== 'set') throw new WrongTypeRedisError()
@@ -460,10 +449,7 @@ export const smoveCommand = defineCommand({
 
     let moved = false
     ctx.db.updateSet(args.source, set => {
-      if (set.members.has(hex)) {
-        set.members.delete(hex)
-        moved = true
-      }
+      moved = set.deleteMember(args.member)
     })
 
     if (!moved) return integer(0)
@@ -473,7 +459,7 @@ export const smoveCommand = defineCommand({
     }
 
     ctx.db.updateSet(args.destination, set => {
-      set.members.set(hex, args.member)
+      set.addMember(args.member)
     })
 
     return integer(1)

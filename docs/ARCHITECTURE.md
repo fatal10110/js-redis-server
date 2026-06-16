@@ -333,6 +333,14 @@ emitting an `evict` mutation event so `WATCH` observes expiry exactly like a
 real delete. Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
 flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L68),
 which clones values before fan-out so subscribers can never mutate shared state.
+In-place collection updates run through a keyspace-owned mutation tracker and
+typed helpers such as `TrackedHashData.setField()` and
+`TrackedListData.trim()`. Dirty tracking is operation-based rather than a
+before/after value diff: effective helper operations mark the key dirty as they
+run, even if a later operation restores the same final value. Commands use an
+explicit force-write escape hatch for Redis-compatible semantics where a
+successful write dirties `WATCH` even when no helper operation changed the final
+value, such as identical STORE rewrites or `LTRIM key 0 -1`.
 
 ## Concurrency model
 

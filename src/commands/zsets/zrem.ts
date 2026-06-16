@@ -11,7 +11,7 @@ export const zremCommand = defineCommand({
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
       for (const member of args.members) {
-        if (zset.members.delete(member.toString('hex'))) removed++
+        if (zset.deleteMember(member)) removed++
       }
     })
     if (
