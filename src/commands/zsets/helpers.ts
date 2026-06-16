@@ -14,7 +14,9 @@ export function getSortedMembers(
   return Array.from(zset.members.values()).sort((a, b) =>
     a.score !== b.score
       ? a.score - b.score
-      : a.member.toString().localeCompare(b.member.toString()),
+      : // Equal scores tie-break by raw byte order (memcmp), matching Redis —
+        // not localeCompare, which would mis-sort non-ASCII members (see #41).
+        Buffer.compare(a.member, b.member),
   )
 }
 
