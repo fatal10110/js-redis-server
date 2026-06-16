@@ -234,6 +234,19 @@ export class NumKeysGreaterThanZeroError extends RedisCommandError {
   }
 }
 
+/** ZUNION/ZINTER/ZDIFF family when numkeys <= 0. */
+export class AtLeastOneInputKeyError extends RedisCommandError {
+  constructor(commandName: string) {
+    super(`at least 1 input key is needed for '${commandName}' command`)
+  }
+}
+
+export class WeightNotFloatError extends RedisCommandError {
+  constructor() {
+    super('weight value is not a float')
+  }
+}
+
 export class CountGreaterThanZeroError extends RedisCommandError {
   constructor() {
     super('count should be greater than 0')
