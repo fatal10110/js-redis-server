@@ -162,6 +162,12 @@ function encodeResp3BlobString(value: Buffer | null): Buffer {
 }
 
 function encodeResp3VerbatimString(format: string, value: Buffer): Buffer {
+  if (Buffer.byteLength(format) !== 3) {
+    throw new Error(
+      `RESP3 verbatim string format must be exactly 3 bytes, got ${JSON.stringify(format)}`,
+    )
+  }
+
   const payload = Buffer.concat([Buffer.from(`${format}:`), value])
   return Buffer.concat([
     Buffer.from(`=${payload.length}\r\n`),
