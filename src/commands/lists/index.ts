@@ -9,6 +9,7 @@ import {
   lsetCommand,
   ltrimCommand,
 } from './access'
+import { linsertCommand } from './insert'
 import { lposCommand } from './lpos'
 import { lpopCommand, rpopCommand } from './pop'
 import {
@@ -27,6 +28,7 @@ export const listsCommands = [
   llenCommand,
   lrangeCommand,
   lindexCommand,
+  linsertCommand,
   lsetCommand,
   lremCommand,
   ltrimCommand,
@@ -48,6 +50,7 @@ export {
   blpopCommand,
   brpopCommand,
   lindexCommand,
+  linsertCommand,
   llenCommand,
   lmoveCommand,
   lmpopCommand,
