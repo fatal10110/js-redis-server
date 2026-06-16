@@ -130,4 +130,40 @@ describe('RESP encoder core', () => {
       Buffer.from('>2\r\n$7\r\nmessage\r\n$1\r\nx\r\n'),
     )
   })
+
+  test('encodes RESP3 verbatim strings with a 3-byte format prefix', () => {
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.verbatim('txt', Buffer.from('Some string')), {
+        version: 3,
+      }),
+      Buffer.from('=15\r\ntxt:Some string\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.verbatim('mkd', Buffer.from('# title')), {
+        version: 3,
+      }),
+      Buffer.from('=11\r\nmkd:# title\r\n'),
+    )
+  })
+
+  test('downgrades RESP3 verbatim strings to a plain RESP2 bulk string', () => {
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.verbatim('txt', Buffer.from('Some string'))),
+      Buffer.from('$11\r\nSome string\r\n'),
+    )
+  })
+
+  test('rejects RESP3 verbatim strings whose format is not exactly 3 bytes', () => {
+    for (const badFormat of ['', 'tx', 'text', 'txt ']) {
+      assert.throws(
+        () =>
+          encodeRedisValue(
+            RedisValue.verbatim(badFormat, Buffer.from('payload')),
+            { version: 3 },
+          ),
+        /format must be exactly 3 bytes/,
+        `format "${badFormat}" should be rejected`,
+      )
+    }
+  })
 })
