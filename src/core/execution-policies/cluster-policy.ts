@@ -34,7 +34,12 @@ export function createClusterPolicy(
       }
 
       if (plan.definition.name === 'select') {
-        throw new RedisCommandError('SELECT is not allowed in cluster mode')
+        // Cluster mode has a single logical database (0). SELECT 0 is a no-op
+        // and accepted; any non-zero index is rejected like real Redis.
+        const index = (plan.args as { database: number }).database
+        if (index !== 0) {
+          throw new RedisCommandError('SELECT is not allowed in cluster mode')
+        }
       }
 
       if (
