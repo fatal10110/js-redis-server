@@ -99,9 +99,9 @@ surface.
 
 #### FLUSHDB / FLUSHALL
 
-- [x] `FLUSHDB` - Remove all keys from the current database
-- [x] `FLUSHALL` - Remove all keys from all databases
-- [ ] `ASYNC`/`SYNC` modifiers - not accepted (any extra argument is a wrong-arity error)
+- [x] `FLUSHDB [ASYNC|SYNC]` - Remove all keys from the current database
+- [x] `FLUSHALL [ASYNC|SYNC]` - Remove all keys from all databases
+- The optional `ASYNC` / `SYNC` modifier is accepted (case-insensitive) and ignored — the in-memory keyspace is always flushed synchronously. Any other token, or more than one modifier, returns `ERR syntax error`.
 
 > `FLUSHALL`/`FLUSHDB` clear keyspace data but **not** the Lua script cache -
 > only `SCRIPT FLUSH` does.
