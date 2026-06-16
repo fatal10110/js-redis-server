@@ -136,7 +136,7 @@ export const xautoclaimCommand = defineCommand({
         }
       }
 
-      return { nextStartId, claimed, deleted }
+      return { result: { nextStartId, claimed, deleted }, changed: true }
     })
 
     return array([

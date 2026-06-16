@@ -51,6 +51,7 @@ export const zpopminCommand = defineCommand({
       for (const entry of toRemove) {
         z.members.delete(entry.member.toString('hex'))
       }
+      return { result: undefined, changed: toRemove.length > 0 }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
     const items: RedisValue[] = []
@@ -78,6 +79,7 @@ export const zpopmaxCommand = defineCommand({
       for (const entry of toRemove) {
         z.members.delete(entry.member.toString('hex'))
       }
+      return { result: undefined, changed: toRemove.length > 0 }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
     const items: RedisValue[] = []

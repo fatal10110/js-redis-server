@@ -50,10 +50,37 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
 
     // e.g. HDEL on a non-existent key: there is nothing to remove, the
     // collection stays empty, so the key must never appear.
-    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, () => {})
+    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, () => ({
+      result: undefined,
+      changed: false,
+    }))
 
     assert.strictEqual(keyspace.get(key), null)
     assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(events.length, 0)
+  })
+
+  test('a no-op mutation on an existing collection emits no event', () => {
+    const { keyspace, events } = setup()
+    const key = Buffer.from('h')
+
+    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, hash => {
+      hash.fields.set('f', { field: Buffer.from('f'), value: Buffer.from('v') })
+      return { result: undefined, changed: true }
+    })
+    events.length = 0
+
+    keyspace.update<RedisHashData, number>(
+      key,
+      'hash',
+      createHashData,
+      hash => {
+        const deleted = hash.fields.delete('missing') ? 1 : 0
+        return { result: deleted, changed: deleted > 0 }
+      },
+    )
+
+    assert.strictEqual(keyspace.getType(key), 'hash')
     assert.strictEqual(events.length, 0)
   })
 
@@ -63,12 +90,14 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
 
     keyspace.update<RedisHashData, void>(key, 'hash', createHashData, hash => {
       hash.fields.set('f', { field: Buffer.from('f'), value: Buffer.from('v') })
+      return { result: undefined, changed: true }
     })
     assert.strictEqual(keyspace.getType(key), 'hash')
     events.length = 0
 
     keyspace.update<RedisHashData, void>(key, 'hash', createHashData, hash => {
       hash.fields.delete('f')
+      return { result: undefined, changed: true }
     })
 
     assert.strictEqual(keyspace.get(key), null)
@@ -83,6 +112,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
 
     keyspace.update<RedisListData, void>(key, 'list', createListData, list => {
       list.values.push(Buffer.from('a'))
+      return { result: undefined, changed: true }
     })
     assert.strictEqual(keyspace.getType(key), 'list')
     events.length = 0
@@ -90,6 +120,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
     // e.g. LTRIM that removes every element
     keyspace.update<RedisListData, void>(key, 'list', createListData, list => {
       list.values.length = 0
+      return { result: undefined, changed: true }
     })
 
     assert.strictEqual(keyspace.get(key), null)
@@ -108,6 +139,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       createSortedSetData,
       zset => {
         zset.members.set('m', { member: Buffer.from('m'), score: 1 })
+        return { result: undefined, changed: true }
       },
     )
     assert.strictEqual(keyspace.getType(key), 'zset')
@@ -120,6 +152,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       createSortedSetData,
       zset => {
         zset.members.delete('m')
+        return { result: undefined, changed: true }
       },
     )
 
@@ -135,6 +168,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
 
     keyspace.update<RedisSetData, void>(key, 'set', createSetData, set => {
       set.members.set('m', Buffer.from('m'))
+      return { result: undefined, changed: true }
     })
 
     assert.strictEqual(keyspace.getType(key), 'set')
@@ -152,6 +186,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       () => createStringData(Buffer.alloc(0)),
       str => {
         str.value = Buffer.alloc(0)
+        return { result: undefined, changed: true }
       },
     )
 
@@ -168,6 +203,7 @@ describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#
       createStreamData,
       () => {
         // Create the stream without adding entries (e.g. XGROUP CREATE MKSTREAM).
+        return { result: undefined, changed: true }
       },
     )
 

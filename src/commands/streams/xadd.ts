@@ -130,7 +130,7 @@ export const xaddCommand = defineCommand({
         applyTrim(stream, args.trim)
       }
 
-      return next
+      return { result: next, changed: true }
     })
 
     return bulk(Buffer.from(formatStreamId(id)))

@@ -333,6 +333,10 @@ emitting an `evict` mutation event so `WATCH` observes expiry exactly like a
 real delete. Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
 flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L68),
 which clones values before fan-out so subscribers can never mutate shared state.
+In-place collection updates return both their command result and a `changed`
+flag; `RedisKeyspace.update()` only emits a `write` or auto-delete event when
+that flag says the key's stored value really changed, so no-op removals do not
+spuriously dirty `WATCH`.
 
 ## Concurrency model
 

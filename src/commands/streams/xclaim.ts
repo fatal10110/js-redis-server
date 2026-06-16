@@ -186,7 +186,7 @@ export const xclaimCommand = defineCommand({
             : entryToReply(entry.id, entry.fields),
         )
       }
-      return replies
+      return { result: replies, changed: true }
     })
 
     return array(claimed)

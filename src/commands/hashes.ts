@@ -134,10 +134,13 @@ export const hsetCommand = defineCommand({
       let count = 0
       for (const { field, value } of args.pairs) {
         const hex = field.toString('hex')
-        if (!hash.fields.has(hex)) count++
+        const existing = hash.fields.get(hex)
+        if (!existing) {
+          count++
+        }
         hash.fields.set(hex, { field, value })
       }
-      return count
+      return { result: count, changed: true }
     })
     return integer(added)
   },
@@ -151,9 +154,9 @@ export const hsetnxCommand = defineCommand({
   execute: (args, ctx) => {
     const set = ctx.db.updateHash(args.key, hash => {
       const hex = args.field.toString('hex')
-      if (hash.fields.has(hex)) return false
+      if (hash.fields.has(hex)) return { result: false, changed: false }
       hash.fields.set(hex, { field: args.field, value: args.value })
-      return true
+      return { result: true, changed: true }
     })
     return integer(set ? 1 : 0)
   },
@@ -186,7 +189,7 @@ export const hdelCommand = defineCommand({
       for (const field of args.fields) {
         if (hash.fields.delete(field.toString('hex'))) deleted++
       }
-      return hash.fields.size
+      return { result: hash.fields.size, changed: deleted > 0 }
     })
     if (remaining === 0) {
       ctx.db.delete(args.key)
@@ -203,8 +206,10 @@ export const hmsetCommand = defineCommand({
   execute: (args, ctx) => {
     ctx.db.updateHash(args.key, hash => {
       for (const { field, value } of args.pairs) {
-        hash.fields.set(field.toString('hex'), { field, value })
+        const hex = field.toString('hex')
+        hash.fields.set(hex, { field, value })
       }
+      return { result: undefined, changed: true }
     })
     return ok()
   },
@@ -339,7 +344,7 @@ export const hincrbyCommand = defineCommand({
       const next = current + args.increment
       const valueBuf = Buffer.from(String(next))
       hash.fields.set(hex, { field: args.field, value: valueBuf })
-      return next
+      return { result: next, changed: true }
     })
     return integer(result)
   },
@@ -374,7 +379,7 @@ export const hincrbyfloatCommand = defineCommand({
       }
       const valueBuf = Buffer.from(formatted)
       hash.fields.set(hex, { field: args.field, value: valueBuf })
-      return valueBuf
+      return { result: valueBuf, changed: true }
     })
     return bulk(result)
   },

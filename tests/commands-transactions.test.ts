@@ -145,6 +145,7 @@ describe('new transaction commands', () => {
     const { session, server } = createSession()
     server.getDatabase(0).updateList(Buffer.from('list'), list => {
       list.values.push(Buffer.from('value'))
+      return { result: undefined, changed: true }
     })
 
     assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())

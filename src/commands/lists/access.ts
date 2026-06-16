@@ -78,6 +78,7 @@ export const lsetCommand = defineCommand({
 
     ctx.db.updateList(args.key, list => {
       list.values[idx] = args.value
+      return { result: undefined, changed: true }
     })
     return ok()
   },
@@ -98,7 +99,10 @@ export const lremCommand = defineCommand({
 
     const result = ctx.db.updateList(args.key, list => {
       const removed = listRemove(list.values, args.count, args.element)
-      return { removed, empty: list.values.length === 0 }
+      return {
+        result: { removed, empty: list.values.length === 0 },
+        changed: removed > 0,
+      }
     })
     if (result.empty) ctx.db.delete(args.key)
     return integer(result.removed)
@@ -129,7 +133,10 @@ export const ltrimCommand = defineCommand({
         list.values.splice(0, start)
         list.values.splice(stop - start + 1)
       }
-      return { empty: list.values.length === 0 }
+      return {
+        result: { empty: list.values.length === 0 },
+        changed: true,
+      }
     })
     if (result.empty) ctx.db.delete(args.key)
     return ok()

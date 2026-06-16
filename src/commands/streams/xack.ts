@@ -22,7 +22,7 @@ export const xackCommand = defineCommand({
       for (const id of ids) {
         if (group.pending.delete(streamIdKey(id))) count++
       }
-      return count
+      return { result: count, changed: count > 0 }
     })
     return integer(acknowledged)
   },

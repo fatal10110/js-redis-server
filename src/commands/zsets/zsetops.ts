@@ -171,9 +171,18 @@ function storeResult(
     db.delete(destination)
     return 0
   }
+  const existing = db.getSortedSet(destination)
+  const changed =
+    !existing ||
+    existing.members.size !== members.size ||
+    Array.from(members).some(([hex, member]) => {
+      const current = existing.members.get(hex)
+      return !current || current.score !== member.score
+    })
   db.updateSortedSet(destination, zset => {
     zset.members.clear()
     for (const [hex, member] of members) zset.members.set(hex, member)
+    return { result: undefined, changed }
   })
   return members.size
 }

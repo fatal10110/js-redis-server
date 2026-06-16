@@ -159,6 +159,7 @@ export function tryZsetMultiPop(
       for (const entry of toRemove) {
         zset.members.delete(entry.member.toString('hex'))
       }
+      return { result: undefined, changed: toRemove.length > 0 }
     })
     deleteSortedSetIfEmpty(db, key)
 

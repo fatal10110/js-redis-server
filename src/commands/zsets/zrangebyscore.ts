@@ -161,6 +161,7 @@ export const zremrangebyscoreCommand = defineCommand({
           removed++
         }
       }
+      return { result: undefined, changed: removed > 0 }
     })
     if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(removed)
@@ -189,6 +190,7 @@ export const zremrangebyrankCommand = defineCommand({
       for (const hex of toRemove) {
         if (set.members.delete(hex)) removed++
       }
+      return { result: undefined, changed: removed > 0 }
     })
     if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(removed)

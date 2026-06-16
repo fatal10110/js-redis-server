@@ -15,7 +15,7 @@ export const lpushCommand = defineCommand({
       for (const val of args.values) {
         list.values.unshift(val)
       }
-      return list.values.length
+      return { result: list.values.length, changed: true }
     })
     return integer(len)
   },
@@ -34,7 +34,7 @@ export const rpushCommand = defineCommand({
       for (const val of args.values) {
         list.values.push(val)
       }
-      return list.values.length
+      return { result: list.values.length, changed: true }
     })
     return integer(len)
   },
@@ -56,7 +56,7 @@ export const lpushxCommand = defineCommand({
       for (const val of args.values) {
         list.values.unshift(val)
       }
-      return list.values.length
+      return { result: list.values.length, changed: true }
     })
     return integer(len)
   },
@@ -78,7 +78,7 @@ export const rpushxCommand = defineCommand({
       for (const val of args.values) {
         list.values.push(val)
       }
-      return list.values.length
+      return { result: list.values.length, changed: true }
     })
     return integer(len)
   },

@@ -139,7 +139,10 @@ export function tryListMultiPop(
         if (value) values.push(value)
       }
 
-      return { values, empty: list.values.length === 0 }
+      return {
+        result: { values, empty: list.values.length === 0 },
+        changed: values.length > 0,
+      }
     })
     if (result.empty) db.delete(key)
 

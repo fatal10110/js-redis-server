@@ -165,7 +165,7 @@ function readGroupEntries(
         }
       }
 
-      return replies
+      return { result: replies, changed: true }
     })
 
     if (entries.length > 0 || id !== '>') {

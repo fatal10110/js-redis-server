@@ -14,6 +14,7 @@ import {
 } from './data-types'
 import {
   ExpirationState,
+  KeyspaceUpdateResult,
   KeyspaceEntry,
   RedisKeyspace,
   SetOptions,
@@ -107,35 +108,35 @@ export class RedisDatabase {
 
   updateHash<TResult>(
     key: Buffer,
-    mutator: (hash: RedisHashData) => TResult,
+    mutator: (hash: RedisHashData) => KeyspaceUpdateResult<TResult>,
   ): TResult {
     return this.updateTyped(key, 'hash', createHashData, mutator)
   }
 
   updateList<TResult>(
     key: Buffer,
-    mutator: (list: RedisListData) => TResult,
+    mutator: (list: RedisListData) => KeyspaceUpdateResult<TResult>,
   ): TResult {
     return this.updateTyped(key, 'list', createListData, mutator)
   }
 
   updateSet<TResult>(
     key: Buffer,
-    mutator: (set: RedisSetData) => TResult,
+    mutator: (set: RedisSetData) => KeyspaceUpdateResult<TResult>,
   ): TResult {
     return this.updateTyped(key, 'set', createSetData, mutator)
   }
 
   updateSortedSet<TResult>(
     key: Buffer,
-    mutator: (zset: RedisSortedSetData) => TResult,
+    mutator: (zset: RedisSortedSetData) => KeyspaceUpdateResult<TResult>,
   ): TResult {
     return this.updateTyped(key, 'zset', createSortedSetData, mutator)
   }
 
   updateStream<TResult>(
     key: Buffer,
-    mutator: (stream: RedisStreamData) => TResult,
+    mutator: (stream: RedisStreamData) => KeyspaceUpdateResult<TResult>,
   ): TResult {
     return this.updateTyped(key, 'stream', createStreamData, mutator)
   }
@@ -154,7 +155,7 @@ export class RedisDatabase {
     key: Buffer,
     expectedType: TValue['type'],
     createValue: () => TValue,
-    mutator: (value: TValue) => TResult,
+    mutator: (value: TValue) => KeyspaceUpdateResult<TResult>,
   ): TResult {
     try {
       return this.keyspace.update(key, expectedType, createValue, mutator)

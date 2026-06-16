@@ -172,6 +172,7 @@ export const xgroupCommand = defineCommand({
           consumers: new Map(),
           pending: new Map(),
         })
+        return { result: undefined, changed: true }
       })
       return ok()
     }
@@ -189,6 +190,7 @@ export const xgroupCommand = defineCommand({
             ? cloneStreamId(stream.lastId)
             : cloneStreamId(command.id)
         group.entriesRead = command.entriesRead
+        return { result: undefined, changed: true }
       })
       return ok()
     }
@@ -197,9 +199,10 @@ export const xgroupCommand = defineCommand({
       const stream = ctx.db.getStream(command.key)
       if (!stream) return integer(0)
 
-      const removed = ctx.db.updateStream(command.key, writable =>
-        writable.groups.delete(bufferId(command.group)),
-      )
+      const removed = ctx.db.updateStream(command.key, writable => {
+        const removed = writable.groups.delete(bufferId(command.group))
+        return { result: removed, changed: removed }
+      })
       return integer(removed ? 1 : 0)
     }
 
@@ -212,14 +215,16 @@ export const xgroupCommand = defineCommand({
       const created = ctx.db.updateStream(command.key, stream => {
         const group = requireStreamGroup(stream, command.key, command.group)
         const consumerId = bufferId(command.consumer)
-        if (group.consumers.has(consumerId)) return false
+        if (group.consumers.has(consumerId)) {
+          return { result: false, changed: false }
+        }
 
         group.consumers.set(consumerId, {
           name: Buffer.from(command.consumer),
           seenAt: Date.now(),
           activeAt: null,
         })
-        return true
+        return { result: true, changed: true }
       })
       return integer(created ? 1 : 0)
     }
@@ -232,7 +237,9 @@ export const xgroupCommand = defineCommand({
     const deleted = ctx.db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream, command.key, command.group)
       const consumerId = bufferId(command.consumer)
-      if (!group.consumers.delete(consumerId)) return 0
+      if (!group.consumers.delete(consumerId)) {
+        return { result: 0, changed: false }
+      }
 
       let removedPending = 0
       for (const [pendingId, pending] of Array.from(group.pending)) {
@@ -240,7 +247,7 @@ export const xgroupCommand = defineCommand({
         group.pending.delete(pendingId)
         removedPending++
       }
-      return removedPending
+      return { result: removedPending, changed: true }
     })
     return integer(deleted)
   },

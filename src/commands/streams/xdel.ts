@@ -31,7 +31,7 @@ export const xdelCommand = defineCommand({
           count++
         }
       }
-      return count
+      return { result: count, changed: count > 0 }
     })
     // Streams are not removed when they become empty, matching Redis.
     return integer(deleted)

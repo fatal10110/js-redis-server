@@ -13,6 +13,7 @@ export const zremCommand = defineCommand({
       for (const member of args.members) {
         if (zset.members.delete(member.toString('hex'))) removed++
       }
+      return { result: undefined, changed: removed > 0 }
     })
     if (
       removed > 0 &&

@@ -15,8 +15,9 @@ export const zincrbyCommand = defineCommand({
       const existing = zset.members.get(hex)
       const score = (existing?.score ?? 0) + inc
       assertValidResultingScore(score)
+      const changed = !existing || existing.score !== score
       zset.members.set(hex, { member: args.member, score })
-      return score
+      return { result: score, changed }
     })
     return bulk(scoreBuffer(newScore))
   },

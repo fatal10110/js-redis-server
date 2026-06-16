@@ -50,7 +50,7 @@ describe('new Redis state core', () => {
     db.updateList(key, list => {
       list.values.push(Buffer.from('a'))
       list.values.push(Buffer.from('b'))
-      return list.values.length
+      return { result: list.values.length, changed: true }
     })
 
     assert.deepStrictEqual(
@@ -103,6 +103,7 @@ describe('new Redis state core', () => {
         field: Buffer.from('field'),
         value: Buffer.from('value'),
       })
+      return { result: undefined, changed: true }
     })
 
     const firstRead = db.get(key)
@@ -128,7 +129,11 @@ describe('new Redis state core', () => {
     db.set(key, createStringData(Buffer.from('value')))
 
     assert.throws(
-      () => db.updateList(key, list => list.values.push(Buffer.from('x'))),
+      () =>
+        db.updateList(key, list => {
+          list.values.push(Buffer.from('x'))
+          return { result: undefined, changed: true }
+        }),
       WrongTypeRedisError,
     )
   })

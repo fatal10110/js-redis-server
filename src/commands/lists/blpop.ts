@@ -20,7 +20,10 @@ export function tryListPop(
 
     const result = db.updateList(key, list => {
       const value = side === 'left' ? list.values.shift()! : list.values.pop()!
-      return { value, empty: list.values.length === 0 }
+      return {
+        result: { value, empty: list.values.length === 0 },
+        changed: true,
+      }
     })
     if (result.empty) db.delete(key)
     return RedisResult.create(

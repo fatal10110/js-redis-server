@@ -82,6 +82,7 @@ export const zremrangebylexCommand = defineCommand({
           removed++
         }
       }
+      return { result: undefined, changed: removed > 0 }
     })
     if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(removed)
