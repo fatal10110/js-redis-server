@@ -150,6 +150,7 @@ export {
   blpopCommand,
   brpopCommand,
   lindexCommand,
+  linsertCommand,
   llenCommand,
   lmoveCommand,
   lmpopCommand,
