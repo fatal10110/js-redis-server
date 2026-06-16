@@ -21,9 +21,8 @@ export type SetOptions = {
   keepTtl?: boolean
 }
 
-export type KeyspaceUpdateResult<TResult> = {
-  result: TResult
-  changed: boolean
+export type KeyspaceMutationTracker = {
+  markChanged(): void
 }
 
 export class WrongRedisTypeError extends Error {
@@ -137,7 +136,7 @@ export class RedisKeyspace {
     key: Buffer,
     expectedType: TValue['type'],
     createValue: () => TValue,
-    mutator: (value: TValue) => KeyspaceUpdateResult<TResult>,
+    mutator: (value: TValue, tracker: KeyspaceMutationTracker) => TResult,
   ): TResult {
     const existing = this.getLiveEntry(key)
 
@@ -152,7 +151,14 @@ export class RedisKeyspace {
       value: createValue(),
     }
 
-    const { result, changed } = mutator(entry.value as TValue)
+    let changed = false
+    const tracker: KeyspaceMutationTracker = {
+      markChanged: () => {
+        changed = true
+      },
+    }
+
+    const result = mutator(entry.value as TValue, tracker)
     const id = keyId(key)
 
     if (!changed) {

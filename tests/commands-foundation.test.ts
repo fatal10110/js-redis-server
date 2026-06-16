@@ -240,8 +240,7 @@ describe('new foundation commands', () => {
     const { session, server } = createSession()
     const key = Buffer.from('list')
     server.getDatabase(0).updateList(key, list => {
-      list.values.push(Buffer.from('a'))
-      return { result: undefined, changed: true }
+      list.pushRight([Buffer.from('a')])
     })
 
     assert.deepStrictEqual(
@@ -288,8 +287,7 @@ describe('new foundation commands', () => {
 
     db.setString(Buffer.from('a'), Buffer.from('A'))
     db.updateList(Buffer.from('b'), list => {
-      list.values.push(Buffer.from('B'))
-      return { result: undefined, changed: true }
+      list.pushRight([Buffer.from('B')])
     })
 
     assert.deepStrictEqual(

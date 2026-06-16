@@ -11,13 +11,11 @@ export const zincrbyCommand = defineCommand({
   execute: (args, ctx) => {
     const inc = parseFloatArg(args.increment)
     const newScore = ctx.db.updateSortedSet(args.key, zset => {
-      const hex = args.member.toString('hex')
-      const existing = zset.members.get(hex)
+      const existing = zset.getMember(args.member)
       const score = (existing?.score ?? 0) + inc
       assertValidResultingScore(score)
-      const changed = !existing || existing.score !== score
-      zset.members.set(hex, { member: args.member, score })
-      return { result: score, changed }
+      zset.setScore(args.member, score)
+      return score
     })
     return bulk(scoreBuffer(newScore))
   },

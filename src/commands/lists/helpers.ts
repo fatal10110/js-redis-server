@@ -67,11 +67,8 @@ export function popList(
 
   if (count === undefined) {
     const result = ctx.db.updateList(args.key, list => {
-      const value = side === 'left' ? list.values.shift() : list.values.pop()
-      return {
-        result: { value: value ?? null, empty: list.values.length === 0 },
-        changed: value !== undefined,
-      }
+      const value = list.pop(side)
+      return { value, empty: list.length === 0 }
     })
     if (result.empty) ctx.db.delete(args.key)
     return bulk(result.value)
@@ -82,14 +79,8 @@ export function popList(
   }
 
   const result = ctx.db.updateList(args.key, list => {
-    const values =
-      side === 'left'
-        ? list.values.splice(0, count)
-        : list.values.splice(Math.max(0, list.values.length - count))
-    return {
-      result: { values, empty: list.values.length === 0 },
-      changed: values.length > 0,
-    }
+    const values = list.popMany(side, count)
+    return { values, empty: list.length === 0 }
   })
   if (result.empty) ctx.db.delete(args.key)
 

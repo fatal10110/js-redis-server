@@ -140,7 +140,8 @@ export const xclaimCommand = defineCommand({
       command.group,
     )
     const claimed = ctx.db.updateStream(command.key, stream => {
-      const group = requireStreamGroup(stream, command.key, command.group)
+      const value = stream.value
+      const group = requireStreamGroup(value, command.key, command.group)
       ensureConsumer(group, command.consumer, now).activeAt = now
       const consumerId = bufferId(command.consumer)
       if (command.lastId) group.lastDeliveredId = cloneStreamId(command.lastId)
@@ -148,7 +149,7 @@ export const xclaimCommand = defineCommand({
       const replies: RedisValue[] = []
       for (const id of command.ids) {
         const pendingId = streamIdKey(id)
-        const entry = findEntry(stream, id)
+        const entry = findEntry(value, id)
         let pending = group.pending.get(pendingId)
 
         if (!pending && command.force && entry) {
@@ -186,7 +187,8 @@ export const xclaimCommand = defineCommand({
             : entryToReply(entry.id, entry.fields),
         )
       }
-      return { result: replies, changed: true }
+      stream.forceWrite()
+      return replies
     })
 
     return array(claimed)

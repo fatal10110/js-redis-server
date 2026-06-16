@@ -316,4 +316,66 @@ describe('WATCH/UNWATCH', () => {
       }
     }
   })
+
+  test('identical store writes should dirty watched destination keys', async () => {
+    const cases: Array<{
+      name: string
+      initialize(client: Redis, key: string): Promise<unknown>
+      store(client: Redis, key: string): Promise<unknown>
+      expectedStoreReply: unknown
+    }> = [
+      {
+        name: 'SINTERSTORE identical set',
+        initialize: async (client, key) => {
+          await client.call('SADD', `${key}:source`, 'a', 'b', 'c')
+          await client.call('SINTERSTORE', key, `${key}:source`)
+        },
+        store: (client, key) =>
+          client.call('SINTERSTORE', key, `${key}:source`),
+        expectedStoreReply: 3,
+      },
+      {
+        name: 'ZINTERSTORE identical sorted set',
+        initialize: async (client, key) => {
+          await client.call('ZADD', `${key}:source`, 1, 'a', 2, 'b')
+          await client.call('ZINTERSTORE', key, 1, `${key}:source`)
+        },
+        store: (client, key) =>
+          client.call('ZINTERSTORE', key, 1, `${key}:source`),
+        expectedStoreReply: 2,
+      },
+    ]
+
+    for (const item of cases) {
+      const key = `watch:{store:${randomKey()}}`
+      const directClient = await connectToSlotOwner(redisClient!, key)
+
+      try {
+        await directClient.call('DEL', key, `${key}:source`)
+        await item.initialize(directClient, key)
+
+        assert.strictEqual(await directClient.call('WATCH', key), 'OK')
+        assert.strictEqual(
+          await item.store(directClient, key),
+          item.expectedStoreReply,
+          item.name,
+        )
+
+        assert.strictEqual(await directClient.call('MULTI'), 'OK')
+        assert.strictEqual(
+          await directClient.call('SET', key, 'after'),
+          'QUEUED',
+        )
+
+        const result = await directClient.call('EXEC')
+        assert.strictEqual(result, null, item.name)
+      } finally {
+        await directClient.call('UNWATCH').catch(() => undefined)
+        await directClient
+          .call('DEL', key, `${key}:source`)
+          .catch(() => undefined)
+        directClient.disconnect()
+      }
+    }
+  })
 })

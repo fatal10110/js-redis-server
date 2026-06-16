@@ -144,8 +144,7 @@ describe('new transaction commands', () => {
   test('keeps runtime command errors as EXEC array elements', async () => {
     const { session, server } = createSession()
     server.getDatabase(0).updateList(Buffer.from('list'), list => {
-      list.values.push(Buffer.from('value'))
-      return { result: undefined, changed: true }
+      list.pushRight([Buffer.from('value')])
     })
 
     assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())

@@ -131,18 +131,8 @@ export function tryListMultiPop(
     if (!list || list.values.length === 0) continue
 
     const result = db.updateList(key, list => {
-      const values: Buffer[] = []
-      const limit = Math.min(count, list.values.length)
-
-      for (let i = 0; i < limit; i++) {
-        const value = side === 'left' ? list.values.shift() : list.values.pop()
-        if (value) values.push(value)
-      }
-
-      return {
-        result: { values, empty: list.values.length === 0 },
-        changed: values.length > 0,
-      }
+      const values = list.popMany(side, count)
+      return { values, empty: list.length === 0 }
     })
     if (result.empty) db.delete(key)
 

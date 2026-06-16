@@ -49,9 +49,8 @@ export const zpopminCommand = defineCommand({
     if (toRemove.length === 0) return array([])
     ctx.db.updateSortedSet(args.key, z => {
       for (const entry of toRemove) {
-        z.members.delete(entry.member.toString('hex'))
+        z.deleteMember(entry.member)
       }
-      return { result: undefined, changed: toRemove.length > 0 }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
     const items: RedisValue[] = []
@@ -77,9 +76,8 @@ export const zpopmaxCommand = defineCommand({
     if (toRemove.length === 0) return array([])
     ctx.db.updateSortedSet(args.key, z => {
       for (const entry of toRemove) {
-        z.members.delete(entry.member.toString('hex'))
+        z.deleteMember(entry.member)
       }
-      return { result: undefined, changed: toRemove.length > 0 }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
     const items: RedisValue[] = []

@@ -47,11 +47,9 @@ describe('new Redis state core', () => {
     db.subscribeKey(key, event => keyEvents.push(event))
 
     db.setString(Buffer.from('string'), Buffer.from('value'))
-    db.updateList(key, list => {
-      list.values.push(Buffer.from('a'))
-      list.values.push(Buffer.from('b'))
-      return { result: list.values.length, changed: true }
-    })
+    db.updateList(key, list =>
+      list.pushRight([Buffer.from('a'), Buffer.from('b')]),
+    )
 
     assert.deepStrictEqual(
       events.map(event => event.type),
@@ -99,11 +97,7 @@ describe('new Redis state core', () => {
     })
 
     db.updateHash(key, hash => {
-      hash.fields.set('field', {
-        field: Buffer.from('field'),
-        value: Buffer.from('value'),
-      })
-      return { result: undefined, changed: true }
+      hash.setField(Buffer.from('field'), Buffer.from('value'))
     })
 
     const firstRead = db.get(key)
@@ -111,14 +105,14 @@ describe('new Redis state core', () => {
       assert.fail('Expected hash value')
     }
 
-    firstRead.fields.get('field')!.value.write('x')
+    firstRead.fields.get(fieldKey('field'))!.value.write('x')
     assertHashValue(db.get(key), 'value')
 
     if (!eventValue || eventValue.type !== 'hash') {
       assert.fail('Expected hash event value')
     }
 
-    eventValue.fields.get('field')!.value.write('y')
+    eventValue.fields.get(fieldKey('field'))!.value.write('y')
     assertHashValue(db.get(key), 'value')
   })
 
@@ -131,8 +125,7 @@ describe('new Redis state core', () => {
     assert.throws(
       () =>
         db.updateList(key, list => {
-          list.values.push(Buffer.from('x'))
-          return { result: undefined, changed: true }
+          list.pushRight([Buffer.from('x')])
         }),
       WrongTypeRedisError,
     )
@@ -238,5 +231,12 @@ function assertHashValue(value: RedisDataValue | null, expected: string) {
     assert.fail('Expected hash value')
   }
 
-  assert.strictEqual(value.fields.get('field')?.value.toString(), expected)
+  assert.strictEqual(
+    value.fields.get(fieldKey('field'))?.value.toString(),
+    expected,
+  )
+}
+
+function fieldKey(field: string): string {
+  return Buffer.from(field).toString('hex')
 }

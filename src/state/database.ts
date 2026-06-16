@@ -14,8 +14,8 @@ import {
 } from './data-types'
 import {
   ExpirationState,
-  KeyspaceUpdateResult,
   KeyspaceEntry,
+  type KeyspaceMutationTracker,
   RedisKeyspace,
   SetOptions,
   WrongRedisTypeError,
@@ -27,6 +27,13 @@ import {
 } from './mutation-events'
 import { SerialTurnQueue, type RedisTurnQueue } from '../core/turn-queue'
 import { WrongTypeRedisError } from '../core/redis-error'
+import {
+  TrackedHashData,
+  TrackedListData,
+  TrackedSetData,
+  TrackedSortedSetData,
+  TrackedStreamData,
+} from './tracked-values'
 
 export class RedisDatabase {
   readonly mutations = new RedisMutationBus()
@@ -108,37 +115,67 @@ export class RedisDatabase {
 
   updateHash<TResult>(
     key: Buffer,
-    mutator: (hash: RedisHashData) => KeyspaceUpdateResult<TResult>,
+    mutator: (hash: TrackedHashData) => TResult,
   ): TResult {
-    return this.updateTyped(key, 'hash', createHashData, mutator)
+    return this.updateTyped(
+      key,
+      'hash',
+      createHashData,
+      mutator,
+      (value, tracker) => new TrackedHashData(value, tracker),
+    )
   }
 
   updateList<TResult>(
     key: Buffer,
-    mutator: (list: RedisListData) => KeyspaceUpdateResult<TResult>,
+    mutator: (list: TrackedListData) => TResult,
   ): TResult {
-    return this.updateTyped(key, 'list', createListData, mutator)
+    return this.updateTyped(
+      key,
+      'list',
+      createListData,
+      mutator,
+      (value, tracker) => new TrackedListData(value, tracker),
+    )
   }
 
   updateSet<TResult>(
     key: Buffer,
-    mutator: (set: RedisSetData) => KeyspaceUpdateResult<TResult>,
+    mutator: (set: TrackedSetData) => TResult,
   ): TResult {
-    return this.updateTyped(key, 'set', createSetData, mutator)
+    return this.updateTyped(
+      key,
+      'set',
+      createSetData,
+      mutator,
+      (value, tracker) => new TrackedSetData(value, tracker),
+    )
   }
 
   updateSortedSet<TResult>(
     key: Buffer,
-    mutator: (zset: RedisSortedSetData) => KeyspaceUpdateResult<TResult>,
+    mutator: (zset: TrackedSortedSetData) => TResult,
   ): TResult {
-    return this.updateTyped(key, 'zset', createSortedSetData, mutator)
+    return this.updateTyped(
+      key,
+      'zset',
+      createSortedSetData,
+      mutator,
+      (value, tracker) => new TrackedSortedSetData(value, tracker),
+    )
   }
 
   updateStream<TResult>(
     key: Buffer,
-    mutator: (stream: RedisStreamData) => KeyspaceUpdateResult<TResult>,
+    mutator: (stream: TrackedStreamData) => TResult,
   ): TResult {
-    return this.updateTyped(key, 'stream', createStreamData, mutator)
+    return this.updateTyped(
+      key,
+      'stream',
+      createStreamData,
+      mutator,
+      (value, tracker) => new TrackedStreamData(value, tracker),
+    )
   }
 
   private getTyped<TValue extends RedisDataValue>(
@@ -151,14 +188,20 @@ export class RedisDatabase {
     return value as TValue
   }
 
-  private updateTyped<TValue extends RedisDataValue, TResult>(
+  private updateTyped<TValue extends RedisDataValue, TTracked, TResult>(
     key: Buffer,
     expectedType: TValue['type'],
     createValue: () => TValue,
-    mutator: (value: TValue) => KeyspaceUpdateResult<TResult>,
+    mutator: (value: TTracked) => TResult,
+    track: (value: TValue, tracker: KeyspaceMutationTracker) => TTracked,
   ): TResult {
     try {
-      return this.keyspace.update(key, expectedType, createValue, mutator)
+      return this.keyspace.update(
+        key,
+        expectedType,
+        createValue,
+        (value, tracker) => mutator(track(value as TValue, tracker)),
+      )
     } catch (err) {
       if (err instanceof WrongRedisTypeError) throw new WrongTypeRedisError()
       throw err

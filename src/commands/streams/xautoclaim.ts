@@ -98,7 +98,8 @@ export const xautoclaimCommand = defineCommand({
       command.group,
     )
     const result = ctx.db.updateStream(command.key, stream => {
-      const group = requireStreamGroup(stream, command.key, command.group)
+      const value = stream.value
+      const group = requireStreamGroup(value, command.key, command.group)
       ensureConsumer(group, command.consumer, now).activeAt = now
       const consumerId = bufferId(command.consumer)
       const claimed: RedisValue[] = []
@@ -108,7 +109,7 @@ export const xautoclaimCommand = defineCommand({
       for (const pending of pendingEntriesSorted(group)) {
         if (compareStreamId(pending.id, command.start) < 0) continue
 
-        const entry = findEntry(stream, pending.id)
+        const entry = findEntry(value, pending.id)
         if (!entry) {
           group.pending.delete(streamIdKey(pending.id))
           deleted.push(streamIdValue(pending.id))
@@ -136,7 +137,8 @@ export const xautoclaimCommand = defineCommand({
         }
       }
 
-      return { result: { nextStartId, claimed, deleted }, changed: true }
+      stream.forceWrite()
+      return { nextStartId, claimed, deleted }
     })
 
     return array([

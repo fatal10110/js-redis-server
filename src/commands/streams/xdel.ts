@@ -19,20 +19,11 @@ export const xdelCommand = defineCommand({
       return integer(0)
     }
 
-    const deleted = ctx.db.updateStream(args.key, stream => {
-      let count = 0
-      for (const target of targets) {
-        const idx = stream.entries.findIndex(
-          entry => compareStreamId(entry.id, target) === 0,
-        )
-        if (idx !== -1) {
-          updateMaxDeletedId(stream, stream.entries[idx].id)
-          stream.entries.splice(idx, 1)
-          count++
-        }
-      }
-      return { result: count, changed: count > 0 }
-    })
+    const deleted = ctx.db.updateStream(args.key, stream =>
+      stream.deleteEntries(targets, compareStreamId, entry =>
+        updateMaxDeletedId(stream.value, entry.id),
+      ),
+    )
     // Streams are not removed when they become empty, matching Redis.
     return integer(deleted)
   },

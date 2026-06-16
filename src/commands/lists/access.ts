@@ -3,7 +3,7 @@ import { t } from '../../core/command-schema'
 import { IndexOutOfRangeError, NoSuchKeyError } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import { array, bulk, integer, ok } from '../helpers'
-import { listRemove, resolveIndex } from './helpers'
+import { resolveIndex } from './helpers'
 
 export const llenCommand = defineCommand({
   name: 'llen',
@@ -77,8 +77,7 @@ export const lsetCommand = defineCommand({
     if (idx < 0 || idx >= list.values.length) throw new IndexOutOfRangeError()
 
     ctx.db.updateList(args.key, list => {
-      list.values[idx] = args.value
-      return { result: undefined, changed: true }
+      list.setAt(idx, args.value)
     })
     return ok()
   },
@@ -98,11 +97,8 @@ export const lremCommand = defineCommand({
     if (!list) return integer(0)
 
     const result = ctx.db.updateList(args.key, list => {
-      const removed = listRemove(list.values, args.count, args.element)
-      return {
-        result: { removed, empty: list.values.length === 0 },
-        changed: removed > 0,
-      }
+      const removed = list.removeMatching(args.count, args.element)
+      return { removed, empty: list.length === 0 }
     })
     if (result.empty) ctx.db.delete(args.key)
     return integer(result.removed)
@@ -123,20 +119,11 @@ export const ltrimCommand = defineCommand({
     if (!list) return ok()
 
     const result = ctx.db.updateList(args.key, list => {
-      let start = resolveIndex(args.start, list.values.length)
-      let stop = resolveIndex(args.stop, list.values.length)
+      let start = resolveIndex(args.start, list.length)
+      let stop = resolveIndex(args.stop, list.length)
       start = Math.max(0, start)
-      stop = Math.min(list.values.length - 1, stop)
-      if (start > stop) {
-        list.values.length = 0
-      } else {
-        list.values.splice(0, start)
-        list.values.splice(stop - start + 1)
-      }
-      return {
-        result: { empty: list.values.length === 0 },
-        changed: true,
-      }
+      stop = Math.min(list.length - 1, stop)
+      return list.trim(start, stop, { forceDirty: true })
     })
     if (result.empty) ctx.db.delete(args.key)
     return ok()

@@ -122,15 +122,14 @@ export const xaddCommand = defineCommand({
         throw new StreamIdEqualOrSmallerError()
       }
 
-      stream.entries.push({ id: next, fields: args.fields })
-      stream.lastId = next
-      stream.entriesAdded++
+      stream.appendEntry(next, args.fields)
 
       if (args.trim !== undefined) {
-        applyTrim(stream, args.trim)
+        const trim = args.trim
+        stream.trim(value => applyTrim(value, trim))
       }
 
-      return { result: next, changed: true }
+      return next
     })
 
     return bulk(Buffer.from(formatStreamId(id)))
