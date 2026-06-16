@@ -128,6 +128,22 @@ export class TrackedListData {
     this.tracker.markChanged()
   }
 
+  insertRelativeTo(
+    pivot: Buffer,
+    element: Buffer,
+    position: 'before' | 'after',
+  ): number {
+    const pivotIndex = this.list.values.findIndex(value => value.equals(pivot))
+    if (pivotIndex === -1) {
+      return -1
+    }
+
+    const insertIndex = position === 'before' ? pivotIndex : pivotIndex + 1
+    this.list.values.splice(insertIndex, 0, element)
+    this.tracker.markChanged()
+    return this.list.values.length
+  }
+
   removeMatching(count: number, element: Buffer): number {
     const target = element.toString('binary')
     let removed = 0
