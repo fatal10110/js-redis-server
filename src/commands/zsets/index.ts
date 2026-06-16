@@ -8,7 +8,9 @@ import { zrangeCommand, zrevrangeCommand } from './zrange'
 import {
   zcountCommand,
   zrangebyscoreCommand,
+  zrevrangebyscoreCommand,
   zremrangebyscoreCommand,
+  zremrangebyrankCommand,
 } from './zrangebyscore'
 import {
   zlexcountCommand,
@@ -40,7 +42,9 @@ export const zsetsCommands = [
   zrangeCommand,
   zrevrangeCommand,
   zrangebyscoreCommand,
+  zrevrangebyscoreCommand,
   zremrangebyscoreCommand,
+  zremrangebyrankCommand,
   zcountCommand,
   zrangebylexCommand,
   zrevrangebylexCommand,
@@ -70,7 +74,9 @@ export {
   zrangeCommand,
   zrevrangeCommand,
   zrangebyscoreCommand,
+  zrevrangebyscoreCommand,
   zremrangebyscoreCommand,
+  zremrangebyrankCommand,
   zcountCommand,
   zrangebylexCommand,
   zrevrangebylexCommand,

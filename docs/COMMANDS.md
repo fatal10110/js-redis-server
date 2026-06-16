@@ -250,7 +250,9 @@ with `GT` or `LT`.
 - [x] `ZREVRANGE key start stop [WITHSCORES]` - Return a range of members by index, high to low
 - [x] `ZMSCORE key member [member ...]` - Get the scores of multiple members (nil per missing member)
 - [x] `ZRANDMEMBER key [count [WITHSCORES]]` - Get one or more random members, optionally with their scores
-- [x] `ZRANGEBYSCORE key min max` - Return members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
+- [x] `ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]` - Return members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
+- [x] `ZREVRANGEBYSCORE key max min [WITHSCORES] [LIMIT offset count]` - Return members with scores between max and min, high to low (`-inf`, `+inf`, and exclusive `(score` bounds supported)
+- [x] `ZREMRANGEBYRANK key start stop` - Remove members by rank range (negative ranks count from highest)
 - [x] `ZREMRANGEBYSCORE key min max` - Remove members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZCOUNT key min max` - Count members with scores between min and max (`-inf`, `+inf`, and exclusive `(score` bounds supported)
 - [x] `ZRANGEBYLEX key min max [LIMIT offset count]` - Return members within a lexicographic range (`-`, `+`, and inclusive `[member`/exclusive `(member` bounds supported)
@@ -270,14 +272,12 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
+- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
 - [ ] `ZREVRANGE` does not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes; use `ZRANGE ... REV` instead
-- [ ] `ZRANGEBYSCORE` does not support `WITHSCORES` or `LIMIT offset count`
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
 
 #### Not implemented
 
-- [ ] `ZREVRANGEBYSCORE` / `ZREMRANGEBYRANK`
 - [ ] `ZRANGESTORE` / `ZMPOP` / `BZPOPMIN` / `BZPOPMAX` / `BZMPOP`
 
 ## 9. Stream Commands
