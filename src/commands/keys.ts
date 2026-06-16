@@ -12,6 +12,7 @@ import {
 } from '../core/redis-error'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
+  bulk,
   integer,
   ok,
   simpleString,
@@ -98,6 +99,22 @@ export const dbsizeCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: () => [],
   execute: (_args, ctx) => integer(ctx.db.size()),
+})
+
+export const randomkeyCommand = defineCommand({
+  name: 'randomkey',
+  schema: t.object({}),
+  flags: ['readonly', 'random', 'fast'],
+  keys: () => [],
+  execute: (_args, ctx) => {
+    const entries = ctx.db.entriesSnapshot()
+    if (entries.length === 0) {
+      return bulk(null)
+    }
+
+    const index = Math.floor(Math.random() * entries.length)
+    return bulk(entries[index].key)
+  },
 })
 
 export const ttlCommand = defineCommand({
@@ -506,6 +523,7 @@ export const keysCommands = [
   touchCommand,
   typeCommand,
   dbsizeCommand,
+  randomkeyCommand,
   ttlCommand,
   pttlCommand,
   expiretimeCommand,

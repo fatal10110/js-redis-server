@@ -150,6 +150,7 @@ surface.
 - [x] `EXISTS key [key ...]` - Determine how many of the given keys exist
 - [x] `TOUCH key [key ...]` - Count the given keys that exist without changing key values
 - [x] `TYPE key` - Return the type of the value stored at key
+- [x] `RANDOMKEY` - Return a random key from the selected database, or nil when empty
 - [x] `RENAME key newkey` - Rename a key
 - [x] `RENAMENX key newkey` - Rename a key only if the new key does not exist
 - [x] `COPY source destination [DB destination-db] [REPLACE]` - Copy a key's value (and TTL) to a destination, optionally into another database; returns `0` if the destination exists without `REPLACE`
@@ -174,7 +175,6 @@ with `GT` or `LT`.
 #### Not implemented
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
-- [ ] `RANDOMKEY`
 - [ ] `MOVE`
 - [ ] `DUMP` / `RESTORE`
 - [ ] `SORT` / `SORT_RO`
