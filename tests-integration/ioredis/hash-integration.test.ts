@@ -370,6 +370,12 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         'abc',
         'float',
         'abc',
+        'float-trailing-garbage',
+        '1abc',
+        'float-dangling-exponent',
+        '1.0e',
+        'float-trailing-space',
+        '1.5 ',
         'leading-zero',
         '007',
         'negative-zero',
@@ -414,6 +420,23 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         () => redisClient?.hincrbyfloat(hashKey, 'float', 1.5),
         errorWithMessage('ERR hash value is not a float'),
       )
+      for (const field of [
+        'float-trailing-garbage',
+        'float-dangling-exponent',
+        'float-trailing-space',
+      ]) {
+        await assert.rejects(
+          () => redisClient?.hincrbyfloat(hashKey, field, 1),
+          errorWithMessage('ERR hash value is not a float'),
+        )
+      }
+      for (const increment of ['1abc', '1.0e', '1.5 ']) {
+        await assert.rejects(
+          () =>
+            redisClient?.call('HINCRBYFLOAT', hashKey, 'missing', increment),
+          errorWithMessage('ERR value is not a valid float'),
+        )
+      }
     } finally {
       await redisClient?.del(hashKey, stringKey)
     }
