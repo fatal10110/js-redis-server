@@ -241,6 +241,7 @@ with `GT` or `LT`.
 - [x] `LLEN key` - Return the length of the list
 - [x] `LRANGE key start stop` - Get a range of elements
 - [x] `LINDEX key index` - Get an element by index
+- [x] `LINSERT key BEFORE | AFTER pivot element` - Insert an element before or after the first matching pivot
 - [x] `LSET key index element` - Set the value of an element by index
 - [x] `LREM key count element` - Remove elements matching a value
 - [x] `LTRIM key start stop` - Trim a list to the specified range
@@ -252,10 +253,6 @@ with `GT` or `LT`.
 - [x] `BLMOVE source destination LEFT | RIGHT LEFT | RIGHT timeout` - Blocking variant of `LMOVE`
 - [x] `LMPOP numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Pop from the first non-empty list
 - [x] `BLMPOP timeout numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Blocking variant of `LMPOP`
-
-#### Not implemented
-
-- [ ] `LINSERT`
 
 ## 7. Set Commands
 
