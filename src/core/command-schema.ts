@@ -33,6 +33,8 @@ type InferShape<TShape extends SchemaShape> = {
 }
 
 const INTEGER_TOKEN_PATTERN = /^(0|-?[1-9]\d*)$/
+const FLOAT_TOKEN_PATTERN =
+  /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$/
 
 class MissingInputError extends Error {
   constructor() {
@@ -86,6 +88,19 @@ function keywordMatches(actual: Buffer, expected: string): boolean {
 
 export function isIntegerToken(raw: string): boolean {
   return INTEGER_TOKEN_PATTERN.test(raw)
+}
+
+export function parseFiniteFloatToken(raw: string): number | undefined {
+  if (!FLOAT_TOKEN_PATTERN.test(raw)) {
+    return undefined
+  }
+
+  const value = Number(raw)
+  if (!Number.isFinite(value)) {
+    return undefined
+  }
+
+  return value
 }
 
 function makeSchema<TValue>(
@@ -164,8 +179,8 @@ export const t = {
 
   float(): CommandSchema<number> {
     return makeSchema((input, index) => {
-      const value = Number(readToken(input, index).toString())
-      if (!Number.isFinite(value)) {
+      const value = parseFiniteFloatToken(readToken(input, index).toString())
+      if (value === undefined) {
         throw new ExpectedFloatError()
       }
 
