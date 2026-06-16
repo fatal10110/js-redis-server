@@ -13,6 +13,12 @@ import type {
 } from './data-types'
 import type { KeyspaceMutationTracker } from './keyspace'
 
+// Dirty tracking is operation-based, not a final-value diff. An effective
+// mutating helper marks the key dirty when the operation changes structure, and
+// commands use forceDirty/forceWrite for Redis writes that must dirty WATCH even
+// when the final value is equal (for example identical STORE rewrites or
+// full-range LTRIM).
+
 export class TrackedHashData {
   constructor(
     private readonly hash: RedisHashData,
