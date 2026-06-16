@@ -317,6 +317,64 @@ describe('WATCH/UNWATCH', () => {
     }
   })
 
+  test('RENAME key key self-rename is a no-op and does not dirty a watched key', async () => {
+    const key = `watch:{selfrename:${randomKey()}}`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await directClient.call('DEL', key)
+      await directClient.call('SET', key, 'value')
+
+      assert.strictEqual(await directClient.call('WATCH', key), 'OK')
+
+      // Renaming a key to itself is a true no-op: +OK, value preserved,
+      // and no keyspace mutation that would invalidate the WATCH.
+      assert.strictEqual(await directClient.call('RENAME', key, key), 'OK')
+      assert.strictEqual(await directClient.call('GET', key), 'value')
+
+      assert.strictEqual(await directClient.call('MULTI'), 'OK')
+      assert.strictEqual(await directClient.call('SET', key, 'after'), 'QUEUED')
+
+      // Transaction must NOT be aborted by the self-rename.
+      const result = await directClient.call('EXEC')
+      assert.deepStrictEqual(result, ['OK'])
+      assert.strictEqual(await directClient.call('GET', key), 'after')
+    } finally {
+      await directClient.call('UNWATCH').catch(() => undefined)
+      await directClient.call('DEL', key).catch(() => undefined)
+      directClient.disconnect()
+    }
+  })
+
+  test('RENAME key key on a missing key still errors with no such key', async () => {
+    const key = `watch:{selfrename:missing:${randomKey()}}`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await directClient.call('DEL', key)
+      await assert.rejects(
+        () => directClient.call('RENAME', key, key),
+        errorWithMessage('ERR no such key'),
+      )
+    } finally {
+      directClient.disconnect()
+    }
+  })
+
+  test('RENAME with wrong number of arguments errors', async () => {
+    const key = `watch:{selfrename:arity:${randomKey()}}`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await assert.rejects(
+        () => directClient.call('RENAME', key),
+        errorWithMessage("ERR wrong number of arguments for 'rename' command"),
+      )
+    } finally {
+      directClient.disconnect()
+    }
+  })
+
   test('identical store writes should dirty watched destination keys', async () => {
     const cases: Array<{
       name: string
