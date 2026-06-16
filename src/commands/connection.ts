@@ -18,6 +18,7 @@ import { array, bulk, integer, ok, simpleString } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 const REDIS_VERSION = '7.4.4'
+const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
 const clientIds = new WeakMap<RedisClientSession, number>()
 const clientNames = new WeakMap<RedisClientSession, Buffer>()
@@ -124,6 +125,9 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
       'role:master',
       'connected_slaves:0',
       'master_failover_state:no-failover',
+      `master_replid:${MASTER_REPLID}`,
+      'master_repl_offset:0',
+      'second_repl_offset:-1',
       'repl_backlog_active:0',
     ],
     cpu: () => [
