@@ -253,6 +253,8 @@ export {
   zcountCommand,
   zpopminCommand,
   zpopmaxCommand,
+  bzpopminCommand,
+  bzpopmaxCommand,
   zmpopCommand,
   bzmpopCommand,
 } from './zsets'

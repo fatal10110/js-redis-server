@@ -18,7 +18,12 @@ import {
   zremrangebylexCommand,
   zrevrangebylexCommand,
 } from './zrangebylex'
-import { zpopmaxCommand, zpopminCommand } from './zpop'
+import {
+  bzpopmaxCommand,
+  bzpopminCommand,
+  zpopmaxCommand,
+  zpopminCommand,
+} from './zpop'
 import { bzmpopCommand, zmpopCommand } from './zmpop'
 import {
   zdiffCommand,
@@ -53,6 +58,8 @@ export const zsetsCommands = [
   zremrangebylexCommand,
   zpopminCommand,
   zpopmaxCommand,
+  bzpopminCommand,
+  bzpopmaxCommand,
   zmpopCommand,
   bzmpopCommand,
   zunionstoreCommand,
@@ -87,6 +94,8 @@ export {
   zremrangebylexCommand,
   zpopminCommand,
   zpopmaxCommand,
+  bzpopminCommand,
+  bzpopmaxCommand,
   zmpopCommand,
   bzmpopCommand,
   zunionstoreCommand,
