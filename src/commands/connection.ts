@@ -177,7 +177,10 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
   } else if (requestedSection in sectionBuilders) {
     selectedSections = [requestedSection]
   } else {
-    throw new RedisCommandError('Invalid section name')
+    // Real Redis replies with an empty bulk string for an unrecognized
+    // section name rather than an error (clients like ioredis probe with
+    // arbitrary section names during connection setup).
+    return ''
   }
 
   const lines: string[] = []
