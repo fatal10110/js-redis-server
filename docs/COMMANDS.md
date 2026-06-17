@@ -108,7 +108,7 @@ surface.
 
 #### TIME
 
-- [ ] `TIME` - Return the current server time as a two-element array `[unix-time-seconds, microseconds]`
+- [x] `TIME` - Return the current server time as a two-element array `[unix-time-seconds, microseconds]`
 
 #### MEMORY
 
@@ -443,7 +443,7 @@ cluster-wide fan-out between separate mock cluster nodes is not implemented.
 - [ ] `SAVE` - Synchronously save the dataset to disk
 - [ ] `BGSAVE [SCHEDULE]` - Asynchronously save the dataset to disk in the background
 - [ ] `BGREWRITEAOF` - Asynchronously rewrite the append-only file
-- [ ] `LASTSAVE` - Return the Unix timestamp of the last successful save
+- [x] `LASTSAVE` - Return the Unix timestamp of the last successful save (returns process start time, since there is no persistence)
 - [ ] `SHUTDOWN [NOSAVE|SAVE|ABORT]` - Synchronously save and shut down the server
 
 ## 16. ACL Commands
