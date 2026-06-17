@@ -7,8 +7,13 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
+import { normalizeKeyspaceNotifyConfig } from '../state'
 import { ok } from './helpers'
 import { commandSubcommandInfo } from './introspection'
+
+// Behavior-driving parameters whose authoritative value lives on the server
+// state (not the inert defaults map below), so other subsystems can read them.
+const KEYSPACE_NOTIFY_PARAM = 'notify-keyspace-events'
 
 /**
  * Plausible Redis defaults for the parameters client libraries probe during
@@ -79,9 +84,13 @@ function configGet(
   }
 
   const store = getConfigStore(ctx)
+  // Overlay server-backed params so CONFIG GET reflects their live values.
+  const effective = new Map(store)
+  effective.set(KEYSPACE_NOTIFY_PARAM, ctx.server.notifyKeyspaceEvents)
+
   const patterns = args.map(arg => arg.toString())
   const matched = new Map<string, string>()
-  for (const [name, value] of store) {
+  for (const [name, value] of effective) {
     if (patterns.some(pattern => globMatches(pattern, name))) {
       matched.set(name, value)
     }
@@ -110,6 +119,11 @@ function configSet(
   for (let i = 0; i < args.length; i += 2) {
     const name = args[i].toString().toLowerCase()
     const value = args[i + 1].toString()
+    if (name === KEYSPACE_NOTIFY_PARAM) {
+      // Validate + normalize now so the whole SET aborts before applying any.
+      updates.push([name, normalizeKeyspaceNotifyConfig(value)])
+      continue
+    }
     if (!store.has(name)) {
       throw new RedisCommandError(
         `Unknown option or number of arguments for CONFIG SET - '${args[i].toString()}'`,
@@ -120,6 +134,10 @@ function configSet(
 
   // Validate every parameter before applying any — CONFIG SET is atomic.
   for (const [name, value] of updates) {
+    if (name === KEYSPACE_NOTIFY_PARAM) {
+      ctx.server.notifyKeyspaceEvents = value
+      continue
+    }
     store.set(name, value)
   }
   return ok()

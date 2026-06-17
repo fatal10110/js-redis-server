@@ -194,28 +194,37 @@ export class CommandExecutor {
         }
       }
 
-      const rawResult = plan.definition.execute(plan.args, ctx)
+      // Tag the database with the active command so keyspace notifications can
+      // name write events after the originating command. Saved/restored so
+      // nested (Lua redis.call) and parked/interleaved commands stay correct.
+      const prevNotifyCommand = ctx.db.activeNotifyCommand
+      ctx.db.activeNotifyCommand = plan.definition.name
+      try {
+        const rawResult = plan.definition.execute(plan.args, ctx)
 
-      if (isResponseStream(rawResult)) {
-        let finalStream = ensureNonThenableStream(rawResult)
-        for (const policy of this.policies) {
-          finalStream =
-            (await policy.onStream?.(plan, ctx, finalStream)) ?? finalStream
-          finalStream = ensureNonThenableStream(finalStream)
+        if (isResponseStream(rawResult)) {
+          let finalStream = ensureNonThenableStream(rawResult)
+          for (const policy of this.policies) {
+            finalStream =
+              (await policy.onStream?.(plan, ctx, finalStream)) ?? finalStream
+            finalStream = ensureNonThenableStream(finalStream)
+          }
+
+          return finalStream
         }
 
-        return finalStream
+        const result = await rawResult
+
+        let finalResult = result
+        for (const policy of this.policies) {
+          finalResult =
+            (await policy.afterExecute?.(plan, ctx, finalResult)) ?? finalResult
+        }
+
+        return finalResult
+      } finally {
+        ctx.db.activeNotifyCommand = prevNotifyCommand
       }
-
-      const result = await rawResult
-
-      let finalResult = result
-      for (const policy of this.policies) {
-        finalResult =
-          (await policy.afterExecute?.(plan, ctx, finalResult)) ?? finalResult
-      }
-
-      return finalResult
     } catch (err) {
       if (err instanceof RedisCommandError) {
         if (shouldDirtyTransaction(plan, ctx)) {
@@ -272,20 +281,27 @@ export class CommandExecutor {
       }
 
       assertSyncCommandDefinition(plan)
-      const rawResult = plan.definition.execute(plan.args, ctx)
-      const result = assertSyncCommandResult(plan, rawResult)
 
-      let finalResult = result
-      for (const policy of this.policies) {
-        finalResult =
-          assertSyncPolicyResult(
-            policy.name,
-            'afterExecute',
-            policy.afterExecute?.(plan, ctx, finalResult),
-          ) ?? finalResult
+      const prevNotifyCommand = ctx.db.activeNotifyCommand
+      ctx.db.activeNotifyCommand = plan.definition.name
+      try {
+        const rawResult = plan.definition.execute(plan.args, ctx)
+        const result = assertSyncCommandResult(plan, rawResult)
+
+        let finalResult = result
+        for (const policy of this.policies) {
+          finalResult =
+            assertSyncPolicyResult(
+              policy.name,
+              'afterExecute',
+              policy.afterExecute?.(plan, ctx, finalResult),
+            ) ?? finalResult
+        }
+
+        return finalResult
+      } finally {
+        ctx.db.activeNotifyCommand = prevNotifyCommand
       }
-
-      return finalResult
     } catch (err) {
       if (err instanceof RedisCommandError) {
         if (shouldDirtyTransaction(plan, ctx)) {

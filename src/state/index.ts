@@ -36,6 +36,13 @@ export type { ExpirationState, KeyspaceEntry, SetOptions } from './keyspace'
 export { RedisKeyspace, WrongRedisTypeError } from './keyspace'
 
 export { RedisDatabase } from './database'
+export {
+  KeyspaceNotifier,
+  keyspaceNotifyFlagsToString,
+  normalizeKeyspaceNotifyConfig,
+  parseKeyspaceNotifyFlags,
+  type KeyspaceNotifyFlags,
+} from './keyspace-notifier'
 export { RedisScriptCache } from './script-cache'
 export {
   RedisPubSubBroker,
