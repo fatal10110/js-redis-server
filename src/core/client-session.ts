@@ -2,6 +2,7 @@ import type { CommandPlan } from './command-definition'
 import { CommandExecutor, type ExecutorResult } from './command-executor'
 import {
   createDefaultParkHandler,
+  createNonBlockingParkHandler,
   type ClientSessionMode,
   type ParkHandler,
   type ParkRequest,
@@ -273,8 +274,13 @@ export class ClientSession implements RedisClientSession {
     // Blocking commands must not park while the EXEC turn is held — that would
     // deadlock because no other session could produce the wakeup write. Override
     // park so any blocking command queued in MULTI behaves non-blocking (returns
-    // null immediately), matching real Redis BLPOP-inside-MULTI semantics.
-    const noBlockCtx = this.createExecutionContext(undefined, async () => null)
+    // null immediately), matching real Redis BLPOP-inside-MULTI semantics. The
+    // handler still consumes the park request (waitFor + abort signal) instead of
+    // discarding it — see createNonBlockingParkHandler.
+    const noBlockCtx = this.createExecutionContext(
+      undefined,
+      createNonBlockingParkHandler(),
+    )
     let currentDbId = this.selectedDatabaseId
 
     for (const plan of plans) {
