@@ -120,6 +120,7 @@ export {
 export {
   createDefaultParkHandler,
   createNoopParkHandler,
+  createNonBlockingParkHandler,
 } from './core/redis-context'
 export {
   RedisLuaRuntime,
