@@ -132,4 +132,40 @@ describe(`Raw TCP protocol integration (${testRunner.getBackendName()})`, () => 
 
     assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('$-1\r\n'))
   })
+
+  // #80: RESET must execute immediately inside MULTI (like EXEC/DISCARD/WATCH),
+  // aborting the transaction — it must not be queued.
+  test('RESET inside MULTI executes immediately and aborts the transaction', async () => {
+    const conn = await connect()
+    const key = `${randomKey()}:reset-multi`
+
+    conn.write(commandFrame('MULTI'))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    // A normal command is queued.
+    conn.write(commandFrame('SET', key, 'queued'))
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('+QUEUED\r\n'),
+    )
+
+    // RESET is NOT queued — it runs now and replies +RESET.
+    conn.write(commandFrame('RESET'))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+RESET\r\n'))
+
+    // The transaction was discarded, so EXEC has nothing to run.
+    conn.write(commandFrame('EXEC'))
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('-ERR EXEC without MULTI\r\n'),
+    )
+
+    // The queued SET never executed.
+    conn.write(commandFrame('GET', key))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('$-1\r\n'))
+
+    // The session is back to normal mode — ordinary commands run, not queued.
+    conn.write(commandFrame('SET', key, 'normal'))
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+OK\r\n'))
+  })
 })
