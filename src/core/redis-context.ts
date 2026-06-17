@@ -122,6 +122,41 @@ export function createNoopParkHandler(): ParkHandler {
   return createDefaultParkHandler()
 }
 
+/**
+ * Park handler for commands replayed inside MULTI/EXEC.
+ *
+ * Blocking commands (BLPOP, BLMOVE, BLMPOP, BZMPOP, XREAD BLOCK, ...) must not
+ * actually block here: real Redis runs them non-blocking inside a transaction
+ * and returns the immediate "nothing happened" result (e.g. BLPOP -> nil). This
+ * resolves `null` straight away — the same timeout sentinel a real park returns
+ * on expiry — so the command takes its non-blocking branch and its `finally`
+ * cleanup (wakeup-subscription teardown) runs.
+ *
+ * Unlike a bare `async () => null`, it still *honors* the park request:
+ *  - it attaches a no-op handler to `request.waitFor`, so a command whose wait
+ *    rejects never surfaces an unhandled promise rejection (mirrors
+ *    {@link createDefaultParkHandler}, which consumes `waitFor`);
+ *  - it rejects with an AbortError if the session signal is already aborted, so
+ *    a transaction aborted mid-EXEC propagates immediately instead of swallowing
+ *    the abort.
+ *
+ * Commands MUST release any wakeup subscription in a `finally` around
+ * `ctx.park(...)`, never by chaining off `waitFor` — a non-blocking park may
+ * resolve without `waitFor` ever settling.
+ */
+export function createNonBlockingParkHandler(): ParkHandler {
+  return request => {
+    // Consume waitFor; we never await its value but a rejection must not leak.
+    request.waitFor.catch(() => {})
+
+    if (request.signal.aborted) {
+      return Promise.reject(createAbortError())
+    }
+
+    return Promise.resolve(null)
+  }
+}
+
 function createAbortError(): Error {
   const err = new Error('The operation was aborted')
   err.name = 'AbortError'
