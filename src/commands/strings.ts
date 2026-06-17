@@ -1,5 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import {
+  parseFiniteFloatToken,
   t,
   type CommandSchema,
   type ParseContext,
@@ -7,7 +8,8 @@ import {
 import type { RedisDatabase } from '../state'
 import {
   ExpectedFloatError,
-  ExpectedIntegerError,
+  IncrByFloatNanOrInfinityError,
+  IncrDecrOverflowError,
   InvalidExpireTimeError,
   OffsetOutOfRangeError,
   RedisSyntaxError,
@@ -19,8 +21,11 @@ import { RedisValue } from '../core/redis-value'
 import {
   bulk,
   ensureStringOrMissing,
+  INT64_MAX,
+  INT64_MIN,
   integer,
   ok,
+  parseInt64Token,
   parseIntegerToken,
   parsePositiveExpireToken,
   requireNextOptionValue,
@@ -180,7 +185,7 @@ export const incrCommand = defineCommand({
   schema: t.object({ key: t.key() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => incrementBy(ctx.db, args.key, 1),
+  execute: (args, ctx) => incrementBy(ctx.db, args.key, 1n),
 })
 
 export const decrCommand = defineCommand({
@@ -188,12 +193,15 @@ export const decrCommand = defineCommand({
   schema: t.object({ key: t.key() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => incrementBy(ctx.db, args.key, -1),
+  execute: (args, ctx) => incrementBy(ctx.db, args.key, -1n),
 })
 
 export const incrbyCommand = defineCommand({
   name: 'incrby',
-  schema: t.object({ key: t.key(), amount: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    amount: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => incrementBy(ctx.db, args.key, args.amount),
@@ -201,10 +209,19 @@ export const incrbyCommand = defineCommand({
 
 export const decrbyCommand = defineCommand({
   name: 'decrby',
-  schema: t.object({ key: t.key(), amount: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    amount: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => incrementBy(ctx.db, args.key, -args.amount),
+  execute: (args, ctx) => {
+    // Negating INT64_MIN overflows int64, so Redis rejects it before the op.
+    if (args.amount === INT64_MIN) {
+      throw new IncrDecrOverflowError('decrement would overflow')
+    }
+    return incrementBy(ctx.db, args.key, -args.amount)
+  },
 })
 
 export const incrbyfloatCommand = defineCommand({
@@ -213,24 +230,21 @@ export const incrbyfloatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const increment = parseFloat(args.amount.toString())
-    if (!Number.isFinite(increment)) {
-      throw new ExpectedFloatError()
-    }
+    // Like real Redis, an infinity literal ("inf"/"+inf"/"-inf"/"infinity",
+    // any case) is a *valid* operand — it only fails the post-arithmetic
+    // NaN/Infinity check. A non-numeric or overflow-magnitude value (e.g.
+    // "nan", "abc", "1e5000") is a parse error ("value is not a valid float").
+    const increment = parseIncrByFloatValue(args.amount.toString())
 
     const existing = ensureStringOrMissing(ctx.db, args.key)
     let current = 0
     if (existing) {
-      const parsed = parseFloat(existing.toString())
-      if (!Number.isFinite(parsed)) {
-        throw new ExpectedFloatError()
-      }
-      current = parsed
+      current = parseIncrByFloatValue(existing.toString())
     }
 
     const next = current + increment
     if (!Number.isFinite(next)) {
-      throw new ExpectedFloatError()
+      throw new IncrByFloatNanOrInfinityError()
     }
 
     const valueBuf = Buffer.from(next.toString())
@@ -238,6 +252,24 @@ export const incrbyfloatCommand = defineCommand({
     return bulk(valueBuf)
   },
 })
+
+// Parses an INCRBYFLOAT operand the way real Redis does (strtold): an infinity
+// literal is accepted (and returned as +/-Infinity) so the result check can
+// flag it, while NaN and finite-overflow magnitudes are rejected as invalid
+// floats. No surrounding whitespace is allowed and the *whole* token must be a
+// valid decimal float — "3abc", " 3.5", and "1,5" are parse errors, not silent
+// prefix parses (unlike JS parseFloat).
+function parseIncrByFloatValue(raw: string): number {
+  if (/^[+-]?inf(inity)?$/i.test(raw)) {
+    return raw.startsWith('-') ? -Infinity : Infinity
+  }
+
+  const value = parseFiniteFloatToken(raw)
+  if (value === undefined) {
+    throw new ExpectedFloatError()
+  }
+  return value
+}
 
 export const getsetCommand = defineCommand({
   name: 'getset',
@@ -566,13 +598,13 @@ type GetexArgs = {
 function incrementBy(
   db: RedisDatabase,
   key: Buffer,
-  delta: number,
+  delta: bigint,
 ): RedisResult {
   const existing = ensureStringOrMissing(db, key)
-  const current = existing ? parseIntegerToken(existing) : 0
+  const current = existing ? parseInt64Token(existing) : 0n
   const next = current + delta
-  if (!Number.isSafeInteger(next)) {
-    throw new ExpectedIntegerError()
+  if (next > INT64_MAX || next < INT64_MIN) {
+    throw new IncrDecrOverflowError()
   }
   db.setString(key, Buffer.from(next.toString()), { keepTtl: true })
   return integer(next)
