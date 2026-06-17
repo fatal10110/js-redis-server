@@ -1,5 +1,5 @@
 import { defineCommand } from '../core/command-definition'
-import { t } from '../core/command-schema'
+import { t, type ParseContext } from '../core/command-schema'
 import {
   DbIndexOutOfRangeError,
   ExpireGtLtConflictError,
@@ -8,13 +8,19 @@ import {
   NoSuchKeyError,
   RedisSyntaxError,
   SameObjectError,
+  SortScoreNotDoubleError,
   UnsupportedOptionError,
+  WrongNumberOfArgumentsError,
+  WrongTypeRedisError,
 } from '../core/redis-error'
+import { RedisValue } from '../core/redis-value'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
+  array,
   bulk,
   integer,
   ok,
+  parseIntegerToken,
   simpleString,
   ttlMilliseconds,
   ttlSeconds,
@@ -516,6 +522,168 @@ export const copyCommand = defineCommand({
   },
 })
 
+// SORT key [LIMIT offset count] [ASC | DESC] [ALPHA] [STORE destination]
+// Sorts the elements of a list, set, or zset (zset is sorted by member value,
+// not score). Numeric by default — every element must parse as a double, or
+// the command errors; ALPHA switches to a byte-wise lexicographic sort. STORE
+// writes the sorted result to a destination list and replies with its length.
+// BY/GET external-key pattern dereference is intentionally not implemented yet
+// (tracked as a follow-up); passing either yields a syntax error.
+type SortArgs = {
+  key: Buffer
+  desc: boolean
+  alpha: boolean
+  limit?: { offset: number; count: number }
+  store?: Buffer
+}
+
+function parseSort(
+  input: readonly Buffer[],
+  index: number,
+  ctx: ParseContext,
+  allowStore: boolean,
+): SortArgs {
+  const key = input[index]
+  if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
+
+  let cursor = index + 1
+  let desc = false
+  let alpha = false
+  let limit: { offset: number; count: number } | undefined
+  let store: Buffer | undefined
+
+  while (cursor < input.length) {
+    const option = input[cursor]!.toString().toUpperCase()
+
+    if (option === 'ASC') {
+      desc = false
+      cursor++
+      continue
+    }
+
+    if (option === 'DESC') {
+      desc = true
+      cursor++
+      continue
+    }
+
+    if (option === 'ALPHA') {
+      alpha = true
+      cursor++
+      continue
+    }
+
+    if (option === 'LIMIT') {
+      const offsetToken = input[cursor + 1]
+      const countToken = input[cursor + 2]
+      if (!offsetToken || !countToken) throw new RedisSyntaxError()
+      limit = {
+        offset: parseIntegerToken(offsetToken),
+        count: parseIntegerToken(countToken),
+      }
+      cursor += 3
+      continue
+    }
+
+    if (allowStore && option === 'STORE') {
+      const destination = input[cursor + 1]
+      if (!destination) throw new RedisSyntaxError()
+      store = destination
+      cursor += 2
+      continue
+    }
+
+    throw new RedisSyntaxError()
+  }
+
+  return { key, desc, alpha, limit, store }
+}
+
+function sortSchema(allowStore: boolean) {
+  return t.custom<SortArgs>((input, index, ctx) => ({
+    value: parseSort(input, index, ctx, allowStore),
+    nextIndex: input.length,
+  }))
+}
+
+function readSortSource(db: RedisDatabase, key: Buffer): Buffer[] {
+  const type = db.getType(key)
+  if (type === null) return []
+  if (type === 'list') return db.getList(key)!.values
+  if (type === 'set') return Array.from(db.getSet(key)!.members.values())
+  if (type === 'zset') {
+    return Array.from(db.getSortedSet(key)!.members.values(), m => m.member)
+  }
+  throw new WrongTypeRedisError()
+}
+
+function sortNumericScore(element: Buffer): number {
+  // Redis converts every element with strtod; an empty string becomes 0, and
+  // anything that does not parse as a double aborts the whole command.
+  const value = Number(element.toString())
+  if (Number.isNaN(value)) throw new SortScoreNotDoubleError()
+  return value
+}
+
+function sortElements(elements: readonly Buffer[], args: SortArgs): Buffer[] {
+  if (args.alpha) {
+    const sorted = [...elements].sort((a, b) => Buffer.compare(a, b))
+    if (args.desc) sorted.reverse()
+    return sorted
+  }
+
+  const scored = elements.map(element => ({
+    element,
+    score: sortNumericScore(element),
+  }))
+  scored.sort((a, b) => a.score - b.score)
+  if (args.desc) scored.reverse()
+  return scored.map(entry => entry.element)
+}
+
+function applySortLimit(
+  elements: Buffer[],
+  limit: SortArgs['limit'],
+): Buffer[] {
+  if (!limit) return elements
+  // Redis clamps a negative offset to 0; a negative count means "all remaining".
+  const start = Math.max(0, limit.offset)
+  if (start >= elements.length) return []
+  if (limit.count < 0) return elements.slice(start)
+  return elements.slice(start, start + limit.count)
+}
+
+function runSort(args: SortArgs, db: RedisDatabase) {
+  const source = readSortSource(db, args.key)
+  const sorted = applySortLimit(sortElements(source, args), args.limit)
+
+  if (args.store) {
+    db.delete(args.store)
+    if (sorted.length > 0) {
+      db.updateList(args.store, list => list.pushRight(sorted))
+    }
+    return integer(sorted.length)
+  }
+
+  return array(sorted.map(element => RedisValue.bulkString(element)))
+}
+
+export const sortCommand = defineCommand({
+  name: 'sort',
+  schema: sortSchema(true),
+  flags: ['write', 'denyoom'],
+  keys: args => (args.store ? [args.key, args.store] : [args.key]),
+  execute: (args, ctx) => runSort(args, ctx.db),
+})
+
+export const sortRoCommand = defineCommand({
+  name: 'sort_ro',
+  schema: sortSchema(false),
+  flags: ['readonly'],
+  keys: args => [args.key],
+  execute: (args, ctx) => runSort(args, ctx.db),
+})
+
 export const keysCommands = [
   delCommand,
   unlinkCommand,
@@ -538,6 +706,8 @@ export const keysCommands = [
   renameCommand,
   renamenxCommand,
   copyCommand,
+  sortCommand,
+  sortRoCommand,
 ]
 
 function expireKey(
