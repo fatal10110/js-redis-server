@@ -179,6 +179,20 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR value is not a valid float'),
       )
 
+      // Redis parses the whole token (strtold): trailing junk, leading or
+      // trailing whitespace, and non-'.' separators are all invalid floats,
+      // not silent prefix parses.
+      for (const bad of ['3abc', '3.5x', ' 3.5', '3.5 ', '1,5', '', '0x']) {
+        await direct.set(key, '1')
+        await assert.rejects(
+          () => direct.call('INCRBYFLOAT', key, bad),
+          errorWithMessage('ERR value is not a valid float'),
+          `increment "${bad}" should be an invalid float`,
+        )
+        // The key is left untouched on a parse error.
+        assert.strictEqual(await direct.get(key), '1')
+      }
+
       // A finite increment still works normally.
       await direct.set(key, '3')
       assert.strictEqual(await direct.call('INCRBYFLOAT', key, '1.0e2'), '103')

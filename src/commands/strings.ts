@@ -1,5 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import {
+  parseFiniteFloatToken,
   t,
   type CommandSchema,
   type ParseContext,
@@ -252,16 +253,19 @@ export const incrbyfloatCommand = defineCommand({
   },
 })
 
-// Parses an INCRBYFLOAT operand the way real Redis does: an infinity literal
-// is accepted (and returned as +/-Infinity) so the result check can flag it,
-// while NaN and finite-overflow magnitudes are rejected as invalid floats.
+// Parses an INCRBYFLOAT operand the way real Redis does (strtold): an infinity
+// literal is accepted (and returned as +/-Infinity) so the result check can
+// flag it, while NaN and finite-overflow magnitudes are rejected as invalid
+// floats. No surrounding whitespace is allowed and the *whole* token must be a
+// valid decimal float — "3abc", " 3.5", and "1,5" are parse errors, not silent
+// prefix parses (unlike JS parseFloat).
 function parseIncrByFloatValue(raw: string): number {
-  if (/^\s*[+-]?inf(inity)?\s*$/i.test(raw)) {
-    return raw.trimStart().startsWith('-') ? -Infinity : Infinity
+  if (/^[+-]?inf(inity)?$/i.test(raw)) {
+    return raw.startsWith('-') ? -Infinity : Infinity
   }
 
-  const value = parseFloat(raw)
-  if (!Number.isFinite(value)) {
+  const value = parseFiniteFloatToken(raw)
+  if (value === undefined) {
     throw new ExpectedFloatError()
   }
   return value
