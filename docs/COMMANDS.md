@@ -161,6 +161,8 @@ surface.
 - [x] `COPY source destination [DB destination-db] [REPLACE]` - Copy a key's value (and TTL) to a destination, optionally into another database; returns `0` if the destination exists without `REPLACE`
 - [x] `KEYS pattern` - Find all keys matching a glob pattern
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Incrementally iterate the keyspace (see [Scan Family](#10-scan-family))
+- [x] `SORT key [LIMIT offset count] [ASC | DESC] [ALPHA] [STORE destination]` - Sort a list, set, or zset (zset sorted by member value, not score); numeric by default, `ALPHA` for lexicographic; `STORE` writes the result to a destination list and returns its length
+- [x] `SORT_RO key [LIMIT offset count] [ASC | DESC] [ALPHA]` - Read-only variant of `SORT`; rejects `STORE`
 
 #### Expiration
 
@@ -177,12 +179,16 @@ surface.
 `NX`, `GT`, and `LT` follow Redis' mutual-exclusion rules; `XX` can be combined
 with `GT` or `LT`.
 
+#### Notes / gaps vs. real Redis
+
+- `SORT` / `SORT_RO` do not support the `BY` or `GET` external-key pattern
+  dereference — passing either yields a syntax error (tracked as a follow-up)
+
 #### Not implemented
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
 - [ ] `MOVE`
 - [ ] `DUMP` / `RESTORE`
-- [ ] `SORT` / `SORT_RO`
 - [ ] `WAIT`
 - [ ] `MIGRATE`
 
