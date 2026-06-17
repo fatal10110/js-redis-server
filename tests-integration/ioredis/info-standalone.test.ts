@@ -34,4 +34,25 @@ describe(`INFO command standalone integration (${testRunner.getBackendName()})`,
     assert.match(info, /^master_repl_offset:\d+$/m)
     assert.match(info, /^second_repl_offset:-1$/m)
   })
+
+  test('INFO with an unknown section returns an empty bulk string, not an error', async () => {
+    const info = (await client!.call('INFO', 'nonexistent')) as string
+
+    assert.strictEqual(info, '')
+  })
+
+  test('INFO unknown section is case-insensitive and still returns empty', async () => {
+    const info = (await client!.call('INFO', 'NoSuchSection')) as string
+
+    assert.strictEqual(info, '')
+  })
+
+  test('INFO still serves a known section after an unknown one', async () => {
+    const unknown = (await client!.call('INFO', 'bogus')) as string
+    assert.strictEqual(unknown, '')
+
+    const server = (await client!.call('INFO', 'server')) as string
+    assert.match(server, /^# Server$/m)
+    assert.match(server, /^redis_version:/m)
+  })
 })
