@@ -5,6 +5,10 @@ import type { Unsubscribe } from './mutation-events'
 import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
 import type { RedisClientSession } from '../core/redis-context'
+import {
+  createRedisLuaRuntime,
+  type RedisLuaRuntime,
+} from '../core/lua-runtime'
 
 export type RedisServerStateOptions = {
   databaseCount?: number
@@ -28,6 +32,7 @@ export class RedisServerState {
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
   private readonly clientSessions = new Set<RedisClientSession>()
+  private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
 
   constructor(options?: RedisServerStateOptions) {
     this.requirepass = options?.requirepass
@@ -45,6 +50,18 @@ export class RedisServerState {
     this.pubsubBroker = options?.pubsubBroker ?? new RedisPubSubBroker()
     this.clusterTopology =
       options?.clusterTopology ?? new RedisClusterTopology()
+  }
+
+  /**
+   * Returns this server's own Lua runtime, created lazily and memoized per
+   * RedisServerState instance. Scoping the runtime here (rather than a
+   * process-wide singleton) keeps each logical node's LuaEngine + script
+   * re-entrancy guard isolated, so concurrent EVALs on independent
+   * server/cluster nodes never collide (issue #130).
+   */
+  getLuaRuntime(): Promise<RedisLuaRuntime> {
+    this.luaRuntimePromise ??= createRedisLuaRuntime()
+    return this.luaRuntimePromise
   }
 
   getDatabase(id: number): RedisDatabase {

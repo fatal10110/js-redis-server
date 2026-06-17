@@ -124,7 +124,6 @@ export {
 export {
   RedisLuaRuntime,
   createRedisLuaRuntime,
-  getDefaultRedisLuaRuntime,
   luaReplyToRedisValue,
   type LuaReplyValue,
 } from './core/lua-runtime'

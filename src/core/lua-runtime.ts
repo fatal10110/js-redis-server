@@ -113,13 +113,12 @@ function createLuaMonitorContext(
   }
 }
 
-let defaultRuntimePromise: Promise<RedisLuaRuntime> | null = null
-
-export async function getDefaultRedisLuaRuntime(): Promise<RedisLuaRuntime> {
-  defaultRuntimePromise ??= createRedisLuaRuntime()
-  return defaultRuntimePromise
-}
-
+// Each RedisLuaRuntime gets its own freshly-loaded WASM module + LuaEngine +
+// hostState. A LuaWasmModule is single-use (module.create() consumes it), so it
+// cannot be shared between engines. Scoping a runtime per RedisServerState (see
+// RedisServerState.getLuaRuntime) keeps each logical node's script re-entrancy
+// guard isolated, so concurrent EVALs on independent server/cluster nodes never
+// collide (issue #130).
 export async function createRedisLuaRuntime(): Promise<RedisLuaRuntime> {
   const module = await load()
   return new RedisLuaRuntime(module)
