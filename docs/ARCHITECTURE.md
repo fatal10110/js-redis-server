@@ -307,7 +307,7 @@ flowchart LR
     ME --> DT["RedisDataValue<br/>string · hash · list · set · zset · stream"]
     KS -- "emit on write/delete/expire/<br/>persist/evict/flush" --> MB[RedisMutationBus]
 
-    MB -- "global listeners" --> GL["e.g. future keyspace notifications"]
+    MB -- "global listeners" --> KN["KeyspaceNotifier<br/>→ PubSubBroker (keyspace/keyevent)"]
     MB -- "per-key listeners" --> WL["ClientSession WATCH<br/>→ marks session dirty"]
 ```
 
@@ -333,6 +333,12 @@ emitting an `evict` mutation event so `WATCH` observes expiry exactly like a
 real delete. Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
 flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L68),
 which clones values before fan-out so subscribers can never mutate shared state.
+The [`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this
+bus and republishes mutations as Redis keyspace/keyevent notifications through
+the `RedisPubSubBroker` when `notify-keyspace-events` is enabled. Lifecycle
+events (`del`/`expire`/`persist`/`expired`) come straight from the mutation
+type; write event names (`set`/`lpush`/…) come from the active command, which
+the `CommandExecutor` records on the `RedisDatabase` around `execute`.
 In-place collection updates run through a keyspace-owned mutation tracker and
 typed helpers such as `TrackedHashData.setField()` and
 `TrackedListData.trim()`. Dirty tracking is operation-based rather than a

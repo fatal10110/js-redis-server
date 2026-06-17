@@ -91,7 +91,12 @@ surface.
 > There is no real configuration subsystem behind this - values are an
 > in-memory per-server store seeded with plausible defaults (`maxmemory`,
 > `appendonly`, `save`, listpack thresholds, etc.), enough to satisfy client
-> library initialization. `CONFIG SET` does not change server behavior.
+> library initialization. Most parameters are inert: `CONFIG SET` stores the
+> value but does not change server behavior. The exception is
+> `notify-keyspace-events`, which is a real, behavior-driving setting — see
+> [Keyspace notifications](#14-pubsub-commands). Its value is validated and
+> normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as `AKE`;
+> an unknown class character is rejected).
 
 #### DBSIZE
 
@@ -437,6 +442,30 @@ Subscribed connections enforce Redis' restricted command mode: only subscribe,
 unsubscribe, `PING`, `RESET`, and `QUIT` are accepted until all subscriptions
 are removed. Pub/Sub state is process-local to the `RedisServerState` instance;
 cluster-wide fan-out between separate mock cluster nodes is not implemented.
+
+#### Keyspace notifications
+
+Key mutations are published to the standard `__keyspace@<db>__:<key>` (event in
+the message) and `__keyevent@<db>__:<event>` (key in the message) channels when
+enabled via `CONFIG SET notify-keyspace-events <flags>`. The flag string uses
+Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
+`t`, `m`, `n`, `d`); it is validated and normalized like real Redis.
+
+- [x] Lifecycle events derived from the keyspace itself: `del`, `expire`,
+      `persist`, and `expired` (fired when a key is lazily evicted on access).
+- [x] Write events named after the originating command, matching real Redis:
+      `set` (and `setnx`/`setex`/`getset`/`mset` → `set`), `incrby`
+      (`incr`/`decr`/`decrby` → `incrby`), `append`, `setrange`, `lpush`/`rpush`
+      (`lpushx`/`rpushx` too), `lpop`, `lset`, `linsert`, `hset`
+      (`hmset`/`hsetnx` → `hset`), `hdel`, `sadd`, `srem`, `spop`, `zadd`,
+      `zincr` (from `ZINCRBY`), `zrem`, `xadd`, etc.
+- [x] `RENAME`/`RENAMENX` emit `rename_from` + `rename_to`; `COPY` emits
+      `copy_to`.
+
+> Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
+> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; cross-DB
+> `COPY` does not name the destination event. Notifications are process-local to
+> the `RedisServerState`, so they are not delivered across mock cluster nodes.
 
 ## 15. Persistence Commands
 
