@@ -43,6 +43,20 @@ export class NoAuthError extends RedisCommandError {
   }
 }
 
+/** `HELLO <version>` with a syntactically valid but unsupported protocol version. */
+export class NoProtoError extends RedisCommandError {
+  constructor() {
+    super('unsupported protocol version', 'NOPROTO')
+  }
+}
+
+/** `HELLO <version>` where version is not a valid integer at all. */
+export class HelloProtocolNotIntegerError extends RedisCommandError {
+  constructor() {
+    super('Protocol version is not an integer or out of range')
+  }
+}
+
 export class ExpectedIntegerError extends RedisCommandError {
   constructor() {
     super('value is not an integer or out of range')
