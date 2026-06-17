@@ -1,5 +1,6 @@
 import { RedisClusterTopology } from './cluster-topology'
 import { RedisDatabase } from './database'
+import { KeyspaceNotifier } from './keyspace-notifier'
 import { RedisMonitorFeed } from './monitor-feed'
 import type { Unsubscribe } from './mutation-events'
 import { RedisPubSubBroker } from './pubsub-broker'
@@ -31,6 +32,12 @@ export class RedisServerState {
   readonly pubsubBroker: RedisPubSubBroker
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
+  /**
+   * Normalized `notify-keyspace-events` flag string (Redis canonical form, e.g.
+   * `"AKE"`). Empty string disables keyspace notifications. Managed via
+   * CONFIG GET/SET; read by the wired {@link KeyspaceNotifier} on each mutation.
+   */
+  notifyKeyspaceEvents = ''
   private readonly clientSessions = new Set<RedisClientSession>()
   private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
 
@@ -50,6 +57,20 @@ export class RedisServerState {
     this.pubsubBroker = options?.pubsubBroker ?? new RedisPubSubBroker()
     this.clusterTopology =
       options?.clusterTopology ?? new RedisClusterTopology()
+
+    // Bridge every database's mutation bus to the Pub/Sub broker so key
+    // mutations surface as Redis keyspace/keyevent notifications. The bridge is
+    // always wired; it is a cheap no-op while `notifyKeyspaceEvents` is empty.
+    const notifier = new KeyspaceNotifier(this.pubsubBroker)
+    for (const database of this.databases) {
+      database.subscribe(event =>
+        notifier.handle(
+          event,
+          database.activeNotifyCommand,
+          this.notifyKeyspaceEvents,
+        ),
+      )
+    }
   }
 
   /**

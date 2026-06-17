@@ -46,6 +46,14 @@ export class RedisDatabase {
    * serialization in tests.
    */
   readonly turnQueue: RedisTurnQueue = new SerialTurnQueue()
+  /**
+   * Name of the command currently executing against this database, set by the
+   * CommandExecutor around `definition.execute`. Keyspace notifications read it
+   * to name write events after the originating command (e.g. LPUSH → `lpush`),
+   * which the mutation bus itself does not carry. `null` outside command
+   * execution.
+   */
+  activeNotifyCommand: string | null = null
   private readonly keyspace: RedisKeyspace
 
   constructor(public readonly id: number) {
