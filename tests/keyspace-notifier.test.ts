@@ -17,7 +17,7 @@ describe('keyspace notify flag parsing', () => {
     assert.strictEqual(flags.list, false)
   })
 
-  test("'A' expands to every class except m, n and d", () => {
+  test("'A' expands to every class except m and n (module IS included)", () => {
     const flags = parseKeyspaceNotifyFlags('A')
     for (const key of [
       'generic',
@@ -29,12 +29,12 @@ describe('keyspace notify flag parsing', () => {
       'expired',
       'evicted',
       'stream',
+      'module',
     ] as const) {
       assert.strictEqual(flags[key], true, `${key} should be set by A`)
     }
     assert.strictEqual(flags.keyMiss, false)
     assert.strictEqual(flags.newKey, false)
-    assert.strictEqual(flags.module, false)
   })
 
   test('rejects an unknown class character with the Redis error', () => {
@@ -56,6 +56,18 @@ describe('keyspace notify flag normalization', () => {
     ['Elx', 'lxE'],
     ['KExe', 'xeKE'],
     ['AKEt', 'AKE'],
+    // m / n / d edge cases (module is part of 'A'; n only when not collapsed;
+    // m always last). Verified against redis-server 7.2.14.
+    ['Km', 'Km'],
+    ['KEm', 'KEm'],
+    ['Ad', 'A'],
+    ['g$lshzxet', 'g$lshzxet'],
+    ['g$lshzxetd', 'A'],
+    ['KEn', 'nKE'],
+    ['And', 'A'],
+    ['KEgnd$', 'g$dnKE'],
+    ['Adm', 'Am'],
+    ['dKEmn', 'dnKEm'],
   ]
 
   for (const [input, expected] of cases) {

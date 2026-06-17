@@ -27,7 +27,8 @@ export type KeyspaceNotifyFlags = {
 }
 
 // The classes that 'A' (NOTIFY_ALL) expands to — everything except the
-// key-miss (m), new-key (n) and module (d) classes, matching Redis.
+// key-miss (m) and new-key (n) classes, matching Redis. Note `module` (d) IS
+// part of 'A': `Ad` collapses to `A`, while `g$lshzxet` (no d) stays expanded.
 const ALL_CLASS_KEYS = [
   'generic',
   'string',
@@ -38,6 +39,7 @@ const ALL_CLASS_KEYS = [
   'expired',
   'evicted',
   'stream',
+  'module',
 ] as const satisfies readonly (keyof KeyspaceNotifyFlags)[]
 
 function emptyFlags(): KeyspaceNotifyFlags {
@@ -124,9 +126,13 @@ export function parseKeyspaceNotifyFlags(value: string): KeyspaceNotifyFlags {
 }
 
 /**
- * Render flags back to Redis' canonical string form. When every class that 'A'
- * covers is set, those classes collapse to a single 'A' (matching Redis'
- * `keyspaceEventsFlagsToString`), e.g. parsing `"KEA"` normalizes to `"AKE"`.
+ * Render flags back to Redis' canonical string form, matching Redis 7.2's
+ * `keyspaceEventsFlagsToString` exactly. When every class 'A' covers
+ * (`g$lshzxetd`) is set they collapse to a single 'A'; otherwise the type
+ * classes (including `d`) plus `n` are emitted, then `K`/`E`, then `m` last.
+ * Note `n` is only emitted when the type classes are NOT collapsed to 'A'
+ * (e.g. `KEn` → `nKE`, but `And` → `A`), while `m` is always emitted last
+ * (e.g. `Adm` → `Am`). Examples: `KEA` → `AKE`, `KEgnd$` → `g$dnKE`.
  */
 export function keyspaceNotifyFlagsToString(
   flags: KeyspaceNotifyFlags,
@@ -144,12 +150,12 @@ export function keyspaceNotifyFlagsToString(
     if (flags.expired) result += 'x'
     if (flags.evicted) result += 'e'
     if (flags.stream) result += 't'
+    if (flags.module) result += 'd'
+    if (flags.newKey) result += 'n'
   }
-  if (flags.keyMiss) result += 'm'
-  if (flags.newKey) result += 'n'
-  if (flags.module) result += 'd'
   if (flags.keyspace) result += 'K'
   if (flags.keyevent) result += 'E'
+  if (flags.keyMiss) result += 'm'
   return result
 }
 
@@ -191,19 +197,17 @@ const WRITE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
   rename: 'rename_to',
   renamenx: 'rename_to',
   copy: 'copy_to',
-  move: 'move_to',
 }
 
-// Commands that delete a key as part of a rename/move emit a dedicated event
+// Commands that delete a key as part of a rename emit a dedicated event
 // instead of the default `del`.
 const DELETE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
   rename: 'rename_from',
   renamenx: 'rename_from',
-  move: 'move_from',
 }
 
 // Write events whose class is generic (g) rather than the value's data type.
-const GENERIC_WRITE_COMMANDS = new Set(['rename', 'renamenx', 'copy', 'move'])
+const GENERIC_WRITE_COMMANDS = new Set(['rename', 'renamenx', 'copy'])
 
 function classForType(type: RedisDataValue['type']): NotifyClass {
   switch (type) {
