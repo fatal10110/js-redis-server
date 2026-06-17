@@ -309,7 +309,94 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
       /^ERR This Redis command is not allowed from script/,
     )
   })
+
+  test('keeps the monitoring connection itself usable for further commands (#126)', async () => {
+    const monitor = await connect()
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    // Draining the long-lived MONITOR stream must not block the connection's
+    // frame loop: the same connection can still issue commands and read their
+    // replies (real Redis lets a monitoring client keep sending commands).
+    monitor.write(commandFrame('PING'))
+    assert.deepStrictEqual(
+      await readMonitorReply(monitor),
+      Buffer.from('+PONG\r\n'),
+    )
+
+    // A second round proves the loop keeps flowing, not just a one-shot.
+    monitor.write(commandFrame('PING', 'hello'))
+    assert.deepStrictEqual(
+      await readMonitorReply(monitor),
+      Buffer.from('$5\r\nhello\r\n'),
+    )
+  })
+
+  test('RESET on a monitoring connection exits monitor mode (#126)', async () => {
+    const monitor = await connect()
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    monitor.write(commandFrame('RESET'))
+    assert.deepStrictEqual(
+      await readMonitorReply(monitor),
+      Buffer.from('+RESET\r\n'),
+    )
+
+    // Back in normal mode: a command on this connection still works.
+    monitor.write(commandFrame('PING'))
+    assert.deepStrictEqual(
+      await readMonitorReply(monitor),
+      Buffer.from('+PONG\r\n'),
+    )
+  })
 })
+
+/**
+ * Read the next command reply on a monitoring connection, skipping any monitor
+ * feed lines that interleave with it. Feed lines are simple strings beginning
+ * with a timestamp (`+<digits>.<digits> [...]`), so a reply is any frame whose
+ * second byte is not a digit. Times out instead of hanging forever so a blocked
+ * frame loop surfaces as a test failure rather than a stuck process.
+ */
+async function readMonitorReply(
+  connection: RawRedisConnection,
+): Promise<Buffer> {
+  for (let i = 0; i < 32; i++) {
+    const raw = await withTimeout(
+      connection.readRawFrame(),
+      2000,
+      'monitor connection reply',
+    )
+    if (raw[0] === PLUS && raw[1] >= ZERO && raw[1] <= NINE) {
+      continue
+    }
+    return raw
+  }
+  assert.fail('no non-monitor reply arrived on the monitoring connection')
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`timed out waiting for ${label}`)),
+        ms,
+      ).unref()
+    }),
+  ])
+}
+
+const PLUS = '+'.charCodeAt(0)
+const ZERO = '0'.charCodeAt(0)
+const NINE = '9'.charCodeAt(0)
 
 function assertMonitorLine(
   line: string,
