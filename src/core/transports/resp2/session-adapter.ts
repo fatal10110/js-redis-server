@@ -3,6 +3,7 @@ import { RedisCommandError } from '../../redis-error'
 import { RedisResult } from '../../redis-result'
 import { encodeRedisResult } from '../../resp-encoder'
 import { isResponseStream } from '../../response-stream'
+import type { ResponseStream } from '../../response-stream'
 import type { ExecutorResult } from '../../command-executor'
 import type { RespEncodeOptions } from '../../resp-encoder'
 import type { Logger } from '../../../logger'
@@ -27,6 +28,7 @@ export class Resp2SessionAdapter {
   private readonly logger?: Pick<Logger, 'error'>
   private readonly encoder?: RespEncodeOptions
   private writeChain: Promise<void> = Promise.resolve()
+  private readonly activeStreams = new Set<Promise<void>>()
 
   constructor(options: Resp2SessionAdapterOptions) {
     this.transport = options.transport
@@ -64,6 +66,10 @@ export class Resp2SessionAdapter {
     } finally {
       this.session.close()
       await pushWriter
+      // Streams are torn down by session.close() (resetResponseStreams aborts
+      // them); wait for their drain tasks to settle so nothing writes after we
+      // return.
+      await Promise.allSettled(this.activeStreams)
     }
   }
 
@@ -74,17 +80,42 @@ export class Resp2SessionAdapter {
 
   private async writeExecutorResult(result: ExecutorResult): Promise<void> {
     if (isResponseStream(result)) {
-      for await (const frame of result.frames(this.transport.signal)) {
-        await this.writeRedisResult(frame)
-        if (this.transport.signal.aborted) {
-          result.close('transport closed')
-          return
-        }
-      }
+      // A ResponseStream can be long-lived (MONITOR, future SUBSCRIBE). Draining
+      // it inline would pin the frame loop until the stream closed, so the
+      // connection could never send another command. Drain it as a background
+      // task instead, multiplexed onto the shared writeChain, while run() keeps
+      // reading and dispatching subsequent frames.
+      this.spawnStreamDrain(result)
       return
     }
 
     await this.writeRedisResult(result)
+  }
+
+  private spawnStreamDrain(stream: ResponseStream): void {
+    const drain = this.drainStream(stream)
+    this.activeStreams.add(drain)
+    void drain.finally(() => {
+      this.activeStreams.delete(drain)
+    })
+  }
+
+  private async drainStream(stream: ResponseStream): Promise<void> {
+    try {
+      for await (const frame of stream.frames(this.transport.signal)) {
+        await this.writeRedisResult(frame)
+        if (this.transport.signal.aborted) {
+          stream.close('transport closed')
+          return
+        }
+      }
+    } catch (err) {
+      stream.close('resp2 stream error')
+      if (!this.transport.signal.aborted) {
+        this.logger?.error(err)
+        this.transport.close('resp2 stream error')
+      }
+    }
   }
 
   private async writeRedisResult(result: RedisResult): Promise<void> {
