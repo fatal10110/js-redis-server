@@ -578,7 +578,11 @@ export const authCommand = defineCommand({
 export const resetCommand = defineCommand({
   name: 'reset',
   schema: t.object({}),
-  flags: ['admin', 'subscribed'],
+  // 'transaction' makes RESET bypass MULTI queueing and run immediately, like
+  // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
+  // discardTransaction() instead of being queued until EXEC (matches real
+  // Redis, which excludes RESET from queueMultiCommand).
+  flags: ['admin', 'subscribed', 'transaction'],
   keys: () => [],
   execute: (_args, ctx) => {
     clientNames.delete(ctx.session)
