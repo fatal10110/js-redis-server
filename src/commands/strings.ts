@@ -8,6 +8,7 @@ import type { RedisDatabase } from '../state'
 import {
   ExpectedFloatError,
   ExpectedIntegerError,
+  IncrByFloatNanOrInfinityError,
   InvalidExpireTimeError,
   OffsetOutOfRangeError,
   RedisSyntaxError,
@@ -213,24 +214,21 @@ export const incrbyfloatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const increment = parseFloat(args.amount.toString())
-    if (!Number.isFinite(increment)) {
-      throw new ExpectedFloatError()
-    }
+    // Like real Redis, an infinity literal ("inf"/"+inf"/"-inf"/"infinity",
+    // any case) is a *valid* operand — it only fails the post-arithmetic
+    // NaN/Infinity check. A non-numeric or overflow-magnitude value (e.g.
+    // "nan", "abc", "1e5000") is a parse error ("value is not a valid float").
+    const increment = parseIncrByFloatValue(args.amount.toString())
 
     const existing = ensureStringOrMissing(ctx.db, args.key)
     let current = 0
     if (existing) {
-      const parsed = parseFloat(existing.toString())
-      if (!Number.isFinite(parsed)) {
-        throw new ExpectedFloatError()
-      }
-      current = parsed
+      current = parseIncrByFloatValue(existing.toString())
     }
 
     const next = current + increment
     if (!Number.isFinite(next)) {
-      throw new ExpectedFloatError()
+      throw new IncrByFloatNanOrInfinityError()
     }
 
     const valueBuf = Buffer.from(next.toString())
@@ -238,6 +236,21 @@ export const incrbyfloatCommand = defineCommand({
     return bulk(valueBuf)
   },
 })
+
+// Parses an INCRBYFLOAT operand the way real Redis does: an infinity literal
+// is accepted (and returned as +/-Infinity) so the result check can flag it,
+// while NaN and finite-overflow magnitudes are rejected as invalid floats.
+function parseIncrByFloatValue(raw: string): number {
+  if (/^\s*[+-]?inf(inity)?\s*$/i.test(raw)) {
+    return raw.trimStart().startsWith('-') ? -Infinity : Infinity
+  }
+
+  const value = parseFloat(raw)
+  if (!Number.isFinite(value)) {
+    throw new ExpectedFloatError()
+  }
+  return value
+}
 
 export const getsetCommand = defineCommand({
   name: 'getset',

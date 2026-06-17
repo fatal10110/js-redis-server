@@ -53,6 +53,78 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(incr2, '3.8')
   })
 
+  test('INCRBYFLOAT distinguishes invalid-float from NaN/Infinity result (#56)', async () => {
+    const tag = `{incrbyfloat-inf:${randomKey()}}`
+    const key = `${tag}:key`
+    const direct = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      // A result of +/-Infinity (an infinity increment) reports the
+      // post-arithmetic error, NOT the "value is not a valid float" parse error.
+      for (const increment of [
+        'inf',
+        '+inf',
+        '-inf',
+        'infinity',
+        'Inf',
+        'INF',
+      ]) {
+        await direct.set(key, '3.0')
+        await assert.rejects(
+          () => direct.call('INCRBYFLOAT', key, increment),
+          errorWithMessage('ERR increment would produce NaN or Infinity'),
+          `increment "${increment}" should report the NaN/Infinity error`,
+        )
+        // The key is left untouched on error.
+        assert.strictEqual(await direct.get(key), '3.0')
+      }
+
+      // A stored infinity plus a finite increment is still infinity.
+      await direct.set(key, 'inf')
+      await assert.rejects(
+        () => direct.call('INCRBYFLOAT', key, '1'),
+        errorWithMessage('ERR increment would produce NaN or Infinity'),
+      )
+
+      // inf + (-inf) = NaN — also the post-arithmetic error.
+      await direct.set(key, 'inf')
+      await assert.rejects(
+        () => direct.call('INCRBYFLOAT', key, '-inf'),
+        errorWithMessage('ERR increment would produce NaN or Infinity'),
+      )
+
+      // Genuinely non-numeric / overflow-magnitude increments are parse errors.
+      await direct.set(key, '1')
+      await assert.rejects(
+        () => direct.call('INCRBYFLOAT', key, 'nan'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+      await assert.rejects(
+        () => direct.call('INCRBYFLOAT', key, '1e5000'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+      await assert.rejects(
+        () => direct.call('INCRBYFLOAT', key, 'abc'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+
+      // A finite increment still works normally.
+      await direct.set(key, '3')
+      assert.strictEqual(await direct.call('INCRBYFLOAT', key, '1.0e2'), '103')
+
+      // Arity.
+      await assert.rejects(
+        () => direct.call('INCRBYFLOAT', key),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'incrbyfloat' command",
+        ),
+      )
+    } finally {
+      await direct.del(key)
+      direct.disconnect()
+    }
+  })
+
   test('APPEND command', async () => {
     // APPEND to non-existent key
     const append1 = await redisClient?.append('appendkey', 'hello')

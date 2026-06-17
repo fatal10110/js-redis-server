@@ -55,6 +55,12 @@ export class ExpectedFloatError extends RedisCommandError {
   }
 }
 
+export class IncrByFloatNanOrInfinityError extends RedisCommandError {
+  constructor() {
+    super('increment would produce NaN or Infinity')
+  }
+}
+
 export class ResultingScoreNaNError extends RedisCommandError {
   constructor() {
     super('resulting score is not a number (NaN)')
