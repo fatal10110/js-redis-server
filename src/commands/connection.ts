@@ -20,6 +20,9 @@ import { commandSubcommandInfo } from './introspection'
 const REDIS_VERSION = '7.4.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
+// There is no persistence, so LASTSAVE reports the process/server start time.
+const serverStartTimeSeconds = Math.floor(Date.now() / 1000)
+
 const clientIds = new WeakMap<RedisClientSession, number>()
 const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
@@ -600,6 +603,30 @@ export const resetCommand = defineCommand({
   },
 })
 
+export const timeCommand = defineCommand({
+  name: 'time',
+  schema: t.object({}),
+  flags: ['readonly', 'random', 'fast'],
+  keys: () => [],
+  execute: () => {
+    const now = Date.now()
+    const seconds = Math.floor(now / 1000)
+    const microseconds = (now % 1000) * 1000
+    return array([
+      RedisValue.bulkString(Buffer.from(seconds.toString())),
+      RedisValue.bulkString(Buffer.from(microseconds.toString())),
+    ])
+  },
+})
+
+export const lastsaveCommand = defineCommand({
+  name: 'lastsave',
+  schema: t.object({}),
+  flags: ['readonly', 'fast'],
+  keys: () => [],
+  execute: () => integer(serverStartTimeSeconds),
+})
+
 export const connectionCommands = [
   pingCommand,
   quitCommand,
@@ -609,4 +636,6 @@ export const connectionCommands = [
   helloCommand,
   authCommand,
   resetCommand,
+  timeCommand,
+  lastsaveCommand,
 ]
