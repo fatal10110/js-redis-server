@@ -302,6 +302,8 @@ with `GT` or `LT`.
 - [x] `ZPOPMAX key [count]` - Remove and return members with the highest scores
 - [x] `ZMPOP numkeys key [key ...] MIN|MAX [COUNT count]` - Pop one or more members from the first non-empty sorted set
 - [x] `BZMPOP timeout numkeys key [key ...] MIN|MAX [COUNT count]` - Blocking multi-key sorted-set pop; returns null on timeout
+- [x] `BZPOPMIN key [key ...] timeout` - Blocking pop of the lowest-score member from the first non-empty sorted set; returns `[key, member, score]` or null on timeout
+- [x] `BZPOPMAX key [key ...] timeout` - Blocking pop of the highest-score member from the first non-empty sorted set; returns `[key, member, score]` or null on timeout
 - [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate members and scores (see [Scan Family](#10-scan-family))
 - [x] `ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]` - Union of sorted sets (or plain sets, scored 1) into destination; empty result deletes destination
 - [x] `ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]` - Intersection of sorted sets into destination; empty result deletes destination
@@ -313,13 +315,13 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
+- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
 - [ ] `ZREVRANGE` does not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes; use `ZRANGE ... REV` instead
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
 
 #### Not implemented
 
-- [ ] `ZRANGESTORE` / `BZPOPMIN` / `BZPOPMAX`
+- [ ] `ZRANGESTORE`
 
 ## 9. Stream Commands
 
