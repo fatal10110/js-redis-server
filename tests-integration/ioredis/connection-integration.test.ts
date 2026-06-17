@@ -114,6 +114,30 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), name)
   })
 
+  test('HELLO with an unsupported protocol version returns NOPROTO', async () => {
+    await assert.rejects(
+      () => directClient!.call('HELLO', '4') as Promise<unknown>,
+      errorWithMessage('NOPROTO unsupported protocol version'),
+    )
+    await assert.rejects(
+      () => directClient!.call('HELLO', '0') as Promise<unknown>,
+      errorWithMessage('NOPROTO unsupported protocol version'),
+    )
+    await assert.rejects(
+      () => directClient!.call('HELLO', '-1') as Promise<unknown>,
+      errorWithMessage('NOPROTO unsupported protocol version'),
+    )
+  })
+
+  test('HELLO with a non-integer protocol version returns the HELLO-specific ERR', async () => {
+    await assert.rejects(
+      () => directClient!.call('HELLO', 'abc') as Promise<unknown>,
+      errorWithMessage(
+        'ERR Protocol version is not an integer or out of range',
+      ),
+    )
+  })
+
   test('HELLO 3 switches the connection to RESP3 replies', async () => {
     const port = testRunner.getClusterPorts()[0]
     assert.notStrictEqual(port, undefined)

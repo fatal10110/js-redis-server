@@ -1,12 +1,14 @@
 import { defineCommand } from '../core/command-definition'
-import { t } from '../core/command-schema'
+import { isIntegerToken, t } from '../core/command-schema'
 import type {
   RedisClientSession,
   RedisExecutionContext,
 } from '../core/redis-context'
 import {
+  HelloProtocolNotIntegerError,
   NoAuthError,
   NoPasswordConfiguredError,
+  NoProtoError,
   RedisCommandError,
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
@@ -499,10 +501,35 @@ export const clientCommand = defineCommand({
   },
 })
 
+/**
+ * Parse HELLO's protocol-version token. Unlike a generic `t.integer()` field,
+ * an out-of-range-but-valid integer (e.g. `4`, `0`, `-1`) must produce the
+ * protocol-specific `NOPROTO` error rather than the generic `ERR ... out of
+ * range`, and a genuinely non-integer token gets HELLO's own wording for the
+ * `ERR` case — both only discoverable by checking real Redis's wire replies.
+ */
+function parseHelloVersion(token: Buffer): 2 | 3 {
+  const raw = token.toString()
+  if (!isIntegerToken(raw)) {
+    throw new HelloProtocolNotIntegerError()
+  }
+
+  const parsed = Number(raw)
+  if (!Number.isSafeInteger(parsed)) {
+    throw new HelloProtocolNotIntegerError()
+  }
+
+  if (parsed !== 2 && parsed !== 3) {
+    throw new NoProtoError()
+  }
+
+  return parsed
+}
+
 export const helloCommand = defineCommand({
   name: 'hello',
   schema: t.object({
-    version: t.optional(t.integer({ min: 2, max: 3 })),
+    version: t.optional(t.bulk()),
     args: t.variadic(t.bulk()),
   }),
   flags: ['noscript'],
@@ -514,9 +541,7 @@ export const helloCommand = defineCommand({
     const version =
       args.version === undefined
         ? ctx.session.protocolVersion
-        : args.version === 3
-          ? 3
-          : 2
+        : parseHelloVersion(args.version)
     const { pendingName } = parseHelloOptions(ctx, args.args)
 
     // A password-protected server rejects HELLO unless the client is already
