@@ -410,8 +410,16 @@ Cluster only exposes database 0); any non-zero index is rejected.
 
 ## Lua scripting
 
-[`RedisLuaRuntime`](../src/core/lua-runtime.ts#L24) wraps `lua-redis-wasm` and
-exposes `redis.call`/`redis.pcall` to scripts via a host callback
+Each [`RedisServerState`](../src/state/server-state.ts#L13) owns its own
+[`RedisLuaRuntime`](../src/core/lua-runtime.ts#L24), created lazily and
+memoized via [`getLuaRuntime()`](../src/state/server-state.ts#L62) on first
+`EVAL`/`EVALSHA`. The runtime is **not** a process-wide singleton — scoping it
+per server state keeps each logical node's `LuaEngine` and script
+re-entrancy guard isolated, so concurrent `EVAL`s on independent
+server/cluster nodes never share Lua state.
+
+`RedisLuaRuntime` wraps `lua-redis-wasm` and exposes `redis.call`/`redis.pcall`
+to scripts via a host callback
 ([`runRedisCommand`](../src/core/lua-runtime.ts#L58)) that:
 
 1. builds a `CommandPlan` with `ctx.executor.plan(name, args)` — the _exact_
