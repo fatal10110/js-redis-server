@@ -7,7 +7,7 @@ import {
 import type { RedisDatabase } from '../state'
 import {
   ExpectedFloatError,
-  ExpectedIntegerError,
+  IncrDecrOverflowError,
   InvalidExpireTimeError,
   OffsetOutOfRangeError,
   RedisSyntaxError,
@@ -19,8 +19,11 @@ import { RedisValue } from '../core/redis-value'
 import {
   bulk,
   ensureStringOrMissing,
+  INT64_MAX,
+  INT64_MIN,
   integer,
   ok,
+  parseInt64Token,
   parseIntegerToken,
   parsePositiveExpireToken,
   requireNextOptionValue,
@@ -180,7 +183,7 @@ export const incrCommand = defineCommand({
   schema: t.object({ key: t.key() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => incrementBy(ctx.db, args.key, 1),
+  execute: (args, ctx) => incrementBy(ctx.db, args.key, 1n),
 })
 
 export const decrCommand = defineCommand({
@@ -188,12 +191,15 @@ export const decrCommand = defineCommand({
   schema: t.object({ key: t.key() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => incrementBy(ctx.db, args.key, -1),
+  execute: (args, ctx) => incrementBy(ctx.db, args.key, -1n),
 })
 
 export const incrbyCommand = defineCommand({
   name: 'incrby',
-  schema: t.object({ key: t.key(), amount: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    amount: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => incrementBy(ctx.db, args.key, args.amount),
@@ -201,10 +207,19 @@ export const incrbyCommand = defineCommand({
 
 export const decrbyCommand = defineCommand({
   name: 'decrby',
-  schema: t.object({ key: t.key(), amount: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    amount: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
-  execute: (args, ctx) => incrementBy(ctx.db, args.key, -args.amount),
+  execute: (args, ctx) => {
+    // Negating INT64_MIN overflows int64, so Redis rejects it before the op.
+    if (args.amount === INT64_MIN) {
+      throw new IncrDecrOverflowError('decrement would overflow')
+    }
+    return incrementBy(ctx.db, args.key, -args.amount)
+  },
 })
 
 export const incrbyfloatCommand = defineCommand({
@@ -566,13 +581,13 @@ type GetexArgs = {
 function incrementBy(
   db: RedisDatabase,
   key: Buffer,
-  delta: number,
+  delta: bigint,
 ): RedisResult {
   const existing = ensureStringOrMissing(db, key)
-  const current = existing ? parseIntegerToken(existing) : 0
+  const current = existing ? parseInt64Token(existing) : 0n
   const next = current + delta
-  if (!Number.isSafeInteger(next)) {
-    throw new ExpectedIntegerError()
+  if (next > INT64_MAX || next < INT64_MIN) {
+    throw new IncrDecrOverflowError()
   }
   db.setString(key, Buffer.from(next.toString()), { keepTtl: true })
   return integer(next)

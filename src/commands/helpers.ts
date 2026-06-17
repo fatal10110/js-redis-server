@@ -79,6 +79,26 @@ export function parseIntegerToken(token: Buffer): number {
   return value
 }
 
+export const INT64_MAX = 9223372036854775807n
+export const INT64_MIN = -9223372036854775808n
+
+// Parse a stored token as a signed 64-bit integer, matching Redis' int64
+// semantics for INCR/DECR. Unlike parseIntegerToken this keeps full precision
+// above 2^53 and rejects values outside the int64 range.
+export function parseInt64Token(token: Buffer): bigint {
+  const raw = token.toString()
+  if (!isIntegerToken(raw)) {
+    throw new ExpectedIntegerError()
+  }
+
+  const value = BigInt(raw)
+  if (value < INT64_MIN || value > INT64_MAX) {
+    throw new ExpectedIntegerError()
+  }
+
+  return value
+}
+
 export function parsePositiveExpireToken(
   token: Buffer,
   commandName: string,

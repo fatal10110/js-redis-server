@@ -44,6 +44,77 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(decr1, 6)
   })
 
+  test('INCR/INCRBY/DECR/DECRBY operate over the full int64 range', async () => {
+    const tag = `{int64:${randomKey()}}`
+    const key = `${tag}:counter`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      // INCR just below the int64 max reaches it exactly (precision > 2^53)
+      await directClient.set(key, '9223372036854775806')
+      await directClient.incr(key)
+      assert.strictEqual(await directClient.get(key), '9223372036854775807')
+
+      // INCR at the int64 max overflows and leaves the value untouched
+      await assert.rejects(
+        () => directClient.incr(key),
+        errorWithMessage('ERR increment or decrement would overflow'),
+      )
+      assert.strictEqual(await directClient.get(key), '9223372036854775807')
+
+      // DECR at the int64 min overflows
+      await directClient.set(key, '-9223372036854775808')
+      await assert.rejects(
+        () => directClient.decr(key),
+        errorWithMessage('ERR increment or decrement would overflow'),
+      )
+      assert.strictEqual(await directClient.get(key), '-9223372036854775808')
+
+      // INCRBY with a large in-range amount keeps full precision
+      await directClient.set(key, '1')
+      await directClient.call('INCRBY', key, '9223372036854775806')
+      assert.strictEqual(await directClient.get(key), '9223372036854775807')
+
+      // INCRBY that would cross the int64 max overflows
+      await assert.rejects(
+        () => directClient.call('INCRBY', key, '1'),
+        errorWithMessage('ERR increment or decrement would overflow'),
+      )
+
+      // INCRBY/DECRBY amount outside the int64 range is rejected outright
+      await assert.rejects(
+        () => directClient.call('INCRBY', key, '99999999999999999999999'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => directClient.call('DECRBY', key, '99999999999999999999999'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+
+      // DECRBY by the int64 min cannot be negated -> dedicated overflow message
+      await directClient.set(key, '0')
+      await assert.rejects(
+        () => directClient.call('DECRBY', key, '-9223372036854775808'),
+        errorWithMessage('ERR decrement would overflow'),
+      )
+
+      // DECRBY large in-range amount keeps full precision
+      await directClient.set(key, '-1')
+      await directClient.call('DECRBY', key, '9223372036854775807')
+      assert.strictEqual(await directClient.get(key), '-9223372036854775808')
+
+      // INCR on a value already out of int64 range is rejected
+      await directClient.set(key, '99999999999999999999999')
+      await assert.rejects(
+        () => directClient.incr(key),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+    } finally {
+      await directClient.del(key)
+      directClient.disconnect()
+    }
+  })
+
   test('INCRBYFLOAT command', async () => {
     // INCRBYFLOAT
     const incr1 = await redisClient?.incrbyfloat('floatcounter', 1.5)

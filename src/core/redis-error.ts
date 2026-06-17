@@ -49,6 +49,12 @@ export class ExpectedIntegerError extends RedisCommandError {
   }
 }
 
+export class IncrDecrOverflowError extends RedisCommandError {
+  constructor(message = 'increment or decrement would overflow') {
+    super(message)
+  }
+}
+
 export class ExpectedFloatError extends RedisCommandError {
   constructor() {
     super('value is not a valid float')
