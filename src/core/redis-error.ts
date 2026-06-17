@@ -81,6 +81,13 @@ export class IncrByFloatNanOrInfinityError extends RedisCommandError {
   }
 }
 
+/** A non-ALPHA SORT met an element that does not parse as a double. */
+export class SortScoreNotDoubleError extends RedisCommandError {
+  constructor() {
+    super("One or more scores can't be converted into double")
+  }
+}
+
 export class ResultingScoreNaNError extends RedisCommandError {
   constructor() {
     super('resulting score is not a number (NaN)')
