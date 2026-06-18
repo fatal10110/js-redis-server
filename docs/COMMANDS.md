@@ -289,8 +289,8 @@ with `GT` or `LT`.
 - [x] `ZCARD key` - Get the number of members
 - [x] `ZSCORE key member` - Get the score of a member
 - [x] `ZINCRBY key increment member` - Increment the score of a member (`inf`, `+inf`, and `-inf` increments supported; NaN results rejected)
-- [x] `ZRANK key member` - Get the index of a member, lowest score first
-- [x] `ZREVRANK key member` - Get the index of a member, highest score first
+- [x] `ZRANK key member [WITHSCORE]` - Get the index of a member, lowest score first; optionally return `[rank, score]`
+- [x] `ZREVRANK key member [WITHSCORE]` - Get the index of a member, highest score first; optionally return `[rank, score]`
 - [x] `ZRANGE key min max [BYSCORE | BYLEX] [REV] [LIMIT offset count] [WITHSCORES]` - Return a range of members by index, score, or lexicographic range, optionally reversed
 - [x] `ZRANGESTORE destination source min max [BYSCORE | BYLEX] [REV] [LIMIT offset count]` - Store a `ZRANGE`-style result in destination; empty result deletes destination
 - [x] `ZREVRANGE key start stop [WITHSCORES]` - Return a range of members by index, high to low
@@ -322,9 +322,8 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
+- Score replies from `ZSCORE`, `ZINCRBY`, `ZRANK WITHSCORE`, `ZREVRANK WITHSCORE`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
 - [ ] `ZREVRANGE` does not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes; use `ZRANGE ... REV` instead
-- [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
 
 ## 9. Stream Commands
 

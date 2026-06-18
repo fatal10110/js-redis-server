@@ -6,6 +6,24 @@ import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
+function redisVersionFromInfo(info: string | undefined): string | null {
+  const match = info?.match(/^redis_version:(\d+\.\d+\.\d+)/m)
+  return match?.[1] ?? null
+}
+
+function redisVersionAtLeast(
+  version: string | null,
+  major: number,
+  minor: number,
+): boolean {
+  if (!version) {
+    return false
+  }
+
+  const [actualMajor = 0, actualMinor = 0] = version.split('.').map(Number)
+  return actualMajor > major || (actualMajor === major && actualMinor >= minor)
+}
+
 describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
@@ -187,6 +205,82 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
 
     const revrank2 = await redisClient?.zrevrank('zset5', 'one')
     assert.strictEqual(revrank2, 2)
+  })
+
+  test('ZRANK and ZREVRANK WITHSCORE option', async t => {
+    if (testRunner.backend === 'real') {
+      const serverInfo = (await redisClient?.call('INFO', 'server')) as
+        | string
+        | undefined
+      const redisVersion = redisVersionFromInfo(serverInfo)
+      if (!redisVersionAtLeast(redisVersion, 7, 2)) {
+        t.skip(
+          `ZRANK WITHSCORE requires Redis 7.2+; real backend is ${redisVersion ?? 'unknown'}`,
+        )
+        return
+      }
+    }
+
+    const keyTag = `zrank-withscore:${randomKey()}`
+    const zsetKey = `{${keyTag}}:zset`
+    const stringKey = `{${keyTag}}:string`
+
+    try {
+      await redisClient?.call('ZADD', zsetKey, 1, 'one', 2, 'two', 3.5, 'three')
+
+      assert.deepStrictEqual(
+        await redisClient?.call('ZRANK', zsetKey, 'one', 'WITHSCORE'),
+        [0, '1'],
+      )
+      assert.deepStrictEqual(
+        await redisClient?.call('ZRANK', zsetKey, 'three', 'withscore'),
+        [2, '3.5'],
+      )
+      assert.deepStrictEqual(
+        await redisClient?.call('ZREVRANK', zsetKey, 'three', 'WITHSCORE'),
+        [0, '3.5'],
+      )
+      assert.deepStrictEqual(
+        await redisClient?.call('ZREVRANK', zsetKey, 'one', 'WITHSCORE'),
+        [2, '1'],
+      )
+
+      assert.strictEqual(
+        await redisClient?.call('ZRANK', zsetKey, 'missing', 'WITHSCORE'),
+        null,
+      )
+      assert.strictEqual(
+        await redisClient?.call('ZREVRANK', zsetKey, 'missing', 'WITHSCORE'),
+        null,
+      )
+
+      await redisClient?.call('SET', stringKey, 'not-a-zset')
+      await assert.rejects(
+        () => redisClient?.call('ZRANK', stringKey, 'one', 'WITHSCORE'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () => redisClient?.call('ZRANK', zsetKey, 'one', 'BADOPTION'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'ZREVRANK',
+            zsetKey,
+            'one',
+            'WITHSCORE',
+            'WITHSCORE',
+          ),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'zrevrank' command",
+        ),
+      )
+    } finally {
+      await redisClient?.call('DEL', zsetKey, stringKey)
+    }
   })
 
   test('ZINCRBY command', async () => {
