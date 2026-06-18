@@ -57,9 +57,11 @@ to the connection's [`ClientSession`](../src/core/client-session.ts). The
 session asks the [`CommandExecutor`](../src/core/command-executor.ts) to look
 up and run it; the executor returns a `RedisResult` (or a `ResponseStream` for
 streaming replies), which the session adapter encodes back to wire bytes using
-the protocol version (`RESP2`/`RESP3`) negotiated for that connection. While
-executing a valid command plan, the `CommandExecutor` publishes a cloned command
-event to the server-level monitor feed when `MONITOR` clients are listening.
+the protocol version (`RESP2`/`RESP3`) negotiated for that connection. A
+`RedisResult` can also carry pre-encoded bytes for protocol-sensitive composite
+replies such as `EXEC` crossing an in-transaction `HELLO`. While executing a
+valid command plan, the `CommandExecutor` publishes a cloned command event to the
+server-level monitor feed when `MONITOR` clients are listening.
 Unknown commands and arity/syntax failures are skipped; execution errors from
 successfully planned commands are still published, matching Redis. Cluster
 redirects and pre-execution cluster errors are skipped because the command is not
@@ -176,7 +178,7 @@ sequenceDiagram
     end
     CE-->>CS: RedisResult or ResponseStream
     CS-->>SA: result
-    SA->>SA: encode via session.protocolVersion (RESP2/RESP3)
+    SA->>SA: write pre-encoded result, or encode via session.protocolVersion
     SA-->>Cl: encoded reply
 ```
 
@@ -255,7 +257,10 @@ already-parsed `CommandPlan` on the session, and replies `+QUEUED` — so parsin
 and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at
 queue time, not at `EXEC` time. `EXEC` drains the queue and replays each plan
 through [`ClientSession.executeTransaction`](../src/core/client-session.ts#L156),
-which reuses the normal `executePlan` path per command.
+which reuses the normal `executePlan` path per command. When a queued `HELLO`
+changes the session RESP version, `executeTransaction` captures each element's
+wire bytes with the protocol version active after that element runs, then returns
+a pre-encoded outer array so earlier replies are not retroactively re-encoded.
 
 `WATCH` subscribes to per-key mutation events on the database
 ([`ClientSession.watch`](../src/core/client-session.ts#L185)); any write,
@@ -385,13 +390,14 @@ On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
 union (`simple-string`, `bulk-string`, `integer`, `double`, `boolean`,
 `big-number`, `verbatim`, `array`, `set`, `map`, `map-pairs`, `push`, `null`, `error`, ...)
-to either RESP2 or RESP3 wire bytes. Each connection starts on RESP2; sending
-`HELLO 3` switches that single session to RESP3 — `RedisValue.map`/`mapPairs`/
-`set`/`double`/`boolean`/`bigNumber`/`push` then encode as their native RESP3
-types (`%`, `%`, `~`, `,`, `#`, `(`, `>`) instead of being downgraded to
-arrays/bulk-strings. `map` downgrades to a flat RESP2 key/value array, while
-`mapPairs` downgrades to a RESP2 array of `[key, value]` pairs for commands like
-`XREAD`. See the
+to either RESP2 or RESP3 wire bytes. [`encodeRedisResult`](../src/core/resp-encoder.ts#L10)
+writes a `RedisResult`'s pre-encoded buffer verbatim when one is present. Each
+connection starts on RESP2; sending `HELLO 3` switches that single session to
+RESP3 — `RedisValue.map`/`mapPairs`/`set`/`double`/`boolean`/`bigNumber`/`push`
+then encode as their native RESP3 types (`%`, `%`, `~`, `,`, `#`, `(`, `>`)
+instead of being downgraded to arrays/bulk-strings. `map` downgrades to a flat
+RESP2 key/value array, while `mapPairs` downgrades to a RESP2 array of
+`[key, value]` pairs for commands like `XREAD`. See the
 [README's protocol-version section](../README.md#protocol-version-resp2--resp3)
 for the client-facing view of this negotiation.
 
