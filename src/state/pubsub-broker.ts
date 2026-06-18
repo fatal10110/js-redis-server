@@ -28,6 +28,10 @@ type PatternSubscriber = {
 
 export class RedisPubSubBroker {
   private readonly channels = new Map<string, Map<symbol, ChannelSubscriber>>()
+  private readonly shardChannels = new Map<
+    string,
+    Map<symbol, ChannelSubscriber>
+  >()
   private readonly patterns = new Map<string, Map<symbol, PatternSubscriber>>()
 
   subscribe(
@@ -72,6 +76,27 @@ export class RedisPubSubBroker {
     }
   }
 
+  ssubscribe(
+    channel: Buffer,
+    listener: RedisPubSubMessageListener,
+  ): Unsubscribe {
+    const id = Symbol('shard-channel-subscriber')
+    const key = pubsubKey(channel)
+    let subscribers = this.shardChannels.get(key)
+    if (!subscribers) {
+      subscribers = new Map()
+      this.shardChannels.set(key, subscribers)
+    }
+
+    subscribers.set(id, { channel: Buffer.from(channel), listener })
+    return () => {
+      subscribers?.delete(id)
+      if (subscribers?.size === 0) {
+        this.shardChannels.delete(key)
+      }
+    }
+  }
+
   publish(channel: Buffer, message: Buffer): number {
     let delivered = 0
     const channelSubscribers = this.channels.get(pubsubKey(channel))
@@ -104,6 +129,25 @@ export class RedisPubSubBroker {
     return delivered
   }
 
+  spublish(channel: Buffer, message: Buffer): number {
+    let delivered = 0
+    const channelSubscribers = this.shardChannels.get(pubsubKey(channel))
+
+    if (!channelSubscribers) {
+      return delivered
+    }
+
+    for (const subscriber of Array.from(channelSubscribers.values())) {
+      subscriber.listener({
+        channel: Buffer.from(channel),
+        message: Buffer.from(message),
+      })
+      delivered++
+    }
+
+    return delivered
+  }
+
   channelsMatching(pattern?: Buffer): Buffer[] {
     const channels: Buffer[] = []
 
@@ -123,8 +167,31 @@ export class RedisPubSubBroker {
     return channels
   }
 
+  shardChannelsMatching(pattern?: Buffer): Buffer[] {
+    const channels: Buffer[] = []
+
+    for (const subscribers of this.shardChannels.values()) {
+      const first = subscribers.values().next().value
+      if (!first) {
+        continue
+      }
+
+      if (pattern && !redisGlobMatch(pattern, first.channel)) {
+        continue
+      }
+
+      channels.push(Buffer.from(first.channel))
+    }
+
+    return channels
+  }
+
   subscriberCount(channel: Buffer): number {
     return this.channels.get(pubsubKey(channel))?.size ?? 0
+  }
+
+  shardSubscriberCount(channel: Buffer): number {
+    return this.shardChannels.get(pubsubKey(channel))?.size ?? 0
   }
 
   patternSubscriptionCount(): number {

@@ -107,6 +107,7 @@ export class ClientSession implements RedisClientSession {
   /** Subset of watched keys mutated since WATCH — non-empty fails the next EXEC. */
   private readonly dirtyWatches = new Set<string>()
   private readonly pubsubChannels = new Map<string, PubSubRegistration>()
+  private readonly pubsubShardChannels = new Map<string, PubSubRegistration>()
   private readonly pubsubPatterns = new Map<string, PubSubRegistration>()
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
@@ -163,12 +164,20 @@ export class ClientSession implements RedisClientSession {
     return this.pubsubChannels.size
   }
 
+  get pubsubShardChannelCount(): number {
+    return this.pubsubShardChannels.size
+  }
+
   get pubsubPatternCount(): number {
     return this.pubsubPatterns.size
   }
 
-  get pubsubSubscriptionCount(): number {
+  get pubsubRegularSubscriptionCount(): number {
     return this.pubsubChannelCount + this.pubsubPatternCount
+  }
+
+  get pubsubSubscriptionCount(): number {
+    return this.pubsubRegularSubscriptionCount + this.pubsubShardChannelCount
   }
 
   setAuthenticated(value: boolean): void {
@@ -423,7 +432,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('subscribe', [
           RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }
@@ -445,7 +454,7 @@ export class ClientSession implements RedisClientSession {
       return [
         pubsubFrame('unsubscribe', [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       ]
     }
@@ -463,7 +472,84 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('unsubscribe', [
           RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+        ]),
+      )
+    }
+
+    return frames
+  }
+
+  subscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[] {
+    const frames: RedisResult[] = []
+
+    for (const channel of channels) {
+      const key = pubsubId(channel)
+      if (!this.pubsubShardChannels.has(key)) {
+        const subscribedChannel = Buffer.from(channel)
+        const unsubscribe = this.server.pubsubBroker.ssubscribe(
+          subscribedChannel,
+          message => {
+            this.enqueuePush(
+              pubsubFrame('smessage', [
+                RedisValue.bulkString(Buffer.from(message.channel)),
+                RedisValue.bulkString(Buffer.from(message.message)),
+              ]),
+            )
+          },
+        )
+
+        this.pubsubShardChannels.set(key, {
+          value: subscribedChannel,
+          unsubscribe,
+        })
+      }
+
+      this.refreshPubSubMode()
+      frames.push(
+        pubsubFrame('ssubscribe', [
+          RedisValue.bulkString(Buffer.from(channel)),
+          RedisValue.integer(this.pubsubShardChannelCount),
+        ]),
+      )
+    }
+
+    return frames
+  }
+
+  unsubscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[] {
+    const targets =
+      channels.length > 0
+        ? channels
+        : Array.from(
+            this.pubsubShardChannels.values(),
+            entry => entry.value,
+          ).reverse()
+
+    if (targets.length === 0) {
+      this.refreshPubSubMode()
+      return [
+        pubsubFrame('sunsubscribe', [
+          RedisValue.bulkString(null),
+          RedisValue.integer(this.pubsubShardChannelCount),
+        ]),
+      ]
+    }
+
+    const frames: RedisResult[] = []
+    for (const channel of targets) {
+      const key = pubsubId(channel)
+      const existing = this.pubsubShardChannels.get(key)
+      if (existing) {
+        existing.unsubscribe()
+        this.pubsubShardChannels.delete(key)
+      }
+
+      this.refreshPubSubMode()
+      frames.push(
+        pubsubFrame('sunsubscribe', [
+          RedisValue.bulkString(Buffer.from(channel)),
+          RedisValue.integer(this.pubsubShardChannelCount),
         ]),
       )
     }
@@ -501,7 +587,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('psubscribe', [
           RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }
@@ -523,7 +609,7 @@ export class ClientSession implements RedisClientSession {
       return [
         pubsubFrame('punsubscribe', [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       ]
     }
@@ -541,7 +627,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('punsubscribe', [
           RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }
@@ -553,11 +639,15 @@ export class ClientSession implements RedisClientSession {
     for (const subscription of this.pubsubChannels.values()) {
       subscription.unsubscribe()
     }
+    for (const subscription of this.pubsubShardChannels.values()) {
+      subscription.unsubscribe()
+    }
     for (const subscription of this.pubsubPatterns.values()) {
       subscription.unsubscribe()
     }
 
     this.pubsubChannels.clear()
+    this.pubsubShardChannels.clear()
     this.pubsubPatterns.clear()
     this.refreshPubSubMode()
   }
