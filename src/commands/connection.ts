@@ -30,6 +30,8 @@ const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
 let nextClientId = 1
+const INVALID_CLIENT_NAME_MESSAGE =
+  'Client names cannot contain spaces, newlines or special characters.'
 
 function getClientId(session: RedisClientSession): number {
   const existing = clientIds.get(session)
@@ -40,6 +42,27 @@ function getClientId(session: RedisClientSession): number {
   const id = nextClientId++
   clientIds.set(session, id)
   return id
+}
+
+function assertValidClientName(name: Buffer): void {
+  for (const byte of name) {
+    if (byte >= 0x21 && byte <= 0x7e) {
+      continue
+    }
+
+    throw new RedisCommandError(INVALID_CLIENT_NAME_MESSAGE)
+  }
+}
+
+function setClientName(session: RedisClientSession, name: Buffer): void {
+  assertValidClientName(name)
+
+  if (name.length === 0) {
+    clientNames.delete(session)
+    return
+  }
+
+  clientNames.set(session, name)
 }
 
 function isClusterMode(ctx: RedisExecutionContext): boolean {
@@ -444,7 +467,7 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'setname') {
       expectArgCount('client|setname', args.args, 1)
-      clientNames.set(ctx.session, args.args[0])
+      setClientName(ctx.session, args.args[0])
       return ok()
     }
 
@@ -553,7 +576,7 @@ export const helloCommand = defineCommand({
     }
 
     if (pendingName !== undefined) {
-      clientNames.set(ctx.session, pendingName)
+      setClientName(ctx.session, pendingName)
     }
 
     ctx.session.setProtocolVersion(version)
