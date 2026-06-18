@@ -68,6 +68,71 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     assert.deepStrictEqual(await conn.readFrame(), 'OK')
   })
 
+  test('allows sharded subscribed-mode commands and receives shard messages', async () => {
+    const subscriber = await connect()
+    const publisher = await connect()
+    const channel = `raw-shard-pubsub:${randomKey()}`
+    const missingChannel = `${channel}:missing`
+
+    subscriber.write(commandFrame('SSUBSCRIBE', channel))
+    assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
+      'ssubscribe',
+      channel,
+      1,
+    ])
+
+    publisher.write(
+      commandFrame('PUBSUB', 'SHARDNUMSUB', channel, missingChannel),
+    )
+    assert.deepStrictEqual(normalizeFrame(await publisher.readFrame()), [
+      channel,
+      1,
+      missingChannel,
+      0,
+    ])
+
+    publisher.write(commandFrame('PUBSUB', 'SHARDCHANNELS', channel))
+    assert.deepStrictEqual(normalizeFrame(await publisher.readFrame()), [
+      channel,
+    ])
+
+    subscriber.write(commandFrame('PING', 'hello'))
+    assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
+      'pong',
+      'hello',
+    ])
+
+    subscriber.write(commandFrame('GET', 'blocked'))
+    assert.match(
+      respText(await subscriber.readFrame()),
+      /^ERR Can't execute 'get': only .* allowed in this context$/,
+    )
+
+    publisher.write(commandFrame('SPUBLISH', channel, 'hello-shard'))
+    assert.deepStrictEqual(await publisher.readFrame(), 1)
+    assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
+      'smessage',
+      channel,
+      'hello-shard',
+    ])
+
+    subscriber.write(commandFrame('SUNSUBSCRIBE', channel))
+    assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
+      'sunsubscribe',
+      channel,
+      0,
+    ])
+
+    subscriber.write(commandFrame('SET', 'after-shard-unsubscribe', 'ok'))
+    assert.deepStrictEqual(await subscriber.readFrame(), 'OK')
+
+    publisher.write(commandFrame('SPUBLISH', channel, 'after'))
+    assert.deepStrictEqual(await publisher.readFrame(), 0)
+
+    publisher.write(commandFrame('PUBSUB', 'SHARDCHANNELS'))
+    assert.deepStrictEqual(await publisher.readFrame(), [])
+  })
+
   test('RESP3 subscribed clients can run commands and use normal PING replies', async () => {
     const conn = await connect()
     const channel = `raw-resp3-pubsub:${randomKey()}`
@@ -207,6 +272,18 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
       "ERR wrong number of arguments for 'publish' command",
     )
 
+    conn.write(commandFrame('SSUBSCRIBE'))
+    assert.strictEqual(
+      respText(await conn.readFrame()),
+      "ERR wrong number of arguments for 'ssubscribe' command",
+    )
+
+    conn.write(commandFrame('SPUBLISH', 'channel-only'))
+    assert.strictEqual(
+      respText(await conn.readFrame()),
+      "ERR wrong number of arguments for 'spublish' command",
+    )
+
     conn.write(commandFrame('PUBSUB', 'NUMPAT', 'extra'))
     assert.strictEqual(
       respText(await conn.readFrame()),
@@ -251,6 +328,13 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     conn.write(commandFrame('PUNSUBSCRIBE'))
     assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
       'punsubscribe',
+      null,
+      0,
+    ])
+
+    conn.write(commandFrame('SUNSUBSCRIBE'))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'sunsubscribe',
       null,
       0,
     ])

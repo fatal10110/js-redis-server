@@ -54,6 +54,44 @@ export const unsubscribeCommand = defineCommand({
     framesResult(ctx.session.unsubscribePubSubChannels(args.channels)),
 })
 
+export const ssubscribeCommand = defineCommand({
+  name: 'ssubscribe',
+  schema: t.object({
+    channels: t.variadic(t.key(), { min: 1 }),
+  }),
+  flags: ['pubsub', 'noscript', 'subscribed'],
+  introspection: {
+    arity: -2,
+    flags: ['pubsub', 'noscript', 'loading', 'stale'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@pubsub', '@slow'],
+  },
+  keys: args => args.channels,
+  execute: (args, ctx) =>
+    framesResult(ctx.session.subscribePubSubShardChannels(args.channels)),
+})
+
+export const sunsubscribeCommand = defineCommand({
+  name: 'sunsubscribe',
+  schema: t.object({
+    channels: t.variadic(t.key()),
+  }),
+  flags: ['pubsub', 'noscript', 'subscribed'],
+  introspection: {
+    arity: -1,
+    flags: ['pubsub', 'noscript', 'loading', 'stale'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@pubsub', '@slow'],
+  },
+  keys: args => args.channels,
+  execute: (args, ctx) =>
+    framesResult(ctx.session.unsubscribePubSubShardChannels(args.channels)),
+})
+
 export const psubscribeCommand = defineCommand({
   name: 'psubscribe',
   schema: t.object({
@@ -112,6 +150,26 @@ export const publishCommand = defineCommand({
     integer(ctx.server.pubsubBroker.publish(args.channel, args.message)),
 })
 
+export const spublishCommand = defineCommand({
+  name: 'spublish',
+  schema: t.object({
+    channel: t.key(),
+    message: t.bulk(),
+  }),
+  flags: ['pubsub', 'fast'],
+  introspection: {
+    arity: 3,
+    flags: ['pubsub', 'loading', 'stale', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@pubsub', '@fast'],
+  },
+  keys: args => [args.channel],
+  execute: (args, ctx) =>
+    integer(ctx.server.pubsubBroker.spublish(args.channel, args.message)),
+})
+
 export const pubsubCommand = defineCommand({
   name: 'pubsub',
   schema: t.object({
@@ -147,7 +205,13 @@ export const pubsubCommand = defineCommand({
       }),
     ],
   },
-  keys: () => [],
+  keys: args => {
+    if (args.subcommand.toLowerCase() === 'shardnumsub') {
+      return args.args
+    }
+
+    return []
+  },
   execute: (args, ctx) => {
     const subcommand = args.subcommand.toLowerCase()
 
@@ -166,7 +230,10 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardchannels') {
       expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
-      return array([])
+      const channels = ctx.server.pubsubBroker.shardChannelsMatching(
+        args.args[0],
+      )
+      return array(channels.map(channel => RedisValue.bulkString(channel)))
     }
 
     if (subcommand === 'shardnumsub') {
@@ -174,7 +241,9 @@ export const pubsubCommand = defineCommand({
         RedisValue.array(
           args.args.flatMap(channel => [
             RedisValue.bulkString(Buffer.from(channel)),
-            RedisValue.integer(0),
+            RedisValue.integer(
+              ctx.server.pubsubBroker.shardSubscriberCount(channel),
+            ),
           ]),
         ),
       )
@@ -194,9 +263,12 @@ export const pubsubCommand = defineCommand({
 export const pubsubCommands = [
   subscribeCommand,
   unsubscribeCommand,
+  ssubscribeCommand,
+  sunsubscribeCommand,
   psubscribeCommand,
   punsubscribeCommand,
   publishCommand,
+  spublishCommand,
   pubsubCommand,
 ]
 
