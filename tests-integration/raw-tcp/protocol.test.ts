@@ -133,6 +133,49 @@ describe(`Raw TCP protocol integration (${testRunner.getBackendName()})`, () => 
     assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('$-1\r\n'))
   })
 
+  test('encodes EXEC elements with the protocol active when each command ran', async () => {
+    const conn = await connect()
+    const missing = `${randomKey()}:absent`
+
+    conn.write(
+      Buffer.concat([
+        commandFrame('MULTI'),
+        commandFrame('GET', missing),
+        commandFrame('HELLO', '3'),
+        commandFrame('GET', missing),
+        commandFrame('EXEC'),
+      ]),
+    )
+
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+OK\r\n'))
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('+QUEUED\r\n'),
+    )
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('+QUEUED\r\n'),
+    )
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('+QUEUED\r\n'),
+    )
+
+    const rawExec = await conn.readRawFrame()
+    assert.ok(
+      rawExec.subarray(0, 9).equals(Buffer.from('*3\r\n$-1\r\n')),
+      `expected pre-HELLO GET to stay RESP2 null, got ${rawExec.toString()}`,
+    )
+    assert.ok(
+      rawExec.includes(Buffer.from('%7\r\n')),
+      `expected HELLO 3 to be encoded as a RESP3 map, got ${rawExec.toString()}`,
+    )
+    assert.ok(
+      rawExec.subarray(-3).equals(Buffer.from('_\r\n')),
+      `expected post-HELLO GET to use RESP3 null, got ${rawExec.toString()}`,
+    )
+  })
+
   // #80: RESET must execute immediately inside MULTI (like EXEC/DISCARD/WATCH),
   // aborting the transaction — it must not be queued.
   test('RESET inside MULTI executes immediately and aborts the transaction', async () => {

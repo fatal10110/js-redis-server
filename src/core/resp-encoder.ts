@@ -11,6 +11,10 @@ export function encodeRedisResult(
   result: RedisResult,
   options?: RespEncodeOptions,
 ): Buffer {
+  if (result.encoded) {
+    return Buffer.from(result.encoded)
+  }
+
   return encodeRedisValue(result.value, options)
 }
 

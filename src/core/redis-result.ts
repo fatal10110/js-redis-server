@@ -9,10 +9,19 @@ export class RedisResult {
   constructor(
     public readonly value: RedisValue,
     public readonly options?: RedisResultOptions,
+    public readonly encoded?: Buffer,
   ) {}
 
   static create(value: RedisValue, options?: RedisResultOptions): RedisResult {
     return new RedisResult(value, options)
+  }
+
+  static preEncoded(
+    value: RedisValue,
+    encoded: Buffer,
+    options?: RedisResultOptions,
+  ): RedisResult {
+    return new RedisResult(value, options, Buffer.from(encoded))
   }
 
   static nil(): RedisResult {

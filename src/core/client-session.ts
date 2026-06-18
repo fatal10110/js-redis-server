@@ -13,7 +13,7 @@ import {
 import { RedisCommandError } from './redis-error'
 import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
-import type { RespVersion } from './resp-encoder'
+import { encodeRedisValue, type RespVersion } from './resp-encoder'
 import { type RedisTurnHandle, type RedisTurnQueue } from './turn-queue'
 import type {
   RedisClusterNodeRole,
@@ -279,6 +279,8 @@ export class ClientSession implements RedisClientSession {
     plans: readonly CommandPlan[],
   ): Promise<RedisResult> {
     const values: RedisValue[] = []
+    const encodedValues: Buffer[] = []
+    let sawProtocolSwitch = false
 
     // Blocking commands must not park while the EXEC turn is held — that would
     // deadlock because no other session could produce the wakeup write. Override
@@ -313,28 +315,62 @@ export class ClientSession implements RedisClientSession {
       // array. Real Redis always replies with an N-element EXEC array, so trap
       // the failure into this command's slot and keep running the rest (#83).
       let result: Awaited<ReturnType<typeof this.executor.executePlan>>
+      const versionBefore = this.protocolVersion
       try {
         result = await this.executor.executePlan(plan, noBlockCtx)
       } catch (err) {
         if (this.signal.aborted) {
           throw err
         }
-        values.push(RedisValue.error((err as Error).message))
+        this.appendTransactionValue(
+          RedisValue.error((err as Error).message),
+          values,
+          encodedValues,
+        )
+        sawProtocolSwitch ||= this.protocolVersion !== versionBefore
         continue
       }
 
       if (result instanceof RedisResult) {
-        values.push(result.value)
+        this.appendTransactionValue(
+          result.value,
+          values,
+          encodedValues,
+          result.encoded,
+        )
+        sawProtocolSwitch ||= this.protocolVersion !== versionBefore
         continue
       }
 
       result.close('streaming command is not allowed in transaction')
-      values.push(
+      this.appendTransactionValue(
         RedisValue.error('Streaming command is not allowed in transaction'),
+        values,
+        encodedValues,
       )
+      sawProtocolSwitch ||= this.protocolVersion !== versionBefore
     }
 
-    return RedisResult.create(RedisValue.array(values))
+    const value = RedisValue.array(values)
+    if (!sawProtocolSwitch) {
+      return RedisResult.create(value)
+    }
+
+    return RedisResult.preEncoded(value, encodeTransactionArray(encodedValues))
+  }
+
+  private appendTransactionValue(
+    value: RedisValue,
+    values: RedisValue[],
+    encodedValues: Buffer[],
+    encoded?: Buffer,
+  ): void {
+    values.push(value)
+    encodedValues.push(
+      encoded
+        ? Buffer.from(encoded)
+        : encodeRedisValue(value, { version: this.protocolVersion }),
+    )
   }
 
   /**
@@ -869,6 +905,13 @@ function pubsubId(value: Buffer): string {
 
 function pubsubFrame(name: string, items: RedisValue[]): RedisResult {
   return RedisResult.create(RedisValue.push(name, items))
+}
+
+function encodeTransactionArray(encodedValues: readonly Buffer[]): Buffer {
+  return Buffer.concat([
+    Buffer.from(`*${encodedValues.length}\r\n`),
+    ...encodedValues,
+  ])
 }
 
 function createAbortError(): Error {
