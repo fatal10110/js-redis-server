@@ -131,6 +131,20 @@ describe('RESP encoder core', () => {
     )
   })
 
+  test('writes pre-encoded RedisResult bytes verbatim', () => {
+    const encoded = Buffer.from('*1\r\n_\r\n')
+    const result = RedisResult.preEncoded(
+      RedisValue.array([RedisValue.null()]),
+      encoded,
+    )
+    encoded.write('$', 4)
+
+    assert.deepStrictEqual(
+      encodeRedisResult(result, { version: 2 }),
+      Buffer.from('*1\r\n_\r\n'),
+    )
+  })
+
   test('encodes RESP3 verbatim strings with a 3-byte format prefix', () => {
     assert.deepStrictEqual(
       encodeRedisValue(RedisValue.verbatim('txt', Buffer.from('Some string')), {
