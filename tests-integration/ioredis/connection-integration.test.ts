@@ -17,6 +17,8 @@ import {
 } from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
+const INVALID_CLIENT_NAME_ERROR =
+  'ERR Client names cannot contain spaces, newlines or special characters.'
 
 describe(`Connection commands integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -64,6 +66,69 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
 
     const list = (await directClient?.call('CLIENT', 'LIST')) as string
     assert.match(list, new RegExp(`name=${name}`))
+  })
+
+  test('CLIENT SETNAME validates names like Redis', async () => {
+    const validName = `client-${randomKey()}_!~`
+    const invalidNames = [
+      'has space',
+      'line\nbreak',
+      '\u0001control',
+      String.fromCharCode(0x7f),
+      'caf\u00e9',
+    ]
+
+    assert.strictEqual(
+      await directClient?.call('CLIENT', 'SETNAME', validName),
+      'OK',
+    )
+    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), validName)
+
+    for (const invalidName of invalidNames) {
+      await assert.rejects(
+        () =>
+          directClient!.call(
+            'CLIENT',
+            'SETNAME',
+            invalidName,
+          ) as Promise<unknown>,
+        errorWithMessage(INVALID_CLIENT_NAME_ERROR),
+      )
+      assert.strictEqual(
+        await directClient?.call('CLIENT', 'GETNAME'),
+        validName,
+      )
+    }
+
+    assert.strictEqual(await directClient?.call('CLIENT', 'SETNAME', ''), 'OK')
+    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), null)
+  })
+
+  test('HELLO SETNAME validates names like CLIENT SETNAME', async () => {
+    const key = `{hello-setname:${randomKey()}}:probe`
+    const client = await connectToSlotOwner(redisClient!, key)
+    const validName = `hello-${randomKey()}`
+
+    try {
+      const hello = (await client.call(
+        'HELLO',
+        '2',
+        'SETNAME',
+        validName,
+      )) as unknown[]
+
+      assertHelloEntry(hello, 'server', 'redis')
+      assert.strictEqual(await client.call('CLIENT', 'GETNAME'), validName)
+
+      await assert.rejects(
+        () =>
+          client.call('HELLO', '2', 'SETNAME', 'has space') as Promise<unknown>,
+        errorWithMessage(INVALID_CLIENT_NAME_ERROR),
+      )
+      assert.strictEqual(await client.call('CLIENT', 'GETNAME'), validName)
+    } finally {
+      client.disconnect()
+    }
   })
 
   test('CLIENT LIST reports all active clients on the connected node', async () => {
