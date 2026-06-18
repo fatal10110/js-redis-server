@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage, randomKey } from '../utils'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -382,6 +382,289 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
       await redisClient?.zrange(key, '-', '+', 'BYLEX'),
       [],
     )
+  })
+
+  // ---------- ZRANGESTORE ----------
+
+  test('ZRANGESTORE stores an index range and overwrites destination', async () => {
+    const tag = `{zrangestore:${randomKey()}}`
+    const source = `${tag}:source`
+    const destination = `${tag}:destination`
+
+    try {
+      await redisClient?.zadd(source, 1, 'a', 2, 'b', 3, 'c', 4, 'd')
+      await redisClient?.set(destination, 'old-value')
+
+      assert.strictEqual(
+        await redisClient?.call('zrangestore', destination, source, '1', '2'),
+        2,
+      )
+      assert.deepStrictEqual(
+        await redisClient?.zrange(destination, 0, -1, 'WITHSCORES'),
+        ['b', '2', 'c', '3'],
+      )
+      assert.deepStrictEqual(await redisClient?.zrange(source, 0, -1), [
+        'a',
+        'b',
+        'c',
+        'd',
+      ])
+    } finally {
+      await redisClient?.del(source)
+      await redisClient?.del(destination)
+    }
+  })
+
+  test('ZRANGESTORE supports BYSCORE and BYLEX ranges', async () => {
+    const tag = `{zrangestore-ranges:${randomKey()}}`
+    const scoreSource = `${tag}:score-source`
+    const scoreDestination = `${tag}:score-destination`
+    const lexSource = `${tag}:lex-source`
+    const lexDestination = `${tag}:lex-destination`
+
+    try {
+      await redisClient?.zadd(
+        scoreSource,
+        1,
+        'a',
+        2,
+        'b',
+        3,
+        'c',
+        4,
+        'd',
+        5,
+        'e',
+      )
+      assert.strictEqual(
+        await redisClient?.call(
+          'zrangestore',
+          scoreDestination,
+          scoreSource,
+          '5',
+          '2',
+          'BYSCORE',
+          'REV',
+          'LIMIT',
+          '1',
+          '2',
+        ),
+        2,
+      )
+      assert.deepStrictEqual(
+        await redisClient?.zrange(scoreDestination, 0, -1, 'WITHSCORES'),
+        ['c', '3', 'd', '4'],
+      )
+
+      await redisClient?.zadd(lexSource, 0, 'a', 0, 'b', 0, 'c', 0, 'd')
+      assert.strictEqual(
+        await redisClient?.call(
+          'zrangestore',
+          lexDestination,
+          lexSource,
+          '[d',
+          '[b',
+          'BYLEX',
+          'REV',
+          'LIMIT',
+          '0',
+          '2',
+        ),
+        2,
+      )
+      assert.deepStrictEqual(await redisClient?.zrange(lexDestination, 0, -1), [
+        'c',
+        'd',
+      ])
+    } finally {
+      await redisClient?.del(
+        scoreSource,
+        scoreDestination,
+        lexSource,
+        lexDestination,
+      )
+    }
+  })
+
+  test('ZRANGESTORE deletes destination when source is missing or range is empty', async () => {
+    const tag = `{zrangestore-empty:${randomKey()}}`
+    const source = `${tag}:source`
+    const missingSource = `${tag}:missing`
+    const destination = `${tag}:destination`
+
+    try {
+      await redisClient?.zadd(source, 1, 'a')
+      await redisClient?.zadd(destination, 9, 'old')
+      assert.strictEqual(
+        await redisClient?.call(
+          'zrangestore',
+          destination,
+          source,
+          '2',
+          '3',
+          'BYSCORE',
+        ),
+        0,
+      )
+      assert.strictEqual(await redisClient?.exists(destination), 0)
+
+      await redisClient?.zadd(destination, 9, 'old')
+      assert.strictEqual(
+        await redisClient?.call(
+          'zrangestore',
+          destination,
+          missingSource,
+          '0',
+          '-1',
+        ),
+        0,
+      )
+      assert.strictEqual(await redisClient?.exists(destination), 0)
+    } finally {
+      await redisClient?.del(source, missingSource, destination)
+    }
+  })
+
+  test('ZRANGESTORE rejects invalid syntax and wrong-type sources', async () => {
+    const tag = `{zrangestore-errors:${randomKey()}}`
+    const source = `${tag}:source`
+    const destination = `${tag}:destination`
+    const stringSource = `${tag}:string-source`
+
+    try {
+      await redisClient?.zadd(source, 1, 'a', 2, 'b')
+      await redisClient?.set(stringSource, 'not-a-zset')
+
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            source,
+            '0',
+            '-1',
+            'LIMIT',
+            '0',
+            '1',
+          ),
+        errorWithMessage(
+          'ERR syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX',
+        ),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            source,
+            '0',
+            '-1',
+            'WITHSCORES',
+          ),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            source,
+            '-',
+            '+',
+            'BYSCORE',
+            'BYLEX',
+          ),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('zrangestore', destination, source, '(1', '4'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            source,
+            'x',
+            '5',
+            'BYSCORE',
+          ),
+        errorWithMessage('ERR min or max is not a float'),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            source,
+            'a',
+            'c',
+            'BYLEX',
+          ),
+        errorWithMessage('ERR min or max not valid string range item'),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            source,
+            '-inf',
+            '+inf',
+            'BYSCORE',
+            'LIMIT',
+            'a',
+            'b',
+          ),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => redisClient?.call('zrangestore', destination, source, '0'),
+        errorWithMessage(
+          "ERR wrong number of arguments for 'zrangestore' command",
+        ),
+      )
+      await assert.rejects(
+        () =>
+          redisClient?.call(
+            'zrangestore',
+            destination,
+            stringSource,
+            '0',
+            '-1',
+          ),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+    } finally {
+      await redisClient?.del(source, destination, stringSource)
+    }
+  })
+
+  test('ZRANGESTORE rejects destination and source keys from different slots', async () => {
+    const source = `{zrangestore-cross:${randomKey()}}:source`
+    const destination = `zrangestore-cross-destination:${randomKey()}`
+
+    try {
+      await redisClient?.zadd(source, 1, 'a')
+      const directClient = await connectToSlotOwner(redisClient!, source)
+      try {
+        await assert.rejects(
+          () =>
+            directClient.call('zrangestore', destination, source, '0', '-1'),
+          errorWithMessage(
+            "CROSSSLOT Keys in request don't hash to the same slot",
+          ),
+        )
+      } finally {
+        directClient.disconnect()
+      }
+    } finally {
+      await redisClient?.del(source)
+      await redisClient?.del(destination)
+    }
   })
 
   // ---------- modern ZRANGE: error paths ----------

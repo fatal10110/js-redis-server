@@ -1,5 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
+import type { RedisExecutionContext } from '../../core/redis-context'
 import {
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
@@ -8,7 +9,7 @@ import {
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisSortedSetMember } from '../../state/data-types'
-import { array, scoreBuffer } from '../helpers'
+import { array, integer, scoreBuffer } from '../helpers'
 import {
   applyLexLimit,
   getLexSortedMembers,
@@ -28,14 +29,89 @@ import { parseScoreBoundArg, scoreWithinBounds } from './score'
 // reverse order (max then min), matching ZREVRANGEBYSCORE/ZREVRANGEBYLEX.
 type ZrangeBy = 'index' | 'score' | 'lex'
 
-type ZrangeArgs = {
+type ZrangeSelectionArgs = {
   key: Buffer
   min: Buffer
   max: Buffer
   by: ZrangeBy
   rev: boolean
   limit?: LexLimit
+}
+
+type ZrangeArgs = ZrangeSelectionArgs & {
   withScores: boolean
+}
+
+type ZrangestoreArgs = ZrangeSelectionArgs & {
+  destination: Buffer
+}
+
+type ParsedZrangeOptions = {
+  by: ZrangeBy
+  rev: boolean
+  limit?: LexLimit
+  withScores: boolean
+}
+
+function parseZrangeOptions(
+  input: readonly Buffer[],
+  cursor: number,
+  options: { allowWithScores: boolean },
+): ParsedZrangeOptions {
+  let by: ZrangeBy = 'index'
+  let rev = false
+  let withScores = false
+  let limit: LexLimit | undefined
+
+  while (cursor < input.length) {
+    const option = input[cursor]!.toString().toUpperCase()
+
+    if (option === 'BYSCORE') {
+      if (by === 'lex') throw new RedisSyntaxError()
+      by = 'score'
+      cursor++
+      continue
+    }
+
+    if (option === 'BYLEX') {
+      if (by === 'score') throw new RedisSyntaxError()
+      by = 'lex'
+      cursor++
+      continue
+    }
+
+    if (option === 'REV') {
+      rev = true
+      cursor++
+      continue
+    }
+
+    if (option === 'WITHSCORES') {
+      if (!options.allowWithScores) throw new RedisSyntaxError()
+      withScores = true
+      cursor++
+      continue
+    }
+
+    if (option === 'LIMIT') {
+      const offsetTok = input[cursor + 1]
+      const countTok = input[cursor + 2]
+      if (!offsetTok || !countTok) throw new RedisSyntaxError()
+      limit = {
+        offset: parseLexLimitInt(offsetTok),
+        count: parseLexLimitInt(countTok),
+      }
+      cursor += 3
+      continue
+    }
+
+    throw new RedisSyntaxError()
+  }
+
+  if (limit && by === 'index') throw new ZrangeLimitWithoutByError()
+  if (withScores && by === 'lex') throw new ZrangeWithScoresByLexError()
+
+  return { by, rev, limit, withScores }
 }
 
 function createZrangeSchema() {
@@ -47,64 +123,89 @@ function createZrangeSchema() {
       throw new WrongNumberOfArgumentsError(ctx.commandName)
     }
 
-    let by: ZrangeBy = 'index'
-    let rev = false
-    let withScores = false
-    let limit: LexLimit | undefined
-
-    let cursor = index + 3
-    while (cursor < input.length) {
-      const option = input[cursor]!.toString().toUpperCase()
-
-      if (option === 'BYSCORE') {
-        if (by === 'lex') throw new RedisSyntaxError()
-        by = 'score'
-        cursor++
-        continue
-      }
-
-      if (option === 'BYLEX') {
-        if (by === 'score') throw new RedisSyntaxError()
-        by = 'lex'
-        cursor++
-        continue
-      }
-
-      if (option === 'REV') {
-        rev = true
-        cursor++
-        continue
-      }
-
-      if (option === 'WITHSCORES') {
-        withScores = true
-        cursor++
-        continue
-      }
-
-      if (option === 'LIMIT') {
-        const offsetTok = input[cursor + 1]
-        const countTok = input[cursor + 2]
-        if (!offsetTok || !countTok) throw new RedisSyntaxError()
-        limit = {
-          offset: parseLexLimitInt(offsetTok),
-          count: parseLexLimitInt(countTok),
-        }
-        cursor += 3
-        continue
-      }
-
-      throw new RedisSyntaxError()
-    }
-
-    if (limit && by === 'index') throw new ZrangeLimitWithoutByError()
-    if (withScores && by === 'lex') throw new ZrangeWithScoresByLexError()
-
     return {
-      value: { key, min, max, by, rev, limit, withScores },
+      value: {
+        key,
+        min,
+        max,
+        ...parseZrangeOptions(input, index + 3, { allowWithScores: true }),
+      },
       nextIndex: input.length,
     }
   })
+}
+
+function createZrangestoreSchema() {
+  return t.custom<ZrangestoreArgs>((input, index, ctx) => {
+    const destination = input[index]
+    const key = input[index + 1]
+    const min = input[index + 2]
+    const max = input[index + 3]
+    if (!destination || !key || !min || !max) {
+      throw new WrongNumberOfArgumentsError(ctx.commandName)
+    }
+
+    const { by, rev, limit } = parseZrangeOptions(input, index + 4, {
+      allowWithScores: false,
+    })
+
+    return {
+      value: { destination, key, min, max, by, rev, limit },
+      nextIndex: input.length,
+    }
+  })
+}
+
+function selectZrangeMembers(
+  args: ZrangeSelectionArgs,
+  ctx: RedisExecutionContext,
+): RedisSortedSetMember[] {
+  // With REV the bounds are supplied as `max min`, so swap before parsing.
+  const minTok = args.rev ? args.max : args.min
+  const maxTok = args.rev ? args.min : args.max
+
+  if (args.by === 'index') {
+    // parse index bounds up front so a bad index errors even on a missing key
+    const startIdx = parseLexLimitInt(args.min)
+    const stopIdx = parseLexLimitInt(args.max)
+    const zset = ctx.db.getSortedSet(args.key)
+    if (!zset) return []
+    return sliceByIndex(getSortedMembers(zset), startIdx, stopIdx, args.rev)
+  }
+
+  if (args.by === 'score') {
+    const min = parseScoreBoundArg(minTok.toString())
+    const max = parseScoreBoundArg(maxTok.toString())
+    const zset = ctx.db.getSortedSet(args.key)
+    if (!zset) return []
+    let matched = getSortedMembers(zset).filter(m =>
+      scoreWithinBounds(m.score, min, max),
+    )
+    if (args.rev) matched = matched.reverse()
+    return applyLexLimit(matched, args.limit)
+  }
+
+  // BYLEX
+  const min = parseLexBoundArg(minTok)
+  const max = parseLexBoundArg(maxTok)
+  const zset = ctx.db.getSortedSet(args.key)
+  if (!zset) return []
+  let matched = getLexSortedMembers(zset).filter(m =>
+    lexMemberWithinBounds(m.member, min, max),
+  )
+  if (args.rev) matched = matched.reverse()
+  return applyLexLimit(matched, args.limit)
+}
+
+function buildStoredMembers(
+  members: RedisSortedSetMember[],
+): Map<string, RedisSortedSetMember> {
+  return new Map(
+    members.map(entry => [
+      entry.member.toString('hex'),
+      { member: Buffer.from(entry.member), score: entry.score },
+    ]),
+  )
 }
 
 function buildRangeOutput(
@@ -141,51 +242,29 @@ export const zrangeCommand = defineCommand({
   flags: ['readonly'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    // With REV the bounds are supplied as `max min`, so swap before parsing.
-    const minTok = args.rev ? args.max : args.min
-    const maxTok = args.rev ? args.min : args.max
-
-    if (args.by === 'index') {
-      // parse index bounds up front so a bad index errors even on a missing key
-      const startIdx = parseLexLimitInt(args.min)
-      const stopIdx = parseLexLimitInt(args.max)
-      const zset = ctx.db.getSortedSet(args.key)
-      if (!zset) return array([])
-      const slice = sliceByIndex(
-        getSortedMembers(zset),
-        startIdx,
-        stopIdx,
-        args.rev,
-      )
-      return array(buildRangeOutput(slice, args.withScores))
-    }
-
-    if (args.by === 'score') {
-      const min = parseScoreBoundArg(minTok.toString())
-      const max = parseScoreBoundArg(maxTok.toString())
-      const zset = ctx.db.getSortedSet(args.key)
-      if (!zset) return array([])
-      let matched = getSortedMembers(zset).filter(m =>
-        scoreWithinBounds(m.score, min, max),
-      )
-      if (args.rev) matched = matched.reverse()
-      return array(
-        buildRangeOutput(applyLexLimit(matched, args.limit), args.withScores),
-      )
-    }
-
-    // BYLEX
-    const min = parseLexBoundArg(minTok)
-    const max = parseLexBoundArg(maxTok)
-    const zset = ctx.db.getSortedSet(args.key)
-    if (!zset) return array([])
-    let matched = getLexSortedMembers(zset).filter(m =>
-      lexMemberWithinBounds(m.member, min, max),
-    )
-    if (args.rev) matched = matched.reverse()
     return array(
-      buildRangeOutput(applyLexLimit(matched, args.limit), args.withScores),
+      buildRangeOutput(selectZrangeMembers(args, ctx), args.withScores),
     )
+  },
+})
+
+export const zrangestoreCommand = defineCommand({
+  name: 'zrangestore',
+  schema: createZrangestoreSchema(),
+  flags: ['write'],
+  keys: args => [args.destination, args.key],
+  execute: (args, ctx) => {
+    const members = buildStoredMembers(selectZrangeMembers(args, ctx))
+    if (members.size === 0) {
+      ctx.db.delete(args.destination)
+      return integer(0)
+    }
+
+    ctx.db.delete(args.destination)
+    ctx.db.updateSortedSet(args.destination, zset => {
+      zset.replaceMembers(members, { forceDirty: true })
+    })
+    return integer(members.size)
   },
 })
 
