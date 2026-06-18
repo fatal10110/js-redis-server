@@ -4,7 +4,7 @@ import { zrankCommand, zrevrankCommand } from './zrank'
 import { zmscoreCommand, zscoreCommand } from './zscore'
 import { zrandmemberCommand } from './zrandmember'
 import { zincrbyCommand } from './zincrby'
-import { zrangeCommand, zrevrangeCommand } from './zrange'
+import { zrangeCommand, zrangestoreCommand, zrevrangeCommand } from './zrange'
 import {
   zcountCommand,
   zrangebyscoreCommand,
@@ -46,6 +46,7 @@ export const zsetsCommands = [
   zrandmemberCommand,
   zincrbyCommand,
   zrangeCommand,
+  zrangestoreCommand,
   zrevrangeCommand,
   zrangebyscoreCommand,
   zrevrangebyscoreCommand,
@@ -82,6 +83,7 @@ export {
   zrandmemberCommand,
   zincrbyCommand,
   zrangeCommand,
+  zrangestoreCommand,
   zrevrangeCommand,
   zrangebyscoreCommand,
   zrevrangebyscoreCommand,

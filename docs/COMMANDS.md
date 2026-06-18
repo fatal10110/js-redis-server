@@ -292,6 +292,7 @@ with `GT` or `LT`.
 - [x] `ZRANK key member` - Get the index of a member, lowest score first
 - [x] `ZREVRANK key member` - Get the index of a member, highest score first
 - [x] `ZRANGE key min max [BYSCORE | BYLEX] [REV] [LIMIT offset count] [WITHSCORES]` - Return a range of members by index, score, or lexicographic range, optionally reversed
+- [x] `ZRANGESTORE destination source min max [BYSCORE | BYLEX] [REV] [LIMIT offset count]` - Store a `ZRANGE`-style result in destination; empty result deletes destination
 - [x] `ZREVRANGE key start stop [WITHSCORES]` - Return a range of members by index, high to low
 - [x] `ZMSCORE key member [member ...]` - Get the scores of multiple members (nil per missing member)
 - [x] `ZRANDMEMBER key [count [WITHSCORES]]` - Get one or more random members, optionally with their scores
@@ -324,10 +325,6 @@ with `GT` or `LT`.
 - Score replies from `ZSCORE`, `ZINCRBY`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
 - [ ] `ZREVRANGE` does not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes; use `ZRANGE ... REV` instead
 - [ ] `ZRANK`/`ZREVRANK` do not support the Redis 7.2 `WITHSCORE` option
-
-#### Not implemented
-
-- [ ] `ZRANGESTORE`
 
 ## 9. Stream Commands
 
