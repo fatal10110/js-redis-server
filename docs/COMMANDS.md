@@ -159,6 +159,7 @@ surface.
 - [x] `RENAME key newkey` - Rename a key
 - [x] `RENAMENX key newkey` - Rename a key only if the new key does not exist
 - [x] `COPY source destination [DB destination-db] [REPLACE]` - Copy a key's value (and TTL) to a destination, optionally into another database; returns `0` if the destination exists without `REPLACE`
+- [x] `MOVE key db` - Move a key to another database, preserving TTL; returns `0` if the source is missing or the destination already exists; rejected in cluster mode
 - [x] `KEYS pattern` - Find all keys matching a glob pattern
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Incrementally iterate the keyspace (see [Scan Family](#10-scan-family))
 - [x] `SORT key [LIMIT offset count] [ASC | DESC] [ALPHA] [STORE destination]` - Sort a list, set, or zset (zset sorted by member value, not score); numeric by default, `ALPHA` for lexicographic; `STORE` writes the result to a destination list and returns its length
@@ -187,7 +188,6 @@ with `GT` or `LT`.
 #### Not implemented
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
-- [ ] `MOVE`
 - [ ] `DUMP` / `RESTORE`
 - [ ] `WAIT`
 - [ ] `MIGRATE`
