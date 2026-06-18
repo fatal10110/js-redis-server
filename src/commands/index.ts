@@ -176,7 +176,10 @@ export {
   pubsubCommand,
   pubsubCommands,
   punsubscribeCommand,
+  spublishCommand,
+  ssubscribeCommand,
   subscribeCommand,
+  sunsubscribeCommand,
   unsubscribeCommand,
 } from './pubsub'
 export {

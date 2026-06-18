@@ -439,9 +439,8 @@ flags are enforced inside `redis.call`/`redis.pcall`.
 - [x] `SUBSCRIBE` / `UNSUBSCRIBE`
 - [x] `PSUBSCRIBE` / `PUNSUBSCRIBE`
 - [x] `PUBSUB CHANNELS|NUMSUB|NUMPAT`
-- [x] `PUBSUB SHARDCHANNELS|SHARDNUMSUB` - Present for Redis 7 command compatibility; returns empty shard pub/sub state because sharded Pub/Sub subscriptions are not implemented yet.
-
-- [ ] `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH`
+- [x] `SSUBSCRIBE` / `SUNSUBSCRIBE` / `SPUBLISH`
+- [x] `PUBSUB SHARDCHANNELS|SHARDNUMSUB`
 
 Subscribed connections enforce Redis' restricted command mode: only subscribe,
 unsubscribe, `PING`, `RESET`, and `QUIT` are accepted until all subscriptions
