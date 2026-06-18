@@ -77,13 +77,16 @@ type SeedEntry =
   | { key: string; type: 'list';   value: (string | number)[]; ttlMs?: number; db?: number }
   | { key: string; type: 'set';    value: (string | number)[]; ttlMs?: number; db?: number }
   | { key: string; type: 'zset';   value: Record<string, number>; ttlMs?: number; db?: number }
-  | { key: string; type: 'stream'; value: { /* entries */ }; ttlMs?: number; db?: number }
 
 mock.seed(entries: SeedEntry[]): Promise<void>
 ```
 
-- Maps each entry → `RedisDataValue` via existing `create*Data`, string key → `Buffer`, `ttlMs` → `expiresAt`, routes to `db` (standalone) or the slot-correct node (cluster) via `topology.calculateSlotForKeys`.
-- Tests: unit per type; integration seed → read-back through ioredis on both backends (mock + real).
+- Public contract: users provide only keys, types, values, optional `ttlMs`, and optional `db`; the mock owns placement and internal value conversion.
+- `db` selects the logical Redis database/namespace. Phase 2 guarantees it for standalone mocks and keeps it in the seed shape so cluster namespace support can use the same contract later.
+- Maps each entry → `RedisDataValue` via existing `create*Data`, string key → `Buffer`, `ttlMs` → `expiresAt`.
+- In cluster mode, compute the Redis hash slot for each key, resolve the slot owner master, write the value into that node, and let existing replica propagation handle replicas.
+- Stream seeding is deferred until the public stream entry shape is explicit (entries, IDs, groups/consumer metadata) instead of exposing internal stream state.
+- Tests: unit per supported seed type; public integration coverage seeds a mock and reads back through real client libraries (`ioredis` and `node-redis`), including standalone and cluster mock modes.
 
 ### Phase 3 — Dual ESM + CJS packaging
 
