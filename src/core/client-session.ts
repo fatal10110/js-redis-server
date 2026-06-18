@@ -172,12 +172,12 @@ export class ClientSession implements RedisClientSession {
     return this.pubsubPatterns.size
   }
 
+  get pubsubRegularSubscriptionCount(): number {
+    return this.pubsubChannelCount + this.pubsubPatternCount
+  }
+
   get pubsubSubscriptionCount(): number {
-    return (
-      this.pubsubChannelCount +
-      this.pubsubShardChannelCount +
-      this.pubsubPatternCount
-    )
+    return this.pubsubRegularSubscriptionCount + this.pubsubShardChannelCount
   }
 
   setAuthenticated(value: boolean): void {
@@ -432,7 +432,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('subscribe', [
           RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }
@@ -454,7 +454,7 @@ export class ClientSession implements RedisClientSession {
       return [
         pubsubFrame('unsubscribe', [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       ]
     }
@@ -472,7 +472,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('unsubscribe', [
           RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }
@@ -509,7 +509,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('ssubscribe', [
           RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubShardChannelCount),
         ]),
       )
     }
@@ -531,7 +531,7 @@ export class ClientSession implements RedisClientSession {
       return [
         pubsubFrame('sunsubscribe', [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubShardChannelCount),
         ]),
       ]
     }
@@ -549,7 +549,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('sunsubscribe', [
           RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubShardChannelCount),
         ]),
       )
     }
@@ -587,7 +587,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('psubscribe', [
           RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }
@@ -609,7 +609,7 @@ export class ClientSession implements RedisClientSession {
       return [
         pubsubFrame('punsubscribe', [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       ]
     }
@@ -627,7 +627,7 @@ export class ClientSession implements RedisClientSession {
       frames.push(
         pubsubFrame('punsubscribe', [
           RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubSubscriptionCount),
+          RedisValue.integer(this.pubsubRegularSubscriptionCount),
         ]),
       )
     }

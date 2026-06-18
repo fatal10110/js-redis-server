@@ -99,6 +99,20 @@ describe(`Sharded Pub/Sub cluster integration (${testRunner.getBackendName()})`,
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),
       )
+
+      assert.deepStrictEqual(
+        await directClient.call('PUBSUB', 'SHARDNUMSUB', remoteChannel),
+        [remoteChannel, 0],
+      )
+      assert.deepStrictEqual(
+        await directClient.call(
+          'PUBSUB',
+          'SHARDNUMSUB',
+          localChannel,
+          remoteChannel,
+        ),
+        [localChannel, 0, remoteChannel, 0],
+      )
     } finally {
       directClient.disconnect()
     }

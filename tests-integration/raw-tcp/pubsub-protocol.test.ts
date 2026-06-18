@@ -133,6 +133,86 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     assert.deepStrictEqual(await publisher.readFrame(), [])
   })
 
+  test('keeps regular and shard subscription reply counts independent', async () => {
+    const conn = await connect()
+    const prefix = `raw-mixed-pubsub:${randomKey()}`
+    const firstChannel = `${prefix}:channel:1`
+    const secondChannel = `${prefix}:channel:2`
+    const firstShardChannel = `${prefix}:shard:1`
+    const secondShardChannel = `${prefix}:shard:2`
+    const pattern = `${prefix}:pattern:*`
+
+    conn.write(commandFrame('SUBSCRIBE', firstChannel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'subscribe',
+      firstChannel,
+      1,
+    ])
+
+    conn.write(commandFrame('SSUBSCRIBE', firstShardChannel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'ssubscribe',
+      firstShardChannel,
+      1,
+    ])
+
+    conn.write(commandFrame('SUBSCRIBE', secondChannel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'subscribe',
+      secondChannel,
+      2,
+    ])
+
+    conn.write(commandFrame('PSUBSCRIBE', pattern))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'psubscribe',
+      pattern,
+      3,
+    ])
+
+    conn.write(commandFrame('SSUBSCRIBE', secondShardChannel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'ssubscribe',
+      secondShardChannel,
+      2,
+    ])
+
+    conn.write(commandFrame('SUNSUBSCRIBE', firstShardChannel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'sunsubscribe',
+      firstShardChannel,
+      1,
+    ])
+
+    conn.write(commandFrame('UNSUBSCRIBE', firstChannel))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'unsubscribe',
+      firstChannel,
+      2,
+    ])
+
+    conn.write(commandFrame('PUNSUBSCRIBE', pattern))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'punsubscribe',
+      pattern,
+      1,
+    ])
+
+    conn.write(commandFrame('SUNSUBSCRIBE'))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'sunsubscribe',
+      secondShardChannel,
+      0,
+    ])
+
+    conn.write(commandFrame('UNSUBSCRIBE'))
+    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
+      'unsubscribe',
+      secondChannel,
+      0,
+    ])
+  })
+
   test('RESP3 subscribed clients can run commands and use normal PING replies', async () => {
     const conn = await connect()
     const channel = `raw-resp3-pubsub:${randomKey()}`

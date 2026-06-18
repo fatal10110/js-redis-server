@@ -205,13 +205,7 @@ export const pubsubCommand = defineCommand({
       }),
     ],
   },
-  keys: args => {
-    if (args.subcommand.toLowerCase() === 'shardnumsub') {
-      return args.args
-    }
-
-    return []
-  },
+  keys: () => [],
   execute: (args, ctx) => {
     const subcommand = args.subcommand.toLowerCase()
 
