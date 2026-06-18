@@ -151,6 +151,16 @@ describe('new cluster execution policy', () => {
       RedisResult.error('SELECT is not allowed in cluster mode', 'ERR'),
     )
   })
+
+  test('rejects MOVE in cluster mode like Redis Cluster', async () => {
+    const { session, topology } = createClusterHarness()
+    const key = findKeyOwnedBy(topology, 'local')
+
+    assert.deepStrictEqual(
+      await session.execute('move', [key, Buffer.from('1')]),
+      RedisResult.error('MOVE is not allowed in cluster mode', 'ERR'),
+    )
+  })
 })
 
 function createClusterHarness() {

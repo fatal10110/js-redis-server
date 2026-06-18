@@ -124,6 +124,7 @@ export {
   flushallCommand,
   flushdbCommand,
   keysCommands,
+  moveCommand,
   persistCommand,
   pexpireCommand,
   pexpireatCommand,

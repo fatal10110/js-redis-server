@@ -436,6 +436,43 @@ export const renamenxCommand = defineCommand({
   },
 })
 
+export const moveCommand = defineCommand({
+  name: 'move',
+  schema: t.object({ key: t.key(), database: t.integer() }),
+  flags: ['write'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    const targetDb = ctx.server.databases[args.database]
+    if (!targetDb) {
+      throw new DbIndexOutOfRangeError()
+    }
+
+    if (targetDb.id === ctx.db.id) {
+      throw new SameObjectError()
+    }
+
+    const value = ctx.db.get(args.key)
+    if (!value) return integer(0)
+
+    if (targetDb.getType(args.key) !== null) {
+      return integer(0)
+    }
+
+    const expiration = ctx.db.getExpiration(args.key)
+    const expiresAt =
+      expiration.kind === 'expires' ? expiration.expiresAt : undefined
+
+    ctx.db.delete(args.key)
+    targetDb.set(
+      args.key,
+      value,
+      expiresAt !== undefined ? { expiresAt } : undefined,
+    )
+
+    return integer(1)
+  },
+})
+
 type CopyOptions = { db?: number; replace: boolean }
 
 /**
@@ -705,6 +742,7 @@ export const keysCommands = [
   pexpireatCommand,
   renameCommand,
   renamenxCommand,
+  moveCommand,
   copyCommand,
   sortCommand,
   sortRoCommand,

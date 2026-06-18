@@ -42,6 +42,10 @@ export function createClusterPolicy(
         }
       }
 
+      if (plan.definition.name === 'move') {
+        throw new RedisCommandError('MOVE is not allowed in cluster mode')
+      }
+
       if (
         plan.definition.name === 'multi' &&
         ctx.session.mode !== 'transaction'
