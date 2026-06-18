@@ -30,7 +30,7 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 #### CLIENT
 
 - [x] `CLIENT GETNAME` - Get the connection name
-- [x] `CLIENT SETNAME connection-name` - Set the connection name
+- [x] `CLIENT SETNAME connection-name` - Set the connection name; empty clears it, and non-empty names must contain only printable non-space ASCII bytes
 - [x] `CLIENT SETINFO LIB-NAME|LIB-VER value` - Record client library metadata
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
