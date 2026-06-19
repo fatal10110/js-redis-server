@@ -81,13 +81,13 @@ export const hscanCommand = defineCommand({
       return scanResult([], args)
     }
 
-    const items: ScanItem[] = []
-    for (const { field, value } of hash.fields.values()) {
-      items.push({
-        matchValue: field,
-        values: [RedisValue.bulkString(field), RedisValue.bulkString(value)],
-      })
-    }
+    const entries = ctx.db.updateHash(args.key, hash =>
+      Array.from(hash.entries()),
+    )
+    const items: ScanItem[] = entries.map(({ field, value }) => ({
+      matchValue: field,
+      values: [RedisValue.bulkString(field), RedisValue.bulkString(value)],
+    }))
 
     return scanResult(items, args)
   },

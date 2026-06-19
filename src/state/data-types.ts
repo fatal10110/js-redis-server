@@ -19,6 +19,7 @@ export type RedisHashData = {
 export type RedisHashField = {
   field: Buffer
   value: Buffer
+  expiresAt?: number
 }
 
 export type RedisListData = {
@@ -105,6 +106,7 @@ export function cloneRedisDataValue(value: RedisDataValue): RedisDataValue {
             {
               field: Buffer.from(field.field),
               value: Buffer.from(field.value),
+              expiresAt: field.expiresAt,
             },
           ]),
         ),
