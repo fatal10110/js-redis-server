@@ -332,10 +332,14 @@ Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
 `set`, `zset`, `stream`). Stream values store ordered entries plus consumer
 groups, per-group pending-entry lists, and consumer idle metadata. Expiration is
-**lazy** — `getLiveEntry` calls
-[`evictIfExpired`](../src/state/keyspace.ts#L207) on read, deleting and
-emitting an `evict` mutation event so `WATCH` observes expiry exactly like a
-real delete. Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
+handled by both an active sweep and a lazy fallback. `RedisServerState` runs a
+background active-expiry pass across its databases, under each database's
+`SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
+the master's replicated deletion. `getLiveEntry` still calls
+[`evictIfExpired`](../src/state/keyspace.ts#L240) on reads that encounter an
+expired key before the next sweep. Either path deletes the entry and emits an
+`evict` mutation event so `WATCH` observes expiry exactly like a real delete.
+Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
 flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L68),
 which clones values before fan-out so subscribers can never mutate shared state.
 The [`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this

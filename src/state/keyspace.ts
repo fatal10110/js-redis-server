@@ -193,25 +193,15 @@ export class RedisKeyspace {
   }
 
   size(): number {
-    let count = 0
-
-    for (const entry of Array.from(this.entries.values())) {
-      if (!this.evictIfExpired(entry)) {
-        count += 1
-      }
-    }
-
-    return count
+    this.sweepExpired()
+    return this.entries.size
   }
 
   entriesSnapshot(): KeyspaceEntry[] {
+    this.sweepExpired()
     const entries: KeyspaceEntry[] = []
 
-    for (const entry of Array.from(this.entries.values())) {
-      if (this.evictIfExpired(entry)) {
-        continue
-      }
-
+    for (const entry of this.entries.values()) {
       entries.push({
         key: Buffer.from(entry.key),
         value: cloneRedisDataValue(entry.value),
@@ -220,6 +210,18 @@ export class RedisKeyspace {
     }
 
     return entries
+  }
+
+  sweepExpired(now = Date.now()): number {
+    let count = 0
+
+    for (const entry of Array.from(this.entries.values())) {
+      if (this.evictIfExpired(entry, now)) {
+        count += 1
+      }
+    }
+
+    return count
   }
 
   private getLiveEntry(key: Buffer): KeyspaceEntry | null {
@@ -235,8 +237,8 @@ export class RedisKeyspace {
     return entry
   }
 
-  private evictIfExpired(entry: KeyspaceEntry): boolean {
-    if (entry.expiresAt === undefined || entry.expiresAt > Date.now()) {
+  private evictIfExpired(entry: KeyspaceEntry, now = Date.now()): boolean {
+    if (entry.expiresAt === undefined || entry.expiresAt > now) {
       return false
     }
 

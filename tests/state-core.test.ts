@@ -1,6 +1,12 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
-import { RedisServerState, WrongTypeRedisError, createStringData } from '../src'
+import {
+  Resp2Server,
+  RedisServerState,
+  WrongTypeRedisError,
+  createRedisCommandExecutor,
+  createStringData,
+} from '../src'
 import type {
   RedisDataValue,
   RedisMonitorCommandEvent,
@@ -83,6 +89,80 @@ describe('new Redis state core', () => {
     db.expire(key, Date.now() - 1)
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(events.at(-1)?.type, 'evict')
+    server.close()
+  })
+
+  test('actively sweeps expired entries without a read', async () => {
+    const server = new RedisServerState({ activeExpiryIntervalMs: 5 })
+    const db = server.getDatabase(0)
+    const key = Buffer.from('active-expiring')
+    const events: RedisMutationEvent[] = []
+    db.subscribeKey(key, event => events.push(event))
+
+    try {
+      db.setString(key, Buffer.from('value'), { expiresAt: Date.now() + 10 })
+
+      await waitUntil(() => events.some(event => event.type === 'evict'))
+
+      assert.strictEqual(db.size(), 0)
+    } finally {
+      server.close()
+    }
+  })
+
+  test('active expiry swallows listener failures without an unhandled rejection', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+
+    const server = new RedisServerState({ activeExpiryIntervalMs: 5 })
+    const db = server.getDatabase(0)
+    const key = Buffer.from('active-expiry-listener-error')
+    db.subscribe(event => {
+      if (event.type === 'evict') {
+        throw new Error('listener boom')
+      }
+    })
+
+    try {
+      db.setString(key, Buffer.from('value'), { expiresAt: Date.now() + 10 })
+
+      await new Promise(resolve => setTimeout(resolve, 50))
+
+      assert.strictEqual(
+        unhandled.length,
+        0,
+        'active expiry must catch sweep failures',
+      )
+    } finally {
+      server.close()
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  test('Resp2Server.close closes state even when the TCP server never listened', async () => {
+    const state = new RedisServerState({ activeExpiryIntervalMs: 5 })
+    const server = new Resp2Server({
+      server: state,
+      executor: createRedisCommandExecutor(),
+    })
+    const db = state.getDatabase(0)
+    const key = Buffer.from('close-before-listen')
+    const events: RedisMutationEvent[] = []
+    db.subscribeKey(key, event => events.push(event))
+
+    db.setString(key, Buffer.from('value'), { expiresAt: Date.now() + 10 })
+
+    await assert.rejects(() => server.close(), {
+      code: 'ERR_SERVER_NOT_RUNNING',
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    assert.deepStrictEqual(
+      events.map(event => event.type),
+      ['write'],
+      'state timer must be closed even when server.close rejects',
+    )
   })
 
   test('returns defensive clones from reads and mutation events', () => {
@@ -239,4 +319,19 @@ function assertHashValue(value: RedisDataValue | null, expected: string) {
 
 function fieldKey(field: string): string {
   return Buffer.from(field).toString('hex')
+}
+
+async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+
+  assert.fail('Timed out waiting for condition')
 }
