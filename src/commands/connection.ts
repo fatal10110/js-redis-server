@@ -419,6 +419,7 @@ export const selectCommand = defineCommand({
     database: t.integer({ min: 0 }),
   }),
   flags: ['fast'],
+  capabilities: { clusterMode: 'singleDb' },
   keys: () => [],
   execute: (args, ctx) => {
     ctx.session.selectDatabase(args.database)
