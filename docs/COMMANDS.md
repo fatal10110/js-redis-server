@@ -344,13 +344,12 @@ with `GT` or `LT`.
 - [x] `XINFO STREAM key [FULL [COUNT count]]` - Inspect stream metadata, entries, groups, and PEL details
 - [x] `XINFO GROUPS key` - List stream consumer groups
 - [x] `XINFO CONSUMERS key group` - List consumers in a group
-- [x] `XSETID key last-id [ENTRIESADDED entries-added]` - Set the last-generated stream ID and optionally the entries-added counter
+- [x] `XSETID key last-id [ENTRIESADDED entries-added] [MAXDELETEDID max-deleted-id]` - Set the last-generated stream ID and optionally stream metadata counters
 
 #### Notes / gaps vs. real Redis
 
 - Approximate (`~`) `XADD`/`XTRIM` trim specs use a simplified mock heuristic that may leave one extra eligible entry; `LIMIT count` is accepted for Redis-compatible parsing and treated as a trimming hint.
 - [ ] Stream radix-tree statistics in `XINFO STREAM` are approximated for mock compatibility rather than mirroring Redis internals
-- [ ] `XSETID ... MAXDELETEDID max-deleted-id` is not supported - rejected with a syntax error instead of updating `max-deleted-entry-id` ([#259](https://github.com/fatal10110/js-redis-server/issues/259))
 
 ## 10. Scan Family
 
