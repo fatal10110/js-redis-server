@@ -579,6 +579,67 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('HSCAN omits expired hash fields', async () => {
+    const key = `{hexpire-hscan:${randomKey()}}:hash`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, key)
+      await directClient.hset(key, 'keep', 'value1', 'gone', 'value2')
+
+      assert.deepStrictEqual(
+        await directClient.call('HPEXPIRE', key, '5', 'FIELDS', '1', 'gone'),
+        [1],
+      )
+
+      await delay(40)
+
+      const [, scanEntries] = (await directClient.call('HSCAN', key, '0')) as [
+        string,
+        string[],
+      ]
+      const scanned = new Map<string, string>()
+      for (let i = 0; i < scanEntries.length; i += 2) {
+        scanned.set(scanEntries[i], scanEntries[i + 1])
+      }
+
+      assert.deepStrictEqual(Object.fromEntries(scanned), { keep: 'value1' })
+    } finally {
+      await directClient?.del(key)
+      directClient?.disconnect()
+    }
+  })
+
+  test('HEXPIRE deletes the key when every field expires', async () => {
+    const key = `{hexpire-empty:${randomKey()}}:hash`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, key)
+      await directClient.hset(key, 'field1', 'value1', 'field2', 'value2')
+
+      assert.deepStrictEqual(
+        await directClient.call(
+          'HPEXPIRE',
+          key,
+          '0',
+          'FIELDS',
+          '2',
+          'field1',
+          'field2',
+        ),
+        [2, 2],
+      )
+      assert.strictEqual(await directClient.exists(key), 0)
+      assert.strictEqual(await directClient.type(key), 'none')
+    } finally {
+      await directClient?.del(key)
+      directClient?.disconnect()
+    }
+  })
+
   test('HEXPIRE condition flags match Redis', async () => {
     const key = `{hexpire-options:${randomKey()}}:hash`
     let directClient: Redis | undefined
@@ -786,6 +847,48 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         ),
       )
       await assert.rejects(
+        () =>
+          directClient?.call(
+            'HEXPIRE',
+            stringKey,
+            'abc',
+            'FIELDS',
+            '1',
+            'field',
+          ),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call(
+            'HEXPIRE',
+            stringKey,
+            '100',
+            'FIELDS',
+            '5',
+            'field',
+          ),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call(
+            'HEXPIRE',
+            stringKey,
+            '100',
+            'FIELDS',
+            '0',
+            'field',
+          ),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await assert.rejects(
         () => directClient?.call('HEXPIRE'),
         errorWithMessage("ERR wrong number of arguments for 'hexpire' command"),
       )
@@ -800,7 +903,60 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       await assert.rejects(
         () =>
+          directClient?.call('HEXPIRE', hashKey, '-1', 'FIELDS', '1', 'field'),
+        errorWithMessage('ERR invalid expire time, must be >= 0'),
+      )
+      assert.strictEqual(await directClient.hget(hashKey, 'field'), 'value')
+      await assert.rejects(
+        () =>
+          directClient?.call(
+            'HEXPIRE',
+            hashKey,
+            '99999999999',
+            'FIELDS',
+            '1',
+            'field',
+          ),
+        errorWithMessage("ERR invalid expire time in 'hexpire' command"),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call(
+            'HEXPIREAT',
+            hashKey,
+            '9999999999999999',
+            'FIELDS',
+            '1',
+            'field',
+          ),
+        errorWithMessage("ERR invalid expire time in 'hexpireat' command"),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call(
+            'HEXPIRE',
+            hashKey,
+            '9223372036854775807',
+            'FIELDS',
+            '1',
+            'field',
+          ),
+        errorWithMessage("ERR invalid expire time in 'hexpire' command"),
+      )
+      await assert.rejects(
+        () => directClient?.call('HEXPIRE', hashKey, '100', '1', 'field'),
+        errorWithMessage("ERR wrong number of arguments for 'hexpire' command"),
+      )
+      await assert.rejects(
+        () =>
           directClient?.call('HEXPIRE', hashKey, '10', 'FIELD', '1', 'field'),
+        errorWithMessage(
+          'ERR Mandatory argument FIELDS is missing or not at the right position',
+        ),
+      )
+      await assert.rejects(
+        () =>
+          directClient?.call('HEXPIRE', hashKey, '100', '1', 'FIELDS', 'field'),
         errorWithMessage(
           'ERR Mandatory argument FIELDS is missing or not at the right position',
         ),

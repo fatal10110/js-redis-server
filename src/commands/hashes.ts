@@ -10,6 +10,7 @@ import {
   ExpectedIntegerError,
   HashValueNotFloatError,
   HashValueNotIntegerError,
+  InvalidExpireTimeError,
   RedisCommandError,
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
@@ -37,6 +38,9 @@ type HashExpireMode =
   | 'unix-milliseconds'
 type HashExpireArgs = {
   key: Buffer
+  rawArgs: Buffer[]
+}
+type ParsedHashExpireArgs = {
   time: bigint
   option: HashExpireOption | undefined
   fields: Buffer[]
@@ -44,8 +48,7 @@ type HashExpireArgs = {
 
 const LONG_MAX = 9223372036854775807n
 const LONG_MIN = -9223372036854775808n
-const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
-const MIN_SAFE_INTEGER_BIGINT = BigInt(Number.MIN_SAFE_INTEGER)
+const HASH_FIELD_EXPIRE_MAX_ABS_MS = 0x0000ffffffffffffn >> 2n
 
 function createFieldValuePairsSchema() {
   return t.custom<FieldValuePair[]>(
@@ -145,53 +148,56 @@ function createHashExpireSchema() {
   return t.custom<HashExpireArgs>(
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
-      const timeToken = input[index + 1]
-      if (!key || !timeToken) {
+      if (!key || input.length - index < 5) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
-
-      const time = parseHashExpireTime(timeToken)
-      let cursor = index + 2
-      if (cursor >= input.length) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
-
-      let option: HashExpireOption | undefined
-      const maybeOption = input[cursor].toString().toUpperCase()
-      if (isHashExpireOption(maybeOption)) {
-        option = maybeOption
-        cursor += 1
-      }
-
-      const fieldsToken = input[cursor]
-      if (!fieldsToken) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
-      if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
-        throw new RedisCommandError(
-          'Mandatory argument FIELDS is missing or not at the right position',
-        )
-      }
-
-      const fieldCountToken = input[cursor + 1]
-      if (!fieldCountToken) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
-
-      const fieldCount = parseHashExpireFieldCount(fieldCountToken)
-      const fields = input.slice(cursor + 2)
-      if (fieldCount !== BigInt(fields.length)) {
-        throw new RedisCommandError(
-          'The `numfields` parameter must match the number of arguments',
-        )
       }
 
       return {
-        value: { key, time, option, fields },
+        value: { key, rawArgs: input.slice(index + 1) },
         nextIndex: input.length,
       }
     },
   )
+}
+
+function parseHashExpireArgs(
+  rawArgs: readonly Buffer[],
+  commandName: string,
+): ParsedHashExpireArgs {
+  const time = parseHashExpireTime(rawArgs[0])
+  let cursor = 1
+
+  let option: HashExpireOption | undefined
+  const maybeOption = rawArgs[cursor].toString().toUpperCase()
+  if (isHashExpireOption(maybeOption)) {
+    option = maybeOption
+    cursor += 1
+  }
+
+  const fieldsToken = rawArgs[cursor]
+  if (!fieldsToken) {
+    throw new WrongNumberOfArgumentsError(commandName)
+  }
+  if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+    throw new RedisCommandError(
+      'Mandatory argument FIELDS is missing or not at the right position',
+    )
+  }
+
+  const fieldCountToken = rawArgs[cursor + 1]
+  if (!fieldCountToken) {
+    throw new WrongNumberOfArgumentsError(commandName)
+  }
+
+  const fieldCount = parseHashExpireFieldCount(fieldCountToken)
+  const fields = rawArgs.slice(cursor + 2)
+  if (fieldCount !== BigInt(fields.length)) {
+    throw new RedisCommandError(
+      'The `numfields` parameter must match the number of arguments',
+    )
+  }
+
+  return { time, option, fields }
 }
 
 function parsePositiveFieldCount(token: Buffer): bigint {
@@ -261,61 +267,85 @@ function expireHashFields(
   ctx: RedisExecutionContext,
   mode: HashExpireMode,
 ): RedisResult {
-  const expiresAt = hashExpireTimeToTimestamp(args.time, mode)
+  const commandName = hashExpireCommandName(mode)
+  const existingHash = ctx.db.getHash(args.key)
+  const parsedArgs = parseHashExpireArgs(args.rawArgs, commandName)
+  const expiresAt = hashExpireTimeToTimestamp(
+    parsedArgs.time,
+    mode,
+    commandName,
+  )
   const now = Date.now()
 
-  return withExistingHash(
-    ctx,
-    args.key,
-    () => array(args.fields.map(() => RedisValue.integer(-2))),
-    hash => {
-      return array(
-        args.fields.map(field => {
-          const entry = hash.getField(field)
-          if (!entry) {
-            return RedisValue.integer(-2)
-          }
+  if (!existingHash) {
+    return array(parsedArgs.fields.map(() => RedisValue.integer(-2)))
+  }
 
-          if (!shouldApplyHashExpire(entry.expiresAt, expiresAt, args.option)) {
-            return RedisValue.integer(0)
-          }
+  return ctx.db.updateHash(args.key, hash => {
+    return array(
+      parsedArgs.fields.map(field => {
+        const entry = hash.getField(field)
+        if (!entry) {
+          return RedisValue.integer(-2)
+        }
 
-          if (expiresAt <= now) {
-            hash.deleteField(field)
-            return RedisValue.integer(2)
-          }
+        if (
+          !shouldApplyHashExpire(entry.expiresAt, expiresAt, parsedArgs.option)
+        ) {
+          return RedisValue.integer(0)
+        }
 
-          hash.setFieldExpiration(field, expiresAt)
-          return RedisValue.integer(1)
-        }),
-      )
-    },
-  )
+        if (expiresAt <= now) {
+          hash.deleteField(field)
+          return RedisValue.integer(2)
+        }
+
+        hash.setFieldExpiration(field, expiresAt)
+        return RedisValue.integer(1)
+      }),
+    )
+  })
 }
 
 function hashExpireTimeToTimestamp(
   value: bigint,
   mode: HashExpireMode,
+  commandName: string,
 ): number {
+  if (value < 0n) {
+    throw new RedisCommandError('invalid expire time, must be >= 0')
+  }
+
+  const isSecondsMode = mode === 'seconds' || mode === 'unix-seconds'
+  if (isSecondsMode && value > HASH_FIELD_EXPIRE_MAX_ABS_MS / 1000n) {
+    throw new InvalidExpireTimeError(commandName)
+  }
+
+  const milliseconds = isSecondsMode ? value * 1000n : value
+  const baseTime =
+    mode === 'seconds' || mode === 'milliseconds' ? BigInt(Date.now()) : 0n
+
+  if (milliseconds > HASH_FIELD_EXPIRE_MAX_ABS_MS - baseTime) {
+    throw new InvalidExpireTimeError(commandName)
+  }
+
+  return Number(milliseconds + baseTime)
+}
+
+function hashExpireCommandName(mode: HashExpireMode): string {
   if (mode === 'seconds') {
-    return Date.now() + bigintToNumberSaturated(value * 1000n)
+    return 'hexpire'
   }
 
   if (mode === 'milliseconds') {
-    return Date.now() + bigintToNumberSaturated(value)
+    return 'hpexpire'
   }
 
   if (mode === 'unix-seconds') {
-    return bigintToNumberSaturated(value * 1000n)
+    return 'hexpireat'
   }
 
-  return bigintToNumberSaturated(value)
-}
-
-function bigintToNumberSaturated(value: bigint): number {
-  if (value > MAX_SAFE_INTEGER_BIGINT) return Number.MAX_SAFE_INTEGER
-  if (value < MIN_SAFE_INTEGER_BIGINT) return Number.MIN_SAFE_INTEGER
-  return Number(value)
+  return 'hpexpireat'
 }
 
 function shouldApplyHashExpire(
