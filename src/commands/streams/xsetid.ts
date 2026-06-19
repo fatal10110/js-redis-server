@@ -27,6 +27,7 @@ type XsetidArgs = {
   key: Buffer
   id: StreamId
   entriesAdded: number | null
+  maxDeletedId: StreamId | null
 }
 
 function createXsetidSchema() {
@@ -40,12 +41,21 @@ function createXsetidSchema() {
 
       let cursor = index + 2
       let entriesAdded: number | null = null
+      let maxDeletedId: StreamId | null = null
       while (cursor < input.length) {
         const option = input[cursor].toString().toUpperCase()
         if (option === 'ENTRIESADDED') {
           const rawEntriesAdded = input[cursor + 1]
           if (!rawEntriesAdded) throw new RedisSyntaxError()
           entriesAdded = parseNonNegativeInteger(rawEntriesAdded)
+          cursor += 2
+          continue
+        }
+
+        if (option === 'MAXDELETEDID') {
+          const rawMaxDeletedId = input[cursor + 1]
+          if (!rawMaxDeletedId) throw new RedisSyntaxError()
+          maxDeletedId = parseExactId(rawMaxDeletedId.toString())
           cursor += 2
           continue
         }
@@ -58,6 +68,7 @@ function createXsetidSchema() {
           key,
           id: parseExactId(rawId.toString()),
           entriesAdded,
+          maxDeletedId,
         },
         nextIndex: input.length,
       }
@@ -82,6 +93,9 @@ export const xsetidCommand = defineCommand({
       writable.value.lastId = cloneStreamId(command.id)
       if (command.entriesAdded !== null) {
         writable.value.entriesAdded = command.entriesAdded
+      }
+      if (command.maxDeletedId !== null) {
+        writable.value.maxDeletedEntryId = cloneStreamId(command.maxDeletedId)
       }
       writable.forceWrite()
     })
