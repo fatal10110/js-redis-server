@@ -171,6 +171,16 @@ describe('new cluster execution policy', () => {
     )
   })
 
+  test('returns CLUSTERDOWN without the slot number for an unassigned slot', async () => {
+    const { session, topology } = createClusterHarnessWithUnassignedSlot()
+    const key = findKeyInUnassignedSlot(topology)
+
+    assert.deepStrictEqual(
+      await session.execute('get', [key]),
+      RedisResult.error('Hash slot not served', 'CLUSTERDOWN'),
+    )
+  })
+
   test('DISCARD clears the pinned transaction slot', async () => {
     const { session, server, topology } = createClusterHarness()
     const [first, second] = findDifferentSlotKeysOwnedBy(topology, 'local')
@@ -228,6 +238,45 @@ function createClusterHarness() {
   const session = new ClientSession({ server, executor })
 
   return { executor, server, session, topology }
+}
+
+function createClusterHarnessWithUnassignedSlot() {
+  // Leave slot 8192 unassigned so a key hashing to it triggers CLUSTERDOWN.
+  const topology = new RedisClusterTopology([
+    {
+      id: 'local',
+      role: 'master',
+      host: '127.0.0.1',
+      port: 7000,
+      slots: [[0, 8191]],
+    },
+    {
+      id: 'remote',
+      role: 'master',
+      host: '127.0.0.1',
+      port: 7001,
+      slots: [[8193, 16383]],
+    },
+  ])
+  const server = new RedisServerState({ clusterTopology: topology })
+  const executor = createRedisCommandExecutor({
+    extraCommands: createClusterCommands('local'),
+    policies: [createClusterPolicy({ localNodeId: 'local' })],
+  })
+  const session = new ClientSession({ server, executor })
+
+  return { executor, server, session, topology }
+}
+
+function findKeyInUnassignedSlot(topology: RedisClusterTopology): Buffer {
+  for (let index = 0; index < 1000000; index++) {
+    const key = Buffer.from(`unassigned-${index}`)
+    if (topology.getSlotOwner(topology.calculateSlot(key)) === undefined) {
+      return key
+    }
+  }
+
+  throw new Error('Could not find key hashing to an unassigned slot')
 }
 
 function findKeyOwnedBy(

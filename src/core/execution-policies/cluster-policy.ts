@@ -124,7 +124,7 @@ function validateClusterSlot(
 
   const owner = topology.getSlotOwner(slot)
   if (!owner) {
-    throw new RedisClusterDownError(slot)
+    throw new RedisClusterDownError()
   }
 
   throw new RedisMovedError(slot, owner.host, owner.port)
