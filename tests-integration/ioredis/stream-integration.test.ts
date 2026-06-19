@@ -77,7 +77,9 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       await assert.rejects(
         () => node.call('XADD', fixedMsKey, '7-*', 'f', 'v'),
-        errorWithMessage('ERR Elements are too large to be stored'),
+        errorWithMessage(
+          'ERR The ID specified in XADD is equal or smaller than the target stream top item',
+        ),
       )
 
       assert.strictEqual(

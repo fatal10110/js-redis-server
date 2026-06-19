@@ -195,7 +195,7 @@ with `GT` or `LT`.
 
 ## 4. String Commands
 
-- [x] `GET key` - Get the value of a key
+- [x] `GET key` - Returns the string value of a key.
 - [x] `SET key value [NX | XX] [GET] [KEEPTTL | EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds]` - Set the string value of a key
 - [x] `SETNX key value` - Set the value of a key, only if it does not exist
 - [x] `SETEX key seconds value` - Set the value and expiration in seconds
@@ -324,7 +324,7 @@ with `GT` or `LT`.
 #### Notes / gaps vs. real Redis
 
 - Score replies from `ZSCORE`, `ZINCRBY`, `ZRANK WITHSCORE`, `ZREVRANK WITHSCORE`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
-- `ZREVRANGE` is intentionally limited to `key start stop [WITHSCORES]`, matching real Redis: the command was deprecated in 6.2 in favor of `ZRANGE ... REV` and never gained `BYSCORE`/`BYLEX`/`REV`/`LIMIT` itself (verified against live Redis 7.0.14, which also rejects those tokens with `ERR syntax error`). Use `ZRANGE ... REV` for the unified syntax.
+- `ZREVRANGE` is intentionally limited to `key start stop [WITHSCORES]`, matching real Redis: the command was deprecated in 6.2 in favor of `ZRANGE ... REV` and never gained `BYSCORE`/`BYLEX`/`REV`/`LIMIT` itself (verified against live Redis 7.2.5, which also rejects those tokens with `ERR syntax error`). Use `ZRANGE ... REV` for the unified syntax.
 
 ## 9. Stream Commands
 

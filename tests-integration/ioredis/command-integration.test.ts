@@ -113,7 +113,7 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(docs[0], 'get')
 
     const getDocs = docs[1] as unknown[]
-    assertMapEntry(getDocs, 'summary', 'Get the value of a key')
+    assertMapEntry(getDocs, 'summary', 'Returns the string value of a key.')
     assertMapEntry(getDocs, 'group', 'string')
 
     const unknownDocs = (await redisClient?.call(
@@ -141,7 +141,7 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
       assert.ok(getDocs instanceof Map)
       assert.strictEqual(
         respText(respMapGet(getDocs, 'summary')),
-        'Get the value of a key',
+        'Returns the string value of a key.',
       )
       assert.strictEqual(respText(respMapGet(getDocs, 'group')), 'string')
 

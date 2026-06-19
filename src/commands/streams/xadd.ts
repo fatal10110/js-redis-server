@@ -2,7 +2,6 @@ import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   InvalidStreamIdError,
-  StreamElementTooLargeError,
   StreamIdEqualOrSmallerError,
   StreamIdExhaustedError,
   StreamIdNotGreaterThanZeroError,
@@ -59,10 +58,7 @@ function nextSeqForMs(ms: bigint, lastId: StreamId): StreamId {
   if (ms < lastId.ms) {
     return { ms, seq: lastId.seq === MAX_UINT64 ? MAX_UINT64 : lastId.seq + 1n }
   }
-  if (lastId.seq === MAX_UINT64) {
-    if (ms === MAX_UINT64) throw new StreamIdExhaustedError()
-    throw new StreamElementTooLargeError()
-  }
+  if (lastId.seq === MAX_UINT64) return { ms, seq: MAX_UINT64 }
 
   return { ms, seq: lastId.seq + 1n }
 }
