@@ -324,7 +324,7 @@ with `GT` or `LT`.
 #### Notes / gaps vs. real Redis
 
 - Score replies from `ZSCORE`, `ZINCRBY`, `ZRANK WITHSCORE`, `ZREVRANK WITHSCORE`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
-- [ ] `ZREVRANGE` does not support the Redis 6.2+ unified syntax (`BYSCORE`, `BYLEX`, `REV`, `LIMIT offset count`) - `start`/`stop` are always treated as indexes; use `ZRANGE ... REV` instead
+- `ZREVRANGE` is intentionally limited to `key start stop [WITHSCORES]`, matching real Redis: the command was deprecated in 6.2 in favor of `ZRANGE ... REV` and never gained `BYSCORE`/`BYLEX`/`REV`/`LIMIT` itself (verified against live Redis 7.0.14, which also rejects those tokens with `ERR syntax error`). Use `ZRANGE ... REV` for the unified syntax.
 
 ## 9. Stream Commands
 
@@ -350,6 +350,7 @@ with `GT` or `LT`.
 
 - Approximate (`~`) `XADD`/`XTRIM` trim specs use a simplified mock heuristic that may leave one extra eligible entry; `LIMIT count` is accepted for Redis-compatible parsing and treated as a trimming hint.
 - [ ] Stream radix-tree statistics in `XINFO STREAM` are approximated for mock compatibility rather than mirroring Redis internals
+- [ ] `XSETID ... MAXDELETEDID max-deleted-id` is not supported - rejected with a syntax error instead of updating `max-deleted-entry-id` ([#259](https://github.com/fatal10110/js-redis-server/issues/259))
 
 ## 10. Scan Family
 
