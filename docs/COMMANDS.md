@@ -229,6 +229,10 @@ with `GT` or `LT`.
 - [x] `HGETALL key` - Get all fields and values in a hash (RESP3 map / RESP2 flat array)
 - [x] `HDEL key field [field ...]` - Delete one or more hash fields
 - [x] `HGETDEL key FIELDS numfields field [field ...]` - Get and delete one or more hash fields
+- [x] `HEXPIRE key seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in seconds
+- [x] `HPEXPIRE key milliseconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in milliseconds
+- [x] `HEXPIREAT key unix-time-seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field expiration timestamps in seconds
+- [x] `HPEXPIREAT key unix-time-milliseconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field expiration timestamps in milliseconds
 - [x] `HEXISTS key field` - Determine if a hash field exists
 - [x] `HKEYS key` - Get all fields in a hash
 - [x] `HVALS key` - Get all values in a hash
@@ -241,7 +245,7 @@ with `GT` or `LT`.
 
 #### Not implemented
 
-- [ ] `HEXPIRE` / `HPEXPIRE` / `HEXPIREAT` / `HPEXPIREAT` / `HPERSIST` / `HTTL` / `HPTTL` / `HGETEX` (hash-field-TTL family)
+- [ ] `HPERSIST` / `HTTL` / `HPTTL` / `HGETEX` (remaining hash-field-TTL family)
 
 ## 6. List Commands
 

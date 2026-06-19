@@ -330,9 +330,13 @@ cloned command events without any command writing directly to a transport.
 Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 `Map<keyId, KeyspaceEntry>` holding byte-safe `Buffer` keys and typed
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
-`set`, `zset`, `stream`). Stream values store ordered entries plus consumer
-groups, per-group pending-entry lists, and consumer idle metadata. Expiration is
-handled by both an active sweep and a lazy fallback. `RedisServerState` runs a
+`set`, `zset`, `stream`). Hash values store byte-safe field entries and can
+attach an `expiresAt` timestamp to individual fields for the hash-field TTL
+commands; tracked hash helpers lazily delete expired fields on hash reads and
+writes, and the keyspace removes the hash key when the last live field
+disappears. Stream values store ordered entries plus consumer groups, per-group
+pending-entry lists, and consumer idle metadata. Key expiration is handled by
+both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass across its databases, under each database's
 `SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
 the master's replicated deletion. `getLiveEntry` still calls

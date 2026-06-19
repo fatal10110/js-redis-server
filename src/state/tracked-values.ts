@@ -26,27 +26,43 @@ export class TrackedHashData {
   ) {}
 
   get size(): number {
+    this.deleteExpiredFields()
     return this.hash.fields.size
   }
 
   getField(field: Buffer): RedisHashField | undefined {
-    return this.hash.fields.get(field.toString('hex'))
+    const id = field.toString('hex')
+    const entry = this.hash.fields.get(id)
+    if (!entry) {
+      return undefined
+    }
+
+    if (isHashFieldExpired(entry)) {
+      this.hash.fields.delete(id)
+      this.tracker.markChanged()
+      return undefined
+    }
+
+    return entry
   }
 
   hasField(field: Buffer): boolean {
-    return this.hash.fields.has(field.toString('hex'))
+    return this.getField(field) !== undefined
   }
 
   setField(
     field: Buffer,
     value: Buffer,
-    options: { forceDirty?: boolean } = {},
+    options: { forceDirty?: boolean; keepTtl?: boolean } = {},
   ): { added: boolean; valueChanged: boolean } {
     const hex = field.toString('hex')
-    const existing = this.hash.fields.get(hex)
+    const existing = this.getField(field)
     const valueChanged = !existing || !existing.value.equals(value)
-    this.hash.fields.set(hex, { field, value })
-    if (options.forceDirty || valueChanged) {
+    const expiresAt = options.keepTtl ? existing?.expiresAt : undefined
+    const ttlChanged = existing?.expiresAt !== expiresAt
+
+    this.hash.fields.set(hex, { field, value, expiresAt })
+    if (options.forceDirty || valueChanged || ttlChanged) {
       this.tracker.markChanged()
     }
     return { added: existing === undefined, valueChanged }
@@ -62,6 +78,11 @@ export class TrackedHashData {
   }
 
   deleteField(field: Buffer): boolean {
+    const existing = this.getField(field)
+    if (!existing) {
+      return false
+    }
+
     const deleted = this.hash.fields.delete(field.toString('hex'))
     if (deleted) {
       this.tracker.markChanged()
@@ -69,9 +90,43 @@ export class TrackedHashData {
     return deleted
   }
 
+  setFieldExpiration(field: Buffer, expiresAt: number): boolean {
+    const entry = this.getField(field)
+    if (!entry) {
+      return false
+    }
+
+    if (entry.expiresAt !== expiresAt) {
+      entry.expiresAt = expiresAt
+      this.tracker.markChanged()
+    }
+    return true
+  }
+
   entries(): IterableIterator<RedisHashField> {
+    this.deleteExpiredFields()
     return this.hash.fields.values()
   }
+
+  private deleteExpiredFields(): void {
+    const now = Date.now()
+    let deleted = false
+
+    for (const [id, entry] of this.hash.fields) {
+      if (isHashFieldExpired(entry, now)) {
+        this.hash.fields.delete(id)
+        deleted = true
+      }
+    }
+
+    if (deleted) {
+      this.tracker.markChanged()
+    }
+  }
+}
+
+function isHashFieldExpired(field: RedisHashField, now = Date.now()): boolean {
+  return field.expiresAt !== undefined && field.expiresAt <= now
 }
 
 export class TrackedListData {

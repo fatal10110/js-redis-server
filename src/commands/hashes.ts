@@ -5,7 +5,9 @@ import {
   t,
   type ParseContext,
 } from '../core/command-schema'
+import type { RedisExecutionContext } from '../core/redis-context'
 import {
+  ExpectedIntegerError,
   HashValueNotFloatError,
   HashValueNotIntegerError,
   RedisCommandError,
@@ -14,6 +16,7 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
+import type { TrackedHashData } from '../state/tracked-values'
 import { bulk, integer, ok, array, parseIntegerToken } from './helpers'
 
 type FieldValuePair = { field: Buffer; value: Buffer }
@@ -26,8 +29,23 @@ type HgetdelArgs = {
   key: Buffer
   fields: Buffer[]
 }
+type HashExpireOption = 'NX' | 'XX' | 'GT' | 'LT'
+type HashExpireMode =
+  | 'seconds'
+  | 'milliseconds'
+  | 'unix-seconds'
+  | 'unix-milliseconds'
+type HashExpireArgs = {
+  key: Buffer
+  time: bigint
+  option: HashExpireOption | undefined
+  fields: Buffer[]
+}
 
 const LONG_MAX = 9223372036854775807n
+const LONG_MIN = -9223372036854775808n
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
+const MIN_SAFE_INTEGER_BIGINT = BigInt(Number.MIN_SAFE_INTEGER)
 
 function createFieldValuePairsSchema() {
   return t.custom<FieldValuePair[]>(
@@ -123,6 +141,59 @@ function createHgetdelSchema() {
   )
 }
 
+function createHashExpireSchema() {
+  return t.custom<HashExpireArgs>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      const key = input[index]
+      const timeToken = input[index + 1]
+      if (!key || !timeToken) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const time = parseHashExpireTime(timeToken)
+      let cursor = index + 2
+      if (cursor >= input.length) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      let option: HashExpireOption | undefined
+      const maybeOption = input[cursor].toString().toUpperCase()
+      if (isHashExpireOption(maybeOption)) {
+        option = maybeOption
+        cursor += 1
+      }
+
+      const fieldsToken = input[cursor]
+      if (!fieldsToken) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+        throw new RedisCommandError(
+          'Mandatory argument FIELDS is missing or not at the right position',
+        )
+      }
+
+      const fieldCountToken = input[cursor + 1]
+      if (!fieldCountToken) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const fieldCount = parseHashExpireFieldCount(fieldCountToken)
+      const fields = input.slice(cursor + 2)
+      if (fieldCount !== BigInt(fields.length)) {
+        throw new RedisCommandError(
+          'The `numfields` parameter must match the number of arguments',
+        )
+      }
+
+      return {
+        value: { key, time, option, fields },
+        nextIndex: input.length,
+      }
+    },
+  )
+}
+
 function parsePositiveFieldCount(token: Buffer): bigint {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
@@ -135,6 +206,140 @@ function parsePositiveFieldCount(token: Buffer): bigint {
   }
 
   return value
+}
+
+function parseHashExpireTime(token: Buffer): bigint {
+  const raw = token.toString()
+  if (!isIntegerToken(raw)) {
+    throw new ExpectedIntegerError()
+  }
+
+  const value = BigInt(raw)
+  if (value < LONG_MIN || value > LONG_MAX) {
+    throw new ExpectedIntegerError()
+  }
+
+  return value
+}
+
+function parseHashExpireFieldCount(token: Buffer): bigint {
+  const raw = token.toString()
+  if (!isIntegerToken(raw)) {
+    throw new RedisCommandError(
+      'Parameter `numFields` should be greater than 0',
+    )
+  }
+
+  const value = BigInt(raw)
+  if (value < 1n || value > LONG_MAX) {
+    throw new RedisCommandError(
+      'Parameter `numFields` should be greater than 0',
+    )
+  }
+
+  return value
+}
+
+function isHashExpireOption(value: string): value is HashExpireOption {
+  return value === 'NX' || value === 'XX' || value === 'GT' || value === 'LT'
+}
+
+function withExistingHash<TResult>(
+  ctx: RedisExecutionContext,
+  key: Buffer,
+  missing: () => TResult,
+  callback: (hash: TrackedHashData) => TResult,
+): TResult {
+  const hash = ctx.db.getHash(key)
+  if (!hash) return missing()
+
+  return ctx.db.updateHash(key, callback)
+}
+
+function expireHashFields(
+  args: HashExpireArgs,
+  ctx: RedisExecutionContext,
+  mode: HashExpireMode,
+): RedisResult {
+  const expiresAt = hashExpireTimeToTimestamp(args.time, mode)
+  const now = Date.now()
+
+  return withExistingHash(
+    ctx,
+    args.key,
+    () => array(args.fields.map(() => RedisValue.integer(-2))),
+    hash => {
+      return array(
+        args.fields.map(field => {
+          const entry = hash.getField(field)
+          if (!entry) {
+            return RedisValue.integer(-2)
+          }
+
+          if (!shouldApplyHashExpire(entry.expiresAt, expiresAt, args.option)) {
+            return RedisValue.integer(0)
+          }
+
+          if (expiresAt <= now) {
+            hash.deleteField(field)
+            return RedisValue.integer(2)
+          }
+
+          hash.setFieldExpiration(field, expiresAt)
+          return RedisValue.integer(1)
+        }),
+      )
+    },
+  )
+}
+
+function hashExpireTimeToTimestamp(
+  value: bigint,
+  mode: HashExpireMode,
+): number {
+  if (mode === 'seconds') {
+    return Date.now() + bigintToNumberSaturated(value * 1000n)
+  }
+
+  if (mode === 'milliseconds') {
+    return Date.now() + bigintToNumberSaturated(value)
+  }
+
+  if (mode === 'unix-seconds') {
+    return bigintToNumberSaturated(value * 1000n)
+  }
+
+  return bigintToNumberSaturated(value)
+}
+
+function bigintToNumberSaturated(value: bigint): number {
+  if (value > MAX_SAFE_INTEGER_BIGINT) return Number.MAX_SAFE_INTEGER
+  if (value < MIN_SAFE_INTEGER_BIGINT) return Number.MIN_SAFE_INTEGER
+  return Number(value)
+}
+
+function shouldApplyHashExpire(
+  currentExpiresAt: number | undefined,
+  nextExpiresAt: number,
+  option: HashExpireOption | undefined,
+): boolean {
+  if (option === 'NX') {
+    return currentExpiresAt === undefined
+  }
+
+  if (option === 'XX') {
+    return currentExpiresAt !== undefined
+  }
+
+  if (option === 'GT') {
+    return currentExpiresAt !== undefined && nextExpiresAt > currentExpiresAt
+  }
+
+  if (option === 'LT') {
+    return currentExpiresAt === undefined || nextExpiresAt < currentExpiresAt
+  }
+
+  return true
 }
 
 function randomHashEntries<TValue>(entries: TValue[], count: number): TValue[] {
@@ -212,10 +417,12 @@ export const hgetCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    if (!hash) return bulk(null)
-    const entry = hash.fields.get(args.field.toString('hex'))
-    return bulk(entry?.value ?? null)
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => bulk(null),
+      hash => bulk(hash.getField(args.field)?.value ?? null),
+    )
   },
 })
 
@@ -271,6 +478,38 @@ export const hgetdelCommand = defineCommand({
   },
 })
 
+export const hexpireCommand = defineCommand({
+  name: 'hexpire',
+  schema: createHashExpireSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => expireHashFields(args, ctx, 'seconds'),
+})
+
+export const hpexpireCommand = defineCommand({
+  name: 'hpexpire',
+  schema: createHashExpireSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => expireHashFields(args, ctx, 'milliseconds'),
+})
+
+export const hexpireatCommand = defineCommand({
+  name: 'hexpireat',
+  schema: createHashExpireSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => expireHashFields(args, ctx, 'unix-seconds'),
+})
+
+export const hpexpireatCommand = defineCommand({
+  name: 'hpexpireat',
+  schema: createHashExpireSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => expireHashFields(args, ctx, 'unix-milliseconds'),
+})
+
 export const hmsetCommand = defineCommand({
   name: 'hmset',
   schema: t.object({ key: t.key(), pairs: createFieldValuePairsSchema() }),
@@ -292,12 +531,17 @@ export const hmgetCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    return array(
-      args.fields.map(field => {
-        const entry = hash?.fields.get(field.toString('hex'))
-        return RedisValue.bulkString(entry?.value ?? null)
-      }),
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => array(args.fields.map(() => RedisValue.bulkString(null))),
+      hash =>
+        array(
+          args.fields.map(field => {
+            const entry = hash.getField(field)
+            return RedisValue.bulkString(entry?.value ?? null)
+          }),
+        ),
     )
   },
 })
@@ -308,12 +552,21 @@ export const hgetallCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    const entries: [RedisValue, RedisValue][] = []
-    for (const { field, value } of hash?.fields.values() ?? []) {
-      entries.push([RedisValue.bulkString(field), RedisValue.bulkString(value)])
-    }
-    return RedisResult.create(RedisValue.map(entries))
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => RedisResult.create(RedisValue.map([])),
+      hash => {
+        const entries: [RedisValue, RedisValue][] = []
+        for (const { field, value } of hash.entries()) {
+          entries.push([
+            RedisValue.bulkString(field),
+            RedisValue.bulkString(value),
+          ])
+        }
+        return RedisResult.create(RedisValue.map(entries))
+      },
+    )
   },
 })
 
@@ -323,12 +576,16 @@ export const hkeysCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    if (!hash) return array([])
-    return array(
-      Array.from(hash.fields.values()).map(({ field }) =>
-        RedisValue.bulkString(field),
-      ),
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => array([]),
+      hash =>
+        array(
+          Array.from(hash.entries()).map(({ field }) =>
+            RedisValue.bulkString(field),
+          ),
+        ),
     )
   },
 })
@@ -339,12 +596,16 @@ export const hvalsCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    if (!hash) return array([])
-    return array(
-      Array.from(hash.fields.values()).map(({ value }) =>
-        RedisValue.bulkString(value),
-      ),
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => array([]),
+      hash =>
+        array(
+          Array.from(hash.entries()).map(({ value }) =>
+            RedisValue.bulkString(value),
+          ),
+        ),
     )
   },
 })
@@ -355,19 +616,28 @@ export const hrandfieldCommand = defineCommand({
   flags: ['readonly', 'random', 'noscript'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    if (!hash || hash.fields.size === 0) {
-      return args.count === undefined ? bulk(null) : array([])
-    }
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => (args.count === undefined ? bulk(null) : array([])),
+      hash => {
+        const entries = Array.from(hash.entries())
+        if (entries.length === 0) {
+          return args.count === undefined ? bulk(null) : array([])
+        }
 
-    const entries = Array.from(hash.fields.values())
-    if (args.count === undefined) {
-      const entry = entries[Math.floor(Math.random() * entries.length)]
-      return bulk(entry.field)
-    }
+        if (args.count === undefined) {
+          const entry = entries[Math.floor(Math.random() * entries.length)]
+          return bulk(entry.field)
+        }
 
-    return array(
-      hashEntriesReply(randomHashEntries(entries, args.count), args.withValues),
+        return array(
+          hashEntriesReply(
+            randomHashEntries(entries, args.count),
+            args.withValues,
+          ),
+        )
+      },
     )
   },
 })
@@ -378,8 +648,12 @@ export const hlenCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    return integer(hash?.fields.size ?? 0)
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => integer(0),
+      hash => integer(hash.size),
+    )
   },
 })
 
@@ -389,9 +663,12 @@ export const hexistsCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    if (!hash) return integer(0)
-    return integer(hash.fields.has(args.field.toString('hex')) ? 1 : 0)
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => integer(0),
+      hash => integer(hash.hasField(args.field) ? 1 : 0),
+    )
   },
 })
 
@@ -413,7 +690,7 @@ export const hincrbyCommand = defineCommand({
       }
       const next = current + args.increment
       const valueBuf = Buffer.from(String(next))
-      hash.setField(args.field, valueBuf, { forceDirty: true })
+      hash.setField(args.field, valueBuf, { forceDirty: true, keepTtl: true })
       return next
     })
     return integer(result)
@@ -447,7 +724,7 @@ export const hincrbyfloatCommand = defineCommand({
         formatted = next.toFixed(17).replace(/\.?0+$/, '')
       }
       const valueBuf = Buffer.from(formatted)
-      hash.setField(args.field, valueBuf, { forceDirty: true })
+      hash.setField(args.field, valueBuf, { forceDirty: true, keepTtl: true })
       return valueBuf
     })
     return bulk(result)
@@ -460,10 +737,12 @@ export const hstrlenCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const hash = ctx.db.getHash(args.key)
-    if (!hash) return integer(0)
-    const entry = hash.fields.get(args.field.toString('hex'))
-    return integer(entry?.value.byteLength ?? 0)
+    return withExistingHash(
+      ctx,
+      args.key,
+      () => integer(0),
+      hash => integer(hash.getField(args.field)?.value.byteLength ?? 0),
+    )
   },
 })
 
@@ -473,6 +752,10 @@ export const hashesCommands = [
   hgetCommand,
   hdelCommand,
   hgetdelCommand,
+  hexpireCommand,
+  hpexpireCommand,
+  hexpireatCommand,
+  hpexpireatCommand,
   hmsetCommand,
   hmgetCommand,
   hgetallCommand,
