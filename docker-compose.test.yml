@@ -1,20 +1,41 @@
 services:
-  # Redis Cluster using grokzen/redis-cluster
+  # Redis 8.0 cluster. grokzen/redis-cluster never published an 8.x tag, so we
+  # run our own 6-node cluster from the official image. All six redis-server
+  # processes live in ONE container so they reach each other over 127.0.0.1 and
+  # the host port map is 1:1 — each node announces 127.0.0.1:<port>, which makes
+  # MOVED/ASK redirects resolvable from a Mac host (the same property that made
+  # grokzen "just work"). Bus ports default to client-port + 10000 (40000-4000x)
+  # and stay container-internal — host clients only ever touch the client ports.
   redis-cluster:
-    image: grokzen/redis-cluster:7.2.5
+    image: redis:8.0
     platform: linux/amd64
     ports:
       - '30000-30005:30000-30005'
-    environment:
-      # Configure cluster to start at port 8000 instead of default 7000
-      INITIAL_PORT: 30000
-      # 3 masters with 1 slave each (default, but explicit)
-      MASTERS: 3
-      SLAVES_PER_MASTER: 1
-      # For Mac compatibility
-      IP: 0.0.0.0
-      LANG: C
-      LC_ALL: C
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        for port in 30000 30001 30002 30003 30004 30005; do
+          redis-server \
+            --port $$port \
+            --cluster-enabled yes \
+            --cluster-config-file nodes-$$port.conf \
+            --cluster-node-timeout 5000 \
+            --cluster-announce-ip 127.0.0.1 \
+            --cluster-announce-port $$port \
+            --appendonly no \
+            --save "" \
+            --daemonize yes
+        done
+        until redis-cli -p 30000 ping >/dev/null 2>&1; do sleep 0.2; done
+        echo "yes" | redis-cli --cluster create \
+          127.0.0.1:30000 127.0.0.1:30001 127.0.0.1:30002 \
+          127.0.0.1:30003 127.0.0.1:30004 127.0.0.1:30005 \
+          --cluster-replicas 1
+        # Keep the container alive in the foreground; the redis-servers run
+        # daemonized in the background.
+        exec tail -f /dev/null
     healthcheck:
       # Only healthy once every slot is assigned and the cluster reports OK.
       # `get a` answers before the cluster has finished forming, which lets
@@ -34,7 +55,7 @@ services:
   # or SELECT (e.g. SELECT inside MULTI/EXEC) connect here instead. The harness
   # uses it when REDIS_STANDALONE_PORT is set; see tests-integration/test-config.ts.
   redis-standalone:
-    image: redis:7.2.5
+    image: redis:8.0
     ports:
       - '6399:6379'
     healthcheck:
@@ -49,7 +70,7 @@ services:
   # connect here. The harness uses it when REDIS_STANDALONE_AUTH_PORT is set;
   # see tests-integration/test-config.ts (STANDALONE_AUTH_PASSWORD).
   redis-standalone-auth:
-    image: redis:7.2.5
+    image: redis:8.0
     command:
       [
         'redis-server',

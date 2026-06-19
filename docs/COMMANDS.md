@@ -228,6 +228,7 @@ with `GT` or `LT`.
 - [x] `HMGET key field [field ...]` - Get the values of multiple hash fields
 - [x] `HGETALL key` - Get all fields and values in a hash (RESP3 map / RESP2 flat array)
 - [x] `HDEL key field [field ...]` - Delete one or more hash fields
+- [x] `HGETDEL key FIELDS numfields field [field ...]` - Get and delete one or more hash fields
 - [x] `HEXISTS key field` - Determine if a hash field exists
 - [x] `HKEYS key` - Get all fields in a hash
 - [x] `HVALS key` - Get all values in a hash
@@ -240,7 +241,7 @@ with `GT` or `LT`.
 
 #### Not implemented
 
-- [ ] `HEXPIRE` / `HPEXPIRE` / `HEXPIREAT` / `HPEXPIREAT` / `HPERSIST` / `HTTL` / `HPTTL` / `HGETDEL` / `HGETEX` (Redis 7.4 hash-field-TTL family)
+- [ ] `HEXPIRE` / `HPEXPIRE` / `HEXPIREAT` / `HPEXPIREAT` / `HPERSIST` / `HTTL` / `HPTTL` / `HGETEX` (hash-field-TTL family)
 
 ## 6. List Commands
 

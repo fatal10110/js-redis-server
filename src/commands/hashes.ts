@@ -8,6 +8,7 @@ import {
 import {
   HashValueNotFloatError,
   HashValueNotIntegerError,
+  RedisCommandError,
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
@@ -21,6 +22,12 @@ type HrandfieldArgs = {
   count: number | undefined
   withValues: boolean
 }
+type HgetdelArgs = {
+  key: Buffer
+  fields: Buffer[]
+}
+
+const LONG_MAX = 9223372036854775807n
 
 function createFieldValuePairsSchema() {
   return t.custom<FieldValuePair[]>(
@@ -83,6 +90,51 @@ function createHrandfieldSchema() {
       return { value: { key, count, withValues }, nextIndex: cursor }
     },
   )
+}
+
+function createHgetdelSchema() {
+  return t.custom<HgetdelArgs>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      const key = input[index]
+      if (!key || input.length - index < 4) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const fieldsToken = input[index + 1]
+      if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+        throw new RedisCommandError(
+          'Mandatory argument FIELDS is missing or not at the right position',
+        )
+      }
+
+      const fieldCount = parsePositiveFieldCount(input[index + 2])
+      const fields = input.slice(index + 3)
+      if (fieldCount !== BigInt(fields.length)) {
+        throw new RedisCommandError(
+          'The `numfields` parameter must match the number of arguments',
+        )
+      }
+
+      return {
+        value: { key, fields },
+        nextIndex: input.length,
+      }
+    },
+  )
+}
+
+function parsePositiveFieldCount(token: Buffer): bigint {
+  const raw = token.toString()
+  if (!isIntegerToken(raw)) {
+    throw new RedisCommandError('Number of fields must be a positive integer')
+  }
+
+  const value = BigInt(raw)
+  if (value < 1n || value > LONG_MAX) {
+    throw new RedisCommandError('Number of fields must be a positive integer')
+  }
+
+  return value
 }
 
 function randomHashEntries<TValue>(entries: TValue[], count: number): TValue[] {
@@ -187,6 +239,35 @@ export const hdelCommand = defineCommand({
       ctx.db.delete(args.key)
     }
     return integer(deleted)
+  },
+})
+
+export const hgetdelCommand = defineCommand({
+  name: 'hgetdel',
+  schema: createHgetdelSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => {
+    if (!ctx.db.getHash(args.key)) {
+      return array(args.fields.map(() => RedisValue.bulkString(null)))
+    }
+
+    let remaining = 0
+    const values = ctx.db.updateHash(args.key, hash => {
+      const replies: RedisValue[] = []
+      for (const field of args.fields) {
+        const entry = hash.getField(field)
+        replies.push(RedisValue.bulkString(entry?.value ?? null))
+        if (entry) hash.deleteField(field)
+      }
+      remaining = hash.size
+      return replies
+    })
+
+    if (remaining === 0) {
+      ctx.db.delete(args.key)
+    }
+    return array(values)
   },
 })
 
@@ -391,6 +472,7 @@ export const hashesCommands = [
   hsetnxCommand,
   hgetCommand,
   hdelCommand,
+  hgetdelCommand,
   hmsetCommand,
   hmgetCommand,
   hgetallCommand,
