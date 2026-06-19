@@ -179,6 +179,64 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('XSETID MAXDELETEDID updates XINFO STREAM metadata', async () => {
+    const key = `{xsetid-maxdeleted:${randomKey()}}`
+    const node = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await node.call('XADD', key, '1-0', 'f', 'v')
+      assert.strictEqual(
+        await node.call(
+          'XSETID',
+          key,
+          '5-0',
+          'maxdeletedid',
+          '2-0',
+          'ENTRIESADDED',
+          '42',
+        ),
+        'OK',
+      )
+
+      const streamInfo = (await node.call('XINFO', 'STREAM', key)) as unknown[]
+      assert.strictEqual(kvArrayGet(streamInfo, 'last-generated-id'), '5-0')
+      assert.strictEqual(kvArrayGet(streamInfo, 'max-deleted-entry-id'), '2-0')
+      assert.strictEqual(kvArrayGet(streamInfo, 'entries-added'), 42)
+
+      assert.strictEqual(
+        await node.call(
+          'XSETID',
+          key,
+          '6-0',
+          'ENTRIESADDED',
+          '7',
+          'MAXDELETEDID',
+          '3-0',
+          'ENTRIESADDED',
+          '9',
+          'MAXDELETEDID',
+          '4-0',
+        ),
+        'OK',
+      )
+
+      const duplicateInfo = (await node.call(
+        'XINFO',
+        'STREAM',
+        key,
+      )) as unknown[]
+      assert.strictEqual(kvArrayGet(duplicateInfo, 'last-generated-id'), '6-0')
+      assert.strictEqual(
+        kvArrayGet(duplicateInfo, 'max-deleted-entry-id'),
+        '4-0',
+      )
+      assert.strictEqual(kvArrayGet(duplicateInfo, 'entries-added'), 9)
+    } finally {
+      await node.del(key)
+      node.disconnect()
+    }
+  })
+
   test('XSETID rejects lower ids, invalid options, and wrong types', async () => {
     const tag = `{xsetid-errors:${randomKey()}}`
     const key = `${tag}:stream`
@@ -211,6 +269,16 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       await assert.rejects(
         () => node.call('XSETID', key, '6-0', 'ENTRIESADDED'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, '6-0', 'MAXDELETEDID', 'bad-id'),
+        errorWithMessage(
+          'ERR Invalid stream ID specified as stream command argument',
+        ),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, '6-0', 'MAXDELETEDID'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
