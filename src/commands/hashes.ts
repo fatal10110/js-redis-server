@@ -10,6 +10,7 @@ import {
   ExpectedIntegerError,
   HashValueNotFloatError,
   HashValueNotIntegerError,
+  IncrDecrOverflowError,
   InvalidExpireTimeError,
   RedisCommandError,
   RedisSyntaxError,
@@ -796,22 +797,34 @@ export const hexistsCommand = defineCommand({
 
 export const hincrbyCommand = defineCommand({
   name: 'hincrby',
-  schema: t.object({ key: t.key(), field: t.key(), increment: t.integer() }),
+  schema: t.object({
+    key: t.key(),
+    field: t.key(),
+    increment: t.bigInteger({ min: LONG_MIN, max: LONG_MAX }),
+  }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
     const result = ctx.db.updateHash(args.key, hash => {
       const entry = hash.getField(args.field)
-      let current = 0
+      let current = 0n
       if (entry) {
         const raw = entry.value.toString()
-        if (!isIntegerToken(raw) || !Number.isSafeInteger(Number(raw))) {
+        // Redis parses the stored value as a 64-bit signed integer; a value
+        // outside that range is "hash value is not an integer", not overflow.
+        if (!isIntegerToken(raw)) {
           throw new HashValueNotIntegerError()
         }
-        current = Number(raw)
+        current = BigInt(raw)
+        if (current < LONG_MIN || current > LONG_MAX) {
+          throw new HashValueNotIntegerError()
+        }
       }
       const next = current + args.increment
-      const valueBuf = Buffer.from(String(next))
+      if (next < LONG_MIN || next > LONG_MAX) {
+        throw new IncrDecrOverflowError()
+      }
+      const valueBuf = Buffer.from(next.toString())
       hash.setField(args.field, valueBuf, { forceDirty: true, keepTtl: true })
       return next
     })
