@@ -58,11 +58,11 @@ export class Resp2Server {
   close(): Promise<void> {
     return new Promise((resolve, reject) =>
       this.server.close(err => {
+        this.state.close()
         if (err) {
           reject(err)
           return
         }
-        this.state.close()
         resolve()
       }),
     )

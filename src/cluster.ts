@@ -233,6 +233,7 @@ function createClusterNodeStates(
       new RedisServerState({
         databaseCount,
         clusterTopology: topology,
+        activeExpiryIntervalMs: node.role === 'replica' ? false : undefined,
       }),
     )
   }

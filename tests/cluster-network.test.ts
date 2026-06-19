@@ -46,13 +46,56 @@ describe('ClusterNetwork slot distribution', () => {
     const key = Buffer.from('delayed-replica-key')
     master.server.getDatabase(0).setString(key, Buffer.from('value'))
 
-    assert.strictEqual(replica.server.getDatabase(0).getString(key), null)
+    try {
+      assert.strictEqual(replica.server.getDatabase(0).getString(key), null)
 
-    await sleep(40)
+      await sleep(40)
 
-    assert.deepStrictEqual(
-      replica.server.getDatabase(0).getString(key),
-      Buffer.from('value'),
-    )
+      assert.deepStrictEqual(
+        replica.server.getDatabase(0).getString(key),
+        Buffer.from('value'),
+      )
+    } finally {
+      await closeUnstartedCluster(cluster)
+    }
+  })
+
+  test('replica states do not actively expire replicated keys on their own clock', async () => {
+    const cluster = buildRedisCluster({
+      masters: 1,
+      replicasPerMaster: 1,
+      basePort: 0,
+    })
+    const replica = cluster.nodes.find(node => node.role === 'replica')
+    assert.ok(replica)
+
+    const key = Buffer.from('replica-active-expiry-key')
+    const events: string[] = []
+    const replicaDb = replica.server.getDatabase(0)
+    replicaDb.subscribeKey(key, event => events.push(event.type))
+
+    try {
+      replicaDb.setString(key, Buffer.from('value'), {
+        expiresAt: Date.now() + 10,
+      })
+
+      await sleep(150)
+
+      assert.deepStrictEqual(events, ['write'])
+    } finally {
+      await closeUnstartedCluster(cluster)
+    }
   })
 })
+
+async function closeUnstartedCluster(
+  cluster: ReturnType<typeof buildRedisCluster>,
+): Promise<void> {
+  try {
+    await cluster.close()
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'ERR_SERVER_NOT_RUNNING') {
+      throw err
+    }
+  }
+}

@@ -46,8 +46,7 @@ export class RedisServerState {
    */
   notifyKeyspaceEvents = ''
   private readonly clientSessions = new Set<RedisClientSession>()
-  private activeExpiryTimer: ReturnType<typeof setInterval> | null = null
-  private activeExpiryRunning = false
+  private activeExpiryTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
   private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
 
@@ -136,7 +135,7 @@ export class RedisServerState {
   close(): void {
     this.closed = true
     if (this.activeExpiryTimer) {
-      clearInterval(this.activeExpiryTimer)
+      clearTimeout(this.activeExpiryTimer)
       this.activeExpiryTimer = null
     }
   }
@@ -151,39 +150,50 @@ export class RedisServerState {
       throw new Error(`Invalid active expiry interval ${resolvedIntervalMs}`)
     }
 
-    const timer = setInterval(() => {
-      void this.runActiveExpiry()
-    }, resolvedIntervalMs)
-    ;(
-      timer as ReturnType<typeof setInterval> & { unref?: () => void }
-    ).unref?.()
+    this.scheduleActiveExpiry(resolvedIntervalMs)
+  }
+
+  private scheduleActiveExpiry(intervalMs: number): void {
+    const timer = setTimeout(() => {
+      this.activeExpiryTimer = null
+      void this.runActiveExpiryTick(intervalMs)
+    }, intervalMs)
+
+    ;(timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.()
     this.activeExpiryTimer = timer
   }
 
+  private async runActiveExpiryTick(intervalMs: number): Promise<void> {
+    try {
+      await this.runActiveExpiry()
+    } catch {
+      // Active expiry is best-effort; command reads still lazily expire keys.
+    } finally {
+      if (!this.closed) {
+        this.scheduleActiveExpiry(intervalMs)
+      }
+    }
+  }
+
   private async runActiveExpiry(): Promise<void> {
-    if (this.closed || this.activeExpiryRunning) {
+    if (this.closed) {
       return
     }
 
-    this.activeExpiryRunning = true
-    try {
-      const now = Date.now()
-      for (const database of this.databases) {
-        if (this.closed) {
-          return
-        }
-
-        const turn = await database.turnQueue.waitTurn()
-        try {
-          if (!this.closed) {
-            database.sweepExpired(now)
-          }
-        } finally {
-          turn.release()
-        }
+    const now = Date.now()
+    for (const database of this.databases) {
+      if (this.closed) {
+        return
       }
-    } finally {
-      this.activeExpiryRunning = false
+
+      const turn = await database.turnQueue.waitTurn()
+      try {
+        if (!this.closed) {
+          database.sweepExpired(now)
+        }
+      } finally {
+        turn.release()
+      }
     }
   }
 }

@@ -334,7 +334,8 @@ Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
 groups, per-group pending-entry lists, and consumer idle metadata. Expiration is
 handled by both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass across its databases, under each database's
-`SerialTurnQueue`, and `getLiveEntry` still calls
+`SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
+the master's replicated deletion. `getLiveEntry` still calls
 [`evictIfExpired`](../src/state/keyspace.ts#L240) on reads that encounter an
 expired key before the next sweep. Either path deletes the entry and emits an
 `evict` mutation event so `WATCH` observes expiry exactly like a real delete.
