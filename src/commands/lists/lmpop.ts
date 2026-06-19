@@ -110,7 +110,6 @@ function parseListMultiPopArgs(
     }
 
     count = parseListPopCount(input[cursor + 1])
-    cursor += 2
   }
 
   if (options.blocking) {

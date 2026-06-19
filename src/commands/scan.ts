@@ -241,13 +241,22 @@ function readOptionValue(
   return readRequired(input, optionIndex + 1, commandName)
 }
 
+// Redis parses the cursor as an unsigned 64-bit integer (strtoull), so a
+// negative value or anything past 2^64-1 is rejected as an invalid cursor.
+const MAX_CURSOR = (1n << 64n) - 1n
+
 function parseCursor(raw: Buffer): bigint {
   const value = raw.toString()
-  if (!/^-?\d+$/.test(value)) {
+  if (!/^\d+$/.test(value)) {
     throw new RedisCommandError('invalid cursor')
   }
 
-  return BigInt(value)
+  const cursor = BigInt(value)
+  if (cursor > MAX_CURSOR) {
+    throw new RedisCommandError('invalid cursor')
+  }
+
+  return cursor
 }
 
 function parseCount(raw: Buffer): number {

@@ -490,10 +490,10 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
       () => redisClient?.scan('abc'),
       errorWithMessage('ERR invalid cursor'),
     )
-    assert.deepStrictEqual(await redisClient?.scan('-1', 'MATCH', 'missing'), [
-      '0',
-      [],
-    ])
+    await assert.rejects(
+      () => redisClient!.scan('-1', 'MATCH', 'missing'),
+      errorWithMessage('ERR invalid cursor'),
+    )
     await assert.rejects(
       () => redisClient?.scan('0', 'COUNT', 'abc'),
       errorWithMessage('ERR value is not an integer or out of range'),

@@ -883,23 +883,13 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       listExpiretime,
     )
 
-    // Wrong arity → error (no key, and extra args)
-    await assert.rejects(
-      () => redisClient!.call('EXPIRETIME'),
-      errorWithMessage(
-        "ERR wrong number of arguments for 'expiretime' command",
-      ),
-    )
+    // Wrong arity → error. (The zero-argument case can't be issued through a
+    // cluster client — it injects an implicit routing key — so it's covered by
+    // the raw-TCP protocol-errors suite instead.)
     await assert.rejects(
       () => redisClient!.call('EXPIRETIME', withTtl, 'extra'),
       errorWithMessage(
         "ERR wrong number of arguments for 'expiretime' command",
-      ),
-    )
-    await assert.rejects(
-      () => redisClient!.call('PEXPIRETIME'),
-      errorWithMessage(
-        "ERR wrong number of arguments for 'pexpiretime' command",
       ),
     )
     await assert.rejects(
@@ -955,18 +945,12 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     await redisClient!.pexpire(listKey, 1900)
     assert.strictEqual(await redisClient!.ttl(listKey), 2)
 
-    // Wrong arity → error.
-    await assert.rejects(
-      () => redisClient!.call('TTL'),
-      errorWithMessage("ERR wrong number of arguments for 'ttl' command"),
-    )
+    // Wrong arity → error. (The zero-argument case can't be issued through a
+    // cluster client — it injects an implicit routing key — so it's covered by
+    // the raw-TCP protocol-errors suite instead.)
     await assert.rejects(
       () => redisClient!.call('TTL', reproKey, 'extra'),
       errorWithMessage("ERR wrong number of arguments for 'ttl' command"),
-    )
-    await assert.rejects(
-      () => redisClient!.call('PTTL'),
-      errorWithMessage("ERR wrong number of arguments for 'pttl' command"),
     )
     await assert.rejects(
       () => redisClient!.call('PTTL', reproKey, 'extra'),

@@ -65,4 +65,20 @@ describe(`Raw TCP protocol errors (${testRunner.getBackendName()})`, () => {
       '-ERR Protocol error: invalid bulk length\r\n',
     )
   })
+
+  // A cluster-aware client (e.g. ioredis) injects an implicit routing key when a
+  // keyed command is sent with no key, so it can never put EXPIRETIME/TTL on the
+  // wire with zero arguments. The bare socket is the only way to assert the
+  // server's wrong-arity reply for these commands.
+  test('keyed commands with no arguments return a wrong-arity error', async () => {
+    const conn = await connect()
+
+    for (const command of ['EXPIRETIME', 'PEXPIRETIME', 'TTL', 'PTTL']) {
+      conn.write(commandFrame(command))
+      assert.strictEqual(
+        (await conn.readRawFrame()).toString(),
+        `-ERR wrong number of arguments for '${command.toLowerCase()}' command\r\n`,
+      )
+    }
+  })
 })
