@@ -85,8 +85,8 @@ surface.
 - [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (glob-matched against a fixed set of plausible defaults; RESP3 map / RESP2 flat array)
 - [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown parameter names with the real Redis error, matching CONFIG SET's "all-or-nothing" validation)
 - [x] `CONFIG HELP`
-- [ ] `CONFIG RESETSTAT` - Reset the stats returned by INFO
-- [ ] `CONFIG REWRITE` - Rewrite the configuration file
+- [x] `CONFIG RESETSTAT` - Reset the stats returned by INFO (no-op in the mock)
+- [x] `CONFIG REWRITE` - Rewrite the configuration file (returns Redis' no-config-file error)
 
 > There is no real configuration subsystem behind this - values are an
 > in-memory per-server store seeded with plausible defaults (`maxmemory`,
@@ -96,7 +96,8 @@ surface.
 > `notify-keyspace-events`, which is a real, behavior-driving setting — see
 > [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 > normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as `AKE`;
-> an unknown class character is rejected).
+> an unknown class character is rejected). Since there is no backing config file,
+> `CONFIG REWRITE` reports the same no-config-file error as Redis.
 
 #### DBSIZE
 
