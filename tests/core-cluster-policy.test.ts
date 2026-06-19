@@ -7,7 +7,7 @@ import {
   RedisServerState,
   RedisValue,
   createClusterPolicy,
-  createClusterCommand,
+  createClusterCommands,
   createRedisCommandExecutor,
 } from '../src'
 
@@ -182,7 +182,7 @@ function createClusterHarness() {
   ])
   const server = new RedisServerState({ clusterTopology: topology })
   const executor = createRedisCommandExecutor({
-    extraCommands: [createClusterCommand('local')],
+    extraCommands: createClusterCommands('local'),
     policies: [createClusterPolicy({ localNodeId: 'local' })],
   })
   const session = new ClientSession({ server, executor })

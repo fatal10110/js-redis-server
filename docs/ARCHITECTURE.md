@@ -413,14 +413,15 @@ split evenly across masters, with optional replicas), then spins up one
 `Resp2Server` per node — each with its **own** `RedisServerState` (so data is
 genuinely partitioned) but **sharing** the topology object, registered with:
 
-- an extra `CLUSTER` command ([`createClusterCommand`](../src/commands/cluster.ts))
-  scoped to that node's id (`CLUSTER INFO`/`MYID`/`NODES`/`SHARDS`/`SLOTS`), and
+- extra cluster commands ([`createClusterCommands`](../src/commands/cluster.ts)):
+  `CLUSTER`, scoped to that node's id
+  (`CLUSTER INFO`/`MYID`/`NODES`/`SHARDS`/`SLOTS`), plus `READONLY`/`READWRITE`, and
 - a [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts) bound to
   that node's id, so each node independently validates ownership and redirects
   with `MOVED`/`CROSSSLOT`/`CLUSTERDOWN` (see [Cluster routing](#cluster-routing)).
 
 There is no separate "cluster commander" type — cluster mode is the same
-`Resp2Server` + `CommandExecutor` core, configured with one extra command and
+`Resp2Server` + `CommandExecutor` core, configured with extra cluster commands and
 one extra policy. `SELECT 0` is accepted as a no-op in cluster mode (Redis
 Cluster only exposes database 0); any non-zero index is rejected. Multi-database
 commands such as `MOVE` are rejected in cluster mode.
