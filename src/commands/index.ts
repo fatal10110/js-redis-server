@@ -73,7 +73,6 @@ export {
 } from './connection'
 export { monitorCommand, monitorCommands } from './monitor'
 export {
-  createClusterCommand,
   createClusterCommands,
   readonlyCommand,
   readwriteCommand,

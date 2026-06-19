@@ -4,7 +4,7 @@ import {
   ClientSession,
   RedisClusterTopology,
   RedisServerState,
-  createClusterCommand,
+  createClusterCommands,
   createClusterPolicy,
   createRedisCommandExecutor,
 } from '../src'
@@ -57,7 +57,7 @@ async function clusterNodes(): Promise<string> {
   ])
   const server = new RedisServerState({ clusterTopology: topology })
   const executor = createRedisCommandExecutor({
-    extraCommands: [createClusterCommand('local')],
+    extraCommands: createClusterCommands('local'),
     policies: [createClusterPolicy({ localNodeId: 'local' })],
   })
   const session = new ClientSession({ server, executor })

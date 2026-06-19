@@ -157,7 +157,6 @@ export {
   createRedisCommandRegistry,
   commandCommand,
   copyCommand,
-  createClusterCommand,
   createClusterCommands,
   dbsizeCommand,
   delCommand,
