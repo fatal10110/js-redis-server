@@ -14,6 +14,7 @@ export const multiCommand = defineCommand({
   name: 'multi',
   schema: t.object({}),
   flags: ['readonly', 'fast', 'transaction', 'noscript'],
+  capabilities: { transactionBoundary: 'begin' },
   keys: () => [],
   execute: (_args, ctx) => {
     ctx.session.beginTransaction()
@@ -28,6 +29,7 @@ export const execCommand = defineCommand({
   // only marks it as transaction-control so policies do not treat it as a
   // normal write/read command.
   flags: ['transaction', 'noscript'],
+  capabilities: { transactionBoundary: 'end' },
   keys: () => [],
   execute: async (_args, ctx) => {
     if (ctx.session.mode !== 'transaction') {
@@ -56,6 +58,7 @@ export const discardCommand = defineCommand({
   name: 'discard',
   schema: t.object({}),
   flags: ['readonly', 'fast', 'transaction', 'noscript'],
+  capabilities: { transactionBoundary: 'end' },
   keys: () => [],
   execute: (_args, ctx) => {
     if (ctx.session.mode !== 'transaction') {

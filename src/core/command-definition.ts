@@ -22,6 +22,18 @@ export type CommandCapabilities = {
   pushOnly?: boolean
   movableKeys?: boolean
   scriptKeys?: boolean
+  /**
+   * How the command behaves under cluster mode. `'forbidden'` is always
+   * rejected; `'singleDb'` is rejected only when it targets a non-zero
+   * database. Consumed by `ClusterPolicy` instead of matching command names.
+   */
+  clusterMode?: 'forbidden' | 'singleDb'
+  /**
+   * Marks the command as a transaction boundary. `'begin'` opens a transaction
+   * (MULTI); `'end'` closes one (EXEC/DISCARD). `ClusterPolicy` uses this to
+   * reset the per-session pinned slot instead of matching command names.
+   */
+  transactionBoundary?: 'begin' | 'end'
 }
 
 export type CommandMonitorMetadata = {

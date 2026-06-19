@@ -33,29 +33,38 @@ export function createClusterPolicy(
         localNodeChecked = true
       }
 
-      if (plan.definition.name === 'select') {
-        // Cluster mode has a single logical database (0). SELECT 0 is a no-op
-        // and accepted; any non-zero index is rejected like real Redis.
+      const capabilities = plan.definition.capabilities
+
+      if (capabilities?.clusterMode === 'forbidden') {
+        throw new RedisCommandError(
+          `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
+        )
+      }
+
+      if (capabilities?.clusterMode === 'singleDb') {
+        // Cluster mode has a single logical database (0). DB 0 is a no-op and
+        // accepted; any non-zero index is rejected like real Redis.
         const index = (plan.args as { database: number }).database
         if (index !== 0) {
-          throw new RedisCommandError('SELECT is not allowed in cluster mode')
+          throw new RedisCommandError(
+            `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
+          )
         }
       }
 
-      if (plan.definition.name === 'move') {
-        throw new RedisCommandError('MOVE is not allowed in cluster mode')
-      }
-
+      // A transaction boundary resets the per-session pinned slot: 'begin'
+      // (MULTI) starts fresh, 'end' (EXEC/DISCARD) releases the pin once the
+      // current transaction is over.
       if (
-        plan.definition.name === 'multi' &&
+        capabilities?.transactionBoundary === 'begin' &&
         ctx.session.mode !== 'transaction'
       ) {
         transactionSlots.delete(ctx.session)
       }
 
       if (
-        ctx.session.mode === 'transaction' &&
-        (plan.definition.name === 'exec' || plan.definition.name === 'discard')
+        capabilities?.transactionBoundary === 'end' &&
+        ctx.session.mode === 'transaction'
       ) {
         transactionSlots.delete(ctx.session)
       }

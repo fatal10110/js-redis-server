@@ -152,6 +152,15 @@ describe('new cluster execution policy', () => {
     )
   })
 
+  test('accepts SELECT 0 in cluster mode', async () => {
+    const { session } = createClusterHarness()
+
+    assert.deepStrictEqual(
+      await session.execute('select', [Buffer.from('0')]),
+      RedisResult.ok(),
+    )
+  })
+
   test('rejects MOVE in cluster mode like Redis Cluster', async () => {
     const { session, topology } = createClusterHarness()
     const key = findKeyOwnedBy(topology, 'local')
@@ -159,6 +168,37 @@ describe('new cluster execution policy', () => {
     assert.deepStrictEqual(
       await session.execute('move', [key, Buffer.from('1')]),
       RedisResult.error('MOVE is not allowed in cluster mode', 'ERR'),
+    )
+  })
+
+  test('DISCARD clears the pinned transaction slot', async () => {
+    const { session, server, topology } = createClusterHarness()
+    const [first, second] = findDifferentSlotKeysOwnedBy(topology, 'local')
+
+    // Pin the slot to `first`, then abandon the transaction.
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    assert.deepStrictEqual(
+      await session.execute('set', [first, Buffer.from('one')]),
+      RedisResult.create(RedisValue.simpleString('QUEUED')),
+    )
+    assert.deepStrictEqual(
+      await session.execute('discard', []),
+      RedisResult.ok(),
+    )
+
+    // A fresh transaction must be able to pin a different slot.
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    assert.deepStrictEqual(
+      await session.execute('set', [second, Buffer.from('two')]),
+      RedisResult.create(RedisValue.simpleString('QUEUED')),
+    )
+    assert.deepStrictEqual(
+      await session.execute('exec', []),
+      RedisResult.create(RedisValue.array([RedisValue.simpleString('OK')])),
+    )
+    assert.deepStrictEqual(
+      server.getDatabase(0).getString(second),
+      Buffer.from('two'),
     )
   })
 })
