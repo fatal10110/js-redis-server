@@ -186,6 +186,7 @@ export {
   hashesCommands,
   hexistsCommand,
   hgetallCommand,
+  hgetdelCommand,
   hgetCommand,
   hdelCommand,
   hincrbyfloatCommand,
