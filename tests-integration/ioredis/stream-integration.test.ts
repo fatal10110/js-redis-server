@@ -125,6 +125,110 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  test('XSETID sets last-generated-id and advances generated XADD ids', async () => {
+    const key = `{xsetid:${randomKey()}}`
+    const node = await connectToSlotOwner(redisClient!, key)
+    const futureMs = BigInt(Date.now()) + 60_000n
+
+    try {
+      await node.call('XADD', key, '1-0', 'f', 'v')
+      assert.strictEqual(await node.call('XSETID', key, `${futureMs}-0`), 'OK')
+
+      const streamInfo = (await node.call('XINFO', 'STREAM', key)) as unknown[]
+      assert.strictEqual(kvArrayGet(streamInfo, 'length'), 1)
+      assert.strictEqual(
+        kvArrayGet(streamInfo, 'last-generated-id'),
+        `${futureMs}-0`,
+      )
+      assert.strictEqual(kvArrayGet(streamInfo, 'entries-added'), 1)
+
+      assert.strictEqual(
+        await node.call('XADD', key, '*', 'f', 'v'),
+        `${futureMs}-1`,
+      )
+    } finally {
+      await node.del(key)
+      node.disconnect()
+    }
+  })
+
+  test('XSETID ENTRIESADDED updates XINFO STREAM metadata', async () => {
+    const key = `{xsetid-meta:${randomKey()}}`
+    const node = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await node.call('XADD', key, '1-0', 'f', 'v')
+      assert.strictEqual(
+        await node.call('XSETID', key, '5-0', 'entriesadded', '42'),
+        'OK',
+      )
+
+      const streamInfo = (await node.call('XINFO', 'STREAM', key)) as unknown[]
+      assert.strictEqual(kvArrayGet(streamInfo, 'last-generated-id'), '5-0')
+      assert.strictEqual(kvArrayGet(streamInfo, 'entries-added'), 42)
+      assert.strictEqual(
+        await node.call('XADD', key, '5-*', 'f', 'next'),
+        '5-1',
+      )
+
+      const updatedInfo = (await node.call('XINFO', 'STREAM', key)) as unknown[]
+      assert.strictEqual(kvArrayGet(updatedInfo, 'entries-added'), 43)
+    } finally {
+      await node.del(key)
+      node.disconnect()
+    }
+  })
+
+  test('XSETID rejects lower ids, invalid options, and wrong types', async () => {
+    const tag = `{xsetid-errors:${randomKey()}}`
+    const key = `${tag}:stream`
+    const stringKey = `${tag}:string`
+    const node = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await node.call('XADD', key, '5-0', 'f', 'v')
+      await node.set(stringKey, 'not-a-stream')
+
+      await assert.rejects(
+        () => node.call('XSETID', `${tag}:missing`, '1-0'),
+        errorWithMessage('ERR no such key'),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, '4-0'),
+        errorWithMessage(
+          'ERR The ID specified in XSETID is smaller than the target stream top item',
+        ),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, 'not-an-id'),
+        errorWithMessage(
+          'ERR Invalid stream ID specified as stream command argument',
+        ),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, '6-0', 'ENTRIESADDED', 'nope'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, '6-0', 'ENTRIESADDED'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', key, '6-0', 'BOGUS', '1'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => node.call('XSETID', stringKey, '6-0'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+    } finally {
+      await node.del(key, stringKey)
+      node.disconnect()
+    }
+  })
+
   test('XRANGE returns entries within an inclusive range', async () => {
     const key = randomKey()
     await redisClient?.xadd(key, '1-1', 'a', '1')

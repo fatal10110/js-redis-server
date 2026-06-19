@@ -10,6 +10,7 @@ import { xpendingCommand } from './xpending'
 import { xrangeCommand, xrevrangeCommand } from './xrange'
 import { xreadCommand } from './xread'
 import { xreadgroupCommand } from './xreadgroup'
+import { xsetidCommand } from './xsetid'
 import { xtrimCommand } from './xtrim'
 
 export const streamsCommands = [
@@ -27,6 +28,7 @@ export const streamsCommands = [
   xclaimCommand,
   xautoclaimCommand,
   xinfoCommand,
+  xsetidCommand,
 ]
 
 export {
@@ -43,5 +45,6 @@ export {
   xreadCommand,
   xreadgroupCommand,
   xrevrangeCommand,
+  xsetidCommand,
   xtrimCommand,
 }
