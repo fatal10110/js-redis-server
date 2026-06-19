@@ -187,6 +187,15 @@ for (let i = 0; i < args.length; i++) {
 
 Performance is **not** a priority — this is a mocking library for tests, not a production datastore. Prefer correctness, Redis compatibility, and code clarity over micro-optimizations. Defensive cloning, extra allocations, and readable-but-slower constructs are all acceptable. Only treat performance as a problem if it makes test suites impractically slow.
 
+## Review Notes
+
+When reviewing a change (PR or diff) — or self-reviewing before opening one — weigh these four dimensions, in priority order. The [`redis-pr-review`](.claude/skills/redis-pr-review/SKILL.md) skill automates this: it fans the work out to a Redis wire-compat expert and a Node.js code-quality architect, then merges their findings.
+
+1. **Code quality** — early returns and linear flow (see Code Style above); no dead code or redundant branches introduced by the diff; precise names; type-safety (no `any`, no unsafe casts); explicit error handling with no unhandled promise rejections or unawaited fire-and-forget async; full resource lifecycle (anything started — timers, subscriptions, sessions — is cleaned up on `close`/`RESET`/disconnect). Tests must follow the rules below (node:test only, integration-first, red-before-green).
+2. **Code design** — respect the layered pipeline. Commands stay pure `(args, ctx) → RedisResult` and never touch the transport; cross-cutting behavior belongs in an `ExecutionPolicy`, not special-cased per command; new per-connection state must be torn down in **every** place connection state is reset (pubsub, watches, response streams, transaction queue); honor the per-database `SerialTurnQueue`/`park` concurrency model. Aim for the right altitude — neither over-generalized nor copy-pasted.
+3. **Redis compatibility** — the hard gate, and the repo's whole purpose. Any "real Redis does X" claim is **verified against a real `redis-server`**, never from memory (wire format, error wording, RESP2/RESP3 encoding, command flags, and keyspace-notification / expiry / replica / cluster semantics). Client-visible errors go through `RedisCommandError` subclasses; `flags` (`readonly`/`write`/`noscript`/`transaction`/`admin`/...) must match what real Redis assigns.
+4. **Reusability** — prefer existing building blocks over new ones: schema via `t`, `defineCommand`, the shared keyspace/data-type helpers, existing `RedisCommandError` types, and existing `ExecutionPolicy`s. Extract shared logic instead of duplicating it; introduce a new abstraction only when two or more call sites actually need it.
+
 ## Testing Requirements
 
 ### Test Style (Mandatory)
