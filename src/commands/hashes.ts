@@ -18,7 +18,15 @@ import {
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { TrackedHashData } from '../state/tracked-values'
-import { bulk, integer, ok, array, parseIntegerToken } from './helpers'
+import {
+  array,
+  bulk,
+  integer,
+  ok,
+  parseIntegerToken,
+  ttlMilliseconds,
+  ttlSeconds,
+} from './helpers'
 
 type FieldValuePair = { field: Buffer; value: Buffer }
 type HrandfieldArgs = {
@@ -26,7 +34,7 @@ type HrandfieldArgs = {
   count: number | undefined
   withValues: boolean
 }
-type HgetdelArgs = {
+type HashFieldsArgs = {
   key: Buffer
   fields: Buffer[]
 }
@@ -113,8 +121,8 @@ function createHrandfieldSchema() {
   )
 }
 
-function createHgetdelSchema() {
-  return t.custom<HgetdelArgs>(
+function createHashFieldsSchema() {
+  return t.custom<HashFieldsArgs>(
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key || input.length - index < 4) {
@@ -142,6 +150,66 @@ function createHgetdelSchema() {
       }
     },
   )
+}
+
+function persistHashFields(
+  args: HashFieldsArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
+  const existingHash = ctx.db.getHash(args.key)
+  if (!existingHash) {
+    return array(args.fields.map(() => RedisValue.integer(-2)))
+  }
+
+  return ctx.db.updateHash(args.key, hash => {
+    return array(
+      args.fields.map(field => {
+        const entry = hash.getField(field)
+        if (!entry) {
+          return RedisValue.integer(-2)
+        }
+
+        if (entry.expiresAt === undefined) {
+          return RedisValue.integer(-1)
+        }
+
+        hash.clearFieldExpiration(field)
+        return RedisValue.integer(1)
+      }),
+    )
+  })
+}
+
+function hashFieldTtls(
+  args: HashFieldsArgs,
+  ctx: RedisExecutionContext,
+  mode: 'seconds' | 'milliseconds',
+): RedisResult {
+  const existingHash = ctx.db.getHash(args.key)
+  if (!existingHash) {
+    return array(args.fields.map(() => RedisValue.integer(-2)))
+  }
+
+  return ctx.db.updateHash(args.key, hash => {
+    return array(
+      args.fields.map(field => {
+        const entry = hash.getField(field)
+        if (!entry) {
+          return RedisValue.integer(-2)
+        }
+
+        if (entry.expiresAt === undefined) {
+          return RedisValue.integer(-1)
+        }
+
+        const ttl =
+          mode === 'seconds'
+            ? ttlSeconds(entry.expiresAt)
+            : ttlMilliseconds(entry.expiresAt)
+        return RedisValue.integer(ttl)
+      }),
+    )
+  })
 }
 
 function createHashExpireSchema() {
@@ -481,7 +549,7 @@ export const hdelCommand = defineCommand({
 
 export const hgetdelCommand = defineCommand({
   name: 'hgetdel',
-  schema: createHgetdelSchema(),
+  schema: createHashFieldsSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -506,6 +574,14 @@ export const hgetdelCommand = defineCommand({
     }
     return array(values)
   },
+})
+
+export const hpersistCommand = defineCommand({
+  name: 'hpersist',
+  schema: createHashFieldsSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: persistHashFields,
 })
 
 export const hexpireCommand = defineCommand({
@@ -538,6 +614,22 @@ export const hpexpireatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => expireHashFields(args, ctx, 'unix-milliseconds'),
+})
+
+export const httlCommand = defineCommand({
+  name: 'httl',
+  schema: createHashFieldsSchema(),
+  flags: ['readonly', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => hashFieldTtls(args, ctx, 'seconds'),
+})
+
+export const hpttlCommand = defineCommand({
+  name: 'hpttl',
+  schema: createHashFieldsSchema(),
+  flags: ['readonly', 'fast'],
+  keys: args => [args.key],
+  execute: (args, ctx) => hashFieldTtls(args, ctx, 'milliseconds'),
 })
 
 export const hmsetCommand = defineCommand({
@@ -782,10 +874,13 @@ export const hashesCommands = [
   hgetCommand,
   hdelCommand,
   hgetdelCommand,
+  hpersistCommand,
   hexpireCommand,
   hpexpireCommand,
   hexpireatCommand,
   hpexpireatCommand,
+  httlCommand,
+  hpttlCommand,
   hmsetCommand,
   hmgetCommand,
   hgetallCommand,
