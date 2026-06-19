@@ -287,9 +287,10 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         await directClient.call('SCRIPT', 'FLUSH', 'SYNC'),
         'OK',
       )
-      assert.deepStrictEqual(await directClient.call('SCRIPT', 'EXISTS', sha), [
-        0,
-      ])
+      assert.deepStrictEqual(
+        await directClient.call('SCRIPT', 'EXISTS', sha),
+        [0],
+      )
       await assert.rejects(
         () => directClient.evalsha(upperSha, 0, 'cached'),
         errorWithMessage('NOSCRIPT No matching script. Please use EVAL.'),
