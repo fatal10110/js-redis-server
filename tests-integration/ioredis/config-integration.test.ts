@@ -2,7 +2,7 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { connectToSlotOwner, randomKey } from '../utils'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -19,6 +19,7 @@ function configArrayToMap(reply: unknown): Map<string, string> {
 describe(`CONFIG GET/SET integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
   let directClient: Redis | undefined
+  let standaloneClient: Redis | undefined
 
   before(async () => {
     redisClient = await testRunner.setupIoredisCluster('config-integration')
@@ -26,6 +27,7 @@ describe(`CONFIG GET/SET integration (${testRunner.getBackendName()})`, () => {
       redisClient,
       `{config:${randomKey()}}:probe`,
     )
+    standaloneClient = await testRunner.setupIoredisStandalone()
   })
 
   after(async () => {
@@ -76,6 +78,37 @@ describe(`CONFIG GET/SET integration (${testRunner.getBackendName()})`, () => {
   test('CONFIG SET rejects an unknown parameter', async () => {
     await assert.rejects(async () =>
       directClient?.call('CONFIG', 'SET', 'definitely-not-a-real-param', '1'),
+    )
+  })
+
+  test('CONFIG RESETSTAT returns OK', async () => {
+    const reply = await standaloneClient?.call('CONFIG', 'RESETSTAT')
+
+    assert.strictEqual(reply, 'OK')
+  })
+
+  test('CONFIG RESETSTAT rejects extra arguments', async () => {
+    await assert.rejects(
+      () => standaloneClient!.call('CONFIG', 'RESETSTAT', 'extra'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'config|resetstat' command",
+      ),
+    )
+  })
+
+  test('CONFIG REWRITE rejects when no config file is loaded', async () => {
+    await assert.rejects(
+      () => standaloneClient!.call('CONFIG', 'REWRITE'),
+      errorWithMessage('ERR The server is running without a config file'),
+    )
+  })
+
+  test('CONFIG REWRITE rejects extra arguments', async () => {
+    await assert.rejects(
+      () => standaloneClient!.call('CONFIG', 'REWRITE', 'extra'),
+      errorWithMessage(
+        "ERR wrong number of arguments for 'config|rewrite' command",
+      ),
     )
   })
 })

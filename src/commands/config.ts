@@ -143,6 +143,22 @@ function configSet(
   return ok()
 }
 
+function configResetStat(args: readonly Buffer[]): RedisResult {
+  if (args.length !== 0) {
+    throw new WrongNumberOfArgumentsError('config|resetstat')
+  }
+
+  return ok()
+}
+
+function configRewrite(args: readonly Buffer[]): RedisResult {
+  if (args.length !== 0) {
+    throw new WrongNumberOfArgumentsError('config|rewrite')
+  }
+
+  throw new RedisCommandError('The server is running without a config file')
+}
+
 export const configCommand = defineCommand({
   name: 'config',
   schema: t.object({
@@ -165,6 +181,8 @@ export const configCommand = defineCommand({
       commandSubcommandInfo('config|get', -3),
       commandSubcommandInfo('config|set', -4),
       commandSubcommandInfo('config|help', 2),
+      commandSubcommandInfo('config|resetstat', 2),
+      commandSubcommandInfo('config|rewrite', 2),
     ],
   },
   keys: () => [],
@@ -177,6 +195,14 @@ export const configCommand = defineCommand({
 
     if (subcommand === 'set') {
       return configSet(args.args, ctx)
+    }
+
+    if (subcommand === 'resetstat') {
+      return configResetStat(args.args)
+    }
+
+    if (subcommand === 'rewrite') {
+      return configRewrite(args.args)
     }
 
     throw new RedisCommandError(
