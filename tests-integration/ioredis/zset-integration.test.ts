@@ -6,24 +6,6 @@ import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
-function redisVersionFromInfo(info: string | undefined): string | null {
-  const match = info?.match(/^redis_version:(\d+\.\d+\.\d+)/m)
-  return match?.[1] ?? null
-}
-
-function redisVersionAtLeast(
-  version: string | null,
-  major: number,
-  minor: number,
-): boolean {
-  if (!version) {
-    return false
-  }
-
-  const [actualMajor = 0, actualMinor = 0] = version.split('.').map(Number)
-  return actualMajor > major || (actualMajor === major && actualMinor >= minor)
-}
-
 describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
@@ -207,20 +189,7 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     assert.strictEqual(revrank2, 2)
   })
 
-  test('ZRANK and ZREVRANK WITHSCORE option', async t => {
-    if (testRunner.backend === 'real') {
-      const serverInfo = (await redisClient?.call('INFO', 'server')) as
-        | string
-        | undefined
-      const redisVersion = redisVersionFromInfo(serverInfo)
-      if (!redisVersionAtLeast(redisVersion, 7, 2)) {
-        t.skip(
-          `ZRANK WITHSCORE requires Redis 7.2+; real backend is ${redisVersion ?? 'unknown'}`,
-        )
-        return
-      }
-    }
-
+  test('ZRANK and ZREVRANK WITHSCORE option', async () => {
     const keyTag = `zrank-withscore:${randomKey()}`
     const zsetKey = `{${keyTag}}:zset`
     const stringKey = `{${keyTag}}:string`

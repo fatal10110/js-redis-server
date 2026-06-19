@@ -61,7 +61,7 @@ export const getCommand = defineCommand({
     keyStep: 1,
     categories: ['@read', '@string', '@fast'],
     keySpecs: [commandKeySpec(1, 0, 1, ['RO', 'access'])],
-    docs: commandDocs('Get the value of a key', 'string', [
+    docs: commandDocs('Returns the string value of a key.', 'string', [
       commandKeyArgument('key', 0),
     ]),
   },
