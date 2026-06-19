@@ -28,17 +28,6 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
     await testRunner.cleanup()
   })
 
-  async function supportsHgetdel(
-    client: Cluster | undefined,
-  ): Promise<boolean> {
-    if (testRunner.backend !== 'real') {
-      return true
-    }
-
-    const info = await client?.call('COMMAND', 'INFO', 'HGETDEL')
-    return Array.isArray(info) && info[0] !== null
-  }
-
   test('HSET and HGET commands', async () => {
     // HSET single field
     const result1 = await redisClient?.hset('hash1', 'field1', 'value1')
@@ -344,12 +333,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(await redisClient?.type(key), 'none')
   })
 
-  test('HGETDEL returns values and deletes fields', async t => {
-    if (!(await supportsHgetdel(redisClient))) {
-      t.skip('configured real Redis does not support HGETDEL')
-      return
-    }
-
+  test('HGETDEL returns values and deletes fields', async () => {
     const key = `{hgetdel:${randomKey()}}:hash`
     let directClient: Redis | undefined
 
@@ -424,12 +408,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
-  test('HGETDEL errors match Redis', async t => {
-    if (!(await supportsHgetdel(redisClient))) {
-      t.skip('configured real Redis does not support HGETDEL')
-      return
-    }
-
+  test('HGETDEL errors match Redis', async () => {
     const tag = `{hgetdel-errors:${randomKey()}}`
     const hashKey = `${tag}:hash`
     const stringKey = `${tag}:string`

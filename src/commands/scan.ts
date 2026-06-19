@@ -243,11 +243,18 @@ function readOptionValue(
 
 function parseCursor(raw: Buffer): bigint {
   const value = raw.toString()
-  if (!/^-?\d+$/.test(value)) {
+  // Redis parses the cursor as an unsigned 64-bit integer (strict_strtoull):
+  // a leading sign or a value past UINT64_MAX is rejected as `invalid cursor`.
+  if (!/^\d+$/.test(value)) {
     throw new RedisCommandError('invalid cursor')
   }
 
-  return BigInt(value)
+  const parsed = BigInt(value)
+  if (parsed > 0xffffffffffffffffn) {
+    throw new RedisCommandError('invalid cursor')
+  }
+
+  return parsed
 }
 
 function parseCount(raw: Buffer): number {
