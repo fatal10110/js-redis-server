@@ -120,6 +120,26 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(await expired, true)
   })
 
+  test('publishes expired event from active expiry without a forcing read', async () => {
+    const actor = await connect()
+    const subscriber = await connect()
+    await actor.config('SET', 'notify-keyspace-events', 'KEA')
+    const key = randomKey()
+
+    await subscriber.psubscribe(`__keyevent@0__:*`)
+    await settle()
+
+    const expired = waitForEvent(
+      subscriber,
+      `__keyevent@0__:expired`,
+      key,
+      3000,
+    )
+    await actor.set(key, 'v', 'PX', 50)
+
+    assert.strictEqual(await expired, true)
+  })
+
   test('translates RENAME into rename_from and rename_to', async () => {
     const actor = await connect()
     const subscriber = await connect()

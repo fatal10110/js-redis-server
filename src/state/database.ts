@@ -228,6 +228,10 @@ export class RedisDatabase {
     return this.keyspace.entriesSnapshot()
   }
 
+  sweepExpired(now?: number): number {
+    return this.keyspace.sweepExpired(now)
+  }
+
   subscribe(listener: RedisMutationListener): Unsubscribe {
     return this.mutations.subscribe(listener)
   }

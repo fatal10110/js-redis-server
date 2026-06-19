@@ -83,6 +83,25 @@ describe('new Redis state core', () => {
     db.expire(key, Date.now() - 1)
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(events.at(-1)?.type, 'evict')
+    server.close()
+  })
+
+  test('actively sweeps expired entries without a read', async () => {
+    const server = new RedisServerState({ activeExpiryIntervalMs: 5 })
+    const db = server.getDatabase(0)
+    const key = Buffer.from('active-expiring')
+    const events: RedisMutationEvent[] = []
+    db.subscribeKey(key, event => events.push(event))
+
+    try {
+      db.setString(key, Buffer.from('value'), { expiresAt: Date.now() + 10 })
+
+      await waitUntil(() => events.some(event => event.type === 'evict'))
+
+      assert.strictEqual(db.size(), 0)
+    } finally {
+      server.close()
+    }
   })
 
   test('returns defensive clones from reads and mutation events', () => {
@@ -239,4 +258,19 @@ function assertHashValue(value: RedisDataValue | null, expected: string) {
 
 function fieldKey(field: string): string {
   return Buffer.from(field).toString('hex')
+}
+
+async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+
+  assert.fail('Timed out waiting for condition')
 }

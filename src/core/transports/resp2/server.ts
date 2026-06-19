@@ -62,6 +62,7 @@ export class Resp2Server {
           reject(err)
           return
         }
+        this.state.close()
         resolve()
       }),
     )

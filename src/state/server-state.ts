@@ -18,12 +18,19 @@ export type RedisServerStateOptions = {
   pubsubBroker?: RedisPubSubBroker
   scriptCache?: RedisScriptCache
   /**
+   * Interval for the background active-expiry sweep. Set to `false` to disable
+   * the timer for tests that need full manual control of expiration.
+   */
+  activeExpiryIntervalMs?: number | false
+  /**
    * Optional server password (Redis `requirepass`). When set, connections start
    * unauthenticated and must `AUTH` before running most commands. When unset,
    * the default user is `nopass` and no authentication is enforced.
    */
   requirepass?: string
 }
+
+const DEFAULT_ACTIVE_EXPIRY_INTERVAL_MS = 100
 
 export class RedisServerState {
   readonly databases: RedisDatabase[]
@@ -39,6 +46,9 @@ export class RedisServerState {
    */
   notifyKeyspaceEvents = ''
   private readonly clientSessions = new Set<RedisClientSession>()
+  private activeExpiryTimer: ReturnType<typeof setInterval> | null = null
+  private activeExpiryRunning = false
+  private closed = false
   private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
 
   constructor(options?: RedisServerStateOptions) {
@@ -71,6 +81,8 @@ export class RedisServerState {
         ),
       )
     }
+
+    this.startActiveExpiry(options?.activeExpiryIntervalMs)
   }
 
   /**
@@ -110,6 +122,68 @@ export class RedisServerState {
   flushAllDatabases(): void {
     for (const database of this.databases) {
       database.flush()
+    }
+  }
+
+  sweepExpired(now = Date.now()): number {
+    let count = 0
+    for (const database of this.databases) {
+      count += database.sweepExpired(now)
+    }
+    return count
+  }
+
+  close(): void {
+    this.closed = true
+    if (this.activeExpiryTimer) {
+      clearInterval(this.activeExpiryTimer)
+      this.activeExpiryTimer = null
+    }
+  }
+
+  private startActiveExpiry(intervalMs: number | false | undefined): void {
+    if (intervalMs === false) {
+      return
+    }
+
+    const resolvedIntervalMs = intervalMs ?? DEFAULT_ACTIVE_EXPIRY_INTERVAL_MS
+    if (!Number.isInteger(resolvedIntervalMs) || resolvedIntervalMs < 1) {
+      throw new Error(`Invalid active expiry interval ${resolvedIntervalMs}`)
+    }
+
+    const timer = setInterval(() => {
+      void this.runActiveExpiry()
+    }, resolvedIntervalMs)
+    ;(
+      timer as ReturnType<typeof setInterval> & { unref?: () => void }
+    ).unref?.()
+    this.activeExpiryTimer = timer
+  }
+
+  private async runActiveExpiry(): Promise<void> {
+    if (this.closed || this.activeExpiryRunning) {
+      return
+    }
+
+    this.activeExpiryRunning = true
+    try {
+      const now = Date.now()
+      for (const database of this.databases) {
+        if (this.closed) {
+          return
+        }
+
+        const turn = await database.turnQueue.waitTurn()
+        try {
+          if (!this.closed) {
+            database.sweepExpired(now)
+          }
+        } finally {
+          turn.release()
+        }
+      }
+    } finally {
+      this.activeExpiryRunning = false
     }
   }
 }
