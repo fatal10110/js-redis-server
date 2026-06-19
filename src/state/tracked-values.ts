@@ -103,6 +103,17 @@ export class TrackedHashData {
     return true
   }
 
+  clearFieldExpiration(field: Buffer): boolean {
+    const entry = this.getField(field)
+    if (!entry || entry.expiresAt === undefined) {
+      return false
+    }
+
+    delete entry.expiresAt
+    this.tracker.markChanged()
+    return true
+  }
+
   entries(): IterableIterator<RedisHashField> {
     this.deleteExpiredFields()
     return this.hash.fields.values()

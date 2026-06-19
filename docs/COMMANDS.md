@@ -233,6 +233,9 @@ with `GT` or `LT`.
 - [x] `HPEXPIRE key milliseconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in milliseconds
 - [x] `HEXPIREAT key unix-time-seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field expiration timestamps in seconds
 - [x] `HPEXPIREAT key unix-time-milliseconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field expiration timestamps in milliseconds
+- [x] `HPERSIST key FIELDS numfields field [field ...]` - Remove hash-field TTLs
+- [x] `HTTL key FIELDS numfields field [field ...]` - Get hash-field TTLs in seconds
+- [x] `HPTTL key FIELDS numfields field [field ...]` - Get hash-field TTLs in milliseconds
 - [x] `HEXISTS key field` - Determine if a hash field exists
 - [x] `HKEYS key` - Get all fields in a hash
 - [x] `HVALS key` - Get all values in a hash
@@ -245,7 +248,7 @@ with `GT` or `LT`.
 
 #### Not implemented
 
-- [ ] `HPERSIST` / `HTTL` / `HPTTL` / `HGETEX` (remaining hash-field-TTL family)
+- [ ] `HGETEX key [EX seconds|PX ms|EXAT unix-s|PXAT unix-ms|PERSIST|KEEPTTL] FIELDS numfields field [field ...]`
 
 ## 6. List Commands
 
