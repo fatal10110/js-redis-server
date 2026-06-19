@@ -208,8 +208,8 @@ export class RedisMovedError extends RedisCommandError {
 }
 
 export class RedisClusterDownError extends RedisCommandError {
-  constructor(slot: number) {
-    super(`Hash slot ${slot} is not served`, 'CLUSTERDOWN')
+  constructor() {
+    super('Hash slot not served', 'CLUSTERDOWN')
   }
 }
 
