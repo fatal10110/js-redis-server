@@ -224,3 +224,16 @@ export {
   type RedisClusterNodeHandle,
   type RedisClusterOptions,
 } from './cluster'
+
+// Test-mock facade
+export {
+  createRedisMock,
+  createRedisServer,
+  type CreateRedisMockOptions,
+  type CreateRedisServerOptions,
+  type RedisAddress,
+  type RedisMock,
+  type RedisMockClusterOptions,
+  type RedisServerHandle,
+} from './mock'
+export { seedCluster, seedStandalone, type SeedEntry } from './seed'

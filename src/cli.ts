@@ -1,7 +1,5 @@
-import { createRedisCommandExecutor } from './commands'
-import { Resp2Server } from './core/transports/resp2/server'
 import { buildRedisCluster } from './cluster'
-import { RedisServerState } from './state'
+import { createRedisServer } from './mock'
 import type { Logger } from './logger'
 
 type Mode = 'single' | 'cluster'
@@ -158,11 +156,7 @@ async function runSingle(options: CliOptions, logger: Logger) {
   validatePort(options.port, 'port')
   logger.debug('Starting single server mode', { port: options.port })
 
-  const state = new RedisServerState()
-  const executor = createRedisCommandExecutor()
-  const server = new Resp2Server({ server: state, executor, logger })
-
-  await server.listen(options.port)
+  const { server } = await createRedisServer({ port: options.port, logger })
   logger.info(`Single Redis server listening at ${server.getAddress()}`)
 
   const shutdown = async () => {

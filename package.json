@@ -23,16 +23,23 @@
     "url": "https://github.com/fatal10110/js-redis-server/issues"
   },
   "homepage": "https://github.com/fatal10110/js-redis-server#readme",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
   },
   "bin": {
-    "js-redis-server": "dist/cli.js"
+    "js-redis-server": "./dist/cli.js"
   },
   "sideEffects": false,
   "files": [
@@ -44,7 +51,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "rm -rf ./dist && tsc && node -e \"const f=require('fs');const p='dist/cli.js';f.writeFileSync(p,'#!/usr/bin/env node\\n'+f.readFileSync(p,'utf8'));f.chmodSync(p,0o755)\"",
+    "build": "tsup",
     "start": "npm run build && node --enable-source-maps ./dist/cli.js",
     "test": "tsc --noEmit && node --enable-source-maps --import tsx --no-warnings --test \"./tests/**/*.test.ts\"",
     "test:integration:mock": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/**/*.test.ts\"",
@@ -78,6 +85,7 @@
     "lint-staged": "^17.0.7",
     "prettier": "^3.8.4",
     "redis": "^6.0.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }
