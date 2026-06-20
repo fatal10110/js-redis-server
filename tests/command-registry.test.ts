@@ -6,8 +6,8 @@ import {
   RedisValue,
   defineCommand,
   t,
-} from '../src'
-import type { CommandDefinition, CommandFlag } from '../src'
+} from '../src/internal'
+import type { CommandDefinition, CommandFlag } from '../src/internal'
 
 function makeCommand(
   name: string,

@@ -2,9 +2,8 @@
 // hand (custom commands, policies, transports, schema parsing, Lua, …).
 //
 // Published as the `js-redis-server/core` subpath. The package root
-// (`js-redis-server`) re-exports everything here for now, so importing from the
-// root stays non-breaking; new code that only needs internals should prefer the
-// `js-redis-server/core` subpath.
+// (`js-redis-server`) intentionally exposes only the curated consumer facade;
+// import from this subpath when you need these lower-level pieces.
 
 export type {
   CommandCapabilities,
@@ -100,6 +99,7 @@ export {
   REDIS_CLUSTER_SLOT_COUNT,
   RedisClusterTopology,
   RedisDatabase,
+  RedisServerState,
   RedisKeyspace,
   RedisMonitorFeed,
   RedisMutationBus,
@@ -115,6 +115,7 @@ export {
 } from './state'
 export {
   connectionCommands,
+  createRedisCommandExecutor,
   createRedisCommandRegistry,
   commandCommand,
   copyCommand,
@@ -172,3 +173,22 @@ export {
 } from './core/transports/resp2'
 export { InMemoryConnectionTransport } from './core/transports/in-memory-connection-transport'
 export { SocketConnectionTransport } from './core/transports/socket-connection-transport'
+
+// Pipeline assembly building blocks — the pieces `createRedisMock` /
+// `createRedisServer` / `createRedisCluster` wire together. Power users who
+// assemble the pipeline by hand reach for these directly.
+export {
+  Resp2Server,
+  type Resp2ServerOptions,
+} from './core/transports/resp2/server'
+export {
+  RedisCluster,
+  createRedisCluster,
+  buildRedisCluster,
+  computeSlotRange,
+  type RedisClusterNodeHandle,
+  type RedisClusterOptions,
+} from './cluster'
+
+// Client-visible error classes (also re-exported from the package root).
+export * from './core/redis-error'

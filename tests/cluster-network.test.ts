@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { buildRedisCluster, computeSlotRange } from '../src/cluster'
+import { createRedisCluster, computeSlotRange } from '../src/cluster'
 
 describe('ClusterNetwork slot distribution', () => {
   test('computeSlotRange covers all slots without overlap', () => {
@@ -31,8 +31,27 @@ describe('ClusterNetwork slot distribution', () => {
     assert.throws(() => computeSlotRange(3, 3), /Invalid master index/)
   })
 
+  test('listen cleans up nodes that already started when a later node fails', async () => {
+    const cluster = createRedisCluster({ masters: 2, basePort: 0 })
+    const servers = (
+      cluster as unknown as {
+        servers: Array<{
+          listen(port?: number): Promise<void>
+          server: { address(): unknown }
+        }>
+      }
+    ).servers
+
+    servers[1].listen = async () => {
+      throw new Error('forced listen failure')
+    }
+
+    await assert.rejects(cluster.listen(), /forced listen failure/)
+    assert.strictEqual(servers[0].server.address(), null)
+  })
+
   test('replica state updates can be delayed', async () => {
-    const cluster = buildRedisCluster({
+    const cluster = createRedisCluster({
       masters: 1,
       replicasPerMaster: 1,
       basePort: 0,
@@ -56,12 +75,12 @@ describe('ClusterNetwork slot distribution', () => {
         Buffer.from('value'),
       )
     } finally {
-      await closeUnstartedCluster(cluster)
+      await cluster.close()
     }
   })
 
   test('replica states do not actively expire replicated keys on their own clock', async () => {
-    const cluster = buildRedisCluster({
+    const cluster = createRedisCluster({
       masters: 1,
       replicasPerMaster: 1,
       basePort: 0,
@@ -83,19 +102,7 @@ describe('ClusterNetwork slot distribution', () => {
 
       assert.deepStrictEqual(events, ['write'])
     } finally {
-      await closeUnstartedCluster(cluster)
+      await cluster.close()
     }
   })
 })
-
-async function closeUnstartedCluster(
-  cluster: ReturnType<typeof buildRedisCluster>,
-): Promise<void> {
-  try {
-    await cluster.close()
-  } catch (err) {
-    if ((err as { code?: string }).code !== 'ERR_SERVER_NOT_RUNNING') {
-      throw err
-    }
-  }
-}

@@ -5,7 +5,7 @@ import {
   RedisServerState,
   RedisResult,
   RedisValue,
-} from '../src'
+} from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 
 // Issue #130: RedisLuaRuntime used to be a process-wide module-level singleton

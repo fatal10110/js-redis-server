@@ -7,7 +7,7 @@ import {
   createClusterCommands,
   createClusterPolicy,
   createRedisCommandExecutor,
-} from '../src'
+} from '../src/internal'
 
 describe('CLUSTER NODES output format', () => {
   test('reports bus port as client port + 10000 (#55)', async () => {

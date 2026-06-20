@@ -1,7 +1,8 @@
 import { test, describe, afterEach } from 'node:test'
 import assert from 'node:assert'
-// Import exclusively through the package barrel — this is the curated public
-// surface consumers see, not the deep module paths.
+// The root barrel is the curated consumer surface: the test-mock facade, the
+// `create*` builders, seeding, the socketless client, and the error classes.
+import * as root from '../src'
 import {
   createRedisMock,
   createRedisServer,
@@ -9,16 +10,21 @@ import {
   InMemoryRedisClient,
   seedStandalone,
   seedCluster,
+  createRedisCluster,
   buildRedisCluster,
   RedisCluster,
   computeSlotRange,
-  Resp2Server,
-  RedisServerState,
-  createRedisCommandExecutor,
   RedisCommandError,
   WrongTypeRedisError,
   type RedisMock,
 } from '../src'
+// Hand-wiring building blocks live on the `js-redis-server/core` subpath, NOT
+// on the root.
+import {
+  Resp2Server,
+  RedisServerState,
+  createRedisCommandExecutor,
+} from '../src/internal'
 
 describe('public interface — exported symbols', () => {
   test('facade, builders, and helpers are all exported as the right kind', () => {
@@ -28,9 +34,9 @@ describe('public interface — exported symbols', () => {
       createInMemoryClient,
       seedStandalone,
       seedCluster,
+      createRedisCluster,
       buildRedisCluster,
       computeSlotRange,
-      createRedisCommandExecutor,
     ]) {
       assert.strictEqual(typeof fn, 'function')
     }
@@ -38,12 +44,37 @@ describe('public interface — exported symbols', () => {
     for (const ctor of [
       InMemoryRedisClient,
       RedisCluster,
-      Resp2Server,
-      RedisServerState,
       RedisCommandError,
       WrongTypeRedisError,
     ]) {
       assert.strictEqual(typeof ctor, 'function')
+    }
+  })
+
+  test('buildRedisCluster is a deprecated alias of createRedisCluster', () => {
+    assert.strictEqual(buildRedisCluster, createRedisCluster)
+  })
+
+  test('hand-wiring building blocks ARE exported from the core subpath', () => {
+    assert.strictEqual(typeof Resp2Server, 'function')
+    assert.strictEqual(typeof RedisServerState, 'function')
+    assert.strictEqual(typeof createRedisCommandExecutor, 'function')
+  })
+
+  test('hand-wiring building blocks are NOT on the root barrel', () => {
+    for (const name of [
+      'Resp2Server',
+      'RedisServerState',
+      'createRedisCommandExecutor',
+      'defineCommand',
+      'CommandRegistry',
+      'RedisDatabase',
+    ]) {
+      assert.strictEqual(
+        name in root,
+        false,
+        `${name} should only be exported from js-redis-server/core`,
+      )
     }
   })
 
@@ -67,6 +98,20 @@ describe('public interface — createRedisServer', () => {
       assert.strictEqual('executor' in handle, false)
     } finally {
       await handle.close()
+    }
+  })
+
+  test('the cluster option builds and starts a listening cluster', async () => {
+    const cluster = await createRedisServer({ cluster: { masters: 3 } })
+    try {
+      assert.ok(cluster instanceof RedisCluster)
+      assert.strictEqual(cluster.nodes.length, 3)
+      // Already listening — every node bound a real port.
+      for (const node of cluster.nodes) {
+        assert.ok(node.port > 0)
+      }
+    } finally {
+      await cluster.close()
     }
   })
 })

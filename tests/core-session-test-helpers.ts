@@ -3,8 +3,8 @@ import {
   RedisServerState,
   createRedisCommandExecutor,
   createRedisCommandRegistry,
-} from '../src'
-import type { CommandDefinition } from '../src'
+} from '../src/internal'
+import type { CommandDefinition } from '../src/internal'
 
 export function createRedisSessionHarness(options?: {
   databaseCount?: number

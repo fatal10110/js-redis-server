@@ -11,8 +11,8 @@ import {
   defineCommand,
   isResponseStream,
   t,
-} from '../src'
-import type { RedisExecutionContext, ResponseStream } from '../src'
+} from '../src/internal'
+import type { RedisExecutionContext, ResponseStream } from '../src/internal'
 
 function createContext(executor?: CommandExecutor): RedisExecutionContext {
   const server = new RedisServerState()

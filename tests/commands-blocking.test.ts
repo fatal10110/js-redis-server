@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
-import { ClientSession, RedisResult, RedisValue } from '../src'
+import { ClientSession, RedisResult, RedisValue } from '../src/internal'
 import { createRedisSessionHarness as createHarness } from './core-session-test-helpers'
 
 function buf(...tokens: string[]): Buffer[] {

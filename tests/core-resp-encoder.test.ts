@@ -5,7 +5,7 @@ import {
   RedisValue,
   encodeRedisResult,
   encodeRedisValue,
-} from '../src'
+} from '../src/internal'
 
 describe('RESP encoder core', () => {
   test('encodes RESP2 scalar values', () => {

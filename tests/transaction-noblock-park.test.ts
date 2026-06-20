@@ -6,8 +6,8 @@ import {
   RedisResult,
   RedisValue,
   t,
-} from '../src'
-import type { RedisDatabase } from '../src'
+} from '../src/internal'
+import type { RedisDatabase } from '../src/internal'
 import { createRedisSessionHarness } from './core-session-test-helpers'
 
 function buf(...tokens: string[]): Buffer[] {

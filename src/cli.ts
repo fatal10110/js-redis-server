@@ -1,4 +1,3 @@
-import { buildRedisCluster } from './cluster'
 import { createRedisServer } from './mock'
 import type { Logger } from './logger'
 
@@ -176,14 +175,11 @@ async function runCluster(options: CliOptions, logger: Logger) {
     basePort: options.basePort,
   })
 
-  const cluster = buildRedisCluster({
-    masters: options.masters,
-    replicasPerMaster: options.slaves,
+  const cluster = await createRedisServer({
+    cluster: { masters: options.masters, replicas: options.slaves },
     basePort: options.basePort,
     logger,
   })
-
-  await cluster.listen()
 
   const nodes = cluster.nodes.map(n => `${n.id} ${n.host}:${n.port}`).join(', ')
   logger.info(`Cluster nodes: ${nodes}`)
