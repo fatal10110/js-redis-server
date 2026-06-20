@@ -9,7 +9,7 @@ import {
   createClusterPolicy,
   createClusterCommands,
   createRedisCommandExecutor,
-} from '../src'
+} from '../src/internal'
 
 describe('new cluster execution policy', () => {
   test('allows commands whose parsed keys belong to the local node', async () => {

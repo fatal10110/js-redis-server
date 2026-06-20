@@ -43,8 +43,9 @@ Practically, that means:
 - **Client-agnostic** — works with `ioredis`, `node-redis`, `redis`, or
   anything else that opens a socket and speaks RESP. Switch clients, switch
   nothing else.
-- **Standalone *and* cluster mode** — `buildRedisCluster()` spins up a real
-  multi-node topology with slot routing, `MOVED`/`ASK` redirects, and
+- **Standalone *and* cluster mode** — `createRedisServer({ cluster })` and
+  `createRedisMock({ cluster })` start a real multi-node topology with slot
+  routing, `MOVED`/`ASK` redirects, and
   cross-slot validation, so you can test cluster-aware code paths without
   Docker or a real cluster.
 - **Real Lua scripting** — `EVAL`/`EVALSHA` run actual Lua via WebAssembly
@@ -80,7 +81,7 @@ import {
   RedisServerState,
   createRedisCommandExecutor,
   Resp2Server,
-} from 'js-redis-server'
+} from 'js-redis-server/core'
 
 const state = new RedisServerState()
 const executor = createRedisCommandExecutor()

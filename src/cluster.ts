@@ -51,11 +51,15 @@ export class RedisCluster {
   }
 
   async listen(): Promise<void> {
-    await Promise.all(
-      this.servers.map((server, index) =>
-        server.listen(this.nodes[index].port),
-      ),
-    )
+    try {
+      for (let index = 0; index < this.servers.length; index++) {
+        await this.servers[index].listen(this.nodes[index].port)
+      }
+    } catch (err) {
+      await this.close()
+      throw err
+    }
+
     // Backfill actual ports — when basePort is 0 the OS assigns random ports
     // and the handles/topology need to reflect what was actually bound.
     this.servers.forEach((server, index) => {
@@ -69,7 +73,18 @@ export class RedisCluster {
     for (const link of this.replicationLinks) {
       link.close()
     }
-    await Promise.all(this.servers.map(server => server.close()))
+    const results = await Promise.allSettled(
+      this.servers.map(server => server.close()),
+    )
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        continue
+      }
+      if (isServerNotRunningError(result.reason)) {
+        continue
+      }
+      throw result.reason
+    }
   }
 
   getAddresses(): string[] {
@@ -77,7 +92,19 @@ export class RedisCluster {
   }
 }
 
-export function buildRedisCluster(options: RedisClusterOptions): RedisCluster {
+function isServerNotRunningError(err: unknown): boolean {
+  return (err as { code?: string }).code === 'ERR_SERVER_NOT_RUNNING'
+}
+
+/**
+ * Builds an **un-started** cluster — call {@link RedisCluster.listen} yourself.
+ *
+ * @deprecated Prefer {@link createRedisServer} with the `cluster` option, which
+ * builds *and* starts the cluster in one call (and is symmetric with
+ * `createRedisMock({ cluster })`). This low-level builder remains for callers
+ * that need to control when `listen()` runs.
+ */
+export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
   validateOptions(options)
 
   const host = options.host ?? '127.0.0.1'
@@ -163,6 +190,13 @@ export function buildRedisCluster(options: RedisClusterOptions): RedisCluster {
 
   return new RedisCluster(topology, handles, servers, replicationLinks)
 }
+
+/**
+ * @deprecated Renamed to {@link createRedisCluster} for naming consistency with
+ * `createRedisServer` / `createRedisMock`. This alias will be removed in a
+ * future release.
+ */
+export const buildRedisCluster = createRedisCluster
 
 export function computeSlotRange(
   masterIndex: number,

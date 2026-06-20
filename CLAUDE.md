@@ -112,7 +112,7 @@ Commands are pure `(args, ctx) → RedisResult` — they never touch the transpo
 
 The integration test suite supports two backends via `TEST_BACKEND` (see [tests-integration/test-config.ts](tests-integration/test-config.ts)):
 
-- `mock` (default): spins up an in-process mock cluster via `buildRedisCluster` — fast, no external dependencies
+- `mock` (default): spins up an in-process mock cluster via `createRedisCluster` — fast, no external dependencies
 - `real`: uses an actual Redis cluster (validates real-world compatibility)
 
 Integration tests live in [tests-integration/](tests-integration/) with subdirectories for `ioredis/` and `node-redis/` clients.

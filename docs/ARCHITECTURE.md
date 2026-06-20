@@ -215,7 +215,7 @@ onStream(plan, ctx, stream) // can wrap/replace a streaming result
 [`AuthPolicy`](../src/core/execution-policies/auth-policy.ts) first and appends
 [`TransactionPolicy`](../src/core/execution-policies/transaction-policy.ts)
 last; [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts) is
-inserted between them only for cluster nodes (see [`buildRedisCluster`](../src/cluster.ts#L70)).
+inserted between them only for cluster nodes (see [`createRedisCluster`](../src/cluster.ts#L80)).
 Order matters: `AuthPolicy` rejects unauthenticated clients with `NOAUTH`
 before any routing or queueing happens (only `AUTH`/`HELLO`/`RESET`/`QUIT` pass
 when `requirepass` is set and the session is unauthenticated), and cluster
@@ -420,7 +420,7 @@ for the client-facing view of this negotiation.
 
 ## Cluster mode
 
-[`buildRedisCluster`](../src/cluster.ts#L70) computes a slot-range topology
+[`createRedisCluster`](../src/cluster.ts#L80) computes a slot-range topology
 ([`RedisClusterTopology`](../src/state/cluster-topology.ts#L16), 16384 slots
 split evenly across masters, with optional replicas), then spins up one
 `Resp2Server` per node — each with its **own** `RedisServerState` (so data is
@@ -446,11 +446,11 @@ server as a test mock. It sits on top of the existing wiring rather than
 beside it:
 
 - standalone mocks go through [`createRedisServer`](../src/mock.ts) — the
-  standalone analog to `buildRedisCluster` that wires `RedisServerState` (16
+  standalone analog to `createRedisCluster` that wires `RedisServerState` (16
   databases by default), `createRedisCommandExecutor`, and a `Resp2Server`.
   [`cli.ts`](../src/cli.ts) `runSingle` is built on the same helper, so the CLI
   and the mock never drift.
-- cluster mocks delegate straight to `buildRedisCluster`.
+- cluster mocks delegate straight to `createRedisCluster`.
 
 The returned `RedisMock` exposes connection helpers (`connectionOptions()`,
 `clusterNodes()`, `url`), `flush()`/`reset()` (→ `state.flushAllDatabases()` or

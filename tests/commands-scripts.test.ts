@@ -11,7 +11,7 @@ import {
   Resp2SessionAdapter,
   createClusterPolicy,
   createRedisCommandExecutor,
-} from '../src'
+} from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
 

@@ -11,8 +11,8 @@ import {
   Resp2SessionAdapter,
   defineCommand,
   t,
-} from '../src'
-import type { ResponseStream } from '../src'
+} from '../src/internal'
+import type { ResponseStream } from '../src/internal'
 import { createRedisSessionHarness as createHarness } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
 

@@ -1,12 +1,11 @@
-// Curated public surface.
+// Curated public surface — the small set of symbols a test/dev consumer needs:
+// the test-mock facade, the `create*` server/cluster builders, seeding, the
+// socketless client, and the client-visible error classes.
 //
-// Deep internals (command definitions, schema parsing, policies, transports,
-// Lua, data-type helpers, …) live in the `js-redis-server/core` subpath and are
-// re-exported here so importing from the root stays non-breaking. The symbols
-// listed explicitly below are the promoted, first-class entry points: the
-// test-mock facade, the server/cluster builders, and the client-visible error
-// classes.
-export * from './internal'
+// Deep internals and hand-wiring building blocks (command definitions, schema
+// parsing, execution policies, transports, `Resp2Server` / `RedisServerState` /
+// `createRedisCommandExecutor`, Lua, data-type helpers, …) are intentionally
+// NOT on the root. Import them from the `js-redis-server/core` subpath instead.
 
 // Test-mock facade
 export {
@@ -14,6 +13,7 @@ export {
   createRedisServer,
   type CreateRedisMockOptions,
   type CreateRedisServerOptions,
+  type CreateRedisServerClusterOptions,
   type RedisAddress,
   type RedisMock,
   type RedisMockClientOptions,
@@ -30,15 +30,11 @@ export {
   type RedisNativeReply,
 } from './in-memory-client'
 
-// Server / cluster builders
-export { RedisServerState } from './state'
-export { createRedisCommandExecutor } from './commands'
-export {
-  Resp2Server,
-  type Resp2ServerOptions,
-} from './core/transports/resp2/server'
+// Cluster builder (consistent `create*` naming; `buildRedisCluster` is a
+// deprecated alias kept for back-compat).
 export {
   RedisCluster,
+  createRedisCluster,
   buildRedisCluster,
   computeSlotRange,
   type RedisClusterNodeHandle,

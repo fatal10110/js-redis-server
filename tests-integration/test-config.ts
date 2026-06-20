@@ -3,12 +3,12 @@ import { createCluster, RedisClusterType } from 'redis'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import { buildRedisCluster, RedisCluster } from '../src/cluster'
+import { createRedisCluster, RedisCluster } from '../src/cluster'
 import {
   Resp2Server,
   RedisServerState,
   createRedisCommandExecutor,
-} from '../src'
+} from '../src/internal'
 
 export type TestBackend = 'mock' | 'real'
 
@@ -36,7 +36,7 @@ export class TestRunner {
     const key = mockClusterKey(options)
     let cluster = this.mockClusters.get(key)
     if (!cluster) {
-      cluster = buildRedisCluster({
+      cluster = createRedisCluster({
         masters: options.masters,
         replicasPerMaster: options.replicasPerMaster,
         basePort: 0,

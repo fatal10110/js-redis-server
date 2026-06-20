@@ -6,12 +6,12 @@ import {
   WrongTypeRedisError,
   createRedisCommandExecutor,
   createStringData,
-} from '../src'
+} from '../src/internal'
 import type {
   RedisDataValue,
   RedisMonitorCommandEvent,
   RedisMutationEvent,
-} from '../src'
+} from '../src/internal'
 
 describe('new Redis state core', () => {
   test('keeps script cache separate from database flush', () => {

@@ -1,6 +1,6 @@
 import { createRedisCommandExecutor } from './commands'
 import {
-  buildRedisCluster,
+  createRedisCluster,
   type RedisCluster,
   type RedisClusterNodeHandle,
 } from './cluster'
@@ -27,6 +27,16 @@ export type CreateRedisServerOptions = {
   logger?: Pick<Logger, 'error'>
 }
 
+export type CreateRedisServerClusterOptions = {
+  /** Build a (listening) cluster instead of a standalone server. */
+  cluster: RedisMockClusterOptions
+  /** Cluster base port. Defaults to `0` (each node OS-assigned). */
+  basePort?: number
+  /** Databases per cluster node. Defaults to 1. */
+  databasesPerNode?: number
+  logger?: Pick<Logger, 'error'>
+}
+
 export type RedisServerHandle = {
   host: string
   port: number
@@ -47,13 +57,38 @@ function createStandalonePipeline(databaseCount?: number): {
 }
 
 /**
- * Standalone analog to {@link buildRedisCluster}: wires a {@link RedisServerState}
- * (16 databases by default), the shared command executor, and a
- * {@link Resp2Server}, then starts listening. Returns the live handle.
+ * Runs a real, **listening** Redis server you connect a normal client library
+ * to. Standalone by default (one {@link RedisServerState} + executor +
+ * {@link Resp2Server}, 16 databases); pass `cluster` to build and start a whole
+ * cluster instead — the returned {@link RedisCluster} is already listening.
+ *
+ * For tests prefer {@link createRedisMock}, which wraps this and adds seeding,
+ * reset-between-tests, and an in-process socketless client. Drop to
+ * `js-redis-server/core` only when you need to assemble the pipeline by hand.
+ *
+ * @see {@link createRedisMock} — the test-mock facade (use this for test suites)
  */
+export function createRedisServer(
+  options?: CreateRedisServerOptions,
+): Promise<RedisServerHandle>
+export function createRedisServer(
+  options: CreateRedisServerClusterOptions,
+): Promise<RedisCluster>
 export async function createRedisServer(
-  options: CreateRedisServerOptions = {},
-): Promise<RedisServerHandle> {
+  options: CreateRedisServerOptions | CreateRedisServerClusterOptions = {},
+): Promise<RedisServerHandle | RedisCluster> {
+  if ('cluster' in options) {
+    const cluster = createRedisCluster({
+      masters: options.cluster.masters,
+      replicasPerMaster: options.cluster.replicas ?? 0,
+      basePort: options.basePort ?? 0,
+      databasesPerNode: options.databasesPerNode,
+      logger: options.logger,
+    })
+    await cluster.listen()
+    return cluster
+  }
+
   const { state, executor } = createStandalonePipeline(options.databaseCount)
   const server = new Resp2Server({
     server: state,
@@ -137,6 +172,18 @@ export interface RedisMock {
   readonly nodes?: readonly RedisClusterNodeHandle[]
 }
 
+/**
+ * Creates a {@link RedisMock} — the entry point for test suites. Standalone by
+ * default; pass `{ cluster: { masters } }` for a cluster mock. Adds seeding,
+ * reset-between-tests, and an in-process socketless client on top of a real
+ * server/cluster.
+ *
+ * To run a long-running server a separate process connects to (a CLI, a dev
+ * tool) rather than drive it from test code, use {@link createRedisServer}
+ * instead (it takes the same `cluster` option).
+ *
+ * @see {@link createRedisServer} — run a real server/cluster without test helpers
+ */
 export async function createRedisMock(
   options: CreateRedisMockOptions = {},
 ): Promise<RedisMock> {
@@ -252,7 +299,7 @@ async function createClusterMock(
   cluster: RedisMockClusterOptions,
   options: CreateRedisMockOptions,
 ): Promise<RedisMock> {
-  const built = buildRedisCluster({
+  const built = createRedisCluster({
     masters: cluster.masters,
     replicasPerMaster: cluster.replicas ?? 0,
     basePort: options.basePort ?? 0,

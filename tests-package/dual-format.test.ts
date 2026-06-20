@@ -24,11 +24,17 @@ before(() => {
 async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(typeof pkg.createRedisMock, 'function')
   assert.strictEqual(typeof pkg.createRedisServer, 'function')
+  assert.strictEqual(typeof pkg.createRedisCluster, 'function')
   assert.strictEqual(typeof pkg.InMemoryRedisClient, 'function')
   assert.strictEqual(typeof pkg.buildRedisCluster, 'function')
+  assert.strictEqual(pkg.buildRedisCluster, pkg.createRedisCluster)
   assert.strictEqual(typeof pkg.RedisCommandError, 'function')
-  // The executor is intentionally not part of the public surface.
+  // The executor and hand-wiring building blocks are intentionally not part of
+  // the root surface — they live on `js-redis-server/core`.
   assert.strictEqual('executor' in pkg, false)
+  assert.strictEqual('Resp2Server' in pkg, false)
+  assert.strictEqual('RedisServerState' in pkg, false)
+  assert.strictEqual('createRedisCommandExecutor' in pkg, false)
 
   const createRedisMock = pkg.createRedisMock as (o: unknown) => Promise<{
     client(): { command(...a: unknown[]): Promise<unknown> }
@@ -45,6 +51,10 @@ function assertCore(core: Record<string, unknown>): void {
   assert.strictEqual(typeof core.defineCommand, 'function')
   assert.strictEqual(typeof core.CommandRegistry, 'function')
   assert.strictEqual(typeof core.t, 'object')
+  // Hand-wiring building blocks live here, not on the root.
+  assert.strictEqual(typeof core.Resp2Server, 'function')
+  assert.strictEqual(typeof core.RedisServerState, 'function')
+  assert.strictEqual(typeof core.createRedisCommandExecutor, 'function')
   // Facade lives at the root, not in the internals subpath.
   assert.strictEqual(core.createRedisMock, undefined)
 }
