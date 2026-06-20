@@ -142,12 +142,17 @@ are not implemented.
 - Theme: clones bought for "safety" that single-threaded JS does not need on the
   read/notify paths.
 
-### P5 — EXEC park context = latent deadlock
+### P5 — Resolved: EXEC park context no longer deadlocks
 
-`src/core/client-session.ts:156-159`: queued plans run with
-`createExecutionContext()` (no turn access) → `park` uses the default handler
-that does not release the outer turn. Moot now (no blocking command is queueable;
-`pushOnly` is rejected in MULTI). Becomes real if blocking lands inside MULTI.
+Originally a latent deadlock: queued plans ran with the default park handler,
+so a blocking command replayed inside EXEC would park on a wakeup write that no
+other session could produce while the EXEC turn was held. Now
+`executeTransaction` replays plans with `createNonBlockingParkHandler`
+(`src/core/redis-context.ts`, `src/core/client-session.ts:291`), which resolves
+`null` immediately — a blocking command inside `MULTI` takes its non-blocking
+branch and returns the "nothing happened" result (e.g. `BLPOP` → nil), matching
+real Redis, while still honoring the session abort signal and consuming
+`waitFor` so no rejection leaks.
 
 ### SCAN family — secondary findings
 
@@ -230,8 +235,10 @@ Robustness / fidelity (deferred, behavior-compatible today):
 - [ ] **P4 perf** — keys-only SCAN snapshot; skip the value clone for
       dirty-only WATCH listeners.
 - [ ] **SCAN cursor stability** under concurrent mutation (§3 SCAN findings).
-- [ ] **EXEC park-context** (§3 P5) — must be resolved before any blocking
-      command becomes queueable inside `MULTI`.
+- [x] **EXEC park-context** (§3 P5) — resolved: `executeTransaction` replays
+      queued plans with `createNonBlockingParkHandler`, so a blocking command
+      inside `MULTI` returns its non-blocking result immediately instead of
+      deadlocking on the held EXEC turn (matches real `BLPOP`-in-MULTI).
 
 Validation gates:
 
