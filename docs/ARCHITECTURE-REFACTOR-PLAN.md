@@ -1,5 +1,14 @@
 # Architecture Refactor Plan
 
+> **Status (2026-06-20): the hard cutover is complete.** All five migration
+> phases below have landed — including Phase 4's Pub/Sub, blocking, and
+> streaming commands, which were the last to arrive. This document is retained
+> as the design record for the new core; current per-command coverage and the
+> remaining compatibility gaps are tracked in
+> [COMMANDS.md](./COMMANDS.md) and the acceptance checklist in
+> [ARCHITECTURE-REVIEW.md](./ARCHITECTURE-REVIEW.md). The runtime architecture
+> itself is documented in [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ## Purpose
 
 This project is primarily a Redis-compatible mock server, not a high-performance
@@ -445,6 +454,13 @@ Port all commands directly to the new `defineCommand` API and delete the old `Sc
 2. Strings, Hashes, Lists, Sets, Sorted Sets
 3. Scripts and Cluster commands
 4. PubSub, Blocking, and Streaming commands (using `ResponseStream` and `ctx.park`)
+
+*Landed: foundation, all data-type families, scripts/cluster, the SCAN family,
+client handshake, and the full Pub/Sub, blocking (`BLPOP`/`BRPOP`/`BLMOVE`/
+`BLMPOP`/`BZPOPMIN`/`BZPOPMAX`/`BZMPOP`/`XREAD BLOCK`), MONITOR, `COMMAND`, and
+stream command surfaces. `WAIT` remains unported (a no-op in a single-node mock
+anyway). See [COMMANDS.md](./COMMANDS.md) for the authoritative per-command
+status.*
 
 ### Phase 5: Cleanup
 
