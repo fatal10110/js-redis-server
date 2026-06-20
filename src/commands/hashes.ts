@@ -54,6 +54,19 @@ type ParsedHashExpireArgs = {
   option: HashExpireOption | undefined
   fields: Buffer[]
 }
+type HgetexExpiration =
+  | { kind: 'keep' }
+  | { kind: 'persist' }
+  | { kind: 'set'; mode: HashExpireMode; time: bigint }
+type HgetexPlan =
+  | { kind: 'keep' }
+  | { kind: 'persist' }
+  | { kind: 'expireAt'; at: number }
+type HgetexArgs = {
+  key: Buffer
+  expiration: HgetexExpiration
+  fields: Buffer[]
+}
 
 const LONG_MAX = 9223372036854775807n
 const LONG_MIN = -9223372036854775808n
@@ -151,6 +164,79 @@ function createHashFieldsSchema() {
       }
     },
   )
+}
+
+function createHgetexSchema() {
+  return t.custom<HgetexArgs>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      const key = input[index]
+      if (!key || input.length - index < 4) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const { expiration, nextIndex } = parseHgetexExpiration(
+        input,
+        index + 1,
+        ctx.commandName,
+      )
+
+      const fieldsToken = input[nextIndex]
+      if (!fieldsToken || fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+        throw new RedisCommandError(
+          'Mandatory argument FIELDS is missing or not at the right position',
+        )
+      }
+
+      const fieldCountToken = input[nextIndex + 1]
+      if (!fieldCountToken) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const fieldCount = parsePositiveFieldCount(fieldCountToken)
+      const fields = input.slice(nextIndex + 2)
+      if (fieldCount !== BigInt(fields.length)) {
+        throw new RedisCommandError(
+          'The `numfields` parameter must match the number of arguments',
+        )
+      }
+
+      return { value: { key, expiration, fields }, nextIndex: input.length }
+    },
+  )
+}
+
+function parseHgetexExpiration(
+  input: readonly Buffer[],
+  index: number,
+  commandName: string,
+): { expiration: HgetexExpiration; nextIndex: number } {
+  const token = input[index]?.toString().toUpperCase()
+  if (token === 'PERSIST') {
+    return { expiration: { kind: 'persist' }, nextIndex: index + 1 }
+  }
+
+  const mode = hgetexExpireMode(token)
+  if (!mode) {
+    return { expiration: { kind: 'keep' }, nextIndex: index }
+  }
+
+  const timeToken = input[index + 1]
+  if (!timeToken) {
+    throw new WrongNumberOfArgumentsError(commandName)
+  }
+
+  const time = parseHashExpireTime(timeToken)
+  return { expiration: { kind: 'set', mode, time }, nextIndex: index + 2 }
+}
+
+function hgetexExpireMode(
+  token: string | undefined,
+): HashExpireMode | undefined {
+  if (token === 'EX') return 'seconds'
+  if (token === 'PX') return 'milliseconds'
+  if (token === 'EXAT') return 'unix-seconds'
+  if (token === 'PXAT') return 'unix-milliseconds'
+  return undefined
 }
 
 function persistHashFields(
@@ -376,6 +462,61 @@ function expireHashFields(
   })
 }
 
+function resolveHgetexPlan(expiration: HgetexExpiration): HgetexPlan {
+  if (expiration.kind === 'set') {
+    return {
+      kind: 'expireAt',
+      at: hashExpireTimeToTimestamp(expiration.time, expiration.mode, 'hgetex'),
+    }
+  }
+  return expiration
+}
+
+function getexHashFields(
+  args: HgetexArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
+  // Resolve the target timestamp up front so an invalid expire time is
+  // reported even when the key is missing, matching the HEXPIRE ordering.
+  const plan = resolveHgetexPlan(args.expiration)
+
+  const existingHash = ctx.db.getHash(args.key)
+  if (!existingHash) {
+    return array(args.fields.map(() => RedisValue.bulkString(null)))
+  }
+
+  const now = Date.now()
+  let remaining = 0
+  const values = ctx.db.updateHash(args.key, hash => {
+    const replies: RedisValue[] = []
+    for (const field of args.fields) {
+      const entry = hash.getField(field)
+      replies.push(RedisValue.bulkString(entry?.value ?? null))
+      if (!entry) continue
+
+      if (plan.kind === 'persist') {
+        hash.clearFieldExpiration(field)
+        continue
+      }
+
+      if (plan.kind === 'expireAt') {
+        if (plan.at <= now) {
+          hash.deleteField(field)
+        } else {
+          hash.setFieldExpiration(field, plan.at)
+        }
+      }
+    }
+    remaining = hash.size
+    return replies
+  })
+
+  if (remaining === 0) {
+    ctx.db.delete(args.key)
+  }
+  return array(values)
+}
+
 function hashExpireTimeToTimestamp(
   value: bigint,
   mode: HashExpireMode,
@@ -575,6 +716,14 @@ export const hgetdelCommand = defineCommand({
     }
     return array(values)
   },
+})
+
+export const hgetexCommand = defineCommand({
+  name: 'hgetex',
+  schema: createHgetexSchema(),
+  flags: ['write', 'fast'],
+  keys: args => [args.key],
+  execute: getexHashFields,
 })
 
 export const hpersistCommand = defineCommand({
@@ -887,6 +1036,7 @@ export const hashesCommands = [
   hgetCommand,
   hdelCommand,
   hgetdelCommand,
+  hgetexCommand,
   hpersistCommand,
   hexpireCommand,
   hpexpireCommand,
