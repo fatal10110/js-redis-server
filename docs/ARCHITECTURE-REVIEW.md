@@ -4,16 +4,27 @@ Single source of truth for the `codex/redis-architecture-refactor` review.
 Supersedes and consolidates the prior slice reviews (Phase 1, Phase 2/3/4),
 the refactor findings, and the SCAN review notes.
 
-- Last updated: 2026-06-07
+- Last updated: 2026-06-20
 - Reviewed against: [ARCHITECTURE-REFACTOR-PLAN.md](./ARCHITECTURE-REFACTOR-PLAN.md)
 - Command coverage tracked separately in [COMMANDS.md](./COMMANDS.md)
 - Test harness documented in [TEST-INTEGRATION.md](./TEST-INTEGRATION.md)
 
 > Scope: review only. No production code changed by this review.
 
+> **Status refresh (2026-06-20):** the architecture cutover is complete and the
+> originally-deferred features have landed. Pub/Sub, MONITOR, the full stream
+> command set, blocking commands (`BLPOP`/`BRPOP`/`BLMOVE`/`BLMPOP`/`BZPOPMIN`/
+> `BZPOPMAX`/`BZMPOP`/`XREAD BLOCK`), and `COMMAND` are all implemented and
+> wired. The phase scorecard (§4) and remaining-gaps checklist (§6) below have
+> been updated accordingly. The §1 test counts and §3 findings are preserved as
+> the dated snapshot from the original review.
+
 ---
 
 ## 1. Status
+
+_Snapshot from the 2026-06-07 review run; counts grow as commands land. Run
+`npm run test:all` for current figures._
 
 | Check                                                 | Result                                   |
 | ----------------------------------------------------- | ---------------------------------------- |
@@ -131,12 +142,17 @@ are not implemented.
 - Theme: clones bought for "safety" that single-threaded JS does not need on the
   read/notify paths.
 
-### P5 — EXEC park context = latent deadlock
+### P5 — Resolved: EXEC park context no longer deadlocks
 
-`src/core/client-session.ts:156-159`: queued plans run with
-`createExecutionContext()` (no turn access) → `park` uses the default handler
-that does not release the outer turn. Moot now (no blocking command is queueable;
-`pushOnly` is rejected in MULTI). Becomes real if blocking lands inside MULTI.
+Originally a latent deadlock: queued plans ran with the default park handler,
+so a blocking command replayed inside EXEC would park on a wakeup write that no
+other session could produce while the EXEC turn was held. Now
+`executeTransaction` replays plans with `createNonBlockingParkHandler`
+(`src/core/redis-context.ts`, `src/core/client-session.ts:291`), which resolves
+`null` immediately — a blocking command inside `MULTI` takes its non-blocking
+branch and returns the "nothing happened" result (e.g. `BLPOP` → nil), matching
+real Redis, while still honoring the session abort signal and consuming
+`waitFor` so no rejection leaks.
 
 ### SCAN family — secondary findings
 
@@ -167,13 +183,20 @@ that does not release the outer turn. Moot now (no blocking command is queueable
 | 1. Execution engine (core) | ✅ Done    | RedisResult/Value, CommandDefinition, Executor, schema `t.*`, policies.                   |
 | 2. State & database        | ✅ Done    | ServerState/Database/Keyspace, mutation bus, lazy eviction emits events.                  |
 | 3. Transport & session     | ✅ Done    | ConnectionTransport (+in-memory/socket), ClientSession, Resp2SessionAdapter, Resp2Server. |
-| 4. Port commands           | ⚠️ Partial | ~115 commands incl. scan family + handshake. Missing: pub/sub, blocking, streams.         |
+| 4. Port commands           | ✅ Done    | Full surface: scan family, handshake, Pub/Sub, MONITOR, `COMMAND`, blocking, and streams. |
 | 5. Cleanup (delete legacy) | ✅ Done    | See resolved P1.                                                                          |
 
-**Not ported (Phase 4):** Pub/Sub (`RedisPubSubBroker` exists, unwired),
-blocking `BLPOP/BRPOP/WAIT` (park infra exists, no command), streams
-(placeholder type). `ResponseStream` + `pushOnly` capability scaffolded but
-unused.
+**Phase 4 complete.** Pub/Sub is wired through `RedisPubSubBroker` +
+`ResponseStream` (`SUBSCRIBE`/`PSUBSCRIBE`/`SSUBSCRIBE`/`PUBLISH`/`SPUBLISH`/
+`PUBSUB`, restricted subscribed-mode session enforced by `subscribed-policy.ts`);
+`MONITOR` streams via `RedisMonitorFeed`; the full stream command set (`XADD`…
+`XAUTOCLAIM`/`XINFO`) is implemented; blocking commands (`BLPOP`, `BRPOP`,
+`BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `XREAD BLOCK`,
+`XREADGROUP BLOCK`) run on `ctx.park`; keyspace notifications are bridged via
+`KeyspaceNotifier`. `ResponseStream` + `pushOnly` are now exercised in
+production paths. Genuine remaining gaps are tracked in §6 and
+[COMMANDS.md](./COMMANDS.md) — notably `WAIT`, `OBJECT ENCODING`, `DUMP`/
+`RESTORE`, `MIGRATE`, `LCS`, and the `FUNCTION`/`FCALL` family.
 
 ---
 
@@ -181,18 +204,45 @@ unused.
 
 - `createNoopParkHandler` returns the default handler — misnomer
   (`src/core/redis-context.ts`).
-- `SessionDirective` union + `'subscribed'` session mode declared, never used.
+- The `'subscribed'` session mode is now live — enforced by
+  `src/core/execution-policies/subscribed-policy.ts`, which restricts a
+  subscribed connection to pubsub-only commands (earlier review flagged it as
+  declared-but-unused; resolved).
 - `RESET` now resets db/watch/tx, RESP protocol version, and cluster read mode.
 
 ---
 
-## 6. Suggested priority
+## 6. Remaining acceptance checklist
 
-1. **Pub/Sub** — wire `RedisPubSubBroker`, `SUBSCRIBE`/`UNSUBSCRIBE`,
-   `PSUBSCRIBE`/`PUNSUBSCRIBE`, and `PUBLISH` through `ResponseStream`.
-2. **Blocking commands** — land `BLPOP`/`BRPOP` on top of `ctx.park`, then
-   address the EXEC park-context note before any blocking command can run in a
-   transaction.
-3. **P4 perf** — keys-only snapshot; skip the clone for dirty-only watchers.
-   This is safe to defer because behavior compatibility is the primary project
-   goal.
+The architecture cutover is done; what remains is incremental Redis
+compatibility plus a few deferred robustness items. Distinct from the
+**completed** cutover work above, these are the open gaps:
+
+Compatibility gaps (tracked in [COMMANDS.md](./COMMANDS.md)):
+
+- [ ] `WAIT` — accept and return immediately (no-op in a single-node mock).
+- [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`.
+- [ ] `DUMP` / `RESTORE` and `MIGRATE`.
+- [ ] `LCS` (longest common subsequence).
+- [ ] `FUNCTION` / `FCALL` family (Redis Functions, 7.0+).
+- [ ] `HSCAN ... NOVALUES` (Redis 7.4).
+- [ ] Server-introspection subcommands returning real data: `MEMORY USAGE`,
+      `SLOWLOG`, `LATENCY`, `DEBUG OBJECT/SLEEP/RELOAD`.
+- [ ] RESP3-specific *request* frame extensions (replies are already RESP3).
+
+Robustness / fidelity (deferred, behavior-compatible today):
+
+- [ ] **P4 perf** — keys-only SCAN snapshot; skip the value clone for
+      dirty-only WATCH listeners.
+- [ ] **SCAN cursor stability** under concurrent mutation (§3 SCAN findings).
+- [x] **EXEC park-context** (§3 P5) — resolved: `executeTransaction` replays
+      queued plans with `createNonBlockingParkHandler`, so a blocking command
+      inside `MULTI` returns its non-blocking result immediately instead of
+      deadlocking on the held EXEC turn (matches real `BLPOP`-in-MULTI).
+
+Validation gates:
+
+- [x] Mock-backend integration suite green (run `npm run test:all`).
+- [x] Real-Redis backend integration suite green (`TEST_BACKEND=real`).
+- [ ] Periodic stale-issue cleanup against the GitHub compatibility tracker so
+      this checklist and the board stay in sync.
