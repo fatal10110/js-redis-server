@@ -3,35 +3,24 @@ import {
   InvalidStreamIdError,
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
+import { MIN_ID } from '../../state/stream-ids'
+
+// StreamId arithmetic now lives in the state layer; re-export it here so the
+// streams command modules keep importing it from a single place.
+export {
+  MIN_ID,
+  formatStreamId,
+  streamIdKey,
+  compareStreamId,
+  cloneStreamId,
+  maxStreamId,
+} from '../../state/stream-ids'
 
 export const MAX_UINT64 = (1n << 64n) - 1n
-export const MIN_ID: StreamId = { ms: 0n, seq: 0n }
 export const MAX_ID: StreamId = { ms: MAX_UINT64, seq: MAX_UINT64 }
-
-export function formatStreamId(id: StreamId): string {
-  return `${id.ms}-${id.seq}`
-}
-
-export function streamIdKey(id: StreamId): string {
-  return formatStreamId(id)
-}
 
 export function bufferId(value: Buffer): string {
   return value.toString('hex')
-}
-
-export function compareStreamId(a: StreamId, b: StreamId): number {
-  if (a.ms !== b.ms) return a.ms < b.ms ? -1 : 1
-  if (a.seq !== b.seq) return a.seq < b.seq ? -1 : 1
-  return 0
-}
-
-export function cloneStreamId(id: StreamId): StreamId {
-  return { ms: id.ms, seq: id.seq }
-}
-
-export function maxStreamId(a: StreamId, b: StreamId): StreamId {
-  return compareStreamId(a, b) >= 0 ? a : b
 }
 
 export function parseUint64(token: string): bigint | null {

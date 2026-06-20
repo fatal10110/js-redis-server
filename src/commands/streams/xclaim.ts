@@ -4,17 +4,10 @@ import {
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
-import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
-import { ensureConsumer, findEntry, requireStreamGroup } from './groups'
-import {
-  bufferId,
-  cloneStreamId,
-  parseExactId,
-  parseNonNegativeInteger,
-  streamIdKey,
-} from './ids'
+import { requireStreamGroup } from './groups'
+import { parseExactId, parseNonNegativeInteger } from './ids'
 import { entryToReply, streamIdValue } from './replies'
 
 type XclaimArgs = {
@@ -140,57 +133,29 @@ export const xclaimCommand = defineCommand({
       command.group,
     )
     const claimed = ctx.db.updateStream(command.key, stream => {
-      const value = stream.value
-      const group = requireStreamGroup(value, command.key, command.group)
-      ensureConsumer(group, command.consumer, now).activeAt = now
-      const consumerId = bufferId(command.consumer)
-      if (command.lastId) group.lastDeliveredId = cloneStreamId(command.lastId)
-
-      const replies: RedisValue[] = []
-      for (const id of command.ids) {
-        const pendingId = streamIdKey(id)
-        const entry = findEntry(value, id)
-        let pending = group.pending.get(pendingId)
-
-        if (!pending && command.force && entry) {
-          pending = {
-            id: cloneStreamId(id),
-            consumerId,
-            deliveredAt: now,
-            deliveryCount: 0,
-          }
-          group.pending.set(pendingId, pending)
-        }
-
-        if (!pending) continue
-        if (!entry) {
-          group.pending.delete(pendingId)
-          continue
-        }
-
-        const idleTime = Math.max(0, now - pending.deliveredAt)
-        if (idleTime < command.minIdleMs) continue
-
-        pending.consumerId = consumerId
-        pending.deliveredAt =
-          command.timeMs ??
-          (command.idleMs !== null ? now - command.idleMs : now)
-        if (command.retryCount !== null) {
-          pending.deliveryCount = command.retryCount
-        } else if (!command.justId) {
-          pending.deliveryCount++
-        }
-
-        replies.push(
-          command.justId
-            ? streamIdValue(entry.id)
-            : entryToReply(entry.id, entry.fields),
-        )
-      }
-      stream.forceWrite()
-      return replies
+      const group = requireStreamGroup(stream.value, command.key, command.group)
+      return stream.claim(
+        group,
+        command.consumer,
+        command.ids,
+        {
+          minIdleMs: command.minIdleMs,
+          idleMs: command.idleMs,
+          timeMs: command.timeMs,
+          retryCount: command.retryCount,
+          force: command.force,
+          justId: command.justId,
+          lastId: command.lastId,
+        },
+        now,
+      )
     })
 
-    return array(claimed)
+    const replies = claimed.map(entry =>
+      command.justId
+        ? streamIdValue(entry.id)
+        : entryToReply(entry.id, entry.fields),
+    )
+    return array(replies)
   },
 })

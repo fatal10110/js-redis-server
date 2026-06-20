@@ -188,12 +188,8 @@ export const xgroupCommand = defineCommand({
           command.key,
           command.group,
         )
-        group.lastDeliveredId =
-          command.id === '$'
-            ? cloneStreamId(stream.lastId)
-            : cloneStreamId(command.id)
-        group.entriesRead = command.entriesRead
-        stream.forceWrite()
+        const lastDeliveredId = command.id === '$' ? stream.lastId : command.id
+        stream.setGroupId(group, lastDeliveredId, command.entriesRead)
       })
       return ok()
     }

@@ -7,21 +7,8 @@ import {
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
-import {
-  ensureConsumer,
-  findEntry,
-  pendingEntriesSorted,
-  requireStreamGroup,
-} from './groups'
-import {
-  bufferId,
-  cloneStreamId,
-  compareStreamId,
-  MIN_ID,
-  parseExactId,
-  parseNonNegativeInteger,
-  streamIdKey,
-} from './ids'
+import { requireStreamGroup } from './groups'
+import { parseExactId, parseNonNegativeInteger } from './ids'
 import { entryToReply, streamIdValue } from './replies'
 
 type XautoclaimArgs = {
@@ -98,53 +85,31 @@ export const xautoclaimCommand = defineCommand({
       command.group,
     )
     const result = ctx.db.updateStream(command.key, stream => {
-      const value = stream.value
-      const group = requireStreamGroup(value, command.key, command.group)
-      ensureConsumer(group, command.consumer, now).activeAt = now
-      const consumerId = bufferId(command.consumer)
-      const claimed: RedisValue[] = []
-      const deleted: RedisValue[] = []
-      let nextStartId: StreamId = MIN_ID
-
-      for (const pending of pendingEntriesSorted(group)) {
-        if (compareStreamId(pending.id, command.start) < 0) continue
-
-        const entry = findEntry(value, pending.id)
-        if (!entry) {
-          group.pending.delete(streamIdKey(pending.id))
-          deleted.push(streamIdValue(pending.id))
-          continue
-        }
-
-        const idleTime = Math.max(0, now - pending.deliveredAt)
-        if (idleTime < command.minIdleMs) continue
-
-        pending.consumerId = consumerId
-        pending.deliveredAt = now
-        if (!command.justId) pending.deliveryCount++
-        claimed.push(
-          command.justId
-            ? streamIdValue(entry.id)
-            : entryToReply(entry.id, entry.fields),
-        )
-
-        if (claimed.length >= command.count) {
-          const next = pendingEntriesSorted(group).find(
-            item => compareStreamId(item.id, pending.id) > 0,
-          )
-          nextStartId = next ? cloneStreamId(next.id) : MIN_ID
-          break
-        }
-      }
-
-      stream.forceWrite()
-      return { nextStartId, claimed, deleted }
+      const group = requireStreamGroup(stream.value, command.key, command.group)
+      return stream.autoClaim(
+        group,
+        command.consumer,
+        {
+          minIdleMs: command.minIdleMs,
+          start: command.start,
+          count: command.count,
+          justId: command.justId,
+        },
+        now,
+      )
     })
+
+    const claimed = result.claimed.map(entry =>
+      command.justId
+        ? streamIdValue(entry.id)
+        : entryToReply(entry.id, entry.fields),
+    )
+    const deleted = result.deleted.map(id => streamIdValue(id))
 
     return array([
       streamIdValue(result.nextStartId),
-      RedisValue.array(result.claimed),
-      RedisValue.array(result.deleted),
+      RedisValue.array(claimed),
+      RedisValue.array(deleted),
     ])
   },
 })
