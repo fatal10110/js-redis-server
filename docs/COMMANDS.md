@@ -229,6 +229,7 @@ with `GT` or `LT`.
 - [x] `HGETALL key` - Get all fields and values in a hash (RESP3 map / RESP2 flat array)
 - [x] `HDEL key field [field ...]` - Delete one or more hash fields
 - [x] `HGETDEL key FIELDS numfields field [field ...]` - Get and delete one or more hash fields
+- [x] `HGETEX key [EX seconds|PX ms|EXAT unix-s|PXAT unix-ms|PERSIST] FIELDS numfields field [field ...]` - Get one or more hash fields and optionally update their TTLs
 - [x] `HEXPIRE key seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in seconds
 - [x] `HPEXPIRE key milliseconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in milliseconds
 - [x] `HEXPIREAT key unix-time-seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field expiration timestamps in seconds
@@ -245,10 +246,6 @@ with `GT` or `LT`.
 - [x] `HINCRBYFLOAT key field increment` - Increment the float value of a hash field
 - [x] `HRANDFIELD key [count [WITHVALUES]]` - Return one or more random hash fields, optionally with values
 - [x] `HSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate hash fields and values (see [Scan Family](#10-scan-family))
-
-#### Not implemented
-
-- [ ] `HGETEX key [EX seconds|PX ms|EXAT unix-s|PXAT unix-ms|PERSIST|KEEPTTL] FIELDS numfields field [field ...]`
 
 ## 6. List Commands
 
