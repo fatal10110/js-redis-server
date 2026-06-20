@@ -121,6 +121,47 @@ describe('Stream metadata WATCH semantics', () => {
       mutate: (client, key) =>
         client.call('XAUTOCLAIM', key, 'g', 'c2', '0', '0'),
     },
+    {
+      name: 'XACK acknowledging a pending entry',
+      initialize: async (client, key) => {
+        await client.call('XADD', key, '1-1', 'f', 'v')
+        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.call('XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', key, '>')
+      },
+      mutate: (client, key) => client.call('XACK', key, 'g', '1-1'),
+    },
+    {
+      name: 'XGROUP CREATE on an existing stream',
+      initialize: (client, key) => client.call('XADD', key, '1-1', 'f', 'v'),
+      mutate: (client, key) => client.call('XGROUP', 'CREATE', key, 'g', '0'),
+    },
+    {
+      name: 'XGROUP DESTROY removing a group',
+      initialize: async (client, key) => {
+        await client.call('XADD', key, '1-1', 'f', 'v')
+        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+      },
+      mutate: (client, key) => client.call('XGROUP', 'DESTROY', key, 'g'),
+    },
+    {
+      name: 'XGROUP CREATECONSUMER creating a consumer',
+      initialize: async (client, key) => {
+        await client.call('XADD', key, '1-1', 'f', 'v')
+        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+      },
+      mutate: (client, key) =>
+        client.call('XGROUP', 'CREATECONSUMER', key, 'g', 'c'),
+    },
+    {
+      name: 'XGROUP DELCONSUMER removing a consumer',
+      initialize: async (client, key) => {
+        await client.call('XADD', key, '1-1', 'f', 'v')
+        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.call('XGROUP', 'CREATECONSUMER', key, 'g', 'c')
+      },
+      mutate: (client, key) =>
+        client.call('XGROUP', 'DELCONSUMER', key, 'g', 'c'),
+    },
   ]
 
   for (const item of cleanCases) {
@@ -150,6 +191,33 @@ describe('Stream metadata WATCH semantics', () => {
       }
     })
   }
+
+  // Creating the watched key itself is a write, even via XGROUP CREATE MKSTREAM:
+  // real Redis dirties a WATCH on a key that comes into existence.
+  test('XGROUP CREATE MKSTREAM creating the watched key dirties it', async () => {
+    const key = `stream:{watch:${randomKey()}}`
+    const directClient = await connectToSlotOwner(redisClient!, key)
+
+    try {
+      await directClient.call('DEL', key)
+
+      assert.strictEqual(await directClient.call('WATCH', key), 'OK')
+      assert.strictEqual(
+        await directClient.call('XGROUP', 'CREATE', key, 'g', '0', 'MKSTREAM'),
+        'OK',
+      )
+
+      assert.strictEqual(await directClient.call('MULTI'), 'OK')
+      assert.strictEqual(await directClient.call('SET', key, 'after'), 'QUEUED')
+
+      const result = await directClient.call('EXEC')
+      assert.strictEqual(result, null)
+    } finally {
+      await directClient.call('UNWATCH').catch(() => undefined)
+      await directClient.call('DEL', key).catch(() => undefined)
+      directClient.disconnect()
+    }
+  })
 
   test('XADD still dirties a watched stream', async () => {
     const key = `stream:{watch:${randomKey()}}`
