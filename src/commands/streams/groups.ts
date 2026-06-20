@@ -1,13 +1,18 @@
 import { RedisCommandError } from '../../core/redis-error'
 import type {
-  RedisStreamConsumer,
   RedisStreamConsumerGroup,
   RedisStreamData,
-  RedisStreamEntry,
-  RedisStreamPendingEntry,
   StreamId,
 } from '../../state/data-types'
 import { bufferId, cloneStreamId, compareStreamId, maxStreamId } from './ids'
+
+// Pure consumer-group lookups moved to the state layer (so TrackedStreamData can
+// use them); re-exported here for the streams command modules.
+export {
+  findEntry,
+  pendingEntriesSorted,
+  ensureConsumer,
+} from '../../state/stream-groups'
 
 export class BusyStreamGroupError extends RedisCommandError {
   constructor() {
@@ -32,44 +37,6 @@ export function updateMaxDeletedId(
 ): void {
   stream.maxDeletedEntryId = cloneStreamId(
     maxStreamId(stream.maxDeletedEntryId, id),
-  )
-}
-
-export function findEntry(
-  stream: RedisStreamData,
-  id: StreamId,
-): RedisStreamEntry | null {
-  return (
-    stream.entries.find(entry => compareStreamId(entry.id, id) === 0) ?? null
-  )
-}
-
-export function ensureConsumer(
-  group: RedisStreamConsumerGroup,
-  name: Buffer,
-  now: number,
-): RedisStreamConsumer {
-  const id = bufferId(name)
-  const existing = group.consumers.get(id)
-  if (existing) {
-    existing.seenAt = now
-    return existing
-  }
-
-  const consumer: RedisStreamConsumer = {
-    name: Buffer.from(name),
-    seenAt: now,
-    activeAt: null,
-  }
-  group.consumers.set(id, consumer)
-  return consumer
-}
-
-export function pendingEntriesSorted(
-  group: RedisStreamConsumerGroup,
-): RedisStreamPendingEntry[] {
-  return Array.from(group.pending.values()).sort((a, b) =>
-    compareStreamId(a.id, b.id),
   )
 }
 

@@ -12,12 +12,25 @@ import type {
   StreamId,
 } from './data-types'
 import type { KeyspaceMutationTracker } from './keyspace'
+import {
+  ensureConsumer,
+  findEntry,
+  pendingEntriesSorted,
+} from './stream-groups'
+import {
+  cloneStreamId,
+  compareStreamId,
+  MIN_ID,
+  streamIdKey,
+} from './stream-ids'
 
 // Dirty tracking is operation-based, not a final-value diff. An effective
 // mutating helper marks the key dirty when the operation changes structure, and
-// commands use forceDirty/forceWrite for Redis writes that must dirty WATCH even
-// when the final value is equal (for example identical STORE rewrites or
-// full-range LTRIM).
+// commands pass forceDirty for Redis writes that must dirty WATCH even when the
+// final value is equal (for example identical STORE rewrites or full-range
+// LTRIM). Stream consumer-group / pending / last-id mutations deliberately do
+// NOT mark the key dirty: real Redis leaves a WATCH on the stream key intact for
+// those, only entry-set changes (XADD/XDEL/…) touch it.
 
 export class TrackedHashData {
   constructor(
@@ -401,6 +414,16 @@ export class TrackedSortedSetData {
   }
 }
 
+// XREADGROUP delivery: a present entry carries its fields; a history read of an
+// entry that has since been deleted carries fields === null.
+export type StreamDelivery = { id: StreamId; fields: Buffer[] | null }
+export type ClaimedEntry = { id: StreamId; fields: Buffer[] }
+export type AutoClaimResult = {
+  nextStartId: StreamId
+  claimed: ClaimedEntry[]
+  deleted: StreamId[]
+}
+
 export class TrackedStreamData {
   constructor(
     private readonly stream: RedisStreamData,
@@ -464,8 +487,197 @@ export class TrackedStreamData {
     return count
   }
 
-  forceWrite(): void {
-    this.tracker.markChanged()
+  // XSETID. The stream already exists (the command rejects a missing key), so
+  // mutating the live value in place is enough to persist; real Redis does not
+  // touch a WATCH on the stream key for a last-id change, so no markChanged().
+  setId(
+    id: StreamId,
+    options: { entriesAdded: number | null; maxDeletedId: StreamId | null },
+  ): void {
+    this.stream.lastId = cloneStreamId(id)
+    if (options.entriesAdded !== null) {
+      this.stream.entriesAdded = options.entriesAdded
+    }
+    if (options.maxDeletedId !== null) {
+      this.stream.maxDeletedEntryId = cloneStreamId(options.maxDeletedId)
+    }
+  }
+
+  // XGROUP SETID. Consumer-group metadata changes do not dirty a WATCH on the
+  // stream key in real Redis, so this never calls markChanged().
+  setGroupId(
+    group: RedisStreamConsumerGroup,
+    lastDeliveredId: StreamId,
+    entriesRead: number | null,
+  ): void {
+    group.lastDeliveredId = cloneStreamId(lastDeliveredId)
+    group.entriesRead = entriesRead
+  }
+
+  // XREADGROUP for a single stream. Returns the delivered entries (fields === null
+  // marks a history entry that was deleted from the stream) for the command to
+  // shape into a reply. Delivering messages / advancing the PEL does not dirty a
+  // WATCH on the stream key in real Redis.
+  readGroup(
+    group: RedisStreamConsumerGroup,
+    consumerName: Buffer,
+    id: StreamId | '>',
+    options: { count: number | null; noack: boolean },
+    now: number,
+  ): StreamDelivery[] {
+    ensureConsumer(group, consumerName, now).activeAt = now
+    const consumerId = consumerName.toString('hex')
+    const { count, noack } = options
+    const delivered: StreamDelivery[] = []
+    const limited = count !== null && count > 0
+
+    if (id === '>') {
+      for (const entry of this.stream.entries) {
+        if (compareStreamId(entry.id, group.lastDeliveredId) <= 0) continue
+
+        delivered.push({ id: entry.id, fields: entry.fields })
+        group.lastDeliveredId = cloneStreamId(entry.id)
+        group.entriesRead = (group.entriesRead ?? 0) + 1
+
+        if (!noack) {
+          group.pending.set(streamIdKey(entry.id), {
+            id: cloneStreamId(entry.id),
+            consumerId,
+            deliveredAt: now,
+            deliveryCount: 1,
+          })
+        }
+
+        if (limited && delivered.length >= count) break
+      }
+      return delivered
+    }
+
+    for (const pending of pendingEntriesSorted(group)) {
+      if (pending.consumerId !== consumerId) continue
+      if (compareStreamId(pending.id, id) <= 0) continue
+
+      const entry = findEntry(this.stream, pending.id)
+      delivered.push(
+        entry
+          ? { id: entry.id, fields: entry.fields }
+          : { id: pending.id, fields: null },
+      )
+
+      if (limited && delivered.length >= count) break
+    }
+    return delivered
+  }
+
+  // XCLAIM. Returns the claimed entries for the command to shape into a reply
+  // (justId vs full). Reassigning pending ownership does not dirty a WATCH on the
+  // stream key in real Redis.
+  claim(
+    group: RedisStreamConsumerGroup,
+    consumerName: Buffer,
+    ids: readonly StreamId[],
+    options: {
+      minIdleMs: number
+      idleMs: number | null
+      timeMs: number | null
+      retryCount: number | null
+      force: boolean
+      justId: boolean
+      lastId: StreamId | null
+    },
+    now: number,
+  ): ClaimedEntry[] {
+    ensureConsumer(group, consumerName, now).activeAt = now
+    const consumerId = consumerName.toString('hex')
+    if (options.lastId) group.lastDeliveredId = cloneStreamId(options.lastId)
+
+    const claimed: ClaimedEntry[] = []
+    for (const id of ids) {
+      const pendingId = streamIdKey(id)
+      const entry = findEntry(this.stream, id)
+      let pending = group.pending.get(pendingId)
+
+      if (!pending && options.force && entry) {
+        pending = {
+          id: cloneStreamId(id),
+          consumerId,
+          deliveredAt: now,
+          deliveryCount: 0,
+        }
+        group.pending.set(pendingId, pending)
+      }
+
+      if (!pending) continue
+      if (!entry) {
+        group.pending.delete(pendingId)
+        continue
+      }
+
+      const idleTime = Math.max(0, now - pending.deliveredAt)
+      if (idleTime < options.minIdleMs) continue
+
+      pending.consumerId = consumerId
+      pending.deliveredAt =
+        options.timeMs ?? (options.idleMs !== null ? now - options.idleMs : now)
+      if (options.retryCount !== null) {
+        pending.deliveryCount = options.retryCount
+      } else if (!options.justId) {
+        pending.deliveryCount++
+      }
+
+      claimed.push({ id: entry.id, fields: entry.fields })
+    }
+    return claimed
+  }
+
+  // XAUTOCLAIM. Returns the next cursor, the claimed entries, and the ids of
+  // pending entries dropped because their stream entry was gone. Does not dirty a
+  // WATCH on the stream key in real Redis.
+  autoClaim(
+    group: RedisStreamConsumerGroup,
+    consumerName: Buffer,
+    options: {
+      minIdleMs: number
+      start: StreamId
+      count: number
+      justId: boolean
+    },
+    now: number,
+  ): AutoClaimResult {
+    ensureConsumer(group, consumerName, now).activeAt = now
+    const consumerId = consumerName.toString('hex')
+    const claimed: ClaimedEntry[] = []
+    const deleted: StreamId[] = []
+    let nextStartId: StreamId = MIN_ID
+
+    for (const pending of pendingEntriesSorted(group)) {
+      if (compareStreamId(pending.id, options.start) < 0) continue
+
+      const entry = findEntry(this.stream, pending.id)
+      if (!entry) {
+        group.pending.delete(streamIdKey(pending.id))
+        deleted.push(pending.id)
+        continue
+      }
+
+      const idleTime = Math.max(0, now - pending.deliveredAt)
+      if (idleTime < options.minIdleMs) continue
+
+      pending.consumerId = consumerId
+      pending.deliveredAt = now
+      if (!options.justId) pending.deliveryCount++
+      claimed.push({ id: entry.id, fields: entry.fields })
+
+      if (claimed.length >= options.count) {
+        const next = pendingEntriesSorted(group).find(
+          item => compareStreamId(item.id, pending.id) > 0,
+        )
+        nextStartId = next ? cloneStreamId(next.id) : MIN_ID
+        break
+      }
+    }
+
+    return { nextStartId, claimed, deleted }
   }
 
   addGroup(groupId: string, group: RedisStreamConsumerGroup): void {
@@ -509,8 +721,4 @@ export class TrackedStreamData {
     this.tracker.markChanged()
     return removedPending
   }
-}
-
-function streamIdKey(id: StreamId): string {
-  return `${id.ms}-${id.seq}`
 }

@@ -6,20 +6,8 @@ import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
 import { bulk } from '../helpers'
-import {
-  ensureConsumer,
-  pendingEntriesSorted,
-  requireStreamGroup,
-  findEntry,
-} from './groups'
-import {
-  bufferId,
-  cloneStreamId,
-  compareStreamId,
-  parseExactId,
-  parseNonNegativeInteger,
-  streamIdKey,
-} from './ids'
+import { requireStreamGroup } from './groups'
+import { parseExactId, parseNonNegativeInteger } from './ids'
 import { bulkString, deletedEntryToReply, entryToReply } from './replies'
 
 type XreadGroupStream = { key: Buffer; id: StreamId | '>' }
@@ -122,53 +110,21 @@ function readGroupEntries(
   }
 
   for (const { key, id } of streams) {
-    const entries = ctx.db.updateStream(key, stream => {
-      const value = stream.value
-      const group = requireStreamGroup(value, key, groupName, 'XREADGROUP')
-      const consumer = ensureConsumer(group, consumerName, now)
-      consumer.activeAt = now
-
-      const consumerId = bufferId(consumerName)
-      const replies: RedisValue[] = []
-
-      if (id === '>') {
-        for (const entry of value.entries) {
-          if (compareStreamId(entry.id, group.lastDeliveredId) <= 0) continue
-
-          replies.push(entryToReply(entry.id, entry.fields))
-          group.lastDeliveredId = cloneStreamId(entry.id)
-          group.entriesRead = (group.entriesRead ?? 0) + 1
-
-          if (!noack) {
-            group.pending.set(streamIdKey(entry.id), {
-              id: cloneStreamId(entry.id),
-              consumerId,
-              deliveredAt: now,
-              deliveryCount: 1,
-            })
-          }
-
-          if (count !== null && count > 0 && replies.length >= count) break
-        }
-      } else {
-        for (const pending of pendingEntriesSorted(group)) {
-          if (pending.consumerId !== consumerId) continue
-          if (compareStreamId(pending.id, id) <= 0) continue
-
-          const entry = findEntry(value, pending.id)
-          replies.push(
-            entry
-              ? entryToReply(entry.id, entry.fields)
-              : deletedEntryToReply(pending.id),
-          )
-
-          if (count !== null && count > 0 && replies.length >= count) break
-        }
-      }
-
-      stream.forceWrite()
-      return replies
+    const delivered = ctx.db.updateStream(key, stream => {
+      const group = requireStreamGroup(
+        stream.value,
+        key,
+        groupName,
+        'XREADGROUP',
+      )
+      return stream.readGroup(group, consumerName, id, { count, noack }, now)
     })
+
+    const entries = delivered.map(item =>
+      item.fields === null
+        ? deletedEntryToReply(item.id)
+        : entryToReply(item.id, item.fields),
+    )
 
     if (entries.length > 0 || id !== '>') {
       results.push([bulkString(key), RedisValue.array(entries)])

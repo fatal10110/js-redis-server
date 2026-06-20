@@ -8,12 +8,7 @@ import {
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { ok } from '../helpers'
-import {
-  cloneStreamId,
-  compareStreamId,
-  parseExactId,
-  parseNonNegativeInteger,
-} from './ids'
+import { compareStreamId, parseExactId, parseNonNegativeInteger } from './ids'
 
 class XsetidSmallerThanTopError extends RedisCommandError {
   constructor() {
@@ -90,14 +85,10 @@ export const xsetidCommand = defineCommand({
     }
 
     ctx.db.updateStream(command.key, writable => {
-      writable.value.lastId = cloneStreamId(command.id)
-      if (command.entriesAdded !== null) {
-        writable.value.entriesAdded = command.entriesAdded
-      }
-      if (command.maxDeletedId !== null) {
-        writable.value.maxDeletedEntryId = cloneStreamId(command.maxDeletedId)
-      }
-      writable.forceWrite()
+      writable.setId(command.id, {
+        entriesAdded: command.entriesAdded,
+        maxDeletedId: command.maxDeletedId,
+      })
     })
 
     return ok()

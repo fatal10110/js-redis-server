@@ -356,10 +356,14 @@ In-place collection updates run through a keyspace-owned mutation tracker and
 typed helpers such as `TrackedHashData.setField()` and
 `TrackedListData.trim()`. Dirty tracking is operation-based rather than a
 before/after value diff: effective helper operations mark the key dirty as they
-run, even if a later operation restores the same final value. Commands use an
-explicit force-write escape hatch for Redis-compatible semantics where a
-successful write dirties `WATCH` even when no helper operation changed the final
-value, such as identical STORE rewrites or `LTRIM key 0 -1`.
+run, even if a later operation restores the same final value. Commands pass an
+explicit `forceDirty` flag for Redis-compatible semantics where a successful
+write dirties `WATCH` even when no helper operation changed the final value, such
+as identical STORE rewrites or `LTRIM key 0 -1`. Conversely, stream
+consumer-group, pending-entry, and last-id mutations (`XREADGROUP`, `XCLAIM`,
+`XAUTOCLAIM`, `XGROUP SETID`, `XSETID`) deliberately leave a `WATCH` on the
+stream key intact — matching real Redis, where only entry-set changes
+(`XADD`/`XDEL`/…) touch it.
 
 ## Concurrency model
 
