@@ -476,13 +476,13 @@ export class TrackedStreamData {
     return count
   }
 
+  // XACK. Clearing pending entries mutates the live group in place (the stream
+  // key already exists), so no commit is needed; real Redis does not dirty a
+  // WATCH on the stream key for a PEL change, so no markChanged().
   ack(group: RedisStreamConsumerGroup, ids: readonly StreamId[]): number {
     let count = 0
     for (const id of ids) {
       if (group.pending.delete(streamIdKey(id))) count++
-    }
-    if (count > 0) {
-      this.tracker.markChanged()
     }
     return count
   }
@@ -680,19 +680,24 @@ export class TrackedStreamData {
     return { nextStartId, claimed, deleted }
   }
 
+  // XGROUP CREATE. Adding a group does not dirty a WATCH on an existing stream
+  // key in real Redis, but XGROUP CREATE ... MKSTREAM can create a brand-new
+  // key that still must be persisted (and, as a key creation, does dirty the
+  // WATCH). markCommitted() commits the value while letting keyspace.update
+  // decide the dirty signal based on whether the key already existed.
   addGroup(groupId: string, group: RedisStreamConsumerGroup): void {
     this.stream.groups.set(groupId, group)
-    this.tracker.markChanged()
+    this.tracker.markCommitted()
   }
 
+  // XGROUP DESTROY. In-place change to an existing stream key; real Redis does
+  // not dirty a WATCH on the stream key, so no markChanged().
   deleteGroup(groupId: string): boolean {
-    const removed = this.stream.groups.delete(groupId)
-    if (removed) {
-      this.tracker.markChanged()
-    }
-    return removed
+    return this.stream.groups.delete(groupId)
   }
 
+  // XGROUP CREATECONSUMER. In-place change to an existing stream key; real
+  // Redis does not dirty a WATCH on the stream key, so no markChanged().
   addConsumer(
     group: RedisStreamConsumerGroup,
     consumerId: string,
@@ -703,10 +708,11 @@ export class TrackedStreamData {
     }
 
     group.consumers.set(consumerId, consumer)
-    this.tracker.markChanged()
     return true
   }
 
+  // XGROUP DELCONSUMER. In-place change to an existing stream key; real Redis
+  // does not dirty a WATCH on the stream key, so no markChanged().
   deleteConsumer(group: RedisStreamConsumerGroup, consumerId: string): number {
     if (!group.consumers.delete(consumerId)) {
       return 0
@@ -718,7 +724,6 @@ export class TrackedStreamData {
       group.pending.delete(pendingId)
       removedPending++
     }
-    this.tracker.markChanged()
     return removedPending
   }
 }

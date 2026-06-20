@@ -361,9 +361,13 @@ explicit `forceDirty` flag for Redis-compatible semantics where a successful
 write dirties `WATCH` even when no helper operation changed the final value, such
 as identical STORE rewrites or `LTRIM key 0 -1`. Conversely, stream
 consumer-group, pending-entry, and last-id mutations (`XREADGROUP`, `XCLAIM`,
-`XAUTOCLAIM`, `XGROUP SETID`, `XSETID`) deliberately leave a `WATCH` on the
-stream key intact — matching real Redis, where only entry-set changes
-(`XADD`/`XDEL`/…) touch it.
+`XAUTOCLAIM`, `XGROUP SETID`, `XSETID`, `XACK`, `XGROUP
+CREATE`/`DESTROY`/`CREATECONSUMER`/`DELCONSUMER`) deliberately leave a `WATCH` on
+the stream key intact — matching real Redis, where only entry-set changes
+(`XADD`/`XDEL`/…) touch it. The one exception is `XGROUP CREATE ... MKSTREAM`
+when it creates the key: those helpers commit through `markCommitted()`, which
+persists the value but only dirties `WATCH` when the key is brand-new (coming
+into existence is itself a write).
 
 ## Concurrency model
 

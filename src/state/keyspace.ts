@@ -22,7 +22,15 @@ export type SetOptions = {
 }
 
 export type KeyspaceMutationTracker = {
+  // A WATCH-dirtying write: persists the value AND dirties a WATCH on the key.
   markChanged(): void
+  // Persist the (possibly brand-new) value without, on its own, dirtying a
+  // WATCH. Used for stream consumer-group / pending-entry metadata changes,
+  // which real Redis does not treat as touching a WATCH on the stream key. A
+  // brand-new key still dirties — coming into existence is itself a write — so
+  // `keyspace.update` only suppresses the dirty signal for in-place changes to
+  // an already-existing key.
+  markCommitted(): void
 }
 
 export class WrongRedisTypeError extends Error {
@@ -151,17 +159,21 @@ export class RedisKeyspace {
       value: createValue(),
     }
 
-    let changed = false
+    let dirty = false
+    let committed = false
     const tracker: KeyspaceMutationTracker = {
       markChanged: () => {
-        changed = true
+        dirty = true
+      },
+      markCommitted: () => {
+        committed = true
       },
     }
 
     const result = mutator(entry.value as TValue, tracker)
     const id = keyId(key)
 
-    if (!changed) {
+    if (!dirty && !committed) {
       return result
     }
 
@@ -180,7 +192,13 @@ export class RedisKeyspace {
     }
 
     this.entries.set(id, entry)
-    this.emitWrite(entry)
+    // A markChanged write always dirties WATCH. A markCommitted-only change
+    // dirties only when it creates the key (`!existing`): real Redis treats
+    // bringing a watched key into existence as a write, but leaves a WATCH
+    // intact for in-place metadata changes to an already-existing key.
+    if (dirty || !existing) {
+      this.emitWrite(entry)
+    }
     return result
   }
 
