@@ -240,6 +240,7 @@ library to it.
 | `connectionOptions()` | ioredis-shaped `{ host, port }` for a single client. |
 | `clusterNodes()` | Seed-node list for `Redis.Cluster` (one entry for standalone). |
 | `seed(entries)` | Preload data (see [Seeding](#seeding)). |
+| `client(opts?)` | Socketless in-process client (see [Socketless client](#socketless-client)). |
 | `flush()` / `reset()` | Clear all keyspace data between tests. |
 | `close()` | Shut down the server / cluster. |
 | `state` / `nodes` | Escape hatches to the underlying `RedisServerState` / node handles. |
@@ -307,6 +308,36 @@ const mock = await createRedisMock({ cluster: { masters: 3, replicas: 1 } })
 const cluster = new Redis.Cluster(mock.clusterNodes())
 ```
 
+### Socketless client
+
+If you don't need a real client library, `mock.client()` returns an in-process
+client that drives the **same** command pipeline directly — no TCP loopback, no
+RESP encoding — and resolves to native JS replies (throwing `RedisCommandError`
+on `-ERR`). Standalone mocks only; cluster mocks throw.
+
+```typescript
+const mock = await createRedisMock()
+const client = mock.client() // { database?, returnBuffers? }
+
+await client.command('SET', 'k', 'v')
+await client.command('GET', 'k') // 'v'
+await client.command('INCR', 'n') // 1 (number)
+await client.command('HGETALL', 'h') // { field: 'value', ... }
+
+// clients are closed automatically when the mock closes
+await mock.close()
+```
+
+For a mock with **no network listener at all**, pass `transport: 'memory'`. Only
+`client()` works; the network accessors (`host`/`port`/`url`/`connectionOptions`/
+`clusterNodes`) throw.
+
+```typescript
+const mock = await createRedisMock({ transport: 'memory' })
+const client = mock.client()
+await client.command('PING') // 'PONG'
+```
+
 ### Seeding
 
 `seed()` takes an explicit entries array — you supply keys, types, values, and
@@ -325,6 +356,24 @@ type SeedEntry =
 `db` selects the logical database (standalone mocks). Streams are not seedable
 yet. For anything beyond these shapes, drive your client directly or reach for
 the `mock.state` escape hatch.
+
+### Package entry points
+
+The package ships dual ESM + CJS builds. The root entry promotes the test-mock
+facade, the server/cluster builders, and the client-visible error classes:
+
+```typescript
+import { createRedisMock, buildRedisCluster, RedisCommandError } from 'js-redis-server'
+```
+
+Deep internals — `defineCommand`, the `t` schema builder, execution policies,
+transports, the Lua runtime, data-type helpers, etc. — are also available from
+the `js-redis-server/core` subpath (and are still re-exported from the root for
+now, so existing imports keep working):
+
+```typescript
+import { defineCommand, t, CommandRegistry } from 'js-redis-server/core'
+```
 
 ## API Reference
 

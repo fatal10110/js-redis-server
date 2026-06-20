@@ -7,11 +7,15 @@ import { defineConfig } from 'tsup'
 // runnable.
 export default defineConfig([
   {
-    entry: { index: 'src/index.ts' },
+    entry: { index: 'src/index.ts', core: 'src/internal.ts' },
     format: ['esm', 'cjs'],
     dts: true,
     sourcemap: true,
     clean: true,
+    // Bundle each entry standalone. Code splitting would otherwise carve out
+    // shared chunks and trip over a pre-existing state/index ↔ server-state
+    // circular dependency, risking broken module init order.
+    splitting: false,
     outDir: 'dist',
   },
   {
