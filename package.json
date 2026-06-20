@@ -23,16 +23,33 @@
     "url": "https://github.com/fatal10110/js-redis-server/issues"
   },
   "homepage": "https://github.com/fatal10110/js-redis-server#readme",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./core": {
+      "import": {
+        "types": "./dist/core.d.mts",
+        "default": "./dist/core.mjs"
+      },
+      "require": {
+        "types": "./dist/core.d.ts",
+        "default": "./dist/core.js"
+      }
     }
   },
   "bin": {
-    "js-redis-server": "dist/cli.js"
+    "js-redis-server": "./dist/cli.js"
   },
   "sideEffects": false,
   "files": [
@@ -44,14 +61,15 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "rm -rf ./dist && tsc && node -e \"const f=require('fs');const p='dist/cli.js';f.writeFileSync(p,'#!/usr/bin/env node\\n'+f.readFileSync(p,'utf8'));f.chmodSync(p,0o755)\"",
+    "build": "tsup",
     "start": "npm run build && node --enable-source-maps ./dist/cli.js",
     "test": "tsc --noEmit && node --enable-source-maps --import tsx --no-warnings --test \"./tests/**/*.test.ts\"",
     "test:integration:mock": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/**/*.test.ts\"",
     "test:integration:real": "tsc --noEmit && npm run clean:redis && TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test \"./tests-integration/**/*.test.ts\"",
     "test:integration:raw:mock": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/raw-tcp/**/*.test.ts\"",
     "test:integration:raw:real": "tsc --noEmit && TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test \"./tests-integration/raw-tcp/**/*.test.ts\"",
-    "test:all": "npm run test && npm run test:integration:mock && npm run test:integration:real",
+    "test:package": "npm run build && node --enable-source-maps --import tsx --no-warnings --test \"./tests-package/**/*.test.ts\"",
+    "test:all": "npm run test && npm run test:package && npm run test:integration:mock && npm run test:integration:real",
     "clean:redis": "redis-cli --cluster call 127.0.0.1:30000 FLUSHALL || redis-cli FLUSHALL || echo 'Redis cleanup attempted'",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.+(js|ts|json)\"",
@@ -78,6 +96,7 @@
     "lint-staged": "^17.0.7",
     "prettier": "^3.8.4",
     "redis": "^6.0.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }

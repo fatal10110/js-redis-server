@@ -18,6 +18,7 @@ queueing, and command semantics never diverge between them.
 - [Concurrency model](#concurrency-model)
 - [Protocol & transports (RESP2 / RESP3)](#protocol--transports-resp2--resp3)
 - [Cluster mode](#cluster-mode)
+- [Test-mock facade](#test-mock-facade)
 - [Lua scripting](#lua-scripting)
 - [Adding a command](#adding-a-command)
 
@@ -437,6 +438,46 @@ There is no separate "cluster commander" type — cluster mode is the same
 one extra policy. `SELECT 0` is accepted as a no-op in cluster mode (Redis
 Cluster only exposes database 0); any non-zero index is rejected. Multi-database
 commands such as `MOVE` are rejected in cluster mode.
+
+## Test-mock facade
+
+[`createRedisMock`](../src/mock.ts) is the public entry point for using the
+server as a test mock. It sits on top of the existing wiring rather than
+beside it:
+
+- standalone mocks go through [`createRedisServer`](../src/mock.ts) — the
+  standalone analog to `buildRedisCluster` that wires `RedisServerState` (16
+  databases by default), `createRedisCommandExecutor`, and a `Resp2Server`.
+  [`cli.ts`](../src/cli.ts) `runSingle` is built on the same helper, so the CLI
+  and the mock never drift.
+- cluster mocks delegate straight to `buildRedisCluster`.
+
+The returned `RedisMock` exposes connection helpers (`connectionOptions()`,
+`clusterNodes()`, `url`), `flush()`/`reset()` (→ `state.flushAllDatabases()` or
+a cluster fan-out), and `state`/`nodes` escape hatches.
+
+`mock.client()` returns an [`InMemoryRedisClient`](../src/in-memory-client.ts) —
+a socketless client that drives the **same** pipeline by holding a
+[`ClientSession`](../src/core/client-session.ts) and calling `session.execute`
+directly, bypassing both the TCP loopback and RESP encode/decode. Replies are
+decoded from `RedisValue` into native JS (integers narrowed to `number` when
+safe; `-ERR` surfaced as `RedisCommandError`). Streaming commands are rejected.
+The executor stays private to the facade — it is never exposed on `RedisMock` or
+the `createRedisServer` handle.
+
+The standalone transport is selectable via `transport: 'tcp' | 'memory'`. The
+default `'tcp'` starts a real `Resp2Server`; `'memory'` skips the listener
+entirely (no port), so only `mock.client()` works and the network accessors
+throw. Cluster mocks are always TCP.
+
+[`seed`](../src/seed.ts) converts a public `SeedEntry[]` into keyspace writes:
+each entry maps to a `RedisDataValue` via the existing tracked
+`updateHash`/`updateList`/… helpers (so the conversion stays in one place), with
+`ttlMs` applied as an expiration and `db` selecting the logical database. In
+cluster mode it resolves each key's slot owner via the topology and writes into
+that master, letting the normal replication links propagate to replicas. Writes
+acquire the per-database `SerialTurnQueue` turn, so seeding never interleaves
+with an in-flight command.
 
 ## Lua scripting
 

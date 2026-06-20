@@ -71,6 +71,37 @@ console.log(`Redis server listening at ${server.getAddress()}`)
 await server.close()
 ```
 
+### As a Test Mock (recommended)
+
+For test suites, skip the manual wiring above and use the `createRedisMock()`
+facade. It spins up a standalone server (16 databases, random free port) or a
+whole cluster, seeds data, and resets between tests:
+
+```typescript
+import { createRedisMock } from 'js-redis-server'
+import { Redis } from 'ioredis'
+
+const mock = await createRedisMock()
+// or: await createRedisMock({ cluster: { masters: 3, replicas: 1 } })
+
+await mock.seed([
+  { key: 'user:1', type: 'string', value: 'alice' },
+  { key: 'counter', type: 'string', value: 42 },
+  { key: 'h:1', type: 'hash', value: { name: 'bob' }, ttlMs: 5000 },
+  { key: 'l:1', type: 'list', value: ['a', 'b'] },
+  { key: 's:1', type: 'set', value: ['x', 'y'] },
+  { key: 'z:1', type: 'zset', value: { a: 1, b: 2 } },
+])
+
+const client = new Redis(mock.connectionOptions())
+// cluster: new Redis.Cluster(mock.clusterNodes())
+
+await mock.flush() // reset between tests
+await mock.close()
+```
+
+See [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests) for `beforeEach`/`afterEach` recipes.
+
 ### As a CLI
 
 ```bash
@@ -194,38 +225,154 @@ const cluster = createCluster({
 await cluster.connect()
 ```
 
-### Using in Unit Tests
+## Use as a Redis mock in tests
 
-Since `js-redis-server` starts instantly, it is perfect for isolated integration testing in Node.js test frameworks (like Mocha, Jest, or Node's test runner):
+`js-redis-server` starts instantly with no external Redis, so it makes a clean
+drop-in mock for test suites. The `createRedisMock()` facade owns the server
+lifecycle, seeding, and reset-between-tests; you just connect your real client
+library to it.
+
+`RedisMock` surface:
+
+| Member | Description |
+| :--- | :--- |
+| `host` / `port` / `url` | Connection coordinates of the (first) node. |
+| `connectionOptions()` | ioredis-shaped `{ host, port }` for a single client. |
+| `clusterNodes()` | Seed-node list for `Redis.Cluster` (one entry for standalone). |
+| `seed(entries)` | Preload data (see [Seeding](#seeding)). |
+| `client(opts?)` | Socketless in-process client (see [Socketless client](#socketless-client)). |
+| `flush()` / `reset()` | Clear all keyspace data between tests. |
+| `close()` | Shut down the server / cluster. |
+| `state` / `nodes` | Escape hatches to the underlying `RedisServerState` / node handles. |
+
+### node:test
 
 ```typescript
-import { test, before, after } from 'node:test'
+import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert'
-import Redis from 'ioredis'
-import { RedisServerState, createRedisCommandExecutor, Resp2Server } from 'js-redis-server'
+import { Redis } from 'ioredis'
+import { createRedisMock, type RedisMock } from 'js-redis-server'
 
-let server: Resp2Server
+let mock: RedisMock
 let client: Redis
 
-before(async () => {
-  const state = new RedisServerState()
-  const executor = createRedisCommandExecutor()
-  server = new Resp2Server({ server: state, executor })
-  
-  await server.listen(6379)
-  client = new Redis(6379, '127.0.0.1')
+beforeEach(async () => {
+  mock = await createRedisMock()
+  client = new Redis(mock.connectionOptions())
 })
 
-after(async () => {
-  await client.quit()
-  await server.close()
+afterEach(async () => {
+  client.disconnect()
+  await mock.close()
 })
 
 test('basic set/get operations', async () => {
   await client.set('foo', 'bar')
-  const val = await client.get('foo')
-  assert.strictEqual(val, 'bar')
+  assert.strictEqual(await client.get('foo'), 'bar')
 })
+```
+
+### vitest / jest
+
+```typescript
+import { beforeEach, afterEach, test, expect } from 'vitest' // or '@jest/globals'
+import { Redis } from 'ioredis'
+import { createRedisMock, type RedisMock } from 'js-redis-server'
+
+let mock: RedisMock
+let client: Redis
+
+beforeEach(async () => {
+  mock = await createRedisMock()
+  await mock.seed([{ key: 'counter', type: 'string', value: 1 }])
+  client = new Redis(mock.connectionOptions())
+})
+
+afterEach(async () => {
+  client.disconnect()
+  await mock.close()
+})
+
+test('increments a seeded counter', async () => {
+  expect(await client.incr('counter')).toBe(2)
+})
+```
+
+Prefer a fresh `createRedisMock()` per test for full isolation; to reuse one
+instance across a file, call `await mock.flush()` in `afterEach` instead.
+
+### Cluster mocks
+
+```typescript
+const mock = await createRedisMock({ cluster: { masters: 3, replicas: 1 } })
+const cluster = new Redis.Cluster(mock.clusterNodes())
+```
+
+### Socketless client
+
+If you don't need a real client library, `mock.client()` returns an in-process
+client that drives the **same** command pipeline directly — no TCP loopback, no
+RESP encoding — and resolves to native JS replies (throwing `RedisCommandError`
+on `-ERR`). Standalone mocks only; cluster mocks throw.
+
+```typescript
+const mock = await createRedisMock()
+const client = mock.client() // { database?, returnBuffers? }
+
+await client.command('SET', 'k', 'v')
+await client.command('GET', 'k') // 'v'
+await client.command('INCR', 'n') // 1 (number)
+await client.command('HGETALL', 'h') // { field: 'value', ... }
+
+// clients are closed automatically when the mock closes
+await mock.close()
+```
+
+For a mock with **no network listener at all**, pass `transport: 'memory'`. Only
+`client()` works; the network accessors (`host`/`port`/`url`/`connectionOptions`/
+`clusterNodes`) throw.
+
+```typescript
+const mock = await createRedisMock({ transport: 'memory' })
+const client = mock.client()
+await client.command('PING') // 'PONG'
+```
+
+### Seeding
+
+`seed()` takes an explicit entries array — you supply keys, types, values, and
+optional `ttlMs` / `db`; the mock owns placement (including cluster slot
+routing) and the internal value conversion.
+
+```typescript
+type SeedEntry =
+  | { key: string; type: 'string'; value: string | number; ttlMs?: number; db?: number }
+  | { key: string; type: 'hash';   value: Record<string, string | number>; ttlMs?: number; db?: number }
+  | { key: string; type: 'list';   value: (string | number)[]; ttlMs?: number; db?: number }
+  | { key: string; type: 'set';    value: (string | number)[]; ttlMs?: number; db?: number }
+  | { key: string; type: 'zset';   value: Record<string, number>; ttlMs?: number; db?: number }
+```
+
+`db` selects the logical database (standalone mocks). Streams are not seedable
+yet. For anything beyond these shapes, drive your client directly or reach for
+the `mock.state` escape hatch.
+
+### Package entry points
+
+The package ships dual ESM + CJS builds. The root entry promotes the test-mock
+facade, the server/cluster builders, and the client-visible error classes:
+
+```typescript
+import { createRedisMock, buildRedisCluster, RedisCommandError } from 'js-redis-server'
+```
+
+Deep internals — `defineCommand`, the `t` schema builder, execution policies,
+transports, the Lua runtime, data-type helpers, etc. — are also available from
+the `js-redis-server/core` subpath (and are still re-exported from the root for
+now, so existing imports keep working):
+
+```typescript
+import { defineCommand, t, CommandRegistry } from 'js-redis-server/core'
 ```
 
 ## API Reference
@@ -285,6 +432,45 @@ buildRedisCluster(options: RedisClusterOptions): RedisCluster
 | `basePort` | `number` | **Required** | Base port range. If `0`, random OS ports are assigned. |
 | `host` | `string` | `'127.0.0.1'` | Host address to bind to. |
 | `databasesPerNode` | `number` | `1` | Number of databases per cluster node. |
+| `logger` | `Pick<Logger, 'error'>` | `undefined` | Optional logger. |
+
+---
+
+### `createRedisMock`
+
+High-level test-mock facade. Returns a `RedisMock` wrapping a standalone server
+(default) or a cluster.
+
+```typescript
+createRedisMock(options?: CreateRedisMockOptions): Promise<RedisMock>
+```
+
+**Options (`CreateRedisMockOptions`)**:
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `cluster` | `{ masters: number; replicas?: number }` | `undefined` | When set, builds a cluster mock instead of a standalone one. |
+| `databaseCount` | `number` | `16` | Standalone-only: logical database count. |
+| `port` | `number` | `0` | Standalone bind port (`0` = OS-assigned). |
+| `basePort` | `number` | `0` | Cluster base port (`0` = each node OS-assigned). |
+| `logger` | `Pick<Logger, 'error'>` | `undefined` | Optional logger. |
+
+---
+
+### `createRedisServer`
+
+Standalone analog to `buildRedisCluster`: wires `RedisServerState` (16 databases
+by default), the command executor, and a `Resp2Server`, then listens. Returns a
+`{ host, port, state, server, close() }` handle.
+
+```typescript
+createRedisServer(options?: CreateRedisServerOptions): Promise<RedisServerHandle>
+```
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `port` | `number` | `0` | Bind port (`0` = OS-assigned). |
+| `databaseCount` | `number` | `16` | Logical database count (matches real Redis). |
 | `logger` | `Pick<Logger, 'error'>` | `undefined` | Optional logger. |
 
 
