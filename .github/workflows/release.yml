@@ -33,6 +33,12 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Verify dual ESM/CJS package
+        # Resolves the built package by name through both the `require` and
+        # `import` conditions for the root and the `js-redis-server/core`
+        # subpath — guards the exports map and dual output before publish.
+        run: npm run test:package
+
       - name: Publish to npm
         run: npm publish --provenance --access public
         env:
