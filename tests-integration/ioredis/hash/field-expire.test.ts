@@ -427,40 +427,4 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       directClient?.disconnect()
     }
   })
-
-  test('HEXPIRE arg-content errors stay inline inside MULTI/EXEC', async () => {
-    const key = `{hexpire-multi-errors:${randomKey()}}:hash`
-    let directClient: Redis | undefined
-
-    try {
-      assert.ok(redisClient)
-      directClient = await connectToSlotOwner(redisClient, key)
-
-      assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(
-        await directClient.hset(key, 'field', 'value'),
-        'QUEUED',
-      )
-      assert.strictEqual(
-        await directClient.hexpire(key, 'abc', 'FIELDS', '1', 'field'),
-        'QUEUED',
-      )
-      assert.strictEqual(await directClient.hget(key, 'field'), 'QUEUED')
-
-      const result = await directClient.call('EXEC')
-
-      assert.ok(Array.isArray(result))
-      assert.strictEqual(result.length, 3)
-      assert.strictEqual(result[0], 1)
-      assert.ok(result[1] instanceof Error)
-      assert.strictEqual(
-        result[1].message,
-        'ERR value is not an integer or out of range',
-      )
-      assert.strictEqual(result[2], 'value')
-    } finally {
-      await directClient?.del(key)
-      directClient?.disconnect()
-    }
-  })
 })

@@ -90,33 +90,6 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     assert.strictEqual(await directClient?.client('GETNAME'), null)
   })
 
-  test('HELLO SETNAME validates names like CLIENT SETNAME', async () => {
-    const key = `{hello-setname:${randomKey()}}:probe`
-    const client = await connectToSlotOwner(redisClient!, key)
-    const validName = `hello-${randomKey()}`
-
-    try {
-      const hello = (await client.call(
-        'HELLO',
-        '2',
-        'SETNAME',
-        validName,
-      )) as unknown[]
-
-      assertHelloEntry(hello, 'server', 'redis')
-      assert.strictEqual(await client.client('GETNAME'), validName)
-
-      await assert.rejects(
-        () =>
-          client.call('HELLO', '2', 'SETNAME', 'has space') as Promise<unknown>,
-        errorWithMessage(INVALID_CLIENT_NAME_ERROR),
-      )
-      assert.strictEqual(await client.client('GETNAME'), validName)
-    } finally {
-      client.disconnect()
-    }
-  })
-
   test('CLIENT LIST reports all active clients on the connected node', async () => {
     const key = `{client-list:${randomKey()}}:probe`
     const primary = await connectToSlotOwner(redisClient!, key)
@@ -142,45 +115,6 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
       primary.disconnect()
       secondary.disconnect()
     }
-  })
-
-  test('HELLO can set the connection name and reports cluster mode', async () => {
-    const name = `hello-${randomKey()}`
-    const hello = (await directClient?.call(
-      'HELLO',
-      '2',
-      'SETNAME',
-      name,
-    )) as unknown[]
-
-    assertHelloEntry(hello, 'server', 'redis')
-    assertHelloEntry(hello, 'proto', 2)
-    assertHelloEntry(hello, 'mode', 'cluster')
-    assert.strictEqual(await directClient?.client('GETNAME'), name)
-  })
-
-  test('HELLO with an unsupported protocol version returns NOPROTO', async () => {
-    await assert.rejects(
-      () => directClient!.call('HELLO', '4') as Promise<unknown>,
-      errorWithMessage('NOPROTO unsupported protocol version'),
-    )
-    await assert.rejects(
-      () => directClient!.call('HELLO', '0') as Promise<unknown>,
-      errorWithMessage('NOPROTO unsupported protocol version'),
-    )
-    await assert.rejects(
-      () => directClient!.call('HELLO', '-1') as Promise<unknown>,
-      errorWithMessage('NOPROTO unsupported protocol version'),
-    )
-  })
-
-  test('HELLO with a non-integer protocol version returns the HELLO-specific ERR', async () => {
-    await assert.rejects(
-      () => directClient!.call('HELLO', 'abc') as Promise<unknown>,
-      errorWithMessage(
-        'ERR Protocol version is not an integer or out of range',
-      ),
-    )
   })
 
   test('HELLO 3 switches the connection to RESP3 replies', async () => {
@@ -242,15 +176,6 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     )
   })
 
-  test('RESET clears connection-local state', async () => {
-    assert.strictEqual(
-      await directClient?.client('SETNAME', 'reset-name'),
-      'OK',
-    )
-    assert.strictEqual(await directClient?.call('RESET'), 'RESET')
-    assert.strictEqual(await directClient?.client('GETNAME'), null)
-  })
-
   test('SELECT 0 is allowed in cluster mode (no-op DB switch)', async () => {
     assert.strictEqual(await directClient?.select(0), 'OK')
   })
@@ -265,21 +190,4 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
       errorWithMessage('ERR SELECT is not allowed in cluster mode'),
     )
   })
-
-  test('SELECT with a non-integer index is a value error in cluster mode', async () => {
-    await assert.rejects(
-      () => directClient?.call('SELECT', 'abc'),
-      errorWithMessage('ERR value is not an integer or out of range'),
-    )
-  })
 })
-
-function assertHelloEntry(
-  reply: unknown[],
-  key: string,
-  expected: string | number,
-): void {
-  const index = reply.indexOf(key)
-  assert.notStrictEqual(index, -1)
-  assert.strictEqual(reply[index + 1], expected)
-}

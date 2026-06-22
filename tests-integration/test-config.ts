@@ -237,6 +237,17 @@ export class TestRunner {
       : this.startRealStandalone()
   }
 
+  /**
+   * Start a password-protected (requirepass) standalone server for raw-tcp
+   * tests and return its port. No client is created — callers drive the
+   * AUTH/NOAUTH/WRONGPASS handshake over a bare `RawRedisConnection`.
+   */
+  async setupRawStandaloneAuth(): Promise<number> {
+    return this.backend === 'mock'
+      ? this.startMockStandaloneAuth()
+      : this.startRealStandaloneAuth()
+  }
+
   private async startMockStandalone(): Promise<number> {
     const state = new RedisServerState({ databaseCount: 16 })
     const executor = createRedisCommandExecutor()
@@ -340,6 +351,27 @@ export class TestRunner {
     this.standaloneProcs.push(proc)
     await waitForRedis(port)
     return port
+  }
+
+  /**
+   * Bring up a cluster for raw-tcp tests and return its node ports.
+   *
+   * Unlike `setupIoredisCluster`, no client is created — callers open
+   * `RawRedisConnection`s themselves (see `connectToRawSlotOwner`). This lets
+   * wire-level tests that need cluster routing (raw MULTI/EXEC/WATCH, CROSSSLOT,
+   * MOVED) run over a bare socket instead of through a client.
+   */
+  async setupRawCluster(
+    options: IoredisClusterSetupOptions = {},
+  ): Promise<number[]> {
+    if (this.backend === 'mock') {
+      await this.ensureMockCluster({
+        masters: options.masters ?? 3,
+        replicasPerMaster: options.replicasPerMaster ?? 0,
+      })
+      return this.getMockClusterPorts()
+    }
+    return this.getRealClusterPorts()
   }
 
   getMockClusterPorts(): number[] {

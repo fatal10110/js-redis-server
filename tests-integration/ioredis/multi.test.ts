@@ -2,7 +2,7 @@ import { Cluster } from 'ioredis'
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
+import { connectToSlotOwner, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -68,83 +68,6 @@ describe('multi', () => {
     assert.ok(res)
     assert.strictEqual(res[0][1], 'OK')
     assert.ok(res[1][0]?.message.includes('NOSCRIPT'))
-  })
-
-  test('DISCARD clears queued writes without executing them', async () => {
-    const key = `{discard:${randomKey()}}:key`
-    const directClient = await connectToSlotOwner(redisClient!, key)
-
-    try {
-      assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.set(key, 'value'), 'QUEUED')
-      assert.strictEqual(await directClient.call('DISCARD'), 'OK')
-      assert.strictEqual(await directClient.get(key), null)
-    } finally {
-      directClient.disconnect()
-    }
-  })
-
-  test('transaction mode errors match Redis', async () => {
-    const key = `{tx-errors:${randomKey()}}:key`
-    const directClient = await connectToSlotOwner(redisClient!, key)
-
-    try {
-      await assert.rejects(
-        () => directClient.call('EXEC'),
-        errorWithMessage('ERR EXEC without MULTI'),
-      )
-      await assert.rejects(
-        () => directClient.call('DISCARD'),
-        errorWithMessage('ERR DISCARD without MULTI'),
-      )
-
-      assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      await assert.rejects(
-        () => directClient.call('WATCH', key),
-        errorWithMessage('ERR WATCH inside MULTI is not allowed'),
-      )
-      assert.deepStrictEqual(await directClient.call('EXEC'), [])
-    } finally {
-      directClient.disconnect()
-    }
-  })
-
-  test('EXEC with wrong arity aborts the transaction with EXECABORT', async () => {
-    const key = `{exec-arity:${randomKey()}}:key`
-    const directClient = await connectToSlotOwner(redisClient!, key)
-
-    try {
-      assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.set(key, 'value'), 'QUEUED')
-      await assert.rejects(
-        () => directClient.call('EXEC', 'foo'),
-        errorWithMessage(
-          "EXECABORT Transaction discarded because of: wrong number of arguments for 'exec' command",
-        ),
-      )
-
-      // Session must be back in normal mode: this SET runs immediately
-      // instead of being queued, and the queued SET above never ran.
-      assert.strictEqual(await directClient.set(key, 'value2'), 'OK')
-      assert.strictEqual(await directClient.get(key), 'value2')
-    } finally {
-      await directClient.del(key)
-      directClient.disconnect()
-    }
-  })
-
-  test('UNWATCH is queued in MULTI and returns OK from EXEC', async () => {
-    const key = `{unwatch:${randomKey()}}:key`
-    const directClient = await connectToSlotOwner(redisClient!, key)
-
-    try {
-      assert.strictEqual(await directClient.call('WATCH', key), 'OK')
-      assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('UNWATCH'), 'QUEUED')
-      assert.deepStrictEqual(await directClient.call('EXEC'), ['OK'])
-    } finally {
-      directClient.disconnect()
-    }
   })
 
   test('runtime command errors are returned as EXEC array elements', async () => {
