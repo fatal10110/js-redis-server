@@ -70,11 +70,11 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         'ERR value is not an integer or out of range',
       )
       await assert.rejects(
-        () => node.call('XRANGE', key, '-', '+', 'COUNT', 'abc'),
+        () => node.xrange(key, '-', '+', 'COUNT', 'abc'),
         invalidCount,
       )
       await assert.rejects(
-        () => node.call('XREVRANGE', key, '+', '-', 'COUNT', 'abc'),
+        () => node.xrevrange(key, '+', '-', 'COUNT', 'abc'),
         invalidCount,
       )
     } finally {

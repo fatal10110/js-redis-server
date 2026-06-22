@@ -329,9 +329,9 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
     const rawSetMember = Buffer.from([0x61, 0x00, 0x62])
     const rawZsetMember = Buffer.from('😀', 'utf16le')
 
-    await redisClient?.call('hset', hashKey, rawHashField, rawHashValue)
-    await redisClient?.call('sadd', setKey, rawSetMember)
-    await redisClient?.call('zadd', zsetKey, '1', rawZsetMember)
+    await redisClient?.hset(hashKey, rawHashField, rawHashValue)
+    await redisClient?.sadd(setKey, rawSetMember)
+    await redisClient?.zadd(zsetKey, '1', rawZsetMember)
 
     const hscan = (await redisClient?.callBuffer(
       'hscan',

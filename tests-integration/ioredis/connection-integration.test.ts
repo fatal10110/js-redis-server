@@ -39,7 +39,7 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
 
   test('PING and INFO expose Redis-compatible connection metadata', async () => {
     assert.strictEqual(await directClient?.ping(), 'PONG')
-    assert.strictEqual(await directClient?.call('PING', 'hello'), 'hello')
+    assert.strictEqual(await directClient?.ping('hello'), 'hello')
 
     const info = (await directClient?.info()) ?? ''
     assert.match(info, /loading:0/)
@@ -50,21 +50,18 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
   test('CLIENT name, id, info, and list are connection-local', async () => {
     const name = `client-${randomKey()}`
 
-    assert.strictEqual(
-      await directClient?.call('CLIENT', 'SETNAME', name),
-      'OK',
-    )
-    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), name)
+    assert.strictEqual(await directClient?.client('SETNAME', name), 'OK')
+    assert.strictEqual(await directClient?.client('GETNAME'), name)
 
-    const id = await directClient?.call('CLIENT', 'ID')
+    const id = await directClient?.client('ID')
     assert.strictEqual(typeof id, 'number')
     assert.ok((id as number) > 0)
 
-    const info = (await directClient?.call('CLIENT', 'INFO')) as string
+    const info = (await directClient?.client('INFO')) as string
     assert.match(info, new RegExp(`name=${name}`))
     assert.match(info, /db=0/)
 
-    const list = (await directClient?.call('CLIENT', 'LIST')) as string
+    const list = (await directClient?.client('LIST')) as string
     assert.match(list, new RegExp(`name=${name}`))
   })
 
@@ -78,30 +75,19 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
       'caf\u00e9',
     ]
 
-    assert.strictEqual(
-      await directClient?.call('CLIENT', 'SETNAME', validName),
-      'OK',
-    )
-    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), validName)
+    assert.strictEqual(await directClient?.client('SETNAME', validName), 'OK')
+    assert.strictEqual(await directClient?.client('GETNAME'), validName)
 
     for (const invalidName of invalidNames) {
       await assert.rejects(
-        () =>
-          directClient!.call(
-            'CLIENT',
-            'SETNAME',
-            invalidName,
-          ) as Promise<unknown>,
+        () => directClient!.client('SETNAME', invalidName) as Promise<unknown>,
         errorWithMessage(INVALID_CLIENT_NAME_ERROR),
       )
-      assert.strictEqual(
-        await directClient?.call('CLIENT', 'GETNAME'),
-        validName,
-      )
+      assert.strictEqual(await directClient?.client('GETNAME'), validName)
     }
 
-    assert.strictEqual(await directClient?.call('CLIENT', 'SETNAME', ''), 'OK')
-    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), null)
+    assert.strictEqual(await directClient?.client('SETNAME', ''), 'OK')
+    assert.strictEqual(await directClient?.client('GETNAME'), null)
   })
 
   test('HELLO SETNAME validates names like CLIENT SETNAME', async () => {
@@ -118,14 +104,14 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
       )) as unknown[]
 
       assertHelloEntry(hello, 'server', 'redis')
-      assert.strictEqual(await client.call('CLIENT', 'GETNAME'), validName)
+      assert.strictEqual(await client.client('GETNAME'), validName)
 
       await assert.rejects(
         () =>
           client.call('HELLO', '2', 'SETNAME', 'has space') as Promise<unknown>,
         errorWithMessage(INVALID_CLIENT_NAME_ERROR),
       )
-      assert.strictEqual(await client.call('CLIENT', 'GETNAME'), validName)
+      assert.strictEqual(await client.client('GETNAME'), validName)
     } finally {
       client.disconnect()
     }
@@ -139,22 +125,16 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     const secondaryName = `secondary-${randomKey()}`
 
     try {
-      assert.strictEqual(
-        await primary.call('CLIENT', 'SETNAME', primaryName),
-        'OK',
-      )
-      assert.strictEqual(
-        await secondary.call('CLIENT', 'SETNAME', secondaryName),
-        'OK',
-      )
+      assert.strictEqual(await primary.client('SETNAME', primaryName), 'OK')
+      assert.strictEqual(await secondary.client('SETNAME', secondaryName), 'OK')
 
-      const list = (await primary.call('CLIENT', 'LIST')) as string
+      const list = (await primary.client('LIST')) as string
       assert.match(list, new RegExp(`name=${primaryName}`))
       assert.match(list, new RegExp(`name=${secondaryName}`))
 
       secondary.disconnect()
       await eventually(async () => {
-        const updated = (await primary.call('CLIENT', 'LIST')) as string
+        const updated = (await primary.client('LIST')) as string
         assert.match(updated, new RegExp(`name=${primaryName}`))
         assert.doesNotMatch(updated, new RegExp(`name=${secondaryName}`))
       })
@@ -176,7 +156,7 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     assertHelloEntry(hello, 'server', 'redis')
     assertHelloEntry(hello, 'proto', 2)
     assertHelloEntry(hello, 'mode', 'cluster')
-    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), name)
+    assert.strictEqual(await directClient?.client('GETNAME'), name)
   })
 
   test('HELLO with an unsupported protocol version returns NOPROTO', async () => {
@@ -264,11 +244,11 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
 
   test('RESET clears connection-local state', async () => {
     assert.strictEqual(
-      await directClient?.call('CLIENT', 'SETNAME', 'reset-name'),
+      await directClient?.client('SETNAME', 'reset-name'),
       'OK',
     )
     assert.strictEqual(await directClient?.call('RESET'), 'RESET')
-    assert.strictEqual(await directClient?.call('CLIENT', 'GETNAME'), null)
+    assert.strictEqual(await directClient?.client('GETNAME'), null)
   })
 
   test('SELECT 0 is allowed in cluster mode (no-op DB switch)', async () => {

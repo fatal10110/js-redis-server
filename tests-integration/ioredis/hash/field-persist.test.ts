@@ -39,23 +39,15 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HPEXPIRE',
-          key,
-          '5000',
-          'FIELDS',
-          '1',
-          'volatile',
-        ),
+        await directClient.hpexpire(key, '5000', 'FIELDS', '1', 'volatile'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call('HPEXPIRE', key, '20', 'FIELDS', '1', 'soon'),
+        await directClient.hpexpire(key, '20', 'FIELDS', '1', 'soon'),
         [1],
       )
 
-      const seconds = await directClient.call(
-        'HTTL',
+      const seconds = await directClient.httl(
         key,
         'FIELDS',
         '4',
@@ -72,8 +64,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.ok(seconds[2] >= 0 && seconds[2] <= 1)
       assert.strictEqual(seconds[3], -2)
 
-      const milliseconds = await directClient.call(
-        'HPTTL',
+      const milliseconds = await directClient.hpttl(
         key,
         'FIELDS',
         '4',
@@ -91,8 +82,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(milliseconds[3], -2)
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HPERSIST',
+        await directClient.hpersist(
           key,
           'FIELDS',
           '4',
@@ -104,14 +94,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [-1, 1, -2, -1],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HPTTL',
-          key,
-          'FIELDS',
-          '2',
-          'persistent',
-          'volatile',
-        ),
+        await directClient.hpttl(key, 'FIELDS', '2', 'persistent', 'volatile'),
         [-1, -1],
       )
 
@@ -121,8 +104,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(await directClient.hget(key, 'volatile'), 'value2')
       assert.strictEqual(await directClient.hget(key, 'soon'), null)
       assert.deepStrictEqual(
-        await directClient.call(
-          'HTTL',
+        await directClient.httl(
           key,
           'FIELDS',
           '3',
@@ -147,15 +129,15 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       directClient = await connectToSlotOwner(redisClient, key)
 
       assert.deepStrictEqual(
-        await directClient.call('HPERSIST', key, 'FIELDS', '2', 'a', 'b'),
+        await directClient.hpersist(key, 'FIELDS', '2', 'a', 'b'),
         [-2, -2],
       )
       assert.deepStrictEqual(
-        await directClient.call('HTTL', key, 'FIELDS', '2', 'a', 'b'),
+        await directClient.httl(key, 'FIELDS', '2', 'a', 'b'),
         [-2, -2],
       )
       assert.deepStrictEqual(
-        await directClient.call('HPTTL', key, 'FIELDS', '2', 'a', 'b'),
+        await directClient.hpttl(key, 'FIELDS', '2', 'a', 'b'),
         [-2, -2],
       )
       assert.strictEqual(await directClient.exists(key), 0)

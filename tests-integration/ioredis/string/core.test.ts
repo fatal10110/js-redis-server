@@ -128,18 +128,9 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
     try {
       await directClient.set(key, 'abcdef')
 
-      assert.strictEqual(
-        await directClient.call('SUBSTR', key, '1', '3'),
-        'bcd',
-      )
-      assert.strictEqual(
-        await directClient.call('SUBSTR', key, '-3', '-1'),
-        'def',
-      )
-      assert.strictEqual(
-        await directClient.call('SUBSTR', missingKey, '0', '1'),
-        '',
-      )
+      assert.strictEqual(await directClient.substr(key, '1', '3'), 'bcd')
+      assert.strictEqual(await directClient.substr(key, '-3', '-1'), 'def')
+      assert.strictEqual(await directClient.substr(missingKey, '0', '1'), '')
     } finally {
       await directClient.del(key, missingKey)
       directClient.disconnect()
@@ -219,49 +210,43 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('INCRBY', stringKey, 'abc'),
+        () => directClient.incrby(stringKey, 'abc'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('INCRBY', stringKey, '01'),
+        () => directClient.incrby(stringKey, '01'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('DECRBY', stringKey, '-01'),
+        () => directClient.decrby(stringKey, '-01'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('INCRBYFLOAT', stringKey, 'abc'),
+        () => directClient.incrbyfloat(stringKey, 'abc'),
         errorWithMessage('ERR value is not a valid float'),
       )
       await assert.rejects(
-        () => directClient.call('SETRANGE', stringKey, '-1', 'x'),
+        () => directClient.setrange(stringKey, '-1', 'x'),
         errorWithMessage('ERR offset is out of range'),
       )
       await assert.rejects(
-        () => directClient.call('SETEX', `${tag}:setex`, '0', 'value'),
+        () => directClient.setex(`${tag}:setex`, '0', 'value'),
         errorWithMessage("ERR invalid expire time in 'setex' command"),
       )
       await assert.rejects(
-        () =>
-          directClient.call(
-            'SETEX',
-            `${tag}:setex-leading-zero`,
-            '01',
-            'value',
-          ),
+        () => directClient.setex(`${tag}:setex-leading-zero`, '01', 'value'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('PSETEX', `${tag}:psetex`, '0', 'value'),
+        () => directClient.psetex(`${tag}:psetex`, '0', 'value'),
         errorWithMessage("ERR invalid expire time in 'psetex' command"),
       )
       await assert.rejects(
-        () => directClient.call('GETEX', stringKey, 'EX', '0'),
+        () => directClient.getex(stringKey, 'EX', '0'),
         errorWithMessage("ERR invalid expire time in 'getex' command"),
       )
       await assert.rejects(
-        () => directClient.call('GETEX', stringKey, 'EX', '10', 'PX', '10'),
+        () => directClient.getex(stringKey, 'EX', '10', 'PX', '10'),
         errorWithMessage('ERR syntax error'),
       )
     } finally {

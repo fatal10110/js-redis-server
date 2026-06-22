@@ -76,13 +76,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '2-1', 'f', 'v')
       await node.xadd(key, '3-1', 'f', 'v')
 
-      const removed = (await node.call(
-        'XTRIM',
-        key,
-        'MAXLEN',
-        '~',
-        '2',
-      )) as number
+      const removed = (await node.xtrim(key, 'MAXLEN', '~', '2')) as number
       assert.strictEqual(removed, 0)
       assert.strictEqual(await node.xlen(key), 3)
       assert.deepStrictEqual(await node.xrange(key, '-', '+'), [
@@ -103,8 +97,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '2-1', 'f', 'v')
       await node.xadd(key, '3-1', 'f', 'v')
 
-      const removed = (await node.call(
-        'XTRIM',
+      const removed = (await node.xtrim(
         key,
         'MAXLEN',
         '~',
@@ -127,25 +120,24 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '3-1', 'f', 'v')
 
       await assert.rejects(
-        () => node.call('XTRIM', key, 'MAXLEN', '2', 'LIMIT', '1'),
+        () => node.xtrim(key, 'MAXLEN', '2', 'LIMIT', '1'),
         errorWithMessage(
           'ERR syntax error, LIMIT cannot be used without the special ~ option',
         ),
       )
       await assert.rejects(
-        () => node.call('XTRIM', key, 'MAXLEN', '~', '2', 'LIMIT'),
+        () => node.xtrim(key, 'MAXLEN', '~', '2', 'LIMIT'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => node.call('XTRIM', key, 'MAXLEN', '~', '2', 'LIMIT', 'abc'),
+        () => node.xtrim(key, 'MAXLEN', '~', '2', 'LIMIT', 'abc'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => node.call('XTRIM', key, 'MAXLEN', '~', '2', 'LIMIT', '-1'),
+        () => node.xtrim(key, 'MAXLEN', '~', '2', 'LIMIT', '-1'),
         errorWithMessage('ERR The LIMIT argument must be >= 0.'),
       )
-      const removed = (await node.call(
-        'XTRIM',
+      const removed = (await node.xtrim(
         key,
         'MAXLEN',
         '~',
@@ -169,7 +161,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '2-0', 'f', 'v')
       await node.xadd(key, '3-0', 'f', 'v')
 
-      assert.strictEqual(await node.call('XTRIM', key, 'MINID', '2-0'), 1)
+      assert.strictEqual(await node.xtrim(key, 'MINID', '2-0'), 1)
       assert.deepStrictEqual(await node.xrange(key, '-', '+'), [
         ['2-0', ['f', 'v']],
         ['3-0', ['f', 'v']],

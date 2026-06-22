@@ -122,10 +122,7 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
       const originalTtl = await directClient.pttl(key)
       assert.ok(originalTtl > 0 && originalTtl <= 5000)
 
-      assert.strictEqual(
-        await directClient.call('SET', key, 'kept', 'KEEPTTL'),
-        'OK',
-      )
+      assert.strictEqual(await directClient.set(key, 'kept', 'KEEPTTL'), 'OK')
       assert.strictEqual(await directClient.get(key), 'kept')
 
       const keptTtl = await directClient.pttl(key)
@@ -152,17 +149,17 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
         ),
       )
       await assert.rejects(
-        () => directClient.call('SET', listKey, 'value', 'GET'),
+        () => directClient.set(listKey, 'value', 'GET'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
       )
       await assert.rejects(
-        () => directClient.call('SET', stringKey, 'value', 'NX', 'XX'),
+        () => directClient.set(stringKey, 'value', 'NX', 'XX'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => directClient.call('SET', stringKey, 'value', 'EX', '0'),
+        () => directClient.set(stringKey, 'value', 'EX', '0'),
         errorWithMessage("ERR invalid expire time in 'set' command"),
       )
     } finally {

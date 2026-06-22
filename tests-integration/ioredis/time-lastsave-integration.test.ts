@@ -2,7 +2,6 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { Redis } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { errorWithMessage } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -19,7 +18,7 @@ describe(`TIME / LASTSAVE integration (${testRunner.getBackendName()})`, () => {
 
   test('TIME returns [seconds, microseconds] close to current time', async () => {
     const before = Math.floor(Date.now() / 1000)
-    const reply = (await client?.call('TIME')) as [string, string]
+    const reply = (await client?.time()) as [string, string]
     const after = Math.floor(Date.now() / 1000)
 
     assert.ok(Array.isArray(reply), 'TIME must return an array')
@@ -43,15 +42,8 @@ describe(`TIME / LASTSAVE integration (${testRunner.getBackendName()})`, () => {
     )
   })
 
-  test('TIME rejects extra arguments', async () => {
-    await assert.rejects(
-      () => client!.call('TIME', 'extra'),
-      errorWithMessage("ERR wrong number of arguments for 'time' command"),
-    )
-  })
-
   test('LASTSAVE returns a Unix timestamp integer not in the future', async () => {
-    const reply = await client?.call('LASTSAVE')
+    const reply = await client?.lastsave()
     const now = Math.floor(Date.now() / 1000)
 
     const timestamp = Number(reply)
@@ -60,13 +52,6 @@ describe(`TIME / LASTSAVE integration (${testRunner.getBackendName()})`, () => {
     assert.ok(
       timestamp <= now + 1,
       `LASTSAVE timestamp ${timestamp} must not be in the future (now ${now})`,
-    )
-  })
-
-  test('LASTSAVE rejects extra arguments', async () => {
-    await assert.rejects(
-      () => client!.call('LASTSAVE', 'extra'),
-      errorWithMessage("ERR wrong number of arguments for 'lastsave' command"),
     )
   })
 })

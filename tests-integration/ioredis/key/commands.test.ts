@@ -65,13 +65,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       await new Promise(resolve => setTimeout(resolve, 20))
 
       assert.strictEqual(
-        await directClient.call(
-          'TOUCH',
-          stringKey,
-          hashKey,
-          missingKey,
-          expiringKey,
-        ),
+        await directClient.touch(stringKey, hashKey, missingKey, expiringKey),
         2,
       )
       assert.strictEqual(
@@ -79,14 +73,14 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         2,
       )
       assert.strictEqual(await directClient.type(hashKey), 'hash')
-      assert.strictEqual(await directClient.call('TOUCH', missingKey), 0)
+      assert.strictEqual(await directClient.touch(missingKey), 0)
 
       await assert.rejects(
         () => directClient.call('TOUCH'),
         errorWithMessage("ERR wrong number of arguments for 'touch' command"),
       )
       await assert.rejects(
-        () => directClient.call('TOUCH', crossSlotA, crossSlotB),
+        () => directClient.touch(crossSlotA, crossSlotB),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),
@@ -141,7 +135,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR no such key'),
       )
       await assert.rejects(
-        () => redisClient?.call('EXPIRE', key, 'abc'),
+        () => redisClient?.expire(key, 'abc'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
 

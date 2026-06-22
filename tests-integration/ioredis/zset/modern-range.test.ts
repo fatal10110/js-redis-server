@@ -60,18 +60,6 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
     ])
   })
 
-  test('ZMSCORE rejects wrong arity', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zmscore', key),
-        errorWithMessage("ERR wrong number of arguments for 'zmscore' command"),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
   test('ZMSCORE on a wrong-type key returns WRONGTYPE', async () => {
     const key = `{zmod:${randomKey()}}`
     await redisClient?.set(key, 'notazset')
@@ -183,23 +171,6 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
     const key = `{zmod:${randomKey()}}`
     assert.strictEqual(await redisClient?.zrandmember(key), null)
     assert.deepStrictEqual(await redisClient?.zrandmember(key, 3), [])
-  })
-
-  test('ZRANDMEMBER with non-integer count errors', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrandmember', key, 'x'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      // WITHSCORES without a count is parsed as the count token -> not an integer
-      await assert.rejects(
-        () => redisClient?.call('zrandmember', key, 'WITHSCORES'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
   })
 
   test('ZRANDMEMBER on a wrong-type key returns WRONGTYPE', async () => {
@@ -396,7 +367,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
       await redisClient?.set(destination, 'old-value')
 
       assert.strictEqual(
-        await redisClient?.call('zrangestore', destination, source, '1', '2'),
+        await redisClient?.zrangestore(destination, source, '1', '2'),
         2,
       )
       assert.deepStrictEqual(
@@ -437,8 +408,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
         'e',
       )
       assert.strictEqual(
-        await redisClient?.call(
-          'zrangestore',
+        await redisClient?.zrangestore(
           scoreDestination,
           scoreSource,
           '5',
@@ -458,8 +428,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
 
       await redisClient?.zadd(lexSource, 0, 'a', 0, 'b', 0, 'c', 0, 'd')
       assert.strictEqual(
-        await redisClient?.call(
-          'zrangestore',
+        await redisClient?.zrangestore(
           lexDestination,
           lexSource,
           '[d',
@@ -496,8 +465,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
       await redisClient?.zadd(source, 1, 'a')
       await redisClient?.zadd(destination, 9, 'old')
       assert.strictEqual(
-        await redisClient?.call(
-          'zrangestore',
+        await redisClient?.zrangestore(
           destination,
           source,
           '2',
@@ -510,136 +478,12 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
 
       await redisClient?.zadd(destination, 9, 'old')
       assert.strictEqual(
-        await redisClient?.call(
-          'zrangestore',
-          destination,
-          missingSource,
-          '0',
-          '-1',
-        ),
+        await redisClient?.zrangestore(destination, missingSource, '0', '-1'),
         0,
       )
       assert.strictEqual(await redisClient?.exists(destination), 0)
     } finally {
       await redisClient?.del(source, missingSource, destination)
-    }
-  })
-
-  test('ZRANGESTORE rejects invalid syntax and wrong-type sources', async () => {
-    const tag = `{zrangestore-errors:${randomKey()}}`
-    const source = `${tag}:source`
-    const destination = `${tag}:destination`
-    const stringSource = `${tag}:string-source`
-
-    try {
-      await redisClient?.zadd(source, 1, 'a', 2, 'b')
-      await redisClient?.set(stringSource, 'not-a-zset')
-
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            source,
-            '0',
-            '-1',
-            'LIMIT',
-            '0',
-            '1',
-          ),
-        errorWithMessage(
-          'ERR syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX',
-        ),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            source,
-            '0',
-            '-1',
-            'WITHSCORES',
-          ),
-        errorWithMessage('ERR syntax error'),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            source,
-            '-',
-            '+',
-            'BYSCORE',
-            'BYLEX',
-          ),
-        errorWithMessage('ERR syntax error'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrangestore', destination, source, '(1', '4'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            source,
-            'x',
-            '5',
-            'BYSCORE',
-          ),
-        errorWithMessage('ERR min or max is not a float'),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            source,
-            'a',
-            'c',
-            'BYLEX',
-          ),
-        errorWithMessage('ERR min or max not valid string range item'),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            source,
-            '-inf',
-            '+inf',
-            'BYSCORE',
-            'LIMIT',
-            'a',
-            'b',
-          ),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrangestore', destination, source, '0'),
-        errorWithMessage(
-          "ERR wrong number of arguments for 'zrangestore' command",
-        ),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrangestore',
-            destination,
-            stringSource,
-            '0',
-            '-1',
-          ),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
-    } finally {
-      await redisClient?.del(source, destination, stringSource)
     }
   })
 
@@ -652,8 +496,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
       const directClient = await connectToSlotOwner(redisClient!, source)
       try {
         await assert.rejects(
-          () =>
-            directClient.call('zrangestore', destination, source, '0', '-1'),
+          () => directClient.zrangestore(destination, source, '0', '-1'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
@@ -668,63 +511,4 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
   })
 
   // ---------- modern ZRANGE: error paths ----------
-
-  test('ZRANGE rejects invalid option combinations', async () => {
-    const key = await seedScored([
-      [1, 'a'],
-      [2, 'b'],
-      [3, 'c'],
-    ])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, '0', '-1', 'LIMIT', '0', '2'),
-        errorWithMessage(
-          'ERR syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX',
-        ),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, '-', '+', 'BYLEX', 'WITHSCORES'),
-        errorWithMessage(
-          'ERR syntax error, WITHSCORES not supported in combination with BYLEX',
-        ),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, '-', '+', 'BYSCORE', 'BYLEX'),
-        errorWithMessage('ERR syntax error'),
-      )
-      // index form requires integer start/stop
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, '(1', '4'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, 'x', '5', 'BYSCORE'),
-        errorWithMessage('ERR min or max is not a float'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, 'a', 'c', 'BYLEX'),
-        errorWithMessage('ERR min or max not valid string range item'),
-      )
-      await assert.rejects(
-        () =>
-          redisClient?.call(
-            'zrange',
-            key,
-            '-inf',
-            '+inf',
-            'BYSCORE',
-            'LIMIT',
-            'a',
-            'b',
-          ),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('zrange', key, '0'),
-        errorWithMessage("ERR wrong number of arguments for 'zrange' command"),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
 })

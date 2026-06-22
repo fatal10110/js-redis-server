@@ -33,27 +33,26 @@ describe('Stream metadata WATCH semantics', () => {
   const cleanCases: Case[] = [
     {
       name: 'XSETID to a different id',
-      initialize: (client, key) => client.call('XADD', key, '5-5', 'f', 'v'),
-      mutate: (client, key) => client.call('XSETID', key, '9-9'),
+      initialize: (client, key) => client.xadd(key, '5-5', 'f', 'v'),
+      mutate: (client, key) => client.xsetid(key, '9-9'),
     },
     {
       name: 'XGROUP SETID to a different id',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XADD', key, '2-2', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xadd(key, '2-2', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
       },
-      mutate: (client, key) => client.call('XGROUP', 'SETID', key, 'g', '2'),
+      mutate: (client, key) => client.xgroup('SETID', key, 'g', '2'),
     },
     {
       name: 'XREADGROUP > delivering new entries',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
       },
       mutate: (client, key) =>
-        client.call(
-          'XREADGROUP',
+        client.xreadgroup(
           'GROUP',
           'g',
           'c',
@@ -67,100 +66,94 @@ describe('Stream metadata WATCH semantics', () => {
     {
       name: 'XREADGROUP history read (explicit id)',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
-        await client.call('XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', key, '>')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
+        await client.xreadgroup('GROUP', 'g', 'c', 'STREAMS', key, '>')
       },
       mutate: (client, key) =>
-        client.call('XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', key, '0'),
+        client.xreadgroup('GROUP', 'g', 'c', 'STREAMS', key, '0'),
     },
     {
       name: 'XREADGROUP > with no new entries',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '$')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '$')
       },
       mutate: (client, key) =>
-        client.call('XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', key, '>'),
+        client.xreadgroup('GROUP', 'g', 'c', 'STREAMS', key, '>'),
     },
     {
       name: 'XCLAIM that claims a pending entry',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
-        await client.call('XREADGROUP', 'GROUP', 'g', 'c1', 'STREAMS', key, '>')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
+        await client.xreadgroup('GROUP', 'g', 'c1', 'STREAMS', key, '>')
       },
-      mutate: (client, key) =>
-        client.call('XCLAIM', key, 'g', 'c2', '0', '1-1'),
+      mutate: (client, key) => client.xclaim(key, 'g', 'c2', '0', '1-1'),
     },
     {
       name: 'XCLAIM that claims nothing',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
       },
-      mutate: (client, key) =>
-        client.call('XCLAIM', key, 'g', 'c2', '0', '9-9'),
+      mutate: (client, key) => client.xclaim(key, 'g', 'c2', '0', '9-9'),
     },
     {
       name: 'XAUTOCLAIM that claims a pending entry',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
-        await client.call('XREADGROUP', 'GROUP', 'g', 'c1', 'STREAMS', key, '>')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
+        await client.xreadgroup('GROUP', 'g', 'c1', 'STREAMS', key, '>')
       },
-      mutate: (client, key) =>
-        client.call('XAUTOCLAIM', key, 'g', 'c2', '0', '0'),
+      mutate: (client, key) => client.xautoclaim(key, 'g', 'c2', '0', '0'),
     },
     {
       name: 'XAUTOCLAIM that claims nothing',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
       },
-      mutate: (client, key) =>
-        client.call('XAUTOCLAIM', key, 'g', 'c2', '0', '0'),
+      mutate: (client, key) => client.xautoclaim(key, 'g', 'c2', '0', '0'),
     },
     {
       name: 'XACK acknowledging a pending entry',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
-        await client.call('XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', key, '>')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
+        await client.xreadgroup('GROUP', 'g', 'c', 'STREAMS', key, '>')
       },
-      mutate: (client, key) => client.call('XACK', key, 'g', '1-1'),
+      mutate: (client, key) => client.xack(key, 'g', '1-1'),
     },
     {
       name: 'XGROUP CREATE on an existing stream',
-      initialize: (client, key) => client.call('XADD', key, '1-1', 'f', 'v'),
-      mutate: (client, key) => client.call('XGROUP', 'CREATE', key, 'g', '0'),
+      initialize: (client, key) => client.xadd(key, '1-1', 'f', 'v'),
+      mutate: (client, key) => client.xgroup('CREATE', key, 'g', '0'),
     },
     {
       name: 'XGROUP DESTROY removing a group',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
       },
-      mutate: (client, key) => client.call('XGROUP', 'DESTROY', key, 'g'),
+      mutate: (client, key) => client.xgroup('DESTROY', key, 'g'),
     },
     {
       name: 'XGROUP CREATECONSUMER creating a consumer',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
       },
-      mutate: (client, key) =>
-        client.call('XGROUP', 'CREATECONSUMER', key, 'g', 'c'),
+      mutate: (client, key) => client.xgroup('CREATECONSUMER', key, 'g', 'c'),
     },
     {
       name: 'XGROUP DELCONSUMER removing a consumer',
       initialize: async (client, key) => {
-        await client.call('XADD', key, '1-1', 'f', 'v')
-        await client.call('XGROUP', 'CREATE', key, 'g', '0')
-        await client.call('XGROUP', 'CREATECONSUMER', key, 'g', 'c')
+        await client.xadd(key, '1-1', 'f', 'v')
+        await client.xgroup('CREATE', key, 'g', '0')
+        await client.xgroup('CREATECONSUMER', key, 'g', 'c')
       },
-      mutate: (client, key) =>
-        client.call('XGROUP', 'DELCONSUMER', key, 'g', 'c'),
+      mutate: (client, key) => client.xgroup('DELCONSUMER', key, 'g', 'c'),
     },
   ]
 
@@ -170,23 +163,20 @@ describe('Stream metadata WATCH semantics', () => {
       const directClient = await connectToSlotOwner(redisClient!, key)
 
       try {
-        await directClient.call('DEL', key)
+        await directClient.del(key)
         await item.initialize(directClient, key)
 
         assert.strictEqual(await directClient.call('WATCH', key), 'OK')
         await item.mutate(directClient, key)
 
         assert.strictEqual(await directClient.call('MULTI'), 'OK')
-        assert.strictEqual(
-          await directClient.call('SET', key, 'after'),
-          'QUEUED',
-        )
+        assert.strictEqual(await directClient.set(key, 'after'), 'QUEUED')
 
         const result = await directClient.call('EXEC')
         assert.deepStrictEqual(result, ['OK'], item.name)
       } finally {
         await directClient.call('UNWATCH').catch(() => undefined)
-        await directClient.call('DEL', key).catch(() => undefined)
+        await directClient.del(key).catch(() => undefined)
         directClient.disconnect()
       }
     })
@@ -199,22 +189,22 @@ describe('Stream metadata WATCH semantics', () => {
     const directClient = await connectToSlotOwner(redisClient!, key)
 
     try {
-      await directClient.call('DEL', key)
+      await directClient.del(key)
 
       assert.strictEqual(await directClient.call('WATCH', key), 'OK')
       assert.strictEqual(
-        await directClient.call('XGROUP', 'CREATE', key, 'g', '0', 'MKSTREAM'),
+        await directClient.xgroup('CREATE', key, 'g', '0', 'MKSTREAM'),
         'OK',
       )
 
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('SET', key, 'after'), 'QUEUED')
+      assert.strictEqual(await directClient.set(key, 'after'), 'QUEUED')
 
       const result = await directClient.call('EXEC')
       assert.strictEqual(result, null)
     } finally {
       await directClient.call('UNWATCH').catch(() => undefined)
-      await directClient.call('DEL', key).catch(() => undefined)
+      await directClient.del(key).catch(() => undefined)
       directClient.disconnect()
     }
   })
@@ -224,20 +214,20 @@ describe('Stream metadata WATCH semantics', () => {
     const directClient = await connectToSlotOwner(redisClient!, key)
 
     try {
-      await directClient.call('DEL', key)
-      await directClient.call('XADD', key, '1-1', 'f', 'v')
+      await directClient.del(key)
+      await directClient.xadd(key, '1-1', 'f', 'v')
 
       assert.strictEqual(await directClient.call('WATCH', key), 'OK')
-      await directClient.call('XADD', key, '2-2', 'f', 'v')
+      await directClient.xadd(key, '2-2', 'f', 'v')
 
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('SET', key, 'after'), 'QUEUED')
+      assert.strictEqual(await directClient.set(key, 'after'), 'QUEUED')
 
       const result = await directClient.call('EXEC')
       assert.strictEqual(result, null)
     } finally {
       await directClient.call('UNWATCH').catch(() => undefined)
-      await directClient.call('DEL', key).catch(() => undefined)
+      await directClient.del(key).catch(() => undefined)
       directClient.disconnect()
     }
   })

@@ -78,8 +78,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HGETDEL',
+        await directClient.hgetdel(
           key,
           'FIELDS',
           '3',
@@ -97,34 +96,20 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
 
       await directClient.hset(key, 'field4', 'value4')
       assert.deepStrictEqual(
-        await directClient.call(
-          'HGETDEL',
-          key,
-          'FIELDS',
-          '2',
-          'field4',
-          'field4',
-        ),
+        await directClient.hgetdel(key, 'FIELDS', '2', 'field4', 'field4'),
         ['value4', null],
       )
       assert.strictEqual(await directClient.hexists(key, 'field4'), 0)
 
       assert.deepStrictEqual(
-        await directClient.call('HGETDEL', key, 'FIELDS', '1', 'field3'),
+        await directClient.hgetdel(key, 'FIELDS', '1', 'field3'),
         ['value3'],
       )
       assert.strictEqual(await directClient.exists(key), 0)
       assert.strictEqual(await directClient.type(key), 'none')
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HGETDEL',
-          key,
-          'FIELDS',
-          '2',
-          'field3',
-          'missing',
-        ),
+        await directClient.hgetdel(key, 'FIELDS', '2', 'field3', 'missing'),
         [null, null],
       )
       assert.strictEqual(await directClient.exists(key), 0)
@@ -161,27 +146,26 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage("ERR wrong number of arguments for 'hgetdel' command"),
       )
       await assert.rejects(
-        () => directClient?.call('HGETDEL', hashKey, 'FIELD', '1', 'field'),
+        () => directClient?.hgetdel(hashKey, 'FIELD', '1', 'field'),
         errorWithMessage(
           'ERR Mandatory argument FIELDS is missing or not at the right position',
         ),
       )
       await assert.rejects(
-        () => directClient?.call('HGETDEL', hashKey, 'FIELDS', 'abc', 'field'),
+        () => directClient?.hgetdel(hashKey, 'FIELDS', 'abc', 'field'),
         errorWithMessage('ERR Number of fields must be a positive integer'),
       )
       await assert.rejects(
-        () => directClient?.call('HGETDEL', hashKey, 'FIELDS', '0', 'field'),
+        () => directClient?.hgetdel(hashKey, 'FIELDS', '0', 'field'),
         errorWithMessage('ERR Number of fields must be a positive integer'),
       )
       await assert.rejects(
-        () => directClient?.call('HGETDEL', hashKey, 'FIELDS', '-1', 'field'),
+        () => directClient?.hgetdel(hashKey, 'FIELDS', '-1', 'field'),
         errorWithMessage('ERR Number of fields must be a positive integer'),
       )
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HGETDEL',
+          directClient?.hgetdel(
             hashKey,
             'FIELDS',
             '9223372036854775808',
@@ -190,21 +174,13 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR Number of fields must be a positive integer'),
       )
       await assert.rejects(
-        () => directClient?.call('HGETDEL', hashKey, 'FIELDS', '2', 'field'),
+        () => directClient?.hgetdel(hashKey, 'FIELDS', '2', 'field'),
         errorWithMessage(
           'ERR The `numfields` parameter must match the number of arguments',
         ),
       )
       await assert.rejects(
-        () =>
-          directClient?.call(
-            'HGETDEL',
-            hashKey,
-            'FIELDS',
-            '1',
-            'field',
-            'extra',
-          ),
+        () => directClient?.hgetdel(hashKey, 'FIELDS', '1', 'field', 'extra'),
         errorWithMessage(
           'ERR The `numfields` parameter must match the number of arguments',
         ),

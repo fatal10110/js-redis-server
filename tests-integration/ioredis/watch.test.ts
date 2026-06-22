@@ -114,7 +114,7 @@ describe('WATCH/UNWATCH', () => {
       directClient = await connectToSlotOwner(redisClient!, key)
 
       // Set initial value
-      await directClient.call('SET', key, 'initial')
+      await directClient.set(key, 'initial')
 
       // Watch the key
       await directClient.call('WATCH', key)
@@ -127,10 +127,7 @@ describe('WATCH/UNWATCH', () => {
 
       // Execute transaction
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(
-        await directClient.call('SET', key, 'transactional'),
-        'QUEUED',
-      )
+      assert.strictEqual(await directClient.set(key, 'transactional'), 'QUEUED')
       const result = await directClient.call('EXEC')
 
       // Transaction should succeed because we unwatched
@@ -183,14 +180,14 @@ describe('WATCH/UNWATCH', () => {
       directClient = await connectToSlotOwner(redisClient!, key)
 
       // Set initial value
-      await directClient.call('SET', key, 'initial')
+      await directClient.set(key, 'initial')
 
       // Watch the key
       await directClient.call('WATCH', key)
 
       // Discard transaction
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('SET', key, 'first'), 'QUEUED')
+      assert.strictEqual(await directClient.set(key, 'first'), 'QUEUED')
       assert.strictEqual(await directClient.call('DISCARD'), 'OK')
 
       // Modify the key from another client
@@ -198,10 +195,7 @@ describe('WATCH/UNWATCH', () => {
 
       // Execute another transaction without WATCH
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(
-        await directClient.call('SET', key, 'second'),
-        'QUEUED',
-      )
+      assert.strictEqual(await directClient.set(key, 'second'), 'QUEUED')
       const result = await directClient.call('EXEC')
 
       // Second transaction should succeed (watches cleared after DISCARD)
@@ -236,52 +230,50 @@ describe('WATCH/UNWATCH', () => {
     }> = [
       {
         name: 'HDEL missing field',
-        initialize: (client, key) => client.call('HSET', key, 'field', 'value'),
-        mutate: (client, key) => client.call('HDEL', key, 'missing'),
+        initialize: (client, key) => client.hset(key, 'field', 'value'),
+        mutate: (client, key) => client.hdel(key, 'missing'),
         expectedNoopReply: 0,
       },
       {
         name: 'HSETNX existing field',
-        initialize: (client, key) => client.call('HSET', key, 'field', 'value'),
-        mutate: (client, key) => client.call('HSETNX', key, 'field', 'other'),
+        initialize: (client, key) => client.hset(key, 'field', 'value'),
+        mutate: (client, key) => client.hsetnx(key, 'field', 'other'),
         expectedNoopReply: 0,
       },
       {
         name: 'LREM missing value',
-        initialize: (client, key) => client.call('RPUSH', key, 'one', 'two'),
-        mutate: (client, key) => client.call('LREM', key, 0, 'missing'),
+        initialize: (client, key) => client.rpush(key, 'one', 'two'),
+        mutate: (client, key) => client.lrem(key, 0, 'missing'),
         expectedNoopReply: 0,
       },
       {
         name: 'SREM missing member',
-        initialize: (client, key) => client.call('SADD', key, 'member'),
-        mutate: (client, key) => client.call('SREM', key, 'missing'),
+        initialize: (client, key) => client.sadd(key, 'member'),
+        mutate: (client, key) => client.srem(key, 'missing'),
         expectedNoopReply: 0,
       },
       {
         name: 'ZREM missing member',
-        initialize: (client, key) => client.call('ZADD', key, 1, 'member'),
-        mutate: (client, key) => client.call('ZREM', key, 'missing'),
+        initialize: (client, key) => client.zadd(key, 1, 'member'),
+        mutate: (client, key) => client.zrem(key, 'missing'),
         expectedNoopReply: 0,
       },
       {
         name: 'ZADD XX missing member',
-        initialize: (client, key) => client.call('ZADD', key, 1, 'member'),
-        mutate: (client, key) => client.call('ZADD', key, 'XX', 2, 'missing'),
+        initialize: (client, key) => client.zadd(key, 1, 'member'),
+        mutate: (client, key) => client.zadd(key, 'XX', 2, 'missing'),
         expectedNoopReply: 0,
       },
       {
         name: 'XDEL missing id',
-        initialize: (client, key) =>
-          client.call('XADD', key, '1-0', 'field', 'value'),
-        mutate: (client, key) => client.call('XDEL', key, '2-0'),
+        initialize: (client, key) => client.xadd(key, '1-0', 'field', 'value'),
+        mutate: (client, key) => client.xdel(key, '2-0'),
         expectedNoopReply: 0,
       },
       {
         name: 'XTRIM no removed entries',
-        initialize: (client, key) =>
-          client.call('XADD', key, '1-0', 'field', 'value'),
-        mutate: (client, key) => client.call('XTRIM', key, 'MAXLEN', 10),
+        initialize: (client, key) => client.xadd(key, '1-0', 'field', 'value'),
+        mutate: (client, key) => client.xtrim(key, 'MAXLEN', 10),
         expectedNoopReply: 0,
       },
     ]
@@ -291,7 +283,7 @@ describe('WATCH/UNWATCH', () => {
       const directClient = await connectToSlotOwner(redisClient!, key)
 
       try {
-        await directClient.call('DEL', key)
+        await directClient.del(key)
         await item.initialize(directClient, key)
 
         assert.strictEqual(await directClient.call('WATCH', key), 'OK')
@@ -302,16 +294,13 @@ describe('WATCH/UNWATCH', () => {
         )
 
         assert.strictEqual(await directClient.call('MULTI'), 'OK')
-        assert.strictEqual(
-          await directClient.call('SET', key, 'after'),
-          'QUEUED',
-        )
+        assert.strictEqual(await directClient.set(key, 'after'), 'QUEUED')
 
         const result = await directClient.call('EXEC')
         assert.deepStrictEqual(result, ['OK'], item.name)
       } finally {
         await directClient.call('UNWATCH').catch(() => undefined)
-        await directClient.call('DEL', key).catch(() => undefined)
+        await directClient.del(key).catch(() => undefined)
         directClient.disconnect()
       }
     }
@@ -322,26 +311,26 @@ describe('WATCH/UNWATCH', () => {
     const directClient = await connectToSlotOwner(redisClient!, key)
 
     try {
-      await directClient.call('DEL', key)
-      await directClient.call('SET', key, 'value')
+      await directClient.del(key)
+      await directClient.set(key, 'value')
 
       assert.strictEqual(await directClient.call('WATCH', key), 'OK')
 
       // Renaming a key to itself is a true no-op: +OK, value preserved,
       // and no keyspace mutation that would invalidate the WATCH.
-      assert.strictEqual(await directClient.call('RENAME', key, key), 'OK')
-      assert.strictEqual(await directClient.call('GET', key), 'value')
+      assert.strictEqual(await directClient.rename(key, key), 'OK')
+      assert.strictEqual(await directClient.get(key), 'value')
 
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('SET', key, 'after'), 'QUEUED')
+      assert.strictEqual(await directClient.set(key, 'after'), 'QUEUED')
 
       // Transaction must NOT be aborted by the self-rename.
       const result = await directClient.call('EXEC')
       assert.deepStrictEqual(result, ['OK'])
-      assert.strictEqual(await directClient.call('GET', key), 'after')
+      assert.strictEqual(await directClient.get(key), 'after')
     } finally {
       await directClient.call('UNWATCH').catch(() => undefined)
-      await directClient.call('DEL', key).catch(() => undefined)
+      await directClient.del(key).catch(() => undefined)
       directClient.disconnect()
     }
   })
@@ -351,7 +340,7 @@ describe('WATCH/UNWATCH', () => {
     const directClient = await connectToSlotOwner(redisClient!, key)
 
     try {
-      await directClient.call('DEL', key)
+      await directClient.del(key)
       await assert.rejects(
         () => directClient.call('RENAME', key, key),
         errorWithMessage('ERR no such key'),
@@ -385,21 +374,19 @@ describe('WATCH/UNWATCH', () => {
       {
         name: 'SINTERSTORE identical set',
         initialize: async (client, key) => {
-          await client.call('SADD', `${key}:source`, 'a', 'b', 'c')
-          await client.call('SINTERSTORE', key, `${key}:source`)
+          await client.sadd(`${key}:source`, 'a', 'b', 'c')
+          await client.sinterstore(key, `${key}:source`)
         },
-        store: (client, key) =>
-          client.call('SINTERSTORE', key, `${key}:source`),
+        store: (client, key) => client.sinterstore(key, `${key}:source`),
         expectedStoreReply: 3,
       },
       {
         name: 'ZINTERSTORE identical sorted set',
         initialize: async (client, key) => {
-          await client.call('ZADD', `${key}:source`, 1, 'a', 2, 'b')
-          await client.call('ZINTERSTORE', key, 1, `${key}:source`)
+          await client.zadd(`${key}:source`, 1, 'a', 2, 'b')
+          await client.zinterstore(key, 1, `${key}:source`)
         },
-        store: (client, key) =>
-          client.call('ZINTERSTORE', key, 1, `${key}:source`),
+        store: (client, key) => client.zinterstore(key, 1, `${key}:source`),
         expectedStoreReply: 2,
       },
     ]
@@ -409,7 +396,7 @@ describe('WATCH/UNWATCH', () => {
       const directClient = await connectToSlotOwner(redisClient!, key)
 
       try {
-        await directClient.call('DEL', key, `${key}:source`)
+        await directClient.del(key, `${key}:source`)
         await item.initialize(directClient, key)
 
         assert.strictEqual(await directClient.call('WATCH', key), 'OK')
@@ -420,18 +407,13 @@ describe('WATCH/UNWATCH', () => {
         )
 
         assert.strictEqual(await directClient.call('MULTI'), 'OK')
-        assert.strictEqual(
-          await directClient.call('SET', key, 'after'),
-          'QUEUED',
-        )
+        assert.strictEqual(await directClient.set(key, 'after'), 'QUEUED')
 
         const result = await directClient.call('EXEC')
         assert.strictEqual(result, null, item.name)
       } finally {
         await directClient.call('UNWATCH').catch(() => undefined)
-        await directClient
-          .call('DEL', key, `${key}:source`)
-          .catch(() => undefined)
+        await directClient.del(key, `${key}:source`).catch(() => undefined)
         directClient.disconnect()
       }
     }

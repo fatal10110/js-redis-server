@@ -60,24 +60,24 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
       await directClient.del(listKey)
       await directClient.rpush(listKey, 'a', 'b', 'c', 'd')
 
-      const leftValues = await directClient.call('LPOP', listKey, '2')
+      const leftValues = await directClient.lpop(listKey, '2')
       assert.deepStrictEqual(leftValues, ['a', 'b'])
 
-      const rightValue = await directClient.call('RPOP', listKey, '1')
+      const rightValue = await directClient.rpop(listKey, '1')
       assert.deepStrictEqual(rightValue, ['d'])
 
       const remaining = await directClient.lrange(listKey, 0, -1)
       assert.deepStrictEqual(remaining, ['c'])
 
-      const drained = await directClient.call('RPOP', listKey, '5')
+      const drained = await directClient.rpop(listKey, '5')
       assert.deepStrictEqual(drained, ['c'])
       assert.strictEqual(await directClient.exists(listKey), 0)
 
-      const empty = await directClient.call('LPOP', listKey, '1')
+      const empty = await directClient.lpop(listKey, '1')
       assert.strictEqual(empty, null)
 
       await directClient.rpush(listKey, 'x', 'y')
-      const zeroCount = await directClient.call('LPOP', listKey, '0')
+      const zeroCount = await directClient.lpop(listKey, '0')
       assert.deepStrictEqual(zeroCount, [])
       assert.deepStrictEqual(await directClient.lrange(listKey, 0, -1), [
         'x',
@@ -85,7 +85,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
       ])
 
       await assert.rejects(
-        () => directClient.call('LPOP', listKey, '-1'),
+        () => directClient.lpop(listKey, '-1'),
         errorWithMessage('ERR value is out of range, must be positive'),
       )
     } finally {
@@ -166,7 +166,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
         ),
       )
       await assert.rejects(
-        () => directClient.call('LSET', `${tag}:missing`, '0', 'x'),
+        () => directClient.lset(`${tag}:missing`, '0', 'x'),
         errorWithMessage('ERR no such key'),
       )
 
@@ -176,11 +176,11 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage('ERR index out of range'),
       )
       await assert.rejects(
-        () => directClient.call('LINDEX', listKey, 'abc'),
+        () => directClient.lindex(listKey, 'abc'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('LRANGE', listKey, 'abc', '1'),
+        () => directClient.lrange(listKey, 'abc', '1'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
     } finally {

@@ -57,11 +57,10 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
       await directClient.sadd(setB, 'b', 'c', 'd', 'e')
       await directClient.sadd(setC, 'c', 'd', 'f')
 
-      const count = await directClient.call('SINTERCARD', '3', setA, setB, setC)
+      const count = await directClient.sintercard('3', setA, setB, setC)
       assert.strictEqual(count, 2)
 
-      const limited = await directClient.call(
-        'SINTERCARD',
+      const limited = await directClient.sintercard(
         '3',
         setA,
         setB,
@@ -71,8 +70,7 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       assert.strictEqual(limited, 1)
 
-      const unlimited = await directClient.call(
-        'SINTERCARD',
+      const unlimited = await directClient.sintercard(
         '2',
         setA,
         setB,
@@ -81,17 +79,12 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       assert.strictEqual(unlimited, 3)
 
-      const withMissing = await directClient.call(
-        'SINTERCARD',
-        '2',
-        setA,
-        missing,
-      )
+      const withMissing = await directClient.sintercard('2', setA, missing)
       assert.strictEqual(withMissing, 0)
 
       await directClient.set(stringKey, 'value')
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '2', setA, stringKey),
+        () => directClient?.sintercard('2', setA, stringKey),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -111,38 +104,37 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
         ),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', 'two', setA),
+        () => directClient?.sintercard('two', setA),
         errorWithMessage('ERR numkeys should be greater than 0'),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '0', setA),
+        () => directClient?.sintercard('0', setA),
         errorWithMessage('ERR numkeys should be greater than 0'),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '2', setA),
+        () => directClient?.sintercard('2', setA),
         errorWithMessage(
           "ERR Number of keys can't be greater than number of args",
         ),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '1', setA, setB),
+        () => directClient?.sintercard('1', setA, setB),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '1', setA, 'LIMIT'),
+        () => directClient?.sintercard('1', setA, 'LIMIT'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '1', setA, 'LIMIT', 'abc'),
+        () => directClient?.sintercard('1', setA, 'LIMIT', 'abc'),
         errorWithMessage("ERR LIMIT can't be negative"),
       )
       await assert.rejects(
-        () => directClient?.call('SINTERCARD', '1', setA, 'LIMIT', '-1'),
+        () => directClient?.sintercard('1', setA, 'LIMIT', '-1'),
         errorWithMessage("ERR LIMIT can't be negative"),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('SINTERCARD', '1', setA, 'LIMIT', '1', 'LIMIT'),
+        () => directClient?.sintercard('1', setA, 'LIMIT', '1', 'LIMIT'),
         errorWithMessage('ERR syntax error'),
       )
     } finally {

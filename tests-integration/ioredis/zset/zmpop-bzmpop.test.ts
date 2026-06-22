@@ -35,16 +35,7 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
       await client1!.zadd(second, 10, 'x', 20, 'y')
 
       assert.deepStrictEqual(
-        await client1!.call(
-          'ZMPOP',
-          '3',
-          empty,
-          first,
-          second,
-          'MIN',
-          'COUNT',
-          '2',
-        ),
+        await client1!.zmpop('3', empty, first, second, 'MIN', 'COUNT', '2'),
         [
           first,
           [
@@ -56,14 +47,14 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
       assert.deepStrictEqual(await client1!.zrange(first, 0, -1), ['c'])
       assert.deepStrictEqual(await client1!.zrange(second, 0, -1), ['x', 'y'])
 
-      assert.deepStrictEqual(
-        await client1!.call('ZMPOP', '2', first, second, 'MAX'),
-        [first, [['c', '3']]],
-      )
+      assert.deepStrictEqual(await client1!.zmpop('2', first, second, 'MAX'), [
+        first,
+        [['c', '3']],
+      ])
       assert.strictEqual(await client1!.exists(first), 0)
 
       assert.deepStrictEqual(
-        await client1!.call('ZMPOP', '2', first, second, 'mAx', 'count', '5'),
+        await client1!.zmpop('2', first, second, 'mAx', 'count', '5'),
         [
           second,
           [
@@ -85,10 +76,7 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
 
     try {
       await client1!.del(first, second)
-      assert.strictEqual(
-        await client1!.call('ZMPOP', '2', first, second, 'MIN'),
-        null,
-      )
+      assert.strictEqual(await client1!.zmpop('2', first, second, 'MIN'), null)
     } finally {
       await client1!.del(first, second)
     }
@@ -104,16 +92,7 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
       await client1!.zadd(zset, 1, 'one', 2, 'two', 3, 'three')
 
       assert.deepStrictEqual(
-        await client1!.call(
-          'BZMPOP',
-          '1',
-          '2',
-          empty,
-          zset,
-          'MAX',
-          'COUNT',
-          '2',
-        ),
+        await client1!.bzmpop('1', '2', empty, zset, 'MAX', 'COUNT', '2'),
         [
           zset,
           [
@@ -136,8 +115,7 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
     try {
       await client1!.del(first, second)
 
-      const blockPromise = client1!.call(
-        'BZMPOP',
+      const blockPromise = client1!.bzmpop(
         '5',
         '2',
         first,
@@ -170,7 +148,7 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
     try {
       await client1!.del(first, second)
       assert.strictEqual(
-        await client1!.call('BZMPOP', '0.1', '2', first, second, 'MIN'),
+        await client1!.bzmpop('0.1', '2', first, second, 'MIN'),
         null,
       )
     } finally {
@@ -194,80 +172,71 @@ describe(`ZMPOP / BZMPOP Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage("ERR wrong number of arguments for 'zmpop' command"),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '0', zset, 'MIN'),
+        () => client1!.zmpop('0', zset, 'MIN'),
         errorWithMessage('ERR numkeys should be greater than 0'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', 'abc', zset, 'MIN'),
+        () => client1!.zmpop('abc', zset, 'MIN'),
         errorWithMessage('ERR numkeys should be greater than 0'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '2', zset, other),
+        () => client1!.zmpop('2', zset, other),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', zset, 'MIDDLE'),
+        () => client1!.zmpop('1', zset, 'MIDDLE'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', zset, 'MIN', 'LIMIT', '1'),
+        () => client1!.zmpop('1', zset, 'MIN', 'LIMIT', '1'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', zset, 'MIN', 'COUNT'),
+        () => client1!.zmpop('1', zset, 'MIN', 'COUNT'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', zset, 'MIN', 'COUNT', '0'),
+        () => client1!.zmpop('1', zset, 'MIN', 'COUNT', '0'),
         errorWithMessage('ERR count should be greater than 0'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', zset, 'MIN', 'COUNT', '-1'),
+        () => client1!.zmpop('1', zset, 'MIN', 'COUNT', '-1'),
         errorWithMessage('ERR count should be greater than 0'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', zset, 'MIN', 'COUNT', 'abc'),
+        () => client1!.zmpop('1', zset, 'MIN', 'COUNT', 'abc'),
         errorWithMessage('ERR count should be greater than 0'),
       )
       await assert.rejects(
-        () =>
-          client1!.call('ZMPOP', '1', zset, 'MIN', 'COUNT', '1', 'COUNT', '1'),
+        () => client1!.zmpop('1', zset, 'MIN', 'COUNT', '1', 'COUNT', '1'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => client1!.call('ZMPOP', '1', stringKey, 'MIN'),
+        () => client1!.zmpop('1', stringKey, 'MIN'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
       )
 
       await assert.rejects(
-        () => client1!.call('BZMPOP', '-1', '1', zset, 'MIN'),
+        () => client1!.bzmpop('-1', '1', zset, 'MIN'),
         errorWithMessage('ERR timeout is negative'),
       )
       await assert.rejects(
-        () => client1!.call('BZMPOP', 'abc', '1', zset, 'MIN'),
+        () => client1!.bzmpop('abc', '1', zset, 'MIN'),
         errorWithMessage('ERR timeout is not a float or out of range'),
       )
 
       const directClient = await connectToSlotOwner(client1!, zset)
       try {
         await assert.rejects(
-          () => directClient.call('ZMPOP', '2', zset, 'other-slot-key', 'MIN'),
+          () => directClient.zmpop('2', zset, 'other-slot-key', 'MIN'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () =>
-            directClient.call(
-              'BZMPOP',
-              '1',
-              '2',
-              zset,
-              'other-slot-key',
-              'MIN',
-            ),
+          () => directClient.bzmpop('1', '2', zset, 'other-slot-key', 'MIN'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

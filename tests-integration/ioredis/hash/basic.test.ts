@@ -161,44 +161,35 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         'value3',
       )
 
-      assertField(await directClient.call('HRANDFIELD', hashKey))
-      assert.strictEqual(
-        await directClient.call('HRANDFIELD', missingKey),
-        null,
-      )
+      assertField(await directClient.hrandfield(hashKey))
+      assert.strictEqual(await directClient.hrandfield(missingKey), null)
 
       const twoFields = assertFieldArray(
-        await directClient.call('HRANDFIELD', hashKey, '2'),
+        await directClient.hrandfield(hashKey, '2'),
         2,
       )
       assert.strictEqual(new Set(twoFields).size, 2)
 
       const allFields = assertFieldArray(
-        await directClient.call('HRANDFIELD', hashKey, '10'),
+        await directClient.hrandfield(hashKey, '10'),
         3,
       )
       assert.strictEqual(new Set(allFields).size, 3)
 
-      assertFieldArray(await directClient.call('HRANDFIELD', hashKey, '-5'), 5)
-      assert.deepStrictEqual(
-        await directClient.call('HRANDFIELD', hashKey, '0'),
-        [],
-      )
-      assert.deepStrictEqual(
-        await directClient.call('HRANDFIELD', missingKey, '2'),
-        [],
-      )
+      assertFieldArray(await directClient.hrandfield(hashKey, '-5'), 5)
+      assert.deepStrictEqual(await directClient.hrandfield(hashKey, '0'), [])
+      assert.deepStrictEqual(await directClient.hrandfield(missingKey, '2'), [])
 
       assertFieldValuePairs(
-        await directClient.call('HRANDFIELD', hashKey, '2', 'WITHVALUES'),
+        await directClient.hrandfield(hashKey, '2', 'WITHVALUES'),
         2,
       )
       assertFieldValuePairs(
-        await directClient.call('HRANDFIELD', hashKey, '-4', 'withvalues'),
+        await directClient.hrandfield(hashKey, '-4', 'withvalues'),
         4,
       )
       assert.deepStrictEqual(
-        await directClient.call('HRANDFIELD', missingKey, '2', 'WITHVALUES'),
+        await directClient.hrandfield(missingKey, '2', 'WITHVALUES'),
         [],
       )
 
@@ -217,26 +208,20 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         ),
       )
       await assert.rejects(
-        () => directClient?.call('HRANDFIELD', hashKey, 'abc'),
+        () => directClient?.hrandfield(hashKey, 'abc'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient?.call('HRANDFIELD', hashKey, 'WITHVALUES'),
+        () => directClient?.hrandfield(hashKey, 'WITHVALUES'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient?.call('HRANDFIELD', hashKey, '1', 'BAD'),
+        () => directClient?.hrandfield(hashKey, '1', 'BAD'),
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HRANDFIELD',
-            hashKey,
-            '1',
-            'WITHVALUES',
-            'WITHVALUES',
-          ),
+          directClient?.hrandfield(hashKey, '1', 'WITHVALUES', 'WITHVALUES'),
         errorWithMessage('ERR syntax error'),
       )
     } finally {

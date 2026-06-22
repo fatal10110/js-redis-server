@@ -44,28 +44,19 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '10',
-          'FIELDS',
-          '2',
-          'keep',
-          'missing',
-        ),
+        await directClient.hexpire(key, '10', 'FIELDS', '2', 'keep', 'missing'),
         [1, -2],
       )
       assert.deepStrictEqual(
-        await directClient.call('HPEXPIRE', key, '0', 'FIELDS', '1', 'zero'),
+        await directClient.hpexpire(key, '0', 'FIELDS', '1', 'zero'),
         [2],
       )
       assert.deepStrictEqual(
-        await directClient.call('HEXPIREAT', key, '1', 'FIELDS', '1', 'past'),
+        await directClient.hexpireat(key, '1', 'FIELDS', '1', 'past'),
         [2],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HPEXPIREAT',
+        await directClient.hpexpireat(
           key,
           String(Date.now() + 10_000),
           'FIELDS',
@@ -75,7 +66,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call('HPEXPIRE', key, '5', 'FIELDS', '1', 'soon'),
+        await directClient.hpexpire(key, '5', 'FIELDS', '1', 'soon'),
         [1],
       )
 
@@ -117,13 +108,13 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       await directClient.hset(key, 'keep', 'value1', 'gone', 'value2')
 
       assert.deepStrictEqual(
-        await directClient.call('HPEXPIRE', key, '5', 'FIELDS', '1', 'gone'),
+        await directClient.hpexpire(key, '5', 'FIELDS', '1', 'gone'),
         [1],
       )
 
       await delay(40)
 
-      const [, scanEntries] = (await directClient.call('HSCAN', key, '0')) as [
+      const [, scanEntries] = (await directClient.hscan(key, '0')) as [
         string,
         string[],
       ]
@@ -149,8 +140,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       await directClient.hset(key, 'field1', 'value1', 'field2', 'value2')
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HPEXPIRE',
+        await directClient.hpexpire(
           key,
           '0',
           'FIELDS',
@@ -188,110 +178,39 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
 
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '20',
-          'FIELDS',
-          '1',
-          'volatile',
-        ),
+        await directClient.hexpire(key, '20', 'FIELDS', '1', 'volatile'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '30',
-          'NX',
-          'FIELDS',
-          '1',
-          'volatile',
-        ),
+        await directClient.hexpire(key, '30', 'NX', 'FIELDS', '1', 'volatile'),
         [0],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '30',
-          'NX',
-          'FIELDS',
-          '1',
-          'nx',
-        ),
+        await directClient.hexpire(key, '30', 'NX', 'FIELDS', '1', 'nx'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '30',
-          'XX',
-          'FIELDS',
-          '1',
-          'xx',
-        ),
+        await directClient.hexpire(key, '30', 'XX', 'FIELDS', '1', 'xx'),
         [0],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '30',
-          'XX',
-          'FIELDS',
-          '1',
-          'volatile',
-        ),
+        await directClient.hexpire(key, '30', 'XX', 'FIELDS', '1', 'volatile'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '10',
-          'GT',
-          'FIELDS',
-          '1',
-          'nx',
-        ),
+        await directClient.hexpire(key, '10', 'GT', 'FIELDS', '1', 'nx'),
         [0],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '40',
-          'GT',
-          'FIELDS',
-          '1',
-          'nx',
-        ),
+        await directClient.hexpire(key, '40', 'GT', 'FIELDS', '1', 'nx'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '10',
-          'LT',
-          'FIELDS',
-          '1',
-          'lt',
-        ),
+        await directClient.hexpire(key, '10', 'LT', 'FIELDS', '1', 'lt'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HEXPIRE',
-          key,
-          '40',
-          'LT',
-          'FIELDS',
-          '1',
-          'lt',
-        ),
+        await directClient.hexpire(key, '40', 'LT', 'FIELDS', '1', 'lt'),
         [0],
       )
     } finally {
@@ -317,8 +236,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         '1.5',
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'HPEXPIRE',
+        await directClient.hpexpire(
           key,
           '20',
           'FIELDS',
@@ -361,43 +279,19 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       await directClient.set(stringKey, 'value')
 
       await assert.rejects(
-        () =>
-          directClient?.call(
-            'HEXPIRE',
-            stringKey,
-            '10',
-            'FIELDS',
-            '1',
-            'field',
-          ),
+        () => directClient?.hexpire(stringKey, '10', 'FIELDS', '1', 'field'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
       )
       await assert.rejects(
-        () =>
-          directClient?.call(
-            'HEXPIRE',
-            stringKey,
-            'abc',
-            'FIELDS',
-            '1',
-            'field',
-          ),
+        () => directClient?.hexpire(stringKey, 'abc', 'FIELDS', '1', 'field'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
       )
       await assert.rejects(
-        () =>
-          directClient?.call(
-            'HEXPIRE',
-            stringKey,
-            '100',
-            'FIELDS',
-            '5',
-            'field',
-          ),
+        () => directClient?.hexpire(stringKey, '100', 'FIELDS', '5', 'field'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -425,32 +319,22 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage("ERR wrong number of arguments for 'hexpire' command"),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('HEXPIRE', hashKey, 'abc', 'FIELDS', '1', 'field'),
+        () => directClient?.hexpire(hashKey, 'abc', 'FIELDS', '1', 'field'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('HEXPIRE', hashKey, '-1', 'FIELDS', '1', 'field'),
+        () => directClient?.hexpire(hashKey, '-1', 'FIELDS', '1', 'field'),
         errorWithMessage('ERR invalid expire time, must be >= 0'),
       )
       assert.strictEqual(await directClient.hget(hashKey, 'field'), 'value')
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HEXPIRE',
-            hashKey,
-            '99999999999',
-            'FIELDS',
-            '1',
-            'field',
-          ),
+          directClient?.hexpire(hashKey, '99999999999', 'FIELDS', '1', 'field'),
         errorWithMessage("ERR invalid expire time in 'hexpire' command"),
       )
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HEXPIREAT',
+          directClient?.hexpireat(
             hashKey,
             '9999999999999999',
             'FIELDS',
@@ -476,47 +360,34 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         errorWithMessage("ERR wrong number of arguments for 'hexpire' command"),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('HEXPIRE', hashKey, '10', 'FIELD', '1', 'field'),
+        () => directClient?.hexpire(hashKey, '10', 'FIELD', '1', 'field'),
         errorWithMessage(
           'ERR Mandatory argument FIELDS is missing or not at the right position',
         ),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('HEXPIRE', hashKey, '100', '1', 'FIELDS', 'field'),
+        () => directClient?.hexpire(hashKey, '100', '1', 'FIELDS', 'field'),
         errorWithMessage(
           'ERR Mandatory argument FIELDS is missing or not at the right position',
         ),
       )
       await assert.rejects(
-        () =>
-          directClient?.call(
-            'HEXPIRE',
-            hashKey,
-            '10',
-            'FIELDS',
-            'abc',
-            'field',
-          ),
+        () => directClient?.hexpire(hashKey, '10', 'FIELDS', 'abc', 'field'),
         errorWithMessage('ERR Parameter `numFields` should be greater than 0'),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('HEXPIRE', hashKey, '10', 'FIELDS', '0', 'field'),
+        () => directClient?.hexpire(hashKey, '10', 'FIELDS', '0', 'field'),
         errorWithMessage('ERR Parameter `numFields` should be greater than 0'),
       )
       await assert.rejects(
-        () =>
-          directClient?.call('HEXPIRE', hashKey, '10', 'FIELDS', '2', 'field'),
+        () => directClient?.hexpire(hashKey, '10', 'FIELDS', '2', 'field'),
         errorWithMessage(
           'ERR The `numfields` parameter must match the number of arguments',
         ),
       )
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HEXPIRE',
+          directClient?.hexpire(
             hashKey,
             '10',
             'NX',
@@ -531,8 +402,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HEXPIRE',
+          directClient?.hexpire(
             hashKey,
             '10',
             'GT',
@@ -547,15 +417,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       await assert.rejects(
         () =>
-          directClient?.call(
-            'HEXPIRE',
-            hashKey,
-            '10',
-            'BOGUS',
-            'FIELDS',
-            '1',
-            'field',
-          ),
+          directClient?.hexpire(hashKey, '10', 'BOGUS', 'FIELDS', '1', 'field'),
         errorWithMessage(
           'ERR Mandatory argument FIELDS is missing or not at the right position',
         ),
@@ -576,17 +438,14 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
 
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
       assert.strictEqual(
-        await directClient.call('HSET', key, 'field', 'value'),
+        await directClient.hset(key, 'field', 'value'),
         'QUEUED',
       )
       assert.strictEqual(
-        await directClient.call('HEXPIRE', key, 'abc', 'FIELDS', '1', 'field'),
+        await directClient.hexpire(key, 'abc', 'FIELDS', '1', 'field'),
         'QUEUED',
       )
-      assert.strictEqual(
-        await directClient.call('HGET', key, 'field'),
-        'QUEUED',
-      )
+      assert.strictEqual(await directClient.hget(key, 'field'), 'QUEUED')
 
       const result = await directClient.call('EXEC')
 

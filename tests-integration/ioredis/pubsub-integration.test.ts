@@ -30,13 +30,12 @@ describe(`Pub/Sub integration (${testRunner.getBackendName()})`, () => {
 
     assert.strictEqual(await subscriber.subscribe(channel), 1)
     assert.deepStrictEqual(
-      await publisher.call('PUBSUB', 'NUMSUB', channel, missingChannel),
+      await publisher.pubsub('NUMSUB', channel, missingChannel),
       [channel, 1, missingChannel, 0],
     )
-    assert.deepStrictEqual(
-      await publisher.call('PUBSUB', 'CHANNELS', channel),
-      [channel],
-    )
+    assert.deepStrictEqual(await publisher.pubsub('CHANNELS', channel), [
+      channel,
+    ])
 
     const message = waitForMessage(subscriber, channel)
     assert.strictEqual(await publisher.publish(channel, 'hello'), 1)
@@ -54,14 +53,14 @@ describe(`Pub/Sub integration (${testRunner.getBackendName()})`, () => {
     const channel = `${prefix}:updates`
 
     assert.strictEqual(await subscriber.psubscribe(pattern), 1)
-    assert.strictEqual(await publisher.call('PUBSUB', 'NUMPAT'), 1)
+    assert.strictEqual(await publisher.pubsub('NUMPAT'), 1)
 
     const message = waitForPatternMessage(subscriber, pattern, channel)
     assert.strictEqual(await publisher.publish(channel, 'pattern-hit'), 1)
     assert.strictEqual(await message, 'pattern-hit')
 
     await subscriber.punsubscribe(pattern)
-    assert.strictEqual(await publisher.call('PUBSUB', 'NUMPAT'), 0)
+    assert.strictEqual(await publisher.pubsub('NUMPAT'), 0)
   })
 
   test('reports empty shard Pub/Sub state', async () => {
@@ -69,11 +68,13 @@ describe(`Pub/Sub integration (${testRunner.getBackendName()})`, () => {
     const first = `pubsub-shard:${randomKey()}:1`
     const second = `pubsub-shard:${randomKey()}:2`
 
-    assert.deepStrictEqual(await client.call('PUBSUB', 'SHARDCHANNELS'), [])
-    assert.deepStrictEqual(
-      await client.call('PUBSUB', 'SHARDNUMSUB', first, second),
-      [first, 0, second, 0],
-    )
+    assert.deepStrictEqual(await client.pubsub('SHARDCHANNELS'), [])
+    assert.deepStrictEqual(await client.pubsub('SHARDNUMSUB', first, second), [
+      first,
+      0,
+      second,
+      0,
+    ])
   })
 
   async function connect(): Promise<Redis> {

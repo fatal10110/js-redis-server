@@ -63,22 +63,22 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
 
     try {
       assert.strictEqual(
-        await node.call('XADD', fixedMsKey, `7-${MAX_UINT64}`, 'f', 'v'),
+        await node.xadd(fixedMsKey, `7-${MAX_UINT64}`, 'f', 'v'),
         `7-${MAX_UINT64}`,
       )
       await assert.rejects(
-        () => node.call('XADD', fixedMsKey, '7-*', 'f', 'v'),
+        () => node.xadd(fixedMsKey, '7-*', 'f', 'v'),
         errorWithMessage(
           'ERR The ID specified in XADD is equal or smaller than the target stream top item',
         ),
       )
 
       assert.strictEqual(
-        await node.call('XADD', autoKey, `${futureMs}-${MAX_UINT64}`, 'f', 'v'),
+        await node.xadd(autoKey, `${futureMs}-${MAX_UINT64}`, 'f', 'v'),
         `${futureMs}-${MAX_UINT64}`,
       )
       assert.strictEqual(
-        await node.call('XADD', autoKey, '*', 'f', 'v'),
+        await node.xadd(autoKey, '*', 'f', 'v'),
         `${futureMs + 1n}-0`,
       )
     } finally {
@@ -137,7 +137,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const key = randomKey()
     const node = await connectToSlotOwner(redisClient!, key)
     try {
-      const result = await node.call('XADD', key, 'NOMKSTREAM', '1-1', 'f', 'v')
+      const result = await node.xadd(key, 'NOMKSTREAM', '1-1', 'f', 'v')
       assert.strictEqual(result, null)
       assert.strictEqual(await node.exists(key), 0)
     } finally {
@@ -150,7 +150,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const node = await connectToSlotOwner(redisClient!, key)
     try {
       await node.xadd(key, '1-1', 'f', 'v')
-      const result = await node.call('XADD', key, 'NOMKSTREAM', '2-1', 'g', 'w')
+      const result = await node.xadd(key, 'NOMKSTREAM', '2-1', 'g', 'w')
       assert.strictEqual(result, '2-1')
       assert.strictEqual(await node.xlen(key), 2)
     } finally {
@@ -165,7 +165,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '1-1', 'f', 'v')
       await node.xadd(key, '2-1', 'f', 'v')
       await node.xadd(key, '3-1', 'f', 'v')
-      await node.call('XADD', key, 'MAXLEN', '2', '4-1', 'f', 'v')
+      await node.xadd(key, 'MAXLEN', '2', '4-1', 'f', 'v')
       assert.deepStrictEqual(await node.xrange(key, '-', '+'), [
         ['3-1', ['f', 'v']],
         ['4-1', ['f', 'v']],
@@ -183,8 +183,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '2-1', 'f', 'v')
       await node.xadd(key, '3-1', 'f', 'v')
 
-      const id = (await node.call(
-        'XADD',
+      const id = (await node.xadd(
         key,
         'MAXLEN',
         '~',
@@ -197,8 +196,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       )) as string
       assert.match(id, /^\d+-\d+$/)
 
-      const duplicateLimitId = (await node.call(
-        'XADD',
+      const duplicateLimitId = (await node.xadd(
         key,
         'MAXLEN',
         '~',
@@ -224,31 +222,17 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '1-1', 'f', 'v')
 
       await assert.rejects(
-        () =>
-          node.call('XADD', key, 'MAXLEN', '2', 'LIMIT', '1', '*', 'f', 'v'),
+        () => node.xadd(key, 'MAXLEN', '2', 'LIMIT', '1', '*', 'f', 'v'),
         errorWithMessage(
           'ERR syntax error, LIMIT cannot be used without the special ~ option',
         ),
       )
       await assert.rejects(
-        () =>
-          node.call('XADD', key, 'MAXLEN', '~', '2', 'LIMIT', '*', 'f', 'v'),
+        () => node.xadd(key, 'MAXLEN', '~', '2', 'LIMIT', '*', 'f', 'v'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () =>
-          node.call(
-            'XADD',
-            key,
-            'MAXLEN',
-            '~',
-            '2',
-            'LIMIT',
-            '-1',
-            '*',
-            'f',
-            'v',
-          ),
+        () => node.xadd(key, 'MAXLEN', '~', '2', 'LIMIT', '-1', '*', 'f', 'v'),
         errorWithMessage('ERR The LIMIT argument must be >= 0.'),
       )
     } finally {

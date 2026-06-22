@@ -72,35 +72,35 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
 
       // INCRBY with a large in-range amount keeps full precision
       await directClient.set(key, '1')
-      await directClient.call('INCRBY', key, '9223372036854775806')
+      await directClient.incrby(key, '9223372036854775806')
       assert.strictEqual(await directClient.get(key), '9223372036854775807')
 
       // INCRBY that would cross the int64 max overflows
       await assert.rejects(
-        () => directClient.call('INCRBY', key, '1'),
+        () => directClient.incrby(key, '1'),
         errorWithMessage('ERR increment or decrement would overflow'),
       )
 
       // INCRBY/DECRBY amount outside the int64 range is rejected outright
       await assert.rejects(
-        () => directClient.call('INCRBY', key, '99999999999999999999999'),
+        () => directClient.incrby(key, '99999999999999999999999'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => directClient.call('DECRBY', key, '99999999999999999999999'),
+        () => directClient.decrby(key, '99999999999999999999999'),
         errorWithMessage('ERR value is not an integer or out of range'),
       )
 
       // DECRBY by the int64 min cannot be negated -> dedicated overflow message
       await directClient.set(key, '0')
       await assert.rejects(
-        () => directClient.call('DECRBY', key, '-9223372036854775808'),
+        () => directClient.decrby(key, '-9223372036854775808'),
         errorWithMessage('ERR decrement would overflow'),
       )
 
       // DECRBY large in-range amount keeps full precision
       await directClient.set(key, '-1')
-      await directClient.call('DECRBY', key, '9223372036854775807')
+      await directClient.decrby(key, '9223372036854775807')
       assert.strictEqual(await directClient.get(key), '-9223372036854775808')
 
       // INCR on a value already out of int64 range is rejected
@@ -142,7 +142,7 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
       ]) {
         await direct.set(key, '3.0')
         await assert.rejects(
-          () => direct.call('INCRBYFLOAT', key, increment),
+          () => direct.incrbyfloat(key, increment),
           errorWithMessage('ERR increment would produce NaN or Infinity'),
           `increment "${increment}" should report the NaN/Infinity error`,
         )
@@ -153,29 +153,29 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
       // A stored infinity plus a finite increment is still infinity.
       await direct.set(key, 'inf')
       await assert.rejects(
-        () => direct.call('INCRBYFLOAT', key, '1'),
+        () => direct.incrbyfloat(key, '1'),
         errorWithMessage('ERR increment would produce NaN or Infinity'),
       )
 
       // inf + (-inf) = NaN — also the post-arithmetic error.
       await direct.set(key, 'inf')
       await assert.rejects(
-        () => direct.call('INCRBYFLOAT', key, '-inf'),
+        () => direct.incrbyfloat(key, '-inf'),
         errorWithMessage('ERR increment would produce NaN or Infinity'),
       )
 
       // Genuinely non-numeric / overflow-magnitude increments are parse errors.
       await direct.set(key, '1')
       await assert.rejects(
-        () => direct.call('INCRBYFLOAT', key, 'nan'),
+        () => direct.incrbyfloat(key, 'nan'),
         errorWithMessage('ERR value is not a valid float'),
       )
       await assert.rejects(
-        () => direct.call('INCRBYFLOAT', key, '1e5000'),
+        () => direct.incrbyfloat(key, '1e5000'),
         errorWithMessage('ERR value is not a valid float'),
       )
       await assert.rejects(
-        () => direct.call('INCRBYFLOAT', key, 'abc'),
+        () => direct.incrbyfloat(key, 'abc'),
         errorWithMessage('ERR value is not a valid float'),
       )
 
@@ -185,7 +185,7 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
       for (const bad of ['3abc', '3.5x', ' 3.5', '3.5 ', '1,5', '', '0x']) {
         await direct.set(key, '1')
         await assert.rejects(
-          () => direct.call('INCRBYFLOAT', key, bad),
+          () => direct.incrbyfloat(key, bad),
           errorWithMessage('ERR value is not a valid float'),
           `increment "${bad}" should be an invalid float`,
         )
@@ -195,7 +195,7 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
 
       // A finite increment still works normally.
       await direct.set(key, '3')
-      assert.strictEqual(await direct.call('INCRBYFLOAT', key, '1.0e2'), '103')
+      assert.strictEqual(await direct.incrbyfloat(key, '1.0e2'), '103')
 
       // Arity.
       await assert.rejects(

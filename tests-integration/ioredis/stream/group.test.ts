@@ -38,21 +38,17 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '1-0', 'f', '1')
       await node.xadd(key, '2-0', 'f', '2')
 
+      assert.strictEqual(await node.xgroup('CREATE', key, 'workers', '0'), 'OK')
       assert.strictEqual(
-        await node.call('XGROUP', 'CREATE', key, 'workers', '0'),
-        'OK',
-      )
-      assert.strictEqual(
-        await node.call('XGROUP', 'CREATECONSUMER', key, 'workers', 'alice'),
+        await node.xgroup('CREATECONSUMER', key, 'workers', 'alice'),
         1,
       )
       assert.strictEqual(
-        await node.call('XGROUP', 'CREATECONSUMER', key, 'workers', 'alice'),
+        await node.xgroup('CREATECONSUMER', key, 'workers', 'alice'),
         0,
       )
 
-      const read = (await node.call(
-        'XREADGROUP',
+      const read = (await node.xreadgroup(
         'GROUP',
         'workers',
         'alice',
@@ -72,19 +68,14 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         ],
       ])
 
-      const pendingSummary = (await node.call(
-        'XPENDING',
-        key,
-        'workers',
-      )) as unknown[]
+      const pendingSummary = (await node.xpending(key, 'workers')) as unknown[]
       assert.strictEqual(pendingSummary[0], 2)
       assert.strictEqual(pendingSummary[1], '1-0')
       assert.strictEqual(pendingSummary[2], '2-0')
       assert.ok(Array.isArray(pendingSummary[3]))
 
-      assert.strictEqual(await node.call('XACK', key, 'workers', '1-0'), 1)
-      const pendingDetails = (await node.call(
-        'XPENDING',
+      assert.strictEqual(await node.xack(key, 'workers', '1-0'), 1)
+      const pendingDetails = (await node.xpending(
         key,
         'workers',
         '-',
@@ -96,8 +87,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(pendingDetails[0][1], 'alice')
       assert.strictEqual(pendingDetails[0][3], 1)
 
-      const consumers = (await node.call(
-        'XINFO',
+      const consumers = (await node.xinfo(
         'CONSUMERS',
         key,
         'workers',
@@ -107,17 +97,11 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(kvArrayGet(alice, 'pending'), 1)
 
       assert.strictEqual(
-        await node.call('XGROUP', 'DELCONSUMER', key, 'workers', 'alice'),
+        await node.xgroup('DELCONSUMER', key, 'workers', 'alice'),
         1,
       )
-      assert.strictEqual(
-        await node.call('XGROUP', 'DESTROY', key, 'workers'),
-        1,
-      )
-      assert.strictEqual(
-        await node.call('XGROUP', 'DESTROY', key, 'workers'),
-        0,
-      )
+      assert.strictEqual(await node.xgroup('DESTROY', key, 'workers'), 1)
+      assert.strictEqual(await node.xgroup('DESTROY', key, 'workers'), 0)
     } finally {
       node.disconnect()
     }
@@ -128,7 +112,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const node = await connectToSlotOwner(redisClient!, key)
     try {
       assert.strictEqual(
-        await node.call('XGROUP', 'CREATE', key, 'workers', '$', 'MKSTREAM'),
+        await node.xgroup('CREATE', key, 'workers', '$', 'MKSTREAM'),
         'OK',
       )
       assert.strictEqual(await node.xlen(key), 0)
@@ -136,15 +120,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       await node.xadd(key, '1-0', 'f', '1')
       await node.xadd(key, '2-0', 'f', '2')
       assert.deepStrictEqual(
-        await node.call(
-          'XREADGROUP',
-          'GROUP',
-          'workers',
-          'alice',
-          'STREAMS',
-          key,
-          '>',
-        ),
+        await node.xreadgroup('GROUP', 'workers', 'alice', 'STREAMS', key, '>'),
         [
           [
             key,
@@ -156,21 +132,10 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         ],
       )
 
-      assert.strictEqual(
-        await node.call('XGROUP', 'SETID', key, 'workers', '$'),
-        'OK',
-      )
+      assert.strictEqual(await node.xgroup('SETID', key, 'workers', '$'), 'OK')
       await node.xadd(key, '3-0', 'f', '3')
       assert.deepStrictEqual(
-        await node.call(
-          'XREADGROUP',
-          'GROUP',
-          'workers',
-          'bob',
-          'STREAMS',
-          key,
-          '>',
-        ),
+        await node.xreadgroup('GROUP', 'workers', 'bob', 'STREAMS', key, '>'),
         [[key, [['3-0', ['f', '3']]]]],
       )
     } finally {
@@ -184,9 +149,8 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     try {
       await node.xadd(key, '1-0', 'f', '1')
       await node.xadd(key, '2-0', 'f', '2')
-      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
-      await node.call(
-        'XREADGROUP',
+      await node.xgroup('CREATE', key, 'workers', '0')
+      await node.xreadgroup(
         'GROUP',
         'workers',
         'alice',
@@ -198,12 +162,11 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       )
 
       assert.deepStrictEqual(
-        await node.call('XCLAIM', key, 'workers', 'bob', '0', '1-0'),
+        await node.xclaim(key, 'workers', 'bob', '0', '1-0'),
         [['1-0', ['f', '1']]],
       )
 
-      const claimed = (await node.call(
-        'XAUTOCLAIM',
+      const claimed = (await node.xautoclaim(
         key,
         'workers',
         'carol',
@@ -219,8 +182,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       assert.deepStrictEqual(claimed[2], [])
 
-      const pendingDetails = (await node.call(
-        'XPENDING',
+      const pendingDetails = (await node.xpending(
         key,
         'workers',
         '-',
@@ -245,9 +207,8 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     try {
       await node.xadd(key, '1-1', 'f', '1')
       await node.xadd(key, '2-2', 'f', '2')
-      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
-      await node.call(
-        'XREADGROUP',
+      await node.xgroup('CREATE', key, 'workers', '0')
+      await node.xreadgroup(
         'GROUP',
         'workers',
         'alice',
@@ -260,15 +221,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(await node.xdel(key, '1-1'), 1)
 
       assert.deepStrictEqual(
-        await node.call(
-          'XREADGROUP',
-          'GROUP',
-          'workers',
-          'alice',
-          'STREAMS',
-          key,
-          '0',
-        ),
+        await node.xreadgroup('GROUP', 'workers', 'alice', 'STREAMS', key, '0'),
         [
           [
             key,
@@ -289,18 +242,10 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const node = await connectToSlotOwner(redisClient!, key)
     try {
       await node.xadd(key, '1-1', 'f', '1')
-      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
+      await node.xgroup('CREATE', key, 'workers', '0')
 
       assert.deepStrictEqual(
-        await node.call(
-          'XREADGROUP',
-          'GROUP',
-          'workers',
-          'alice',
-          'STREAMS',
-          key,
-          '0',
-        ),
+        await node.xreadgroup('GROUP', 'workers', 'alice', 'STREAMS', key, '0'),
         [[key, []]],
       )
     } finally {
@@ -314,9 +259,8 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     try {
       await node.xadd(key, '1-0', 'f', '1')
       await node.xadd(key, '2-0', 'f', '2')
-      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
-      await node.call(
-        'XREADGROUP',
+      await node.xgroup('CREATE', key, 'workers', '0')
+      await node.xreadgroup(
         'GROUP',
         'workers',
         'alice',
@@ -327,8 +271,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         '>',
       )
 
-      const streamInfo = (await node.call(
-        'XINFO',
+      const streamInfo = (await node.xinfo(
         'STREAM',
         key,
         'FULL',
@@ -342,18 +285,13 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       ])
       assert.ok(Array.isArray(kvArrayGet(streamInfo, 'groups')))
 
-      const groupsInfo = (await node.call(
-        'XINFO',
-        'GROUPS',
-        key,
-      )) as unknown[][]
+      const groupsInfo = (await node.xinfo('GROUPS', key)) as unknown[][]
       assert.strictEqual(groupsInfo.length, 1)
       assert.strictEqual(kvArrayGet(groupsInfo[0], 'name'), 'workers')
       assert.strictEqual(kvArrayGet(groupsInfo[0], 'consumers'), 1)
       assert.strictEqual(kvArrayGet(groupsInfo[0], 'pending'), 1)
 
-      const consumersInfo = (await node.call(
-        'XINFO',
+      const consumersInfo = (await node.xinfo(
         'CONSUMERS',
         key,
         'workers',
@@ -373,9 +311,8 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       for (let i = 1; i <= 12; i++) {
         await node.xadd(key, `${i}-0`, 'f', `${i}`)
       }
-      await node.call('XGROUP', 'CREATE', key, 'workers', '0')
-      await node.call(
-        'XREADGROUP',
+      await node.xgroup('CREATE', key, 'workers', '0')
+      await node.xreadgroup(
         'GROUP',
         'workers',
         'alice',
@@ -386,12 +323,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
         '>',
       )
 
-      const streamInfo = (await node.call(
-        'XINFO',
-        'STREAM',
-        key,
-        'FULL',
-      )) as unknown[]
+      const streamInfo = (await node.xinfo('STREAM', key, 'FULL')) as unknown[]
       const entries = kvArrayGet(streamInfo, 'entries') as unknown[][]
       assert.strictEqual(entries.length, 10)
       assert.strictEqual(entries[0][0], '1-0')
@@ -413,32 +345,20 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     const node = await connectToSlotOwner(redisClient!, key)
     try {
       await assert.rejects(
-        () => node.call('XGROUP', 'CREATE', key, 'workers', '0'),
+        () => node.xgroup('CREATE', key, 'workers', '0'),
         errorWithMessage(
           'ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.',
         ),
       )
 
       await node.xadd(key, '1-0', 'f', '1')
-      assert.strictEqual(
-        await node.call('XGROUP', 'CREATE', key, 'workers', '0'),
-        'OK',
-      )
+      assert.strictEqual(await node.xgroup('CREATE', key, 'workers', '0'), 'OK')
       await assert.rejects(
-        () => node.call('XGROUP', 'CREATE', key, 'workers', '0'),
+        () => node.xgroup('CREATE', key, 'workers', '0'),
         errorWithMessage('BUSYGROUP Consumer Group name already exists'),
       )
       await assert.rejects(
-        () =>
-          node.call(
-            'XREADGROUP',
-            'GROUP',
-            'missing',
-            'alice',
-            'STREAMS',
-            key,
-            '>',
-          ),
+        () => node.xreadgroup('GROUP', 'missing', 'alice', 'STREAMS', key, '>'),
         errorWithMessage(
           `NOGROUP No such key '${key}' or consumer group 'missing' in XREADGROUP with GROUP option`,
         ),
@@ -447,7 +367,7 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
       const stringKey = `{${tag}}:string`
       await node.set(stringKey, 'value')
       await assert.rejects(
-        () => node.call('XINFO', 'GROUPS', stringKey),
+        () => node.xinfo('GROUPS', stringKey),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),

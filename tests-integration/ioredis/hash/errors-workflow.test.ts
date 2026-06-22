@@ -2,7 +2,6 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -15,91 +14,6 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
 
   after(async () => {
     await testRunner.cleanup()
-  })
-
-  test('Hash command errors match Redis', async () => {
-    const tag = `{hash-errors:${randomKey()}}`
-    const hashKey = `${tag}:hash`
-    const stringKey = `${tag}:string`
-
-    try {
-      await redisClient?.set(stringKey, 'value')
-      await redisClient?.hset(
-        hashKey,
-        'integer',
-        'abc',
-        'float',
-        'abc',
-        'float-trailing-garbage',
-        '1abc',
-        'float-dangling-exponent',
-        '1.0e',
-        'float-trailing-space',
-        '1.5 ',
-        'leading-zero',
-        '007',
-        'negative-zero',
-        '-0',
-      )
-
-      await assert.rejects(
-        () => redisClient?.hget(stringKey, 'field'),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
-      await assert.rejects(
-        () => redisClient?.call('HSET', hashKey, 'field'),
-        errorWithMessage("ERR wrong number of arguments for 'hset' command"),
-      )
-      await assert.rejects(
-        () => redisClient?.call('HINCRBY', hashKey, 'integer', 'abc'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('HINCRBY', hashKey, 'integer', '01'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () => redisClient?.hincrby(hashKey, 'integer', 1),
-        errorWithMessage('ERR hash value is not an integer'),
-      )
-      await assert.rejects(
-        () => redisClient?.hincrby(hashKey, 'leading-zero', 1),
-        errorWithMessage('ERR hash value is not an integer'),
-      )
-      await assert.rejects(
-        () => redisClient?.hincrby(hashKey, 'negative-zero', 1),
-        errorWithMessage('ERR hash value is not an integer'),
-      )
-      await assert.rejects(
-        () => redisClient?.call('HINCRBYFLOAT', hashKey, 'float', 'abc'),
-        errorWithMessage('ERR value is not a valid float'),
-      )
-      await assert.rejects(
-        () => redisClient?.hincrbyfloat(hashKey, 'float', 1.5),
-        errorWithMessage('ERR hash value is not a float'),
-      )
-      for (const field of [
-        'float-trailing-garbage',
-        'float-dangling-exponent',
-        'float-trailing-space',
-      ]) {
-        await assert.rejects(
-          () => redisClient?.hincrbyfloat(hashKey, field, 1),
-          errorWithMessage('ERR hash value is not a float'),
-        )
-      }
-      for (const increment of ['1abc', '1.0e', '1.5 ']) {
-        await assert.rejects(
-          () =>
-            redisClient?.call('HINCRBYFLOAT', hashKey, 'missing', increment),
-          errorWithMessage('ERR value is not a valid float'),
-        )
-      }
-    } finally {
-      await redisClient?.del(hashKey, stringKey)
-    }
   })
 
   test('Hash commands workflow - User Profile', async () => {

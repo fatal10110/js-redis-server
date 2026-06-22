@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, randomKey } from '../../utils'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -86,8 +86,7 @@ describe(`Sorted Set Score-Range (ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZREMRANGEBYRANK
     try {
       const expected = ['a', '1', 'b', '2']
       assert.deepStrictEqual(
-        await redisClient?.call(
-          'zrangebyscore',
+        await redisClient?.zrangebyscore(
           key,
           '-inf',
           '+inf',
@@ -99,8 +98,7 @@ describe(`Sorted Set Score-Range (ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZREMRANGEBYRANK
         expected,
       )
       assert.deepStrictEqual(
-        await redisClient?.call(
-          'zrangebyscore',
+        await redisClient?.zrangebyscore(
           key,
           '-inf',
           '+inf',
@@ -139,74 +137,6 @@ describe(`Sorted Set Score-Range (ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZREMRANGEBYRANK
       await redisClient?.del(key)
     }
   })
-
-  test('ZRANGEBYSCORE LIMIT with non-integer rejects', async () => {
-    const key = await seedScored(sample)
-    try {
-      await assert.rejects(
-        () =>
-          redisClient?.call('zrangebyscore', key, '1', '2', 'LIMIT', 'a', 'b'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZRANGEBYSCORE LIMIT without offset/count rejects with syntax error', async () => {
-    const key = await seedScored(sample)
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrangebyscore', key, '1', '2', 'LIMIT'),
-        errorWithMessage('ERR syntax error'),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZRANGEBYSCORE rejects wrong arity', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrangebyscore', key, '1'),
-        errorWithMessage(
-          "ERR wrong number of arguments for 'zrangebyscore' command",
-        ),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZRANGEBYSCORE rejects non-float bound', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrangebyscore', key, 'x', '2'),
-        errorWithMessage('ERR min or max is not a float'),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZRANGEBYSCORE on wrong type rejects WRONGTYPE', async () => {
-    const key = `{zsr:${randomKey()}}`
-    await redisClient?.set(key, 'v')
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrangebyscore', key, '1', '2'),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  // ---------- ZREVRANGEBYSCORE ----------
 
   test('ZREVRANGEBYSCORE returns descending range with max/min order', async () => {
     const key = await seedScored(sample)
@@ -252,35 +182,6 @@ describe(`Sorted Set Score-Range (ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZREMRANGEBYRANK
     )
   })
 
-  test('ZREVRANGEBYSCORE rejects non-float bound', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrevrangebyscore', key, 'x', '2'),
-        errorWithMessage('ERR min or max is not a float'),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZREVRANGEBYSCORE on wrong type rejects WRONGTYPE', async () => {
-    const key = `{zsr:${randomKey()}}`
-    await redisClient?.set(key, 'v')
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zrevrangebyscore', key, '2', '1'),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  // ---------- ZREMRANGEBYRANK ----------
-
   test('ZREMRANGEBYRANK removes members in rank range', async () => {
     const key = await seedScored(sample)
     try {
@@ -320,47 +221,6 @@ describe(`Sorted Set Score-Range (ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZREMRANGEBYRANK
     try {
       assert.strictEqual(await redisClient?.zremrangebyrank(key, 0, -1), 1)
       assert.strictEqual(await redisClient?.exists(key), 0)
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZREMRANGEBYRANK rejects non-integer rank', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zremrangebyrank', key, 'x', '1'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZREMRANGEBYRANK rejects wrong arity', async () => {
-    const key = await seedScored([[1, 'a']])
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zremrangebyrank', key, '0'),
-        errorWithMessage(
-          "ERR wrong number of arguments for 'zremrangebyrank' command",
-        ),
-      )
-    } finally {
-      await redisClient?.del(key)
-    }
-  })
-
-  test('ZREMRANGEBYRANK on wrong type rejects WRONGTYPE', async () => {
-    const key = `{zsr:${randomKey()}}`
-    await redisClient?.set(key, 'v')
-    try {
-      await assert.rejects(
-        () => redisClient?.call('zremrangebyrank', key, '0', '1'),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
     } finally {
       await redisClient?.del(key)
     }

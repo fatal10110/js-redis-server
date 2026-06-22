@@ -86,37 +86,37 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     const stringKey = `{${keyTag}}:string`
 
     try {
-      await redisClient?.call('ZADD', zsetKey, 1, 'one', 2, 'two', 3.5, 'three')
+      await redisClient?.zadd(zsetKey, 1, 'one', 2, 'two', 3.5, 'three')
 
       assert.deepStrictEqual(
-        await redisClient?.call('ZRANK', zsetKey, 'one', 'WITHSCORE'),
+        await redisClient?.zrank(zsetKey, 'one', 'WITHSCORE'),
         [0, '1'],
       )
       assert.deepStrictEqual(
-        await redisClient?.call('ZRANK', zsetKey, 'three', 'withscore'),
+        await redisClient?.zrank(zsetKey, 'three', 'withscore'),
         [2, '3.5'],
       )
       assert.deepStrictEqual(
-        await redisClient?.call('ZREVRANK', zsetKey, 'three', 'WITHSCORE'),
+        await redisClient?.zrevrank(zsetKey, 'three', 'WITHSCORE'),
         [0, '3.5'],
       )
       assert.deepStrictEqual(
-        await redisClient?.call('ZREVRANK', zsetKey, 'one', 'WITHSCORE'),
+        await redisClient?.zrevrank(zsetKey, 'one', 'WITHSCORE'),
         [2, '1'],
       )
 
       assert.strictEqual(
-        await redisClient?.call('ZRANK', zsetKey, 'missing', 'WITHSCORE'),
+        await redisClient?.zrank(zsetKey, 'missing', 'WITHSCORE'),
         null,
       )
       assert.strictEqual(
-        await redisClient?.call('ZREVRANK', zsetKey, 'missing', 'WITHSCORE'),
+        await redisClient?.zrevrank(zsetKey, 'missing', 'WITHSCORE'),
         null,
       )
 
-      await redisClient?.call('SET', stringKey, 'not-a-zset')
+      await redisClient?.set(stringKey, 'not-a-zset')
       await assert.rejects(
-        () => redisClient?.call('ZRANK', stringKey, 'one', 'WITHSCORE'),
+        () => redisClient?.zrank(stringKey, 'one', 'WITHSCORE'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -139,7 +139,7 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
         ),
       )
     } finally {
-      await redisClient?.call('DEL', zsetKey, stringKey)
+      await redisClient?.del(zsetKey, stringKey)
     }
   })
 

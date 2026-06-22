@@ -26,10 +26,7 @@ describe(`LINSERT Integration (${testRunner.getBackendName()})`, () => {
       await client.del(key)
       await client.rpush(key, 'a', 'b', 'c', 'b')
 
-      assert.strictEqual(
-        await client.call('LINSERT', key, 'BEFORE', 'b', 'x'),
-        5,
-      )
+      assert.strictEqual(await client.linsert(key, 'BEFORE', 'b', 'x'), 5)
       assert.deepStrictEqual(await client.lrange(key, 0, -1), [
         'a',
         'x',
@@ -38,10 +35,7 @@ describe(`LINSERT Integration (${testRunner.getBackendName()})`, () => {
         'b',
       ])
 
-      assert.strictEqual(
-        await client.call('LINSERT', key, 'after', 'b', 'y'),
-        6,
-      )
+      assert.strictEqual(await client.linsert(key, 'after', 'b', 'y'), 6)
       assert.deepStrictEqual(await client.lrange(key, 0, -1), [
         'a',
         'x',
@@ -66,16 +60,10 @@ describe(`LINSERT Integration (${testRunner.getBackendName()})`, () => {
       await client.del(key, missing)
       await client.rpush(key, 'a', 'b', 'c')
 
-      assert.strictEqual(
-        await client.call('LINSERT', key, 'BEFORE', 'z', 'x'),
-        -1,
-      )
+      assert.strictEqual(await client.linsert(key, 'BEFORE', 'z', 'x'), -1)
       assert.deepStrictEqual(await client.lrange(key, 0, -1), ['a', 'b', 'c'])
 
-      assert.strictEqual(
-        await client.call('LINSERT', missing, 'AFTER', 'z', 'x'),
-        0,
-      )
+      assert.strictEqual(await client.linsert(missing, 'AFTER', 'z', 'x'), 0)
       assert.strictEqual(await client.exists(missing), 0)
     } finally {
       await client.del(key, missing)
@@ -110,7 +98,7 @@ describe(`LINSERT Integration (${testRunner.getBackendName()})`, () => {
 
       await client.set(stringKey, 'value')
       await assert.rejects(
-        () => client.call('LINSERT', stringKey, 'BEFORE', 'pivot', 'x'),
+        () => client.linsert(stringKey, 'BEFORE', 'pivot', 'x'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),

@@ -35,7 +35,7 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
       await client1!.zadd(second, 10, 'x')
 
       assert.deepStrictEqual(
-        await client1!.call('BZPOPMIN', empty, first, second, '0'),
+        await client1!.bzpopmin(empty, first, second, '0'),
         [first, 'a', '1'],
       )
       assert.deepStrictEqual(await client1!.zrange(first, 0, -1), ['b', 'c'])
@@ -53,12 +53,12 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
       await client1!.del(zset)
       await client1!.zadd(zset, 1, 'a', 2, 'b')
 
-      assert.deepStrictEqual(await client1!.call('BZPOPMAX', zset, '0'), [
+      assert.deepStrictEqual(await client1!.bzpopmax(zset, '0'), [
         zset,
         'b',
         '2',
       ])
-      assert.deepStrictEqual(await client1!.call('BZPOPMAX', zset, '0'), [
+      assert.deepStrictEqual(await client1!.bzpopmax(zset, '0'), [
         zset,
         'a',
         '1',
@@ -76,10 +76,7 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
 
     try {
       await client1!.del(first, second)
-      assert.strictEqual(
-        await client1!.call('BZPOPMIN', first, second, '0.1'),
-        null,
-      )
+      assert.strictEqual(await client1!.bzpopmin(first, second, '0.1'), null)
     } finally {
       await client1!.del(first, second)
     }
@@ -93,7 +90,7 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
     try {
       await client1!.del(first, second)
 
-      const blockPromise = client1!.call('BZPOPMIN', first, second, '5')
+      const blockPromise = client1!.bzpopmin(first, second, '5')
       await waitForPark()
       await client2!.zadd(second, 7, 'hello')
 
@@ -111,7 +108,7 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
     try {
       await client1!.del(zset)
 
-      const blockPromise = client1!.call('BZPOPMAX', zset, '5')
+      const blockPromise = client1!.bzpopmax(zset, '5')
       await waitForPark()
       await client2!.zadd(zset, 1, 'low', 9, 'high')
 
@@ -151,15 +148,15 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
         ),
       )
       await assert.rejects(
-        () => client1!.call('BZPOPMIN', zset, '-1'),
+        () => client1!.bzpopmin(zset, '-1'),
         errorWithMessage('ERR timeout is negative'),
       )
       await assert.rejects(
-        () => client1!.call('BZPOPMIN', zset, 'abc'),
+        () => client1!.bzpopmin(zset, 'abc'),
         errorWithMessage('ERR timeout is not a float or out of range'),
       )
       await assert.rejects(
-        () => client1!.call('BZPOPMIN', stringKey, '0.1'),
+        () => client1!.bzpopmin(stringKey, '0.1'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -168,13 +165,13 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
       const directClient = await connectToSlotOwner(client1!, zset)
       try {
         await assert.rejects(
-          () => directClient.call('BZPOPMIN', zset, 'other-slot-key', '1'),
+          () => directClient.bzpopmin(zset, 'other-slot-key', '1'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () => directClient.call('BZPOPMAX', zset, 'other-slot-key', '1'),
+          () => directClient.bzpopmax(zset, 'other-slot-key', '1'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

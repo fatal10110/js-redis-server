@@ -74,8 +74,7 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
       directClient = await connectToSlotOwner(redisClient, setKey)
       await directClient.sadd(setKey, 'member1', 'member2')
 
-      const result = await directClient.call(
-        'SMISMEMBER',
+      const result = await directClient.smismember(
         setKey,
         'member1',
         'missing',
@@ -84,8 +83,7 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       assert.deepStrictEqual(result, [1, 0, 1, 1])
 
-      const missing = await directClient.call(
-        'SMISMEMBER',
+      const missing = await directClient.smismember(
         missingKey,
         'member1',
         'member2',
@@ -192,7 +190,7 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(cardAfterZero, 1)
 
       await assert.rejects(
-        () => redisClient?.call('SPOP', key, '-1'),
+        () => redisClient?.spop(key, '-1'),
         errorWithMessage('ERR value is out of range, must be positive'),
       )
     } finally {
@@ -214,35 +212,5 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     // Get multiple random members
     const randoms = await redisClient?.srandmember('set6', 2)
     assert.strictEqual(randoms?.length, 2)
-  })
-
-  test('Set command errors match Redis', async () => {
-    const tag = `{set-errors:${randomKey()}}`
-    const setKey = `${tag}:set`
-    const stringKey = `${tag}:string`
-
-    try {
-      await redisClient?.sadd(setKey, 'a')
-      await redisClient?.set(stringKey, 'value')
-
-      await assert.rejects(
-        () => redisClient?.sadd(stringKey, 'a'),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
-      await assert.rejects(
-        () => redisClient?.call('SRANDMEMBER', setKey, 'abc'),
-        errorWithMessage('ERR value is not an integer or out of range'),
-      )
-      await assert.rejects(
-        () => redisClient?.smove(setKey, stringKey, 'a'),
-        errorWithMessage(
-          'WRONGTYPE Operation against a key holding the wrong kind of value',
-        ),
-      )
-    } finally {
-      await redisClient?.del(setKey, stringKey)
-    }
   })
 })

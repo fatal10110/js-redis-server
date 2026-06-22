@@ -46,10 +46,10 @@ describe(`Sharded Pub/Sub cluster integration (${testRunner.getBackendName()})`,
         channel,
         1,
       ])
-      assert.deepStrictEqual(
-        await owner.call('PUBSUB', 'SHARDNUMSUB', channel),
-        [channel, 1],
-      )
+      assert.deepStrictEqual(await owner.pubsub('SHARDNUMSUB', channel), [
+        channel,
+        1,
+      ])
 
       const message = subscriber.readFrame()
       assert.strictEqual(
@@ -68,10 +68,10 @@ describe(`Sharded Pub/Sub cluster integration (${testRunner.getBackendName()})`,
         channel,
         0,
       ])
-      assert.deepStrictEqual(
-        await owner.call('PUBSUB', 'SHARDNUMSUB', channel),
-        [channel, 0],
-      )
+      assert.deepStrictEqual(await owner.pubsub('SHARDNUMSUB', channel), [
+        channel,
+        0,
+      ])
     } finally {
       owner.disconnect()
     }
@@ -101,16 +101,11 @@ describe(`Sharded Pub/Sub cluster integration (${testRunner.getBackendName()})`,
       )
 
       assert.deepStrictEqual(
-        await directClient.call('PUBSUB', 'SHARDNUMSUB', remoteChannel),
+        await directClient.pubsub('SHARDNUMSUB', remoteChannel),
         [remoteChannel, 0],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'PUBSUB',
-          'SHARDNUMSUB',
-          localChannel,
-          remoteChannel,
-        ),
+        await directClient.pubsub('SHARDNUMSUB', localChannel, remoteChannel),
         [localChannel, 0, remoteChannel, 0],
       )
     } finally {

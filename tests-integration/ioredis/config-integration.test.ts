@@ -36,14 +36,14 @@ describe(`CONFIG GET/SET integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('CONFIG GET returns a value for a known parameter', async () => {
-    const reply = await directClient?.call('CONFIG', 'GET', 'appendonly')
+    const reply = await directClient?.config('GET', 'appendonly')
     const config = configArrayToMap(reply)
     assert.ok(config.has('appendonly'), 'CONFIG GET should return appendonly')
     assert.strictEqual(typeof config.get('appendonly'), 'string')
   })
 
   test('CONFIG GET parameter names are case-insensitive', async () => {
-    const reply = await directClient?.call('CONFIG', 'GET', 'APPENDONLY')
+    const reply = await directClient?.config('GET', 'APPENDONLY')
     const config = configArrayToMap(reply)
     assert.ok(
       config.has('appendonly'),
@@ -52,21 +52,20 @@ describe(`CONFIG GET/SET integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('CONFIG SET updates a value that CONFIG GET reads back', async () => {
-    const setReply = await directClient?.call(
-      'CONFIG',
+    const setReply = await directClient?.config(
       'SET',
       'maxmemory-policy',
       'allkeys-lru',
     )
     assert.strictEqual(setReply, 'OK')
 
-    const reply = await directClient?.call('CONFIG', 'GET', 'maxmemory-policy')
+    const reply = await directClient?.config('GET', 'maxmemory-policy')
     const config = configArrayToMap(reply)
     assert.strictEqual(config.get('maxmemory-policy'), 'allkeys-lru')
   })
 
   test('CONFIG GET supports glob patterns matching multiple parameters', async () => {
-    const reply = await directClient?.call('CONFIG', 'GET', 'maxmemory*')
+    const reply = await directClient?.config('GET', 'maxmemory*')
     const config = configArrayToMap(reply)
     assert.ok(config.has('maxmemory'), 'glob should match maxmemory')
     assert.ok(
