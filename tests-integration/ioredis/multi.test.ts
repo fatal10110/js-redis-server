@@ -76,7 +76,7 @@ describe('multi', () => {
 
     try {
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('SET', key, 'value'), 'QUEUED')
+      assert.strictEqual(await directClient.set(key, 'value'), 'QUEUED')
       assert.strictEqual(await directClient.call('DISCARD'), 'OK')
       assert.strictEqual(await directClient.get(key), null)
     } finally {
@@ -115,7 +115,7 @@ describe('multi', () => {
 
     try {
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(await directClient.call('SET', key, 'value'), 'QUEUED')
+      assert.strictEqual(await directClient.set(key, 'value'), 'QUEUED')
       await assert.rejects(
         () => directClient.call('EXEC', 'foo'),
         errorWithMessage(
@@ -125,7 +125,7 @@ describe('multi', () => {
 
       // Session must be back in normal mode: this SET runs immediately
       // instead of being queued, and the queued SET above never ran.
-      assert.strictEqual(await directClient.call('SET', key, 'value2'), 'OK')
+      assert.strictEqual(await directClient.set(key, 'value2'), 'OK')
       assert.strictEqual(await directClient.get(key), 'value2')
     } finally {
       await directClient.del(key)

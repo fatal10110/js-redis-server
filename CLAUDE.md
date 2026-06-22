@@ -239,6 +239,15 @@ describe('MyFeature', () => {
 - Integration tests: [tests-integration/](tests-integration/) directory
   - `ioredis/` - Tests using ioredis client
   - `node-redis/` - Tests using node-redis client
+  - `raw-tcp/` - Tests that write raw RESP frames over a bare socket (`RawRedisConnection`) and assert the exact reply bytes
+
+### Client API Preference (integration tests)
+
+A client integration test exists to prove the **client behaves identically against mock and real** — so the client's arg-encoding and reply-parsing must be in the loop. Pick the lowest-numbered option that can express the test:
+
+1. **Typed client method** — `redis.set(...)`, `redis.zrange(key, 0, -1, 'WITHSCORES')`, `redis.client('SETNAME', x)`. **Always prefer this.** It exercises the client's transformation, which is the whole point of a client test. This includes most "error" tests: a typed method that forwards bad option/value args still surfaces the server's `-ERR`, so `assert.rejects(() => redis.zadd(key, 'abc', 'm'), ...)` is fine.
+2. **Raw TCP (`raw-tcp/`)** — when the behavior under test **cannot go through a typed method** and is **slot-independent**: malformed frames, wrong-arity (`wrong number of arguments`) replies a client can't even put on the wire, `HELLO`/RESP-version negotiation, pure protocol-error wording. These are bytes-in/bytes-out server tests; the client adds nothing, so use `RawRedisConnection` against a standalone server.
+3. **Custom command caller** (`.call(...)` in ioredis, `.sendCommand(...)` in node-redis) — **last resort**, only when neither fits: the test needs raw, interleaved commands a typed API can't drive **and** requires cluster context the standalone `raw-tcp` harness can't give. Examples: driving raw `MULTI`/`EXEC`/`WATCH` to test server transaction state (ioredis `.multi()` is a client-side pipeline, not interleavable), injecting an unknown command to force `EXECABORT`, or `HELLO`/`AUTH` handshake on a slot-pinned connection. Do **not** reach for `.call`/`.sendCommand` when a typed method exists — it bypasses the client transformation and turns a client test into a misplaced wire test.
 
 ## Adding New Commands
 

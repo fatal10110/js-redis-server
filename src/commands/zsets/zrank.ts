@@ -6,7 +6,7 @@ import {
 } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
-import { array, integer, scoreBuffer } from '../helpers'
+import { array, integer, scoreValue } from '../helpers'
 import { getSortedMembers } from './helpers'
 
 type ZRankArgs = {
@@ -43,10 +43,7 @@ function rankResponse(rank: number, score: number, withScore: boolean) {
     return integer(rank)
   }
 
-  return array([
-    RedisValue.integer(rank),
-    RedisValue.bulkString(scoreBuffer(score)),
-  ])
+  return array([RedisValue.integer(rank), scoreValue(score)])
 }
 
 export const zrankCommand = defineCommand({

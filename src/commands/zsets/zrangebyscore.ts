@@ -6,8 +6,9 @@ import {
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
+import { RedisResult } from '../../core/redis-result'
 import type { RedisSortedSetMember } from '../../state/data-types'
-import { array, integer, scoreBuffer } from '../helpers'
+import { array, integer, scorePairs } from '../helpers'
 import { getSortedMembers, deleteSortedSetIfEmpty } from './helpers'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
@@ -86,18 +87,14 @@ function applyScoreLimit(
   return members.slice(limit.offset, end)
 }
 
-function buildScoreRangeOutput(
+function buildScoreRangeResult(
   members: RedisSortedSetMember[],
   withScores: boolean,
-): RedisValue[] {
-  const items: RedisValue[] = []
-  for (const entry of members) {
-    items.push(RedisValue.bulkString(entry.member))
-    if (withScores) {
-      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
-    }
+): RedisResult {
+  if (withScores) {
+    return RedisResult.create(scorePairs(members))
   }
-  return items
+  return array(members.map(entry => RedisValue.bulkString(entry.member)))
 }
 
 export const zrangebyscoreCommand = defineCommand({
@@ -113,11 +110,9 @@ export const zrangebyscoreCommand = defineCommand({
     const matched = getSortedMembers(zset).filter(m =>
       scoreWithinBounds(m.score, min, max),
     )
-    return array(
-      buildScoreRangeOutput(
-        applyScoreLimit(matched, args.limit),
-        args.withScores,
-      ),
+    return buildScoreRangeResult(
+      applyScoreLimit(matched, args.limit),
+      args.withScores,
     )
   },
 })
@@ -136,11 +131,9 @@ export const zrevrangebyscoreCommand = defineCommand({
     const matched = getSortedMembers(zset)
       .filter(m => scoreWithinBounds(m.score, min, max))
       .reverse()
-    return array(
-      buildScoreRangeOutput(
-        applyScoreLimit(matched, args.limit),
-        args.withScores,
-      ),
+    return buildScoreRangeResult(
+      applyScoreLimit(matched, args.limit),
+      args.withScores,
     )
   },
 })

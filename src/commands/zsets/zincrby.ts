@@ -1,6 +1,7 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import { bulk, scoreBuffer } from '../helpers'
+import { RedisResult } from '../../core/redis-result'
+import { scoreValue } from '../helpers'
 import { assertValidResultingScore, parseFloatArg } from './helpers'
 
 export const zincrbyCommand = defineCommand({
@@ -17,6 +18,6 @@ export const zincrbyCommand = defineCommand({
       zset.setScore(args.member, score)
       return score
     })
-    return bulk(scoreBuffer(newScore))
+    return RedisResult.create(scoreValue(newScore))
   },
 })

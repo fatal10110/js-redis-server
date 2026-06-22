@@ -36,8 +36,7 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('COMMAND INFO returns Redis command metadata and nulls for unknown commands', async () => {
-    const reply = (await redisClient?.call(
-      'COMMAND',
+    const reply = (await redisClient?.command(
       'INFO',
       'GET',
       'SET',
@@ -67,14 +66,13 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('COMMAND LIST returns names and supports Redis FILTERBY variants', async () => {
-    const names = (await redisClient?.call('COMMAND', 'LIST')) as string[]
+    const names = (await redisClient?.command('LIST')) as string[]
     assert.ok(names.includes('get'))
     assert.ok(names.includes('set'))
     assert.ok(names.includes('command'))
     assert.ok(names.includes('command|info'))
 
-    const patternNames = (await redisClient?.call(
-      'COMMAND',
+    const patternNames = (await redisClient?.command(
       'LIST',
       'FILTERBY',
       'PATTERN',
@@ -83,8 +81,7 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     assert.ok(patternNames.includes('get'))
     assert.ok(patternNames.every(name => name.startsWith('get')))
 
-    const moduleNames = (await redisClient?.call(
-      'COMMAND',
+    const moduleNames = (await redisClient?.command(
       'LIST',
       'FILTERBY',
       'MODULE',
@@ -94,9 +91,9 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('COMMAND COUNT and HELP expose the command surface', async () => {
-    const names = (await redisClient?.call('COMMAND', 'LIST')) as string[]
-    const count = (await redisClient?.call('COMMAND', 'COUNT')) as number
-    const help = (await redisClient?.call('COMMAND', 'HELP')) as string[]
+    const names = (await redisClient?.command('LIST')) as string[]
+    const count = (await redisClient?.command('COUNT')) as number
+    const help = (await redisClient?.command('HELP')) as string[]
 
     assert.ok(count > 0)
     assert.ok(names.length > 0)
@@ -105,19 +102,14 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('COMMAND DOCS returns documentation entries and skips unknown commands', async () => {
-    const docs = (await redisClient?.call(
-      'COMMAND',
-      'DOCS',
-      'GET',
-    )) as unknown[]
+    const docs = (await redisClient?.command('DOCS', 'GET')) as unknown[]
     assert.strictEqual(docs[0], 'get')
 
     const getDocs = docs[1] as unknown[]
     assertMapEntry(getDocs, 'summary', 'Returns the string value of a key.')
     assertMapEntry(getDocs, 'group', 'string')
 
-    const unknownDocs = (await redisClient?.call(
-      'COMMAND',
+    const unknownDocs = (await redisClient?.command(
       'DOCS',
       'NOSUCHCOMMAND',
     )) as unknown[]
@@ -181,16 +173,14 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     const tag = '{command-getkeys}'
     const keys = [`${tag}:a`, `${tag}:b`, `${tag}:c`]
 
-    const getKeys = (await redisClient?.call(
-      'COMMAND',
+    const getKeys = (await redisClient?.command(
       'GETKEYS',
       'MGET',
       ...keys,
     )) as string[]
     assert.deepStrictEqual(getKeys, keys)
 
-    const keysAndFlags = (await redisClient?.call(
-      'COMMAND',
+    const keysAndFlags = (await redisClient?.command(
       'GETKEYSANDFLAGS',
       'MGET',
       ...keys,
@@ -217,11 +207,11 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
       ),
     )
     await assert.rejects(
-      redisClient!.call('COMMAND', 'GETKEYS', 'NOSUCH', 'key'),
+      redisClient!.command('GETKEYS', 'NOSUCH', 'key'),
       errorWithMessage('ERR Invalid command specified'),
     )
     await assert.rejects(
-      redisClient!.call('COMMAND', 'GETKEYS', 'SCAN', '0'),
+      redisClient!.command('GETKEYS', 'SCAN', '0'),
       errorWithMessage('ERR The command has no key arguments'),
     )
   })

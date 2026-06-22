@@ -27,6 +27,26 @@ export function scoreBuffer(score: number): Buffer {
   return Buffer.from(score.toString())
 }
 
+// A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching
+// scoreBuffer) and a `,double` on RESP3 — the shape real Redis uses for
+// ZSCORE/ZINCRBY/WITHSCORES scores. `-0` is normalized to `0` like Redis.
+export function scoreValue(score: number): RedisValue {
+  return RedisValue.double(Object.is(score, -0) ? 0 : score)
+}
+
+// member/score pairs for WITHSCORES-style replies: flat [m, s, ...] on RESP2,
+// nested [[m, s], ...] on RESP3, with scores as RESP3 doubles.
+export function scorePairs(
+  members: readonly { member: Buffer; score: number }[],
+): RedisValue {
+  return RedisValue.flatPairs(
+    members.map(entry => [
+      RedisValue.bulkString(entry.member),
+      scoreValue(entry.score),
+    ]),
+  )
+}
+
 export function simpleString(value: string): RedisResult {
   return RedisResult.create(RedisValue.simpleString(value))
 }

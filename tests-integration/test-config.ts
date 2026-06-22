@@ -1,5 +1,10 @@
 import { Redis, Cluster } from 'ioredis'
-import { createCluster, RedisClusterType } from 'redis'
+import {
+  createClient,
+  createCluster,
+  RedisClientType,
+  RedisClusterType,
+} from 'redis'
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -29,6 +34,7 @@ export class TestRunner {
   private standaloneServers: Resp2Server[] = []
   private standaloneProcs: ChildProcess[] = []
   private ioredisStandalone: Redis[] = []
+  private nodeRedisStandalone: RedisClientType[] = []
 
   private async ensureMockCluster(
     options: Required<IoredisClusterSetupOptions>,
@@ -105,12 +111,14 @@ export class TestRunner {
     }
   }
 
-  async setupNodeRedisCluster() {
+  async setupNodeRedisCluster(options: IoredisClusterSetupOptions = {}) {
+    const clusterOptions = {
+      masters: options.masters ?? 3,
+      replicasPerMaster: options.replicasPerMaster ?? 0,
+    }
+
     if (this.backend === 'mock') {
-      const mockCluster = await this.ensureMockCluster({
-        masters: 1,
-        replicasPerMaster: 0,
-      })
+      const mockCluster = await this.ensureMockCluster(clusterOptions)
 
       const redisClient = createCluster({
         rootNodes: mockCluster.nodes.map(node => ({
@@ -156,6 +164,60 @@ export class TestRunner {
     const client = new Redis({ host: '127.0.0.1', port, lazyConnect: true })
     await client.connect()
     this.ioredisStandalone.push(client)
+    return client
+  }
+
+  /**
+   * node-redis equivalent of {@link setupIoredisStandalone}: connect a
+   * node-redis client to a single standalone server (non-cluster) so
+   * SELECT-capable / multi-database tests can run against node-redis too.
+   *
+   *  - mock: spin up an in-process Resp2Server with 16 databases
+   *  - real: connect to REDIS_STANDALONE_PORT (docker-compose) or spawn a child
+   */
+  async setupNodeRedisStandalone(): Promise<RedisClientType> {
+    const port =
+      this.backend === 'mock'
+        ? await this.startMockStandalone()
+        : await this.startRealStandalone()
+
+    const client = createClient({
+      url: `redis://127.0.0.1:${port}`,
+    }) as RedisClientType
+    // Avoid unhandled 'error' events tearing down the test process.
+    client.on('error', () => {})
+    await client.connect()
+    this.nodeRedisStandalone.push(client)
+    return client
+  }
+
+  /**
+   * node-redis equivalent of {@link setupIoredisStandaloneAuth}: connect a
+   * node-redis client WITHOUT a password to a password-protected standalone
+   * server so tests can drive AUTH / NOAUTH / WRONGPASS sequencing explicitly
+   * via `client.sendCommand(['AUTH', STANDALONE_AUTH_PASSWORD])`.
+   *
+   * `disableClientInfo` skips node-redis' connect-time CLIENT SETINFO probes,
+   * which would otherwise fail with NOAUTH on an unauthenticated connection.
+   */
+  async setupNodeRedisStandaloneAuth(): Promise<RedisClientType> {
+    const port =
+      this.backend === 'mock'
+        ? await this.startMockStandaloneAuth()
+        : await this.startRealStandaloneAuth()
+
+    const client = createClient({
+      url: `redis://127.0.0.1:${port}`,
+      // Stay on RESP2 and skip the connect-time CLIENT SETINFO probes so the
+      // client opens without sending HELLO/AUTH — the test drives AUTH itself.
+      RESP: 2,
+      disableClientInfo: true,
+      socket: { reconnectStrategy: false },
+    }) as RedisClientType
+    // Swallow NOAUTH noise; the test drives AUTH manually.
+    client.on('error', () => {})
+    await client.connect()
+    this.nodeRedisStandalone.push(client)
     return client
   }
 
@@ -314,6 +376,12 @@ export class TestRunner {
       client.disconnect()
     }
     this.ioredisStandalone = []
+
+    // Clean up standalone node-redis clients
+    for (const client of this.nodeRedisStandalone) {
+      client.destroy()
+    }
+    this.nodeRedisStandalone = []
 
     // Clean up in-process standalone servers (mock backend)
     await Promise.all(this.standaloneServers.map(server => server.close()))

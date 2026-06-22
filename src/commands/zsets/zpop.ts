@@ -10,7 +10,7 @@ import {
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { array, scoreBuffer } from '../helpers'
+import { array, scorePairs, scoreValue } from '../helpers'
 import { deleteSortedSetIfEmpty, getSortedMembers } from './helpers'
 
 type ZsetPopSide = 'min' | 'max'
@@ -60,12 +60,7 @@ export const zpopminCommand = defineCommand({
       }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
-    const items: RedisValue[] = []
-    for (const entry of toRemove) {
-      items.push(RedisValue.bulkString(entry.member))
-      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
-    }
-    return array(items)
+    return zpopReply(toRemove, args.count !== undefined)
   },
 })
 
@@ -87,14 +82,22 @@ export const zpopmaxCommand = defineCommand({
       }
     })
     deleteSortedSetIfEmpty(ctx.db, args.key)
-    const items: RedisValue[] = []
-    for (const entry of toRemove) {
-      items.push(RedisValue.bulkString(entry.member))
-      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
-    }
-    return array(items)
+    return zpopReply(toRemove, args.count !== undefined)
   },
 })
+
+// ZPOPMIN/ZPOPMAX: without a count the reply is a flat `[member, score]`; with
+// an explicit count it is an array of `[member, score]` pairs (nested on RESP3).
+function zpopReply(
+  members: readonly { member: Buffer; score: number }[],
+  hasCount: boolean,
+): RedisResult {
+  if (hasCount) {
+    return RedisResult.create(scorePairs(members))
+  }
+  const [entry] = members
+  return array([RedisValue.bulkString(entry.member), scoreValue(entry.score)])
+}
 
 type BlockingZsetPopArgs = {
   keys: Buffer[]
@@ -145,7 +148,7 @@ function tryBlockingZsetPop(
       RedisValue.array([
         RedisValue.bulkString(key),
         RedisValue.bulkString(entry.member),
-        RedisValue.bulkString(scoreBuffer(entry.score)),
+        scoreValue(entry.score),
       ]),
     )
   }

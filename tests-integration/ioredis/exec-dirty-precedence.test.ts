@@ -33,11 +33,11 @@ describe('EXEC dirty-flag precedence (EXECABORT over WATCH-nil)', () => {
       directClient = await connectToSlotOwner(redisClient!, key)
       mutatingClient = await connectToSlotOwner(redisClient!, key)
 
-      await directClient.call('SET', key, 'init')
+      await directClient.set(key, 'init')
       await directClient.call('WATCH', key)
 
       // Dirty the WATCH (CLIENT_DIRTY_CAS) from another connection.
-      await mutatingClient.call('SET', key, 'modified')
+      await mutatingClient.set(key, 'modified')
 
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
 
@@ -87,22 +87,19 @@ describe('EXEC dirty-flag precedence (EXECABORT over WATCH-nil)', () => {
       directClient = await connectToSlotOwner(redisClient!, key)
       mutatingClient = await connectToSlotOwner(redisClient!, key)
 
-      await directClient.call('SET', key, 'init')
+      await directClient.set(key, 'init')
       await directClient.call('WATCH', key)
-      await mutatingClient.call('SET', key, 'modified')
+      await mutatingClient.set(key, 'modified')
 
       assert.strictEqual(await directClient.call('MULTI'), 'OK')
-      assert.strictEqual(
-        await directClient.call('SET', key, 'queued'),
-        'QUEUED',
-      )
+      assert.strictEqual(await directClient.set(key, 'queued'), 'QUEUED')
 
       // Clean queue + dirty CAS -> aborts with a nil array, never EXECABORT.
       const result = await directClient.call('EXEC')
       assert.strictEqual(result, null)
 
       // The watched key keeps the other client's value.
-      assert.strictEqual(await directClient.call('GET', key), 'modified')
+      assert.strictEqual(await directClient.get(key), 'modified')
     } finally {
       directClient?.disconnect()
       mutatingClient?.disconnect()

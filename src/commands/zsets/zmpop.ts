@@ -12,7 +12,7 @@ import {
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { scoreBuffer } from '../helpers'
+import { scoreValue } from '../helpers'
 import { deleteSortedSetIfEmpty, getSortedMembers } from './helpers'
 
 type ZsetMultiPopSide = 'min' | 'max'
@@ -168,7 +168,7 @@ export function tryZsetMultiPop(
           toRemove.map(entry =>
             RedisValue.array([
               RedisValue.bulkString(entry.member),
-              RedisValue.bulkString(scoreBuffer(entry.score)),
+              scoreValue(entry.score),
             ]),
           ),
         ),

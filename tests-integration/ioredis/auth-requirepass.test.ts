@@ -24,14 +24,14 @@ describe(`AUTH enforcement with requirepass (${testRunner.getBackendName()})`, (
 
   test('commands before authentication are rejected with NOAUTH', async () => {
     await assert.rejects(
-      () => client!.call('GET', 'k') as Promise<unknown>,
+      () => client!.get('k') as Promise<unknown>,
       errorWithMessage('NOAUTH Authentication required.'),
     )
   })
 
   test('PING is gated too (not on the no-auth allowlist)', async () => {
     await assert.rejects(
-      () => client!.call('PING') as Promise<unknown>,
+      () => client!.ping() as Promise<unknown>,
       errorWithMessage('NOAUTH Authentication required.'),
     )
   })
@@ -69,7 +69,7 @@ describe(`AUTH enforcement with requirepass (${testRunner.getBackendName()})`, (
       await client!.call('AUTH', 'default', STANDALONE_AUTH_PASSWORD),
       'OK',
     )
-    const name = await client!.call('CLIENT', 'GETNAME')
+    const name = await client!.client('GETNAME')
     assert.notStrictEqual(name, 'leaked')
     assert.ok(name === null || name === '')
   })
@@ -80,6 +80,6 @@ describe(`AUTH enforcement with requirepass (${testRunner.getBackendName()})`, (
       'OK',
     )
     // Once authenticated, previously gated commands succeed.
-    assert.strictEqual(await client!.call('GET', 'k'), null)
+    assert.strictEqual(await client!.get('k'), null)
   })
 })

@@ -258,14 +258,13 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       .digest('hex')
 
     try {
-      assert.strictEqual(await directClient.call('SCRIPT', 'LOAD', script), sha)
+      assert.strictEqual(await directClient.script('LOAD', script), sha)
       assert.deepStrictEqual(
-        await directClient.call('SCRIPT', 'EXISTS', sha, missingSha),
+        await directClient.script('EXISTS', sha, missingSha),
         [1, 0],
       )
       assert.deepStrictEqual(
-        await directClient.call(
-          'SCRIPT',
+        await directClient.script(
           'EXISTS',
           upperSha,
           mixedSha,
@@ -283,14 +282,8 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         'cached-mixed-case',
       )
 
-      assert.strictEqual(
-        await directClient.call('SCRIPT', 'FLUSH', 'SYNC'),
-        'OK',
-      )
-      assert.deepStrictEqual(
-        await directClient.call('SCRIPT', 'EXISTS', sha),
-        [0],
-      )
+      assert.strictEqual(await directClient.script('FLUSH', 'SYNC'), 'OK')
+      assert.deepStrictEqual(await directClient.script('EXISTS', sha), [0])
       await assert.rejects(
         () => directClient.evalsha(upperSha, 0, 'cached'),
         errorWithMessage('NOSCRIPT No matching script. Please use EVAL.'),
@@ -307,13 +300,10 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
     )
 
     try {
-      const help = (await directClient.call('SCRIPT', 'HELP')) as string[]
+      const help = (await directClient.script('HELP')) as string[]
       assert.ok(help.some(line => line.includes('SCRIPT <subcommand>')))
 
-      assert.strictEqual(
-        await directClient.call('SCRIPT', 'DEBUG', 'SYNC'),
-        'OK',
-      )
+      assert.strictEqual(await directClient.script('DEBUG', 'SYNC'), 'OK')
       await assert.rejects(
         () => directClient.call('SCRIPT', 'KILL'),
         errorWithMessage('NOTBUSY No scripts in execution right now.'),
@@ -333,11 +323,11 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         ),
       )
       await assert.rejects(
-        () => directClient.call('SCRIPT', 'DEBUG', 'invalid'),
+        () => directClient.script('DEBUG', 'invalid'),
         errorWithMessage('ERR Use SCRIPT DEBUG YES/SYNC/NO'),
       )
       await assert.rejects(
-        () => directClient.call('SCRIPT', 'FLUSH', 'invalid'),
+        () => directClient.script('FLUSH', 'invalid'),
         errorWithMessage('ERR SCRIPT FLUSH only support SYNC|ASYNC option'),
       )
     } finally {

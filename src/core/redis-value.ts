@@ -10,6 +10,7 @@ export type RedisValue =
   | { kind: 'set'; items: RedisValue[] }
   | { kind: 'map'; entries: [RedisValue, RedisValue][] }
   | { kind: 'map-pairs'; entries: [RedisValue, RedisValue][] }
+  | { kind: 'flat-pairs'; entries: [RedisValue, RedisValue][] }
   | { kind: 'push'; name: string; items: RedisValue[] }
   | { kind: 'null' }
   | { kind: 'null-array' }
@@ -41,6 +42,13 @@ export const RedisValue = {
   }),
   mapPairs: (entries: [RedisValue, RedisValue][]): RedisValue => ({
     kind: 'map-pairs',
+    entries,
+  }),
+  // Like map-pairs in RESP3 (an array of [k, v] pairs), but a *flat* array
+  // [k, v, k, v, ...] in RESP2 — the shape sorted-set WITHSCORES /
+  // HRANDFIELD WITHVALUES replies use (flat on RESP2, nested pairs on RESP3).
+  flatPairs: (entries: [RedisValue, RedisValue][]): RedisValue => ({
+    kind: 'flat-pairs',
     entries,
   }),
   push: (name: string, items: RedisValue[]): RedisValue => ({

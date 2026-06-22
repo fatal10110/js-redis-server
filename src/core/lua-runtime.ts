@@ -185,6 +185,12 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
         redisValueToLuaReply(key),
         redisValueToLuaReply(entryValue),
       ])
+    case 'flat-pairs':
+      // EVAL uses RESP2 semantics — WITHSCORES is a flat array to scripts.
+      return value.entries.flatMap(([key, entryValue]) => [
+        redisValueToLuaReply(key),
+        redisValueToLuaReply(entryValue),
+      ])
     case 'push':
       return [Buffer.from(value.name), ...value.items.map(redisValueToLuaReply)]
     case 'null':

@@ -152,7 +152,7 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
         errorWithMessage(`MOVED ${slot} ${master.host}:${master.port}`),
       )
 
-      assert.strictEqual(await replicaClient.call('READONLY'), 'OK')
+      assert.strictEqual(await replicaClient.readonly(), 'OK')
       await eventually(async () => {
         assert.strictEqual(await replicaClient.get(key), 'original')
       })
@@ -174,7 +174,7 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
         ),
       )
 
-      assert.strictEqual(await replicaClient.call('READWRITE'), 'OK')
+      assert.strictEqual(await replicaClient.readwrite(), 'OK')
       await assert.rejects(
         () => replicaClient.get(key),
         errorWithMessage(`MOVED ${slot} ${master.host}:${master.port}`),
@@ -220,7 +220,7 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
 
     try {
       await masterClient.set(key, 'value')
-      assert.strictEqual(await replicaClient.call('READONLY'), 'OK')
+      assert.strictEqual(await replicaClient.readonly(), 'OK')
       await eventually(async () => {
         assert.strictEqual(await replicaClient.get(key), 'value')
       })
