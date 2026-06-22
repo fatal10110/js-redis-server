@@ -1,7 +1,8 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
+import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
-import { array, bulk, scoreBuffer } from '../helpers'
+import { array, bulk, scoreValue } from '../helpers'
 
 export const zscoreCommand = defineCommand({
   name: 'zscore',
@@ -13,7 +14,7 @@ export const zscoreCommand = defineCommand({
     if (!zset) return bulk(null)
     const entry = zset.members.get(args.member.toString('hex'))
     if (!entry) return bulk(null)
-    return bulk(scoreBuffer(entry.score))
+    return RedisResult.create(scoreValue(entry.score))
   },
 })
 
@@ -27,7 +28,7 @@ export const zmscoreCommand = defineCommand({
     const items: RedisValue[] = []
     for (const member of args.members) {
       const entry = zset?.members.get(member.toString('hex'))
-      items.push(RedisValue.bulkString(entry ? scoreBuffer(entry.score) : null))
+      items.push(entry ? scoreValue(entry.score) : RedisValue.bulkString(null))
     }
     return array(items)
   },

@@ -4,9 +4,10 @@ import {
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
+import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisSortedSetMember } from '../../state/data-types'
-import { array, bulk, scoreBuffer } from '../helpers'
+import { array, bulk, scorePairs } from '../helpers'
 import { parseLexLimitInt } from './lex'
 
 type ZrandmemberArgs = {
@@ -74,13 +75,9 @@ export const zrandmemberCommand = defineCommand({
       chosen.push(...shuffled.slice(0, Math.min(args.count, shuffled.length)))
     }
 
-    const items: RedisValue[] = []
-    for (const entry of chosen) {
-      items.push(RedisValue.bulkString(entry.member))
-      if (args.withScores) {
-        items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
-      }
+    if (args.withScores) {
+      return RedisResult.create(scorePairs(chosen))
     }
-    return array(items)
+    return array(chosen.map(entry => RedisValue.bulkString(entry.member)))
   },
 })

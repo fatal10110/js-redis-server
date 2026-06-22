@@ -8,13 +8,14 @@ import {
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
 } from '../../core/redis-error'
+import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type {
   RedisDatabase,
   RedisSortedSetData,
   RedisSortedSetMember,
 } from '../../state'
-import { array, integer, parseIntegerToken, scoreBuffer } from '../helpers'
+import { array, integer, parseIntegerToken, scorePairs } from '../helpers'
 import { getSortedMembers } from './helpers'
 
 // ZUNIONSTORE/ZINTERSTORE/ZUNION/ZINTER/ZDIFF/ZDIFFSTORE/ZINTERCARD.
@@ -146,20 +147,18 @@ function computeDifference(
   return result
 }
 
-function buildScoredOutput(
+function buildScoredResult(
   members: Map<string, RedisSortedSetMember>,
   withScores: boolean,
-): RedisValue[] {
+): RedisResult {
   const sorted = getSortedMembers({
     type: 'zset',
     members,
   } as RedisSortedSetData)
-  const items: RedisValue[] = []
-  for (const entry of sorted) {
-    items.push(RedisValue.bulkString(entry.member))
-    if (withScores) items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
+  if (withScores) {
+    return RedisResult.create(scorePairs(sorted))
   }
-  return items
+  return array(sorted.map(entry => RedisValue.bulkString(entry.member)))
 }
 
 function storeResult(
@@ -316,7 +315,7 @@ export const zunionCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeUnion(sources, args.weights, args.aggregate)
-    return array(buildScoredOutput(result, args.withScores))
+    return buildScoredResult(result, args.withScores)
   },
 })
 
@@ -328,7 +327,7 @@ export const zinterCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeIntersection(sources, args.weights, args.aggregate)
-    return array(buildScoredOutput(result, args.withScores))
+    return buildScoredResult(result, args.withScores)
   },
 })
 
@@ -340,7 +339,7 @@ export const zdiffCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeDifference(sources)
-    return array(buildScoredOutput(result, args.withScores))
+    return buildScoredResult(result, args.withScores)
   },
 })
 

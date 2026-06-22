@@ -135,6 +135,12 @@ export class InMemoryRedisClient {
         }
         return out
       }
+      case 'flat-pairs':
+        // Flat on the wire in RESP2; keep the flat array shape here too.
+        return value.entries.flatMap(([key, val]) => [
+          this.decode(key),
+          this.decode(val),
+        ])
       case 'null':
       case 'null-array':
         return null

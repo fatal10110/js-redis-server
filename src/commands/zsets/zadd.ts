@@ -7,7 +7,8 @@ import {
   ZaddNxXxConflictError,
 } from '../../core/redis-error'
 import type { RedisSortedSetMember } from '../../state/data-types'
-import { bulk, integer, scoreBuffer } from '../helpers'
+import { RedisResult } from '../../core/redis-result'
+import { bulk, integer, scoreValue } from '../helpers'
 import {
   assertValidResultingScore,
   deleteSortedSetIfEmpty,
@@ -167,7 +168,9 @@ export const zaddCommand = defineCommand({
         return nextScore
       })
       deleteSortedSetIfEmpty(ctx.db, args.key)
-      return bulk(newScore === null ? null : scoreBuffer(newScore))
+      return newScore === null
+        ? bulk(null)
+        : RedisResult.create(scoreValue(newScore))
     }
 
     const replyCount = ctx.db.updateSortedSet(args.key, zset => {

@@ -6,6 +6,7 @@ import {
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
+import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type {
   RedisStreamConsumer,
@@ -115,7 +116,11 @@ export const xinfoCommand = defineCommand({
     if (!stream) throw new NoSuchKeyError()
 
     if (command.subcommand === 'stream') {
-      return array(streamInfoReply(stream, command.full, command.count))
+      // XINFO replies are field/value maps: a flat array on RESP2, a `%` map on
+      // RESP3 (matching real Redis). first/last-entry and PEL rows stay arrays.
+      return RedisResult.create(
+        kvMap(streamInfoReply(stream, command.full, command.count)),
+      )
     }
 
     if (command.subcommand === 'groups') {
@@ -131,6 +136,16 @@ export const xinfoCommand = defineCommand({
     )
   },
 })
+
+// Pair a flat [key, value, ...] list into a `map` reply: encoded flat on RESP2
+// (unchanged from the previous array form) and as a `%` map on RESP3.
+function kvMap(flat: RedisValue[]): RedisValue {
+  const entries: [RedisValue, RedisValue][] = []
+  for (let i = 0; i < flat.length; i += 2) {
+    entries.push([flat[i], flat[i + 1]])
+  }
+  return RedisValue.map(entries)
+}
 
 function streamInfoReply(
   stream: RedisStreamData,
@@ -188,7 +203,7 @@ function streamInfoReply(
 
 function groupInfoReply(stream: RedisStreamData) {
   return (group: RedisStreamConsumerGroup): RedisValue =>
-    RedisValue.array([
+    kvMap([
       bulkString('name'),
       bulkString(group.name),
       bulkString('consumers'),
@@ -209,7 +224,7 @@ function fullGroupInfoReply(
   group: RedisStreamConsumerGroup,
   count: number,
 ): RedisValue {
-  return RedisValue.array([
+  return kvMap([
     bulkString('name'),
     bulkString(group.name),
     bulkString('last-delivered-id'),
@@ -254,7 +269,7 @@ function consumerInfoReply(
   const idle = Math.max(0, now - consumer.seenAt)
   const inactive =
     consumer.activeAt === null ? idle : Math.max(0, now - consumer.activeAt)
-  return RedisValue.array([
+  return kvMap([
     bulkString('name'),
     bulkString(consumer.name),
     bulkString('pending'),

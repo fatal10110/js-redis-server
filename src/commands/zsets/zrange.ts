@@ -9,7 +9,8 @@ import {
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisSortedSetMember } from '../../state/data-types'
-import { array, integer, scoreBuffer } from '../helpers'
+import { RedisResult } from '../../core/redis-result'
+import { array, integer, scorePairs } from '../helpers'
 import {
   applyLexLimit,
   getLexSortedMembers,
@@ -208,18 +209,14 @@ function buildStoredMembers(
   )
 }
 
-function buildRangeOutput(
+function buildRangeResult(
   members: RedisSortedSetMember[],
   withScores: boolean,
-): RedisValue[] {
-  const items: RedisValue[] = []
-  for (const entry of members) {
-    items.push(RedisValue.bulkString(entry.member))
-    if (withScores) {
-      items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
-    }
+): RedisResult {
+  if (withScores) {
+    return RedisResult.create(scorePairs(members))
   }
-  return items
+  return array(members.map(entry => RedisValue.bulkString(entry.member)))
 }
 
 function sliceByIndex(
@@ -242,9 +239,7 @@ export const zrangeCommand = defineCommand({
   flags: ['readonly'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return array(
-      buildRangeOutput(selectZrangeMembers(args, ctx), args.withScores),
-    )
+    return buildRangeResult(selectZrangeMembers(args, ctx), args.withScores)
   },
 })
 
@@ -286,14 +281,9 @@ export const zrevrangeCommand = defineCommand({
     const start = args.start < 0 ? Math.max(0, len + args.start) : args.start
     const stop = args.stop < 0 ? len + args.stop : Math.min(args.stop, len - 1)
     if (start > stop) return array([])
-    const slice = sorted.slice(start, stop + 1)
-    const items: RedisValue[] = []
-    for (const entry of slice) {
-      items.push(RedisValue.bulkString(entry.member))
-      if (args.withScores) {
-        items.push(RedisValue.bulkString(scoreBuffer(entry.score)))
-      }
-    }
-    return array(items)
+    return buildRangeResult(
+      sorted.slice(start, stop + 1),
+      args.withScores !== undefined,
+    )
   },
 })

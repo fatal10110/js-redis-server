@@ -59,6 +59,11 @@ describe('createRedisMock standalone seed → node-redis read-back', () => {
   test('reads every seeded type back through node-redis', async () => {
     await assertSeedReadable(client as unknown as NodeReader)
   })
+
+  test('flush() clears seeded data', async () => {
+    await mock.flush()
+    assert.strictEqual(await client.get('user:1'), null)
+  })
 })
 
 describe('createRedisMock cluster seed → node-redis read-back', () => {

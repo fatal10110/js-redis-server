@@ -84,6 +84,25 @@ describe('RESP encoder core', () => {
     )
   })
 
+  test('flat-pairs is a flat array on RESP2 and nested pairs on RESP3', () => {
+    const withScores = RedisValue.flatPairs([
+      [RedisValue.bulkString(Buffer.from('one')), RedisValue.double(1)],
+      [RedisValue.bulkString(Buffer.from('two')), RedisValue.double(2.5)],
+    ])
+
+    // RESP2: flat [member, score, ...] with scores as bulk strings.
+    assert.deepStrictEqual(
+      encodeRedisValue(withScores),
+      Buffer.from('*4\r\n$3\r\none\r\n$1\r\n1\r\n$3\r\ntwo\r\n$3\r\n2.5\r\n'),
+    )
+
+    // RESP3: array of [member, double-score] pairs.
+    assert.deepStrictEqual(
+      encodeRedisValue(withScores, { version: 3 }),
+      Buffer.from('*2\r\n*2\r\n$3\r\none\r\n,1\r\n*2\r\n$3\r\ntwo\r\n,2.5\r\n'),
+    )
+  })
+
   test('encodes RedisResult values and RESP3-native shapes', () => {
     assert.deepStrictEqual(
       encodeRedisResult(RedisResult.ok()),

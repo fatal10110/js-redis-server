@@ -607,18 +607,24 @@ function randomHashEntries<TValue>(entries: TValue[], count: number): TValue[] {
   return result
 }
 
-function hashEntriesReply(
+function hashEntriesResult(
   entries: FieldValuePair[],
   withValues: boolean,
-): RedisValue[] {
+): RedisResult {
   if (!withValues) {
-    return entries.map(({ field }) => RedisValue.bulkString(field))
+    return array(entries.map(({ field }) => RedisValue.bulkString(field)))
   }
 
-  return entries.flatMap(({ field, value }) => [
-    RedisValue.bulkString(field),
-    RedisValue.bulkString(value),
-  ])
+  // WITHVALUES is a flat [field, value, ...] array on RESP2 and an array of
+  // [field, value] pairs on RESP3 — same shape as sorted-set WITHSCORES.
+  return RedisResult.create(
+    RedisValue.flatPairs(
+      entries.map(({ field, value }) => [
+        RedisValue.bulkString(field),
+        RedisValue.bulkString(value),
+      ]),
+    ),
+  )
 }
 
 export const hsetCommand = defineCommand({
@@ -903,11 +909,9 @@ export const hrandfieldCommand = defineCommand({
           return bulk(entry.field)
         }
 
-        return array(
-          hashEntriesReply(
-            randomHashEntries(entries, args.count),
-            args.withValues,
-          ),
+        return hashEntriesResult(
+          randomHashEntries(entries, args.count),
+          args.withValues,
         )
       },
     )
