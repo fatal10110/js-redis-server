@@ -34,94 +34,50 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       await client.rPush(key, ['a', 'b', 'c', 'a', 'b', 'c', 'a'])
 
       // default: first match scanning head -> tail
-      assert.strictEqual(await client.sendCommand(['LPOS', key, 'a']), 0)
+      assert.strictEqual(await client.lPos(key, 'a'), 0)
 
       // RANK 2 -> second match
-      assert.strictEqual(
-        await client.sendCommand(['LPOS', key, 'a', 'RANK', '2']),
-        3,
-      )
+      assert.strictEqual(await client.lPos(key, 'a', { RANK: 2 }), 3)
 
       // negative RANK -> first match scanning tail -> head (absolute index)
-      assert.strictEqual(
-        await client.sendCommand(['LPOS', key, 'a', 'RANK', '-1']),
-        6,
-      )
+      assert.strictEqual(await client.lPos(key, 'a', { RANK: -1 }), 6)
 
       // COUNT 0 -> all matches as array, ascending
-      assert.deepStrictEqual(
-        await client.sendCommand(['LPOS', key, 'a', 'COUNT', '0']),
-        [0, 3, 6],
-      )
+      assert.deepStrictEqual(await client.lPosCount(key, 'a', 0), [0, 3, 6])
 
       // COUNT N -> first N matches
-      assert.deepStrictEqual(
-        await client.sendCommand(['LPOS', key, 'a', 'COUNT', '2']),
-        [0, 3],
-      )
+      assert.deepStrictEqual(await client.lPosCount(key, 'a', 2), [0, 3])
 
       // negative RANK + COUNT -> scan from tail, descending indexes
       assert.deepStrictEqual(
-        await client.sendCommand([
-          'LPOS',
-          key,
-          'a',
-          'RANK',
-          '-1',
-          'COUNT',
-          '2',
-        ]),
+        await client.lPosCount(key, 'a', 2, { RANK: -1 }),
         [6, 3],
       )
 
       // MAXLEN limits elements scanned from head; only index 0,1 examined
       assert.deepStrictEqual(
-        await client.sendCommand([
-          'LPOS',
-          key,
-          'a',
-          'MAXLEN',
-          '2',
-          'COUNT',
-          '0',
-        ]),
+        await client.lPosCount(key, 'a', 0, { MAXLEN: 2 }),
         [0],
       )
 
       // MAXLEN with negative RANK limits elements scanned from tail
       assert.deepStrictEqual(
-        await client.sendCommand([
-          'LPOS',
-          key,
-          'a',
-          'RANK',
-          '-1',
-          'MAXLEN',
-          '2',
-          'COUNT',
-          '0',
-        ]),
+        await client.lPosCount(key, 'a', 0, { RANK: -1, MAXLEN: 2 }),
         [6],
       )
 
       // missing element, no COUNT -> nil
-      assert.strictEqual(await client.sendCommand(['LPOS', key, 'z']), null)
+      assert.strictEqual(await client.lPos(key, 'z'), null)
 
       // missing element, COUNT 0 -> empty array
-      assert.deepStrictEqual(
-        await client.sendCommand(['LPOS', key, 'z', 'COUNT', '0']),
-        [],
-      )
+      assert.deepStrictEqual(await client.lPosCount(key, 'z', 0), [])
 
       // nonexistent key, no COUNT -> nil
-      assert.strictEqual(
-        await client.sendCommand(['LPOS', `${tag}:missing`, 'a']),
-        null,
-      )
+      assert.strictEqual(await client.lPos(`${tag}:missing`, 'a'), null)
 
       // nonexistent key, COUNT 0 -> empty array
       assert.deepStrictEqual(
-        await client.sendCommand(['LPOS', `${tag}:missing`, 'a', 'COUNT', '0']),
+        await client.lPosCount(`${tag}:missing`, 'a', 0),
         [],
       )
     } finally {
@@ -141,14 +97,14 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       await client.rPush(key, ['a', 'b', 'a'])
 
       await assert.rejects(
-        () => client.sendCommand(['LPOS', key, 'a', 'RANK', '0']),
+        () => client.lPos(key, 'a', { RANK: 0 }),
         errorWithMessage(
           "ERR RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list",
         ),
       )
 
       await assert.rejects(
-        () => client.sendCommand(['LPOS', key, 'a', 'COUNT', '-1']),
+        () => client.lPosCount(key, 'a', -1),
         errorWithMessage("ERR COUNT can't be negative"),
       )
 
@@ -169,7 +125,7 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
 
       await client.set(stringKey, 'value')
       await assert.rejects(
-        () => client.sendCommand(['LPOS', stringKey, 'a']),
+        () => client.lPos(stringKey, 'a'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -191,18 +147,12 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       await client.rPush(src, ['a', 'b', 'c']) // [a,b,c]
 
       // pop left of src ('a'), push right of dst
-      assert.strictEqual(
-        await client.sendCommand(['LMOVE', src, dst, 'LEFT', 'RIGHT']),
-        'a',
-      )
+      assert.strictEqual(await client.lMove(src, dst, 'LEFT', 'RIGHT'), 'a')
       assert.deepStrictEqual(await client.lRange(src, 0, -1), ['b', 'c'])
       assert.deepStrictEqual(await client.lRange(dst, 0, -1), ['a'])
 
       // pop right of src ('c'), push left of dst
-      assert.strictEqual(
-        await client.sendCommand(['LMOVE', src, dst, 'RIGHT', 'LEFT']),
-        'c',
-      )
+      assert.strictEqual(await client.lMove(src, dst, 'RIGHT', 'LEFT'), 'c')
       assert.deepStrictEqual(await client.lRange(src, 0, -1), ['b'])
       assert.deepStrictEqual(await client.lRange(dst, 0, -1), ['c', 'a'])
     } finally {
@@ -221,10 +171,7 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       await client.rPush(key, ['1', '2', '3'])
 
       // pop right ('3'), push left -> [3,1,2]
-      assert.strictEqual(
-        await client.sendCommand(['LMOVE', key, key, 'RIGHT', 'LEFT']),
-        '3',
-      )
+      assert.strictEqual(await client.lMove(key, key, 'RIGHT', 'LEFT'), '3')
       assert.deepStrictEqual(await client.lRange(key, 0, -1), ['3', '1', '2'])
     } finally {
       await client.del(key)
@@ -242,18 +189,12 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       await client.del([src, dst])
 
       // missing source -> nil, no destination created
-      assert.strictEqual(
-        await client.sendCommand(['LMOVE', src, dst, 'LEFT', 'RIGHT']),
-        null,
-      )
+      assert.strictEqual(await client.lMove(src, dst, 'LEFT', 'RIGHT'), null)
       assert.strictEqual(await client.exists(dst), 0)
 
       // moving the only element deletes the now-empty source key
       await client.rPush(src, 'only')
-      assert.strictEqual(
-        await client.sendCommand(['LMOVE', src, dst, 'LEFT', 'RIGHT']),
-        'only',
-      )
+      assert.strictEqual(await client.lMove(src, dst, 'LEFT', 'RIGHT'), 'only')
       assert.strictEqual(await client.exists(src), 0)
       assert.deepStrictEqual(await client.lRange(dst, 0, -1), ['only'])
     } finally {

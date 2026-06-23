@@ -59,24 +59,24 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.del(listKey)
       await directClient.rPush(listKey, ['a', 'b', 'c', 'd'])
 
-      const leftValues = await directClient.sendCommand(['LPOP', listKey, '2'])
+      const leftValues = await directClient.lPopCount(listKey, 2)
       assert.deepStrictEqual(leftValues, ['a', 'b'])
 
-      const rightValue = await directClient.sendCommand(['RPOP', listKey, '1'])
+      const rightValue = await directClient.rPopCount(listKey, 1)
       assert.deepStrictEqual(rightValue, ['d'])
 
       const remaining = await directClient.lRange(listKey, 0, -1)
       assert.deepStrictEqual(remaining, ['c'])
 
-      const drained = await directClient.sendCommand(['RPOP', listKey, '5'])
+      const drained = await directClient.rPopCount(listKey, 5)
       assert.deepStrictEqual(drained, ['c'])
       assert.strictEqual(await directClient.exists(listKey), 0)
 
-      const empty = await directClient.sendCommand(['LPOP', listKey, '1'])
+      const empty = await directClient.lPopCount(listKey, 1)
       assert.strictEqual(empty, null)
 
       await directClient.rPush(listKey, ['x', 'y'])
-      const zeroCount = await directClient.sendCommand(['LPOP', listKey, '0'])
+      const zeroCount = await directClient.lPopCount(listKey, 0)
       assert.deepStrictEqual(zeroCount, [])
       assert.deepStrictEqual(await directClient.lRange(listKey, 0, -1), [
         'x',
@@ -84,7 +84,7 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
       ])
 
       await assert.rejects(
-        () => directClient.sendCommand(['LPOP', listKey, '-1']),
+        () => directClient.lPopCount(listKey, -1),
         errorWithMessage('ERR value is out of range, must be positive'),
       )
     } finally {
@@ -151,7 +151,7 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
         ),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['LSET', `${tag}:missing`, '0', 'x']),
+        () => directClient.lSet(`${tag}:missing`, 0, 'x'),
         errorWithMessage('ERR no such key'),
       )
 

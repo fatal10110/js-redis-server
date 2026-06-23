@@ -69,49 +69,31 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
     try {
       await directClient.set(expireKey, 'value')
-      assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', expireKey, '120', 'GT']),
-        0,
-      )
+      assert.strictEqual(await directClient.expire(expireKey, 120, 'GT'), 0)
       assert.strictEqual(await directClient.ttl(expireKey), -1)
-      assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', expireKey, '120', 'LT']),
-        1,
-      )
-      assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', expireKey, '60', 'GT']),
-        0,
-      )
-      assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', expireKey, '240', 'GT']),
-        1,
-      )
-      assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', expireKey, '300', 'LT']),
-        0,
-      )
-      assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', expireKey, '120', 'LT']),
-        1,
-      )
+      assert.strictEqual(await directClient.expire(expireKey, 120, 'LT'), 1)
+      assert.strictEqual(await directClient.expire(expireKey, 60, 'GT'), 0)
+      assert.strictEqual(await directClient.expire(expireKey, 240, 'GT'), 1)
+      assert.strictEqual(await directClient.expire(expireKey, 300, 'LT'), 0)
+      assert.strictEqual(await directClient.expire(expireKey, 120, 'LT'), 1)
       const expireTtl = await directClient.ttl(expireKey)
       assert.ok(expireTtl > 0 && expireTtl <= 120)
 
       await directClient.set(pexpireKey, 'value')
       assert.strictEqual(
-        await directClient.sendCommand(['PEXPIRE', pexpireKey, '120000', 'XX']),
+        await directClient.pExpire(pexpireKey, 120000, 'XX'),
         0,
       )
       assert.strictEqual(
-        await directClient.sendCommand(['PEXPIRE', pexpireKey, '120000', 'NX']),
+        await directClient.pExpire(pexpireKey, 120000, 'NX'),
         1,
       )
       assert.strictEqual(
-        await directClient.sendCommand(['PEXPIRE', pexpireKey, '240000', 'NX']),
+        await directClient.pExpire(pexpireKey, 240000, 'NX'),
         0,
       )
       assert.strictEqual(
-        await directClient.sendCommand(['PEXPIRE', pexpireKey, '240000', 'XX']),
+        await directClient.pExpire(pexpireKey, 240000, 'XX'),
         1,
       )
       const pexpireTtl = await directClient.pTTL(pexpireKey)
@@ -152,96 +134,57 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       await directClient.set(expireatKey, 'value')
       const nowSeconds = Math.floor(Date.now() / 1000)
       assert.strictEqual(
-        await directClient.sendCommand([
-          'EXPIREAT',
-          expireatKey,
-          String(nowSeconds + 120),
-          'NX',
-        ]),
+        await directClient.expireAt(expireatKey, nowSeconds + 120, 'NX'),
         1,
       )
       assert.strictEqual(
-        await directClient.sendCommand([
-          'EXPIREAT',
-          expireatKey,
-          String(nowSeconds + 240),
-          'GT',
-        ]),
+        await directClient.expireAt(expireatKey, nowSeconds + 240, 'GT'),
         1,
       )
       assert.strictEqual(
-        await directClient.sendCommand([
-          'EXPIREAT',
-          expireatKey,
-          String(nowSeconds + 300),
-          'LT',
-        ]),
+        await directClient.expireAt(expireatKey, nowSeconds + 300, 'LT'),
         0,
       )
       assert.strictEqual(
-        await directClient.sendCommand([
-          'EXPIREAT',
-          expireatKey,
-          String(nowSeconds + 120),
-          'LT',
-        ]),
+        await directClient.expireAt(expireatKey, nowSeconds + 120, 'LT'),
         1,
       )
 
       await directClient.set(pexpireatKey, 'value')
       const nowMilliseconds = Date.now()
       assert.strictEqual(
-        await directClient.sendCommand([
-          'PEXPIREAT',
+        await directClient.pExpireAt(
           pexpireatKey,
-          String(nowMilliseconds + 120_000),
+          nowMilliseconds + 120_000,
           'XX',
-        ]),
+        ),
         0,
       )
       assert.strictEqual(
-        await directClient.sendCommand([
-          'PEXPIREAT',
+        await directClient.pExpireAt(
           pexpireatKey,
-          String(nowMilliseconds + 120_000),
+          nowMilliseconds + 120_000,
           'NX',
-        ]),
+        ),
         1,
       )
       assert.strictEqual(
-        await directClient.sendCommand([
-          'PEXPIREAT',
+        await directClient.pExpireAt(
           pexpireatKey,
-          String(nowMilliseconds + 240_000),
+          nowMilliseconds + 240_000,
           'XX',
-        ]),
+        ),
         1,
       )
 
+      assert.strictEqual(await directClient.expire(missing, 10, 'NX'), 0)
+      assert.strictEqual(await directClient.pExpire(missing, 10, 'XX'), 0)
       assert.strictEqual(
-        await directClient.sendCommand(['EXPIRE', missing, '10', 'NX']),
+        await directClient.expireAt(missing, nowSeconds + 10, 'GT'),
         0,
       )
       assert.strictEqual(
-        await directClient.sendCommand(['PEXPIRE', missing, '10', 'XX']),
-        0,
-      )
-      assert.strictEqual(
-        await directClient.sendCommand([
-          'EXPIREAT',
-          missing,
-          String(nowSeconds + 10),
-          'GT',
-        ]),
-        0,
-      )
-      assert.strictEqual(
-        await directClient.sendCommand([
-          'PEXPIREAT',
-          missing,
-          String(nowMilliseconds + 10_000),
-          'LT',
-        ]),
+        await directClient.pExpireAt(missing, nowMilliseconds + 10_000, 'LT'),
         0,
       )
 
@@ -289,7 +232,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
     const expectCondition = async (
       command: 'EXPIREAT' | 'PEXPIREAT',
-      flag: string,
+      flag: 'NX' | 'XX' | 'GT' | 'LT',
       prepare: 'ttl' | 'persistent',
       expectedReturn: number,
       shouldSurvive: boolean,
@@ -302,12 +245,10 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         await directClient.expire(key, 100)
       }
 
-      const result = await directClient.sendCommand([
-        command,
-        key,
-        String(past),
-        flag,
-      ])
+      const result =
+        command === 'EXPIREAT'
+          ? await directClient.expireAt(key, past, flag)
+          : await directClient.pExpireAt(key, past, flag)
       assert.strictEqual(
         result,
         expectedReturn,

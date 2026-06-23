@@ -72,15 +72,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       })
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETDEL',
-          key,
-          'FIELDS',
-          '3',
-          'field2',
-          'missing',
-          'field1',
-        ]),
+        await directClient.hGetDel(key, ['field2', 'missing', 'field1']),
         ['value2', null, 'value1'],
       )
       assert.deepStrictEqual(
@@ -91,40 +83,19 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await directClient.hSet(key, 'field4', 'value4')
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETDEL',
-          key,
-          'FIELDS',
-          '2',
-          'field4',
-          'field4',
-        ]),
+        await directClient.hGetDel(key, ['field4', 'field4']),
         ['value4', null],
       )
       assert.strictEqual(await directClient.hExists(key, 'field4'), 0)
 
-      assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETDEL',
-          key,
-          'FIELDS',
-          '1',
-          'field3',
-        ]),
-        ['value3'],
-      )
+      assert.deepStrictEqual(await directClient.hGetDel(key, ['field3']), [
+        'value3',
+      ])
       assert.strictEqual(await directClient.exists(key), 0)
       assert.strictEqual(await directClient.type(key), 'none')
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETDEL',
-          key,
-          'FIELDS',
-          '2',
-          'field3',
-          'missing',
-        ]),
+        await directClient.hGetDel(key, ['field3', 'missing']),
         [null, null],
       )
       assert.strictEqual(await directClient.exists(key), 0)

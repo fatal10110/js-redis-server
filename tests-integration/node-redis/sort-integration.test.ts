@@ -48,20 +48,14 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT numerically ascending by default', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2', '5', '4'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '1',
-        '2',
-        '3',
-        '4',
-        '5',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['1', '2', '3', '4', '5'])
     })
   })
 
   test('SORT DESC reverses numeric order', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l'), 'DESC']), [
+      assert.deepStrictEqual(await c.sort(k('l'), { DIRECTION: 'DESC' }), [
         '3',
         '2',
         '1',
@@ -72,35 +66,21 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT sorts floats numerically', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['1.5', '1.1', '1.05', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '1.05',
-        '1.1',
-        '1.5',
-        '2',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['1.05', '1.1', '1.5', '2'])
     })
   })
 
   test('SORT keeps duplicate list elements', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '1', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '1',
-        '1',
-        '2',
-        '3',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['1', '1', '2', '3'])
     })
   })
 
   test('SORT treats an empty-string element as numeric zero', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['', '2', '1'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '',
-        '1',
-        '2',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['', '1', '2'])
     })
   })
 
@@ -109,7 +89,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT ALPHA sorts lexicographically', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['banana', 'apple', 'cherry'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l'), 'ALPHA']), [
+      assert.deepStrictEqual(await c.sort(k('l'), { ALPHA: true }), [
         'apple',
         'banana',
         'cherry',
@@ -121,7 +101,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['b', 'a', 'c'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'ALPHA', 'DESC']),
+        await c.sort(k('l'), { ALPHA: true, DIRECTION: 'DESC' }),
         ['c', 'b', 'a'],
       )
     })
@@ -145,7 +125,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2', '5', '4'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'LIMIT', '1', '2']),
+        await c.sort(k('l'), { LIMIT: { offset: 1, count: 2 } }),
         ['2', '3'],
       )
     })
@@ -155,7 +135,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2', '5', '4'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'LIMIT', '1', '-1']),
+        await c.sort(k('l'), { LIMIT: { offset: 1, count: -1 } }),
         ['2', '3', '4', '5'],
       )
     })
@@ -165,7 +145,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'LIMIT', '10', '5']),
+        await c.sort(k('l'), { LIMIT: { offset: 10, count: 5 } }),
         [],
       )
     })

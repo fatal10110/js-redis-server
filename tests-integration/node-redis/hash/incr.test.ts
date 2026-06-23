@@ -33,11 +33,11 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
     const key = `{hincrby64:${randomKey()}}`
     try {
       await redisClient.hSet(key, 'gap', '9007199254740992') // 2^53
-      await redisClient.sendCommand(key, false, ['HINCRBY', key, 'gap', '1'])
+      await redisClient.hIncrBy(key, 'gap', 1)
       assert.strictEqual(await redisClient.hGet(key, 'gap'), '9007199254740993')
 
       await redisClient.hSet(key, 'big', '9000000000000000000')
-      await redisClient.sendCommand(key, false, ['HINCRBY', key, 'big', '1'])
+      await redisClient.hIncrBy(key, 'big', 1)
       assert.strictEqual(
         await redisClient.hGet(key, 'big'),
         '9000000000000000001',

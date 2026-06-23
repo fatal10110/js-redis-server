@@ -29,7 +29,7 @@ describe(`RANDOMKEY integration (node-redis, ${testRunner.getBackendName()})`, (
   })
 
   test('returns null when the selected database is empty', async () => {
-    assert.strictEqual(await client.sendCommand(['RANDOMKEY']), null)
+    assert.strictEqual(await client.randomKey(), null)
   })
 
   test('returns a key from the currently selected database', async () => {
@@ -40,17 +40,13 @@ describe(`RANDOMKEY integration (node-redis, ${testRunner.getBackendName()})`, (
     await client.set(first, 'one')
     await client.set(second, 'two')
 
-    assert.ok(
-      [first, second].includes(
-        (await client.sendCommand(['RANDOMKEY'])) as string,
-      ),
-    )
+    assert.ok([first, second].includes((await client.randomKey()) as string))
 
     await client.select(1)
-    assert.strictEqual(await client.sendCommand(['RANDOMKEY']), null)
+    assert.strictEqual(await client.randomKey(), null)
 
     await client.set(otherDb, 'other')
-    assert.strictEqual(await client.sendCommand(['RANDOMKEY']), otherDb)
+    assert.strictEqual(await client.randomKey(), otherDb)
   })
 
   test('does not return lazily expired keys', async () => {
@@ -59,7 +55,7 @@ describe(`RANDOMKEY integration (node-redis, ${testRunner.getBackendName()})`, (
     await client.set(key, 'expired', { expiration: { type: 'PX', value: 1 } })
     await delay(50)
 
-    assert.strictEqual(await client.sendCommand(['RANDOMKEY']), null)
+    assert.strictEqual(await client.randomKey(), null)
     assert.strictEqual(await client.exists(key), 0)
   })
 

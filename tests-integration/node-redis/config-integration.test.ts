@@ -46,41 +46,28 @@ describe(`CONFIG GET/SET integration (node-redis, ${testRunner.getBackendName()}
   })
 
   test('CONFIG GET returns a value for a known parameter', async () => {
-    const config = configToMap(
-      await directClient.sendCommand(['CONFIG', 'GET', 'appendonly']),
-    )
+    const config = configToMap(await directClient.configGet('appendonly'))
     assert.ok(config.has('appendonly'))
     assert.strictEqual(typeof config.get('appendonly'), 'string')
   })
 
   test('CONFIG GET parameter names are case-insensitive', async () => {
-    const config = configToMap(
-      await directClient.sendCommand(['CONFIG', 'GET', 'APPENDONLY']),
-    )
+    const config = configToMap(await directClient.configGet('APPENDONLY'))
     assert.ok(config.has('appendonly'))
   })
 
   test('CONFIG SET updates a value that CONFIG GET reads back', async () => {
     assert.strictEqual(
-      await directClient.sendCommand([
-        'CONFIG',
-        'SET',
-        'maxmemory-policy',
-        'allkeys-lru',
-      ]),
+      await directClient.configSet('maxmemory-policy', 'allkeys-lru'),
       'OK',
     )
 
-    const config = configToMap(
-      await directClient.sendCommand(['CONFIG', 'GET', 'maxmemory-policy']),
-    )
+    const config = configToMap(await directClient.configGet('maxmemory-policy'))
     assert.strictEqual(config.get('maxmemory-policy'), 'allkeys-lru')
   })
 
   test('CONFIG GET supports glob patterns matching multiple parameters', async () => {
-    const config = configToMap(
-      await directClient.sendCommand(['CONFIG', 'GET', 'maxmemory*']),
-    )
+    const config = configToMap(await directClient.configGet('maxmemory*'))
     assert.ok(config.has('maxmemory'))
     assert.ok(config.has('maxmemory-policy'))
   })
@@ -97,10 +84,7 @@ describe(`CONFIG GET/SET integration (node-redis, ${testRunner.getBackendName()}
   })
 
   test('CONFIG RESETSTAT returns OK', async () => {
-    assert.strictEqual(
-      await standaloneClient.sendCommand(['CONFIG', 'RESETSTAT']),
-      'OK',
-    )
+    assert.strictEqual(await standaloneClient.configResetStat(), 'OK')
   })
 
   test('CONFIG RESETSTAT rejects extra arguments', async () => {
