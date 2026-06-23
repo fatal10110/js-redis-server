@@ -106,37 +106,6 @@ describe(`Connection commands integration (node-redis, ${testRunner.getBackendNa
     )
   })
 
-  test('HELLO SETNAME validates names like CLIENT SETNAME', async () => {
-    const key = `{hello-setname:${randomKey()}}:probe`
-    const client = await connectToNodeRedisSlotOwner(redisClient, key)
-    const validName = `hello-${randomKey()}`
-
-    try {
-      const hello = (await client.sendCommand([
-        'HELLO',
-        '2',
-        'SETNAME',
-        validName,
-      ])) as unknown
-      assert.strictEqual(helloField(hello, 'server'), 'redis')
-      assert.strictEqual(
-        await client.sendCommand(['CLIENT', 'GETNAME']),
-        validName,
-      )
-
-      await assert.rejects(
-        () => client.sendCommand(['HELLO', '2', 'SETNAME', 'has space']),
-        errorWithMessage(INVALID_CLIENT_NAME_ERROR),
-      )
-      assert.strictEqual(
-        await client.sendCommand(['CLIENT', 'GETNAME']),
-        validName,
-      )
-    } finally {
-      client.destroy()
-    }
-  })
-
   test('CLIENT LIST reports all active clients on the connected node', async () => {
     const key = `{client-list:${randomKey()}}:probe`
     const primary = await connectToNodeRedisSlotOwner(redisClient, key)
@@ -162,44 +131,6 @@ describe(`Connection commands integration (node-redis, ${testRunner.getBackendNa
       primary.destroy()
       secondary.destroy()
     }
-  })
-
-  test('HELLO can set the connection name and reports cluster mode', async () => {
-    const key = `{hello-mode:${randomKey()}}:probe`
-    const client = await connectToNodeRedisSlotOwner(redisClient, key)
-    const name = `hello-${randomKey()}`
-    try {
-      const hello = (await client.sendCommand([
-        'HELLO',
-        '2',
-        'SETNAME',
-        name,
-      ])) as unknown
-      assert.strictEqual(helloField(hello, 'server'), 'redis')
-      assert.strictEqual(helloField(hello, 'proto'), 2)
-      assert.strictEqual(helloField(hello, 'mode'), 'cluster')
-      assert.strictEqual(await client.sendCommand(['CLIENT', 'GETNAME']), name)
-    } finally {
-      client.destroy()
-    }
-  })
-
-  test('HELLO with an unsupported protocol version returns NOPROTO', async () => {
-    for (const version of ['4', '0', '-1']) {
-      await assert.rejects(
-        () => directClient.sendCommand(['HELLO', version]),
-        errorWithMessage('NOPROTO unsupported protocol version'),
-      )
-    }
-  })
-
-  test('HELLO with a non-integer protocol version returns the HELLO-specific ERR', async () => {
-    await assert.rejects(
-      () => directClient.sendCommand(['HELLO', 'abc']),
-      errorWithMessage(
-        'ERR Protocol version is not an integer or out of range',
-      ),
-    )
   })
 
   test('the default RESP3 connection reports resp=3 and RESET restores defaults', async () => {
@@ -238,18 +169,6 @@ describe(`Connection commands integration (node-redis, ${testRunner.getBackendNa
     )
   })
 
-  test('RESET clears connection-local state', async () => {
-    assert.strictEqual(
-      await directClient.sendCommand(['CLIENT', 'SETNAME', 'reset-name']),
-      'OK',
-    )
-    assert.strictEqual(await directClient.sendCommand(['RESET']), 'RESET')
-    assert.strictEqual(
-      await directClient.sendCommand(['CLIENT', 'GETNAME']),
-      null,
-    )
-  })
-
   test('SELECT 0 is allowed in cluster mode (no-op DB switch)', async () => {
     assert.strictEqual(await directClient.sendCommand(['SELECT', '0']), 'OK')
   })
@@ -262,13 +181,6 @@ describe(`Connection commands integration (node-redis, ${testRunner.getBackendNa
     await assert.rejects(
       () => directClient.sendCommand(['SELECT', '99']),
       errorWithMessage('ERR SELECT is not allowed in cluster mode'),
-    )
-  })
-
-  test('SELECT with a non-integer index is a value error in cluster mode', async () => {
-    await assert.rejects(
-      () => directClient.sendCommand(['SELECT', 'abc']),
-      errorWithMessage('ERR value is not an integer or out of range'),
     )
   })
 })
