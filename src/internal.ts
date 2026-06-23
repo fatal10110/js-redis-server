@@ -189,6 +189,14 @@ export {
   type RedisClusterNodeHandle,
   type RedisClusterOptions,
 } from './cluster'
+// Client-agnostic in-memory cluster that routes each command to its slot owner
+// up front (client-side routing — no MOVED round-trips).
+export {
+  InMemoryCluster,
+  createInMemoryCluster,
+  type InMemoryClusterOptions,
+  type CommandArgument,
+} from './client-mocks/in-memory-cluster'
 
 // Client-visible error classes (also re-exported from the package root).
 export * from './core/redis-error'
