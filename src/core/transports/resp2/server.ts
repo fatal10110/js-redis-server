@@ -1,10 +1,10 @@
 import { AddressInfo, Server, Socket, createServer } from 'net'
-import { ClientSession } from '../../client-session'
 import type { CommandExecutor } from '../../command-executor'
 import type { Logger } from '../../../logger'
 import type { RedisClusterNodeRole, RedisServerState } from '../../../state'
 import type { RespEncodeOptions } from '../../resp-encoder'
 import { formatHostPort, formatSocketAddressParts } from '../../network-address'
+import { attachSession } from '../attach-session'
 import { SocketConnectionTransport } from '../socket-connection-transport'
 import { Resp2SessionAdapter } from './session-adapter'
 
@@ -87,26 +87,19 @@ export class Resp2Server {
 
   private handleConnection(socket: Socket) {
     const transport = new SocketConnectionTransport(socket)
-    const session = new ClientSession({
-      server: this.state,
+    const { adapter, done } = attachSession(transport, {
+      state: this.state,
       executor: this.executor,
       nodeRole: this.nodeRole,
+      logger: this.logger,
+      encoder: this.encoder,
       clientAddress: formatSocketAddressParts(
         socket.remoteAddress,
         socket.remotePort,
       ),
     })
-    const adapter = new Resp2SessionAdapter({
-      transport,
-      session,
-      logger: this.logger,
-      encoder: this.encoder,
-    })
 
     this.adapters.add(adapter)
-    adapter
-      .run()
-      .catch(err => this.logger?.error(err))
-      .finally(() => this.adapters.delete(adapter))
+    void done.finally(() => this.adapters.delete(adapter))
   }
 }
