@@ -146,15 +146,7 @@ describe(`Stream Commands Integration (node-redis, ${testRunner.getBackendName()
     const key = randomKey()
     const node = await connectToNodeRedisSlotOwner(redisClient, key)
     try {
-      // node-redis xAdd has no NOMKSTREAM option — use the raw command.
-      const result = await node.sendCommand([
-        'XADD',
-        key,
-        'NOMKSTREAM',
-        '1-1',
-        'f',
-        'v',
-      ])
+      const result = await node.xAddNoMkStream(key, '1-1', { f: 'v' })
       assert.strictEqual(result, null)
       assert.strictEqual(await node.exists(key), 0)
     } finally {
@@ -167,14 +159,7 @@ describe(`Stream Commands Integration (node-redis, ${testRunner.getBackendName()
     const node = await connectToNodeRedisSlotOwner(redisClient, key)
     try {
       await node.xAdd(key, '1-1', { f: 'v' })
-      const result = await node.sendCommand([
-        'XADD',
-        key,
-        'NOMKSTREAM',
-        '2-1',
-        'g',
-        'w',
-      ])
+      const result = await node.xAddNoMkStream(key, '2-1', { g: 'w' })
       assert.strictEqual(result, '2-1')
       assert.strictEqual(await node.xLen(key), 2)
     } finally {

@@ -6,8 +6,6 @@ import { flushNodeRedisCluster, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
-type ScanReply = [string, string[]]
-
 describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
 
@@ -23,28 +21,23 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
   async function collectHashScan(
     key: string,
     count: number,
-    options: Array<string | Buffer> = [],
+    match?: string,
   ): Promise<{ entries: Map<string, string>; iterations: number }> {
     const entries = new Map<string, string>()
     let cursor = '0'
     let iterations = 0
 
     do {
-      const [nextCursor, items] = (await redisClient.sendCommand(key, true, [
-        'HSCAN',
-        key,
-        cursor,
-        'COUNT',
-        String(count),
-        ...options,
-      ])) as ScanReply
-      assert.strictEqual(items.length % 2, 0)
+      const reply = await redisClient.hScan(key, cursor, {
+        COUNT: count,
+        ...(match ? { MATCH: match } : {}),
+      })
 
-      for (let i = 0; i < items.length; i += 2) {
-        entries.set(items[i], items[i + 1])
+      for (const { field, value } of reply.entries) {
+        entries.set(field, value)
       }
 
-      cursor = nextCursor
+      cursor = String(reply.cursor)
       iterations++
       assert.ok(iterations < 1000)
     } while (cursor !== '0')
@@ -55,27 +48,23 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
   async function collectSetScan(
     key: string,
     count: number,
-    options: Array<string | Buffer> = [],
+    match?: string,
   ): Promise<{ members: Set<string>; iterations: number }> {
     const members = new Set<string>()
     let cursor = '0'
     let iterations = 0
 
     do {
-      const [nextCursor, items] = (await redisClient.sendCommand(key, true, [
-        'SSCAN',
-        key,
-        cursor,
-        'COUNT',
-        String(count),
-        ...options,
-      ])) as ScanReply
+      const reply = await redisClient.sScan(key, cursor, {
+        COUNT: count,
+        ...(match ? { MATCH: match } : {}),
+      })
 
-      for (const item of items) {
-        members.add(item)
+      for (const member of reply.members) {
+        members.add(member)
       }
 
-      cursor = nextCursor
+      cursor = String(reply.cursor)
       iterations++
       assert.ok(iterations < 1000)
     } while (cursor !== '0')
@@ -86,28 +75,23 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
   async function collectSortedSetScan(
     key: string,
     count: number,
-    options: Array<string | Buffer> = [],
+    match?: string,
   ): Promise<{ entries: Map<string, string>; iterations: number }> {
     const entries = new Map<string, string>()
     let cursor = '0'
     let iterations = 0
 
     do {
-      const [nextCursor, items] = (await redisClient.sendCommand(key, true, [
-        'ZSCAN',
-        key,
-        cursor,
-        'COUNT',
-        String(count),
-        ...options,
-      ])) as ScanReply
-      assert.strictEqual(items.length % 2, 0)
+      const reply = await redisClient.zScan(key, cursor, {
+        COUNT: count,
+        ...(match ? { MATCH: match } : {}),
+      })
 
-      for (let i = 0; i < items.length; i += 2) {
-        entries.set(items[i], items[i + 1])
+      for (const { value, score } of reply.members) {
+        entries.set(value, String(score))
       }
 
-      cursor = nextCursor
+      cursor = String(reply.cursor)
       iterations++
       assert.ok(iterations < 1000)
     } while (cursor !== '0')
@@ -201,20 +185,17 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
       await redisClient.sAdd(setKey, setMembers)
       await redisClient.zAdd(zsetKey, zsetArgs)
 
-      const hashResult = await collectHashScan(hashKey, 1, ['MATCH', 'hit:*'])
+      const hashResult = await collectHashScan(hashKey, 1, 'hit:*')
       assert.deepStrictEqual(sortedEntries(hashResult.entries), [
         ['hit:only', 'value:only'],
       ])
       assert.ok(hashResult.iterations > hashResult.entries.size)
 
-      const setResult = await collectSetScan(setKey, 1, ['MATCH', 'hit:*'])
+      const setResult = await collectSetScan(setKey, 1, 'hit:*')
       assert.deepStrictEqual(sortedValues(setResult.members), ['hit:only'])
       assert.ok(setResult.iterations > setResult.members.size)
 
-      const zsetResult = await collectSortedSetScan(zsetKey, 1, [
-        'MATCH',
-        'hit:*',
-      ])
+      const zsetResult = await collectSortedSetScan(zsetKey, 1, 'hit:*')
       assert.deepStrictEqual(sortedEntries(zsetResult.entries), [
         ['hit:only', '601'],
       ])

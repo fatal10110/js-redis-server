@@ -177,7 +177,7 @@ describe(`BZPOPMIN / BZPOPMAX Integration (node-redis, ${testRunner.getBackendNa
         ),
       )
       await assert.rejects(
-        () => send(['BZPOPMIN', zset, '-1']),
+        () => client1.bzPopMin(zset, -1),
         errorWithMessage('ERR timeout is negative'),
       )
       await assert.rejects(
@@ -185,8 +185,7 @@ describe(`BZPOPMIN / BZPOPMAX Integration (node-redis, ${testRunner.getBackendNa
         errorWithMessage('ERR timeout is not a float or out of range'),
       )
       await assert.rejects(
-        () =>
-          client1.sendCommand(stringKey, false, ['BZPOPMIN', stringKey, '0.1']),
+        () => client1.bzPopMin(stringKey, 0.1),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -195,15 +194,13 @@ describe(`BZPOPMIN / BZPOPMAX Integration (node-redis, ${testRunner.getBackendNa
       const directClient = await connectToNodeRedisSlotOwner(client1, zset)
       try {
         await assert.rejects(
-          () =>
-            directClient.sendCommand(['BZPOPMIN', zset, 'other-slot-key', '1']),
+          () => directClient.bzPopMin([zset, 'other-slot-key'], 1),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () =>
-            directClient.sendCommand(['BZPOPMAX', zset, 'other-slot-key', '1']),
+          () => directClient.bzPopMax([zset, 'other-slot-key'], 1),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

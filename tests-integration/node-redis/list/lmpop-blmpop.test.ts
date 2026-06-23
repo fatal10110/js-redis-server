@@ -39,43 +39,20 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
     await client1.rPush(second, ['x', 'y'])
 
     assert.deepStrictEqual(
-      await client1.sendCommand(first, false, [
-        'LMPOP',
-        '3',
-        empty,
-        first,
-        second,
-        'LEFT',
-        'COUNT',
-        '2',
-      ]),
+      await client1.lmPop([empty, first, second], 'LEFT', { COUNT: 2 }),
       [first, ['a', 'b']],
     )
     assert.deepStrictEqual(await client1.lRange(first, 0, -1), ['c'])
     assert.deepStrictEqual(await client1.lRange(second, 0, -1), ['x', 'y'])
 
-    assert.deepStrictEqual(
-      await client1.sendCommand(first, false, [
-        'LMPOP',
-        '2',
-        first,
-        second,
-        'RIGHT',
-      ]),
-      [first, ['c']],
-    )
+    assert.deepStrictEqual(await client1.lmPop([first, second], 'RIGHT'), [
+      first,
+      ['c'],
+    ])
     assert.strictEqual(await client1.exists(first), 0)
 
     assert.deepStrictEqual(
-      await client1.sendCommand(first, false, [
-        'LMPOP',
-        '2',
-        first,
-        second,
-        'RIGHT',
-        'COUNT',
-        '5',
-      ]),
+      await client1.lmPop([first, second], 'RIGHT', { COUNT: 5 }),
       [second, ['y', 'x']],
     )
     assert.strictEqual(await client1.exists(second), 0)
@@ -87,16 +64,7 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
     const second = `${tag}:second`
     await client1.del([first, second])
 
-    assert.strictEqual(
-      await client1.sendCommand(first, false, [
-        'LMPOP',
-        '2',
-        first,
-        second,
-        'LEFT',
-      ]),
-      null,
-    )
+    assert.strictEqual(await client1.lmPop([first, second], 'LEFT'), null)
   })
 
   test('BLMPOP returns immediately when a list is non-empty', async () => {
@@ -107,16 +75,7 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
     await client1.rPush(list, ['one', 'two', 'three'])
 
     assert.deepStrictEqual(
-      await client1.sendCommand(list, false, [
-        'BLMPOP',
-        '1',
-        '2',
-        empty,
-        list,
-        'RIGHT',
-        'COUNT',
-        '2',
-      ]),
+      await client1.blmPop(1, [empty, list], 'RIGHT', { COUNT: 2 }),
       [list, ['three', 'two']],
     )
     assert.deepStrictEqual(await client1.lRange(list, 0, -1), ['one'])
@@ -128,16 +87,9 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
     const second = `${tag}:second`
     await client1.del([first, second])
 
-    const blockPromise = client1.sendCommand(first, false, [
-      'BLMPOP',
-      '5',
-      '2',
-      first,
-      second,
-      'LEFT',
-      'COUNT',
-      '2',
-    ])
+    const blockPromise = client1.blmPop(5, [first, second], 'LEFT', {
+      COUNT: 2,
+    })
     await waitForPark()
     await client2.rPush(second, ['a', 'b'])
 
@@ -151,17 +103,7 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
     const second = `${tag}:second`
     await client1.del([first, second])
 
-    assert.strictEqual(
-      await client1.sendCommand(first, false, [
-        'BLMPOP',
-        '0.1',
-        '2',
-        first,
-        second,
-        'LEFT',
-      ]),
-      null,
-    )
+    assert.strictEqual(await client1.blmPop(0.1, [first, second], 'LEFT'), null)
   })
 
   test('LMPOP / BLMPOP error paths match Redis', async () => {
@@ -211,27 +153,11 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
       errorWithMessage('ERR syntax error'),
     )
     await assert.rejects(
-      () =>
-        client1.sendCommand(list, false, [
-          'LMPOP',
-          '1',
-          list,
-          'LEFT',
-          'COUNT',
-          '0',
-        ]),
+      () => client1.lmPop([list], 'LEFT', { COUNT: 0 }),
       errorWithMessage('ERR count should be greater than 0'),
     )
     await assert.rejects(
-      () =>
-        client1.sendCommand(list, false, [
-          'LMPOP',
-          '1',
-          list,
-          'LEFT',
-          'COUNT',
-          '-1',
-        ]),
+      () => client1.lmPop([list], 'LEFT', { COUNT: -1 }),
       errorWithMessage('ERR count should be greater than 0'),
     )
     await assert.rejects(
@@ -247,13 +173,7 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
       errorWithMessage('ERR count should be greater than 0'),
     )
     await assert.rejects(
-      () =>
-        client1.sendCommand(stringKey, false, [
-          'LMPOP',
-          '1',
-          stringKey,
-          'LEFT',
-        ]),
+      () => client1.lmPop([stringKey], 'LEFT'),
       errorWithMessage(
         'WRONGTYPE Operation against a key holding the wrong kind of value',
       ),
@@ -273,28 +193,13 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
     const directClient = await connectToNodeRedisSlotOwner(client1, list)
     try {
       await assert.rejects(
-        () =>
-          directClient.sendCommand([
-            'LMPOP',
-            '2',
-            list,
-            'other-slot-key',
-            'LEFT',
-          ]),
+        () => directClient.lmPop([list, 'other-slot-key'], 'LEFT'),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),
       )
       await assert.rejects(
-        () =>
-          directClient.sendCommand([
-            'BLMPOP',
-            '1',
-            '2',
-            list,
-            'other-slot-key',
-            'LEFT',
-          ]),
+        () => directClient.blmPop(1, [list, 'other-slot-key'], 'LEFT'),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),

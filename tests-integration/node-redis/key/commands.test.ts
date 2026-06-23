@@ -69,13 +69,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       await new Promise(resolve => setTimeout(resolve, 20))
 
       assert.strictEqual(
-        await directClient.sendCommand([
-          'TOUCH',
-          stringKey,
-          hashKey,
-          missingKey,
-          expiringKey,
-        ]),
+        await directClient.touch([stringKey, hashKey, missingKey, expiringKey]),
         2,
       )
       assert.strictEqual(
@@ -83,17 +77,14 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         2,
       )
       assert.strictEqual(await directClient.type(hashKey), 'hash')
-      assert.strictEqual(
-        await directClient.sendCommand(['TOUCH', missingKey]),
-        0,
-      )
+      assert.strictEqual(await directClient.touch(missingKey), 0)
 
       await assert.rejects(
         () => directClient.sendCommand(['TOUCH']),
         errorWithMessage("ERR wrong number of arguments for 'touch' command"),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['TOUCH', crossSlotA, crossSlotB]),
+        () => directClient.touch([crossSlotA, crossSlotB]),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),

@@ -17,7 +17,7 @@ describe(`INFO command standalone integration (node-redis, ${testRunner.getBacke
   })
 
   test('INFO cluster omits cluster-only state fields for standalone servers', async () => {
-    const info = (await client.sendCommand(['INFO', 'cluster'])) as string
+    const info = await client.info('cluster')
 
     assert.match(info, /cluster_enabled:0/)
     assert.doesNotMatch(info, /^cluster_state:/m)
@@ -25,7 +25,7 @@ describe(`INFO command standalone integration (node-redis, ${testRunner.getBacke
   })
 
   test('INFO replication exposes Redis-compatible replication identifiers', async () => {
-    const info = (await client.sendCommand(['INFO', 'replication'])) as string
+    const info = await client.info('replication')
 
     assert.match(info, /^role:master$/m)
     assert.match(info, /^connected_slaves:0$/m)
@@ -36,17 +36,17 @@ describe(`INFO command standalone integration (node-redis, ${testRunner.getBacke
   })
 
   test('INFO with an unknown section returns an empty bulk string, not an error', async () => {
-    assert.strictEqual(await client.sendCommand(['INFO', 'nonexistent']), '')
+    assert.strictEqual(await client.info('nonexistent'), '')
   })
 
   test('INFO unknown section is case-insensitive and still returns empty', async () => {
-    assert.strictEqual(await client.sendCommand(['INFO', 'NoSuchSection']), '')
+    assert.strictEqual(await client.info('NoSuchSection'), '')
   })
 
   test('INFO still serves a known section after an unknown one', async () => {
-    assert.strictEqual(await client.sendCommand(['INFO', 'bogus']), '')
+    assert.strictEqual(await client.info('bogus'), '')
 
-    const server = (await client.sendCommand(['INFO', 'server'])) as string
+    const server = await client.info('server')
     assert.match(server, /^# Server$/m)
     assert.match(server, /^redis_version:/m)
   })

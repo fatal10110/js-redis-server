@@ -19,7 +19,7 @@ describe(`TIME / LASTSAVE integration (node-redis, ${testRunner.getBackendName()
 
   test('TIME returns [seconds, microseconds] close to current time', async () => {
     const before = Math.floor(Date.now() / 1000)
-    const reply = (await client.sendCommand(['TIME'])) as [string, string]
+    const reply = (await client.time()) as [string, string]
     const after = Math.floor(Date.now() / 1000)
 
     assert.ok(Array.isArray(reply), 'TIME must return an array')
@@ -51,7 +51,7 @@ describe(`TIME / LASTSAVE integration (node-redis, ${testRunner.getBackendName()
   })
 
   test('LASTSAVE returns a Unix timestamp integer not in the future', async () => {
-    const reply = await client.sendCommand(['LASTSAVE'])
+    const reply = await client.lastSave()
     const now = Math.floor(Date.now() / 1000)
 
     const timestamp = Number(reply)

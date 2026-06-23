@@ -48,20 +48,14 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT numerically ascending by default', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2', '5', '4'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '1',
-        '2',
-        '3',
-        '4',
-        '5',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['1', '2', '3', '4', '5'])
     })
   })
 
   test('SORT DESC reverses numeric order', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l'), 'DESC']), [
+      assert.deepStrictEqual(await c.sort(k('l'), { DIRECTION: 'DESC' }), [
         '3',
         '2',
         '1',
@@ -72,35 +66,21 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT sorts floats numerically', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['1.5', '1.1', '1.05', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '1.05',
-        '1.1',
-        '1.5',
-        '2',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['1.05', '1.1', '1.5', '2'])
     })
   })
 
   test('SORT keeps duplicate list elements', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '1', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '1',
-        '1',
-        '2',
-        '3',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['1', '1', '2', '3'])
     })
   })
 
   test('SORT treats an empty-string element as numeric zero', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['', '2', '1'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l')]), [
-        '',
-        '1',
-        '2',
-      ])
+      assert.deepStrictEqual(await c.sort(k('l')), ['', '1', '2'])
     })
   })
 
@@ -109,7 +89,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT ALPHA sorts lexicographically', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['banana', 'apple', 'cherry'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('l'), 'ALPHA']), [
+      assert.deepStrictEqual(await c.sort(k('l'), { ALPHA: true }), [
         'apple',
         'banana',
         'cherry',
@@ -121,7 +101,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['b', 'a', 'c'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'ALPHA', 'DESC']),
+        await c.sort(k('l'), { ALPHA: true, DIRECTION: 'DESC' }),
         ['c', 'b', 'a'],
       )
     })
@@ -131,7 +111,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['apple', 'banana'])
       await assert.rejects(
-        () => c.sendCommand(['SORT', k('l')]),
+        () => c.sort(k('l')),
         errorWithMessage(
           "ERR One or more scores can't be converted into double",
         ),
@@ -145,7 +125,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2', '5', '4'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'LIMIT', '1', '2']),
+        await c.sort(k('l'), { LIMIT: { offset: 1, count: 2 } }),
         ['2', '3'],
       )
     })
@@ -155,7 +135,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2', '5', '4'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'LIMIT', '1', '-1']),
+        await c.sort(k('l'), { LIMIT: { offset: 1, count: -1 } }),
         ['2', '3', '4', '5'],
       )
     })
@@ -165,7 +145,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
       assert.deepStrictEqual(
-        await c.sendCommand(['SORT', k('l'), 'LIMIT', '10', '5']),
+        await c.sort(k('l'), { LIMIT: { offset: 10, count: 5 } }),
         [],
       )
     })
@@ -186,12 +166,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT sorts a set numerically', async () => {
     await withOps(async (c, k) => {
       await c.sAdd(k('s'), ['10', '2', '33', '4'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('s')]), [
-        '2',
-        '4',
-        '10',
-        '33',
-      ])
+      assert.deepStrictEqual(await c.sort(k('s')), ['2', '4', '10', '33'])
     })
   })
 
@@ -203,11 +178,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
         { score: 1, value: '20' },
         { score: 9, value: '10' },
       ])
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('z')]), [
-        '10',
-        '20',
-        '30',
-      ])
+      assert.deepStrictEqual(await c.sort(k('z')), ['10', '20', '30'])
     })
   })
 
@@ -216,20 +187,17 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT STORE writes the result as a list and returns its length', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
-      const n = await c.sendCommand(['SORT', k('l'), 'STORE', k('dst')])
+      const n = await c.sortStore(k('l'), k('dst'))
       assert.strictEqual(n, 3)
-      assert.strictEqual(await c.sendCommand(['TYPE', k('dst')]), 'list')
-      assert.deepStrictEqual(
-        await c.sendCommand(['LRANGE', k('dst'), '0', '-1']),
-        ['1', '2', '3'],
-      )
+      assert.strictEqual(await c.type(k('dst')), 'list')
+      assert.deepStrictEqual(await c.lRange(k('dst'), 0, -1), ['1', '2', '3'])
     })
   })
 
   test('SORT STORE with an empty result deletes the destination', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('dst'), 'pre-existing')
-      const n = await c.sendCommand(['SORT', k('missing'), 'STORE', k('dst')])
+      const n = await c.sortStore(k('missing'), k('dst'))
       assert.strictEqual(n, 0)
       assert.strictEqual(await c.exists(k('dst')), 0)
     })
@@ -239,7 +207,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
 
   test('SORT on a missing key returns an empty array', async () => {
     await withOps(async (c, k) => {
-      assert.deepStrictEqual(await c.sendCommand(['SORT', k('missing')]), [])
+      assert.deepStrictEqual(await c.sort(k('missing')), [])
     })
   })
 
@@ -247,7 +215,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     await withOps(async (c, k) => {
       await c.set(k('str'), 'hello')
       await assert.rejects(
-        () => c.sendCommand(['SORT', k('str')]),
+        () => c.sort(k('str')),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -279,11 +247,7 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   test('SORT_RO sorts like SORT', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
-      assert.deepStrictEqual(await c.sendCommand(['SORT_RO', k('l')]), [
-        '1',
-        '2',
-        '3',
-      ])
+      assert.deepStrictEqual(await c.sortRo(k('l')), ['1', '2', '3'])
     })
   })
 

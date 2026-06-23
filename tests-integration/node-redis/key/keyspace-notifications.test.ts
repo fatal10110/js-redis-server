@@ -67,7 +67,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
       '__keyspace@0__:*',
       '__keyevent@0__:*',
     ])
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
+    await actor.configSet('notify-keyspace-events', 'KEA')
     const key = randomKey()
 
     const keyspace = bus.waitForEvent(`__keyspace@0__:${key}`, 'set')
@@ -81,7 +81,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('publishes del, expire and persist generic notifications', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
+    await actor.configSet('notify-keyspace-events', 'KEA')
     const key = randomKey()
     await actor.set(key, 'v')
 
@@ -102,7 +102,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('names write events after the originating command', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
+    await actor.configSet('notify-keyspace-events', 'KEA')
     const { bus } = await subscribe(['__keyevent@0__:*'])
 
     const listKey = randomKey()
@@ -135,7 +135,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('publishes expired event when a key lazily expires', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
+    await actor.configSet('notify-keyspace-events', 'KEA')
     const key = randomKey()
 
     const { bus } = await subscribe(['__keyevent@0__:*'])
@@ -150,7 +150,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('publishes expired event from active expiry without a forcing read', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
+    await actor.configSet('notify-keyspace-events', 'KEA')
     const key = randomKey()
 
     const { bus } = await subscribe(['__keyevent@0__:*'])
@@ -163,7 +163,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('translates RENAME into rename_from and rename_to', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
+    await actor.configSet('notify-keyspace-events', 'KEA')
     const src = randomKey()
     const dst = randomKey()
     await actor.set(src, 'v')
@@ -180,7 +180,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('delivers nothing when notify-keyspace-events is disabled', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', ''])
+    await actor.configSet('notify-keyspace-events', '')
     const key = randomKey()
 
     const { bus } = await subscribe(['__keyspace@0__:*', '__keyevent@0__:*'])
@@ -195,7 +195,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
 
   test('gates events by configured class', async () => {
     const actor = await connect()
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'Ex'])
+    await actor.configSet('notify-keyspace-events', 'Ex')
     const setKey = randomKey()
     const expiringKey = randomKey()
 
@@ -224,28 +224,22 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
   test('CONFIG normalizes flags and rejects invalid characters', async () => {
     const actor = await connect()
 
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEA'])
-    assert.strictEqual(
-      configValue(
-        await actor.sendCommand(['CONFIG', 'GET', 'notify-keyspace-events']),
-      ),
-      'AKE',
-    )
+    await actor.configSet('notify-keyspace-events', 'KEA')
+    assert.deepStrictEqual(await actor.configGet('notify-keyspace-events'), {
+      'notify-keyspace-events': 'AKE',
+    })
 
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'KEg$'])
-    assert.strictEqual(
-      configValue(
-        await actor.sendCommand(['CONFIG', 'GET', 'notify-keyspace-events']),
-      ),
-      'g$KE',
-    )
+    await actor.configSet('notify-keyspace-events', 'KEg$')
+    assert.deepStrictEqual(await actor.configGet('notify-keyspace-events'), {
+      'notify-keyspace-events': 'g$KE',
+    })
 
     await assert.rejects(
-      () => actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', 'Z']),
+      () => actor.configSet('notify-keyspace-events', 'Z'),
       /Invalid event class character/,
     )
 
-    await actor.sendCommand(['CONFIG', 'SET', 'notify-keyspace-events', ''])
+    await actor.configSet('notify-keyspace-events', '')
   })
 
   async function connect(): Promise<RedisClientType> {
@@ -268,9 +262,3 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
     return { subscriber, bus }
   }
 })
-
-// CONFIG GET is a flat array on RESP2 and an object on RESP3.
-function configValue(reply: unknown): string {
-  if (Array.isArray(reply)) return String(reply[1])
-  return String((reply as Record<string, unknown>)['notify-keyspace-events'])
-}

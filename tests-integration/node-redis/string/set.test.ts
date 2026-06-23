@@ -161,7 +161,7 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
         ),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['SET', listKey, 'value', 'GET']),
+        () => directClient.set(listKey, 'value', { GET: true }),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -171,7 +171,7 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['SET', stringKey, 'value', 'EX', '0']),
+        () => directClient.set(stringKey, 'value', { EX: 0 }),
         errorWithMessage("ERR invalid expire time in 'set' command"),
       )
     } finally {

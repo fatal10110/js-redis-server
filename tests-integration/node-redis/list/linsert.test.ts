@@ -32,10 +32,7 @@ describe(`LINSERT Integration (node-redis, ${testRunner.getBackendName()})`, () 
       await client.del(key)
       await client.rPush(key, ['a', 'b', 'c', 'b'])
 
-      assert.strictEqual(
-        await client.sendCommand(['LINSERT', key, 'BEFORE', 'b', 'x']),
-        5,
-      )
+      assert.strictEqual(await client.lInsert(key, 'BEFORE', 'b', 'x'), 5)
       assert.deepStrictEqual(await client.lRange(key, 0, -1), [
         'a',
         'x',
@@ -72,16 +69,10 @@ describe(`LINSERT Integration (node-redis, ${testRunner.getBackendName()})`, () 
       await client.del([key, missing])
       await client.rPush(key, ['a', 'b', 'c'])
 
-      assert.strictEqual(
-        await client.sendCommand(['LINSERT', key, 'BEFORE', 'z', 'x']),
-        -1,
-      )
+      assert.strictEqual(await client.lInsert(key, 'BEFORE', 'z', 'x'), -1)
       assert.deepStrictEqual(await client.lRange(key, 0, -1), ['a', 'b', 'c'])
 
-      assert.strictEqual(
-        await client.sendCommand(['LINSERT', missing, 'AFTER', 'z', 'x']),
-        0,
-      )
+      assert.strictEqual(await client.lInsert(missing, 'AFTER', 'z', 'x'), 0)
       assert.strictEqual(await client.exists(missing), 0)
     } finally {
       await client.del([key, missing])
@@ -117,8 +108,7 @@ describe(`LINSERT Integration (node-redis, ${testRunner.getBackendName()})`, () 
 
       await client.set(stringKey, 'value')
       await assert.rejects(
-        () =>
-          client.sendCommand(['LINSERT', stringKey, 'BEFORE', 'pivot', 'x']),
+        () => client.lInsert(stringKey, 'BEFORE', 'pivot', 'x'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),

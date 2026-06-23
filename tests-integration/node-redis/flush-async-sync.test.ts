@@ -24,13 +24,13 @@ describe(`FLUSHDB/FLUSHALL ASYNC|SYNC (node-redis, ${testRunner.getBackendName()
 
   test('FLUSHDB accepts ASYNC and clears the keyspace', async () => {
     await client.set('k1', 'v1')
-    assert.strictEqual(await client.sendCommand(['FLUSHDB', 'ASYNC']), 'OK')
+    assert.strictEqual(await client.flushDb('ASYNC'), 'OK')
     assert.strictEqual(await client.dbSize(), 0)
   })
 
   test('FLUSHDB accepts SYNC', async () => {
     await client.set('k2', 'v2')
-    assert.strictEqual(await client.sendCommand(['FLUSHDB', 'SYNC']), 'OK')
+    assert.strictEqual(await client.flushDb('SYNC'), 'OK')
     assert.strictEqual(await client.dbSize(), 0)
   })
 
@@ -40,21 +40,21 @@ describe(`FLUSHDB/FLUSHALL ASYNC|SYNC (node-redis, ${testRunner.getBackendName()
   })
 
   test('FLUSHDB with no argument still works', async () => {
-    assert.strictEqual(await client.sendCommand(['FLUSHDB']), 'OK')
+    assert.strictEqual(await client.flushDb(), 'OK')
   })
 
   test('FLUSHALL accepts ASYNC and clears all databases', async () => {
     await client.set('k3', 'v3')
-    assert.strictEqual(await client.sendCommand(['FLUSHALL', 'ASYNC']), 'OK')
+    assert.strictEqual(await client.flushAll('ASYNC'), 'OK')
     assert.strictEqual(await client.dbSize(), 0)
   })
 
   test('FLUSHALL accepts SYNC', async () => {
-    assert.strictEqual(await client.sendCommand(['FLUSHALL', 'SYNC']), 'OK')
+    assert.strictEqual(await client.flushAll('SYNC'), 'OK')
   })
 
   test('FLUSHALL with no argument still works', async () => {
-    assert.strictEqual(await client.sendCommand(['FLUSHALL']), 'OK')
+    assert.strictEqual(await client.flushAll(), 'OK')
   })
 
   test('FLUSHDB rejects an unknown modifier with a syntax error', async () => {

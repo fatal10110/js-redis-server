@@ -38,122 +38,52 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       })
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          key,
-          'FIELDS',
-          '3',
-          'f1',
-          'missing',
-          'f2',
-        ]),
+        await directClient.hGetEx(key, ['f1', 'missing', 'f2']),
         ['v1', null, 'v2'],
       )
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          `${tag}:nokey`,
-          'FIELDS',
-          '2',
-          'a',
-          'b',
-        ]),
+        await directClient.hGetEx(`${tag}:nokey`, ['a', 'b']),
         [null, null],
       )
       assert.strictEqual(await directClient.exists(`${tag}:nokey`), 0)
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          key,
-          'EX',
-          '100',
-          'FIELDS',
-          '1',
-          'f1',
-        ]),
+        await directClient.hGetEx(key, 'f1', {
+          expiration: { type: 'EX', value: 100 },
+        }),
         ['v1'],
       )
-      const ttlSet = (await directClient.sendCommand([
-        'HTTL',
-        key,
-        'FIELDS',
-        '1',
-        'f1',
-      ])) as number[]
+      const ttlSet = await directClient.hTTL(key, 'f1')
       assert.ok(ttlSet[0] > 90 && ttlSet[0] <= 100, `ttl ${ttlSet[0]}`)
 
-      assert.deepStrictEqual(
-        await directClient.sendCommand(['HGETEX', key, 'FIELDS', '1', 'f1']),
-        ['v1'],
-      )
-      const ttlKeep = (await directClient.sendCommand([
-        'HTTL',
-        key,
-        'FIELDS',
-        '1',
-        'f1',
-      ])) as number[]
+      assert.deepStrictEqual(await directClient.hGetEx(key, 'f1'), ['v1'])
+      const ttlKeep = await directClient.hTTL(key, 'f1')
       assert.ok(ttlKeep[0] > 90 && ttlKeep[0] <= 100, `ttl ${ttlKeep[0]}`)
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          key,
-          'PERSIST',
-          'FIELDS',
-          '1',
-          'f1',
-        ]),
+        await directClient.hGetEx(key, 'f1', { expiration: 'PERSIST' }),
         ['v1'],
       )
-      assert.deepStrictEqual(
-        await directClient.sendCommand(['HTTL', key, 'FIELDS', '1', 'f1']),
-        [-1],
-      )
+      assert.deepStrictEqual(await directClient.hTTL(key, 'f1'), [-1])
 
-      await directClient.sendCommand([
-        'HGETEX',
-        key,
-        'PX',
-        '50000',
-        'FIELDS',
-        '1',
-        'f2',
-      ])
-      const pttlSet = (await directClient.sendCommand([
-        'HPTTL',
-        key,
-        'FIELDS',
-        '1',
-        'f2',
-      ])) as number[]
+      await directClient.hGetEx(key, 'f2', {
+        expiration: { type: 'PX', value: 50000 },
+      })
+      const pttlSet = await directClient.hpTTL(key, 'f2')
       assert.ok(pttlSet[0] > 40000 && pttlSet[0] <= 50000, `pttl ${pttlSet[0]}`)
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          key,
-          'EXAT',
-          '1',
-          'FIELDS',
-          '1',
-          'f3',
-        ]),
+        await directClient.hGetEx(key, 'f3', {
+          expiration: { type: 'EXAT', value: 1 },
+        }),
         ['v3'],
       )
       assert.strictEqual(await directClient.hExists(key, 'f3'), 0)
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          key,
-          'EX',
-          '0',
-          'FIELDS',
-          '1',
-          'f4',
-        ]),
+        await directClient.hGetEx(key, 'f4', {
+          expiration: { type: 'EX', value: 0 },
+        }),
         ['v4'],
       )
       assert.strictEqual(await directClient.hExists(key, 'f4'), 0)
@@ -161,15 +91,9 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       const lone = `${tag}:lone`
       await directClient.hSet(lone, 'only', 'v')
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HGETEX',
-          lone,
-          'EXAT',
-          '1',
-          'FIELDS',
-          '1',
-          'only',
-        ]),
+        await directClient.hGetEx(lone, 'only', {
+          expiration: { type: 'EXAT', value: 1 },
+        }),
         ['v'],
       )
       assert.strictEqual(await directClient.exists(lone), 0)
@@ -191,14 +115,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.set(stringKey, 'value')
 
       await assert.rejects(
-        () =>
-          directClient!.sendCommand([
-            'HGETEX',
-            stringKey,
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+        () => directClient!.hGetEx(stringKey, 'field'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -302,28 +219,16 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       )
       await assert.rejects(
         () =>
-          directClient!.sendCommand([
-            'HGETEX',
-            hashKey,
-            'EX',
-            '-5',
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+          directClient!.hGetEx(hashKey, 'field', {
+            expiration: { type: 'EX', value: -5 },
+          }),
         errorWithMessage('ERR invalid expire time, must be >= 0'),
       )
       await assert.rejects(
         () =>
-          directClient!.sendCommand([
-            'HGETEX',
-            hashKey,
-            'EXAT',
-            '99999999999',
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+          directClient!.hGetEx(hashKey, 'field', {
+            expiration: { type: 'EXAT', value: 99999999999 },
+          }),
         errorWithMessage("ERR invalid expire time in 'hgetex' command"),
       )
     } finally {

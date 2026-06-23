@@ -40,38 +40,17 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       })
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '5000',
-          'FIELDS',
-          '1',
-          'volatile',
-        ]),
+        await directClient.hpExpire(key, 'volatile', 5000),
         [1],
       )
-      assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '20',
-          'FIELDS',
-          '1',
-          'soon',
-        ]),
-        [1],
-      )
+      assert.deepStrictEqual(await directClient.hpExpire(key, 'soon', 20), [1])
 
-      const seconds = (await directClient.sendCommand([
-        'HTTL',
-        key,
-        'FIELDS',
-        '4',
+      const seconds = await directClient.hTTL(key, [
         'persistent',
         'volatile',
         'soon',
         'missing',
-      ])) as number[]
+      ])
       assert.ok(Array.isArray(seconds))
       assert.strictEqual(seconds[0], -1)
       assert.strictEqual(typeof seconds[1], 'number')
@@ -80,16 +59,12 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       assert.ok(seconds[2] >= 0 && seconds[2] <= 1)
       assert.strictEqual(seconds[3], -2)
 
-      const milliseconds = (await directClient.sendCommand([
-        'HPTTL',
-        key,
-        'FIELDS',
-        '4',
+      const milliseconds = await directClient.hpTTL(key, [
         'persistent',
         'volatile',
         'soon',
         'missing',
-      ])) as number[]
+      ])
       assert.ok(Array.isArray(milliseconds))
       assert.strictEqual(milliseconds[0], -1)
       assert.strictEqual(typeof milliseconds[1], 'number')
@@ -99,11 +74,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       assert.strictEqual(milliseconds[3], -2)
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPERSIST',
-          key,
-          'FIELDS',
-          '4',
+        await directClient.hPersist(key, [
           'persistent',
           'volatile',
           'missing',
@@ -112,14 +83,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         [-1, 1, -2, -1],
       )
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPTTL',
-          key,
-          'FIELDS',
-          '2',
-          'persistent',
-          'volatile',
-        ]),
+        await directClient.hpTTL(key, ['persistent', 'volatile']),
         [-1, -1],
       )
 
@@ -129,15 +93,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       assert.strictEqual(await directClient.hGet(key, 'volatile'), 'value2')
       assert.strictEqual(await directClient.hGet(key, 'soon'), null)
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HTTL',
-          key,
-          'FIELDS',
-          '3',
-          'persistent',
-          'volatile',
-          'soon',
-        ]),
+        await directClient.hTTL(key, ['persistent', 'volatile', 'soon']),
         [-1, -1, -2],
       )
     } finally {
@@ -154,22 +110,12 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       directClient = await connectToNodeRedisSlotOwner(redisClient, key)
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPERSIST',
-          key,
-          'FIELDS',
-          '2',
-          'a',
-          'b',
-        ]),
+        await directClient.hPersist(key, ['a', 'b']),
         [-2, -2],
       )
+      assert.deepStrictEqual(await directClient.hTTL(key, ['a', 'b']), [-2, -2])
       assert.deepStrictEqual(
-        await directClient.sendCommand(['HTTL', key, 'FIELDS', '2', 'a', 'b']),
-        [-2, -2],
-      )
-      assert.deepStrictEqual(
-        await directClient.sendCommand(['HPTTL', key, 'FIELDS', '2', 'a', 'b']),
+        await directClient.hpTTL(key, ['a', 'b']),
         [-2, -2],
       )
       assert.strictEqual(await directClient.exists(key), 0)
@@ -190,18 +136,17 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.hSet(hashKey, 'field', 'value')
       await directClient.set(stringKey, 'value')
 
-      for (const command of ['HPERSIST', 'HTTL', 'HPTTL']) {
+      const wrongTypeCallers = {
+        HPERSIST: (k: string) => directClient!.hPersist(k, ['field']),
+        HTTL: (k: string) => directClient!.hTTL(k, ['field']),
+        HPTTL: (k: string) => directClient!.hpTTL(k, ['field']),
+      } as const
+
+      for (const command of ['HPERSIST', 'HTTL', 'HPTTL'] as const) {
         const commandName = command.toLowerCase()
 
         await assert.rejects(
-          () =>
-            directClient!.sendCommand([
-              command,
-              stringKey,
-              'FIELDS',
-              '1',
-              'field',
-            ]),
+          () => wrongTypeCallers[command](stringKey),
           errorWithMessage(
             'WRONGTYPE Operation against a key holding the wrong kind of value',
           ),

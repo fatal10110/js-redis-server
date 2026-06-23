@@ -178,7 +178,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await directClient.set(stringKey, 'value')
       await assert.rejects(
-        () => directClient!.sendCommand(['HRANDFIELD', stringKey]),
+        () => directClient!.hRandField(stringKey),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),

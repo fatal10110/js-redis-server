@@ -470,8 +470,7 @@ describe(`Sorted Set Set-Operations (node-redis, ${testRunner.getBackendName()})
       await c.zAdd(k('z1'), { score: 1, value: 'a' })
       await c.zAdd(k('z2'), { score: 1, value: 'b' })
       await assert.rejects(
-        () =>
-          c.sendCommand(['ZINTERCARD', '2', k('z1'), k('z2'), 'LIMIT', '-1']),
+        () => c.zInterCard([k('z1'), k('z2')], { LIMIT: -1 }),
         errorWithMessage("ERR LIMIT can't be negative"),
       )
     })

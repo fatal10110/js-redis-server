@@ -186,7 +186,7 @@ describe('COPY command DB option and errors (node-redis, standalone)', () => {
     )
 
     await assert.rejects(
-      client.sendCommand(['COPY', key, `${key}-d`, 'DB', '-1']),
+      client.copy(key, `${key}-d`, { DB: -1 }),
       errorWithMessage('ERR DB index is out of range'),
     )
   })

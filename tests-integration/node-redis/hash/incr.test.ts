@@ -33,11 +33,11 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
     const key = `{hincrby64:${randomKey()}}`
     try {
       await redisClient.hSet(key, 'gap', '9007199254740992') // 2^53
-      await redisClient.sendCommand(key, false, ['HINCRBY', key, 'gap', '1'])
+      await redisClient.hIncrBy(key, 'gap', 1)
       assert.strictEqual(await redisClient.hGet(key, 'gap'), '9007199254740993')
 
       await redisClient.hSet(key, 'big', '9000000000000000000')
-      await redisClient.sendCommand(key, false, ['HINCRBY', key, 'big', '1'])
+      await redisClient.hIncrBy(key, 'big', 1)
       assert.strictEqual(
         await redisClient.hGet(key, 'big'),
         '9000000000000000001',
@@ -45,7 +45,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await redisClient.hSet(key, 'max', '9223372036854775807')
       await assert.rejects(
-        () => redisClient.sendCommand(key, false, ['HINCRBY', key, 'max', '1']),
+        () => redisClient.hIncrBy(key, 'max', 1),
         errorWithMessage('ERR increment or decrement would overflow'),
       )
       assert.strictEqual(
@@ -55,8 +55,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await redisClient.hSet(key, 'min', '-9223372036854775808')
       await assert.rejects(
-        () =>
-          redisClient.sendCommand(key, false, ['HINCRBY', key, 'min', '-1']),
+        () => redisClient.hIncrBy(key, 'min', -1),
         errorWithMessage('ERR increment or decrement would overflow'),
       )
       assert.strictEqual(
@@ -77,8 +76,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await redisClient.hSet(key, 'huge', '99999999999999999999999')
       await assert.rejects(
-        () =>
-          redisClient.sendCommand(key, false, ['HINCRBY', key, 'huge', '1']),
+        () => redisClient.hIncrBy(key, 'huge', 1),
         errorWithMessage('ERR hash value is not an integer'),
       )
     } finally {

@@ -43,61 +43,16 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       })
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HEXPIRE',
-          key,
-          '10',
-          'FIELDS',
-          '2',
-          'keep',
-          'missing',
-        ]),
+        await directClient.hExpire(key, ['keep', 'missing'], 10),
         [1, -2],
       )
+      assert.deepStrictEqual(await directClient.hpExpire(key, 'zero', 0), [2])
+      assert.deepStrictEqual(await directClient.hExpireAt(key, 'past', 1), [2])
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '0',
-          'FIELDS',
-          '1',
-          'zero',
-        ]),
-        [2],
-      )
-      assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HEXPIREAT',
-          key,
-          '1',
-          'FIELDS',
-          '1',
-          'past',
-        ]),
-        [2],
-      )
-      assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIREAT',
-          key,
-          String(Date.now() + 10_000),
-          'FIELDS',
-          '1',
-          'pxat',
-        ]),
+        await directClient.hpExpireAt(key, 'pxat', Date.now() + 10_000),
         [1],
       )
-      assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '5',
-          'FIELDS',
-          '1',
-          'soon',
-        ]),
-        [1],
-      )
+      assert.deepStrictEqual(await directClient.hpExpire(key, 'soon', 5), [1])
 
       await delay(40)
 
@@ -107,10 +62,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         ['value1', null, null, null, 'value5'],
       )
       assert.strictEqual(await directClient.hExists(key, 'soon'), 0)
-      assert.strictEqual(
-        await directClient.sendCommand(['HSTRLEN', key, 'soon']),
-        0,
-      )
+      assert.strictEqual(await directClient.hStrLen(key, 'soon'), 0)
       assert.strictEqual(await directClient.hLen(key), 2)
       assert.deepStrictEqual((await directClient.hKeys(key)).sort(), [
         'keep',
@@ -138,28 +90,14 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       directClient = await connectToNodeRedisSlotOwner(redisClient, key)
       await directClient.hSet(key, { keep: 'value1', gone: 'value2' })
 
-      assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '5',
-          'FIELDS',
-          '1',
-          'gone',
-        ]),
-        [1],
-      )
+      assert.deepStrictEqual(await directClient.hpExpire(key, 'gone', 5), [1])
 
       await delay(40)
 
-      const [, scanEntries] = (await directClient.sendCommand([
-        'HSCAN',
-        key,
-        '0',
-      ])) as [string, string[]]
+      const { entries: scanEntries } = await directClient.hScan(key, '0')
       const scanned = new Map<string, string>()
-      for (let i = 0; i < scanEntries.length; i += 2) {
-        scanned.set(scanEntries[i], scanEntries[i + 1])
+      for (const { field, value } of scanEntries) {
+        scanned.set(field, value)
       }
 
       assert.deepStrictEqual(Object.fromEntries(scanned), { keep: 'value1' })
@@ -178,15 +116,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.hSet(key, { field1: 'value1', field2: 'value2' })
 
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '0',
-          'FIELDS',
-          '2',
-          'field1',
-          'field2',
-        ]),
+        await directClient.hpExpire(key, ['field1', 'field2'], 0),
         [2, 2],
       )
       assert.strictEqual(await directClient.exists(key), 0)
@@ -210,43 +140,40 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         lt: 'value4',
       })
 
-      const hexpire = (...args: string[]) =>
-        directClient!.sendCommand(['HEXPIRE', key, ...args])
-
       assert.deepStrictEqual(
-        await hexpire('20', 'FIELDS', '1', 'volatile'),
+        await directClient.hExpire(key, 'volatile', 20),
         [1],
       )
       assert.deepStrictEqual(
-        await hexpire('30', 'NX', 'FIELDS', '1', 'volatile'),
+        await directClient.hExpire(key, 'volatile', 30, 'NX'),
         [0],
       )
       assert.deepStrictEqual(
-        await hexpire('30', 'NX', 'FIELDS', '1', 'nx'),
+        await directClient.hExpire(key, 'nx', 30, 'NX'),
         [1],
       )
       assert.deepStrictEqual(
-        await hexpire('30', 'XX', 'FIELDS', '1', 'xx'),
+        await directClient.hExpire(key, 'xx', 30, 'XX'),
         [0],
       )
       assert.deepStrictEqual(
-        await hexpire('30', 'XX', 'FIELDS', '1', 'volatile'),
+        await directClient.hExpire(key, 'volatile', 30, 'XX'),
         [1],
       )
       assert.deepStrictEqual(
-        await hexpire('10', 'GT', 'FIELDS', '1', 'nx'),
+        await directClient.hExpire(key, 'nx', 10, 'GT'),
         [0],
       )
       assert.deepStrictEqual(
-        await hexpire('40', 'GT', 'FIELDS', '1', 'nx'),
+        await directClient.hExpire(key, 'nx', 40, 'GT'),
         [1],
       )
       assert.deepStrictEqual(
-        await hexpire('10', 'LT', 'FIELDS', '1', 'lt'),
+        await directClient.hExpire(key, 'lt', 10, 'LT'),
         [1],
       )
       assert.deepStrictEqual(
-        await hexpire('40', 'LT', 'FIELDS', '1', 'lt'),
+        await directClient.hExpire(key, 'lt', 40, 'LT'),
         [0],
       )
     } finally {
@@ -267,16 +194,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         float: '1.5',
       })
       assert.deepStrictEqual(
-        await directClient.sendCommand([
-          'HPEXPIRE',
-          key,
-          '20',
-          'FIELDS',
-          '3',
-          'replace',
-          'counter',
-          'float',
-        ]),
+        await directClient.hpExpire(key, ['replace', 'counter', 'float'], 20),
         [1, 1, 1],
       )
 
@@ -312,7 +230,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       const send = (args: string[]) => directClient!.sendCommand(args)
 
       await assert.rejects(
-        () => send(['HEXPIRE', stringKey, '10', 'FIELDS', '1', 'field']),
+        () => directClient!.hExpire(stringKey, 'field', 10),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -348,12 +266,12 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => send(['HEXPIRE', hashKey, '-1', 'FIELDS', '1', 'field']),
+        () => directClient!.hExpire(hashKey, 'field', -1),
         errorWithMessage('ERR invalid expire time, must be >= 0'),
       )
       assert.strictEqual(await directClient.hGet(hashKey, 'field'), 'value')
       await assert.rejects(
-        () => send(['HEXPIRE', hashKey, '99999999999', 'FIELDS', '1', 'field']),
+        () => directClient!.hExpire(hashKey, 'field', 99999999999),
         errorWithMessage("ERR invalid expire time in 'hexpire' command"),
       )
       await assert.rejects(

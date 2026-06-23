@@ -107,13 +107,13 @@ describe(`BLMOVE Integration (node-redis, ${testRunner.getBackendName()})`, () =
 
     await client1.set(stringKey, 'value')
     await assert.rejects(
-      () => send(['BLMOVE', stringKey, dst, 'LEFT', 'RIGHT', '1']),
+      () => client1.blMove(stringKey, dst, 'LEFT', 'RIGHT', 1),
       errorWithMessage(
         'WRONGTYPE Operation against a key holding the wrong kind of value',
       ),
     )
     await assert.rejects(
-      () => send(['BLMOVE', src, stringKey, 'LEFT', 'RIGHT', '1']),
+      () => client1.blMove(src, stringKey, 'LEFT', 'RIGHT', 1),
       errorWithMessage(
         'WRONGTYPE Operation against a key holding the wrong kind of value',
       ),

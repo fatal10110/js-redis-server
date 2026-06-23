@@ -72,9 +72,7 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
       directClient = await connectToNodeRedisSlotOwner(redisClient, setKey)
       await directClient.sAdd(setKey, ['member1', 'member2'])
 
-      const result = await directClient.sendCommand([
-        'SMISMEMBER',
-        setKey,
+      const result = await directClient.smIsMember(setKey, [
         'member1',
         'missing',
         'member2',
@@ -82,9 +80,7 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
       ])
       assert.deepStrictEqual(result, [1, 0, 1, 1])
 
-      const missing = await directClient.sendCommand([
-        'SMISMEMBER',
-        missingKey,
+      const missing = await directClient.smIsMember(missingKey, [
         'member1',
         'member2',
       ])
@@ -92,7 +88,7 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
       await directClient.set(stringKey, 'value')
       await assert.rejects(
-        () => directClient!.sendCommand(['SMISMEMBER', stringKey, 'member1']),
+        () => directClient!.smIsMember(stringKey, ['member1']),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -183,7 +179,7 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
       assert.strictEqual(cardAfterZero, 1)
 
       await assert.rejects(
-        () => redisClient.sendCommand(key, false, ['SPOP', key, '-1']),
+        () => redisClient.sPopCount(key, -1),
         errorWithMessage('ERR value is out of range, must be positive'),
       )
     } finally {
