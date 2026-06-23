@@ -335,11 +335,90 @@ const client = mock.client()
 await client.command('PING') // 'PONG'
 ```
 
+### Drop-in ioredis mock
+
+`createIoredisMock()` returns a **real** `ioredis` client wired to the in-memory
+pipeline over a fake `net.Socket` — no TCP port, no loopback. Because it's the
+genuine client speaking real RESP, typed methods, pipelines, `multi`, pub/sub,
+and `scanStream` all work unchanged. `ioredis` is an optional peer dependency,
+imported lazily, so the core stays dependency-free — install `ioredis` yourself
+to use this.
+
+```typescript
+import { createIoredisMock } from 'js-redis-server'
+import type { Redis } from 'ioredis'
+
+const redis = (await createIoredisMock()) as Redis // 16 logical DBs by default
+
+await redis.set('k', 'v')
+await redis.get('k') // 'v'
+await redis.hset('h', 'f1', 'a', 'f2', 'b')
+await redis.hgetall('h') // { f1: 'a', f2: 'b' }
+
+await redis.quit() // tears down the in-memory state
+```
+
+Pass `cluster` for a real `Cluster` client; keyed commands follow `MOVED`
+in-process across the synthetic nodes:
+
+```typescript
+import type { Cluster } from 'ioredis'
+
+const cluster = (await createIoredisMock({
+  cluster: { masters: 3, replicasPerMaster: 1 }, // replicasPerMaster optional
+})) as Cluster
+
+await cluster.set('alpha', '1') // routed to its owning master
+await cluster.get('alpha') // '1'
+
+await cluster.quit()
+```
+
+Preload data with a `seed` array (same [`SeedEntry`](#seeding) shapes as
+`createRedisMock().seed()`). The keyspace is populated before the client
+connects, so it's ready on the first command. In cluster mode each key is
+routed to its slot-owning master:
+
+```typescript
+const redis = (await createIoredisMock({
+  seed: [
+    { key: 'user:1', type: 'string', value: 'alice' },
+    { key: 'h:1', type: 'hash', value: { name: 'bob', age: 30 } },
+    { key: 'temp', type: 'string', value: 'x', ttlMs: 50_000 },
+  ],
+})) as Redis
+
+await redis.get('user:1') // 'alice'
+
+// cluster: createIoredisMock({ cluster: { masters: 3 }, seed: [...] })
+```
+
 ### Seeding
 
 `seed()` takes an explicit entries array — you supply keys, types, values, and
 optional `ttlMs` / `db`; the mock owns placement (including cluster slot
 routing) and the internal value conversion.
+
+```typescript
+const mock = await createRedisMock()
+
+await mock.seed([
+  { key: 'user:1', type: 'string', value: 'alice' },
+  { key: 'counter', type: 'string', value: 42 },
+  { key: 'h:1', type: 'hash', value: { name: 'bob', age: 30 } },
+  { key: 'l:1', type: 'list', value: ['a', 'b', 1] },
+  { key: 's:1', type: 'set', value: ['x', 'y'] },
+  { key: 'z:1', type: 'zset', value: { a: 1, b: 2 } },
+  { key: 'ttl:1', type: 'string', value: 'temp', ttlMs: 50_000 },
+  { key: 'in-db-3', type: 'string', value: 'scoped', db: 3 },
+])
+
+const client = mock.client()
+await client.command('GET', 'user:1') // 'alice'
+await client.command('HGETALL', 'h:1') // { name: 'bob', age: '30' }
+```
+
+Each entry's shape is checked against its `type`:
 
 ```typescript
 type SeedEntry =

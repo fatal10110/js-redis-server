@@ -22,6 +22,13 @@ export {
   type RedisServerHandle,
 } from './mock'
 export { seedCluster, seedStandalone, type SeedEntry } from './seed'
+
+// In-memory drop-in client mocks (socketless real client over the in-memory
+// pipeline). `ioredis` is an optional peer dependency, imported lazily.
+export {
+  createIoredisMock,
+  type CreateIoredisMockOptions,
+} from './client-mocks/ioredis-mock'
 export {
   InMemoryRedisClient,
   createInMemoryClient,

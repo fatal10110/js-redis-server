@@ -118,8 +118,20 @@ export async function seedStandalone(
   }
 }
 
+/**
+ * The minimal cluster shape `seedCluster` needs: a topology to slot keys and the
+ * per-node `RedisServerState` to write into. Both the socket-backed
+ * {@link RedisCluster} (`.nodes[].server`) and the TCP-free `buildClusterNodes`
+ * product satisfy this structurally, so the in-memory ioredis mock can reuse the
+ * same seeder.
+ */
+export type SeedClusterTarget = {
+  topology: RedisCluster['topology']
+  nodes: readonly { id: string; server: RedisServerState }[]
+}
+
 export async function seedCluster(
-  cluster: RedisCluster,
+  cluster: SeedClusterTarget,
   entries: readonly SeedEntry[],
 ): Promise<void> {
   for (const entry of entries) {
