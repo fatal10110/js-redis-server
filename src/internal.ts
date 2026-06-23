@@ -173,6 +173,26 @@ export {
 } from './core/transports/resp2'
 export { InMemoryConnectionTransport } from './core/transports/in-memory-connection-transport'
 export { SocketConnectionTransport } from './core/transports/socket-connection-transport'
+// Socketless connection layer — drive a session over any transport without a
+// TCP server (`attachSession`), a net.Socket-shaped in-memory wire
+// (`createVirtualConnection`), and a synthetic `host:port → pipeline` resolver
+// for following cluster `MOVED` redirects in-process (`InMemoryNodeRegistry`).
+export {
+  attachSession,
+  type AttachSessionOptions,
+  type AttachedSession,
+} from './core/transports/attach-session'
+export {
+  createVirtualConnection,
+  VirtualClientSocket,
+  type CreateVirtualConnectionOptions,
+  type VirtualConnection,
+} from './core/transports/virtual-connection'
+export {
+  InMemoryNodeRegistry,
+  type NodePipeline,
+  type RegisteredNode,
+} from './client-mocks/node-registry'
 
 // Pipeline assembly building blocks — the pieces `createRedisMock` /
 // `createRedisServer` / `createRedisCluster` wire together. Power users who
