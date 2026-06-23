@@ -227,20 +227,14 @@ describe(`ZMPOP / BZMPOP Integration (node-redis, ${testRunner.getBackendName()}
         errorWithMessage('ERR syntax error'),
       )
       await assert.rejects(
-        () =>
-          client1.sendCommand(stringKey, false, [
-            'ZMPOP',
-            '1',
-            stringKey,
-            'MIN',
-          ]),
+        () => client1.zmPop([stringKey], 'MIN'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
       )
 
       await assert.rejects(
-        () => send(['BZMPOP', '-1', '1', zset, 'MIN']),
+        () => client1.bzmPop(-1, [zset], 'MIN'),
         errorWithMessage('ERR timeout is negative'),
       )
       await assert.rejects(
@@ -251,28 +245,13 @@ describe(`ZMPOP / BZMPOP Integration (node-redis, ${testRunner.getBackendName()}
       const directClient = await connectToNodeRedisSlotOwner(client1, zset)
       try {
         await assert.rejects(
-          () =>
-            directClient.sendCommand([
-              'ZMPOP',
-              '2',
-              zset,
-              'other-slot-key',
-              'MIN',
-            ]),
+          () => directClient.zmPop([zset, 'other-slot-key'], 'MIN'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () =>
-            directClient.sendCommand([
-              'BZMPOP',
-              '1',
-              '2',
-              zset,
-              'other-slot-key',
-              'MIN',
-            ]),
+          () => directClient.bzmPop(1, [zset, 'other-slot-key'], 'MIN'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

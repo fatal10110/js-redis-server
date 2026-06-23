@@ -109,7 +109,7 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       )
 
       await assert.rejects(
-        () => client.sendCommand(['LPOS', key, 'a', 'MAXLEN', '-1']),
+        () => client.lPos(key, 'a', { MAXLEN: -1 }),
         errorWithMessage("ERR MAXLEN can't be negative"),
       )
 
@@ -229,7 +229,7 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
       // wrong type source
       await client.set(stringKey, 'value')
       await assert.rejects(
-        () => client.sendCommand(['LMOVE', stringKey, dst, 'LEFT', 'RIGHT']),
+        () => client.lMove(stringKey, dst, 'LEFT', 'RIGHT'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -237,7 +237,7 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
 
       // wrong type destination -> source left unchanged
       await assert.rejects(
-        () => client.sendCommand(['LMOVE', src, stringKey, 'LEFT', 'RIGHT']),
+        () => client.lMove(src, stringKey, 'LEFT', 'RIGHT'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),

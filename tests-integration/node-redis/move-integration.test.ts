@@ -98,7 +98,7 @@ describe('MOVE command integration (node-redis, standalone)', () => {
     )
 
     await assert.rejects(
-      client.sendCommand(['MOVE', key, '-1']),
+      client.move(key, -1),
       errorWithMessage('ERR DB index is out of range'),
     )
   })
@@ -150,7 +150,7 @@ describe(`MOVE command cluster rejection (node-redis, ${testRunner.getBackendNam
 
     try {
       await assert.rejects(
-        slotOwner.sendCommand(['MOVE', key, '1']),
+        slotOwner.move(key, 1),
         errorWithMessage('ERR MOVE is not allowed in cluster mode'),
       )
     } finally {

@@ -136,18 +136,17 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.hSet(hashKey, 'field', 'value')
       await directClient.set(stringKey, 'value')
 
-      for (const command of ['HPERSIST', 'HTTL', 'HPTTL']) {
+      const wrongTypeCallers = {
+        HPERSIST: (k: string) => directClient!.hPersist(k, ['field']),
+        HTTL: (k: string) => directClient!.hTTL(k, ['field']),
+        HPTTL: (k: string) => directClient!.hpTTL(k, ['field']),
+      } as const
+
+      for (const command of ['HPERSIST', 'HTTL', 'HPTTL'] as const) {
         const commandName = command.toLowerCase()
 
         await assert.rejects(
-          () =>
-            directClient!.sendCommand([
-              command,
-              stringKey,
-              'FIELDS',
-              '1',
-              'field',
-            ]),
+          () => wrongTypeCallers[command](stringKey),
           errorWithMessage(
             'WRONGTYPE Operation against a key holding the wrong kind of value',
           ),

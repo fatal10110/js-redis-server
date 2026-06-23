@@ -432,8 +432,7 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
         errorWithMessage('ERR value is out of range, must be positive'),
       )
       await assert.rejects(
-        () =>
-          redisClient.sendCommand(zsetKey, false, ['ZPOPMAX', zsetKey, '-1']),
+        () => redisClient.zPopMaxCount(zsetKey, -1),
         errorWithMessage('ERR value is out of range, must be positive'),
       )
 

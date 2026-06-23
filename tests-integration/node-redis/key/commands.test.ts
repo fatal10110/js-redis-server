@@ -84,7 +84,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         errorWithMessage("ERR wrong number of arguments for 'touch' command"),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['TOUCH', crossSlotA, crossSlotB]),
+        () => directClient.touch([crossSlotA, crossSlotB]),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),

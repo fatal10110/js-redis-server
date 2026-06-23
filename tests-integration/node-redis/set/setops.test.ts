@@ -60,55 +60,32 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
       await directClient.sAdd(setB, ['b', 'c', 'd', 'e'])
       await directClient.sAdd(setC, ['c', 'd', 'f'])
 
-      const count = await directClient.sendCommand([
-        'SINTERCARD',
-        '3',
-        setA,
-        setB,
-        setC,
-      ])
+      const count = await directClient.sInterCard([setA, setB, setC])
       assert.strictEqual(count, 2)
 
-      const limited = await directClient.sendCommand([
-        'SINTERCARD',
-        '3',
-        setA,
-        setB,
-        setC,
-        'LIMIT',
-        '1',
-      ])
+      const limited = await directClient.sInterCard([setA, setB, setC], {
+        LIMIT: 1,
+      })
       assert.strictEqual(limited, 1)
 
-      const unlimited = await directClient.sendCommand([
-        'SINTERCARD',
-        '2',
-        setA,
-        setB,
-        'LIMIT',
-        '0',
-      ])
+      const unlimited = await directClient.sInterCard([setA, setB], {
+        LIMIT: 0,
+      })
       assert.strictEqual(unlimited, 3)
 
-      const withMissing = await directClient.sendCommand([
-        'SINTERCARD',
-        '2',
-        setA,
-        missing,
-      ])
+      const withMissing = await directClient.sInterCard([setA, missing])
       assert.strictEqual(withMissing, 0)
 
       await directClient.set(stringKey, 'value')
       await assert.rejects(
-        () => directClient!.sendCommand(['SINTERCARD', '2', setA, stringKey]),
+        () => directClient!.sInterCard([setA, stringKey]),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
       )
 
       await assert.rejects(
-        () =>
-          directClient!.sendCommand(['SINTERCARD', '2', setA, crossSlotKey]),
+        () => directClient!.sInterCard([setA, crossSlotKey]),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),

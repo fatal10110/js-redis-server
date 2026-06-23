@@ -232,11 +232,11 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
         errorWithMessage('ERR value is not a valid float'),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['SETRANGE', stringKey, '-1', 'x']),
+        () => directClient.setRange(stringKey, -1, 'x'),
         errorWithMessage('ERR offset is out of range'),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['SETEX', `${tag}:setex`, '0', 'value']),
+        () => directClient.setEx(`${tag}:setex`, 0, 'value'),
         errorWithMessage("ERR invalid expire time in 'setex' command"),
       )
       await assert.rejects(
@@ -250,12 +250,11 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () =>
-          directClient.sendCommand(['PSETEX', `${tag}:psetex`, '0', 'value']),
+        () => directClient.pSetEx(`${tag}:psetex`, 0, 'value'),
         errorWithMessage("ERR invalid expire time in 'psetex' command"),
       )
       await assert.rejects(
-        () => directClient.sendCommand(['GETEX', stringKey, 'EX', '0']),
+        () => directClient.getEx(stringKey, { type: 'EX', value: 0 }),
         errorWithMessage("ERR invalid expire time in 'getex' command"),
       )
       await assert.rejects(

@@ -78,7 +78,7 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
 
       // INCRBY that would cross the int64 max overflows
       await assert.rejects(
-        () => directClient.sendCommand(['INCRBY', key, '1']),
+        () => directClient.incrBy(key, 1),
         errorWithMessage('ERR increment or decrement would overflow'),
       )
 
@@ -155,7 +155,7 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
       // A stored infinity plus a finite increment is still infinity.
       await direct.set(key, 'inf')
       await assert.rejects(
-        () => direct.sendCommand(['INCRBYFLOAT', key, '1']),
+        () => direct.incrByFloat(key, 1),
         errorWithMessage('ERR increment would produce NaN or Infinity'),
       )
 

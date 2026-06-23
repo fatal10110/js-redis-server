@@ -115,14 +115,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.set(stringKey, 'value')
 
       await assert.rejects(
-        () =>
-          directClient!.sendCommand([
-            'HGETEX',
-            stringKey,
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+        () => directClient!.hGetEx(stringKey, 'field'),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -226,28 +219,16 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       )
       await assert.rejects(
         () =>
-          directClient!.sendCommand([
-            'HGETEX',
-            hashKey,
-            'EX',
-            '-5',
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+          directClient!.hGetEx(hashKey, 'field', {
+            expiration: { type: 'EX', value: -5 },
+          }),
         errorWithMessage('ERR invalid expire time, must be >= 0'),
       )
       await assert.rejects(
         () =>
-          directClient!.sendCommand([
-            'HGETEX',
-            hashKey,
-            'EXAT',
-            '99999999999',
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+          directClient!.hGetEx(hashKey, 'field', {
+            expiration: { type: 'EXAT', value: 99999999999 },
+          }),
         errorWithMessage("ERR invalid expire time in 'hgetex' command"),
       )
     } finally {

@@ -230,7 +230,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       const send = (args: string[]) => directClient!.sendCommand(args)
 
       await assert.rejects(
-        () => send(['HEXPIRE', stringKey, '10', 'FIELDS', '1', 'field']),
+        () => directClient!.hExpire(stringKey, 'field', 10),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -266,12 +266,12 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         errorWithMessage('ERR value is not an integer or out of range'),
       )
       await assert.rejects(
-        () => send(['HEXPIRE', hashKey, '-1', 'FIELDS', '1', 'field']),
+        () => directClient!.hExpire(hashKey, 'field', -1),
         errorWithMessage('ERR invalid expire time, must be >= 0'),
       )
       assert.strictEqual(await directClient.hGet(hashKey, 'field'), 'value')
       await assert.rejects(
-        () => send(['HEXPIRE', hashKey, '99999999999', 'FIELDS', '1', 'field']),
+        () => directClient!.hExpire(hashKey, 'field', 99999999999),
         errorWithMessage("ERR invalid expire time in 'hexpire' command"),
       )
       await assert.rejects(

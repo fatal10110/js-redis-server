@@ -117,14 +117,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await directClient.set(stringKey, 'value')
 
       await assert.rejects(
-        () =>
-          directClient!.sendCommand([
-            'HGETDEL',
-            stringKey,
-            'FIELDS',
-            '1',
-            'field',
-          ]),
+        () => directClient!.hGetDel(stringKey, ['field']),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),

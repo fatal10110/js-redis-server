@@ -621,7 +621,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (node-redis, ${testRun
         ),
       )
       await assert.rejects(
-        () => send(['ZRANGESTORE', destination, stringSource, '0', '-1']),
+        () => redisClient.zRangeStore(destination, stringSource, 0, -1),
         errorWithMessage(
           'WRONGTYPE Operation against a key holding the wrong kind of value',
         ),
@@ -643,14 +643,7 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (node-redis, ${testRun
       )
       try {
         await assert.rejects(
-          () =>
-            directClient.sendCommand([
-              'ZRANGESTORE',
-              destination,
-              source,
-              '0',
-              '-1',
-            ]),
+          () => directClient.zRangeStore(destination, source, 0, -1),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

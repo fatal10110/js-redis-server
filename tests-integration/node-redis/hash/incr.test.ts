@@ -45,7 +45,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await redisClient.hSet(key, 'max', '9223372036854775807')
       await assert.rejects(
-        () => redisClient.sendCommand(key, false, ['HINCRBY', key, 'max', '1']),
+        () => redisClient.hIncrBy(key, 'max', 1),
         errorWithMessage('ERR increment or decrement would overflow'),
       )
       assert.strictEqual(
@@ -55,8 +55,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await redisClient.hSet(key, 'min', '-9223372036854775808')
       await assert.rejects(
-        () =>
-          redisClient.sendCommand(key, false, ['HINCRBY', key, 'min', '-1']),
+        () => redisClient.hIncrBy(key, 'min', -1),
         errorWithMessage('ERR increment or decrement would overflow'),
       )
       assert.strictEqual(
@@ -77,8 +76,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       await redisClient.hSet(key, 'huge', '99999999999999999999999')
       await assert.rejects(
-        () =>
-          redisClient.sendCommand(key, false, ['HINCRBY', key, 'huge', '1']),
+        () => redisClient.hIncrBy(key, 'huge', 1),
         errorWithMessage('ERR hash value is not an integer'),
       )
     } finally {
