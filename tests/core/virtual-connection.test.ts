@@ -96,15 +96,40 @@ describe('createVirtualConnection', () => {
 
   test('destroying the client socket tears down the server session', async () => {
     const { state, executor } = freshPipeline()
-    const { clientSocket } = createVirtualConnection({ state, executor })
+    const { clientSocket, done } = createVirtualConnection({ state, executor })
     await once(clientSocket, 'connect')
     assert.strictEqual(state.getConnectedClients().length, 1)
 
     clientSocket.destroy()
-    await once(clientSocket, 'close')
-    // Give the server-side read loop a tick to observe the closed transport.
-    await new Promise(resolve => setImmediate(resolve))
+    // Await the adapter loop settling rather than a single tick — robust if the
+    // disposal chain ever grows an extra await.
+    await done
 
+    assert.strictEqual(state.getConnectedClients().length, 0)
+  })
+
+  test('tearing down with an active SUBSCRIBE settles cleanly', async () => {
+    const { state, executor } = freshPipeline()
+    const { clientSocket, close, done } = createVirtualConnection({
+      state,
+      executor,
+    })
+    await once(clientSocket, 'connect')
+
+    // Open a push stream over the virtual wire, then read the subscribe
+    // confirmation so the subscription is established server-side.
+    clientSocket.write(commandFrame('SUBSCRIBE', 'ch'))
+    const confirmation = await readBytes(
+      clientSocket,
+      '*3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n'.length,
+    )
+    assert.match(confirmation.toString(), /subscribe/)
+    assert.strictEqual(state.getConnectedClients().length, 1)
+
+    close()
+    // The adapter's finally must drain the active push stream; if it didn't,
+    // `done` would never settle and this test would time out.
+    await done
     assert.strictEqual(state.getConnectedClients().length, 0)
   })
 })

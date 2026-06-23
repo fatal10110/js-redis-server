@@ -3,6 +3,7 @@ import type { CommandExecutor } from '../command-executor'
 import type { RespEncodeOptions } from '../resp-encoder'
 import type { Logger } from '../../logger'
 import type { RedisClusterNodeRole, RedisServerState } from '../../state'
+import { formatSocketAddressParts } from '../network-address'
 import { attachSession } from './attach-session'
 import {
   type ConnectionTransport,
@@ -98,8 +99,12 @@ export class VirtualClientSocket extends Duplex {
     encoding: BufferEncoding,
     callback: (error?: Error | null) => void,
   ): void {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding)
-    this.onClientWrite?.(Buffer.from(buffer))
+    // Defensive copy of caller-owned Buffer input; the string branch already
+    // allocates a fresh Buffer, so it needs no second copy.
+    const owned = Buffer.isBuffer(chunk)
+      ? Buffer.from(chunk)
+      : Buffer.from(chunk, encoding)
+    this.onClientWrite?.(owned)
     callback()
   }
 
@@ -166,6 +171,9 @@ class DuplexConnectionTransport implements ConnectionTransport {
 
   /** Feed a chunk the client wrote into the server-side read loop. */
   feed(chunk: Buffer): void {
+    // Deliberate divergence from InMemoryConnectionTransport.feed (a strict test
+    // harness that throws on a closed transport): a real socket silently drops
+    // writes after close, and this transport models a socket — so drop, not throw.
     if (this.inputEnded || this.closed) {
       return
     }
@@ -301,9 +309,10 @@ export function createVirtualConnection(
     nodeRole: opts.nodeRole,
     logger: opts.logger,
     encoder: opts.encoder,
-    clientAddress: `${opts.remoteAddress ?? '127.0.0.1'}:${
-      opts.remotePort ?? 6379
-    }`,
+    clientAddress: formatSocketAddressParts(
+      opts.remoteAddress ?? '127.0.0.1',
+      opts.remotePort ?? 6379,
+    ),
   })
 
   return {
