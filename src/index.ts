@@ -37,6 +37,20 @@ export {
   type RedisNativeReply,
 } from './in-memory-client'
 
+// In-memory node-redis-shaped client mock (drop-in facade — no TCP socket).
+export {
+  createNodeRedisMock,
+  NodeRedisMockClient,
+  NodeRedisMockCluster,
+  NodeRedisMockMulti,
+  type CreateNodeRedisMockOptions,
+  type NodeRedisMockClusterOptions,
+  type NodeRedisCommandArgument,
+  type NodeRedisReply,
+  type NodeRedisZMember,
+  type NodeRedisPubSubListener,
+} from './client-mocks/node-redis-mock'
+
 // Cluster builder (consistent `create*` naming; `buildRedisCluster` is a
 // deprecated alias kept for back-compat).
 export {

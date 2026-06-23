@@ -86,10 +86,14 @@
     "respjs": "^4.2.0"
   },
   "peerDependencies": {
-    "ioredis": "^5.0.0"
+    "ioredis": "^5.0.0",
+    "redis": "^4.0.0 || ^5.0.0 || ^6.0.0"
   },
   "peerDependenciesMeta": {
     "ioredis": {
+      "optional": true
+    },
+    "redis": {
       "optional": true
     }
   },
