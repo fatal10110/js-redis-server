@@ -8,9 +8,11 @@ import {
   RedisClusterTopology,
   RedisServerState,
   type RedisClusterNode,
+  type RedisClusterNodeRole,
   type RedisMutationEvent,
   type Unsubscribe,
 } from './state'
+import type { CommandExecutor } from './core/command-executor'
 import type { Logger } from './logger'
 
 export type RedisClusterOptions = {
@@ -97,14 +99,36 @@ function isServerNotRunningError(err: unknown): boolean {
 }
 
 /**
- * Builds an **un-started** cluster — call {@link RedisCluster.listen} yourself.
- *
- * @deprecated Prefer {@link createRedisServer} with the `cluster` option, which
- * builds *and* starts the cluster in one call (and is symmetric with
- * `createRedisMock({ cluster })`). This low-level builder remains for callers
- * that need to control when `listen()` runs.
+ * A single cluster node assembled without any TCP socket: its synthetic
+ * `host:port`, replicated state, and the cluster-aware executor bound to it.
  */
-export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
+export type ClusterNodePipeline = {
+  id: string
+  role: RedisClusterNodeRole
+  host: string
+  port: number
+  state: RedisServerState
+  executor: CommandExecutor
+}
+
+/**
+ * The TCP-free product of {@link buildClusterNodes}: the shared topology, every
+ * node pipeline, and the replication links wiring replicas to their masters
+ * (the caller owns their teardown via `close()`).
+ */
+export type ClusterNodes = {
+  topology: RedisClusterTopology
+  nodes: readonly ClusterNodePipeline[]
+  replicationLinks: readonly ReplicationLink[]
+}
+
+/**
+ * Assembles cluster node pipelines — topology, per-node state + executor, and
+ * the replica→master replication links — **without** binding any TCP socket.
+ * Shared by the socket-backed {@link createRedisCluster} and the in-memory
+ * client-mock cluster, so cluster routing/replication semantics never diverge.
+ */
+export function buildClusterNodes(options: RedisClusterOptions): ClusterNodes {
   validateOptions(options)
 
   const host = options.host ?? '127.0.0.1'
@@ -150,8 +174,6 @@ export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
 
   const topology = new RedisClusterTopology(topologyNodes)
 
-  const handles: RedisClusterNodeHandle[] = []
-  const servers: Resp2Server[] = []
   const replicationLinks: ReplicationLink[] = []
   const nodeStates = createClusterNodeStates(
     topologyNodes,
@@ -161,7 +183,7 @@ export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
     replicationLinks,
   )
 
-  for (const node of topologyNodes) {
+  const nodes = topologyNodes.map<ClusterNodePipeline>(node => {
     const state = nodeStates.get(node.id)
     if (!state) {
       throw new Error(`Missing state for cluster node ${node.id}`)
@@ -171,9 +193,38 @@ export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
       extraCommands: createClusterCommands(node.id),
       policies: [createClusterPolicy({ localNodeId: node.id, topology })],
     })
-    const server = new Resp2Server({
-      server: state,
+
+    return {
+      id: node.id,
+      role: node.role,
+      host: node.host,
+      port: node.port,
+      state,
       executor,
+    }
+  })
+
+  return { topology, nodes, replicationLinks }
+}
+
+/**
+ * Builds an **un-started** cluster — call {@link RedisCluster.listen} yourself.
+ *
+ * @deprecated Prefer {@link createRedisServer} with the `cluster` option, which
+ * builds *and* starts the cluster in one call (and is symmetric with
+ * `createRedisMock({ cluster })`). This low-level builder remains for callers
+ * that need to control when `listen()` runs.
+ */
+export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
+  const { topology, nodes, replicationLinks } = buildClusterNodes(options)
+
+  const handles: RedisClusterNodeHandle[] = []
+  const servers: Resp2Server[] = []
+
+  for (const node of nodes) {
+    const server = new Resp2Server({
+      server: node.state,
+      executor: node.executor,
       logger: options.logger,
       nodeRole: node.role,
     })
@@ -183,7 +234,7 @@ export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
       role: node.role,
       host: node.host,
       port: node.port,
-      server: state,
+      server: node.state,
     })
     servers.push(server)
   }
@@ -248,7 +299,7 @@ function validateOptions(options: RedisClusterOptions): void {
   }
 }
 
-type ReplicationLink = {
+export type ReplicationLink = {
   close(): void
 }
 
