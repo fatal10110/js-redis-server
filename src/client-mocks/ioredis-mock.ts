@@ -5,6 +5,7 @@ import {
   type VirtualConnection,
 } from '../core/transports/virtual-connection'
 import { RedisServerState } from '../state'
+import { seedStandalone, seedCluster, type SeedEntry } from '../seed'
 import { InMemoryNodeRegistry, type NodePipeline } from './node-registry'
 import type {
   Redis as RedisClient,
@@ -18,8 +19,11 @@ const DEFAULT_DATABASE_COUNT = 16
 const DEFAULT_CLUSTER_BASE_PORT = 7000
 
 export type CreateIoredisMockOptions =
-  | { cluster?: false; databaseCount?: number }
-  | { cluster: { masters: number; replicasPerMaster?: number } }
+  | { cluster?: false; databaseCount?: number; seed?: readonly SeedEntry[] }
+  | {
+      cluster: { masters: number; replicasPerMaster?: number }
+      seed?: readonly SeedEntry[]
+    }
 
 /**
  * A drop-in, socketless `ioredis` client (standalone or `Cluster`) backed by the
@@ -37,13 +41,13 @@ export async function createIoredisMock(
   const ioredis = await loadIoredis()
 
   if ('cluster' in options && options.cluster) {
-    return createClusterMock(ioredis, options.cluster)
+    return createClusterMock(ioredis, options.cluster, options.seed)
   }
 
   const databaseCount =
     ('databaseCount' in options && options.databaseCount) ||
     DEFAULT_DATABASE_COUNT
-  return createStandaloneMock(ioredis, databaseCount)
+  return createStandaloneMock(ioredis, databaseCount, options.seed)
 }
 
 /**
@@ -152,12 +156,17 @@ function buildConnectorClass(
   }
 }
 
-function createStandaloneMock(
+async function createStandaloneMock(
   ioredis: IoredisModule,
   databaseCount: number,
-): RedisClient {
+  seed?: readonly SeedEntry[],
+): Promise<RedisClient> {
   const state = new RedisServerState({ databaseCount })
   const executor = createRedisCommandExecutor()
+
+  if (seed) {
+    await seedStandalone(state, seed)
+  }
 
   const registry = new InMemoryNodeRegistry()
   registry.register(DEFAULT_HOST, 6379, { state, executor })
@@ -182,15 +191,28 @@ function createStandaloneMock(
   return redis
 }
 
-function createClusterMock(
+async function createClusterMock(
   ioredis: IoredisModule,
   options: { masters: number; replicasPerMaster?: number },
-): RedisCluster {
+  seed?: readonly SeedEntry[],
+): Promise<RedisCluster> {
   const built = buildClusterNodes({
     masters: options.masters,
     replicasPerMaster: options.replicasPerMaster ?? 0,
     basePort: DEFAULT_CLUSTER_BASE_PORT,
   })
+
+  if (seed) {
+    // buildClusterNodes exposes each node's state as `.state`; seedCluster wants
+    // `.server` — same RedisServerState, just bridge the field name.
+    await seedCluster(
+      {
+        topology: built.topology,
+        nodes: built.nodes.map(node => ({ id: node.id, server: node.state })),
+      },
+      seed,
+    )
+  }
 
   const registry = new InMemoryNodeRegistry()
   for (const node of built.nodes) {
