@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -51,27 +54,29 @@ jobs:
       - name: Run unit tests
         run: npm test
 
-  integration-mock:
+  integration:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run integration tests (mock backend)
-        run: npm run test:integration:mock
-
-  integration-real:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: raw-mock
+            script: test:integration:raw:mock
+          - name: raw-real
+            script: test:integration:raw:real
+            needsRedis: true
+          - name: ioredis-mock
+            script: test:integration:mock:ioredis
+          - name: ioredis-real
+            script: test:integration:real:ioredis
+            needsRedis: true
+          - name: node-redis-mock
+            script: test:integration:mock:node-redis
+          - name: node-redis-real
+            script: test:integration:real:node-redis
+            needsRedis: true
 
     steps:
       - name: Checkout repository
@@ -87,17 +92,19 @@ jobs:
         run: npm ci
 
       - name: Start Redis (cluster + standalone)
+        if: matrix.needsRedis
         run: docker compose -f docker-compose.test.yml up -d --wait
 
-      - name: Run integration tests (real backend)
+      - name: Run integration tests (${{ matrix.name }})
         env:
           # Points the harness at the standalone service for SELECT/multi-DB
           # tests that cluster mode cannot serve (see test-config.ts).
+          # Ignored by the mock backend.
           REDIS_STANDALONE_PORT: 6399
           # Password-protected standalone for AUTH/NOAUTH enforcement tests.
           REDIS_STANDALONE_AUTH_PORT: 6400
-        run: npm run test:integration:real
+        run: npm run ${{ matrix.script }}
 
       - name: Stop Redis (cluster + standalone)
-        if: always()
+        if: always() && matrix.needsRedis
         run: docker compose -f docker-compose.test.yml down -v
