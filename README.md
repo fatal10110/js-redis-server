@@ -184,7 +184,9 @@ const cluster = new Redis.Cluster(mock.addresses())
 // node-redis
 import { createCluster } from 'redis'
 const cluster = createCluster({
-  rootNodes: mock.addresses().map(n => ({ url: `redis://${n.host}:${n.port}` })),
+  rootNodes: mock
+    .addresses()
+    .map(n => ({ url: `redis://${n.host}:${n.port}` })),
 })
 await cluster.connect()
 ```
