@@ -519,6 +519,14 @@ async function loadModule(options, hostImports) {
  */
 async function loadGlueFactory(options) {
     if (!isNode) {
+        if (options.modulePath) {
+            // Explicit URL (e.g. a jsdelivr CDN URL). Fully dynamic so the bundler
+            // doesn't try to resolve/emit it; @vite-ignore silences the warning.
+            const imported = await import(/* @vite-ignore */ options.modulePath);
+            return (imported.default ?? imported);
+        }
+        // Bundled default: literal specifier so the bundler emits + resolves the glue
+        // as a co-located asset.
         // @ts-ignore - Emscripten glue has no type declarations; resolved by the bundler.
         const imported = await import('./redis_lua.mjs');
         return (imported.default ?? imported);
@@ -542,7 +550,9 @@ async function loadWasmBinary(options) {
         return options.wasmBytes;
     }
     if (!isNode) {
-        const response = await fetch(new URL("./redis_lua.wasm", import.meta.url));
+        // Explicit URL (e.g. jsdelivr) wins; otherwise the co-located bundled asset.
+        const wasmUrl = options.wasmPath ?? new URL("./redis_lua.wasm", import.meta.url);
+        const response = await fetch(wasmUrl);
         if (!response.ok) {
             throw new Error(`Failed to fetch redis_lua.wasm: ${response.status} ${response.statusText}`);
         }

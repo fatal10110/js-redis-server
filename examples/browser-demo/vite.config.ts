@@ -26,15 +26,7 @@ const emptyMock = abs('./node_modules/node-stdlib-browser/esm/mock/empty.js')
 
 export default defineConfig({
   base: '/js-redis-server/',
-  plugins: [
-    nodePolyfills({
-      // Emscripten glue (redis_lua.mjs) opens with
-      // `import { createRequire } from 'module'`. node-polyfills' default `module`
-      // mock is empty (no createRequire export), so override it with a shim that
-      // provides a throwing createRequire — its Node branch never runs in-browser.
-      overrides: { module: abs('./shims/node-module.js') },
-    }),
-  ],
+  plugins: [nodePolyfills()],
   resolve: {
     alias: {
       'vite-plugin-node-polyfills/shims/buffer': shim('buffer'),

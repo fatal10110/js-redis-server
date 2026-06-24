@@ -151,16 +151,23 @@ imports, `isNode`-branched, browser path uses literal `import('./redis_lua.mjs')
 builtins. All 138 Node tests stay green. Built TS-only (no Docker) since the wasm
 artifacts already existed.
 
-**Caveat discovered — the vendored glue is `-sENVIRONMENT=node`.** `redis_lua.mjs` has
-`ENVIRONMENT_IS_NODE = true` hardcoded, so it unconditionally
-`require("fs"|"path"|"crypto"|"url")` at init via `createRequire`. Since the loader now
-supplies `wasmBinary` + a custom `instantiateWasm`, the fs/path/url paths are never
-exercised; only crypto entropy is real. The demo bridges this with
-`examples/browser-demo/shims/node-module.js` (browser-backed `createRequire` →
-`crypto.getRandomValues`, inert fs/path/url), wired via node-polyfills `overrides`. The
-*proper* fix — rebuilding the wasm with `-sENVIRONMENT=web,worker,node` — is deferred as
-out-of-scope for a demo (needs the Docker/emcc toolchain and reopens runtime
-env-detection). Browser EVAL/EVALSHA verified correct regardless.
+**Proper fix shipped — the glue is now built `-sENVIRONMENT=web,worker,node`.** The
+original vendored glue was `-sENVIRONMENT=node` (hardcoded `ENVIRONMENT_IS_NODE=true`,
+unconditional `require()` at init), which the demo briefly worked around with a
+browser require-shim. That is now resolved at the source: `wasm/build/build.sh` compiles
+with `web,worker,node`, and `wasm/build/docker-build.sh` was bumped to the arm64-native
+`emscripten/emsdk:6.0.1` image (the old `3.1.56` forced `linux/amd64`, whose qemu-emulated
+compiler segfaulted on Apple Silicon). The emsdk-6 glue does runtime env detection, uses
+Web Crypto directly, and drops the `createRequire('module')` preamble entirely — so the
+demo needs **no** require-shim and **no** `module` override. All 138 `lua-redis-wasm`
+node tests pass across the emsdk 3.1→6 jump (ABI unchanged). Browser EVAL/EVALSHA verified
+green with the shim removed.
+
+**CDN delivery (jsdelivr).** `loadModule`'s browser branch also honors `modulePath` /
+`wasmPath` as URLs, so a consumer can fetch the glue + `.wasm` from a CDN
+(`https://cdn.jsdelivr.net/npm/lua-redis-wasm@VERSION/dist/...`) instead of bundling them.
+This requires publishing the fixed `lua-redis-wasm` to npm; the bundled/vendored path
+remains the zero-publish default.
 
 ### 2c. (dropped) No Loader-Option Threading
 
