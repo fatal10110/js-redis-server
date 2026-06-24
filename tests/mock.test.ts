@@ -36,11 +36,7 @@ describe('createRedisMock standalone', () => {
     assert.strictEqual(mock.host, '127.0.0.1')
     assert.ok(mock.port > 0)
     assert.strictEqual(mock.url, `redis://127.0.0.1:${mock.port}`)
-    assert.deepStrictEqual(mock.connectionOptions(), {
-      host: '127.0.0.1',
-      port: mock.port,
-    })
-    assert.deepStrictEqual(mock.clusterNodes(), [
+    assert.deepStrictEqual(mock.addresses(), [
       { host: '127.0.0.1', port: mock.port },
     ])
     assert.ok(mock.state)
@@ -71,7 +67,7 @@ describe('createRedisMock cluster', () => {
 
   test('exposes cluster node list and escape hatch', async () => {
     mock = await createRedisMock({ cluster: { masters: 3 } })
-    assert.strictEqual(mock.clusterNodes().length, 3)
+    assert.strictEqual(mock.addresses().length, 3)
     assert.ok(mock.nodes)
     assert.strictEqual(mock.state, undefined)
   })

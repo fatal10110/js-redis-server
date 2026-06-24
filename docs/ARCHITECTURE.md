@@ -452,8 +452,8 @@ beside it:
   and the mock never drift.
 - cluster mocks delegate straight to `createRedisCluster`.
 
-The returned `RedisMock` exposes connection helpers (`connectionOptions()`,
-`clusterNodes()`, `url`), `flush()`/`reset()` (→ `state.flushAllDatabases()` or
+The returned `RedisMock` exposes connection helpers (`addresses()`, `url`),
+`flush()`/`reset()` (→ `state.flushAllDatabases()` or
 a cluster fan-out), and `state`/`nodes` escape hatches.
 
 [`createInMemoryClient`](../src/in-memory-client.ts) returns an

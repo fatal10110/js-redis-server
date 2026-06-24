@@ -132,10 +132,15 @@ export interface RedisMock {
   readonly host: string
   readonly port: number
   readonly url: string
-  /** ioredis-shaped single-node connection options. */
-  connectionOptions(): RedisAddress
-  /** Seed-node list for ioredis `Cluster` (single entry for standalone mocks). */
-  clusterNodes(): RedisAddress[]
+  /**
+   * Node addresses as `{ host, port }[]` — a single entry for standalone mocks,
+   * every node for cluster mocks. Client-agnostic: index `[0]` for a single
+   * client, or pass the whole array to a cluster client.
+   *
+   * @example new Redis(mock.addresses()[0])         // ioredis, standalone
+   * @example new Redis.Cluster(mock.addresses())    // ioredis, cluster
+   */
+  addresses(): RedisAddress[]
   seed(entries: readonly SeedEntry[]): Promise<void>
   flush(): Promise<void>
   /** Alias for {@link RedisMock.flush}. */
@@ -184,8 +189,7 @@ async function createTcpStandaloneMock(
     host: address.host,
     port: address.port,
     url: `redis://${address.host}:${address.port}`,
-    connectionOptions: () => ({ ...address }),
-    clusterNodes: () => [{ ...address }],
+    addresses: () => [{ ...address }],
     seed: entries => seedStandalone(state, entries),
     flush: async () => state.flushAllDatabases(),
     reset: async () => state.flushAllDatabases(),
@@ -215,8 +219,7 @@ async function createClusterMock(
     host: first.host,
     port: first.port,
     url: `redis://${first.host}:${first.port}`,
-    connectionOptions: () => ({ host: first.host, port: first.port }),
-    clusterNodes: () =>
+    addresses: () =>
       built.nodes.map(node => ({ host: node.host, port: node.port })),
     seed: entries => seedCluster(built, entries),
     flush: () => flushCluster(built),
