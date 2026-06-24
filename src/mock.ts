@@ -8,10 +8,6 @@ import type { CommandExecutor } from './core/command-executor'
 import { Resp2Server } from './core/transports/resp2/server'
 import { RedisServerState } from './state'
 import { seedCluster, seedStandalone, type SeedEntry } from './seed'
-import {
-  InMemoryRedisClient,
-  type InMemoryRedisClientOptions,
-} from './in-memory-client'
 import type { Logger } from './logger'
 
 const DEFAULT_HOST = '127.0.0.1'
@@ -112,39 +108,25 @@ export type RedisMockClusterOptions = {
   replicas?: number
 }
 
-/**
- * Transport backing a standalone mock:
- *  - `'tcp'` (default): a real loopback {@link Resp2Server} you connect a normal
- *    client library to (and may also drive via {@link RedisMock.client}).
- *  - `'memory'`: no TCP listener at all — only the socketless
- *    {@link RedisMock.client} works. The network accessors (`host`/`port`/`url`/
- *    `connectionOptions`/`clusterNodes`) throw.
- */
-export type RedisMockTransport = 'tcp' | 'memory'
-
 export type CreateRedisMockOptions = {
   /** When set, builds a cluster mock instead of a standalone one. */
   cluster?: RedisMockClusterOptions
-  /** Standalone transport (defaults to `'tcp'`). Ignored for cluster mocks. */
-  transport?: RedisMockTransport
   /** Standalone-only: logical database count (defaults to 16). */
   databaseCount?: number
-  /** Standalone bind port (TCP transport). Defaults to `0` (OS-assigned). */
+  /** Standalone bind port. Defaults to `0` (OS-assigned). */
   port?: number
   /** Cluster base port. Defaults to `0` (each node OS-assigned). */
   basePort?: number
   logger?: Pick<Logger, 'error'>
 }
 
-export type RedisMockClientOptions = Pick<
-  InMemoryRedisClientOptions,
-  'database' | 'returnBuffers'
->
-
 /**
  * Friendly test-mock facade over a standalone server or a cluster. Exposes
- * connection helpers, seeding, a socketless client, reset-between-tests, and
- * escape hatches to the underlying state/nodes for power users.
+ * connection helpers, seeding, reset-between-tests, and escape hatches to the
+ * underlying state/nodes for power users.
+ *
+ * Need a socketless in-process client (no TCP, no RESP)? Use the standalone
+ * {@link createInMemoryClient} builder instead.
  */
 export interface RedisMock {
   readonly host: string
@@ -155,13 +137,6 @@ export interface RedisMock {
   /** Seed-node list for ioredis `Cluster` (single entry for standalone mocks). */
   clusterNodes(): RedisAddress[]
   seed(entries: readonly SeedEntry[]): Promise<void>
-  /**
-   * Socketless in-process client over the same command pipeline (no TCP, no
-   * RESP). Standalone mocks only — cluster mocks throw; connect a real cluster
-   * client to {@link RedisMock.clusterNodes} instead. Closed automatically when
-   * the mock closes.
-   */
-  client(options?: RedisMockClientOptions): InMemoryRedisClient
   flush(): Promise<void>
   /** Alias for {@link RedisMock.flush}. */
   reset(): Promise<void>
@@ -174,9 +149,8 @@ export interface RedisMock {
 
 /**
  * Creates a {@link RedisMock} — the entry point for test suites. Standalone by
- * default; pass `{ cluster: { masters } }` for a cluster mock. Adds seeding,
- * reset-between-tests, and an in-process socketless client on top of a real
- * server/cluster.
+ * default; pass `{ cluster: { masters } }` for a cluster mock. Adds seeding and
+ * reset-between-tests on top of a real server/cluster.
  *
  * To run a long-running server a separate process connects to (a CLI, a dev
  * tool) rather than drive it from test code, use {@link createRedisServer}
@@ -188,45 +162,9 @@ export async function createRedisMock(
   options: CreateRedisMockOptions = {},
 ): Promise<RedisMock> {
   if (options.cluster) {
-    if (options.transport === 'memory') {
-      throw new Error(
-        "the 'memory' transport is not supported for cluster mocks; use a tcp cluster mock",
-      )
-    }
     return createClusterMock(options.cluster, options)
   }
-  if (options.transport === 'memory') {
-    return createMemoryMock(options)
-  }
   return createTcpStandaloneMock(options)
-}
-
-/** Track and lazily build socketless clients over a standalone pipeline. */
-function createClientFactory(
-  state: RedisServerState,
-  executor: CommandExecutor,
-): {
-  client: (options?: RedisMockClientOptions) => InMemoryRedisClient
-  closeAll: () => void
-} {
-  const clients = new Set<InMemoryRedisClient>()
-  return {
-    client: clientOptions => {
-      const client = new InMemoryRedisClient({
-        server: state,
-        executor,
-        ...clientOptions,
-      })
-      clients.add(client)
-      return client
-    },
-    closeAll: () => {
-      for (const client of clients) {
-        client.close()
-      }
-      clients.clear()
-    },
-  }
 }
 
 async function createTcpStandaloneMock(
@@ -241,7 +179,6 @@ async function createTcpStandaloneMock(
   await server.listen(options.port ?? 0)
 
   const address: RedisAddress = { host: DEFAULT_HOST, port: server.getPort() }
-  const { client, closeAll } = createClientFactory(state, executor)
 
   return {
     host: address.host,
@@ -250,46 +187,10 @@ async function createTcpStandaloneMock(
     connectionOptions: () => ({ ...address }),
     clusterNodes: () => [{ ...address }],
     seed: entries => seedStandalone(state, entries),
-    client,
     flush: async () => state.flushAllDatabases(),
     reset: async () => state.flushAllDatabases(),
     close: async () => {
-      closeAll()
       await server.close()
-    },
-    state,
-  }
-}
-
-function createMemoryMock(options: CreateRedisMockOptions): RedisMock {
-  const { state, executor } = createStandalonePipeline(options.databaseCount)
-  const { client, closeAll } = createClientFactory(state, executor)
-
-  const noEndpoint = (): never => {
-    throw new Error(
-      'this mock uses the in-memory transport and has no TCP endpoint; use mock.client()',
-    )
-  }
-
-  return {
-    get host(): string {
-      return noEndpoint()
-    },
-    get port(): number {
-      return noEndpoint()
-    },
-    get url(): string {
-      return noEndpoint()
-    },
-    connectionOptions: noEndpoint,
-    clusterNodes: noEndpoint,
-    seed: entries => seedStandalone(state, entries),
-    client,
-    flush: async () => state.flushAllDatabases(),
-    reset: async () => state.flushAllDatabases(),
-    close: async () => {
-      closeAll()
-      state.close()
     },
     state,
   }
@@ -318,11 +219,6 @@ async function createClusterMock(
     clusterNodes: () =>
       built.nodes.map(node => ({ host: node.host, port: node.port })),
     seed: entries => seedCluster(built, entries),
-    client: () => {
-      throw new Error(
-        'client() is not supported for cluster mocks; connect a real cluster client to clusterNodes() instead',
-      )
-    },
     flush: () => flushCluster(built),
     reset: () => flushCluster(built),
     close: () => built.close(),

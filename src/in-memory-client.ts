@@ -1,10 +1,14 @@
+import { createRedisCommandExecutor } from './commands'
 import { ClientSession } from './core/client-session'
 import type { CommandExecutor } from './core/command-executor'
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
 import { RedisResult } from './core/redis-result'
 import { isResponseStream } from './core/response-stream'
-import type { RedisServerState } from './state'
+import { seedStandalone, type SeedEntry } from './seed'
+import { RedisServerState } from './state'
+
+const DEFAULT_DATABASE_COUNT = 16
 
 /** A command argument the in-memory client accepts. */
 export type RedisCommandArgument = string | number | Buffer
@@ -27,6 +31,8 @@ export type InMemoryRedisClientOptions = {
   database?: number
   /** Return `Buffer`s for bulk-string/verbatim replies instead of utf8 strings. */
   returnBuffers?: boolean
+  /** Called once when the client is closed — used to tear down owned state. */
+  onClose?: () => void
 }
 
 /**
@@ -42,6 +48,7 @@ export type InMemoryRedisClientOptions = {
 export class InMemoryRedisClient {
   private readonly session: ClientSession
   private readonly returnBuffers: boolean
+  private readonly onClose?: () => void
   private closed = false
 
   constructor(options: InMemoryRedisClientOptions) {
@@ -51,6 +58,7 @@ export class InMemoryRedisClient {
       database: options.database,
     })
     this.returnBuffers = options.returnBuffers ?? false
+    this.onClose = options.onClose
   }
 
   /**
@@ -97,6 +105,7 @@ export class InMemoryRedisClient {
     }
     this.closed = true
     this.session.close()
+    this.onClose?.()
   }
 
   private decode(value: RedisValue): RedisNativeReply {
@@ -150,10 +159,46 @@ export class InMemoryRedisClient {
   }
 }
 
-export function createInMemoryClient(
-  options: InMemoryRedisClientOptions,
-): InMemoryRedisClient {
-  return new InMemoryRedisClient(options)
+export type CreateInMemoryClientOptions = {
+  /** Logical database count (defaults to 16, matching real Redis). */
+  databaseCount?: number
+  /** Initial selected database (default 0). */
+  database?: number
+  /** Return `Buffer`s for bulk-string/verbatim replies instead of utf8 strings. */
+  returnBuffers?: boolean
+  /** Pre-populate the keyspace before the client is returned. */
+  seed?: readonly SeedEntry[]
+}
+
+/**
+ * A socketless, in-process {@link InMemoryRedisClient} backed by its own
+ * keyspace + command pipeline — the bespoke-client sibling of
+ * {@link createIoredisMock} / {@link createNodeRedisMock}. Owns its state, so
+ * `client.close()` tears everything down.
+ *
+ * Need to drive an existing mock's keyspace instead? Construct
+ * {@link InMemoryRedisClient} directly with that mock's `state` and an executor
+ * from `js-redis-server/core`.
+ */
+export async function createInMemoryClient(
+  options: CreateInMemoryClientOptions = {},
+): Promise<InMemoryRedisClient> {
+  const state = new RedisServerState({
+    databaseCount: options.databaseCount ?? DEFAULT_DATABASE_COUNT,
+  })
+  const executor = createRedisCommandExecutor()
+
+  if (options.seed) {
+    await seedStandalone(state, options.seed)
+  }
+
+  return new InMemoryRedisClient({
+    server: state,
+    executor,
+    database: options.database,
+    returnBuffers: options.returnBuffers,
+    onClose: () => state.close(),
+  })
 }
 
 function isSafeBigInt(value: bigint): boolean {

@@ -456,19 +456,18 @@ The returned `RedisMock` exposes connection helpers (`connectionOptions()`,
 `clusterNodes()`, `url`), `flush()`/`reset()` (→ `state.flushAllDatabases()` or
 a cluster fan-out), and `state`/`nodes` escape hatches.
 
-`mock.client()` returns an [`InMemoryRedisClient`](../src/in-memory-client.ts) —
-a socketless client that drives the **same** pipeline by holding a
-[`ClientSession`](../src/core/client-session.ts) and calling `session.execute`
-directly, bypassing both the TCP loopback and RESP encode/decode. Replies are
-decoded from `RedisValue` into native JS (integers narrowed to `number` when
-safe; `-ERR` surfaced as `RedisCommandError`). Streaming commands are rejected.
-The executor stays private to the facade — it is never exposed on `RedisMock` or
-the `createRedisServer` handle.
-
-The standalone transport is selectable via `transport: 'tcp' | 'memory'`. The
-default `'tcp'` starts a real `Resp2Server`; `'memory'` skips the listener
-entirely (no port), so only `mock.client()` works and the network accessors
-throw. Cluster mocks are always TCP.
+[`createInMemoryClient`](../src/in-memory-client.ts) returns an
+`InMemoryRedisClient` — a socketless client (the bespoke-client sibling of
+`createIoredisMock` / `createNodeRedisMock`) that drives the **same** pipeline by
+holding a [`ClientSession`](../src/core/client-session.ts) and calling
+`session.execute` directly, bypassing both the TCP loopback and RESP
+encode/decode. Replies are decoded from `RedisValue` into native JS (integers
+narrowed to `number` when safe; `-ERR` surfaced as `RedisCommandError`).
+Streaming commands are rejected. It owns its own `RedisServerState` + executor
+(built internally from `databaseCount`/`seed`), so `client.close()` tears them
+down. To drive an existing mock's keyspace instead, construct
+`InMemoryRedisClient` directly with that mock's `state` and a
+`createRedisCommandExecutor()` from `js-redis-server/core`.
 
 [`seed`](../src/seed.ts) converts a public `SeedEntry[]` into keyspace writes:
 each entry maps to a `RedisDataValue` via the existing tracked
