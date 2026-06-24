@@ -23,7 +23,7 @@ describe('createRedisMock seed readback via ioredis (standalone)', () => {
       { key: 'ttl:1', type: 'string', value: 'temp', ttlMs: 50_000 },
       { key: 'in-db-3', type: 'string', value: 'scoped', db: 3 },
     ])
-    client = new Redis({ ...mock.connectionOptions(), lazyConnect: true })
+    client = new Redis({ ...mock.addresses()[0], lazyConnect: true })
     await client.connect()
   })
 
@@ -98,7 +98,7 @@ describe('createRedisMock seed readback via ioredis (cluster)', () => {
       { key: 's:1', type: 'set', value: ['x', 'y'] },
       { key: 'z:1', type: 'zset', value: { a: 1, b: 2 } },
     ])
-    cluster = new Redis.Cluster(mock.clusterNodes(), {
+    cluster = new Redis.Cluster(mock.addresses(), {
       lazyConnect: true,
       slotsRefreshTimeout: 10_000_000,
     })

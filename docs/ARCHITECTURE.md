@@ -415,7 +415,7 @@ then encode as their native RESP3 types (`%`, `%`, `~`, `,`, `#`, `(`, `>`)
 instead of being downgraded to arrays/bulk-strings. `map` downgrades to a flat
 RESP2 key/value array, while `mapPairs` downgrades to a RESP2 array of
 `[key, value]` pairs for commands like `XREAD`. See the
-[README's protocol-version section](../README.md#protocol-version-resp2--resp3)
+[README's "Connecting your client" section](../README.md#connecting-your-client)
 for the client-facing view of this negotiation.
 
 ## Cluster mode
@@ -452,8 +452,8 @@ beside it:
   and the mock never drift.
 - cluster mocks delegate straight to `createRedisCluster`.
 
-The returned `RedisMock` exposes connection helpers (`connectionOptions()`,
-`clusterNodes()`, `url`), `flush()`/`reset()` (→ `state.flushAllDatabases()` or
+The returned `RedisMock` exposes connection helpers (`addresses()`, `url`),
+`flush()`/`reset()` (→ `state.flushAllDatabases()` or
 a cluster fan-out), and `state`/`nodes` escape hatches.
 
 [`createInMemoryClient`](../src/in-memory-client.ts) returns an

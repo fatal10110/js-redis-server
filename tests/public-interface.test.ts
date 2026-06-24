@@ -126,11 +126,7 @@ describe('public interface — createRedisMock', () => {
   test('tcp standalone exposes the documented surface', async () => {
     mock = await createRedisMock()
     assert.strictEqual(mock.url, `redis://127.0.0.1:${mock.port}`)
-    assert.deepStrictEqual(mock.connectionOptions(), {
-      host: '127.0.0.1',
-      port: mock.port,
-    })
-    assert.deepStrictEqual(mock.clusterNodes(), [
+    assert.deepStrictEqual(mock.addresses(), [
       { host: '127.0.0.1', port: mock.port },
     ])
     assert.ok(mock.state)
@@ -151,7 +147,7 @@ describe('public interface — createRedisMock', () => {
 
   test('cluster mock exposes nodes and a slot-routed seed', async () => {
     mock = await createRedisMock({ cluster: { masters: 3 } })
-    assert.strictEqual(mock.clusterNodes().length, 3)
+    assert.strictEqual(mock.addresses().length, 3)
     assert.ok(mock.nodes)
     assert.strictEqual(mock.state, undefined)
     await mock.seed([{ key: 'user:1', type: 'string', value: 'alice' }])

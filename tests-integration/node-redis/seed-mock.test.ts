@@ -106,7 +106,7 @@ describe('createRedisMock seed readback via node-redis (cluster)', () => {
       { key: 'z:1', type: 'zset', value: { a: 1, b: 2 } },
     ])
     cluster = createCluster({
-      rootNodes: mock.clusterNodes().map(node => ({
+      rootNodes: mock.addresses().map(node => ({
         url: `redis://${node.host}:${node.port}`,
       })),
     }) as RedisClusterType
