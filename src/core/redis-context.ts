@@ -1,9 +1,7 @@
-import type {
-  RedisClusterNodeRole,
-  RedisDatabase,
-  RedisMonitorCommandEvent,
-  RedisServerState,
-} from '../state'
+import type { RedisClusterNodeRole } from '../state/cluster-topology'
+import type { RedisDatabase } from '../state/database'
+import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
+import type { RedisServerState } from '../state/server-state'
 import type { CommandExecutor } from './command-executor'
 import type { CommandPlan } from './command-definition'
 import type { RedisResult } from './redis-result'

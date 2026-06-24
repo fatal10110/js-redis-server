@@ -11,7 +11,7 @@ import {
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
-import type { RedisMonitorCommandEvent } from '../state'
+import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
 
 /**
  * The result of running a command: either a finished {@link RedisResult} or a
