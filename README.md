@@ -89,7 +89,6 @@ between tests — you just connect your real client library to it.
 | `host` / `port` / `url` | Connection coordinates of the (first) node.                                               |
 | `addresses()`           | `{ host, port }[]` — one entry standalone, every node for cluster. Client-agnostic.       |
 | `seed(entries)`         | Preload data (see [Seeding](#seeding)).                                                   |
-| `client(opts?)`         | Socketless in-process client (see [Experimental](#experimental-socketless-client-mocks)). |
 | `flush()` / `reset()`   | Clear all keyspace data between tests.                                                    |
 | `close()`               | Shut down the server / cluster.                                                           |
 | `state` / `nodes`       | Escape hatches to the underlying `RedisServerState` / node handles.                       |
