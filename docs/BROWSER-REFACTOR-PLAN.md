@@ -2,11 +2,17 @@
 
 ## Goal
 
-Run the in-memory Redis-compatible server entirely in a browser (tests, playgrounds,
-demos, offline apps) with the full command pipeline, including `SCRIPT`, `EVAL`, and
-`EVALSHA`. There is no TCP in the browser target. Browser consumers drive the mock via
-the function-call client (`createInMemoryClient`) or by feeding RESP bytes through the
+**Scope: one local demo, not a published `npm` browser target.** Get the in-memory
+Redis-compatible server running in a browser well enough to back one demo page, full
+command pipeline including `SCRIPT`/`EVAL`/`EVALSHA`. No TCP in the browser path. The
+demo drives the mock via `createInMemoryClient` or by feeding RESP bytes through the
 socketless `InMemoryConnectionTransport`.
+
+This is explicitly **not** a commitment to ship `js-redis-server/browser` as a supported
+public export, publish a browser-safe `lua-redis-wasm` release, or guarantee
+Node-consumer isolation beyond "don't break the existing Node build." Anything below
+phrased as a publish/package-consumer concern is dropped or downgraded to "whatever the
+demo's own bundler config needs."
 
 ## Why this is still tractable
 
@@ -37,201 +43,213 @@ replacement, and a mandatory browser-safe `lua-redis-wasm` release.
 Important correction: `src/cluster.ts` has no direct Node built-in import, but it is not
 browser-safe today because it imports `Resp2Server`, which imports `net`.
 
-## Strategy: Browser Entry + Real Browser-Safe Lua
+## Strategy: Demo Vite Config Absorbs Node Blockers, Package Untouched
 
-Do **not** rewrite the repo from `Buffer` to `Uint8Array`. Per repo policy ("performance
-is not a priority... prefer correctness and clarity"), keep `Buffer` and ship a browser
-bundle with the `buffer` package injected.
+**Re-reviewed against the locked scope (demo-only, don't touch the package, polyfill in
+the demo build).** The original plan below was written for a *published* browser target,
+which forced source-level changes (a curated `src/browser.ts`, an in-source SHA1 swap,
+threaded loader options) so that arbitrary npm consumers wouldn't have to configure a
+bundler. A single owned GitHub-Pages demo has no such consumers — its own Vite config
+absorbs every Node-builtin blocker, and `js-redis-server`'s `src/` stays byte-for-byte
+unchanged.
 
-Browser v1 includes Lua. That means the `lua-redis-wasm` browser loader work is on the
-critical path, not a later enhancement. The browser build should not rely on empty stubs
-for `node:fs`, `node:path`, `node:url`, `node:crypto`, or `net` to hide reachable code.
-If a stub is used for an intentionally unreachable Emscripten dead branch, make it a
-throwing stub and prove the branch is unreachable with an `EVAL` smoke test in a real
-browser-like runtime.
+Import-graph facts that drive this (traced from `src/in-memory-client.ts`, the demo's
+entry):
+
+- The only **invoked** Node-builtin blocker is `node:crypto` (sync SHA1 in
+  `state/script-cache.ts`, hit on `SCRIPT LOAD`/`EVAL`).
+- `net` is reachable only as `import`-but-never-called: the edge is
+  `in-memory-client → seed → cluster → resp2/server`, and the demo never calls
+  `.listen()`. A throwing/empty `net` stub is honest here — nothing in the demo path
+  reaches `net.createServer()`.
+- `lua-redis-wasm@1.3.0` is the one true blocker: `loadModule()` always does
+  `pathToFileURL(modulePath)` + `import(file://)` for the Emscripten glue, with no
+  factory/url escape hatch. `wasmBytes` skips the `.wasm` read but not the glue import.
+  This must be fixed in the **owned** `lua-redis-wasm` repo (separate package, not
+  `js-redis-server`), exactly as `texture2ddecoder-wasm` was.
+
+So: keep `Buffer` (repo policy: clarity over perf), polyfill `buffer`/`crypto`/`net` via
+the demo's Vite config only, and push all browser-loading smarts into the owned
+`lua-redis-wasm` package so `js-redis-server`'s bare `load()` call keeps working
+unchanged. Do not let `net` stubbing mask anything: the demo's smoke test runs a real
+`EVAL`/`EVALSHA`, which would fail loudly if a genuinely-reachable Node path were stubbed
+away.
 
 ## Phase 0 - Decisions Locked Before Coding
 
-1. **Lua/EVAL ships in browser v1.** This makes the upstream `lua-redis-wasm` browser
-   loader release mandatory before the browser target can be called done.
-2. **Buffer strategy:** polyfill with the `buffer` npm package. It provides the APIs this
-   code and dependencies use (`allocUnsafe`, `readUInt32LE`, `Buffer.concat`, etc.).
-3. **WASM delivery:** support caller-provided `wasmBytes` or `wasmUrl`, and default the
-   browser bundle to a co-located asset URL. Avoid base64 inlining by default.
-4. **Import path:** ship an explicit `js-redis-server/browser` subpath. Keep the package
-   root as the Node build unless we intentionally add a browser condition under
-   `exports["."]`.
+1. **Lua/EVAL is in the demo.** Confirmed by the user. The owned `lua-redis-wasm` browser
+   fix is therefore on the critical path.
+2. **No `js-redis-server` source changes.** The demo imports `createInMemoryClient`
+   straight from `src/` and makes the graph browser-safe purely through its own Vite
+   config. `src/` stays untouched; the package's published API/behavior/deps don't move.
+3. **Polyfills live in the demo only.** Use one plugin — `vite-plugin-node-polyfills` —
+   to cover `buffer`, `crypto` (sync `createHash('sha1')` via `crypto-browserify`, byte-
+   identical digest to `node:crypto`), and `net` (unreachable stub) in one shot. These are
+   `examples/browser-demo` devDependencies, never in the root `package.json`. (Confirmed:
+   root `tsup.config.ts` has explicit entries `index`/`internal`/`cli` only, and `files`
+   publishes `dist/` only — `examples/` is never built or published with the package.)
+4. **WASM/glue delivery:** fix the owned `lua-redis-wasm` so its browser path self-resolves
+   glue + `.wasm` via `new URL('./redis_lua.*', import.meta.url)` (bundler-inlined by
+   Vite), making browser `load()` work with **zero args** — so `js-redis-server`'s existing
+   `createRedisLuaRuntime()` → `load()` call needs no change.
+5. **Import path:** demo imports `../../src/in-memory-client` (relative). No
+   `package.json` exports map, no published subpath, no curated `src/browser.ts`. Revisit
+   only if a real public browser release is ever wanted.
 
-## Phase 1 - Split the Browser-Safe Source Boundary
+## Phase 1 - (dropped) No Browser-Safe Source Split
 
-- Do not import `src/index.ts`, `src/internal.ts`, `src/mock.ts`, or `src/cluster.ts` from
-  `src/browser.ts`; each currently pulls Node-only or broad internal modules into the
-  static graph.
-- Extract the standalone no-listener pipeline and memory mock helpers into a Node-neutral
-  module, for example `src/mock-memory.ts`:
-  - `createStandalonePipeline`
-  - `createMemoryMock`
-  - shared `RedisMock` / option types that do not mention `Resp2Server` values
-- Keep `src/mock.ts` as the Node facade that wires TCP and cluster support on top of the
-  shared memory helpers. This preserves existing Node consumers.
-- Add `src/browser.ts` exporting only the browser-safe surface:
-  - memory-only `createRedisMock`
-  - `createInMemoryClient` / `InMemoryRedisClient`
-  - `RedisServerState`
-  - `createRedisCommandExecutor`
-  - `InMemoryConnectionTransport`
-  - RESP codec and client-visible error classes
-- Browser `createRedisMock` rejects `transport: 'tcp'` and `cluster` with explicit errors.
-  Runtime rejection is not enough by itself; the module graph must also avoid importing
-  TCP/cluster modules.
+**Cut by the re-review.** A curated `src/browser.ts` + `mock-memory.ts` extraction only
+earns its keep for a *published* subpath with external consumers. The demo imports
+`createInMemoryClient` from `src/in-memory-client.ts` directly; Vite tree-shakes the graph
+and polyfills the Node builtins (Phase 3). `src/` is not touched.
 
-Verification:
-
-- Static bundle check for `src/browser.ts` with esbuild `platform: 'browser'`, no Node
-  builtin aliases, and no unresolved `net`, `node:fs`, `node:path`, `node:url`,
-  `node:crypto`, or `process` references.
-- Existing Node tests stay green to prove the shared helper extraction did not change
-  `src/index.ts` behavior.
+If a real public `js-redis-server/browser` export is ever wanted, resurrect this phase
+from git history — but it is explicitly out of scope for the demo.
 
 ## Phase 2 - Make Scripting Browser-Safe
 
-### 2a. Replace Node SHA1
+### 2a. (dropped) No In-Source SHA1 Swap
 
-`RedisScriptCache.load()` must stay sync because `SCRIPT LOAD` and `EVAL` cache scripts
-synchronously. Browser `crypto.subtle.digest()` is async, so do not use it here.
+**Cut by the re-review.** `state/script-cache.ts` keeps `node:crypto`. The demo's Vite
+`node-polyfills` plugin aliases `crypto` to `crypto-browserify`, whose
+`createHash('sha1')` is synchronous (so `RedisScriptCache.load()` stays sync) and produces
+a byte-identical digest to `node:crypto` — `SCRIPT LOAD`/`EVALSHA` digests still match
+real Redis. Package source unchanged; verification happens in the Phase 4 smoke test.
 
-- Add a small dependency-free sync SHA1 helper, for example `src/state/sha1.ts`.
-- Change `src/state/script-cache.ts` to import the helper instead of `node:crypto`.
-- Keep Node behavior identical: same Redis SHA1 digest strings and same cache semantics.
+### 2b. Make the Owned `lua-redis-wasm` Browser-Loadable (the only real code work here)
 
-Verification:
+The one true blocker, in the **separate, owned** `lua-redis-wasm` repo — not
+`js-redis-server`. Reference: [`texture2ddecoder-wasm`](https://github.com/fatal10110/texture2ddecoder-wasm)'s
+`src/index.ts` (single isomorphic loader, runtime env detection, no build-time export
+condition).
 
-- Unit tests for SHA1 vectors, including empty script and a known Lua script.
-- `SCRIPT LOAD`, `SCRIPT EXISTS`, `EVAL`, and `EVALSHA` tests continue to pass.
-
-### 2b. Ship a Browser-Safe `lua-redis-wasm`
-
-Required upstream change in the separate `lua-redis-wasm` repo:
-
-- Add a browser export condition whose top-level graph has no Node built-in imports.
-- Allow browser glue loading without `pathToFileURL()` and `file://` dynamic import.
-  Accept one or more of:
-  - a pre-imported `moduleFactory`
-  - an already loaded glue module
-  - an HTTP(S) `moduleUrl`
-- Continue accepting `wasmBytes` so callers can bypass filesystem reads.
-- Publish a point release and update `js-redis-server` to that version.
-
-Current blocker in the dependency:
+Current blocker in `loadModule()` (`dist/index.mjs`, confirmed in 1.3.0):
 
 ```js
-const moduleUrl = pathToFileURL(modulePath).href
-const imported = await import(moduleUrl)
+const modulePath = options.modulePath ?? defaultModulePath()
+const moduleUrl = pathToFileURL(modulePath).href   // Node-only
+const imported = await import(moduleUrl)            // file:// import, Node-only
+// wasmBytes already lets callers skip the .wasm fs.readFile, but NOT this glue import
 ```
 
-That path is Node-only. Browser v1 cannot ship until this is fixed upstream.
+Required change:
 
-### 2c. Thread Lua Loader Options Through This Repo
+- Branch on environment (`isNode` via `process.versions.node`, else browser).
+- Node path: unchanged (`pathToFileURL` + `fs.readFile`).
+- Browser path: load the Emscripten glue and `.wasm` via
+  `new URL('./redis_lua.mjs', import.meta.url)` / `new URL('./redis_lua.wasm', import.meta.url)`
+  so Vite inlines/serves them — **no `pathToFileURL`, no `file://`, and zero required
+  caller args**. (Zero-arg is the key constraint: it keeps `js-redis-server`'s existing
+  `createRedisLuaRuntime()` → `load()` call working untouched, so Phase 2c is unnecessary.)
+- Keep `wasmBytes` as an optional override.
+- No npm publish required — the demo consumes the built `dist/` (vendored into
+  `examples/browser-demo/vendor/lua-redis-wasm/`). Publish later if desired.
 
-- Add `RedisLuaRuntimeOptions` accepted by `createRedisLuaRuntime(options)`.
-- Add either `luaRuntimeOptions` or `luaRuntimeFactory` to `RedisServerStateOptions`.
-- `RedisServerState.getLuaRuntime()` keeps the current lazy per-server memoization, but
-  uses the configured options/factory.
-- Node default remains current behavior: load the bundled wasm using the dependency's
-  Node path.
-- Browser entry provides a browser loader: fetch `wasmUrl` or consume `wasmBytes`, then
-  call the upstream browser-safe loader/factory.
+**Implementation outcome (done).** `src/loader.ts` rewritten: no top-level `node:*`
+imports, `isNode`-branched, browser path uses literal `import('./redis_lua.mjs')` +
+`fetch(new URL('./redis_lua.wasm', import.meta.url))`; Node path dynamic-imports the
+builtins. All 138 Node tests stay green. Built TS-only (no Docker) since the wasm
+artifacts already existed.
 
-Verification:
+**Caveat discovered — the vendored glue is `-sENVIRONMENT=node`.** `redis_lua.mjs` has
+`ENVIRONMENT_IS_NODE = true` hardcoded, so it unconditionally
+`require("fs"|"path"|"crypto"|"url")` at init via `createRequire`. Since the loader now
+supplies `wasmBinary` + a custom `instantiateWasm`, the fs/path/url paths are never
+exercised; only crypto entropy is real. The demo bridges this with
+`examples/browser-demo/shims/node-module.js` (browser-backed `createRequire` →
+`crypto.getRandomValues`, inert fs/path/url), wired via node-polyfills `overrides`. The
+*proper* fix — rebuilding the wasm with `-sENVIRONMENT=web,worker,node` — is deferred as
+out-of-scope for a demo (needs the Docker/emcc toolchain and reopens runtime
+env-detection). Browser EVAL/EVALSHA verified correct regardless.
 
-- Browser smoke test executes `EVAL "return 1+1" 0` and receives `2`.
-- Browser smoke test runs `SCRIPT LOAD`, then `EVALSHA` with the returned digest.
-- Existing Lua isolation and scripting tests remain green in Node.
+### 2c. (dropped) No Loader-Option Threading
 
-## Phase 3 - Browser Build Target
+**Cut by the re-review.** Because the fixed `lua-redis-wasm` browser `load()` is zero-arg
+self-resolving (2b), `js-redis-server`'s `createRedisLuaRuntime()` / `getLuaRuntime()`
+need no `RedisLuaRuntimeOptions`, no `RedisServerStateOptions` changes. Package source
+unchanged.
 
-- Add a third `tsup` config block:
-  - `entry: { browser: 'src/browser.ts' }`
-  - `format: ['esm']`
-  - `platform: 'browser'`
-  - `dts: true`
-  - `splitting: false` unless the existing circular dependency concern has been removed
-- Add `buffer` as a runtime dependency and inject it for the browser build.
-- Emit or copy the Lua wasm asset into `dist/` unless the browser build is configured to
-  require caller-provided bytes.
-- Add `package.json` `exports["./browser"]` with JS and type entries, for example:
+## Phase 3 - Demo Build
 
-```json
-"./browser": {
-  "import": {
-    "types": "./dist/browser.d.mts",
-    "default": "./dist/browser.mjs"
-  }
-}
-```
+No `tsup` config, no `package.json` exports, nothing published to npm. Demo app lives at
+`examples/browser-demo` (Vite) and imports `createInMemoryClient` straight from
+`../../src/in-memory-client` via a relative path.
 
-- Do not rely on a top-level `"browser"` field while an explicit `exports` map exists. If
-  root-import browser auto-selection is desired, add a real `"browser"` condition under
-  `exports["."]`; otherwise document the explicit subpath.
-- Keep `main`, `module`, and the default `exports["."]` target pointing at the Node build.
+- `examples/browser-demo` gets its OWN `package.json` (own `node_modules`, own
+  `devDependencies`: `vite`, `vite-plugin-node-polyfills`) — root `package.json` is never
+  touched.
+- Demo's `vite.config.ts`:
+  - `plugins: [nodePolyfills({ include: ['buffer', 'crypto'] })]` (and `net` — the plugin
+    stubs it; nothing in the demo path calls `net.createServer().listen()`). This one
+    plugin covers `buffer`, sync-`crypto` SHA1, and the `net` stub at once.
+  - `base: '/js-redis-server/'` so built asset URLs resolve under the GH Pages project-site
+    path (`username.github.io/js-redis-server/`).
+- Demo depends on the local browser-fixed `lua-redis-wasm` build (2b) via a
+  `file:`/workspace dependency — no npm publish needed, just something importable. With
+  2b's zero-arg self-resolving browser `load()`, the demo needs no special loader wiring.
+- Existing Node tests/build untouched (nothing in `src/` changed, so this is automatic).
 
-Verification:
+Verification: `vite build` on the demo resolves with no unresolved Node builtins, and
+produces `examples/browser-demo/dist/`.
 
-- `npm run build` produces `dist/browser.mjs` and browser declarations.
-- `tests-package` covers `import 'js-redis-server/browser'`.
-- A tiny bundled app imports `js-redis-server/browser` and contains no unresolved Node
-  builtins.
+## Phase 4 - Demo Smoke Check + GH Pages Deploy
 
-## Phase 4 - Browser Tests & Docs
+One runnable check, not a suite — this is a demo, not a release gate:
 
-- Browser smoke suite in a real browser-like runtime (Playwright preferred over `jsdom`
-  for WASM/fetch coverage):
-  - `createRedisMock({ transport: 'memory' })`
-  - `createInMemoryClient`
-  - `SET` / `GET` / `HSET` / `EXPIRE`
-  - `MULTI` / `EXEC`
-  - `SCRIPT LOAD` / `SCRIPT EXISTS`
-  - `EVAL`
-  - `EVALSHA`
-- Negative browser tests:
-  - `createRedisMock({ transport: 'tcp' })` rejects clearly
-  - `createRedisMock({ cluster: ... })` rejects clearly
-  - accessing TCP endpoint helpers on a memory mock still throws the existing no-endpoint
-    error
-- Keep all existing Node tests green.
-- Update `docs/ARCHITECTURE.md` with a "Browser target" note.
-- Update `README.md` with:
+- Open the demo in a browser, run through its actual UI flow: a few basic commands
+  (`SET`/`GET`) plus `EVAL`/`EVALSHA` since the demo needs Lua.
+- If the demo has no UI yet, a one-off `assert`-based script run through the demo's own
+  bundler is enough: `createRedisMock({ transport: 'memory' })` → `SET`/`GET` →
+  `SCRIPT LOAD` → `EVALSHA` → assert expected replies.
+- Keep existing Node tests green — that's the only regression gate that matters here.
 
-```ts
-import { createRedisMock } from 'js-redis-server/browser'
-```
+Deploy (decided: GH Actions, not manual branch push):
 
-and document WASM delivery options (`wasmUrl` / `wasmBytes`) if exposed publicly.
+- Add `.github/workflows/deploy-demo.yml`: on push to `main` (path-filtered to
+  `examples/browser-demo/**` and `src/**` so unrelated commits don't redeploy), build the
+  demo with `vite build`, upload `examples/browser-demo/dist` via
+  `actions/upload-pages-artifact`, deploy via `actions/deploy-pages`.
+- One-time manual step (repo owner, not automatable here): Settings → Pages → Source →
+  "GitHub Actions".
 
 ## Effort & Sequencing
 
-| Phase                               | Effort  | Blocking? |
-| ----------------------------------- | ------- | --------- |
-| 0 Locked decisions                  | trivial | yes       |
-| 1 Browser-safe source boundary      | S       | yes       |
-| 2a SHA1 swap                        | S       | yes       |
-| 2b `lua-redis-wasm` browser release | M       | yes       |
-| 2c Lua loader wiring                | S/M     | yes       |
-| 3 Browser build target              | S       | yes       |
-| 4 Tests/docs                        | S/M     | yes       |
+| Phase                                  | Effort  | Status              |
+| --------------------------------------- | ------- | ------------------- |
+| 0 Locked decisions                     | trivial | done                |
+| 1 Browser-safe source split            | —       | dropped (re-review) |
+| 2a In-source SHA1 swap                 | —       | dropped (re-review) |
+| 2b `lua-redis-wasm` browser fix        | S/M     | done (loader.ts; branch feat/browser-loader) |
+| 2c Lua loader wiring                   | —       | dropped (re-review) |
+| 3 Demo app + Vite config               | S       | done (examples/browser-demo) |
+| 4 Demo smoke + GH Pages deploy         | S       | done (browser EVAL verified; workflow added) |
 
-Critical path: Phase 0 -> Phase 1 -> Phase 2a -> Phase 2b -> Phase 2c -> Phase 3 ->
-Phase 4. Lua is mandatory, so there is no supported "browser without Lua" release path.
+`js-redis-server` `src/` was not modified at all — the entire browser target lives in
+`examples/browser-demo/` (Vite app + vendored wasm + node-polyfills config) plus the
+loader fix in the separate `lua-redis-wasm` repo. Browser smoke (chromium via Playwright):
+SET/GET/HSET/HGETALL/RPUSH/LRANGE + EVAL + SCRIPT LOAD + EVALSHA all correct, zero console
+errors.
+
+**Open items / not done:**
+- Neither repo is committed (no PR yet). `lua-redis-wasm` change is on branch
+  `feat/browser-loader`; `js-redis-server` demo is untracked on `main`.
+- The proper `lua-redis-wasm` wasm rebuild (`-sENVIRONMENT=web,worker,node`) is deferred;
+  the demo uses the require-shim workaround instead.
+- One-time manual step before the first deploy: repo Settings → Pages → Source →
+  "GitHub Actions".
 
 ## Risks / Watch Items
 
-- **Upstream release timing:** `lua-redis-wasm` must publish a browser-safe loader before
-  this package can ship a complete browser target.
-- **Static graph leaks:** `src/browser.ts` must not import Node facade modules that pull
-  in `net`, CLI, or TCP cluster code.
-- **Stub masking:** do not let empty aliases make tests pass while reachable Node paths
-  remain in the browser bundle.
-- **Buffer polyfill correctness:** run RESP encode/decode and command tests against the
-  browser bundle, not just against TypeScript source in Node.
-- **WASM delivery:** prefer external/co-located wasm assets or caller-provided bytes over
-  base64 inlining to keep bundle size controlled.
+- **`net` stub honesty:** the demo entry is `createInMemoryClient` only. If the demo ever
+  imports `createRedisMock`/`createRedisServer`/`cluster`, the `net` stub stops being a
+  dead branch and the build silently ships a broken TCP path. Keep the demo on the
+  socketless client; the Phase 4 `EVAL` smoke test is the tripwire.
+- **Polyfill correctness:** exercise RESP encode/decode + a real `SCRIPT LOAD`/`EVALSHA`
+  through the actual demo bundle, not just TS source in Node — confirm `crypto-browserify`
+  SHA1 digests match Redis exactly (they should; it's a faithful impl).
+- **`lua-redis-wasm` browser fix scope:** make browser `load()` zero-arg self-resolving
+  (`import.meta.url`) so `js-redis-server` stays untouched. Don't over-build a generic
+  public loader API unless separately wanted.
+- **Demo import reaching into `src/`:** relative `../../src/in-memory-client` import means
+  the demo tracks source, not the built `dist/`. Fine for a demo; just don't let it imply
+  a supported public entry.

@@ -1,0 +1,63 @@
+name: Deploy browser demo
+
+# Builds examples/browser-demo and publishes it to GitHub Pages.
+# One-time setup: repo Settings → Pages → Source → "GitHub Actions".
+on:
+  push:
+    branches: [main]
+    # Only redeploy when the demo or the source it imports actually changes.
+    paths:
+      - 'examples/browser-demo/**'
+      - 'src/**'
+      - '.github/workflows/deploy-demo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Root deps: the demo imports ../../src, which pulls in respjs and
+      # cluster-key-slot from the root node_modules.
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install demo deps
+        run: npm ci
+        working-directory: examples/browser-demo
+
+      - name: Build demo
+        run: npm run build
+        working-directory: examples/browser-demo
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples/browser-demo/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
