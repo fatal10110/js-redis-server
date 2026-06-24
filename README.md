@@ -35,15 +35,12 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
 - [Features](#features)
 - [Installation](#installation)
 - [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests)
+  - [Connecting your client](#connecting-your-client)
   - [node:test](#nodetest)
   - [vitest / jest](#vitest--jest)
   - [Cluster mocks](#cluster-mocks)
   - [Seeding](#seeding)
   - [`createRedisMock` options](#createredismock-options)
-- [Connecting Clients](#connecting-clients)
-  - [Protocol Version (RESP2 / RESP3)](#protocol-version-resp2--resp3)
-  - [Connecting with ioredis](#connecting-with-ioredis)
-  - [Connecting with node-redis](#connecting-with-node-redis)
 - [Experimental: socketless client mocks](#experimental-socketless-client-mocks)
   - [`createIoredisMock` — ioredis-mock replacement](#createioredismock--ioredis-mock-replacement)
   - [`createNodeRedisMock` — node-redis in-memory mock](#createnoderedismock--node-redis-in-memory-mock)
@@ -84,14 +81,34 @@ between tests — you just connect your real client library to it.
 
 `RedisMock` surface:
 
-| Member                  | Description                                                                               |
-| :---------------------- | :---------------------------------------------------------------------------------------- |
-| `host` / `port` / `url` | Connection coordinates of the (first) node.                                               |
-| `addresses()`           | `{ host, port }[]` — one entry standalone, every node for cluster. Client-agnostic.       |
-| `seed(entries)`         | Preload data (see [Seeding](#seeding)).                                                   |
-| `flush()` / `reset()`   | Clear all keyspace data between tests.                                                    |
-| `close()`               | Shut down the server / cluster.                                                           |
-| `state` / `nodes`       | Escape hatches to the underlying `RedisServerState` / node handles.                       |
+| Member                  | Description                                                                         |
+| :---------------------- | :---------------------------------------------------------------------------------- |
+| `host` / `port` / `url` | Connection coordinates of the (first) node.                                         |
+| `addresses()`           | `{ host, port }[]` — one entry standalone, every node for cluster. Client-agnostic. |
+| `seed(entries)`         | Preload data (see [Seeding](#seeding)).                                             |
+| `flush()` / `reset()`   | Clear all keyspace data between tests.                                              |
+| `close()`               | Shut down the server / cluster.                                                     |
+| `state` / `nodes`       | Escape hatches to the underlying `RedisServerState` / node handles.                 |
+
+### Connecting your client
+
+A mock is a real server on a random free port, so connect any standard client
+to `mock.addresses()` / `mock.url`:
+
+```typescript
+// ioredis
+import { Redis } from 'ioredis'
+const redis = new Redis(mock.addresses()[0])
+
+// node-redis
+import { createClient } from 'redis'
+const client = createClient({ url: mock.url })
+await client.connect()
+```
+
+Connections start on RESP2 and upgrade to RESP3 when the client asks for it
+(ioredis sends `HELLO 3`; node-redis takes a `RESP: 3` option) — negotiated
+per-connection, no special setup.
 
 ### node:test
 
@@ -151,11 +168,25 @@ instance across a file, call `await mock.flush()` in `afterEach` instead.
 
 ### Cluster mocks
 
-Same facade — pass `cluster` and connect a cluster client:
+Same facade — pass `cluster`, then point a cluster client at every node via
+`mock.addresses()`:
 
 ```typescript
 const mock = await createRedisMock({ cluster: { masters: 3, replicas: 1 } })
+```
+
+```typescript
+// ioredis
 const cluster = new Redis.Cluster(mock.addresses())
+```
+
+```typescript
+// node-redis
+import { createCluster } from 'redis'
+const cluster = createCluster({
+  rootNodes: mock.addresses().map(n => ({ url: `redis://${n.host}:${n.port}` })),
+})
+await cluster.connect()
 ```
 
 ### Seeding
@@ -240,65 +271,6 @@ createRedisMock(options?: CreateRedisMockOptions): Promise<RedisMock>
 | `port`          | `number`                                 | `0`         | Standalone bind port (`0` = OS-assigned).                    |
 | `basePort`      | `number`                                 | `0`         | Cluster base port (`0` = each node OS-assigned).             |
 | `logger`        | `Pick<Logger, 'error'>`                  | `undefined` | Optional logger.                                             |
-
-## Connecting Clients
-
-You can connect to a running mock (or server) using any standard Redis client.
-
-### Protocol Version (RESP2 / RESP3)
-
-Each connection starts on RESP2 and can switch to RESP3 by sending `HELLO 3`
-(handled per-session, no server restart needed). Clients that support RESP3
-negotiate this automatically:
-
-```typescript
-import { createClient } from 'redis'
-
-// node-redis negotiates RESP3 via the `RESP` option
-const client = createClient({
-  url: 'redis://127.0.0.1:6379',
-  RESP: 3,
-})
-await client.connect()
-```
-
-### Connecting with ioredis
-
-```typescript
-import Redis from 'ioredis'
-
-// Single Node
-const redis = new Redis(6379, '127.0.0.1')
-
-// Cluster Node
-const cluster = new Redis.Cluster([
-  { host: '127.0.0.1', port: 30000 },
-  { host: '127.0.0.1', port: 30001 },
-  { host: '127.0.0.1', port: 30002 },
-])
-```
-
-### Connecting with node-redis
-
-```typescript
-import { createClient, createCluster } from 'redis'
-
-// Single Node
-const client = createClient({
-  url: 'redis://127.0.0.1:6379',
-})
-await client.connect()
-
-// Cluster Node
-const cluster = createCluster({
-  rootNodes: [
-    { url: 'redis://127.0.0.1:30000' },
-    { url: 'redis://127.0.0.1:30001' },
-    { url: 'redis://127.0.0.1:30002' },
-  ],
-})
-await cluster.connect()
-```
 
 ## Experimental: socketless client mocks
 
