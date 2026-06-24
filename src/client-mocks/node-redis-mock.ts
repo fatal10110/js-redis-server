@@ -3,7 +3,7 @@ import { createRedisCommandExecutor } from '../commands'
 import { buildClusterNodes, type ClusterNodePipeline } from '../cluster'
 import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
-import { RedisCommandError } from '../core/redis-error'
+import { RedisCommandError, RedisCrossSlotError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
 import { isResponseStream, type ResponseStream } from '../core/response-stream'
@@ -27,6 +27,76 @@ import { RedisServerState, RedisClusterTopology } from '../state'
  */
 
 const DEFAULT_DATABASE_COUNT = 16
+
+// node-redis throws its own error types (`instanceof WatchError` / `ErrorReply`
+// is the documented user idiom), so when the `redis` package is present — it
+// always is, since it's the thing being mocked — surface the real classes.
+// Resolved once, before any client is returned, and cached for the synchronous
+// decode path. Falls back to shape-compatible local classes if `redis` is
+// somehow absent.
+type RedisErrorConstructors = {
+  WatchError: new (message?: string) => Error
+  ErrorReply: new (message: string) => Error
+  MultiErrorReply: new (replies: unknown[], errorIndexes: number[]) => Error
+}
+
+class FacadeWatchError extends Error {
+  constructor() {
+    super('One (or more) of the watched keys has been changed')
+    this.name = 'WatchError'
+  }
+}
+class FacadeErrorReply extends Error {}
+class FacadeMultiErrorReply extends FacadeErrorReply {
+  constructor(
+    readonly replies: unknown[],
+    readonly errorIndexes: number[],
+  ) {
+    super('One or more commands in the MULTI/EXEC failed')
+    this.name = 'MultiErrorReply'
+  }
+  *errors(): IterableIterator<unknown> {
+    for (const index of this.errorIndexes) {
+      yield this.replies[index]
+    }
+  }
+}
+
+const FALLBACK_REDIS_ERRORS: RedisErrorConstructors = {
+  WatchError: FacadeWatchError,
+  ErrorReply: FacadeErrorReply,
+  MultiErrorReply: FacadeMultiErrorReply,
+}
+
+let resolvedRedisErrors: RedisErrorConstructors | undefined
+
+async function ensureRedisErrors(): Promise<RedisErrorConstructors> {
+  if (resolvedRedisErrors) {
+    return resolvedRedisErrors
+  }
+  try {
+    const redis = (await import('redis')) as unknown as
+      | Partial<RedisErrorConstructors>
+      | undefined
+    resolvedRedisErrors =
+      redis?.WatchError && redis.ErrorReply && redis.MultiErrorReply
+        ? {
+            WatchError: redis.WatchError,
+            ErrorReply: redis.ErrorReply,
+            MultiErrorReply: redis.MultiErrorReply,
+          }
+        : FALLBACK_REDIS_ERRORS
+  } catch {
+    resolvedRedisErrors = FALLBACK_REDIS_ERRORS
+  }
+  return resolvedRedisErrors
+}
+
+function errorReplyText(value: { code?: string; message: string }): string {
+  // Reconstruct the on-the-wire `CODE message` (e.g. `WRONGTYPE Operation …`)
+  // so the surfaced text matches what node-redis parses off the wire.
+  return value.code ? `${value.code} ${value.message}` : value.message
+}
 
 /** A command argument node-redis accepts on the wire. */
 export type NodeRedisCommandArgument = string | Buffer
@@ -65,6 +135,9 @@ export type NodeRedisPubSubListener = (message: string, channel: string) => void
 export async function createNodeRedisMock(
   options: CreateNodeRedisMockOptions = {},
 ): Promise<NodeRedisMockClient | NodeRedisMockCluster> {
+  // Resolve node-redis' error classes before any command can decode/throw, so
+  // the synchronous decode path can surface real WatchError/ErrorReply types.
+  await ensureRedisErrors()
   if ('cluster' in options && options.cluster) {
     return NodeRedisMockCluster.create(options.cluster)
   }
@@ -73,7 +146,7 @@ export async function createNodeRedisMock(
     DEFAULT_DATABASE_COUNT
   const state = new RedisServerState({ databaseCount })
   const executor = createRedisCommandExecutor()
-  return new NodeRedisMockClient({ state, executor })
+  return new NodeRedisMockClient({ state, executor, ownsState: true })
 }
 
 type FacadeBackend = {
@@ -97,9 +170,7 @@ abstract class CommandRunner {
   protected abstract run(args: NodeRedisCommandArgument[]): Promise<RedisValue>
 
   /** Generic escape hatch for any command, decoded to a native JS reply. */
-  async sendCommand(
-    args: NodeRedisCommandArgument[],
-  ): Promise<NodeRedisReply> {
+  async sendCommand(args: NodeRedisCommandArgument[]): Promise<NodeRedisReply> {
     return decodeReply(await this.run(args))
   }
 
@@ -129,8 +200,10 @@ abstract class CommandRunner {
     return asNumber(await this.run(['INCR', key]))
   }
 
-  async expire(key: string, seconds: number): Promise<boolean> {
-    return asNumber(await this.run(['EXPIRE', key, String(seconds)])) === 1
+  async expire(key: string, seconds: number): Promise<number> {
+    // node-redis' EXPIRE has no transformReply — it passes the raw 0/1 integer
+    // through as a number (not a boolean).
+    return asNumber(await this.run(['EXPIRE', key, String(seconds)]))
   }
 
   async ttl(key: string): Promise<number> {
@@ -202,6 +275,8 @@ abstract class CommandRunner {
 
 export type NodeRedisMockClientInit = FacadeBackend & {
   database?: number
+  /** True only for the client that created the state — it owns its teardown. */
+  ownsState?: boolean
 }
 
 /**
@@ -214,7 +289,14 @@ export class NodeRedisMockClient extends CommandRunner {
   private readonly emitter = new EventEmitter()
   private readonly backend: FacadeBackend
   private readonly database?: number
+  private readonly ownsState: boolean
   private readonly session: ClientSession
+  /**
+   * Serializes commands on this client the way a real single node-redis
+   * connection does, so a concurrent (un-awaited) call cannot interleave between
+   * the MULTI and EXEC of a transaction sharing {@link session}.
+   */
+  private commandLock: Promise<unknown> = Promise.resolve()
   /** Dedicated session + push-reader loop, created lazily on first subscribe. */
   private pubsub?: {
     session: ClientSession
@@ -230,6 +312,7 @@ export class NodeRedisMockClient extends CommandRunner {
     super()
     this.backend = { state: init.state, executor: init.executor }
     this.database = init.database
+    this.ownsState = init.ownsState ?? false
     this.session = new ClientSession({
       server: init.state,
       executor: init.executor,
@@ -270,10 +353,20 @@ export class NodeRedisMockClient extends CommandRunner {
     })
   }
 
-  protected async run(
-    args: NodeRedisCommandArgument[],
-  ): Promise<RedisValue> {
-    return runOnSession(this.session, args, this.closed)
+  protected run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
+    return this.runExclusive(() =>
+      runOnSession(this.session, args, this.closed),
+    )
+  }
+
+  /** Run `fn` after any in-flight command/transaction on this client settles. */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.commandLock.then(fn, fn)
+    this.commandLock = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   // --- pub/sub -------------------------------------------------------------
@@ -338,9 +431,20 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /** Begin a MULTI transaction. Commands are queued, then replayed on exec(). */
   multi(): NodeRedisMockMulti {
-    return new NodeRedisMockMulti(args =>
-      runOnSession(this.session, args, this.closed),
+    return new NodeRedisMockMulti(queued =>
+      this.runExclusive(() => this.runTransactionSpan(queued)),
     )
+  }
+
+  /** Replay MULTI → queued commands → EXEC on the shared session as one span. */
+  private async runTransactionSpan(
+    queued: NodeRedisCommandArgument[][],
+  ): Promise<RedisValue> {
+    await runOnSession(this.session, ['MULTI'], this.closed)
+    for (const args of queued) {
+      await runOnSession(this.session, args, this.closed)
+    }
+    return runOnSession(this.session, ['EXEC'], this.closed)
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -363,7 +467,9 @@ export class NodeRedisMockClient extends CommandRunner {
    * The push-drain loop settles on the next tick via the abort signal.
    */
   destroy(): void {
-    void this.teardown()
+    // teardown() is async (it awaits the push-drain loop); surface a rejection
+    // as an 'error' event rather than dropping it as an unhandled rejection.
+    void this.teardown().catch(err => this.emitter.emit('error', err))
     this.emitter.emit('end')
   }
 
@@ -383,6 +489,12 @@ export class NodeRedisMockClient extends CommandRunner {
       await pubsub.drained
       pubsub.listeners.clear()
       pubsub.patternListeners.clear()
+    }
+    if (this.ownsState) {
+      // Only the creating client owns the state graph; closing it clears the
+      // self-rescheduling active-expiry timer. Duplicates share this state and
+      // must not close it out from under their siblings.
+      this.backend.state.close()
     }
   }
 
@@ -464,8 +576,8 @@ export class NodeRedisMockMulti {
   private settled = false
 
   constructor(
-    private readonly exec1: (
-      args: NodeRedisCommandArgument[],
+    private readonly runTransaction: (
+      queued: NodeRedisCommandArgument[][],
     ) => Promise<RedisValue>,
   ) {}
 
@@ -504,28 +616,42 @@ export class NodeRedisMockMulti {
   }
 
   /**
-   * Replay the queued commands inside a real MULTI/EXEC. Returns an array of
-   * decoded replies, or `null` if the transaction was aborted (a watched key
-   * changed) — matching node-redis.
+   * Replay the queued commands inside a real MULTI/EXEC and return the array of
+   * decoded replies. Matching node-redis, a watch-aborted transaction throws a
+   * `WatchError` (never returns null), and per-command errors are aggregated
+   * into a single `MultiErrorReply` carrying every reply + the error indexes.
    */
-  async exec(): Promise<NodeRedisReply[] | null> {
+  async exec(): Promise<NodeRedisReply[]> {
     this.assertOpen()
     this.settled = true
 
-    await this.exec1(['MULTI'])
-    for (const args of this.queued) {
-      await this.exec1(args)
-    }
-    const result = await this.exec1(['EXEC'])
+    const result = await this.runTransaction(this.queued)
+    const errors = await ensureRedisErrors()
 
     if (result.kind === 'null' || result.kind === 'null-array') {
-      return null
+      // RESP2 `*-1` (a watched key changed). node-redis throws, never null.
+      throw new errors.WatchError()
     }
     if (result.kind !== 'array' && result.kind !== 'set') {
       // Defensive: any non-array EXEC reply (shouldn't happen) → decode as-is.
       return [decodeReply(result)]
     }
-    return result.items.map(item => decodeReply(item))
+
+    const replies: unknown[] = []
+    const errorIndexes: number[] = []
+    result.items.forEach((item, index) => {
+      if (item.kind === 'error') {
+        replies.push(new errors.ErrorReply(errorReplyText(item)))
+        errorIndexes.push(index)
+        return
+      }
+      replies.push(decodeReply(item))
+    })
+
+    if (errorIndexes.length > 0) {
+      throw new errors.MultiErrorReply(replies, errorIndexes)
+    }
+    return replies as NodeRedisReply[]
   }
 
   /** Cancel the transaction without running the queued commands. */
@@ -602,13 +728,14 @@ export class NodeRedisMockCluster extends CommandRunner {
     return this
   }
 
-  protected async run(
-    args: NodeRedisCommandArgument[],
-  ): Promise<RedisValue> {
+  protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
     const session = this.sessionForCommand(args)
     return runOnSession(session, args, this.closed)
   }
 
+  // quit()/disconnect() are async to match node-redis' signatures, but cluster
+  // teardown is fully synchronous (no push-drain loop to await) — unlike the
+  // standalone client whose teardown awaits its pub/sub drain.
   async quit(): Promise<string> {
     this.teardown()
     this.emitter.emit('end')
@@ -637,18 +764,32 @@ export class NodeRedisMockCluster extends CommandRunner {
     for (const link of this.replicationLinks) {
       link.close()
     }
+    // Close each master's state to clear its active-expiry timer. (Replicas are
+    // built with expiry disabled, so only masters arm one.)
+    for (const node of this.masters) {
+      node.state.close()
+    }
   }
 
   /**
    * Resolve (and cache) a session on the master that owns the slot for the
    * command's keys. Keyless commands run on the first master.
    */
-  private sessionForCommand(
-    args: NodeRedisCommandArgument[],
-  ): ClientSession {
+  private sessionForCommand(args: NodeRedisCommandArgument[]): ClientSession {
     const keys = extractRoutingKeys(args)
     const slot =
       keys.length > 0 ? this.topology.calculateSlotForKeys(keys) : null
+
+    if (slot === -1) {
+      // generateMulti() returns -1 when the keys span multiple slots. Match the
+      // real cluster (ClusterPolicy) and refuse, rather than silently running
+      // the whole command against the first key's node with a wrong result.
+      // Surface it the way node-redis would parse `-CROSSSLOT …` off the wire:
+      // an ErrorReply whose message carries the code prefix.
+      const crossSlot = new RedisCrossSlotError()
+      const ErrorReply = resolvedRedisErrors?.ErrorReply
+      throw ErrorReply ? new ErrorReply(errorReplyText(crossSlot)) : crossSlot
+    }
 
     const owner =
       slot === null
@@ -727,14 +868,33 @@ async function drainSubscribeAck(stream: ResponseStream): Promise<RedisValue> {
   return last
 }
 
+// Commands whose keys are every positional argument after the name. The router
+// extracts all of them so a cross-slot invocation (e.g. `del('a','b')` across
+// slots) is detected and refused rather than silently run on the first key's
+// node. Other commands route by their first key argument.
+const MULTI_KEY_COMMANDS = new Set([
+  'DEL',
+  'EXISTS',
+  'UNLINK',
+  'TOUCH',
+  'MGET',
+  'WATCH',
+  'SINTER',
+  'SUNION',
+  'SDIFF',
+  'PFCOUNT',
+])
+
 function extractRoutingKeys(args: NodeRedisCommandArgument[]): Buffer[] {
-  // The facade only needs slot routing, and every command it routes places its
-  // key in the first argument slot. That covers the curated set + the common
-  // single-key sendCommand cases; multi-key cross-slot commands are out of the
-  // honest Tier-2 scope (documented).
   if (args.length < 2) {
     return []
   }
+  if (MULTI_KEY_COMMANDS.has(String(args[0]).toUpperCase())) {
+    return args.slice(1).map(toBuffer)
+  }
+  // Single-key heuristic: every other routed command keys off its first arg.
+  // Uncommon multi-key commands sent via the generic sendCommand fall through
+  // here and route by first key (documented honest scope).
   return [toBuffer(args[1])]
 }
 
@@ -782,10 +942,10 @@ function decodeReply(value: RedisValue): NodeRedisReply {
     case 'verbatim':
       return value.value.toString('utf8')
     case 'integer':
-      if (typeof value.value === 'bigint') {
-        return isSafeBigInt(value.value) ? Number(value.value) : value.value
-      }
-      return value.value
+      // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic,
+      // so it is always a `number` (precision loss past 2^53 included) — never a
+      // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint, handled below.
+      return typeof value.value === 'bigint' ? Number(value.value) : value.value
     case 'double':
       return value.value
     case 'boolean':
@@ -812,14 +972,16 @@ function decodeReply(value: RedisValue): NodeRedisReply {
     case 'null':
     case 'null-array':
       return null
-    case 'error':
-      // Reconstruct the on-the-wire error text (`CODE message`) so the surfaced
-      // message matches what node-redis parses from `-WRONGTYPE …`, `-ERR …`,
-      // etc. The bare `value.message` would drop the code prefix.
-      throw new RedisCommandError(
-        value.code ? `${value.code} ${value.message}` : value.message,
-        value.code,
-      )
+    case 'error': {
+      // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches
+      // the documented idiom) with the reconstructed on-the-wire `CODE message`.
+      // Falls back to RedisCommandError only if the redis package is absent.
+      const text = errorReplyText(value)
+      const ErrorReply = resolvedRedisErrors?.ErrorReply
+      throw ErrorReply
+        ? new ErrorReply(text)
+        : new RedisCommandError(text, value.code)
+    }
   }
 }
 
@@ -840,13 +1002,6 @@ function decodeKey(value: RedisValue): string {
     default:
       return ''
   }
-}
-
-function isSafeBigInt(value: bigint): boolean {
-  return (
-    value >= BigInt(Number.MIN_SAFE_INTEGER) &&
-    value <= BigInt(Number.MAX_SAFE_INTEGER)
-  )
 }
 
 function asNumber(value: RedisValue): number {

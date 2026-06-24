@@ -1,5 +1,6 @@
 import { test, describe, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { ErrorReply, MultiErrorReply, WatchError } from 'redis'
 import {
   createNodeRedisMock,
   type NodeRedisMockClient,
@@ -44,7 +45,8 @@ describe('createNodeRedisMock (standalone)', () => {
   test('expire / ttl', async () => {
     const client = await makeClient()
     await client.set('e', 'v')
-    assert.strictEqual(await client.expire('e', 1000), true)
+    // node-redis returns the raw integer (1), not a boolean.
+    assert.strictEqual(await client.expire('e', 1000), 1)
     const ttl = await client.ttl('e')
     assert.ok(ttl > 0 && ttl <= 1000)
   })
@@ -129,10 +131,30 @@ describe('createNodeRedisMock (standalone)', () => {
     await other.set('w', 'changed')
     const multi = client.multi()
     multi.set('w', 'fromTxn')
-    const res = await multi.exec()
-    // node-redis surfaces an aborted transaction as null.
-    assert.strictEqual(res, null)
+    // node-redis throws WatchError on a watch-aborted EXEC (never returns null).
+    await assert.rejects(
+      () => multi.exec(),
+      (err: unknown) => err instanceof WatchError,
+    )
     assert.strictEqual(await client.get('w'), 'changed')
+  })
+
+  test('exec aggregates per-command errors into MultiErrorReply', async () => {
+    const client = await makeClient()
+    await client.set('s', 'notAnInteger')
+    const multi = client.multi()
+    multi.set('ok', 'v') // succeeds
+    multi.incr('s') // errors: value is not an integer
+    await assert.rejects(
+      () => multi.exec(),
+      (err: unknown) => {
+        assert.ok(err instanceof MultiErrorReply)
+        assert.deepStrictEqual(err.errorIndexes, [1])
+        assert.strictEqual(err.replies[0], 'OK')
+        assert.ok(err.replies[1] instanceof ErrorReply)
+        return true
+      },
+    )
   })
 
   test('pub/sub delivers messages to the subscribe callback', async () => {
@@ -239,5 +261,22 @@ describe('createNodeRedisMock (cluster)', () => {
       'OK',
     )
     assert.strictEqual(await cluster.sendCommand(['GET', 'routed']), 'yes')
+  })
+
+  test('a multi-key command across slots is refused with CROSSSLOT', async () => {
+    cluster = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+
+    // {x} and {y} hash to different slots → DEL spans two slots. Must throw
+    // rather than silently running against the first key's node.
+    await assert.rejects(
+      () => cluster!.del('{x}:a', '{y}:b'),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.match(err.message, /CROSSSLOT/)
+        return true
+      },
+    )
   })
 })
