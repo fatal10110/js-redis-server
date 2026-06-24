@@ -25,6 +25,7 @@ async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(typeof pkg.createRedisMock, 'function')
   assert.strictEqual(typeof pkg.createRedisServer, 'function')
   assert.strictEqual(typeof pkg.createRedisCluster, 'function')
+  assert.strictEqual(typeof pkg.createInMemoryClient, 'function')
   assert.strictEqual(typeof pkg.InMemoryRedisClient, 'function')
   assert.strictEqual(typeof pkg.buildRedisCluster, 'function')
   assert.strictEqual(pkg.buildRedisCluster, pkg.createRedisCluster)
@@ -36,15 +37,14 @@ async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual('RedisServerState' in pkg, false)
   assert.strictEqual('createRedisCommandExecutor' in pkg, false)
 
-  const createRedisMock = pkg.createRedisMock as (o: unknown) => Promise<{
-    client(): { command(...a: unknown[]): Promise<unknown> }
-    close(): Promise<void>
+  const createInMemoryClient = pkg.createInMemoryClient as () => Promise<{
+    command(...a: unknown[]): Promise<unknown>
+    close(): void
   }>
-  const mock = await createRedisMock({ transport: 'memory' })
-  const client = mock.client()
+  const client = await createInMemoryClient()
   assert.strictEqual(await client.command('SET', 'k', 'v'), 'OK')
   assert.strictEqual(await client.command('GET', 'k'), 'v')
-  await mock.close()
+  client.close()
 }
 
 function assertCore(core: Record<string, unknown>): void {
