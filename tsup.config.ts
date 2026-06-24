@@ -12,9 +12,9 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     clean: true,
-    // Bundle each entry standalone. Code splitting would otherwise carve out
-    // shared chunks and trip over a pre-existing state/index ↔ server-state
-    // circular dependency, risking broken module init order.
+    // Bundle each entry standalone — no shared chunks between `index` and
+    // `core`. Keeps the published output a couple of self-contained files
+    // rather than a web of cross-referenced chunks.
     splitting: false,
     outDir: 'dist',
   },

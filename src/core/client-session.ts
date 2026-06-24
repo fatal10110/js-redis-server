@@ -15,12 +15,10 @@ import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
 import { encodeRedisValue, type RespVersion } from './resp-encoder'
 import { type RedisTurnHandle, type RedisTurnQueue } from './turn-queue'
-import type {
-  RedisClusterNodeRole,
-  RedisDatabase,
-  RedisServerState,
-  Unsubscribe,
-} from '../state'
+import type { RedisClusterNodeRole } from '../state/cluster-topology'
+import type { RedisDatabase } from '../state/database'
+import type { RedisServerState } from '../state/server-state'
+import type { Unsubscribe } from '../state/mutation-events'
 
 export type ClientSessionOptions = {
   id?: string
