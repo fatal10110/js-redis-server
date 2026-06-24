@@ -136,18 +136,17 @@ describe('public interface — createRedisMock', () => {
     assert.ok(mock.state)
     assert.strictEqual(mock.nodes, undefined)
 
+    // A socketless client over the mock's own state (the documented power-user
+    // escape hatch) sees the seed and the subsequent flush.
     await mock.seed([{ key: 'k', type: 'string', value: 'v' }])
-    const client = mock.client()
+    const client = new InMemoryRedisClient({
+      server: mock.state!,
+      executor: createRedisCommandExecutor(),
+    })
     assert.strictEqual(await client.command('GET', 'k'), 'v')
     await mock.flush()
     assert.strictEqual(await client.command('GET', 'k'), null)
-  })
-
-  test('memory transport has no endpoint but a working client', async () => {
-    mock = await createRedisMock({ transport: 'memory' })
-    assert.throws(() => mock.connectionOptions(), /no TCP endpoint/)
-    const client = mock.client()
-    assert.strictEqual(await client.command('PING'), 'PONG')
+    client.close()
   })
 
   test('cluster mock exposes nodes and a slot-routed seed', async () => {
@@ -161,15 +160,5 @@ describe('public interface — createRedisMock', () => {
         node.server.getDatabase(0).getString(Buffer.from('user:1')) !== null,
     )
     assert.ok(owner)
-  })
-
-  test('error replies surface as RedisCommandError', async () => {
-    mock = await createRedisMock({ transport: 'memory' })
-    const client = mock.client()
-    await client.command('SET', 'k', 'v')
-    await assert.rejects(
-      client.command('INCR', 'k'),
-      (err: unknown) => err instanceof RedisCommandError,
-    )
   })
 })

@@ -307,33 +307,30 @@ const cluster = new Redis.Cluster(mock.clusterNodes())
 
 ### Socketless client
 
-If you don't need a real client library, `mock.client()` returns an in-process
-client that drives the **same** command pipeline directly — no TCP loopback, no
-RESP encoding — and resolves to native JS replies (throwing `RedisCommandError`
-on `-ERR`). Standalone mocks only; cluster mocks throw.
+If you don't need a real client library, `createInMemoryClient()` returns an
+in-process client with its **own** keyspace that drives the command pipeline
+directly — no TCP loopback, no RESP encoding — and resolves to native JS replies
+(throwing `RedisCommandError` on `-ERR`). It's the bespoke-client sibling of
+`createIoredisMock` / `createNodeRedisMock`; standalone only.
 
 ```typescript
-const mock = await createRedisMock()
-const client = mock.client() // { database?, returnBuffers? }
+import { createInMemoryClient } from 'js-redis-server'
+
+const client = await createInMemoryClient({
+  // databaseCount?, database?, returnBuffers?, seed?
+})
 
 await client.command('SET', 'k', 'v')
 await client.command('GET', 'k') // 'v'
 await client.command('INCR', 'n') // 1 (number)
 await client.command('HGETALL', 'h') // { field: 'value', ... }
 
-// clients are closed automatically when the mock closes
-await mock.close()
+client.close() // tears down its keyspace
 ```
 
-For a mock with **no network listener at all**, pass `transport: 'memory'`. Only
-`client()` works; the network accessors (`host`/`port`/`url`/`connectionOptions`/
-`clusterNodes`) throw.
-
-```typescript
-const mock = await createRedisMock({ transport: 'memory' })
-const client = mock.client()
-await client.command('PING') // 'PONG'
-```
+Need to drive an existing `createRedisMock()`'s keyspace instead of an
+independent one? Construct `InMemoryRedisClient` directly with that mock's
+`state` and an executor from `js-redis-server/core`.
 
 ### Drop-in ioredis mock
 
@@ -413,10 +410,12 @@ await mock.seed([
   { key: 'in-db-3', type: 'string', value: 'scoped', db: 3 },
 ])
 
-const client = mock.client()
-await client.command('GET', 'user:1') // 'alice'
-await client.command('HGETALL', 'h:1') // { name: 'bob', age: '30' }
+// any client connected to the mock now sees the seeded keys
+// (e.g. new Redis(mock.connectionOptions()) — GET user:1 → 'alice')
 ```
+
+`createInMemoryClient()` takes the same `seed` array to pre-populate its own
+keyspace before the first command.
 
 Each entry's shape is checked against its `type`:
 

@@ -16,9 +16,7 @@ export {
   type CreateRedisServerClusterOptions,
   type RedisAddress,
   type RedisMock,
-  type RedisMockClientOptions,
   type RedisMockClusterOptions,
-  type RedisMockTransport,
   type RedisServerHandle,
 } from './mock'
 export { seedCluster, seedStandalone, type SeedEntry } from './seed'
@@ -32,6 +30,7 @@ export {
 export {
   InMemoryRedisClient,
   createInMemoryClient,
+  type CreateInMemoryClientOptions,
   type InMemoryRedisClientOptions,
   type RedisCommandArgument,
   type RedisNativeReply,
