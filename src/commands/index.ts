@@ -1,6 +1,12 @@
 import type { CommandDefinition } from '../core/command-definition'
 import { CommandExecutor } from '../core/command-executor'
 import { CommandRegistry } from '../core/command-registry'
+import {
+  gateSatisfied,
+  resolveCompatibilityProfile,
+  type CompatibilityProfile,
+  type CompatibilitySpec,
+} from '../core/compatibility'
 import type { ExecutionPolicy } from '../core/execution-policies'
 import {
   createAuthPolicy,
@@ -43,19 +49,25 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
 
 export function createRedisCommandRegistry(
   extraCommands: readonly CommandDefinition[] = [],
+  profile: CompatibilityProfile = resolveCompatibilityProfile(),
 ): CommandRegistry {
   const registry = new CommandRegistry()
-  registry.registerAll(redisCommandDefinitions)
-  registry.registerAll(extraCommands)
+  registry.registerAll(
+    filterCompatibleCommands(redisCommandDefinitions, profile),
+  )
+  registry.registerAll(filterCompatibleCommands(extraCommands, profile))
   return registry
 }
 
 export function createRedisCommandExecutor(options?: {
   extraCommands?: readonly CommandDefinition[]
   policies?: readonly ExecutionPolicy[]
+  compatibility?: CompatibilitySpec
 }): CommandExecutor {
+  const profile = resolveCompatibilityProfile(options?.compatibility)
   return new CommandExecutor({
-    registry: createRedisCommandRegistry(options?.extraCommands),
+    registry: createRedisCommandRegistry(options?.extraCommands, profile),
+    profile,
     policies: [
       createAuthPolicy(),
       createSubscribedModePolicy(),
@@ -63,6 +75,17 @@ export function createRedisCommandExecutor(options?: {
       createTransactionPolicy(),
     ],
   })
+}
+
+function filterCompatibleCommands(
+  definitions: readonly CommandDefinition[],
+  profile: CompatibilityProfile,
+): CommandDefinition[] {
+  return definitions.filter(
+    definition =>
+      definition.since === undefined ||
+      gateSatisfied(definition.since, profile),
+  )
 }
 
 export {

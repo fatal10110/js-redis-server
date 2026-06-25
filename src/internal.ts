@@ -56,6 +56,13 @@ export type { RedisResultOptions } from './core/redis-result'
 export type { RespEncodeOptions, RespVersion } from './core/resp-encoder'
 export type { ResponseStream } from './core/response-stream'
 export type { RedisTurnHandle, RedisTurnQueue } from './core/turn-queue'
+export type {
+  CompatibilityProfile,
+  CompatibilitySpec,
+  FeatureId,
+  RedisFlavor,
+  VersionGate,
+} from './core/compatibility'
 export type { ClientSessionOptions } from './core/client-session'
 export type {
   ConnectionTransport,
@@ -74,6 +81,12 @@ export { CommandExecutor, type ExecutorResult } from './core/command-executor'
 export { CommandRegistry } from './core/command-registry'
 export { defineCommand } from './core/command-definition'
 export { t, parseCommandArgs } from './core/command-schema'
+export {
+  FEATURE_GATES,
+  gateSatisfied,
+  parseVersion,
+  resolveCompatibilityProfile,
+} from './core/compatibility'
 export {
   createAuthPolicy,
   createClusterPolicy,

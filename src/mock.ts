@@ -9,6 +9,10 @@ import { Resp2Server } from './core/transports/resp2/server'
 import { RedisServerState } from './state'
 import { seedCluster, seedStandalone, type SeedEntry } from './seed'
 import type { Logger } from './logger'
+import {
+  resolveCompatibilityProfile,
+  type CompatibilitySpec,
+} from './core/compatibility'
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_DATABASE_COUNT = 16
@@ -20,6 +24,7 @@ export type CreateRedisServerOptions = {
   port?: number
   /** Logical database count. Defaults to 16, matching real Redis. */
   databaseCount?: number
+  compatibility?: CompatibilitySpec
   logger?: Pick<Logger, 'error'>
 }
 
@@ -30,6 +35,7 @@ export type CreateRedisServerClusterOptions = {
   basePort?: number
   /** Databases per cluster node. Defaults to 1. */
   databasesPerNode?: number
+  compatibility?: CompatibilitySpec
   logger?: Pick<Logger, 'error'>
 }
 
@@ -42,14 +48,22 @@ export type RedisServerHandle = {
 }
 
 /** Build a standalone keyspace + command pipeline (no transport). */
-function createStandalonePipeline(databaseCount?: number): {
+function createStandalonePipeline(
+  databaseCount?: number,
+  compatibility?: CompatibilitySpec,
+): {
   state: RedisServerState
   executor: CommandExecutor
 } {
+  const profile = resolveCompatibilityProfile(compatibility)
   const state = new RedisServerState({
     databaseCount: databaseCount ?? DEFAULT_DATABASE_COUNT,
+    compatibility: profile,
   })
-  return { state, executor: createRedisCommandExecutor() }
+  return {
+    state,
+    executor: createRedisCommandExecutor({ compatibility: profile }),
+  }
 }
 
 /**
@@ -79,13 +93,17 @@ export async function createRedisServer(
       replicasPerMaster: options.cluster.replicas ?? 0,
       basePort: options.basePort ?? 0,
       databasesPerNode: options.databasesPerNode,
+      compatibility: options.compatibility,
       logger: options.logger,
     })
     await cluster.listen()
     return cluster
   }
 
-  const { state, executor } = createStandalonePipeline(options.databaseCount)
+  const { state, executor } = createStandalonePipeline(
+    options.databaseCount,
+    options.compatibility,
+  )
   const server = new Resp2Server({
     server: state,
     executor,
@@ -117,6 +135,7 @@ export type CreateRedisMockOptions = {
   port?: number
   /** Cluster base port. Defaults to `0` (each node OS-assigned). */
   basePort?: number
+  compatibility?: CompatibilitySpec
   logger?: Pick<Logger, 'error'>
 }
 
@@ -175,7 +194,10 @@ export async function createRedisMock(
 async function createTcpStandaloneMock(
   options: CreateRedisMockOptions,
 ): Promise<RedisMock> {
-  const { state, executor } = createStandalonePipeline(options.databaseCount)
+  const { state, executor } = createStandalonePipeline(
+    options.databaseCount,
+    options.compatibility,
+  )
   const server = new Resp2Server({
     server: state,
     executor,
@@ -208,6 +230,7 @@ async function createClusterMock(
     masters: cluster.masters,
     replicasPerMaster: cluster.replicas ?? 0,
     basePort: options.basePort ?? 0,
+    compatibility: options.compatibility,
     logger: options.logger,
   })
 

@@ -14,6 +14,11 @@ import {
 } from './state'
 import type { CommandExecutor } from './core/command-executor'
 import type { Logger } from './logger'
+import {
+  resolveCompatibilityProfile,
+  type CompatibilityProfile,
+  type CompatibilitySpec,
+} from './core/compatibility'
 
 export type RedisClusterOptions = {
   masters: number
@@ -22,6 +27,7 @@ export type RedisClusterOptions = {
   host?: string
   databasesPerNode?: number
   replicaUpdateDelayMs?: number
+  compatibility?: CompatibilitySpec
   logger?: Pick<Logger, 'error'>
 }
 
@@ -134,6 +140,7 @@ export function buildClusterNodes(options: RedisClusterOptions): ClusterNodes {
   const host = options.host ?? '127.0.0.1'
   const replicas = options.replicasPerMaster ?? 0
   const totalNodes = options.masters * (replicas + 1)
+  const profile = resolveCompatibilityProfile(options.compatibility)
 
   if (options.basePort + totalNodes - 1 > 65535) {
     throw new Error('Cluster base-port range exceeds 65535')
@@ -180,6 +187,7 @@ export function buildClusterNodes(options: RedisClusterOptions): ClusterNodes {
     topology,
     options.databasesPerNode ?? 1,
     options.replicaUpdateDelayMs ?? 0,
+    profile,
     replicationLinks,
   )
 
@@ -191,6 +199,7 @@ export function buildClusterNodes(options: RedisClusterOptions): ClusterNodes {
 
     const executor = createRedisCommandExecutor({
       extraCommands: createClusterCommands(node.id),
+      compatibility: profile,
       policies: [createClusterPolicy({ localNodeId: node.id, topology })],
     })
 
@@ -308,6 +317,7 @@ function createClusterNodeStates(
   topology: RedisClusterTopology,
   databaseCount: number,
   replicaUpdateDelayMs: number,
+  profile: CompatibilityProfile,
   replicationLinks: ReplicationLink[],
 ): Map<string, RedisServerState> {
   const states = new Map<string, RedisServerState>()
@@ -318,6 +328,7 @@ function createClusterNodeStates(
       new RedisServerState({
         databaseCount,
         clusterTopology: topology,
+        compatibility: profile,
         activeExpiryIntervalMs: node.role === 'replica' ? false : undefined,
       }),
     )

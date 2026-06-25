@@ -19,7 +19,7 @@ import { RedisValue } from '../core/redis-value'
 import { array, bulk, integer, ok, simpleString } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
-const REDIS_VERSION = '7.4.4'
+const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
 // There is no persistence, so LASTSAVE reports the process/server start time.
@@ -104,7 +104,7 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
   const sectionBuilders: Record<string, () => string[]> = {
     server: () => [
       '# Server',
-      `redis_version:${REDIS_VERSION}`,
+      ...serverIdentityLines(ctx),
       'redis_git_sha1:00000000',
       'redis_git_dirty:0',
       `redis_mode:${redisMode(ctx)}`,
@@ -478,6 +478,12 @@ export const clientCommand = defineCommand({
     }
 
     if (subcommand === 'setinfo') {
+      if (!ctx.server.profile.has('client.setinfo')) {
+        throw new RedisCommandError(
+          `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+        )
+      }
+
       expectArgCount('client|setinfo', args.args, 2)
       const attribute = args.args[0].toString().toLowerCase()
       if (attribute === 'lib-name') {
@@ -506,7 +512,7 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'help') {
       expectArgCount('client|help', args.args, 0)
-      return array([
+      const lines = [
         value(
           'CLIENT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
         ),
@@ -515,8 +521,11 @@ export const clientCommand = defineCommand({
         value('LIST'),
         value('GETNAME'),
         value('SETNAME <connection-name>'),
-        value('SETINFO <LIB-NAME|LIB-VER> <value>'),
-      ])
+      ]
+      if (ctx.server.profile.has('client.setinfo')) {
+        lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
+      }
+      return array(lines)
     }
 
     throw new RedisCommandError(
@@ -583,8 +592,8 @@ export const helloCommand = defineCommand({
     ctx.session.setProtocolVersion(version)
 
     const fields: [RedisValue, RedisValue][] = [
-      [value('server'), value('redis')],
-      [value('version'), value(REDIS_VERSION)],
+      [value('server'), value(ctx.server.profile.flavor)],
+      [value('version'), value(ctx.server.profile.version)],
       [value('proto'), RedisValue.integer(version)],
       [value('id'), RedisValue.integer(getClientId(ctx.session))],
       [value('mode'), value(redisMode(ctx))],
@@ -599,6 +608,19 @@ export const helloCommand = defineCommand({
     return RedisResult.create(RedisValue.array(fields.flat()))
   },
 })
+
+function serverIdentityLines(ctx: RedisExecutionContext): string[] {
+  const profile = ctx.server.profile
+  if (profile.flavor === 'redis') {
+    return [`redis_version:${profile.version}`]
+  }
+
+  return [
+    `redis_version:${VALKEY_REDIS_COMPAT_VERSION}`,
+    'server_name:valkey',
+    `valkey_version:${profile.version}`,
+  ]
+}
 
 export const authCommand = defineCommand({
   name: 'auth',
@@ -632,6 +654,7 @@ export const authCommand = defineCommand({
 
 export const resetCommand = defineCommand({
   name: 'reset',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({}),
   // 'transaction' makes RESET bypass MULTI queueing and run immediately, like
   // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
