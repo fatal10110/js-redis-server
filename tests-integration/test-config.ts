@@ -10,6 +10,7 @@ import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createRedisCluster, RedisCluster } from '../src/cluster'
 import {
+  type CompatibilitySpec,
   Resp2Server,
   RedisServerState,
   createRedisCommandExecutor,
@@ -27,6 +28,9 @@ export type IoredisClusterSetupOptions = {
 
 export class TestRunner {
   readonly backend = (process.env.TEST_BACKEND as TestBackend) || 'mock'
+  private readonly compatibility = process.env.REDIS_COMPAT as
+    | CompatibilitySpec
+    | undefined
   private readonly mockClusters = new Map<string, RedisCluster>()
   private activeMockCluster: RedisCluster | null = null
   private ioredisCluster: Cluster[] = []
@@ -39,13 +43,14 @@ export class TestRunner {
   private async ensureMockCluster(
     options: Required<IoredisClusterSetupOptions>,
   ): Promise<RedisCluster> {
-    const key = mockClusterKey(options)
+    const key = mockClusterKey(options, this.compatibility)
     let cluster = this.mockClusters.get(key)
     if (!cluster) {
       cluster = createRedisCluster({
         masters: options.masters,
         replicasPerMaster: options.replicasPerMaster,
         basePort: 0,
+        compatibility: this.compatibility,
       })
       this.mockClusters.set(key, cluster)
       await cluster.listen()
@@ -249,8 +254,13 @@ export class TestRunner {
   }
 
   private async startMockStandalone(): Promise<number> {
-    const state = new RedisServerState({ databaseCount: 16 })
-    const executor = createRedisCommandExecutor()
+    const state = new RedisServerState({
+      databaseCount: 16,
+      compatibility: this.compatibility,
+    })
+    const executor = createRedisCommandExecutor({
+      compatibility: state.profile,
+    })
     const server = new Resp2Server({ server: state, executor })
     await server.listen(0)
     this.standaloneServers.push(server)
@@ -294,8 +304,11 @@ export class TestRunner {
     const state = new RedisServerState({
       databaseCount: 16,
       requirepass: STANDALONE_AUTH_PASSWORD,
+      compatibility: this.compatibility,
     })
-    const executor = createRedisCommandExecutor()
+    const executor = createRedisCommandExecutor({
+      compatibility: state.profile,
+    })
     const server = new Resp2Server({ server: state, executor })
     await server.listen(0)
     this.standaloneServers.push(server)
@@ -438,8 +451,11 @@ export class TestRunner {
   }
 }
 
-function mockClusterKey(options: Required<IoredisClusterSetupOptions>): string {
-  return `${options.masters}:${options.replicasPerMaster}`
+function mockClusterKey(
+  options: Required<IoredisClusterSetupOptions>,
+  compatibility: CompatibilitySpec | undefined,
+): string {
+  return `${options.masters}:${options.replicasPerMaster}:${compatibility ?? 'default'}`
 }
 
 /** Grab an OS-assigned free TCP port (used to launch a real redis-server). */

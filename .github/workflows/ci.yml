@@ -64,6 +64,8 @@ jobs:
         include:
           - name: raw-mock
             script: test:integration:raw:mock
+          - name: compatibility-profiles-mock
+            script: test:integration:compatibility:mock
           - name: raw-real
             script: test:integration:raw:real
             needsRedis: true
