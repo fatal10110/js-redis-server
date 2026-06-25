@@ -167,6 +167,7 @@ export const pttlCommand = defineCommand({
 
 export const expiretimeCommand = defineCommand({
   name: 'expiretime',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     key: t.key(),
   }),
@@ -189,6 +190,7 @@ export const expiretimeCommand = defineCommand({
 
 export const pexpiretimeCommand = defineCommand({
   name: 'pexpiretime',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     key: t.key(),
   }),
@@ -215,13 +217,23 @@ type ExpireOptions = {
   comparison?: ExpireComparison
 }
 
-const expireOptionsSchema = t.custom<ExpireOptions>((input, index) => {
+const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   const options: ExpireOptions = {}
   let cursor = index
 
   while (cursor < input.length) {
     const token = input[cursor]!.toString()
     const option = token.toUpperCase()
+
+    if (
+      (option === 'NX' ||
+        option === 'XX' ||
+        option === 'GT' ||
+        option === 'LT') &&
+      !ctx.profile.has('expire.conditions')
+    ) {
+      return { value: options, nextIndex: cursor }
+    }
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
@@ -517,6 +529,7 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
 
 export const copyCommand = defineCommand({
   name: 'copy',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({
     source: t.key(),
     destination: t.key(),
@@ -716,6 +729,7 @@ export const sortCommand = defineCommand({
 
 export const sortRoCommand = defineCommand({
   name: 'sort_ro',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: sortSchema(false),
   flags: ['readonly'],
   keys: args => [args.key],

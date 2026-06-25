@@ -231,6 +231,7 @@ export const sismemberCommand = defineCommand({
 
 export const smismemberCommand = defineCommand({
   name: 'smismember',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
@@ -394,6 +395,7 @@ export const sinterCommand = defineCommand({
 
 export const sintercardCommand = defineCommand({
   name: 'sintercard',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: sintercardSchema,
   flags: ['readonly'],
   keys: args => args.keys,

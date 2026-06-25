@@ -2,6 +2,7 @@ import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
 import type { RedisResult } from './redis-result'
 import type { ResponseStream } from './response-stream'
+import type { VersionGate } from './compatibility'
 
 export type CommandFlag =
   | 'readonly'
@@ -87,6 +88,7 @@ export type CommandExecutionResult =
 
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string
+  readonly since?: VersionGate
   readonly schema: CommandSchema<TArgs>
   readonly flags: readonly CommandFlag[]
   readonly capabilities?: CommandCapabilities

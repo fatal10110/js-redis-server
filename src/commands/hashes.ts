@@ -890,6 +890,7 @@ export const hvalsCommand = defineCommand({
 
 export const hrandfieldCommand = defineCommand({
   name: 'hrandfield',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: createHrandfieldSchema(),
   flags: ['readonly', 'random', 'noscript'],
   keys: args => [args.key],

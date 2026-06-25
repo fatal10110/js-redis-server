@@ -73,6 +73,7 @@ function createXautoclaimSchema() {
 
 export const xautoclaimCommand = defineCommand({
   name: 'xautoclaim',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({ args: createXautoclaimSchema() }),
   flags: ['write'],
   keys: args => [args.args.key],

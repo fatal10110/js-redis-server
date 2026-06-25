@@ -15,6 +15,7 @@ import {
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
+import type { FeatureId } from '../core/compatibility'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
 type CommandArgs = {
@@ -34,6 +35,12 @@ type CommandInfo = {
   keySpecs: readonly CommandKeySpec[]
   subcommands: readonly CommandInfo[]
   docs?: CommandDocumentation
+}
+
+const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
+  'command|docs': 'command.docs',
+  'command|getkeysandflags': 'command.getkeysandflags',
+  'client|setinfo': 'client.setinfo',
 }
 
 const commandIntrospection: CommandIntrospection = {
@@ -89,10 +96,20 @@ export const commandCommand = defineCommand({
       case 'info':
         return commandInfoSubcommand(args, ctx)
       case 'docs':
+        if (!ctx.server.profile.has('command.docs')) {
+          throw new RedisCommandError(
+            `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
+          )
+        }
         return commandDocsSubcommand(args, ctx)
       case 'getkeys':
         return commandGetKeys(args, ctx)
       case 'getkeysandflags':
+        if (!ctx.server.profile.has('command.getkeysandflags')) {
+          throw new RedisCommandError(
+            `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
+          )
+        }
         return commandGetKeysAndFlags(args, ctx)
       case 'help':
         return commandHelp(args)
@@ -271,7 +288,7 @@ function planCommandKeys(
 function allRootCommandInfos(ctx: RedisExecutionContext): CommandInfo[] {
   return ctx.executor
     .getCommandDefinitions()
-    .map(definition => createCommandInfo(definition))
+    .map(definition => createCommandInfo(definition, ctx))
 }
 
 function allCommandInfos(ctx: RedisExecutionContext): CommandInfo[] {
@@ -298,12 +315,14 @@ function findCommandInfo(
 
 function createCommandInfo(
   definition: CommandDefinition<unknown>,
+  ctx: RedisExecutionContext,
 ): CommandInfo {
   const name = definition.name.toLowerCase()
   return createCommandInfoFromIntrospection(
     name,
     definition.flags,
     definition.introspection,
+    ctx,
   )
 }
 
@@ -311,6 +330,7 @@ function createCommandInfoFromIntrospection(
   name: string,
   fallbackFlags: readonly string[],
   introspection?: CommandIntrospection,
+  ctx?: RedisExecutionContext,
 ): CommandInfo {
   const keySpecs = introspection?.keySpecs ?? []
   const firstKey = introspection?.firstKey ?? firstKeyFromSpecs(keySpecs)
@@ -328,20 +348,35 @@ function createCommandInfoFromIntrospection(
     categories: introspection?.categories ?? inferCategories(flags),
     tips: introspection?.tips ?? [],
     keySpecs,
-    subcommands: (introspection?.subcommands ?? []).map(subcommand => {
-      if (!subcommand.name) {
-        throw new Error('Synthetic command introspection is missing a name')
-      }
-      return createCommandInfoFromIntrospection(
-        subcommand.name,
-        subcommand.flags ?? [],
-        subcommand,
-      )
-    }),
+    subcommands: (introspection?.subcommands ?? [])
+      .filter(subcommand => subcommandAvailable(subcommand, ctx))
+      .map(subcommand => {
+        if (!subcommand.name) {
+          throw new Error('Synthetic command introspection is missing a name')
+        }
+        return createCommandInfoFromIntrospection(
+          subcommand.name,
+          subcommand.flags ?? [],
+          subcommand,
+          ctx,
+        )
+      }),
     docs:
       introspection?.docs ??
       commandDocs(`${name.toUpperCase()} command`, 'generic'),
   }
+}
+
+function subcommandAvailable(
+  introspection: CommandIntrospection,
+  ctx?: RedisExecutionContext,
+): boolean {
+  if (!ctx || !introspection.name) {
+    return true
+  }
+
+  const feature = SUBCOMMAND_FEATURES[introspection.name.toLowerCase()]
+  return feature === undefined || ctx.server.profile.has(feature)
 }
 
 function commandInfo(

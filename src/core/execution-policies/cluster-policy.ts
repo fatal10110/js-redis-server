@@ -43,9 +43,10 @@ export function createClusterPolicy(
 
       if (capabilities?.clusterMode === 'singleDb') {
         // Cluster mode has a single logical database (0). DB 0 is a no-op and
-        // accepted; any non-zero index is rejected like real Redis.
+        // accepted; any non-zero index is rejected like real Redis unless the
+        // selected profile models Valkey's cluster multi-DB support.
         const index = (plan.args as { database: number }).database
-        if (index !== 0) {
+        if (index !== 0 && !ctx.server.profile.has('cluster.multi-db')) {
           throw new RedisCommandError(
             `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
           )

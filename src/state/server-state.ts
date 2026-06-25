@@ -10,6 +10,11 @@ import {
   createRedisLuaRuntime,
   type RedisLuaRuntime,
 } from '../core/lua-runtime'
+import {
+  resolveCompatibilityProfile,
+  type CompatibilityProfile,
+  type CompatibilitySpec,
+} from '../core/compatibility'
 
 export type RedisServerStateOptions = {
   databaseCount?: number
@@ -28,6 +33,7 @@ export type RedisServerStateOptions = {
    * the default user is `nopass` and no authentication is enforced.
    */
   requirepass?: string
+  compatibility?: CompatibilitySpec
 }
 
 const DEFAULT_ACTIVE_EXPIRY_INTERVAL_MS = 100
@@ -39,6 +45,7 @@ export class RedisServerState {
   readonly pubsubBroker: RedisPubSubBroker
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
+  readonly profile: CompatibilityProfile
   /**
    * Normalized `notify-keyspace-events` flag string (Redis canonical form, e.g.
    * `"AKE"`). Empty string disables keyspace notifications. Managed via
@@ -52,6 +59,7 @@ export class RedisServerState {
 
   constructor(options?: RedisServerStateOptions) {
     this.requirepass = options?.requirepass
+    this.profile = resolveCompatibilityProfile(options?.compatibility)
     const databaseCount = options?.databaseCount ?? 1
     if (!Number.isInteger(databaseCount) || databaseCount < 1) {
       throw new Error(`Invalid database count ${databaseCount}`)
