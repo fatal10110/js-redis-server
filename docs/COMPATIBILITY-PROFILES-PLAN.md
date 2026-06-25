@@ -1,8 +1,8 @@
-# Compatibility Profiles: emulate Redis 6.2 / 7.0 / 7.2 / 7.4 / Valkey
+# Compatibility Profiles: emulate Redis 6.2 / 7.0 / 7.2 / 7.4 / 8.0 / Valkey
 
 ## Context
 
-The mock currently hardcodes one behavior set = newest Redis (`REDIS_VERSION = '7.4.4'`).
+The mock currently hardcodes one behavior set = newest implemented Redis.
 Package users who depend on this mock in their own test suites can get false greens when
 their production target is older Redis (6.2, 7.0) or Valkey: commands, subcommands, and
 options that did not exist yet (e.g. `EXPIRETIME`, `COMMAND DOCS`, `CLIENT SETINFO`,
@@ -129,6 +129,7 @@ export type CompatibilitySpec =
   | 'redis-7.0'
   | 'redis-7.2'
   | 'redis-7.4'
+  | 'redis-8.0'
   | 'valkey-8.0'
   | 'valkey-9.0' // presets (arbitrary {flavor,version} also accepted)
 
@@ -141,7 +142,7 @@ export function gateSatisfied(
 ): boolean
 ```
 
-- `resolveCompatibilityProfile()` with no arg ⇒ newest Redis (**`redis-7.4` / `7.4.4`**) ⇒ identical to today.
+- `resolveCompatibilityProfile()` with no arg ⇒ newest Redis (**`redis-8.0` / `8.0.0`**) ⇒ identical to today.
 - Named presets map to `{ flavor, version }`; arbitrary versions allowed (`{ flavor:'valkey', version:'9.0.0' }`) so "valkey 9.0" works even though it post-dates real releases.
 - `versionNum` via a `parseVersion()` helper; `has()` is precomputed at resolve time from the gate table.
 - `gateSatisfied(gate, p)` = `gate[p.flavor] !== undefined && p.versionNum >= parseVersion(gate[p.flavor])`.
@@ -257,7 +258,7 @@ Add a short compatibility-profile section to the README/API docs:
 - Show `createRedisMock({ compatibility: 'redis-6.2' })` for test suites that use the mock facade.
 - Show `createRedisCluster({ compatibility: 'valkey-9.0', databasesPerNode: 16 })`
   for cluster tests.
-- State that the default is newest supported Redis (`redis-7.4`) for backward
+- State that the default is newest supported Redis (`redis-8.0`) for backward
   compatibility.
 - State the scope clearly: profiles gate implemented commands/subcommands/options and
   known behavior differences to prevent false greens; unsupported Redis commands remain
@@ -274,7 +275,7 @@ useful, but they are supporting coverage rather than the interface users should 
 Unit (`tests/compatibility/` + co-located):
 
 - `profile.test.ts`: `parseVersion`, `versionNum` ordering, `gateSatisfied` per flavor,
-  named-preset resolution, default = `redis-7.4`, Valkey 7.2 inherits Redis 7.2-era
+  named-preset resolution, default = `redis-8.0`, Valkey 7.2 inherits Redis 7.2-era
   gates, and Valkey 9.0 enables Valkey-specific gates such as `cluster.multi-db`.
 - public builder wiring: `createRedisServer({ compatibility:'redis-6.2' })`,
   `createRedisMock({ compatibility:'redis-6.2' })`, and

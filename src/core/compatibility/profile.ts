@@ -11,6 +11,7 @@ export type FeatureId =
   | 'command.docs'
   | 'command.getkeysandflags'
   | 'client.setinfo'
+  | 'pubsub.sharded'
   | 'cluster.multi-db'
 
 export interface CompatibilityProfile {
@@ -27,6 +28,7 @@ export type CompatibilitySpec =
   | 'redis-7.0'
   | 'redis-7.2'
   | 'redis-7.4'
+  | 'redis-8.0'
   | 'valkey-8.0'
   | 'valkey-9.0'
 
@@ -41,11 +43,12 @@ const PRESETS: Record<
   'redis-7.0': { flavor: 'redis', version: '7.0.15' },
   'redis-7.2': { flavor: 'redis', version: '7.2.4' },
   'redis-7.4': { flavor: 'redis', version: '7.4.4' },
+  'redis-8.0': { flavor: 'redis', version: '8.0.0' },
   'valkey-8.0': { flavor: 'valkey', version: '8.0.0' },
   'valkey-9.0': { flavor: 'valkey', version: '9.0.0' },
 }
 
-const DEFAULT_SPEC = 'redis-7.4'
+const DEFAULT_SPEC = 'redis-8.0'
 
 export function parseVersion(version: string): number {
   const [majorRaw, minorRaw = '0', patchRaw = '0'] = version.split('.')

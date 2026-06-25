@@ -56,6 +56,7 @@ export const unsubscribeCommand = defineCommand({
 
 export const ssubscribeCommand = defineCommand({
   name: 'ssubscribe',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     channels: t.variadic(t.key(), { min: 1 }),
   }),
@@ -75,6 +76,7 @@ export const ssubscribeCommand = defineCommand({
 
 export const sunsubscribeCommand = defineCommand({
   name: 'sunsubscribe',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     channels: t.variadic(t.key()),
   }),
@@ -152,6 +154,7 @@ export const publishCommand = defineCommand({
 
 export const spublishCommand = defineCommand({
   name: 'spublish',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     channel: t.key(),
     message: t.bulk(),
@@ -223,6 +226,11 @@ export const pubsubCommand = defineCommand({
     }
 
     if (subcommand === 'shardchannels') {
+      if (!ctx.server.profile.has('pubsub.sharded')) {
+        throw new RedisCommandError(
+          `unknown subcommand '${args.subcommand}'. Try PUBSUB HELP.`,
+        )
+      }
       expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
       const channels = ctx.server.pubsubBroker.shardChannelsMatching(
         args.args[0],
@@ -231,6 +239,11 @@ export const pubsubCommand = defineCommand({
     }
 
     if (subcommand === 'shardnumsub') {
+      if (!ctx.server.profile.has('pubsub.sharded')) {
+        throw new RedisCommandError(
+          `unknown subcommand '${args.subcommand}'. Try PUBSUB HELP.`,
+        )
+      }
       return RedisResult.create(
         RedisValue.array(
           args.args.flatMap(channel => [
@@ -245,7 +258,7 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'help') {
       expectArgCount('pubsub|help', args.args, 0)
-      return pubsubHelp()
+      return pubsubHelp(ctx)
     }
 
     throw new RedisCommandError(
@@ -285,24 +298,31 @@ function pubsubNumsub(args: PubSubArgs, ctx: RedisExecutionContext) {
   )
 }
 
-function pubsubHelp(): RedisResult {
+function pubsubHelp(ctx: RedisExecutionContext): RedisResult {
+  const lines = [
+    'PUBSUB <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+    'CHANNELS [<pattern>]',
+    '    Return the currently active channels matching a pattern.',
+    'NUMSUB [<channel> ...]',
+    '    Return the number of subscribers for the specified channels.',
+    'NUMPAT',
+    '    Return the number of pattern subscriptions.',
+  ]
+
+  if (ctx.server.profile.has('pubsub.sharded')) {
+    lines.push(
+      'SHARDCHANNELS [<pattern>]',
+      '    Return active shard channels matching a pattern.',
+      'SHARDNUMSUB [<channel> ...]',
+      '    Return the number of shard subscribers for the specified channels.',
+    )
+  }
+
+  lines.push('HELP', '    Prints this help.')
+
   return RedisResult.create(
     RedisValue.array(
-      [
-        'PUBSUB <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-        'CHANNELS [<pattern>]',
-        '    Return the currently active channels matching a pattern.',
-        'NUMSUB [<channel> ...]',
-        '    Return the number of subscribers for the specified channels.',
-        'NUMPAT',
-        '    Return the number of pattern subscriptions.',
-        'SHARDCHANNELS [<pattern>]',
-        '    Return active shard channels matching a pattern.',
-        'SHARDNUMSUB [<channel> ...]',
-        '    Return the number of shard subscribers for the specified channels.',
-        'HELP',
-        '    Prints this help.',
-      ].map(line => RedisValue.bulkString(Buffer.from(line))),
+      lines.map(line => RedisValue.bulkString(Buffer.from(line))),
     ),
   )
 }

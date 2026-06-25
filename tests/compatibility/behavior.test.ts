@@ -125,6 +125,78 @@ describe('compatibility behavior gates', () => {
     )
   })
 
+  test('PUBSUB sharded subcommands follow their feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertError(
+      (await redis62.execute('pubsub', buf('shardchannels'))) as RedisResult,
+      /unknown subcommand/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    const result = (await redis70.execute(
+      'pubsub',
+      buf('shardchannels'),
+    )) as RedisResult
+    assert.strictEqual(result.value.kind, 'array')
+  })
+
+  test('HELP output hides gated subcommands', async () => {
+    const redis62 = createSession('redis-6.2')
+    const commandHelp62 = arrayTexts(
+      (await redis62.execute('command', buf('help'))) as RedisResult,
+    )
+    assert.strictEqual(
+      commandHelp62.some(line => line.includes('DOCS')),
+      false,
+    )
+    assert.strictEqual(
+      commandHelp62.some(line => line.includes('GETKEYSANDFLAGS')),
+      false,
+    )
+
+    const pubsubHelp62 = arrayTexts(
+      (await redis62.execute('pubsub', buf('help'))) as RedisResult,
+    )
+    assert.strictEqual(
+      pubsubHelp62.some(line => line.includes('SHARDCHANNELS')),
+      false,
+    )
+    assert.strictEqual(
+      pubsubHelp62.some(line => line.includes('SHARDNUMSUB')),
+      false,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    const commandHelp70 = arrayTexts(
+      (await redis70.execute('command', buf('help'))) as RedisResult,
+    )
+    assert.strictEqual(
+      commandHelp70.some(line => line.includes('DOCS')),
+      true,
+    )
+    assert.strictEqual(
+      commandHelp70.some(line => line.includes('GETKEYSANDFLAGS')),
+      true,
+    )
+
+    const clientHelp70 = arrayTexts(
+      (await redis70.execute('client', buf('help'))) as RedisResult,
+    )
+    assert.strictEqual(
+      clientHelp70.some(line => line.includes('SETINFO')),
+      false,
+    )
+
+    const redis72 = createSession('redis-7.2')
+    const clientHelp72 = arrayTexts(
+      (await redis72.execute('client', buf('help'))) as RedisResult,
+    )
+    assert.strictEqual(
+      clientHelp72.some(line => line.includes('SETINFO')),
+      true,
+    )
+  })
+
   test('CLIENT SETINFO follows its feature gate', async () => {
     const redis70 = createSession('redis-7.0')
     assertError(
@@ -196,6 +268,11 @@ function commandSubcommandNames(result: RedisResult): string[] {
     assert.ok(name.value)
     return name.value.toString()
   })
+}
+
+function arrayTexts(result: RedisResult): string[] {
+  assert.strictEqual(result.value.kind, 'array')
+  return result.value.items.map(bulkStringText)
 }
 
 function helloField(result: RedisResult, key: string): string {

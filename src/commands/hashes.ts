@@ -45,6 +45,10 @@ type HashExpireMode =
   | 'milliseconds'
   | 'unix-seconds'
   | 'unix-milliseconds'
+
+const HASH_FIELD_EXPIRATION_SINCE = { redis: '7.4.0', valkey: '9.0.0' } as const
+const HGETEX_SINCE = { redis: '8.0.0', valkey: '9.0.0' } as const
+const HGETDEL_SINCE = { redis: '8.0.0', valkey: '9.1.0' } as const
 type HashExpireArgs = {
   key: Buffer
   rawArgs: Buffer[]
@@ -697,6 +701,7 @@ export const hdelCommand = defineCommand({
 
 export const hgetdelCommand = defineCommand({
   name: 'hgetdel',
+  since: HGETDEL_SINCE,
   schema: createHashFieldsSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -726,6 +731,7 @@ export const hgetdelCommand = defineCommand({
 
 export const hgetexCommand = defineCommand({
   name: 'hgetex',
+  since: HGETEX_SINCE,
   schema: createHgetexSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -734,6 +740,7 @@ export const hgetexCommand = defineCommand({
 
 export const hpersistCommand = defineCommand({
   name: 'hpersist',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashFieldsSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -742,6 +749,7 @@ export const hpersistCommand = defineCommand({
 
 export const hexpireCommand = defineCommand({
   name: 'hexpire',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashExpireSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -750,6 +758,7 @@ export const hexpireCommand = defineCommand({
 
 export const hpexpireCommand = defineCommand({
   name: 'hpexpire',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashExpireSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -758,6 +767,7 @@ export const hpexpireCommand = defineCommand({
 
 export const hexpireatCommand = defineCommand({
   name: 'hexpireat',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashExpireSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -766,6 +776,7 @@ export const hexpireatCommand = defineCommand({
 
 export const hpexpireatCommand = defineCommand({
   name: 'hpexpireat',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashExpireSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -774,6 +785,7 @@ export const hpexpireatCommand = defineCommand({
 
 export const httlCommand = defineCommand({
   name: 'httl',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashFieldsSchema(),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
@@ -782,6 +794,7 @@ export const httlCommand = defineCommand({
 
 export const hpttlCommand = defineCommand({
   name: 'hpttl',
+  since: HASH_FIELD_EXPIRATION_SINCE,
   schema: createHashFieldsSchema(),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],

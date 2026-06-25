@@ -512,7 +512,7 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'help') {
       expectArgCount('client|help', args.args, 0)
-      return array([
+      const lines = [
         value(
           'CLIENT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
         ),
@@ -521,8 +521,11 @@ export const clientCommand = defineCommand({
         value('LIST'),
         value('GETNAME'),
         value('SETNAME <connection-name>'),
-        value('SETINFO <LIB-NAME|LIB-VER> <value>'),
-      ])
+      ]
+      if (ctx.server.profile.has('client.setinfo')) {
+        lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
+      }
+      return array(lines)
     }
 
     throw new RedisCommandError(

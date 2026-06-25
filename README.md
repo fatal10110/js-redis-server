@@ -214,7 +214,7 @@ available under newer Redis profiles. Unsupported commands remain unsupported
 regardless of profile.
 
 Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
-`valkey-8.0`, and `valkey-9.0`.
+`redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
 
 ### Seeding
 
@@ -295,7 +295,7 @@ createRedisMock(options?: CreateRedisMockOptions): Promise<RedisMock>
 | :-------------- | :--------------------------------------- | :------------ | :----------------------------------------------------------- |
 | `cluster`       | `{ masters: number; replicas?: number }` | `undefined`   | When set, builds a cluster mock instead of a standalone one. |
 | `databaseCount` | `number`                                 | `16`          | Standalone-only: logical database count.                     |
-| `compatibility` | `CompatibilitySpec`                      | `'redis-7.4'` | Redis / Valkey compatibility profile.                        |
+| `compatibility` | `CompatibilitySpec`                      | `'redis-8.0'` | Redis / Valkey compatibility profile.                        |
 | `port`          | `number`                                 | `0`           | Standalone bind port (`0` = OS-assigned).                    |
 | `basePort`      | `number`                                 | `0`           | Cluster base port (`0` = each node OS-assigned).             |
 | `logger`        | `Pick<Logger, 'error'>`                  | `undefined`   | Optional logger.                                             |

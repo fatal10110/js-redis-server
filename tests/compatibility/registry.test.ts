@@ -79,6 +79,10 @@ describe('compatibility registry filtering', () => {
       'zmpop',
       'bzmpop',
       'sintercard',
+      'spublish',
+      'ssubscribe',
+      'sunsubscribe',
+      'zintercard',
       'sort_ro',
     ]) {
       assert.strictEqual(redis62.has(command), false, command)
@@ -93,9 +97,40 @@ describe('compatibility registry filtering', () => {
       'lmpop',
       'zmpop',
       'sintercard',
+      'spublish',
+      'ssubscribe',
+      'sunsubscribe',
+      'zintercard',
       'sort_ro',
     ]) {
       assert.strictEqual(redis70.has(command), true, command)
+    }
+
+    const redis74 = createRedisCommandRegistry(
+      [],
+      resolveCompatibilityProfile('redis-7.4'),
+    )
+    for (const command of [
+      'hpersist',
+      'hexpire',
+      'hpexpire',
+      'hexpireat',
+      'hpexpireat',
+      'httl',
+      'hpttl',
+    ]) {
+      assert.strictEqual(redis74.has(command), true, command)
+    }
+    for (const command of ['hgetdel', 'hgetex']) {
+      assert.strictEqual(redis74.has(command), false, command)
+    }
+
+    const redis80 = createRedisCommandRegistry(
+      [],
+      resolveCompatibilityProfile('redis-8.0'),
+    )
+    for (const command of ['hgetdel', 'hgetex']) {
+      assert.strictEqual(redis80.has(command), true, command)
     }
   })
 })

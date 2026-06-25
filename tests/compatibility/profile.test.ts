@@ -17,8 +17,8 @@ describe('compatibility profiles', () => {
   test('resolves the default and named presets', () => {
     const defaultProfile = resolveCompatibilityProfile()
     assert.strictEqual(defaultProfile.flavor, 'redis')
-    assert.strictEqual(defaultProfile.version, '7.4.4')
-    assert.strictEqual(defaultProfile.versionNum, 70404)
+    assert.strictEqual(defaultProfile.version, '8.0.0')
+    assert.strictEqual(defaultProfile.versionNum, 80000)
 
     const redis62 = resolveCompatibilityProfile('redis-6.2')
     assert.strictEqual(redis62.flavor, 'redis')
@@ -27,6 +27,10 @@ describe('compatibility profiles', () => {
     const valkey9 = resolveCompatibilityProfile('valkey-9.0')
     assert.strictEqual(valkey9.flavor, 'valkey')
     assert.strictEqual(valkey9.version, '9.0.0')
+
+    const redis80 = resolveCompatibilityProfile('redis-8.0')
+    assert.strictEqual(redis80.flavor, 'redis')
+    assert.strictEqual(redis80.version, '8.0.0')
   })
 
   test('rejects unknown preset strings at runtime', () => {

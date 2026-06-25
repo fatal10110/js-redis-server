@@ -41,6 +41,8 @@ const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
   'command|docs': 'command.docs',
   'command|getkeysandflags': 'command.getkeysandflags',
   'client|setinfo': 'client.setinfo',
+  'pubsub|shardchannels': 'pubsub.sharded',
+  'pubsub|shardnumsub': 'pubsub.sharded',
 }
 
 const commandIntrospection: CommandIntrospection = {
@@ -112,7 +114,7 @@ export const commandCommand = defineCommand({
         }
         return commandGetKeysAndFlags(args, ctx)
       case 'help':
-        return commandHelp(args)
+        return commandHelp(args, ctx)
       default:
         throw new RedisCommandError(
           `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
@@ -218,35 +220,49 @@ function commandGetKeysAndFlags(
   )
 }
 
-function commandHelp(args: CommandArgs): RedisResult {
+function commandHelp(
+  args: CommandArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
   expectArgCount('command|help', args.args, 0)
-  return RedisResult.create(
-    RedisValue.array(
-      [
-        'COMMAND <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-        '(no subcommand)',
-        '    Return details about all Redis commands.',
-        'COUNT',
-        '    Return the total number of commands in this Redis server.',
-        'LIST',
-        '    Return a list of all commands in this Redis server.',
-        'INFO [<command-name> ...]',
-        '    Return details about multiple Redis commands.',
-        '    If no command names are given, documentation details for all',
-        '    commands are returned.',
-        'DOCS [<command-name> ...]',
-        '    Return documentation details about multiple Redis commands.',
-        '    If no command names are given, documentation details for all',
-        '    commands are returned.',
-        'GETKEYS <full-command>',
-        '    Return the keys from a full Redis command.',
-        'GETKEYSANDFLAGS <full-command>',
-        '    Return the keys and the access flags from a full Redis command.',
-        'HELP',
-        '    Prints this help.',
-      ].map(bulkString),
-    ),
+  const lines = [
+    'COMMAND <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+    '(no subcommand)',
+    '    Return details about all Redis commands.',
+    'COUNT',
+    '    Return the total number of commands in this Redis server.',
+    'LIST',
+    '    Return a list of all commands in this Redis server.',
+    'INFO [<command-name> ...]',
+    '    Return details about multiple Redis commands.',
+    '    If no command names are given, documentation details for all',
+    '    commands are returned.',
+  ]
+
+  if (ctx.server.profile.has('command.docs')) {
+    lines.push(
+      'DOCS [<command-name> ...]',
+      '    Return documentation details about multiple Redis commands.',
+      '    If no command names are given, documentation details for all',
+      '    commands are returned.',
+    )
+  }
+
+  lines.push(
+    'GETKEYS <full-command>',
+    '    Return the keys from a full Redis command.',
   )
+
+  if (ctx.server.profile.has('command.getkeysandflags')) {
+    lines.push(
+      'GETKEYSANDFLAGS <full-command>',
+      '    Return the keys and the access flags from a full Redis command.',
+    )
+  }
+
+  lines.push('HELP', '    Prints this help.')
+
+  return RedisResult.create(RedisValue.array(lines.map(bulkString)))
 }
 
 function planCommandKeys(

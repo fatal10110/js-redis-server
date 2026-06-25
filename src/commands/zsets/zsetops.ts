@@ -382,6 +382,7 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
 
 export const zintercardCommand = defineCommand({
   name: 'zintercard',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: zintercardSchema,
   flags: ['readonly'],
   keys: args => args.keys,

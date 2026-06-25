@@ -119,7 +119,7 @@ const cluster = createRedisCluster({
 ```
 
 Supported presets are `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
-`valkey-8.0`, and `valkey-9.0`. The default is `redis-7.4`.
+`redis-8.0`, `valkey-8.0`, and `valkey-9.0`. The default is `redis-8.0`.
 
 Profiles gate implemented commands, subcommands, options, and known behavioral
 differences. Unsupported commands are still unsupported regardless of profile.
@@ -202,7 +202,7 @@ createRedisServer(options: CreateRedisServerClusterOptions): Promise<RedisCluste
 | :-------------- | :---------------------- | :------------ | :------------------------------------------- |
 | `port`          | `number`                | `0`           | Bind port (`0` = OS-assigned).               |
 | `databaseCount` | `number`                | `16`          | Logical database count (matches real Redis). |
-| `compatibility` | `CompatibilitySpec`     | `'redis-7.4'` | Redis / Valkey compatibility profile.        |
+| `compatibility` | `CompatibilitySpec`     | `'redis-8.0'` | Redis / Valkey compatibility profile.        |
 | `logger`        | `Pick<Logger, 'error'>` | `undefined`   | Optional logger.                             |
 
 **Cluster options (`CreateRedisServerClusterOptions`)**:
@@ -212,7 +212,7 @@ createRedisServer(options: CreateRedisServerClusterOptions): Promise<RedisCluste
 | `cluster`          | `{ masters: number; replicas?: number }` | **Required**  | Builds a cluster instead of a standalone server. |
 | `basePort`         | `number`                                 | `0`           | Cluster base port (`0` = each node OS-assigned). |
 | `databasesPerNode` | `number`                                 | `1`           | Databases per cluster node.                      |
-| `compatibility`    | `CompatibilitySpec`                      | `'redis-7.4'` | Redis / Valkey compatibility profile.            |
+| `compatibility`    | `CompatibilitySpec`                      | `'redis-8.0'` | Redis / Valkey compatibility profile.            |
 | `logger`           | `Pick<Logger, 'error'>`                  | `undefined`   | Optional logger.                                 |
 
 ---
@@ -240,7 +240,7 @@ createRedisCluster(options: RedisClusterOptions): RedisCluster
 | `basePort`          | `number`                | **Required**  | Base port range. If `0`, random OS ports are assigned. |
 | `host`              | `string`                | `'127.0.0.1'` | Host address to bind to.                               |
 | `databasesPerNode`  | `number`                | `1`           | Number of databases per cluster node.                  |
-| `compatibility`     | `CompatibilitySpec`     | `'redis-7.4'` | Redis / Valkey compatibility profile.                  |
+| `compatibility`     | `CompatibilitySpec`     | `'redis-8.0'` | Redis / Valkey compatibility profile.                  |
 | `logger`            | `Pick<Logger, 'error'>` | `undefined`   | Optional logger.                                       |
 
 ---
@@ -286,7 +286,7 @@ new RedisServerState(options?: RedisServerStateOptions)
 | Parameter         | Type                   | Default       | Description                                 |
 | :---------------- | :--------------------- | :------------ | :------------------------------------------ |
 | `databaseCount`   | `number`               | `1`           | Number of databases to initialize.          |
-| `compatibility`   | `CompatibilitySpec`    | `'redis-7.4'` | Redis / Valkey compatibility profile.       |
+| `compatibility`   | `CompatibilitySpec`    | `'redis-8.0'` | Redis / Valkey compatibility profile.       |
 | `clusterTopology` | `RedisClusterTopology` | `undefined`   | Optional cluster topology for slot routing. |
 | `pubsubBroker`    | `RedisPubSubBroker`    | `undefined`   | Optional broker for pub/sub operations.     |
 | `scriptCache`     | `RedisScriptCache`     | `undefined`   | Optional cache for Lua scripts.             |
