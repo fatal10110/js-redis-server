@@ -84,6 +84,11 @@ describe('compatibility registry filtering', () => {
       'sunsubscribe',
       'zintercard',
       'sort_ro',
+      'eval_ro',
+      'evalsha_ro',
+      'function',
+      'fcall',
+      'fcall_ro',
     ]) {
       assert.strictEqual(redis62.has(command), false, command)
     }
@@ -102,6 +107,11 @@ describe('compatibility registry filtering', () => {
       'sunsubscribe',
       'zintercard',
       'sort_ro',
+      'eval_ro',
+      'evalsha_ro',
+      'function',
+      'fcall',
+      'fcall_ro',
     ]) {
       assert.strictEqual(redis70.has(command), true, command)
     }

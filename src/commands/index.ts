@@ -249,7 +249,12 @@ export {
 } from './sets'
 export {
   evalCommand,
+  evalRoCommand,
   evalshaCommand,
+  evalshaRoCommand,
+  fcallCommand,
+  fcallRoCommand,
+  functionCommand,
   scriptCommand,
   scriptsCommands,
 } from './scripts'

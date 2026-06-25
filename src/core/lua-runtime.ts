@@ -17,12 +17,13 @@ import { RedisValue } from './redis-value'
 
 type LuaHostState = {
   ctx: RedisExecutionContext | null
+  readOnly: boolean
 }
 
 export type LuaReplyValue = ReplyValue
 
 export class RedisLuaRuntime {
-  private readonly hostState: LuaHostState = { ctx: null }
+  private readonly hostState: LuaHostState = { ctx: null, readOnly: false }
   private readonly engine: LuaEngine
 
   constructor(module: LuaWasmModule) {
@@ -38,17 +39,20 @@ export class RedisLuaRuntime {
     keys: readonly Buffer[],
     args: readonly Buffer[],
     ctx: RedisExecutionContext,
+    options?: { readOnly?: boolean },
   ): ReplyValue {
     if (this.hostState.ctx) {
       throw new RedisCommandError('Lua runtime is already executing a script')
     }
 
     this.hostState.ctx = ctx
+    this.hostState.readOnly = options?.readOnly ?? false
 
     try {
       return this.engine.evalWithArgs(script, [...keys], [...args])
     } finally {
       this.hostState.ctx = null
+      this.hostState.readOnly = false
     }
   }
 
@@ -82,6 +86,14 @@ export class RedisLuaRuntime {
 
     if (plan.flags.includes('noscript')) {
       return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
+    }
+
+    if (this.hostState.readOnly && plan.flags.includes('write')) {
+      return redisErrorToLuaReply(
+        new RedisCommandError(
+          'Write commands are not allowed from read-only scripts.',
+        ),
+      )
     }
 
     const result = ctx.executor.executePlanSync(

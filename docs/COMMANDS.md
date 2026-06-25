@@ -389,6 +389,8 @@ flip its session into transaction mode or register a `WATCH`.
 
 - [x] `EVAL script numkeys [key ...] [arg ...]` - Execute a Lua script
 - [x] `EVALSHA sha1 numkeys [key ...] [arg ...]` - Execute a cached Lua script by its SHA1
+- [x] `EVAL_RO script numkeys [key ...] [arg ...]` - Read-only `EVAL` variant
+- [x] `EVALSHA_RO sha1 numkeys [key ...] [arg ...]` - Read-only `EVALSHA` variant
 - [x] `SCRIPT LOAD script` - Load a script into the script cache
 - [x] `SCRIPT EXISTS sha1 [sha1 ...]` - Check existence of scripts in the cache
 - [x] `SCRIPT FLUSH [ASYNC|SYNC]` - Remove all scripts from the cache
@@ -396,26 +398,24 @@ flip its session into transaction mode or register a `WATCH`.
 - [x] `SCRIPT DEBUG YES|SYNC|NO` - Validates the mode and returns `OK` (debug mode itself is a no-op)
 - [x] `SCRIPT HELP` - Return subcommand help
 
-`EVAL`/`EVALSHA` run via `executePlanSync` against the same command registry
+`EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO` run via `executePlanSync` against the same command registry
 and policies as normal commands, so every command's `noscript`/`readonly`
 flags are enforced inside `redis.call`/`redis.pcall`.
 
-#### Not implemented
+- [x] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
+- [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
+- [x] `FUNCTION LOAD [REPLACE] function-code` - Load a Lua function library
+- [x] `FUNCTION DELETE library-name` - Delete a function library
+- [x] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
+- [x] `FUNCTION STATS` - Return loaded-library/function counts
+- [x] `FUNCTION DUMP` - Dump loaded libraries to a mock-local serialized payload
+- [x] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
+- [x] `FUNCTION FLUSH [ASYNC|SYNC]` - Delete all function libraries
+- [x] `FUNCTION HELP`
 
-- [ ] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
-- [ ] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
-- [ ] `FUNCTION LOAD [REPLACE] function-code` - Load a library of functions
-- [ ] `FUNCTION DELETE library-name` - Delete a function library
-- [ ] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
-- [ ] `FUNCTION STATS` - Return runtime stats for the running script and loaded libraries
-- [ ] `FUNCTION DUMP` - Dump all function libraries to a binary payload
-- [ ] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
-- [ ] `FUNCTION FLUSH [ASYNC|SYNC]` - Delete all function libraries
-- [ ] `FUNCTION HELP`
-
-> Redis Functions (Redis 7.0) are a named, persistent alternative to ad-hoc `EVAL` Lua scripts.
-> They are stored in named libraries and survive flushes/restarts, unlike `EVAL` scripts.
-> `FCALL` / `FCALL_RO` are the call sites; the `FUNCTION` family manages the library registry.
+Redis Functions support plain Lua libraries that declare `#!lua name=<library>`
+and register functions with `redis.register_function("name", function(keys, args)
+...)`. Advanced Redis function metadata and flags are not modeled.
 
 ## 13. Cluster Commands
 

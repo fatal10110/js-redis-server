@@ -5,6 +5,7 @@ import { RedisMonitorFeed } from './monitor-feed'
 import type { Unsubscribe } from './mutation-events'
 import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
+import { RedisFunctionRegistry } from './function-registry'
 import type { RedisClientSession } from '../core/redis-context'
 import {
   createRedisLuaRuntime,
@@ -22,6 +23,7 @@ export type RedisServerStateOptions = {
   monitorFeed?: RedisMonitorFeed
   pubsubBroker?: RedisPubSubBroker
   scriptCache?: RedisScriptCache
+  functionRegistry?: RedisFunctionRegistry
   /**
    * Interval for the background active-expiry sweep. Set to `false` to disable
    * the timer for tests that need full manual control of expiration.
@@ -43,6 +45,7 @@ export class RedisServerState {
   readonly scriptCache: RedisScriptCache
   readonly monitorFeed: RedisMonitorFeed
   readonly pubsubBroker: RedisPubSubBroker
+  readonly functionRegistry: RedisFunctionRegistry
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
   readonly profile: CompatibilityProfile
@@ -70,6 +73,8 @@ export class RedisServerState {
       (_, index) => new RedisDatabase(index),
     )
     this.scriptCache = options?.scriptCache ?? new RedisScriptCache()
+    this.functionRegistry =
+      options?.functionRegistry ?? new RedisFunctionRegistry()
     this.monitorFeed = options?.monitorFeed ?? new RedisMonitorFeed()
     this.pubsubBroker = options?.pubsubBroker ?? new RedisPubSubBroker()
     this.clusterTopology =
