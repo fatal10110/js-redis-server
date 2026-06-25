@@ -89,9 +89,13 @@ function filterCompatibleCommands(
 }
 
 export {
+  aclCommand,
+  clientCommand,
   pingCommand,
   quitCommand,
   selectCommand,
+  shutdownCommand,
+  slowlogCommand,
   connectionCommands,
 } from './connection'
 export { monitorCommand, monitorCommands } from './monitor'

@@ -64,6 +64,8 @@ describe(
 
       await send('SET', key, 'v')
       await expectGate(supportsExpireConditions(), 'EXPIRE', key, '10', 'NX')
+      await expectGate(supportsRedis70Commands(), 'INFO', 'server', 'clients')
+      await expectGate(true, 'SLOWLOG', 'GET', '-1')
 
       await expectGate(supportsCommandDocs(), 'COMMAND', 'DOCS')
       await expectGate(
@@ -73,12 +75,20 @@ describe(
         'lib-name',
         'compat',
       )
+      await expectGate(supportsRedis70Commands(), 'CLIENT', 'NO-EVICT', 'ON')
       await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDCHANNELS')
       await expectGate(
         supportsShardedPubSub(),
         'SPUBLISH',
         `compat:{${profile}}`,
         'message',
+      )
+      await expectGate(
+        supportsRedis70Commands(),
+        'ACL',
+        'DRYRUN',
+        'default',
+        'PING',
       )
       await expectGate(supportsRedis70Commands(), 'EVAL_RO', 'return 1', '0')
       if (supportsRedis70Commands()) {

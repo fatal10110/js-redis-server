@@ -35,14 +35,15 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
 - [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
+- [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
-- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-EVICT`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 
 ## 2. Server Commands
 
 #### INFO
 
-- [x] `INFO [section]` - Get information and statistics about the server
+- [x] `INFO [section ...]` - Get information and statistics about the server; Redis 7.0+ profiles accept multiple sections
   - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry)
   - [x] `commandstats`, `latencystats`, `errorstats`, `modules`, `sentinel` - return empty sections
   - [x] `default` / `all` - returns the default section set
@@ -127,10 +128,10 @@ surface.
 
 #### SLOWLOG
 
-- [ ] `SLOWLOG GET [count]` - Return the slow-log entries
-- [ ] `SLOWLOG LEN` - Return the number of entries in the slow log
-- [ ] `SLOWLOG RESET` - Clear the slow log
-- [ ] `SLOWLOG HELP`
+- [x] `SLOWLOG GET [count]` - Return slow-log entries (empty; this mock does not record command timings)
+- [x] `SLOWLOG LEN` - Return the number of entries in the slow log
+- [x] `SLOWLOG RESET` - Clear the slow log
+- [x] `SLOWLOG HELP`
 
 #### LATENCY
 
@@ -479,14 +480,16 @@ Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
 - [ ] `BGSAVE [SCHEDULE]` - Asynchronously save the dataset to disk in the background
 - [ ] `BGREWRITEAOF` - Asynchronously rewrite the append-only file
 - [x] `LASTSAVE` - Return the Unix timestamp of the last successful save (returns process start time, since there is no persistence)
-- [ ] `SHUTDOWN [NOSAVE|SAVE|ABORT]` - Synchronously save and shut down the server
+- [x] `SHUTDOWN [NOSAVE|SAVE] [NOW] [FORCE]` - Return `OK` and close the current connection; persistence is not implemented
+- [x] `SHUTDOWN ABORT` - Return Redis' no-shutdown-in-progress error
 
 ## 16. ACL Commands
 
-All `ACL` subcommands are unimplemented. The auth system (`requirepass` / `AUTH`) is functional;
-the full multi-user ACL layer (Redis 6.0+) is not.
+The auth system (`requirepass` / `AUTH`) is functional for the built-in
+`default` user. The full multi-user ACL rule engine is not implemented.
 
-- [ ] `ACL WHOAMI` - Return the username of the current connection
+- [x] `ACL WHOAMI` - Return the username of the current connection (`default`)
+- [x] `ACL DRYRUN username command [arg ...]` - Validate whether the built-in `default` user can run a syntactically valid command
 - [ ] `ACL LIST` - List all user accounts in the ACL config format
 - [ ] `ACL USERS` - Return a list of all usernames
 - [ ] `ACL GETUSER username` - Return the full ACL definition for a user
@@ -496,7 +499,7 @@ the full multi-user ACL layer (Redis 6.0+) is not.
 - [ ] `ACL LOG [count | RESET]` - Return or clear the ACL security-event log
 - [ ] `ACL SAVE` - Save the current ACL rules to the `aclfile`
 - [ ] `ACL LOAD` - Reload ACL rules from the `aclfile`
-- [ ] `ACL HELP`
+- [x] `ACL HELP`
 
 ## Implementation Notes
 

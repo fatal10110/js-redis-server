@@ -214,6 +214,121 @@ describe('compatibility behavior gates', () => {
     )
   })
 
+  test('CLIENT NO-EVICT follows its feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertError(
+      (await redis62.execute('client', buf('no-evict', 'on'))) as RedisResult,
+      /unknown subcommand/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    assert.deepStrictEqual(
+      await redis70.execute('client', buf('no-evict', 'on')),
+      RedisResult.ok(),
+    )
+    const noEvictInfo = (await redis70.execute(
+      'client',
+      buf('info'),
+    )) as RedisResult
+    assert.match(bulkStringText(noEvictInfo.value), /(?:^| )flags=Ne(?: |\n)/)
+
+    assert.deepStrictEqual(
+      await redis70.execute('client', buf('no-evict', 'off')),
+      RedisResult.ok(),
+    )
+    const evictableInfo = (await redis70.execute(
+      'client',
+      buf('info'),
+    )) as RedisResult
+    assert.match(bulkStringText(evictableInfo.value), /(?:^| )flags=N(?: |\n)/)
+  })
+
+  test('INFO multiple sections follow their feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertError(
+      (await redis62.execute('info', buf('server', 'clients'))) as RedisResult,
+      /wrong number of arguments/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    const info = (await redis70.execute(
+      'info',
+      buf('server', 'clients'),
+    )) as RedisResult
+    assert.strictEqual(info.value.kind, 'bulk-string')
+    assert.ok(info.value.value)
+    const text = info.value.value.toString()
+    assert.match(text, /^# Server$/m)
+    assert.match(text, /^# Clients$/m)
+    assert.doesNotMatch(text, /^# Keyspace$/m)
+  })
+
+  test('ACL default-user commands and DRYRUN gate are implemented', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertError(
+      (await redis62.execute(
+        'acl',
+        buf('dryrun', 'default', 'ping'),
+      )) as RedisResult,
+      /unknown subcommand/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    assert.deepStrictEqual(
+      await redis70.execute('acl', buf('whoami')),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('default'))),
+    )
+    assert.deepStrictEqual(
+      await redis70.execute('acl', buf('dryrun', 'default', 'ping')),
+      RedisResult.ok(),
+    )
+    assertError(
+      (await redis70.execute(
+        'acl',
+        buf('dryrun', 'alice', 'ping'),
+      )) as RedisResult,
+      /User 'alice' not found/,
+    )
+  })
+
+  test('SLOWLOG exposes an empty in-memory slow log', async () => {
+    const redis62 = createSession('redis-6.2')
+    assert.deepStrictEqual(
+      await redis62.execute('slowlog', buf('get', '-1')),
+      RedisResult.create(RedisValue.array([])),
+    )
+    assert.deepStrictEqual(
+      await redis62.execute('slowlog', buf('len')),
+      RedisResult.create(RedisValue.integer(0)),
+    )
+    assert.deepStrictEqual(
+      await redis62.execute('slowlog', buf('reset')),
+      RedisResult.ok(),
+    )
+    assertError(
+      (await redis62.execute('slowlog', buf('get', 'nope'))) as RedisResult,
+      /value is not an integer/i,
+    )
+  })
+
+  test('SHUTDOWN Redis 7.0 options follow their feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertError(
+      (await redis62.execute('shutdown', buf('abort'))) as RedisResult,
+      /syntax/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    assertError(
+      (await redis70.execute('shutdown', buf('abort'))) as RedisResult,
+      /No shutdown in progress/,
+    )
+    assert.deepStrictEqual(
+      await redis70.execute('shutdown', buf('now', 'force')),
+      RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
+    )
+  })
+
   test('Valkey cluster profile allows non-zero SELECT', async () => {
     const redis = createClusterSession('redis-7.4')
     assert.deepStrictEqual(

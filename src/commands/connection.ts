@@ -16,7 +16,14 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { array, bulk, integer, ok, simpleString } from './helpers'
+import {
+  array,
+  bulk,
+  integer,
+  ok,
+  parseIntegerToken,
+  simpleString,
+} from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
@@ -29,6 +36,7 @@ const clientIds = new WeakMap<RedisClientSession, number>()
 const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
+const noEvictClients = new WeakSet<RedisClientSession>()
 let nextClientId = 1
 const INVALID_CLIENT_NAME_MESSAGE =
   'Client names cannot contain spaces, newlines or special characters.'
@@ -87,8 +95,14 @@ function expectArgCount(
   }
 }
 
-function buildInfo(ctx: RedisExecutionContext, section?: string): string {
-  const requestedSection = section?.toLowerCase() ?? 'default'
+function buildInfo(
+  ctx: RedisExecutionContext,
+  sections: readonly string[] = [],
+): string {
+  const requestedSections =
+    sections.length === 0
+      ? ['default']
+      : sections.map(section => section.toLowerCase())
   const clustered = isClusterMode(ctx)
   const defaultSections = [
     'server',
@@ -196,16 +210,16 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
     },
   }
 
-  let selectedSections: string[]
-  if (requestedSection === 'default' || requestedSection === 'all') {
-    selectedSections = defaultSections
-  } else if (requestedSection in sectionBuilders) {
-    selectedSections = [requestedSection]
-  } else {
-    // Real Redis replies with an empty bulk string for an unrecognized
-    // section name rather than an error (clients like ioredis probe with
-    // arbitrary section names during connection setup).
-    return ''
+  const selectedSections: string[] = []
+  for (const requestedSection of requestedSections) {
+    if (requestedSection === 'default' || requestedSection === 'all') {
+      selectedSections.push(...defaultSections)
+      continue
+    }
+
+    if (requestedSection in sectionBuilders) {
+      selectedSections.push(requestedSection)
+    }
   }
 
   const lines: string[] = []
@@ -215,6 +229,13 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
     }
 
     lines.push(...sectionBuilders[selectedSection]())
+  }
+
+  // Real Redis replies with an empty bulk string for an unrecognized section
+  // name rather than an error (clients like ioredis probe with arbitrary
+  // section names during connection setup).
+  if (lines.length === 0) {
+    return ''
   }
 
   return `${lines.join('\r\n')}\r\n`
@@ -233,7 +254,7 @@ function formatClientLine(session: RedisClientSession): string {
     `db=${session.selectedDatabase}`,
     'age=0',
     'idle=0',
-    `flags=${session.mode === 'subscribed' ? 'P' : 'N'}`,
+    `flags=${clientFlags(session)}`,
     `sub=${session.pubsubChannelCount}`,
     `psub=${session.pubsubPatternCount}`,
     'multi=-1',
@@ -262,6 +283,14 @@ function formatClientLine(session: RedisClientSession): string {
   }
 
   return `${fields.join(' ')}\n`
+}
+
+function clientFlags(session: RedisClientSession): string {
+  let flags = session.mode === 'subscribed' ? 'P' : 'N'
+  if (noEvictClients.has(session)) {
+    flags += 'e'
+  }
+  return flags
 }
 
 const HELLO_NOAUTH_MESSAGE =
@@ -430,11 +459,20 @@ export const selectCommand = defineCommand({
 export const infoCommand = defineCommand({
   name: 'info',
   schema: t.object({
-    section: t.optional(t.string()),
+    sections: t.variadic(t.string()),
   }),
   flags: ['readonly', 'admin'],
   keys: () => [],
-  execute: (args, ctx) => bulk(Buffer.from(buildInfo(ctx, args.section))),
+  execute: (args, ctx) => {
+    if (
+      args.sections.length > 1 &&
+      !ctx.server.profile.has('info.multi-section')
+    ) {
+      throw new WrongNumberOfArgumentsError('info')
+    }
+
+    return bulk(Buffer.from(buildInfo(ctx, args.sections)))
+  },
 })
 
 export const clientCommand = defineCommand({
@@ -458,6 +496,7 @@ export const clientCommand = defineCommand({
       commandSubcommandInfo('client|list', 2),
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
+      commandSubcommandInfo('client|no-evict', 3),
       commandSubcommandInfo('client|setinfo', 4),
       commandSubcommandInfo('client|help', 2),
     ],
@@ -494,6 +533,27 @@ export const clientCommand = defineCommand({
       return ok()
     }
 
+    if (subcommand === 'no-evict') {
+      if (!ctx.server.profile.has('client.no-evict')) {
+        throw new RedisCommandError(
+          `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+        )
+      }
+
+      expectArgCount('client|no-evict', args.args, 1)
+      const mode = args.args[0].toString().toLowerCase()
+      if (mode === 'on') {
+        noEvictClients.add(ctx.session)
+        return ok()
+      }
+      if (mode === 'off') {
+        noEvictClients.delete(ctx.session)
+        return ok()
+      }
+
+      throw new RedisSyntaxError()
+    }
+
     if (subcommand === 'id') {
       expectArgCount('client|id', args.args, 0)
       return integer(getClientId(ctx.session))
@@ -524,6 +584,9 @@ export const clientCommand = defineCommand({
       ]
       if (ctx.server.profile.has('client.setinfo')) {
         lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
+      }
+      if (ctx.server.profile.has('client.no-evict')) {
+        lines.push(value('NO-EVICT <ON|OFF>'))
       }
       return array(lines)
     }
@@ -666,6 +729,7 @@ export const resetCommand = defineCommand({
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
+    noEvictClients.delete(ctx.session)
     ctx.session.resetResponseStreams()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
@@ -702,6 +766,211 @@ export const lastsaveCommand = defineCommand({
   execute: () => integer(serverStartTimeSeconds),
 })
 
+export const aclCommand = defineCommand({
+  name: 'acl',
+  schema: t.object({
+    subcommand: t.string(),
+    args: t.variadic(t.bulk()),
+  }),
+  flags: ['admin', 'noscript'],
+  introspection: {
+    arity: -2,
+    flags: [],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow', '@dangerous'],
+    keySpecs: [],
+    subcommands: [
+      commandSubcommandInfo('acl|whoami', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('acl|dryrun', -4, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('acl|help', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+    ],
+  },
+  keys: () => [],
+  execute: (args, ctx) => {
+    const subcommand = args.subcommand.toLowerCase()
+
+    if (subcommand === 'whoami') {
+      expectArgCount('acl|whoami', args.args, 0)
+      return bulk(Buffer.from(DEFAULT_ACL_USER))
+    }
+
+    if (subcommand === 'dryrun') {
+      if (!ctx.server.profile.has('acl.dryrun')) {
+        throw unknownAclSubcommand(subcommand)
+      }
+
+      if (args.args.length < 2) {
+        throw new WrongNumberOfArgumentsError('acl|dryrun')
+      }
+
+      const username = args.args[0].toString()
+      if (username !== DEFAULT_ACL_USER) {
+        throw new RedisCommandError(`User '${username}' not found`)
+      }
+
+      ctx.executor.plan(args.args[1], args.args.slice(2))
+      return ok()
+    }
+
+    if (subcommand === 'help') {
+      expectArgCount('acl|help', args.args, 0)
+      const lines = [
+        value('ACL <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'),
+        value('WHOAMI'),
+        value('    Return the current ACL username.'),
+      ]
+      if (ctx.server.profile.has('acl.dryrun')) {
+        lines.push(
+          value('DRYRUN <username> <command> [<arg> ...]'),
+          value('    Check whether a user can run a command.'),
+        )
+      }
+      lines.push(value('HELP'), value('    Prints this help.'))
+      return array(lines)
+    }
+
+    throw unknownAclSubcommand(subcommand)
+  },
+})
+
+export const slowlogCommand = defineCommand({
+  name: 'slowlog',
+  schema: t.object({
+    subcommand: t.string(),
+    args: t.variadic(t.bulk()),
+  }),
+  flags: ['readonly', 'admin'],
+  introspection: {
+    arity: -2,
+    flags: [],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow', '@dangerous'],
+    keySpecs: [],
+    subcommands: [
+      commandSubcommandInfo('slowlog|get', -2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('slowlog|len', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('slowlog|reset', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('slowlog|help', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+    ],
+  },
+  keys: () => [],
+  execute: args => {
+    const subcommand = args.subcommand.toLowerCase()
+
+    if (subcommand === 'get') {
+      if (args.args.length > 1) {
+        throw new WrongNumberOfArgumentsError('slowlog|get')
+      }
+      if (args.args.length === 1) {
+        parseIntegerToken(args.args[0])
+      }
+      return array([])
+    }
+
+    if (subcommand === 'len') {
+      expectArgCount('slowlog|len', args.args, 0)
+      return integer(0)
+    }
+
+    if (subcommand === 'reset') {
+      expectArgCount('slowlog|reset', args.args, 0)
+      return ok()
+    }
+
+    if (subcommand === 'help') {
+      expectArgCount('slowlog|help', args.args, 0)
+      return array([
+        value(
+          'SLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+        ),
+        value('GET [<count>]'),
+        value('    Return slow log entries.'),
+        value('LEN'),
+        value('    Return the slow log length.'),
+        value('RESET'),
+        value('    Reset the slow log.'),
+        value('HELP'),
+        value('    Prints this help.'),
+      ])
+    }
+
+    throw new RedisCommandError(
+      `unknown subcommand '${subcommand}'. Try SLOWLOG HELP.`,
+    )
+  },
+})
+
+export const shutdownCommand = defineCommand({
+  name: 'shutdown',
+  schema: t.object({
+    args: t.variadic(t.bulk()),
+  }),
+  flags: ['admin', 'noscript'],
+  keys: () => [],
+  execute: (args, ctx) => {
+    const options = parseShutdownOptions(args.args, ctx)
+    if (options.abort) {
+      throw new RedisCommandError('No shutdown in progress.')
+    }
+
+    return RedisResult.create(RedisValue.simpleString('OK'), { close: true })
+  },
+})
+
+function unknownAclSubcommand(subcommand: string): RedisCommandError {
+  return new RedisCommandError(
+    `unknown subcommand '${subcommand}'. Try ACL HELP.`,
+  )
+}
+
+function parseShutdownOptions(
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): { abort: boolean } {
+  let abort = false
+
+  for (const arg of args) {
+    const option = arg.toString().toLowerCase()
+    if (option === 'save' || option === 'nosave') {
+      continue
+    }
+
+    if (option === 'now' || option === 'force' || option === 'abort') {
+      if (!ctx.server.profile.has('shutdown.now-force-abort')) {
+        throw new RedisSyntaxError()
+      }
+      abort ||= option === 'abort'
+      continue
+    }
+
+    throw new RedisSyntaxError()
+  }
+
+  if (abort && args.length > 1) {
+    throw new RedisSyntaxError()
+  }
+
+  return { abort }
+}
+
 export const connectionCommands = [
   pingCommand,
   quitCommand,
@@ -713,4 +982,7 @@ export const connectionCommands = [
   resetCommand,
   timeCommand,
   lastsaveCommand,
+  aclCommand,
+  slowlogCommand,
+  shutdownCommand,
 ]

@@ -10,7 +10,11 @@ export type FeatureId =
   | 'set.exat-pxat'
   | 'command.docs'
   | 'command.getkeysandflags'
+  | 'acl.dryrun'
+  | 'client.no-evict'
   | 'client.setinfo'
+  | 'info.multi-section'
+  | 'shutdown.now-force-abort'
   | 'pubsub.sharded'
   | 'cluster.multi-db'
 
