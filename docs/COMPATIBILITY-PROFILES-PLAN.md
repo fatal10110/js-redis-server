@@ -26,15 +26,14 @@ the same construction point they already use to start an in-process mock; they s
 need to know that state and executor are separate internal objects.
 
 ```ts
-import { buildRedisServer, buildRedisCluster } from 'js-redis-server'
+import { createRedisCluster, createRedisServer } from 'js-redis-server'
 
-const server = buildRedisServer({
+const server = await createRedisServer({
   compatibility: 'redis-6.2',
   databaseCount: 16,
 })
-await server.listen(0)
 
-const cluster = buildRedisCluster({
+const cluster = createRedisCluster({
   masters: 3,
   replicasPerMaster: 0,
   basePort: 0,
@@ -45,10 +44,12 @@ await cluster.listen()
 ```
 
 Public API requirements:
-- `buildRedisServer({ compatibility })` is the documented standalone entry point and
+- `createRedisServer({ compatibility })` is the documented standalone entry point and
   internally wires one resolved profile into both `RedisServerState` and
   `CommandExecutor`.
-- `buildRedisCluster({ compatibility })` is the documented cluster entry point and applies
+- `createRedisMock({ compatibility })` is the test-facade entry point and passes the same
+  profile through standalone and cluster mocks.
+- `createRedisCluster({ compatibility })` is the low-level cluster entry point and applies
   the same resolved profile to every node.
 - Low-level constructors can still accept `compatibility` for advanced tests, but package
   docs should steer users to the builders to avoid split-brain configuration.
@@ -167,7 +168,7 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
     `BZMPOP`, `SINTERCARD`.
   - Redis 7.2: no root commands currently identified in the implemented surface, but
     run the audit before implementation rather than relying on this list.
-- `src/commands/index.ts`: `createRedisCommandRegistry(extraCommands, profile = resolveCompatibilityProfile())` registers a base command only when `def.since === undefined || gateSatisfied(def.since, profile)`. `extraCommands` (cluster) always registered. `createRedisCommandExecutor` gains `compatibility?: CompatibilitySpec`, resolves it once, filters the registry with it, and forwards the resolved profile to `new CommandExecutor({ …, profile })`.
+- `src/commands/index.ts`: `createRedisCommandRegistry(extraCommands, profile = resolveCompatibilityProfile())` registers every command definition (base and extra) only when `def.since === undefined || gateSatisfied(def.since, profile)`. Cluster/custom commands that should always exist stay untagged. `createRedisCommandExecutor` gains `compatibility?: CompatibilitySpec`, resolves it once, filters the registry with it, and forwards the resolved profile to `new CommandExecutor({ …, profile })`.
 
 Side benefit: `COMMAND COUNT/DOCS/INFO` read `registry.getAll()`, so introspection auto-reflects the profile.
 
@@ -182,15 +183,16 @@ Side benefit: `COMMAND COUNT/DOCS/INFO` read `registry.getAll()`, so introspecti
 - `src/commands/connection.ts`: gate `CLIENT SETINFO` behind Redis 7.2 / Valkey 7.2.
   This matters for package users running clients that probe `CLIENT SETINFO` during
   connection setup; an older profile must behave like the older real server.
-- EXPIRE family in `src/commands/keys.ts`: the existing `expireConditionSchema` custom parser, when it sees `NX|XX|GT|LT` but `!ctx.profile.has('expire.conditions')`, **does not consume** the token and returns `undefined`. The trailing arg then trips `parseCommandArgs`' length check → `WrongNumberOfArgumentsError` — which is exactly what real 6.2 (fixed arity 3) returns. When the feature is on, behavior is unchanged.
+- EXPIRE family in `src/commands/keys.ts`: the existing `expireOptionsSchema` custom parser, when it sees `NX|XX|GT|LT` but `!ctx.profile.has('expire.conditions')`, **does not consume** the token and returns `undefined`. The trailing arg then trips `parseCommandArgs`' length check → `WrongNumberOfArgumentsError` — which is exactly what real 6.2 (fixed arity 3) returns. When the feature is on, behavior is unchanged.
 - SET option loop in `src/commands/strings.ts` (`createSetSchema`): when the loop encounters `GET` and `!ctx.profile.has('set.get')`, or `EXAT|PXAT` and `!ctx.profile.has('set.exat-pxat')`, throw `RedisSyntaxError` (SET is variadic arity, so an unknown option is `ERR syntax error` on the real server — matches).
 
 Rule of thumb for any future option gate: replicate what the real old server does — fixed-arity commands surface a trailing unsupported option as `WrongNumberOfArgumentsError` (don't consume), variadic commands as `RedisSyntaxError` (throw).
 
 ### Policy / semantic gating (execute-time, no new wiring)
 Policies and `execute` already receive `ctx`, so they read `ctx.server.profile` directly — `createClusterPolicy` etc. keep their current signatures.
-- `src/core/execution-policies/cluster-policy.ts` (line 36): the unconditional `SELECT is not allowed in cluster mode` becomes
-  `if (plan.definition.name === 'select' && !ctx.server.profile.has('cluster.multi-db')) throw …`.
+- `src/core/execution-policies/cluster-policy.ts`: keep using the existing
+  `capabilities.clusterMode === 'singleDb'` branch. Its non-zero DB rejection becomes
+  conditional on `!ctx.server.profile.has('cluster.multi-db')`.
   On a `valkey-9` profile the ban lifts, so `SELECT 1` succeeds in cluster mode (per-session DB already works; configure `databasesPerNode > 1` when building the cluster). Real Redis / older Valkey still get the error.
 - This is the template for any future policy- or execute-layer divergence (routing rules, reply shape, default RESP version): add a `FeatureId`, branch on `ctx.server.profile.has(...)`. No policy/command constructor changes.
 
@@ -204,31 +206,33 @@ Policies and `execute` already receive `ctx`, so they read `ctx.server.profile` 
 Both public builders compose `RedisServerState` + `createRedisCommandExecutor` +
 `Resp2Server`. Resolve the profile **once** and hand the same object to both state
 (version strings / server-wide behavior) and executor (registry filtering / parsing).
-- `src/server.ts`: add `buildRedisServer({ compatibility, databaseCount, requirepass,
-  host, port, logger })`. This is the documented standalone API for package users.
-  It resolves the profile once, constructs `RedisServerState({ …, compatibility: profile })`,
-  constructs `createRedisCommandExecutor({ compatibility: profile })`, and returns the
-  configured `Resp2Server`.
+- `src/mock.ts`: add `compatibility?: CompatibilitySpec` to `CreateRedisServerOptions`,
+  `CreateRedisServerClusterOptions`, and `CreateRedisMockOptions`. `createStandalonePipeline`
+  resolves the profile once, constructs `RedisServerState({ …, compatibility: profile })`,
+  and constructs `createRedisCommandExecutor({ compatibility: profile })`.
+- `src/mock.ts`: pass `compatibility` from the `createRedisServer({ cluster })` and
+  `createRedisMock({ cluster })` paths into `createRedisCluster`.
 - `src/cluster.ts`: add `compatibility?: CompatibilitySpec` to `RedisClusterOptions`;
-  resolve once in `buildRedisCluster`; pass the profile into `createClusterNodeStates`
+  resolve once in `buildClusterNodes`; pass the profile into `createClusterNodeStates`
   (→ each `new RedisServerState({ …, compatibility: profile })`) and into each
   `createRedisCommandExecutor({ …, compatibility: profile })` (cluster.ts:143,
   cluster.ts:233).
 - `src/cli.ts`: read a spec from `--compat <preset>` / `REDIS_COMPAT` env, then call
-  `buildRedisServer` or `buildRedisCluster`. CLI code should not manually construct
+  `createRedisServer`. CLI code should not manually construct
   state/executor pairs.
 - Optional hardening: expose `CommandExecutor.profile` and assert in `Resp2Server`
   construction that `server.profile === executor.profile` when both are compatibility-aware.
   This catches advanced users who manually wire mismatched low-level objects.
 
 ### Exports
-- `src/index.ts`: export `buildRedisServer`, `buildRedisCluster`, `resolveCompatibilityProfile`, `gateSatisfied`, and the `CompatibilityProfile` / `CompatibilitySpec` / `RedisFlavor` / `VersionGate` / `FeatureId` types.
+- `src/index.ts`: export `createRedisServer`, `createRedisMock`, `createRedisCluster`, `resolveCompatibilityProfile`, `gateSatisfied`, and the `CompatibilityProfile` / `CompatibilitySpec` / `RedisFlavor` / `VersionGate` / `FeatureId` types. Keep `buildRedisCluster` as the existing deprecated alias only.
 
 ## Package-user documentation
 
 Add a short compatibility-profile section to the README/API docs:
-- Show `buildRedisServer({ compatibility: 'redis-6.2' })` for standalone tests.
-- Show `buildRedisCluster({ compatibility: 'valkey-9.0', databasesPerNode: 16 })`
+- Show `createRedisServer({ compatibility: 'redis-6.2' })` for standalone tests.
+- Show `createRedisMock({ compatibility: 'redis-6.2' })` for test suites that use the mock facade.
+- Show `createRedisCluster({ compatibility: 'valkey-9.0', databasesPerNode: 16 })`
   for cluster tests.
 - State that the default is newest supported Redis (`redis-7.4`) for backward
   compatibility.
@@ -248,8 +252,9 @@ Unit (`tests/compatibility/` + co-located):
 - `profile.test.ts`: `parseVersion`, `versionNum` ordering, `gateSatisfied` per flavor,
   named-preset resolution, default = `redis-7.4`, Valkey 7.2 inherits Redis 7.2-era
   gates, and Valkey 9.0 enables Valkey-specific gates such as `cluster.multi-db`.
-- public builder wiring: `buildRedisServer({ compatibility:'redis-6.2' })` and
-  `buildRedisCluster({ compatibility:'valkey-9.0' })` create state/executor pairs with
+- public builder wiring: `createRedisServer({ compatibility:'redis-6.2' })`,
+  `createRedisMock({ compatibility:'redis-6.2' })`, and
+  `createRedisCluster({ compatibility:'valkey-9.0' })` create state/executor pairs with
   the same resolved profile.
 - registry filtering: `createRedisCommandRegistry([], resolveCompatibilityProfile('redis-6.2'))` has no Redis 7.0 root commands (`expiretime`, `lmpop`, `zmpop`, `sintercard`, etc.); `redis-7.0` has them; default has all.
 - subcommand filtering: `COMMAND DOCS` / `COMMAND GETKEYSANDFLAGS` are absent under
@@ -261,11 +266,11 @@ Unit (`tests/compatibility/` + co-located):
 
 Integration (`tests-integration/`, **mock only** — in-process servers built through the
 public builders with explicit `compatibility`), TDD red-first per the integration-first rule:
-- standalone `buildRedisServer({ compatibility:'redis-6.2' })`: `EXPIRETIME k` →
+- standalone `createRedisServer({ compatibility:'redis-6.2' })`: `EXPIRETIME k` →
   `unknown command`; `EXPIRE k 10 NX` → wrong-args error, asserted through a real client.
-- standalone `buildRedisServer({ compatibility:'redis-7.0' })`: `CLIENT SETINFO` is
+- standalone `createRedisServer({ compatibility:'redis-7.0' })`: `CLIENT SETINFO` is
   rejected like Redis 7.0, while default/newest accepts it.
-- cluster `buildRedisCluster({ …, compatibility:'valkey-9.0', databasesPerNode: 16 })`:
+- cluster `createRedisCluster({ …, compatibility:'valkey-9.0', databasesPerNode: 16 })`:
   `SELECT 1` succeeds; the same cluster on a redis profile rejects `SELECT 1` with
   `SELECT is not allowed in cluster mode`.
 - Existing integration suites keep the **default** profile, so they (and the real-Redis backend) stay green unchanged.
@@ -292,7 +297,7 @@ redis-cli -p <port> INFO server    # redis_version:6.2.14
 REDIS_COMPAT=valkey-9.0 npm start
 redis-cli -p <port> INFO server    # server_name:valkey, valkey_version:9.0.0
 # cluster smoke (valkey-9 allows multi-DB; redis rejects):
-#   buildRedisCluster({ masters:1, basePort:0, compatibility:'valkey-9.0', databasesPerNode:16 })
+#   createRedisCluster({ masters:1, basePort:0, compatibility:'valkey-9.0', databasesPerNode:16 })
 #   redis-cli -c -p <port> SELECT 1   # OK on valkey-9, error on any redis profile
 ```
 
