@@ -197,6 +197,7 @@ with `GT` or `LT`.
 
 - [x] `GET key` - Returns the string value of a key.
 - [x] `SET key value [NX | XX] [GET] [KEEPTTL | EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds]` - Set the string value of a key
+  - Compatibility profiles: `GET` is available in `redis-6.2`; combining `NX` with `GET` is available in `redis-7.0+`.
 - [x] `SETNX key value` - Set the value of a key, only if it does not exist
 - [x] `SETEX key seconds value` - Set the value and expiration in seconds
 - [x] `PSETEX key milliseconds value` - Set the value and expiration in milliseconds

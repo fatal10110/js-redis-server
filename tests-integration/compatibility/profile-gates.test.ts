@@ -127,6 +127,7 @@ describe(
       await send('SET', key, 'v')
       await expectGate(supportsExpireConditions(), 'EXPIRE', key, '10', 'NX')
       await expectGate(true, 'SET', key, 'next', 'GET')
+      await expectGate(supportsSetNxGet(), 'SET', key, 'guarded', 'NX', 'GET')
       await expectGate(true, 'SET', key, 'expires', 'EXAT', '4102444800')
 
       await expectGate(supportsCommandDocs(), 'COMMAND', 'DOCS')
@@ -240,6 +241,10 @@ function supportsExpireConditions(): boolean {
 }
 
 function supportsRedis70Commands(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsSetNxGet(): boolean {
   return profile !== 'redis-6.2'
 }
 

@@ -7,6 +7,7 @@ export type VersionGate = { redis?: string; valkey?: string }
 export type FeatureId =
   | 'expire.conditions'
   | 'set.get'
+  | 'set.nx-get'
   | 'set.exat-pxat'
   | 'command.docs'
   | 'command.getkeysandflags'
