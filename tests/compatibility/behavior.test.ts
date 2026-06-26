@@ -214,6 +214,57 @@ describe('compatibility behavior gates', () => {
     )
   })
 
+  test('LPOP and RPOP count on missing keys return nil arrays', async () => {
+    for (const profile of ['redis-6.2', 'redis-7.0'] as const) {
+      const session = createSession(profile)
+      assert.deepStrictEqual(
+        (await session.execute('lpop', buf('missing-list', '1'))).value,
+        RedisValue.nullArray(),
+        profile,
+      )
+      assert.deepStrictEqual(
+        (await session.execute('rpop', buf('missing-list', '1'))).value,
+        RedisValue.nullArray(),
+        profile,
+      )
+    }
+  })
+
+  test('XAUTOCLAIM deleted-id reply element follows Redis 7 profile', async () => {
+    const redis62 = createSession('redis-6.2')
+    await createDeletedPendingStreamEntry(redis62)
+    assert.deepStrictEqual(
+      (
+        await redis62.execute(
+          'xautoclaim',
+          buf('stream', 'workers', 'bob', '0', '0-0', 'COUNT', '10'),
+        )
+      ).value,
+      RedisValue.array([
+        RedisValue.bulkString(Buffer.from('0-0')),
+        RedisValue.array([RedisValue.bulkString(null)]),
+      ]),
+    )
+    assert.strictEqual(await pendingCount(redis62), 1)
+
+    const redis70 = createSession('redis-7.0')
+    await createDeletedPendingStreamEntry(redis70)
+    assert.deepStrictEqual(
+      (
+        await redis70.execute(
+          'xautoclaim',
+          buf('stream', 'workers', 'bob', '0', '0-0', 'COUNT', '10'),
+        )
+      ).value,
+      RedisValue.array([
+        RedisValue.bulkString(Buffer.from('0-0')),
+        RedisValue.array([]),
+        RedisValue.array([RedisValue.bulkString(Buffer.from('1-0'))]),
+      ]),
+    )
+    assert.strictEqual(await pendingCount(redis70), 0)
+  })
+
   test('Valkey cluster profile allows non-zero SELECT', async () => {
     for (const profile of [
       'redis-6.2',
@@ -263,6 +314,29 @@ describe('compatibility behavior gates', () => {
     assert.strictEqual(helloField(valkeyHello, 'version'), '9.0.0')
   })
 })
+
+async function createDeletedPendingStreamEntry(
+  session: ClientSession,
+): Promise<void> {
+  await session.execute('xadd', buf('stream', '1-0', 'field', 'value'))
+  await session.execute('xgroup', buf('create', 'stream', 'workers', '0'))
+  await session.execute(
+    'xreadgroup',
+    buf('GROUP', 'workers', 'alice', 'STREAMS', 'stream', '>'),
+  )
+  await session.execute('xdel', buf('stream', '1-0'))
+}
+
+async function pendingCount(session: ClientSession): Promise<number | bigint> {
+  const pending = (await session.execute(
+    'xpending',
+    buf('stream', 'workers'),
+  )) as RedisResult
+  assert.strictEqual(pending.value.kind, 'array')
+  const count = pending.value.items[0]
+  assert.strictEqual(count.kind, 'integer')
+  return count.value
+}
 
 function commandSubcommandNames(result: RedisResult): string[] {
   assert.strictEqual(result.value.kind, 'array')

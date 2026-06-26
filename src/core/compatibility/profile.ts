@@ -12,6 +12,7 @@ export type FeatureId =
   | 'command.getkeysandflags'
   | 'client.setinfo'
   | 'pubsub.sharded'
+  | 'stream.xautoclaim-deleted-ids'
   | 'cluster.multi-db'
 
 export interface CompatibilityProfile {
