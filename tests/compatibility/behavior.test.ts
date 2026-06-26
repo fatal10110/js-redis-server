@@ -52,6 +52,11 @@ function assertError(result: RedisResult, pattern: RegExp): void {
   assert.match(result.value.message, pattern)
 }
 
+function assertErrorMessage(result: RedisResult, message: string): void {
+  assert.strictEqual(result.value.kind, 'error')
+  assert.strictEqual(result.value.message, message)
+}
+
 describe('compatibility behavior gates', () => {
   test('EXPIRE conditions are rejected before Redis 7.0', async () => {
     const redis62 = createSession('redis-6.2')
@@ -107,9 +112,16 @@ describe('compatibility behavior gates', () => {
 
   test('COMMAND subcommands follow their feature gates', async () => {
     const redis62 = createSession('redis-6.2')
-    assertError(
+    assertErrorMessage(
       (await redis62.execute('command', buf('docs'))) as RedisResult,
-      /unknown subcommand/i,
+      "Unknown subcommand or wrong number of arguments for 'docs'. Try COMMAND HELP.",
+    )
+    assertErrorMessage(
+      (await redis62.execute(
+        'command',
+        buf('GETKEYSANDFLAGS', 'get', 'k'),
+      )) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'GETKEYSANDFLAGS'. Try COMMAND HELP.",
     )
 
     const redis70 = createSession('redis-7.0')
@@ -147,9 +159,13 @@ describe('compatibility behavior gates', () => {
 
   test('PUBSUB sharded subcommands follow their feature gate', async () => {
     const redis62 = createSession('redis-6.2')
-    assertError(
+    assertErrorMessage(
       (await redis62.execute('pubsub', buf('shardchannels'))) as RedisResult,
-      /unknown subcommand/i,
+      "Unknown subcommand or wrong number of arguments for 'shardchannels'. Try PUBSUB HELP.",
+    )
+    assertErrorMessage(
+      (await redis62.execute('pubsub', buf('SHARDNUMSUB'))) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'SHARDNUMSUB'. Try PUBSUB HELP.",
     )
 
     const redis70 = createSession('redis-7.0')
@@ -218,13 +234,22 @@ describe('compatibility behavior gates', () => {
   })
 
   test('CLIENT SETINFO follows its feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertErrorMessage(
+      (await redis62.execute(
+        'client',
+        buf('SETINFO', 'lib-name', 'test'),
+      )) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'SETINFO'. Try CLIENT HELP.",
+    )
+
     const redis70 = createSession('redis-7.0')
-    assertError(
+    assertErrorMessage(
       (await redis70.execute(
         'client',
-        buf('setinfo', 'lib-name', 'test'),
+        buf('SETINFO', 'lib-name', 'test'),
       )) as RedisResult,
-      /unknown subcommand/i,
+      "unknown subcommand 'SETINFO'. Try CLIENT HELP.",
     )
 
     const redis72 = createSession('redis-7.2')
@@ -232,6 +257,57 @@ describe('compatibility behavior gates', () => {
       await redis72.execute('client', buf('setinfo', 'lib-name', 'test')),
       RedisResult.ok(),
     )
+  })
+
+  test('LPOP and RPOP count on missing keys return nil arrays', async () => {
+    for (const profile of ['redis-6.2', 'redis-7.0'] as const) {
+      const session = createSession(profile)
+      assert.deepStrictEqual(
+        (await session.execute('lpop', buf('missing-list', '1'))).value,
+        RedisValue.nullArray(),
+        profile,
+      )
+      assert.deepStrictEqual(
+        (await session.execute('rpop', buf('missing-list', '1'))).value,
+        RedisValue.nullArray(),
+        profile,
+      )
+    }
+  })
+
+  test('XAUTOCLAIM deleted-id reply element follows Redis 7 profile', async () => {
+    const redis62 = createSession('redis-6.2')
+    await createDeletedPendingStreamEntry(redis62)
+    assert.deepStrictEqual(
+      (
+        await redis62.execute(
+          'xautoclaim',
+          buf('stream', 'workers', 'bob', '0', '0-0', 'COUNT', '10'),
+        )
+      ).value,
+      RedisValue.array([
+        RedisValue.bulkString(Buffer.from('0-0')),
+        RedisValue.array([RedisValue.bulkString(null)]),
+      ]),
+    )
+    assert.strictEqual(await pendingCount(redis62), 1)
+
+    const redis70 = createSession('redis-7.0')
+    await createDeletedPendingStreamEntry(redis70)
+    assert.deepStrictEqual(
+      (
+        await redis70.execute(
+          'xautoclaim',
+          buf('stream', 'workers', 'bob', '0', '0-0', 'COUNT', '10'),
+        )
+      ).value,
+      RedisValue.array([
+        RedisValue.bulkString(Buffer.from('0-0')),
+        RedisValue.array([]),
+        RedisValue.array([RedisValue.bulkString(Buffer.from('1-0'))]),
+      ]),
+    )
+    assert.strictEqual(await pendingCount(redis70), 0)
   })
 
   test('Valkey cluster profile allows non-zero SELECT', async () => {
@@ -283,6 +359,29 @@ describe('compatibility behavior gates', () => {
     assert.strictEqual(helloField(valkeyHello, 'version'), '9.0.0')
   })
 })
+
+async function createDeletedPendingStreamEntry(
+  session: ClientSession,
+): Promise<void> {
+  await session.execute('xadd', buf('stream', '1-0', 'field', 'value'))
+  await session.execute('xgroup', buf('create', 'stream', 'workers', '0'))
+  await session.execute(
+    'xreadgroup',
+    buf('GROUP', 'workers', 'alice', 'STREAMS', 'stream', '>'),
+  )
+  await session.execute('xdel', buf('stream', '1-0'))
+}
+
+async function pendingCount(session: ClientSession): Promise<number | bigint> {
+  const pending = (await session.execute(
+    'xpending',
+    buf('stream', 'workers'),
+  )) as RedisResult
+  assert.strictEqual(pending.value.kind, 'array')
+  const count = pending.value.items[0]
+  assert.strictEqual(count.kind, 'integer')
+  return count.value
+}
 
 function commandSubcommandNames(result: RedisResult): string[] {
   assert.strictEqual(result.value.kind, 'array')

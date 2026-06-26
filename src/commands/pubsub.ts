@@ -227,9 +227,7 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardchannels') {
       if (!ctx.server.profile.has('pubsub.sharded')) {
-        throw new RedisCommandError(
-          `unknown subcommand '${args.subcommand}'. Try PUBSUB HELP.`,
-        )
+        throw pubsubUnavailableSubcommandError(args.subcommand)
       }
       expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
       const channels = ctx.server.pubsubBroker.shardChannelsMatching(
@@ -240,9 +238,7 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardnumsub') {
       if (!ctx.server.profile.has('pubsub.sharded')) {
-        throw new RedisCommandError(
-          `unknown subcommand '${args.subcommand}'. Try PUBSUB HELP.`,
-        )
+        throw pubsubUnavailableSubcommandError(args.subcommand)
       }
       return RedisResult.create(
         RedisValue.array(
@@ -367,5 +363,13 @@ function expectPubSubSubcommandMaxArgCount(
 function pubsubSubcommandError(subcommand: string): RedisCommandError {
   return new RedisCommandError(
     `unknown subcommand or wrong number of arguments for '${subcommand}'. Try PUBSUB HELP.`,
+  )
+}
+
+function pubsubUnavailableSubcommandError(
+  subcommand: string,
+): RedisCommandError {
+  return new RedisCommandError(
+    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try PUBSUB HELP.`,
   )
 }

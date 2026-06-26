@@ -76,6 +76,17 @@ describe('compatibility profiles', () => {
     assert.strictEqual(redis62.has('expire.conditions'), false)
     assert.strictEqual(redis62.has('set.get'), true)
     assert.strictEqual(redis62.has('client.setinfo'), false)
+    assert.strictEqual(
+      redis62.has('client.setinfo.unknown-subcommand-error'),
+      false,
+    )
+
+    const redis70 = resolveCompatibilityProfile('redis-7.0')
+    assert.strictEqual(redis70.has('client.setinfo'), false)
+    assert.strictEqual(
+      redis70.has('client.setinfo.unknown-subcommand-error'),
+      true,
+    )
 
     const valkey72 = resolveCompatibilityProfile({
       flavor: 'valkey',

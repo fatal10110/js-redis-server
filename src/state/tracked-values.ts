@@ -418,9 +418,10 @@ export class TrackedSortedSetData {
 // entry that has since been deleted carries fields === null.
 export type StreamDelivery = { id: StreamId; fields: Buffer[] | null }
 export type ClaimedEntry = { id: StreamId; fields: Buffer[] }
+export type AutoClaimedEntry = { id: StreamId; fields: Buffer[] | null }
 export type AutoClaimResult = {
   nextStartId: StreamId
-  claimed: ClaimedEntry[]
+  claimed: AutoClaimedEntry[]
   deleted: StreamId[]
 }
 
@@ -641,12 +642,13 @@ export class TrackedStreamData {
       start: StreamId
       count: number
       justId: boolean
+      cleanDeletedEntries: boolean
     },
     now: number,
   ): AutoClaimResult {
     ensureConsumer(group, consumerName, now).activeAt = now
     const consumerId = consumerName.toString('hex')
-    const claimed: ClaimedEntry[] = []
+    const claimed: AutoClaimedEntry[] = []
     const deleted: StreamId[] = []
     let nextStartId: StreamId = MIN_ID
 
@@ -655,8 +657,26 @@ export class TrackedStreamData {
 
       const entry = findEntry(this.stream, pending.id)
       if (!entry) {
-        group.pending.delete(streamIdKey(pending.id))
-        deleted.push(pending.id)
+        if (options.cleanDeletedEntries) {
+          group.pending.delete(streamIdKey(pending.id))
+          deleted.push(pending.id)
+          continue
+        }
+
+        const idleTime = Math.max(0, now - pending.deliveredAt)
+        if (idleTime < options.minIdleMs) continue
+
+        pending.consumerId = consumerId
+        pending.deliveredAt = now
+        if (!options.justId) pending.deliveryCount++
+        claimed.push({ id: pending.id, fields: null })
+
+        if (claimed.length >= options.count) {
+          const next = pendingEntriesSorted(group).find(
+            item => compareStreamId(item.id, pending.id) > 0,
+          )
+          nextStartId = next ? cloneStreamId(next.id) : MIN_ID
+        }
         continue
       }
 
