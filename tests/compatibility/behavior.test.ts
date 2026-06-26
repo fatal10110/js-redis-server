@@ -310,6 +310,32 @@ describe('compatibility behavior gates', () => {
     assert.strictEqual(await pendingCount(redis70), 0)
   })
 
+  test('SCRIPT DEBUG inside MULTI returns the Redis pipeline error', async () => {
+    for (const profile of ['redis-6.2', 'redis-7.0'] as const) {
+      const session = createSession(profile)
+      assert.deepStrictEqual(
+        await session.execute('multi', []),
+        RedisResult.ok(),
+      )
+      assert.deepStrictEqual(
+        await session.execute('script', buf('debug', 'YES')),
+        RedisResult.create(RedisValue.simpleString('QUEUED')),
+      )
+      assert.deepStrictEqual(
+        await session.execute('exec', []),
+        RedisResult.create(
+          RedisValue.array([
+            RedisValue.error(
+              'SCRIPT DEBUG must be called outside a pipeline',
+              'ERR',
+            ),
+          ]),
+        ),
+        profile,
+      )
+    }
+  })
+
   test('Valkey cluster profile allows non-zero SELECT', async () => {
     for (const profile of [
       'redis-6.2',

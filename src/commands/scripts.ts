@@ -81,7 +81,7 @@ export const scriptCommand = defineCommand({
       case 'kill':
         return scriptKill(args)
       case 'debug':
-        return scriptDebug(args)
+        return scriptDebug(args, ctx)
       case 'help':
         return scriptHelp(args)
       default:
@@ -174,11 +174,20 @@ function scriptKill(args: ScriptArgs): RedisResult {
   return RedisResult.error('No scripts in execution right now.', 'NOTBUSY')
 }
 
-function scriptDebug(args: ScriptArgs): RedisResult {
+function scriptDebug(
+  args: ScriptArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
   expectRestLength(args, 'script|debug', 1)
   const mode = args.rest[0].toString().toUpperCase()
   if (mode !== 'YES' && mode !== 'SYNC' && mode !== 'NO') {
     throw new ScriptDebugModeError()
+  }
+
+  if (ctx.transactionReplay) {
+    throw new RedisCommandError(
+      'SCRIPT DEBUG must be called outside a pipeline',
+    )
   }
 
   return ok()
