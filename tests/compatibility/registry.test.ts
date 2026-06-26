@@ -19,6 +19,44 @@ const futureCommand = defineCommand({
   execute: () => RedisResult.ok(),
 })
 
+const redis62Commands = [
+  'getex',
+  'getdel',
+  'copy',
+  'hrandfield',
+  'lmove',
+  'blmove',
+  'smismember',
+  'xautoclaim',
+  'zmscore',
+  'reset',
+]
+
+const redis70Commands = [
+  'expiretime',
+  'pexpiretime',
+  'lmpop',
+  'blmpop',
+  'zmpop',
+  'bzmpop',
+  'sintercard',
+  'spublish',
+  'ssubscribe',
+  'sunsubscribe',
+  'zintercard',
+  'sort_ro',
+]
+
+const hashFieldExpirationCommands = [
+  'hpersist',
+  'hexpire',
+  'hpexpire',
+  'hexpireat',
+  'hpexpireat',
+  'httl',
+  'hpttl',
+]
+
 describe('compatibility registry filtering', () => {
   test('filters command definitions whose version gate is not satisfied', () => {
     const redis62 = createRedisCommandRegistry(
@@ -49,18 +87,7 @@ describe('compatibility registry filtering', () => {
       [],
       resolveCompatibilityProfile({ flavor: 'redis', version: '6.0.0' }),
     )
-    for (const command of [
-      'getex',
-      'getdel',
-      'copy',
-      'hrandfield',
-      'lmove',
-      'blmove',
-      'smismember',
-      'xautoclaim',
-      'zmscore',
-      'reset',
-    ]) {
+    for (const command of redis62Commands) {
       assert.strictEqual(redis60.has(command), false, command)
     }
 
@@ -68,23 +95,10 @@ describe('compatibility registry filtering', () => {
       [],
       resolveCompatibilityProfile('redis-6.2'),
     )
-    for (const command of ['getex', 'copy', 'hrandfield', 'lmove', 'zmscore']) {
+    for (const command of redis62Commands) {
       assert.strictEqual(redis62.has(command), true, command)
     }
-    for (const command of [
-      'expiretime',
-      'pexpiretime',
-      'lmpop',
-      'blmpop',
-      'zmpop',
-      'bzmpop',
-      'sintercard',
-      'spublish',
-      'ssubscribe',
-      'sunsubscribe',
-      'zintercard',
-      'sort_ro',
-    ]) {
+    for (const command of redis70Commands) {
       assert.strictEqual(redis62.has(command), false, command)
     }
 
@@ -92,17 +106,7 @@ describe('compatibility registry filtering', () => {
       [],
       resolveCompatibilityProfile('redis-7.0'),
     )
-    for (const command of [
-      'expiretime',
-      'lmpop',
-      'zmpop',
-      'sintercard',
-      'spublish',
-      'ssubscribe',
-      'sunsubscribe',
-      'zintercard',
-      'sort_ro',
-    ]) {
+    for (const command of redis70Commands) {
       assert.strictEqual(redis70.has(command), true, command)
     }
 
@@ -110,15 +114,7 @@ describe('compatibility registry filtering', () => {
       [],
       resolveCompatibilityProfile('redis-7.4'),
     )
-    for (const command of [
-      'hpersist',
-      'hexpire',
-      'hpexpire',
-      'hexpireat',
-      'hpexpireat',
-      'httl',
-      'hpttl',
-    ]) {
+    for (const command of hashFieldExpirationCommands) {
       assert.strictEqual(redis74.has(command), true, command)
     }
     for (const command of ['hgetdel', 'hgetex']) {
@@ -132,5 +128,36 @@ describe('compatibility registry filtering', () => {
     for (const command of ['hgetdel', 'hgetex']) {
       assert.strictEqual(redis80.has(command), true, command)
     }
+  })
+
+  test('filters implemented root commands by Valkey version', () => {
+    const valkey8 = createRedisCommandRegistry(
+      [],
+      resolveCompatibilityProfile('valkey-8.0'),
+    )
+    for (const command of [...redis62Commands, ...redis70Commands]) {
+      assert.strictEqual(valkey8.has(command), true, command)
+    }
+    for (const command of [
+      ...hashFieldExpirationCommands,
+      'hgetex',
+      'hgetdel',
+    ]) {
+      assert.strictEqual(valkey8.has(command), false, command)
+    }
+
+    const valkey9 = createRedisCommandRegistry(
+      [],
+      resolveCompatibilityProfile('valkey-9.0'),
+    )
+    for (const command of [
+      ...redis62Commands,
+      ...redis70Commands,
+      ...hashFieldExpirationCommands,
+      'hgetex',
+    ]) {
+      assert.strictEqual(valkey9.has(command), true, command)
+    }
+    assert.strictEqual(valkey9.has('hgetdel'), false)
   })
 })
