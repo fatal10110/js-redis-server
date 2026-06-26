@@ -99,18 +99,14 @@ export const commandCommand = defineCommand({
         return commandInfoSubcommand(args, ctx)
       case 'docs':
         if (!ctx.server.profile.has('command.docs')) {
-          throw new RedisCommandError(
-            `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
-          )
+          throw commandSubcommandError(args.subcommand)
         }
         return commandDocsSubcommand(args, ctx)
       case 'getkeys':
         return commandGetKeys(args, ctx)
       case 'getkeysandflags':
         if (!ctx.server.profile.has('command.getkeysandflags')) {
-          throw new RedisCommandError(
-            `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
-          )
+          throw commandSubcommandError(args.subcommand)
         }
         return commandGetKeysAndFlags(args, ctx)
       case 'help':
@@ -122,6 +118,12 @@ export const commandCommand = defineCommand({
     }
   },
 })
+
+function commandSubcommandError(subcommand: string): RedisCommandError {
+  return new RedisCommandError(
+    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try COMMAND HELP.`,
+  )
+}
 
 function commandCount(
   args: CommandArgs,
