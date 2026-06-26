@@ -11,6 +11,7 @@ export type FeatureId =
   | 'command.docs'
   | 'command.getkeysandflags'
   | 'client.setinfo'
+  | 'client.setinfo.unknown-subcommand-error'
   | 'pubsub.sharded'
   | 'cluster.multi-db'
 

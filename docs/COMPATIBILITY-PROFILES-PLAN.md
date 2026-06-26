@@ -113,6 +113,8 @@ export type FeatureId =
   | 'command.docs' // COMMAND DOCS                                    (subcommand)
   | 'command.getkeysandflags' // COMMAND GETKEYSANDFLAGS                     (subcommand)
   | 'client.setinfo' // CLIENT SETINFO                                  (subcommand)
+  | 'client.setinfo.unknown-subcommand-error' // CLIENT SETINFO old-profile error shape
+  | 'pubsub.sharded' // PUBSUB SHARD* / SSUBSCRIBE / SPUBLISH           (subcommand/root)
   | 'cluster.multi-db' // SELECT non-zero db / multi-DB in cluster mode   (policy)
 
 export interface CompatibilityProfile {
@@ -199,11 +201,14 @@ Side benefit: `COMMAND COUNT/DOCS/INFO` read `registry.getAll()`, so introspecti
   gated-off subcommands.
 - `src/commands/connection.ts`: gate `CLIENT SETINFO` behind Redis 7.2 / Valkey 7.2.
   This matters for package users running clients that probe `CLIENT SETINFO` during
-  connection setup; an older profile must behave like the older real server.
+  connection setup; an older profile must behave like the older real server. Its
+  missing-feature error is version-specific: Redis 6.2 says `Unknown subcommand
+  or wrong number of arguments`, while Redis 7.0 says `unknown subcommand`; model
+  that with a named compatibility gate, not an inline version comparison.
 - EXPIRE family in `src/commands/keys.ts`: the existing `expireOptionsSchema` custom parser, when it sees `NX|XX|GT|LT` but `!ctx.profile.has('expire.conditions')`, **does not consume** the token and returns `undefined`. The trailing arg then trips `parseCommandArgs`' length check → `WrongNumberOfArgumentsError` — which is exactly what real 6.2 (fixed arity 3) returns. When the feature is on, behavior is unchanged.
 - SET option loop in `src/commands/strings.ts` (`createSetSchema`): when the loop encounters `GET` and `!ctx.profile.has('set.get')`, or `EXAT|PXAT` and `!ctx.profile.has('set.exat-pxat')`, throw `RedisSyntaxError` (SET is variadic arity, so an unknown option is `ERR syntax error` on the real server — matches).
 
-Rule of thumb for any future option gate: replicate what the real old server does — fixed-arity commands surface a trailing unsupported option as `WrongNumberOfArgumentsError` (don't consume), variadic commands as `RedisSyntaxError` (throw).
+Rule of thumb for any future option gate: verify the exact missing-feature behavior against the real old server before choosing the mock error. Do not infer it from parser shape alone; Redis varies by command and option, so record the observed error/result shape with the gate.
 
 ### Policy / semantic gating (execute-time, no new wiring)
 
