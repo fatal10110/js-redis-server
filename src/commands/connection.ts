@@ -479,9 +479,7 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'setinfo') {
       if (!ctx.server.profile.has('client.setinfo')) {
-        throw new RedisCommandError(
-          `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
-        )
+        throw clientSetInfoUnavailableError(ctx, args.subcommand)
       }
 
       expectArgCount('client|setinfo', args.args, 2)
@@ -529,10 +527,25 @@ export const clientCommand = defineCommand({
     }
 
     throw new RedisCommandError(
-      `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+      `unknown subcommand '${args.subcommand}'. Try CLIENT HELP.`,
     )
   },
 })
+
+function clientSetInfoUnavailableError(
+  ctx: RedisExecutionContext,
+  subcommand: string,
+): RedisCommandError {
+  if (!ctx.server.profile.has('client.setinfo.unknown-subcommand-error')) {
+    return new RedisCommandError(
+      `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CLIENT HELP.`,
+    )
+  }
+
+  return new RedisCommandError(
+    `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+  )
+}
 
 /**
  * Parse HELLO's protocol-version token. Unlike a generic `t.integer()` field,

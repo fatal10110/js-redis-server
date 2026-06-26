@@ -52,6 +52,11 @@ function assertError(result: RedisResult, pattern: RegExp): void {
   assert.match(result.value.message, pattern)
 }
 
+function assertErrorMessage(result: RedisResult, message: string): void {
+  assert.strictEqual(result.value.kind, 'error')
+  assert.strictEqual(result.value.message, message)
+}
+
 describe('compatibility behavior gates', () => {
   test('EXPIRE conditions are rejected before Redis 7.0', async () => {
     const redis62 = createSession('redis-6.2')
@@ -87,9 +92,16 @@ describe('compatibility behavior gates', () => {
 
   test('COMMAND subcommands follow their feature gates', async () => {
     const redis62 = createSession('redis-6.2')
-    assertError(
+    assertErrorMessage(
       (await redis62.execute('command', buf('docs'))) as RedisResult,
-      /unknown subcommand/i,
+      "Unknown subcommand or wrong number of arguments for 'docs'. Try COMMAND HELP.",
+    )
+    assertErrorMessage(
+      (await redis62.execute(
+        'command',
+        buf('GETKEYSANDFLAGS', 'get', 'k'),
+      )) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'GETKEYSANDFLAGS'. Try COMMAND HELP.",
     )
 
     const redis70 = createSession('redis-7.0')
@@ -127,9 +139,13 @@ describe('compatibility behavior gates', () => {
 
   test('PUBSUB sharded subcommands follow their feature gate', async () => {
     const redis62 = createSession('redis-6.2')
-    assertError(
+    assertErrorMessage(
       (await redis62.execute('pubsub', buf('shardchannels'))) as RedisResult,
-      /unknown subcommand/i,
+      "Unknown subcommand or wrong number of arguments for 'shardchannels'. Try PUBSUB HELP.",
+    )
+    assertErrorMessage(
+      (await redis62.execute('pubsub', buf('SHARDNUMSUB'))) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'SHARDNUMSUB'. Try PUBSUB HELP.",
     )
 
     const redis70 = createSession('redis-7.0')
@@ -198,13 +214,22 @@ describe('compatibility behavior gates', () => {
   })
 
   test('CLIENT SETINFO follows its feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertErrorMessage(
+      (await redis62.execute(
+        'client',
+        buf('SETINFO', 'lib-name', 'test'),
+      )) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'SETINFO'. Try CLIENT HELP.",
+    )
+
     const redis70 = createSession('redis-7.0')
-    assertError(
+    assertErrorMessage(
       (await redis70.execute(
         'client',
-        buf('setinfo', 'lib-name', 'test'),
+        buf('SETINFO', 'lib-name', 'test'),
       )) as RedisResult,
-      /unknown subcommand/i,
+      "unknown subcommand 'SETINFO'. Try CLIENT HELP.",
     )
 
     const redis72 = createSession('redis-7.2')
