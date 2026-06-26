@@ -13,6 +13,7 @@ export type FeatureId =
   | 'client.setinfo'
   | 'client.setinfo.unknown-subcommand-error'
   | 'pubsub.sharded'
+  | 'stream.xautoclaim-deleted-ids'
   | 'cluster.multi-db'
 
 export interface CompatibilityProfile {
