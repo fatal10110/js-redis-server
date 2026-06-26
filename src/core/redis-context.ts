@@ -69,6 +69,7 @@ export interface RedisExecutionContext {
   readonly server: RedisServerState
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
+  readonly transactionReplay?: boolean
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

@@ -289,6 +289,8 @@ export class ClientSession implements RedisClientSession {
     const noBlockCtx = this.createExecutionContext(
       undefined,
       createNonBlockingParkHandler(),
+      undefined,
+      true,
     )
     let currentDbId = this.selectedDatabaseId
 
@@ -774,6 +776,7 @@ export class ClientSession implements RedisClientSession {
     turnAccess?: TurnAccess,
     parkOverride?: ParkHandler,
     monitor?: RedisMonitorContext,
+    transactionReplay = false,
   ): RedisExecutionContext {
     // `db` is a live getter, not a snapshot: a queued `SELECT N` runs mid-EXEC
     // and updates `selectedDatabaseId`, so every command must resolve the
@@ -787,6 +790,7 @@ export class ClientSession implements RedisClientSession {
       server: this.server,
       session: this,
       executor: this.executor,
+      ...(transactionReplay ? { transactionReplay } : {}),
       ...(this.nodeRole ? { nodeRole: this.nodeRole } : {}),
       ...(monitor ? { monitor } : {}),
       signal: this.signal,
