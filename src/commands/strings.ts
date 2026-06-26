@@ -574,6 +574,14 @@ function createSetSchema(): CommandSchema<SetArgs> {
         throw new RedisSyntaxError()
       }
 
+      if (
+        args.condition === 'NX' &&
+        args.get &&
+        !ctx.profile.has('set.nx-get')
+      ) {
+        throw new RedisSyntaxError()
+      }
+
       return { value: args, nextIndex: input.length }
     },
   )

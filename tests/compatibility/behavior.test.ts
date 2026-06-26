@@ -83,6 +83,26 @@ describe('compatibility behavior gates', () => {
       buf('k', 'v', 'GET'),
     )) as RedisResult
     assert.deepStrictEqual(result.value, { kind: 'bulk-string', value: null })
+
+    assertError(
+      (await redis62.execute('set', buf('k', 'v', 'NX', 'GET'))) as RedisResult,
+      /syntax/i,
+    )
+    assertError(
+      (await redis62.execute('set', buf('k', 'v', 'GET', 'NX'))) as RedisResult,
+      /syntax/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    await redis70.execute('set', buf('k', 'old'))
+    const nxGet = (await redis70.execute(
+      'set',
+      buf('k', 'new', 'NX', 'GET'),
+    )) as RedisResult
+    assert.deepStrictEqual(nxGet.value, {
+      kind: 'bulk-string',
+      value: Buffer.from('old'),
+    })
   })
 
   test('COMMAND subcommands follow their feature gates', async () => {
