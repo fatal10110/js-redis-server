@@ -124,6 +124,13 @@ Supported presets are `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
 Profiles gate implemented commands, subcommands, options, and known behavioral
 differences. Unsupported commands are still unsupported regardless of profile.
 
+Valkey profiles model the Redis 7.0-era gates as enabled:
+
+| Profile | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate |
+| --- | --- | --- |
+| `valkey-8.0` | enabled | cluster multi-DB disabled |
+| `valkey-9.0` | enabled | cluster multi-DB enabled |
+
 ## Package Entry Points
 
 The package ships dual ESM + CJS builds with two import surfaces:

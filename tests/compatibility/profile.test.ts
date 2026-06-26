@@ -28,6 +28,10 @@ describe('compatibility profiles', () => {
     assert.strictEqual(valkey9.flavor, 'valkey')
     assert.strictEqual(valkey9.version, '9.0.0')
 
+    const valkey80 = resolveCompatibilityProfile('valkey-8.0')
+    assert.strictEqual(valkey80.flavor, 'valkey')
+    assert.strictEqual(valkey80.version, '8.0.0')
+
     const redis80 = resolveCompatibilityProfile('redis-8.0')
     assert.strictEqual(redis80.flavor, 'redis')
     assert.strictEqual(redis80.version, '8.0.0')

@@ -215,11 +215,20 @@ describe('compatibility behavior gates', () => {
   })
 
   test('Valkey cluster profile allows non-zero SELECT', async () => {
-    const redis = createClusterSession('redis-7.4')
-    assert.deepStrictEqual(
-      await redis.execute('select', buf('1')),
-      RedisResult.error('SELECT is not allowed in cluster mode', 'ERR'),
-    )
+    for (const profile of [
+      'redis-6.2',
+      'redis-7.0',
+      'redis-7.2',
+      'redis-7.4',
+      'redis-8.0',
+      'valkey-8.0',
+    ] as const) {
+      assert.deepStrictEqual(
+        await createClusterSession(profile).execute('select', buf('1')),
+        RedisResult.error('SELECT is not allowed in cluster mode', 'ERR'),
+        profile,
+      )
+    }
 
     const valkey = createClusterSession('valkey-9.0')
     assert.deepStrictEqual(

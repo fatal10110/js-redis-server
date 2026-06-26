@@ -11,6 +11,7 @@ type ProfileName =
   | 'redis-7.2'
   | 'redis-7.4'
   | 'redis-8.0'
+  | 'valkey-8.0'
   | 'valkey-9.0'
 
 const testRunner = new TestRunner()
@@ -21,8 +22,47 @@ const expectedVersion: Record<ProfileName, string> = {
   'redis-7.2': '7.2.4',
   'redis-7.4': '7.4.4',
   'redis-8.0': '8.0.0',
+  'valkey-8.0': '8.0.0',
   'valkey-9.0': '9.0.0',
 }
+
+const redis62RootCommands = [
+  'GETEX',
+  'GETDEL',
+  'COPY',
+  'HRANDFIELD',
+  'LMOVE',
+  'BLMOVE',
+  'RESET',
+  'SMISMEMBER',
+  'XAUTOCLAIM',
+  'ZMSCORE',
+]
+
+const redis70RootCommands = [
+  'EXPIRETIME',
+  'PEXPIRETIME',
+  'LMPOP',
+  'BLMPOP',
+  'SINTERCARD',
+  'SSUBSCRIBE',
+  'SUNSUBSCRIBE',
+  'SPUBLISH',
+  'SORT_RO',
+  'ZINTERCARD',
+  'ZMPOP',
+  'BZMPOP',
+]
+
+const hashFieldExpirationCommands = [
+  'HEXPIRE',
+  'HPEXPIRE',
+  'HEXPIREAT',
+  'HPEXPIREAT',
+  'HPERSIST',
+  'HTTL',
+  'HPTTL',
+]
 
 describe(
   `compatibility profile integration (${testRunner.getBackendName()}, ${profile})`,
@@ -42,9 +82,14 @@ describe(
 
     test('reports the selected profile over INFO and HELLO', async () => {
       const info = await send('INFO', 'server')
-      if (profile === 'valkey-9.0') {
+      if (profile.startsWith('valkey-')) {
         assert.match(info, /\r\nserver_name:valkey\r\n/)
-        assert.match(info, /\r\nvalkey_version:9\.0\.0\r\n/)
+        assert.match(
+          info,
+          new RegExp(
+            `\\r\\nvalkey_version:${escapeRegExp(expectedVersion[profile])}\\r\\n`,
+          ),
+        )
       } else {
         assert.match(
           info,
@@ -58,14 +103,40 @@ describe(
       assert.match(hello, bulkStringFrame(expectedVersion[profile]))
     })
 
-    test('applies representative command and subcommand gates', async () => {
+    test('applies root command availability gates', async () => {
+      for (const command of redis62RootCommands) {
+        await expectRootCommand(command, true)
+      }
+
+      for (const command of redis70RootCommands) {
+        await expectRootCommand(command, supportsRedis70Commands())
+      }
+
+      for (const command of hashFieldExpirationCommands) {
+        await expectRootCommand(command, supportsHashFieldExpiration())
+      }
+
+      await expectRootCommand('HGETEX', supportsHgetex())
+      await expectRootCommand('HGETDEL', supportsHgetdel())
+    })
+
+    test('applies parser, subcommand, and behavior gates', async () => {
       const key = `compat:${profile}:key`
       const hash = `compat:${profile}:hash`
 
       await send('SET', key, 'v')
       await expectGate(supportsExpireConditions(), 'EXPIRE', key, '10', 'NX')
+      await expectGate(true, 'SET', key, 'next', 'GET')
+      await expectGate(true, 'SET', key, 'expires', 'EXAT', '4102444800')
 
       await expectGate(supportsCommandDocs(), 'COMMAND', 'DOCS')
+      await expectGate(
+        supportsCommandDocs(),
+        'COMMAND',
+        'GETKEYSANDFLAGS',
+        'GET',
+        key,
+      )
       await expectGate(
         supportsClientSetinfo(),
         'CLIENT',
@@ -74,6 +145,7 @@ describe(
         'compat',
       )
       await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDCHANNELS')
+      await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDNUMSUB')
       await expectGate(
         supportsShardedPubSub(),
         'SPUBLISH',
@@ -93,6 +165,14 @@ describe(
         'HEXPIRE',
         hash,
         '10',
+        'FIELDS',
+        '1',
+        'field',
+      )
+      await expectGate(
+        supportsHashFieldExpiration(),
+        'HTTL',
+        hash,
         'FIELDS',
         '1',
         'field',
@@ -131,10 +211,35 @@ describe(
         `${args.join(' ')} should be gated for ${profile}, got ${JSON.stringify(reply)}`,
       )
     }
+
+    async function expectRootCommand(
+      command: string,
+      available: boolean,
+    ): Promise<void> {
+      const reply = await send(command)
+      if (available) {
+        assert.doesNotMatch(
+          reply,
+          /unknown command/i,
+          `${command} should be registered for ${profile}, got ${JSON.stringify(reply)}`,
+        )
+        return
+      }
+
+      assert.match(
+        reply,
+        /unknown command/i,
+        `${command} should be absent for ${profile}, got ${JSON.stringify(reply)}`,
+      )
+    }
   },
 )
 
 function supportsExpireConditions(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsRedis70Commands(): boolean {
   return profile !== 'redis-6.2'
 }
 

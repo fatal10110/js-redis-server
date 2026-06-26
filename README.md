@@ -216,6 +216,13 @@ regardless of profile.
 Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
 `redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
 
+Valkey profiles model the Redis 7.0-era gates as enabled:
+
+| Profile | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate |
+| --- | --- | --- |
+| `valkey-8.0` | enabled | cluster multi-DB disabled |
+| `valkey-9.0` | enabled | cluster multi-DB enabled |
+
 ### Seeding
 
 `seed()` takes an explicit entries array — you supply keys, types, values, and
