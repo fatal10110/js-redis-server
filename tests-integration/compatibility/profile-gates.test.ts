@@ -126,6 +126,7 @@ describe(
 
       await send('SET', key, 'v')
       await expectGate(supportsExpireConditions(), 'EXPIRE', key, '10', 'NX')
+      await expectGate(supportsRedis70Commands(), 'INFO', 'server', 'clients')
       await expectGate(true, 'SET', key, 'next', 'GET')
       await expectGate(supportsSetNxGet(), 'SET', key, 'guarded', 'NX', 'GET')
       await expectGate(true, 'SET', key, 'expires', 'EXAT', '4102444800')
@@ -145,6 +146,7 @@ describe(
         'lib-name',
         'compat',
       )
+      await expectGate(supportsRedis70Commands(), 'CLIENT', 'NO-EVICT', 'ON')
       await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDCHANNELS')
       await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDNUMSUB')
       await expectGate(

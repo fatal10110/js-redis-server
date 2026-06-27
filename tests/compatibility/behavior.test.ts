@@ -259,6 +259,55 @@ describe('compatibility behavior gates', () => {
     )
   })
 
+  test('CLIENT NO-EVICT follows its feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertErrorMessage(
+      (await redis62.execute('client', buf('NO-EVICT', 'on'))) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'NO-EVICT'. Try CLIENT HELP.",
+    )
+
+    const redis70 = createSession('redis-7.0')
+    assert.deepStrictEqual(
+      await redis70.execute('client', buf('no-evict', 'on')),
+      RedisResult.ok(),
+    )
+    const noEvictInfo = (await redis70.execute(
+      'client',
+      buf('info'),
+    )) as RedisResult
+    assert.match(bulkStringText(noEvictInfo.value), /(?:^| )flags=Ne(?: |\n)/)
+
+    assert.deepStrictEqual(
+      await redis70.execute('client', buf('no-evict', 'off')),
+      RedisResult.ok(),
+    )
+    const evictableInfo = (await redis70.execute(
+      'client',
+      buf('info'),
+    )) as RedisResult
+    assert.match(bulkStringText(evictableInfo.value), /(?:^| )flags=N(?: |\n)/)
+  })
+
+  test('INFO multiple sections follow their feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertErrorMessage(
+      (await redis62.execute('info', buf('server', 'clients'))) as RedisResult,
+      'syntax error',
+    )
+
+    const redis70 = createSession('redis-7.0')
+    const info = (await redis70.execute(
+      'info',
+      buf('server', 'clients'),
+    )) as RedisResult
+    assert.strictEqual(info.value.kind, 'bulk-string')
+    assert.ok(info.value.value)
+    const text = info.value.value.toString()
+    assert.match(text, /^# Server$/m)
+    assert.match(text, /^# Clients$/m)
+    assert.doesNotMatch(text, /^# Keyspace$/m)
+  })
+
   test('LPOP and RPOP count on missing keys return nil arrays', async () => {
     for (const profile of ['redis-6.2', 'redis-7.0'] as const) {
       const session = createSession(profile)

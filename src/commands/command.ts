@@ -40,6 +40,7 @@ type CommandInfo = {
 const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
   'command|docs': 'command.docs',
   'command|getkeysandflags': 'command.getkeysandflags',
+  'client|no-evict': 'client.no-evict',
   'client|setinfo': 'client.setinfo',
   'pubsub|shardchannels': 'pubsub.sharded',
   'pubsub|shardnumsub': 'pubsub.sharded',

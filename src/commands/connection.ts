@@ -29,6 +29,7 @@ const clientIds = new WeakMap<RedisClientSession, number>()
 const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
+const noEvictClients = new WeakSet<RedisClientSession>()
 let nextClientId = 1
 const INVALID_CLIENT_NAME_MESSAGE =
   'Client names cannot contain spaces, newlines or special characters.'
@@ -87,8 +88,14 @@ function expectArgCount(
   }
 }
 
-function buildInfo(ctx: RedisExecutionContext, section?: string): string {
-  const requestedSection = section?.toLowerCase() ?? 'default'
+function buildInfo(
+  ctx: RedisExecutionContext,
+  sections: readonly string[] = [],
+): string {
+  const requestedSections =
+    sections.length === 0
+      ? ['default']
+      : sections.map(section => section.toLowerCase())
   const clustered = isClusterMode(ctx)
   const defaultSections = [
     'server',
@@ -196,16 +203,16 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
     },
   }
 
-  let selectedSections: string[]
-  if (requestedSection === 'default' || requestedSection === 'all') {
-    selectedSections = defaultSections
-  } else if (requestedSection in sectionBuilders) {
-    selectedSections = [requestedSection]
-  } else {
-    // Real Redis replies with an empty bulk string for an unrecognized
-    // section name rather than an error (clients like ioredis probe with
-    // arbitrary section names during connection setup).
-    return ''
+  const selectedSections: string[] = []
+  for (const requestedSection of requestedSections) {
+    if (requestedSection === 'default' || requestedSection === 'all') {
+      selectedSections.push(...defaultSections)
+      continue
+    }
+
+    if (requestedSection in sectionBuilders) {
+      selectedSections.push(requestedSection)
+    }
   }
 
   const lines: string[] = []
@@ -215,6 +222,13 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
     }
 
     lines.push(...sectionBuilders[selectedSection]())
+  }
+
+  // Real Redis replies with an empty bulk string for an unrecognized section
+  // name rather than an error (clients like ioredis probe with arbitrary
+  // section names during connection setup).
+  if (lines.length === 0) {
+    return ''
   }
 
   return `${lines.join('\r\n')}\r\n`
@@ -233,7 +247,7 @@ function formatClientLine(session: RedisClientSession): string {
     `db=${session.selectedDatabase}`,
     'age=0',
     'idle=0',
-    `flags=${session.mode === 'subscribed' ? 'P' : 'N'}`,
+    `flags=${clientFlags(session)}`,
     `sub=${session.pubsubChannelCount}`,
     `psub=${session.pubsubPatternCount}`,
     'multi=-1',
@@ -262,6 +276,14 @@ function formatClientLine(session: RedisClientSession): string {
   }
 
   return `${fields.join(' ')}\n`
+}
+
+function clientFlags(session: RedisClientSession): string {
+  let flags = session.mode === 'subscribed' ? 'P' : 'N'
+  if (noEvictClients.has(session)) {
+    flags += 'e'
+  }
+  return flags
 }
 
 const HELLO_NOAUTH_MESSAGE =
@@ -430,11 +452,20 @@ export const selectCommand = defineCommand({
 export const infoCommand = defineCommand({
   name: 'info',
   schema: t.object({
-    section: t.optional(t.string()),
+    sections: t.variadic(t.string()),
   }),
   flags: ['readonly', 'admin'],
   keys: () => [],
-  execute: (args, ctx) => bulk(Buffer.from(buildInfo(ctx, args.section))),
+  execute: (args, ctx) => {
+    if (
+      args.sections.length > 1 &&
+      !ctx.server.profile.has('info.multi-section')
+    ) {
+      throw new RedisSyntaxError()
+    }
+
+    return bulk(Buffer.from(buildInfo(ctx, args.sections)))
+  },
 })
 
 export const clientCommand = defineCommand({
@@ -458,6 +489,7 @@ export const clientCommand = defineCommand({
       commandSubcommandInfo('client|list', 2),
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
+      commandSubcommandInfo('client|no-evict', 3),
       commandSubcommandInfo('client|setinfo', 4),
       commandSubcommandInfo('client|help', 2),
     ],
@@ -492,6 +524,25 @@ export const clientCommand = defineCommand({
       return ok()
     }
 
+    if (subcommand === 'no-evict') {
+      if (!ctx.server.profile.has('client.no-evict')) {
+        throw clientUnavailableSubcommandError(args.subcommand)
+      }
+
+      expectArgCount('client|no-evict', args.args, 1)
+      const mode = args.args[0].toString().toLowerCase()
+      if (mode === 'on') {
+        noEvictClients.add(ctx.session)
+        return ok()
+      }
+      if (mode === 'off') {
+        noEvictClients.delete(ctx.session)
+        return ok()
+      }
+
+      throw new RedisSyntaxError()
+    }
+
     if (subcommand === 'id') {
       expectArgCount('client|id', args.args, 0)
       return integer(getClientId(ctx.session))
@@ -523,6 +574,9 @@ export const clientCommand = defineCommand({
       if (ctx.server.profile.has('client.setinfo')) {
         lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
       }
+      if (ctx.server.profile.has('client.no-evict')) {
+        lines.push(value('NO-EVICT <ON|OFF>'))
+      }
       return array(lines)
     }
 
@@ -537,13 +591,19 @@ function clientSetInfoUnavailableError(
   subcommand: string,
 ): RedisCommandError {
   if (!ctx.server.profile.has('client.setinfo.unknown-subcommand-error')) {
-    return new RedisCommandError(
-      `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CLIENT HELP.`,
-    )
+    return clientUnavailableSubcommandError(subcommand)
   }
 
   return new RedisCommandError(
     `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+  )
+}
+
+function clientUnavailableSubcommandError(
+  subcommand: string,
+): RedisCommandError {
+  return new RedisCommandError(
+    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CLIENT HELP.`,
   )
 }
 
@@ -679,6 +739,7 @@ export const resetCommand = defineCommand({
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
+    noEvictClients.delete(ctx.session)
     ctx.session.resetResponseStreams()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
