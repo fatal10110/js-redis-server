@@ -6,6 +6,10 @@ This document provides a detailed overview of Redis commands and their implement
 only a subset of the real Redis syntax, the supported syntax is shown and a
 **Note** lists the gaps.
 
+Command rows describe the newest implemented profile. Older compatibility
+profiles can hide newer implemented commands, subcommands, options, or reply
+shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-profiles).
+
 ## 1. Connection Commands
 
 - [x] `PING [message]` - Return PONG, or echo `message`

@@ -131,6 +131,23 @@ Valkey profiles model the Redis 7.0-era gates as enabled:
 | `valkey-8.0` | enabled | cluster multi-DB disabled |
 | `valkey-9.0` | enabled | cluster multi-DB enabled |
 
+Current profile gates:
+
+| Surface | Redis profiles | Valkey profiles |
+| --- | --- | --- |
+| Redis 6.2 root commands: `BLMOVE`, `COPY`, `GETDEL`, `GETEX`, `HRANDFIELD`, `LMOVE`, `RESET`, `SMISMEMBER`, `XAUTOCLAIM`, `ZMSCORE` | `redis-6.2+` | `valkey-8.0+` |
+| Redis 7.0 root commands: `BLMPOP`, `BZMPOP`, `EXPIRETIME`, `LMPOP`, `PEXPIRETIME`, `SINTERCARD`, `SORT_RO`, `SPUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `ZINTERCARD`, `ZMPOP` | `redis-7.0+` | `valkey-8.0+` |
+| Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
+| Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
+| `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
+| `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options | `redis-7.0+` | `valkey-8.0+` |
+| `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
+| `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
+| Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |
+| `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
+| Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
+
 ## Package Entry Points
 
 The package ships dual ESM + CJS builds with two import surfaces:

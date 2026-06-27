@@ -211,7 +211,8 @@ const valkeyCluster = await createRedisMock({
 Profiles gate implemented commands, subcommands, options, and known behavioral
 differences. For example, `EXPIRETIME key` is unavailable under `redis-6.2` but
 available under newer Redis profiles. Unsupported commands remain unsupported
-regardless of profile.
+regardless of profile. See the current gate matrix in
+[Compatibility Profiles](docs/API.md#compatibility-profiles).
 
 Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
 `redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
