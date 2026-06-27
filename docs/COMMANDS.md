@@ -39,14 +39,15 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
 - [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
+- [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
-- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-EVICT`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 
 ## 2. Server Commands
 
 #### INFO
 
-- [x] `INFO [section]` - Get information and statistics about the server
+- [x] `INFO [section ...]` - Get information and statistics about the server; Redis 7.0+ profiles accept multiple sections
   - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry)
   - [x] `commandstats`, `latencystats`, `errorstats`, `modules`, `sentinel` - return empty sections
   - [x] `default` / `all` - returns the default section set
