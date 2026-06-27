@@ -16,7 +16,16 @@ const compat = new FlatCompat({
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.grepai/**'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'coverage/**',
+      '.grepai/**',
+      // The browser demo is a standalone sub-project with its own toolchain and
+      // browser globals, plus generated Emscripten glue under vendor/. Not part
+      // of the server's lint scope.
+      'examples/**',
+    ],
   },
   ...compat.extends(
     'eslint:recommended',
