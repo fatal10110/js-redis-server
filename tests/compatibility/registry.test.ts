@@ -45,6 +45,11 @@ const redis70Commands = [
   'sunsubscribe',
   'zintercard',
   'sort_ro',
+  'eval_ro',
+  'evalsha_ro',
+  'function',
+  'fcall',
+  'fcall_ro',
 ]
 
 const hashFieldExpirationCommands = [

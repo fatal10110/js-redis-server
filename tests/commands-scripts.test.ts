@@ -90,6 +90,150 @@ describe('new script commands', () => {
     )
   })
 
+  test('evaluates read-only scripts through EVAL_RO and EVALSHA_RO', async () => {
+    const { session, server } = createSession()
+    const script = Buffer.from('return redis.call("get", KEYS[1])')
+    const key = Buffer.from('readonly-script-key')
+
+    await session.execute('set', [key, Buffer.from('value')])
+    assert.deepStrictEqual(
+      await session.execute('eval_ro', [script, Buffer.from('1'), key]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('value'))),
+    )
+
+    const sha = server.scriptCache.load(script)
+    assert.deepStrictEqual(
+      await session.execute('evalsha_ro', [
+        Buffer.from(sha),
+        Buffer.from('1'),
+        key,
+      ]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('value'))),
+    )
+
+    const result = await session.execute('eval_ro', [
+      Buffer.from('return redis.call("set", KEYS[1], ARGV[1])'),
+      Buffer.from('1'),
+      key,
+      Buffer.from('new-value'),
+    ])
+    assert.ok(result instanceof RedisResult)
+    assert.strictEqual(result.value.kind, 'error')
+    assert.match(result.value.message, /Write commands are not allowed/)
+  })
+
+  test('loads, lists, calls, deletes, and flushes Redis functions', async () => {
+    const { session } = createSession()
+    const library = Buffer.from(`#!lua name=mylib
+redis.register_function("echo", function(keys, args) return args[1] end)
+redis.register_function("readkey", function(keys, args) return redis.call("get", keys[1]) end)`)
+    const key = Buffer.from('function-key')
+
+    assert.deepStrictEqual(
+      await session.execute('function', [Buffer.from('load'), library]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('mylib'))),
+    )
+    assert.deepStrictEqual(
+      await session.execute('fcall', [
+        Buffer.from('echo'),
+        Buffer.from('0'),
+        Buffer.from('hello'),
+      ]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('hello'))),
+    )
+
+    await session.execute('set', [key, Buffer.from('value')])
+    assert.deepStrictEqual(
+      await session.execute('fcall_ro', [
+        Buffer.from('readkey'),
+        Buffer.from('1'),
+        key,
+      ]),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('value'))),
+    )
+
+    const list = await session.execute('function', [Buffer.from('list')])
+    assert.ok(list instanceof RedisResult)
+    assert.strictEqual(list.value.kind, 'array')
+    assert.strictEqual(list.value.items.length, 1)
+    assert.ok(arrayBulkTexts(list.value.items[0]).includes('mylib'))
+    assert.ok(arrayBulkTexts(list.value.items[0]).includes('echo'))
+
+    assert.deepStrictEqual(
+      await session.execute('function', [
+        Buffer.from('delete'),
+        Buffer.from('mylib'),
+      ]),
+      RedisResult.ok(),
+    )
+    assert.deepStrictEqual(
+      await session.execute('fcall', [
+        Buffer.from('echo'),
+        Buffer.from('0'),
+        Buffer.from('hello'),
+      ]),
+      RedisResult.error('Function not found', 'ERR'),
+    )
+
+    await session.execute('function', [Buffer.from('load'), library])
+    assert.deepStrictEqual(
+      await session.execute('function', [
+        Buffer.from('flush'),
+        Buffer.from('SYNC'),
+      ]),
+      RedisResult.ok(),
+    )
+    assert.deepStrictEqual(
+      await session.execute('function', [Buffer.from('list')]),
+      RedisResult.create(RedisValue.array([])),
+    )
+  })
+
+  test('returns Redis errors for function failures', async () => {
+    const { session } = createSession()
+    const library = Buffer.from(`#!lua name=mylib
+redis.register_function("echo", function(keys, args) return args[1] end)`)
+
+    assert.deepStrictEqual(
+      await session.execute('fcall', [
+        Buffer.from('missing'),
+        Buffer.from('0'),
+      ]),
+      RedisResult.error('Function not found', 'ERR'),
+    )
+    assert.deepStrictEqual(
+      await session.execute('fcall', [
+        Buffer.from('missing'),
+        Buffer.from('2'),
+        Buffer.from('only-one-key'),
+      ]),
+      RedisResult.error(
+        `Number of keys can't be greater than number of args`,
+        'ERR',
+      ),
+    )
+
+    await session.execute('function', [Buffer.from('load'), library])
+    assert.deepStrictEqual(
+      await session.execute('function', [Buffer.from('load'), library]),
+      RedisResult.error("Library 'mylib' already exists", 'ERR'),
+    )
+    assert.deepStrictEqual(
+      await session.execute('function', [Buffer.from('missing')]),
+      RedisResult.error(
+        "unknown subcommand 'missing'. Try FUNCTION HELP.",
+        'ERR',
+      ),
+    )
+    assert.deepStrictEqual(
+      await session.execute('function', [
+        Buffer.from('flush'),
+        Buffer.from('invalid'),
+      ]),
+      RedisResult.error('FUNCTION FLUSH only support SYNC|ASYNC option', 'ERR'),
+    )
+  })
+
   test('returns Redis errors for EVAL and EVALSHA failures', async () => {
     const { session } = createSession()
     const badScript = Buffer.from("return redis.set('x', 1)")
@@ -367,4 +511,16 @@ function findKeyOwnedBy(
 
 function scriptSha(script: Buffer): string {
   return crypto.createHash('sha1').update(script).digest('hex')
+}
+
+function arrayBulkTexts(value: RedisValue): string[] {
+  if (value.kind === 'bulk-string') {
+    return value.value ? [value.value.toString()] : []
+  }
+
+  if (value.kind !== 'array') {
+    return []
+  }
+
+  return value.items.flatMap(arrayBulkTexts)
 }

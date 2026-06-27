@@ -155,6 +155,20 @@ describe(
         `compat:{${profile}}`,
         'message',
       )
+      await expectGate(supportsRedis70Commands(), 'EVAL_RO', 'return 1', '0')
+      if (supportsRedis70Commands()) {
+        await expectGate(
+          true,
+          'FUNCTION',
+          'LOAD',
+          '#!lua name=compatlib\nredis.register_function("compat_echo", function(keys, args) return args[1] end)',
+        )
+        await expectGate(true, 'FCALL', 'compat_echo', '0', 'hello')
+        await expectGate(true, 'FCALL_RO', 'compat_echo', '0', 'hello')
+      } else {
+        await expectGate(false, 'FUNCTION', 'HELP')
+        await expectGate(false, 'FCALL', 'missing', '0')
+      }
       await expectGate(
         supportsZintercard(),
         'ZINTERCARD',
@@ -295,6 +309,10 @@ function supportsClientSetinfo(): boolean {
 }
 
 function supportsShardedPubSub(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsRedis70Commands(): boolean {
   return profile !== 'redis-6.2'
 }
 
