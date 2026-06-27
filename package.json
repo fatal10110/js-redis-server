@@ -58,7 +58,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=24"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsup",
@@ -66,6 +66,7 @@
     "test": "tsc --noEmit && node --enable-source-maps --import tsx --no-warnings --test \"./tests/**/*.test.ts\"",
     "test:integration:mock": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/**/*.test.ts\"",
     "test:integration:real": "tsc --noEmit && npm run clean:redis && TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test \"./tests-integration/**/*.test.ts\"",
+    "test:integration:compatibility:mock": "tsc --noEmit && for profile in redis-6.2 redis-7.0 redis-7.2 redis-7.4 redis-8.0 valkey-8.0 valkey-9.0; do echo \"REDIS_COMPAT=$profile\"; TEST_BACKEND=mock REDIS_COMPAT=$profile node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/compatibility/**/*.test.ts\" || exit $?; done",
     "test:integration:mock:ioredis": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/ioredis/**/*.test.ts\"",
     "test:integration:mock:node-redis": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test \"./tests-integration/node-redis/**/*.test.ts\"",
     "test:integration:real:ioredis": "tsc --noEmit && npm run clean:redis && TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test \"./tests-integration/ioredis/**/*.test.ts\"",
@@ -82,8 +83,7 @@
   },
   "dependencies": {
     "cluster-key-slot": "^1.1.2",
-    "lua-redis-wasm": "^1.3.0",
-    "respjs": "^4.2.0"
+    "lua-redis-wasm": "^1.3.0"
   },
   "peerDependencies": {
     "ioredis": "^5.0.0",
@@ -98,10 +98,9 @@
     }
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3.3.5",
     "@eslint/js": "^10.0.1",
-    "@tsconfig/node24": "^24.0.4",
-    "@types/node": "^24.13.2",
+    "@tsconfig/node22": "^22.0.5",
+    "@types/node": "^22.20.0",
     "@typescript-eslint/eslint-plugin": "^8.61.1",
     "@typescript-eslint/parser": "^8.61.1",
     "eslint": "^10.5.0",

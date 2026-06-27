@@ -285,6 +285,7 @@ export const getsetCommand = defineCommand({
 
 export const getdelCommand = defineCommand({
   name: 'getdel',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({ key: t.key() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -451,6 +452,7 @@ export const setrangeCommand = defineCommand({
 
 export const getexCommand = defineCommand({
   name: 'getex',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: createGetexSchema(),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -523,6 +525,10 @@ function createSetSchema(): CommandSchema<SetArgs> {
         }
 
         if (option === 'GET') {
+          if (!ctx.profile.has('set.get')) {
+            throw new RedisSyntaxError()
+          }
+
           if (args.get) {
             throw new RedisSyntaxError()
           }
@@ -548,6 +554,13 @@ function createSetSchema(): CommandSchema<SetArgs> {
           option === 'EXAT' ||
           option === 'PXAT'
         ) {
+          if (
+            (option === 'EXAT' || option === 'PXAT') &&
+            !ctx.profile.has('set.exat-pxat')
+          ) {
+            throw new RedisSyntaxError()
+          }
+
           if (args.expiresAt !== undefined || args.keepTtl) {
             throw new RedisSyntaxError()
           }
@@ -558,6 +571,14 @@ function createSetSchema(): CommandSchema<SetArgs> {
           continue
         }
 
+        throw new RedisSyntaxError()
+      }
+
+      if (
+        args.condition === 'NX' &&
+        args.get &&
+        !ctx.profile.has('set.nx-get')
+      ) {
         throw new RedisSyntaxError()
       }
 

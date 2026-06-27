@@ -19,7 +19,7 @@ import { RedisValue } from '../core/redis-value'
 import { array, bulk, integer, ok, simpleString } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
-const REDIS_VERSION = '7.4.4'
+const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
 // There is no persistence, so LASTSAVE reports the process/server start time.
@@ -29,6 +29,7 @@ const clientIds = new WeakMap<RedisClientSession, number>()
 const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
+const noEvictClients = new WeakSet<RedisClientSession>()
 let nextClientId = 1
 const INVALID_CLIENT_NAME_MESSAGE =
   'Client names cannot contain spaces, newlines or special characters.'
@@ -87,8 +88,14 @@ function expectArgCount(
   }
 }
 
-function buildInfo(ctx: RedisExecutionContext, section?: string): string {
-  const requestedSection = section?.toLowerCase() ?? 'default'
+function buildInfo(
+  ctx: RedisExecutionContext,
+  sections: readonly string[] = [],
+): string {
+  const requestedSections =
+    sections.length === 0
+      ? ['default']
+      : sections.map(section => section.toLowerCase())
   const clustered = isClusterMode(ctx)
   const defaultSections = [
     'server',
@@ -104,7 +111,7 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
   const sectionBuilders: Record<string, () => string[]> = {
     server: () => [
       '# Server',
-      `redis_version:${REDIS_VERSION}`,
+      ...serverIdentityLines(ctx),
       'redis_git_sha1:00000000',
       'redis_git_dirty:0',
       `redis_mode:${redisMode(ctx)}`,
@@ -196,16 +203,16 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
     },
   }
 
-  let selectedSections: string[]
-  if (requestedSection === 'default' || requestedSection === 'all') {
-    selectedSections = defaultSections
-  } else if (requestedSection in sectionBuilders) {
-    selectedSections = [requestedSection]
-  } else {
-    // Real Redis replies with an empty bulk string for an unrecognized
-    // section name rather than an error (clients like ioredis probe with
-    // arbitrary section names during connection setup).
-    return ''
+  const selectedSections: string[] = []
+  for (const requestedSection of requestedSections) {
+    if (requestedSection === 'default' || requestedSection === 'all') {
+      selectedSections.push(...defaultSections)
+      continue
+    }
+
+    if (requestedSection in sectionBuilders) {
+      selectedSections.push(requestedSection)
+    }
   }
 
   const lines: string[] = []
@@ -215,6 +222,13 @@ function buildInfo(ctx: RedisExecutionContext, section?: string): string {
     }
 
     lines.push(...sectionBuilders[selectedSection]())
+  }
+
+  // Real Redis replies with an empty bulk string for an unrecognized section
+  // name rather than an error (clients like ioredis probe with arbitrary
+  // section names during connection setup).
+  if (lines.length === 0) {
+    return ''
   }
 
   return `${lines.join('\r\n')}\r\n`
@@ -233,7 +247,7 @@ function formatClientLine(session: RedisClientSession): string {
     `db=${session.selectedDatabase}`,
     'age=0',
     'idle=0',
-    `flags=${session.mode === 'subscribed' ? 'P' : 'N'}`,
+    `flags=${clientFlags(session)}`,
     `sub=${session.pubsubChannelCount}`,
     `psub=${session.pubsubPatternCount}`,
     'multi=-1',
@@ -262,6 +276,14 @@ function formatClientLine(session: RedisClientSession): string {
   }
 
   return `${fields.join(' ')}\n`
+}
+
+function clientFlags(session: RedisClientSession): string {
+  let flags = session.mode === 'subscribed' ? 'P' : 'N'
+  if (noEvictClients.has(session)) {
+    flags += 'e'
+  }
+  return flags
 }
 
 const HELLO_NOAUTH_MESSAGE =
@@ -430,11 +452,20 @@ export const selectCommand = defineCommand({
 export const infoCommand = defineCommand({
   name: 'info',
   schema: t.object({
-    section: t.optional(t.string()),
+    sections: t.variadic(t.string()),
   }),
   flags: ['readonly', 'admin'],
   keys: () => [],
-  execute: (args, ctx) => bulk(Buffer.from(buildInfo(ctx, args.section))),
+  execute: (args, ctx) => {
+    if (
+      args.sections.length > 1 &&
+      !ctx.server.profile.has('info.multi-section')
+    ) {
+      throw new RedisSyntaxError()
+    }
+
+    return bulk(Buffer.from(buildInfo(ctx, args.sections)))
+  },
 })
 
 export const clientCommand = defineCommand({
@@ -458,6 +489,7 @@ export const clientCommand = defineCommand({
       commandSubcommandInfo('client|list', 2),
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
+      commandSubcommandInfo('client|no-evict', 3),
       commandSubcommandInfo('client|setinfo', 4),
       commandSubcommandInfo('client|help', 2),
     ],
@@ -478,6 +510,10 @@ export const clientCommand = defineCommand({
     }
 
     if (subcommand === 'setinfo') {
+      if (!ctx.server.profile.has('client.setinfo')) {
+        throw clientSetInfoUnavailableError(ctx, args.subcommand)
+      }
+
       expectArgCount('client|setinfo', args.args, 2)
       const attribute = args.args[0].toString().toLowerCase()
       if (attribute === 'lib-name') {
@@ -486,6 +522,25 @@ export const clientCommand = defineCommand({
         clientLibraryVersions.set(ctx.session, args.args[1])
       }
       return ok()
+    }
+
+    if (subcommand === 'no-evict') {
+      if (!ctx.server.profile.has('client.no-evict')) {
+        throw clientUnavailableSubcommandError(args.subcommand)
+      }
+
+      expectArgCount('client|no-evict', args.args, 1)
+      const mode = args.args[0].toString().toLowerCase()
+      if (mode === 'on') {
+        noEvictClients.add(ctx.session)
+        return ok()
+      }
+      if (mode === 'off') {
+        noEvictClients.delete(ctx.session)
+        return ok()
+      }
+
+      throw new RedisSyntaxError()
     }
 
     if (subcommand === 'id') {
@@ -506,7 +561,7 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'help') {
       expectArgCount('client|help', args.args, 0)
-      return array([
+      const lines = [
         value(
           'CLIENT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
         ),
@@ -515,15 +570,42 @@ export const clientCommand = defineCommand({
         value('LIST'),
         value('GETNAME'),
         value('SETNAME <connection-name>'),
-        value('SETINFO <LIB-NAME|LIB-VER> <value>'),
-      ])
+      ]
+      if (ctx.server.profile.has('client.setinfo')) {
+        lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
+      }
+      if (ctx.server.profile.has('client.no-evict')) {
+        lines.push(value('NO-EVICT <ON|OFF>'))
+      }
+      return array(lines)
     }
 
     throw new RedisCommandError(
-      `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+      `unknown subcommand '${args.subcommand}'. Try CLIENT HELP.`,
     )
   },
 })
+
+function clientSetInfoUnavailableError(
+  ctx: RedisExecutionContext,
+  subcommand: string,
+): RedisCommandError {
+  if (!ctx.server.profile.has('client.setinfo.unknown-subcommand-error')) {
+    return clientUnavailableSubcommandError(subcommand)
+  }
+
+  return new RedisCommandError(
+    `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
+  )
+}
+
+function clientUnavailableSubcommandError(
+  subcommand: string,
+): RedisCommandError {
+  return new RedisCommandError(
+    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CLIENT HELP.`,
+  )
+}
 
 /**
  * Parse HELLO's protocol-version token. Unlike a generic `t.integer()` field,
@@ -583,8 +665,8 @@ export const helloCommand = defineCommand({
     ctx.session.setProtocolVersion(version)
 
     const fields: [RedisValue, RedisValue][] = [
-      [value('server'), value('redis')],
-      [value('version'), value(REDIS_VERSION)],
+      [value('server'), value(ctx.server.profile.flavor)],
+      [value('version'), value(ctx.server.profile.version)],
       [value('proto'), RedisValue.integer(version)],
       [value('id'), RedisValue.integer(getClientId(ctx.session))],
       [value('mode'), value(redisMode(ctx))],
@@ -599,6 +681,19 @@ export const helloCommand = defineCommand({
     return RedisResult.create(RedisValue.array(fields.flat()))
   },
 })
+
+function serverIdentityLines(ctx: RedisExecutionContext): string[] {
+  const profile = ctx.server.profile
+  if (profile.flavor === 'redis') {
+    return [`redis_version:${profile.version}`]
+  }
+
+  return [
+    `redis_version:${VALKEY_REDIS_COMPAT_VERSION}`,
+    'server_name:valkey',
+    `valkey_version:${profile.version}`,
+  ]
+}
 
 export const authCommand = defineCommand({
   name: 'auth',
@@ -632,6 +727,7 @@ export const authCommand = defineCommand({
 
 export const resetCommand = defineCommand({
   name: 'reset',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({}),
   // 'transaction' makes RESET bypass MULTI queueing and run immediately, like
   // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
@@ -643,6 +739,7 @@ export const resetCommand = defineCommand({
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
+    noEvictClients.delete(ctx.session)
     ctx.session.resetResponseStreams()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()

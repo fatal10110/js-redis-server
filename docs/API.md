@@ -12,6 +12,7 @@ server, building a cluster, and assembling the pipeline by hand.
 - [Running a Standalone Server](#running-a-standalone-server)
 - [Running a Cluster](#running-a-cluster)
 - [CLI](#cli)
+- [Compatibility Profiles](#compatibility-profiles)
 - [Package Entry Points](#package-entry-points)
 - [Advanced: Assembling the Pipeline by Hand](#advanced-assembling-the-pipeline-by-hand)
 - [API Reference](#api-reference)
@@ -74,6 +75,9 @@ npx js-redis-server --cluster --masters 3
 
 # Run a cluster with replicas
 npx js-redis-server --cluster --masters 3 --slaves 1
+
+# Run as Redis 6.2 compatibility
+npx js-redis-server --compat redis-6.2
 ```
 
 CLI options:
@@ -93,9 +97,57 @@ Cluster options:
   --base-port <number>   Starting port for cluster nodes (default 30000)
 
 General:
+  --compat <preset>       Compatibility profile (or REDIS_COMPAT env)
   -d, --debug            Enable debug logging
   -h, --help             Show help
 ```
+
+## Compatibility Profiles
+
+Pass `compatibility` to pin implemented command behavior to a Redis or Valkey
+target:
+
+```typescript
+await createRedisServer({ compatibility: 'redis-6.2' })
+
+const cluster = createRedisCluster({
+  masters: 3,
+  basePort: 30000,
+  compatibility: 'valkey-9.0',
+  databasesPerNode: 16,
+})
+```
+
+Supported presets are `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
+`redis-8.0`, `valkey-8.0`, and `valkey-9.0`. The default is `redis-8.0`.
+
+Profiles gate implemented commands, subcommands, options, and known behavioral
+differences. Unsupported commands are still unsupported regardless of profile.
+
+Valkey profiles model the Redis 7.0-era gates as enabled:
+
+| Profile | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate |
+| --- | --- | --- |
+| `valkey-8.0` | enabled | cluster multi-DB disabled |
+| `valkey-9.0` | enabled | cluster multi-DB enabled |
+
+Current profile gates:
+
+| Surface | Redis profiles | Valkey profiles |
+| --- | --- | --- |
+| Redis 6.2 root commands: `BLMOVE`, `COPY`, `GETDEL`, `GETEX`, `HRANDFIELD`, `LMOVE`, `RESET`, `SMISMEMBER`, `XAUTOCLAIM`, `ZMSCORE` | `redis-6.2+` | `valkey-8.0+` |
+| Redis 7.0 root commands: `BLMPOP`, `BZMPOP`, `EXPIRETIME`, `LMPOP`, `PEXPIRETIME`, `SINTERCARD`, `SORT_RO`, `SPUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `ZINTERCARD`, `ZMPOP` | `redis-7.0+` | `valkey-8.0+` |
+| Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
+| Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
+| `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
+| `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
+| `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options | `redis-7.0+` | `valkey-8.0+` |
+| `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
+| `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
+| Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |
+| `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
+| Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
 
 ## Package Entry Points
 
@@ -171,20 +223,22 @@ createRedisServer(options: CreateRedisServerClusterOptions): Promise<RedisCluste
 
 **Standalone options (`CreateRedisServerOptions`)**:
 
-| Parameter       | Type                    | Default     | Description                                  |
-| :-------------- | :---------------------- | :---------- | :------------------------------------------- |
-| `port`          | `number`                | `0`         | Bind port (`0` = OS-assigned).               |
-| `databaseCount` | `number`                | `16`        | Logical database count (matches real Redis). |
-| `logger`        | `Pick<Logger, 'error'>` | `undefined` | Optional logger.                             |
+| Parameter       | Type                    | Default       | Description                                  |
+| :-------------- | :---------------------- | :------------ | :------------------------------------------- |
+| `port`          | `number`                | `0`           | Bind port (`0` = OS-assigned).               |
+| `databaseCount` | `number`                | `16`          | Logical database count (matches real Redis). |
+| `compatibility` | `CompatibilitySpec`     | `'redis-8.0'` | Redis / Valkey compatibility profile.        |
+| `logger`        | `Pick<Logger, 'error'>` | `undefined`   | Optional logger.                             |
 
 **Cluster options (`CreateRedisServerClusterOptions`)**:
 
-| Parameter          | Type                                     | Default      | Description                                      |
-| :----------------- | :--------------------------------------- | :----------- | :----------------------------------------------- |
-| `cluster`          | `{ masters: number; replicas?: number }` | **Required** | Builds a cluster instead of a standalone server. |
-| `basePort`         | `number`                                 | `0`          | Cluster base port (`0` = each node OS-assigned). |
-| `databasesPerNode` | `number`                                 | `1`          | Databases per cluster node.                      |
-| `logger`           | `Pick<Logger, 'error'>`                  | `undefined`  | Optional logger.                                 |
+| Parameter          | Type                                     | Default       | Description                                      |
+| :----------------- | :--------------------------------------- | :------------ | :----------------------------------------------- |
+| `cluster`          | `{ masters: number; replicas?: number }` | **Required**  | Builds a cluster instead of a standalone server. |
+| `basePort`         | `number`                                 | `0`           | Cluster base port (`0` = each node OS-assigned). |
+| `databasesPerNode` | `number`                                 | `1`           | Databases per cluster node.                      |
+| `compatibility`    | `CompatibilitySpec`                      | `'redis-8.0'` | Redis / Valkey compatibility profile.            |
+| `logger`           | `Pick<Logger, 'error'>`                  | `undefined`   | Optional logger.                                 |
 
 ---
 
@@ -211,6 +265,7 @@ createRedisCluster(options: RedisClusterOptions): RedisCluster
 | `basePort`          | `number`                | **Required**  | Base port range. If `0`, random OS ports are assigned. |
 | `host`              | `string`                | `'127.0.0.1'` | Host address to bind to.                               |
 | `databasesPerNode`  | `number`                | `1`           | Number of databases per cluster node.                  |
+| `compatibility`     | `CompatibilitySpec`     | `'redis-8.0'` | Redis / Valkey compatibility profile.                  |
 | `logger`            | `Pick<Logger, 'error'>` | `undefined`   | Optional logger.                                       |
 
 ---
@@ -253,9 +308,10 @@ new RedisServerState(options?: RedisServerStateOptions)
 
 **Options (`RedisServerStateOptions`)**:
 
-| Parameter         | Type                   | Default     | Description                                 |
-| :---------------- | :--------------------- | :---------- | :------------------------------------------ |
-| `databaseCount`   | `number`               | `1`         | Number of databases to initialize.          |
-| `clusterTopology` | `RedisClusterTopology` | `undefined` | Optional cluster topology for slot routing. |
-| `pubsubBroker`    | `RedisPubSubBroker`    | `undefined` | Optional broker for pub/sub operations.     |
-| `scriptCache`     | `RedisScriptCache`     | `undefined` | Optional cache for Lua scripts.             |
+| Parameter         | Type                   | Default       | Description                                 |
+| :---------------- | :--------------------- | :------------ | :------------------------------------------ |
+| `databaseCount`   | `number`               | `1`           | Number of databases to initialize.          |
+| `compatibility`   | `CompatibilitySpec`    | `'redis-8.0'` | Redis / Valkey compatibility profile.       |
+| `clusterTopology` | `RedisClusterTopology` | `undefined`   | Optional cluster topology for slot routing. |
+| `pubsubBroker`    | `RedisPubSubBroker`    | `undefined`   | Optional broker for pub/sub operations.     |
+| `scriptCache`     | `RedisScriptCache`     | `undefined`   | Optional cache for Lua scripts.             |

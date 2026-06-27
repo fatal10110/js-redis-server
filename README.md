@@ -39,6 +39,7 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
   - [node:test](#nodetest)
   - [vitest / jest](#vitest--jest)
   - [Cluster mocks](#cluster-mocks)
+  - [Compatibility profiles](#compatibility-profiles)
   - [Seeding](#seeding)
   - [`createRedisMock` options](#createredismock-options)
 - [Experimental: socketless client mocks](#experimental-socketless-client-mocks)
@@ -63,6 +64,8 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
 
 - **RESP2 and RESP3 protocols** - Per-session version negotiation via `HELLO`
 - **Standalone and Cluster modes** - Run a single server or a full cluster
+- **Redis / Valkey compatibility profiles** - Pin implemented command behavior to
+  older Redis or Valkey versions
 - **Lua scripting support** - Execute Redis Lua scripts via WebAssembly
 - **No external dependencies** - Pure JavaScript, no Redis installation needed
 - **TypeScript support** - Ships with full type definitions
@@ -191,6 +194,36 @@ const cluster = createCluster({
 await cluster.connect()
 ```
 
+### Compatibility profiles
+
+By default the mock exposes the newest implemented Redis behavior. Pass
+`compatibility` when a test needs to match an older Redis or Valkey target:
+
+```typescript
+const redis62 = await createRedisMock({ compatibility: 'redis-6.2' })
+
+const valkeyCluster = await createRedisMock({
+  cluster: { masters: 3 },
+  compatibility: 'valkey-9.0',
+})
+```
+
+Profiles gate implemented commands, subcommands, options, and known behavioral
+differences. For example, `EXPIRETIME key` is unavailable under `redis-6.2` but
+available under newer Redis profiles. Unsupported commands remain unsupported
+regardless of profile. See the current gate matrix in
+[Compatibility Profiles](docs/API.md#compatibility-profiles).
+
+Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
+`redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
+
+Valkey profiles model the Redis 7.0-era gates as enabled:
+
+| Profile | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate |
+| --- | --- | --- |
+| `valkey-8.0` | enabled | cluster multi-DB disabled |
+| `valkey-9.0` | enabled | cluster multi-DB enabled |
+
 ### Seeding
 
 `seed()` takes an explicit entries array — you supply keys, types, values, and
@@ -266,13 +299,14 @@ the `mock.state` escape hatch.
 createRedisMock(options?: CreateRedisMockOptions): Promise<RedisMock>
 ```
 
-| Parameter       | Type                                     | Default     | Description                                                  |
-| :-------------- | :--------------------------------------- | :---------- | :----------------------------------------------------------- |
-| `cluster`       | `{ masters: number; replicas?: number }` | `undefined` | When set, builds a cluster mock instead of a standalone one. |
-| `databaseCount` | `number`                                 | `16`        | Standalone-only: logical database count.                     |
-| `port`          | `number`                                 | `0`         | Standalone bind port (`0` = OS-assigned).                    |
-| `basePort`      | `number`                                 | `0`         | Cluster base port (`0` = each node OS-assigned).             |
-| `logger`        | `Pick<Logger, 'error'>`                  | `undefined` | Optional logger.                                             |
+| Parameter       | Type                                     | Default       | Description                                                  |
+| :-------------- | :--------------------------------------- | :------------ | :----------------------------------------------------------- |
+| `cluster`       | `{ masters: number; replicas?: number }` | `undefined`   | When set, builds a cluster mock instead of a standalone one. |
+| `databaseCount` | `number`                                 | `16`          | Standalone-only: logical database count.                     |
+| `compatibility` | `CompatibilitySpec`                      | `'redis-8.0'` | Redis / Valkey compatibility profile.                        |
+| `port`          | `number`                                 | `0`           | Standalone bind port (`0` = OS-assigned).                    |
+| `basePort`      | `number`                                 | `0`           | Cluster base port (`0` = each node OS-assigned).             |
+| `logger`        | `Pick<Logger, 'error'>`                  | `undefined`   | Optional logger.                                             |
 
 ## Experimental: socketless client mocks
 

@@ -46,8 +46,14 @@ describe('CLI argument parsing', () => {
     assert.strictEqual(options.masters, 5)
   })
 
+  test('parses compatibility profile', () => {
+    const options = parseArgs(['--compat', 'redis-6.2'])
+    assert.strictEqual(options.compatibility, 'redis-6.2')
+  })
+
   test('rejects invalid values', () => {
     assert.throws(() => parseArgs(['--port', 'abc']), /Invalid value/)
     assert.throws(() => parseArgs(['--mode', 'bad']), /Invalid mode/)
+    assert.throws(() => parseArgs(['--compat']), /Missing value/)
   })
 })

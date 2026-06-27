@@ -6,6 +6,10 @@ This document provides a detailed overview of Redis commands and their implement
 only a subset of the real Redis syntax, the supported syntax is shown and a
 **Note** lists the gaps.
 
+Command rows describe the newest implemented profile. Older compatibility
+profiles can hide newer implemented commands, subcommands, options, or reply
+shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-profiles).
+
 ## 1. Connection Commands
 
 - [x] `PING [message]` - Return PONG, or echo `message`
@@ -35,14 +39,15 @@ only a subset of the real Redis syntax, the supported syntax is shown and a
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
 - [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
+- [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
-- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-EVICT`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 
 ## 2. Server Commands
 
 #### INFO
 
-- [x] `INFO [section]` - Get information and statistics about the server
+- [x] `INFO [section ...]` - Get information and statistics about the server; Redis 7.0+ profiles accept multiple sections
   - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry)
   - [x] `commandstats`, `latencystats`, `errorstats`, `modules`, `sentinel` - return empty sections
   - [x] `default` / `all` - returns the default section set
@@ -197,6 +202,7 @@ with `GT` or `LT`.
 
 - [x] `GET key` - Returns the string value of a key.
 - [x] `SET key value [NX | XX] [GET] [KEEPTTL | EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds]` - Set the string value of a key
+  - Compatibility profiles: `GET` is available in `redis-6.2`; combining `NX` with `GET` is available in `redis-7.0+`.
 - [x] `SETNX key value` - Set the value of a key, only if it does not exist
 - [x] `SETEX key seconds value` - Set the value and expiration in seconds
 - [x] `PSETEX key milliseconds value` - Set the value and expiration in milliseconds

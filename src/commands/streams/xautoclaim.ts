@@ -73,12 +73,16 @@ function createXautoclaimSchema() {
 
 export const xautoclaimCommand = defineCommand({
   name: 'xautoclaim',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({ args: createXautoclaimSchema() }),
   flags: ['write'],
   keys: args => [args.args.key],
   execute: (args, ctx) => {
     const command = args.args
     const now = Date.now()
+    const includeDeletedIds = ctx.server.profile.has(
+      'stream.xautoclaim-deleted-ids',
+    )
     requireStreamGroup(
       ctx.db.getStream(command.key),
       command.key,
@@ -94,6 +98,7 @@ export const xautoclaimCommand = defineCommand({
           start: command.start,
           count: command.count,
           justId: command.justId,
+          cleanDeletedEntries: includeDeletedIds,
         },
         now,
       )
@@ -102,14 +107,16 @@ export const xautoclaimCommand = defineCommand({
     const claimed = result.claimed.map(entry =>
       command.justId
         ? streamIdValue(entry.id)
-        : entryToReply(entry.id, entry.fields),
+        : entry.fields === null
+          ? RedisValue.bulkString(null)
+          : entryToReply(entry.id, entry.fields),
     )
     const deleted = result.deleted.map(id => streamIdValue(id))
 
-    return array([
-      streamIdValue(result.nextStartId),
-      RedisValue.array(claimed),
-      RedisValue.array(deleted),
-    ])
+    const reply = [streamIdValue(result.nextStartId), RedisValue.array(claimed)]
+    if (includeDeletedIds) {
+      reply.push(RedisValue.array(deleted))
+    }
+    return array(reply)
   },
 })

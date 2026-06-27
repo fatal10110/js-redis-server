@@ -20,6 +20,7 @@ export const zscoreCommand = defineCommand({
 
 export const zmscoreCommand = defineCommand({
   name: 'zmscore',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],

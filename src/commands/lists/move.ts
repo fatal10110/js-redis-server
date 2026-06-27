@@ -89,6 +89,7 @@ export const rpoplpushCommand = defineCommand({
 
 export const lmoveCommand = defineCommand({
   name: 'lmove',
+  since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: t.object({
     source: t.key(),
     destination: t.key(),

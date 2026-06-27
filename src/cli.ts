@@ -1,5 +1,6 @@
 import { createRedisServer } from './mock'
 import type { Logger } from './logger'
+import type { CompatibilitySpec } from './core/compatibility'
 
 type Mode = 'single' | 'cluster'
 
@@ -9,6 +10,7 @@ export type CliOptions = {
   masters: number
   slaves: number
   basePort: number
+  compatibility?: CompatibilitySpec
   help: boolean
   debug: boolean
 }
@@ -75,6 +77,15 @@ export function parseArgs(args: string[]): CliOptions {
 
     if (arg === '--slaves') {
       options.slaves = parseInteger(args[++i], '--slaves')
+      continue
+    }
+
+    if (arg === '--compat') {
+      const value = args[++i]
+      if (!value) {
+        throw new Error('Missing value for --compat')
+      }
+      options.compatibility = value as CompatibilitySpec
       continue
     }
 
@@ -146,6 +157,7 @@ Cluster options:
   --base-port <number>   Starting port for cluster nodes (default 30000)
 
 General:
+  --compat <preset>       Compatibility profile (or REDIS_COMPAT env)
   -d, --debug            Enable debug logging
   -h, --help             Show help
 `)
@@ -155,7 +167,11 @@ async function runSingle(options: CliOptions, logger: Logger) {
   validatePort(options.port, 'port')
   logger.debug('Starting single server mode', { port: options.port })
 
-  const { server } = await createRedisServer({ port: options.port, logger })
+  const { server } = await createRedisServer({
+    port: options.port,
+    compatibility: resolveCliCompatibility(options),
+    logger,
+  })
   logger.info(`Single Redis server listening at ${server.getAddress()}`)
 
   const shutdown = async () => {
@@ -178,6 +194,7 @@ async function runCluster(options: CliOptions, logger: Logger) {
   const cluster = await createRedisServer({
     cluster: { masters: options.masters, replicas: options.slaves },
     basePort: options.basePort,
+    compatibility: resolveCliCompatibility(options),
     logger,
   })
 
@@ -190,6 +207,15 @@ async function runCluster(options: CliOptions, logger: Logger) {
 
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
+}
+
+function resolveCliCompatibility(
+  options: CliOptions,
+): CompatibilitySpec | undefined {
+  return (
+    options.compatibility ??
+    (process.env.REDIS_COMPAT as CompatibilitySpec | undefined)
+  )
 }
 
 export async function main(argv = process.argv.slice(2)) {

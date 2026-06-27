@@ -62,6 +62,17 @@ export {
 } from './cluster'
 
 export type { Logger } from './logger'
+export type {
+  CompatibilityProfile,
+  CompatibilitySpec,
+  FeatureId,
+  RedisFlavor,
+  VersionGate,
+} from './core/compatibility'
+export {
+  gateSatisfied,
+  resolveCompatibilityProfile,
+} from './core/compatibility'
 
 // Client-visible error classes
 export {

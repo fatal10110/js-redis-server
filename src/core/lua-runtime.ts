@@ -102,6 +102,9 @@ function createLuaMonitorContext(
     server: ctx.server,
     session: ctx.session,
     executor: ctx.executor,
+    ...(ctx.transactionReplay
+      ? { transactionReplay: ctx.transactionReplay }
+      : {}),
     ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
     monitor: {
       ...ctx.monitor,

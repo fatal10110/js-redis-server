@@ -12,6 +12,10 @@ import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
 import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
+import {
+  resolveCompatibilityProfile,
+  type CompatibilityProfile,
+} from './compatibility'
 
 /**
  * The result of running a command: either a finished {@link RedisResult} or a
@@ -28,6 +32,7 @@ export type RawExecutionResult = {
 export type CommandExecutorOptions = {
   registry: CommandRegistry
   policies?: readonly ExecutionPolicy[]
+  profile?: CompatibilityProfile
 }
 
 /**
@@ -54,10 +59,12 @@ export type CommandExecutorOptions = {
 export class CommandExecutor {
   private readonly registry: CommandRegistry
   private readonly policies: readonly ExecutionPolicy[]
+  readonly profile: CompatibilityProfile
 
   constructor(options: CommandExecutorOptions) {
     this.registry = options.registry
     this.policies = options.policies ?? []
+    this.profile = options.profile ?? resolveCompatibilityProfile()
   }
 
   getCommandDefinition(name: string): CommandDefinition<unknown> | undefined {
@@ -326,7 +333,12 @@ export class CommandExecutor {
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
   ): CommandPlan<TArgs> {
-    const args = parseCommandArgs(definition.schema, rawArgs, definition.name)
+    const args = parseCommandArgs(
+      definition.schema,
+      rawArgs,
+      definition.name,
+      this.profile,
+    )
     const keys = definition.keys(args)
 
     return {
@@ -384,6 +396,9 @@ function createMonitorDeferredContext(
     server: ctx.server,
     session: ctx.session,
     executor: ctx.executor,
+    ...(ctx.transactionReplay
+      ? { transactionReplay: ctx.transactionReplay }
+      : {}),
     ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
     monitor: {
       ...ctx.monitor,

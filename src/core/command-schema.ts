@@ -5,9 +5,14 @@ import {
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from './redis-error'
+import {
+  resolveCompatibilityProfile,
+  type CompatibilityProfile,
+} from './compatibility'
 
 export type ParseContext = {
   commandName: string
+  profile: CompatibilityProfile
 }
 
 export type ParseNodeResult<TValue> = {
@@ -52,9 +57,10 @@ export function parseCommandArgs<TArgs>(
   schema: CommandSchema<TArgs>,
   input: readonly Buffer[],
   commandName: string,
+  profile: CompatibilityProfile = resolveCompatibilityProfile(),
 ): TArgs {
   try {
-    const result = schema.parse(input, 0, { commandName })
+    const result = schema.parse(input, 0, { commandName, profile })
     if (result.nextIndex !== input.length) {
       throw new WrongNumberOfArgumentsError(commandName)
     }

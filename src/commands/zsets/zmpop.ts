@@ -232,6 +232,7 @@ async function blockingZsetMultiPop(
 
 export const zmpopCommand = defineCommand({
   name: 'zmpop',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<ZsetMultiPopArgs>((input, index, ctx) => ({
     value: parseZsetMultiPopArgs(input, index, ctx, { blocking: false }),
     nextIndex: input.length,
@@ -245,6 +246,7 @@ export const zmpopCommand = defineCommand({
 
 export const bzmpopCommand = defineCommand({
   name: 'bzmpop',
+  since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<BlockingZsetMultiPopArgs>((input, index, ctx) => ({
     value: parseZsetMultiPopArgs(input, index, ctx, { blocking: true }),
     nextIndex: input.length,

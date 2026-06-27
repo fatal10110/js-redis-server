@@ -176,6 +176,30 @@ describe(`Raw TCP protocol integration (${testRunner.getBackendName()})`, () => 
     )
   })
 
+  test('returns SCRIPT DEBUG pipeline errors from EXEC replies', async () => {
+    const conn = await connect()
+
+    conn.write(
+      Buffer.concat([
+        commandFrame('MULTI'),
+        commandFrame('SCRIPT', 'DEBUG', 'YES'),
+        commandFrame('EXEC'),
+      ]),
+    )
+
+    assert.deepStrictEqual(await conn.readRawFrame(), Buffer.from('+OK\r\n'))
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from('+QUEUED\r\n'),
+    )
+    assert.deepStrictEqual(
+      await conn.readRawFrame(),
+      Buffer.from(
+        '*1\r\n-ERR SCRIPT DEBUG must be called outside a pipeline\r\n',
+      ),
+    )
+  })
+
   // #80: RESET must execute immediately inside MULTI (like EXEC/DISCARD/WATCH),
   // aborting the transaction — it must not be queued.
   test('RESET inside MULTI executes immediately and aborts the transaction', async () => {
