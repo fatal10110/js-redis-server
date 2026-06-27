@@ -130,6 +130,7 @@ describe(
       await expectGate(true, 'SET', key, 'next', 'GET')
       await expectGate(supportsSetNxGet(), 'SET', key, 'guarded', 'NX', 'GET')
       await expectGate(true, 'SET', key, 'expires', 'EXAT', '4102444800')
+      await expectGate(true, 'SLOWLOG', 'GET', '-1')
 
       await expectGate(supportsCommandDocs(), 'COMMAND', 'DOCS')
       await expectGate(
@@ -154,6 +155,13 @@ describe(
         'SPUBLISH',
         `compat:{${profile}}`,
         'message',
+      )
+      await expectGate(
+        supportsRedis70Commands(),
+        'ACL',
+        'DRYRUN',
+        'default',
+        'PING',
       )
       await expectGate(supportsRedis70Commands(), 'EVAL_RO', 'return 1', '0')
       if (supportsRedis70Commands()) {
@@ -309,10 +317,6 @@ function supportsClientSetinfo(): boolean {
 }
 
 function supportsShardedPubSub(): boolean {
-  return profile !== 'redis-6.2'
-}
-
-function supportsRedis70Commands(): boolean {
   return profile !== 'redis-6.2'
 }
 

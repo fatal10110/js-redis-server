@@ -129,6 +129,8 @@ export {
   createStringData,
 } from './state'
 export {
+  aclCommand,
+  clientCommand,
   connectionCommands,
   createRedisCommandExecutor,
   createRedisCommandRegistry,
@@ -173,6 +175,8 @@ export {
   scanCommands,
   selectCommand,
   setCommand,
+  shutdownCommand,
+  slowlogCommand,
   scriptCommand,
   scriptsCommands,
   sscanCommand,

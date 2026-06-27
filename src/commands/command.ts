@@ -38,6 +38,7 @@ type CommandInfo = {
 }
 
 const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
+  'acl|dryrun': 'acl.dryrun',
   'command|docs': 'command.docs',
   'command|getkeysandflags': 'command.getkeysandflags',
   'client|no-evict': 'client.no-evict',
