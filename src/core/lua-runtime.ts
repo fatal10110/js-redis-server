@@ -174,10 +174,11 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
 
 /**
  * Re-renders engine-originated script errors whose user-facing wording is
- * Redis-version specific. The Lua engine reports such errors with structured
- * metadata (including the script sha it already computed); the message is
- * rebuilt from that metadata for the active profile rather than string-matched.
- * Other replies pass through untouched.
+ * Redis-version specific. The engine reports such errors with structured
+ * metadata and already renders the modern wording, so modern profiles pass
+ * through untouched; only older profiles rebuild the legacy wording from the
+ * metadata (so each wording lives in exactly one place). Other replies are
+ * returned unchanged.
  */
 export function remapScriptErrorForProfile(
   value: ReplyValue,
@@ -189,16 +190,16 @@ export function remapScriptErrorForProfile(
     Array.isArray(value) ||
     Buffer.isBuffer(value) ||
     !('err' in value) ||
-    value.meta?.kind !== 'global-write'
+    value.meta?.kind !== 'global-write' ||
+    profile.has('script.globals-readonly-table')
   ) {
+    // Modern Redis uses the readonly-table wording the engine already rendered.
     return value
   }
 
+  // Pre-7.0 Redis named the variable instead of mentioning a readonly table.
   const { name, line, sha } = value.meta
-  const body = profile.has('script.globals-readonly-table')
-    ? 'Attempt to modify a readonly table'
-    : `Script attempted to create global variable '${name}'`
-  const message = `user_script:${line}: ${body} script: ${sha}, on @user_script:${line}.`
+  const message = `user_script:${line}: Script attempted to create global variable '${name}' script: ${sha}, on @user_script:${line}.`
   return { err: Buffer.from(message, 'utf8'), code: value.code }
 }
 
