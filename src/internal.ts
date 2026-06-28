@@ -100,6 +100,7 @@ export {
 export {
   RedisLuaRuntime,
   createRedisLuaRuntime,
+  setLuaWasmLoadOptions,
   luaReplyToRedisValue,
   type LuaReplyValue,
 } from './core/lua-runtime'
@@ -214,14 +215,13 @@ export {
   Resp2Server,
   type Resp2ServerOptions,
 } from './core/transports/resp2/server'
+export { computeSlotRange, type RedisClusterOptions } from './cluster'
 export {
   RedisCluster,
   createRedisCluster,
   buildRedisCluster,
-  computeSlotRange,
   type RedisClusterNodeHandle,
-  type RedisClusterOptions,
-} from './cluster'
+} from './cluster-server'
 
 // Client-visible error classes (also re-exported from the package root).
 export * from './core/redis-error'

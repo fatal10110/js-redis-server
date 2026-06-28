@@ -3,17 +3,89 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>js-redis-server — browser demo</title>
+    <title>js-redis-server — interactive browser demo</title>
     <style>
-      body { font-family: ui-monospace, monospace; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-      h1 { font-size: 1.2rem; }
-      #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 1rem; border-radius: 6px; min-height: 8rem; }
+      :root {
+        --bg: #0b0e14;
+        --panel: #11151f;
+        --border: #1e2430;
+        --fg: #c7d1e0;
+        --muted: #6b7689;
+        --accent: #39bae6;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+      header h1 { font-size: 1rem; margin: 0; }
+      header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.8rem; }
+      main { flex: 1; display: flex; min-height: 0; }
+      #left { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      #tabbar { display: flex; gap: 2px; padding: 0.4rem 0.4rem 0; background: var(--panel); }
+      .tab {
+        background: transparent; color: var(--muted); border: none;
+        padding: 0.35rem 0.8rem; border-radius: 6px 6px 0 0; cursor: pointer;
+        font-size: 0.8rem; font-family: ui-monospace, monospace;
+      }
+      .tab.active { background: var(--bg); color: var(--fg); }
+      .tab.add { color: var(--accent); font-weight: bold; }
+      #terminals { flex: 1; min-height: 0; padding: 0.5rem; overflow: hidden; }
+      .terminal-host { height: 100%; }
+      #hints { display: none; }
+      #panel {
+        width: 280px; border-left: 1px solid var(--border);
+        background: var(--panel); padding: 0.75rem; overflow-y: auto;
+      }
+      .panel-section { margin-bottom: 1.25rem; }
+      .panel-section h2 {
+        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+        color: var(--muted); margin: 0 0 0.5rem;
+      }
+      .toggle { display: flex; gap: 4px; }
+      .toggle button {
+        flex: 1; background: var(--bg); color: var(--fg);
+        border: 1px solid var(--border); padding: 0.35rem; border-radius: 6px;
+        cursor: pointer; font-size: 0.8rem; text-transform: capitalize;
+      }
+      .toggle button.active { border-color: var(--accent); color: var(--accent); }
+      .node {
+        display: grid; grid-template-columns: 1fr auto; gap: 0 0.5rem;
+        padding: 0.4rem 0.5rem; border: 1px solid var(--border);
+        border-radius: 6px; margin-bottom: 0.4rem; font-size: 0.75rem;
+        font-family: ui-monospace, monospace;
+      }
+      .node.served { border-color: var(--accent); background: #0f1722; }
+      .node-id { color: var(--fg); }
+      .node-role { color: var(--muted); }
+      .node-slots { grid-column: 1 / -1; color: var(--accent); font-size: 0.7rem; }
+      .hints { list-style: none; margin: 0; padding: 0; }
+      .hints li {
+        font-family: ui-monospace, monospace; font-size: 0.72rem;
+        color: var(--muted); padding: 0.25rem 0; border-bottom: 1px dashed var(--border);
+      }
     </style>
   </head>
   <body>
-    <h1>js-redis-server running in your browser</h1>
-    <p>In-memory Redis-compatible mock, no server, no network.</p>
-    <div id="log">running…</div>
+    <header>
+      <h1>js-redis-server running in your browser</h1>
+      <p>In-memory Redis-compatible mock — no server, no network. Tabs share one
+        keyspace, so MONITOR / SUBSCRIBE / BLPOP see each other.</p>
+    </header>
+    <main>
+      <section id="left">
+        <div id="tabbar"></div>
+        <div id="terminals"></div>
+        <div id="hints"></div>
+      </section>
+      <aside id="panel"></aside>
+    </main>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

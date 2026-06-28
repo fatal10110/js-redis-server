@@ -1,4 +1,4 @@
-import type { RedisCluster } from './cluster'
+import type { RedisCluster } from './cluster-server'
 import type { RedisDatabase, RedisServerState } from './state'
 
 /**
