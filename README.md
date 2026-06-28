@@ -6,6 +6,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/js-redis-server.svg)](https://nodejs.org)
 
+▶ **[Try the interactive browser demo](https://fatal10110.github.io/js-redis-server/)** —
+the whole server runs in your browser (no install, no network): type Redis
+commands in an xterm REPL, run Lua `EVAL`, toggle single/cluster mode and watch
+`MOVED` routing, and open multiple tabs that share one keyspace so `MONITOR` /
+`SUBSCRIBE` / `BLPOP` observe each other.
+
 A real, in-memory Redis-compatible server in pure JavaScript. It starts
 instantly with no Redis installation, so **the main use case is testing** — point
 your normal Redis client at it instead of a real Redis, and your tests run fast,
