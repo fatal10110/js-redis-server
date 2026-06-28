@@ -1,5 +1,6 @@
 import { createRedisCommandExecutor } from './commands'
 import { ClientSession } from './core/client-session'
+import type { CompatibilitySpec } from './core/compatibility'
 import type { CommandExecutor } from './core/command-executor'
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
@@ -273,6 +274,8 @@ export type CreateInMemoryRedisOptions = {
   databaseCount?: number
   /** Pre-populate the keyspace before any connection is opened. */
   seed?: readonly SeedEntry[]
+  /** Redis/Valkey version to emulate (defaults to `redis-8.0`). */
+  compatibility?: CompatibilitySpec
 }
 
 /** Per-connection options for {@link InMemoryRedis.connect}. */
@@ -321,8 +324,11 @@ export async function createInMemoryRedis(
 ): Promise<InMemoryRedis> {
   const state = new RedisServerState({
     databaseCount: options.databaseCount ?? DEFAULT_DATABASE_COUNT,
+    compatibility: options.compatibility,
   })
-  const executor = createRedisCommandExecutor()
+  const executor = createRedisCommandExecutor({
+    compatibility: options.compatibility,
+  })
 
   if (options.seed) {
     await seedStandalone(state, options.seed)

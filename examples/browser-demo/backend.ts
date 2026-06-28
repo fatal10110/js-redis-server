@@ -9,6 +9,7 @@ import {
   type RedisNativeReply,
 } from '../../src/in-memory-client'
 import { buildClusterNodes } from '../../src/cluster'
+import type { CompatibilitySpec } from '../../src/core/compatibility'
 import { formatReply, type Reply } from './format'
 
 export interface NodeInfo {
@@ -80,17 +81,22 @@ const MOVED = /^MOVED (\d+) (\S+):(\d+)/
 
 class ClusterConnection implements DemoConnection {
   private streamingNodes: { id: string; conn: InMemoryRedisClient }[] = []
+  // Sticky current node, like `redis-cli -c`: stay on whatever node last served
+  // a command and only redirect (and print MOVED) when the key lives elsewhere.
+  private currentNode: string
 
   constructor(
     private readonly conns: Map<string, InMemoryRedisClient>,
     private readonly byAddr: Map<string, string>,
-    private readonly defaultNode: string,
+    defaultNode: string,
     private readonly onServed: (nodeId: string) => void,
-  ) {}
+  ) {
+    this.currentNode = defaultNode
+  }
 
   async send(name: string, args: string[]): Promise<SendResult> {
     const hops: string[] = []
-    let nodeId = this.defaultNode
+    let nodeId = this.currentNode
 
     for (let i = 0; i < 6; i++) {
       const conn = this.conns.get(nodeId)!
@@ -104,6 +110,7 @@ class ClusterConnection implements DemoConnection {
           return { ok: true, reply, route: '→ all nodes', streaming: true }
         }
 
+        this.currentNode = nodeId
         this.onServed(nodeId)
         const route = [...hops, nodeId].join(' ')
         return { ok: true, reply, route: `→ ${route}`, streaming: false }
@@ -183,8 +190,13 @@ class ClusterConnection implements DemoConnection {
 
 // --- factories --------------------------------------------------------------
 
-export async function createSingleBackend(): Promise<DemoBackend> {
-  const instance = await createInMemoryRedis({ databaseCount: 16 })
+export async function createSingleBackend(
+  compatibility?: CompatibilitySpec,
+): Promise<DemoBackend> {
+  const instance = await createInMemoryRedis({
+    databaseCount: 16,
+    compatibility,
+  })
   return {
     mode: 'single',
     topology: () => [],
@@ -194,8 +206,15 @@ export async function createSingleBackend(): Promise<DemoBackend> {
   }
 }
 
-export function createClusterBackend(masters = 3): DemoBackend {
-  const { topology, nodes } = buildClusterNodes({ masters, basePort: 7000 })
+export function createClusterBackend(
+  masters = 3,
+  compatibility?: CompatibilitySpec,
+): DemoBackend {
+  const { topology, nodes } = buildClusterNodes({
+    masters,
+    basePort: 7000,
+    compatibility,
+  })
   const byAddr = new Map<string, string>()
   for (const node of nodes) {
     byAddr.set(`${node.host}:${node.port}`, node.id)
