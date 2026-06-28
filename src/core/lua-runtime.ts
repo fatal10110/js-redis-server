@@ -173,14 +173,16 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
 }
 
 /**
- * Re-renders engine-originated script errors whose user-facing wording is
- * Redis-version specific. The engine reports such errors with structured
- * metadata and already renders the modern wording, so modern profiles pass
- * through untouched; only older profiles rebuild the legacy wording from the
- * metadata (so each wording lives in exactly one place). Other replies are
- * returned unchanged.
+ * Renders a script-aborting error into its final Redis wire message. The engine
+ * classifies these errors and attaches metadata — `{ line, sha }` always, plus a
+ * machine `kind`/`name` for its own globals protection — but composes no
+ * user-facing prose, so the host owns both the version-specific wording and the
+ * `... script: <sha>, on @user_script:<line>.` decoration.
+ *
+ * Replies without metadata (returned error tables, redis.error_reply, host-side
+ * limit errors) are emitted verbatim, matching real Redis.
  */
-export function remapScriptErrorForProfile(
+export function renderScriptError(
   value: ReplyValue,
   profile: CompatibilityProfile,
 ): ReplyValue {
@@ -189,17 +191,33 @@ export function remapScriptErrorForProfile(
     typeof value !== 'object' ||
     Array.isArray(value) ||
     Buffer.isBuffer(value) ||
-    !('err' in value) ||
-    value.meta?.kind !== 'global-write' ||
-    profile.has('script.globals-readonly-table')
+    !('err' in value)
   ) {
-    // Modern Redis uses the readonly-table wording the engine already rendered.
+    return value
+  }
+  const meta = value.meta
+  if (!meta) {
     return value
   }
 
-  // Pre-7.0 Redis named the variable instead of mentioning a readonly table.
-  const { name, line, sha } = value.meta
-  const message = `user_script:${line}: Script attempted to create global variable '${name}' script: ${sha}, on @user_script:${line}.`
+  const { line, sha, kind, name } = meta
+  let body: string
+  switch (kind) {
+    case 'global-read':
+      // Version-stable wording.
+      body = `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`
+      break
+    case 'global-write':
+      body = profile.has('script.globals-readonly-table')
+        ? `user_script:${line}: Attempt to modify a readonly table`
+        : `user_script:${line}: Script attempted to create global variable '${name}'`
+      break
+    default:
+      // Lua runtime / propagated command errors already carry their own message.
+      body = value.err.toString('utf8')
+  }
+
+  const message = `${body} script: ${sha}, on @user_script:${line}.`
   return { err: Buffer.from(message, 'utf8'), code: value.code }
 }
 
