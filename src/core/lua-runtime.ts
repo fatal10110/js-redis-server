@@ -1,5 +1,6 @@
 import {
   load,
+  type LoadOptions,
   type LuaEngine,
   type LuaWasmModule,
   type ReplyValue,
@@ -122,8 +123,21 @@ function createLuaMonitorContext(
 // RedisServerState.getLuaRuntime) keeps each logical node's script re-entrancy
 // guard isolated, so concurrent EVALs on independent server/cluster nodes never
 // collide (issue #130).
+let luaWasmLoadOptions: LoadOptions = {}
+
+/**
+ * Override where the Lua WASM module + Emscripten glue are loaded from — e.g. a
+ * CDN URL (`{ modulePath, wasmPath }`) or preloaded bytes (`{ wasmBytes }`).
+ * Affects every runtime created afterwards, so set it once before the first EVAL.
+ * Mainly useful in browser bundles that want the `.wasm` served from a CDN
+ * instead of emitted as a local asset.
+ */
+export function setLuaWasmLoadOptions(options: LoadOptions): void {
+  luaWasmLoadOptions = options
+}
+
 export async function createRedisLuaRuntime(): Promise<RedisLuaRuntime> {
-  const module = await load()
+  const module = await load(luaWasmLoadOptions)
   return new RedisLuaRuntime(module)
 }
 

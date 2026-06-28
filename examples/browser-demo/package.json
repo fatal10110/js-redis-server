@@ -8,6 +8,10 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "lua-redis-wasm": "^1.4.0"
+  },
   "devDependencies": {
     "vite": "^6.0.0",
     "vite-plugin-node-polyfills": "^0.23.0"

@@ -8,7 +8,7 @@ import {
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createRedisCluster, RedisCluster } from '../src/cluster'
+import { createRedisCluster, RedisCluster } from '../src/cluster-server'
 import {
   type CompatibilitySpec,
   Resp2Server,

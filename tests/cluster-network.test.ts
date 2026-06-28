@@ -1,7 +1,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { createRedisCluster, computeSlotRange } from '../src/cluster'
+import { computeSlotRange } from '../src/cluster'
+import { createRedisCluster } from '../src/cluster-server'
 
 describe('ClusterNetwork slot distribution', () => {
   test('computeSlotRange covers all slots without overlap', () => {

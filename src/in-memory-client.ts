@@ -4,7 +4,7 @@ import type { CommandExecutor } from './core/command-executor'
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
 import { RedisResult } from './core/redis-result'
-import { isResponseStream } from './core/response-stream'
+import { isResponseStream, type ResponseStream } from './core/response-stream'
 import { seedStandalone, type SeedEntry } from './seed'
 import { RedisServerState } from './state'
 
@@ -35,6 +35,19 @@ export type InMemoryRedisClientOptions = {
   onClose?: () => void
 }
 
+/** Aborts when any of the given signals abort (or immediately if one already has). */
+function anySignal(signals: readonly AbortSignal[]): AbortSignal {
+  const controller = new AbortController()
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort()
+      break
+    }
+    signal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
+  return controller.signal
+}
+
 /**
  * Socketless, high-level client that drives the **same** command pipeline as a
  * networked client through an in-process {@link ClientSession} — bypassing both
@@ -50,6 +63,16 @@ export class InMemoryRedisClient {
   private readonly returnBuffers: boolean
   private readonly onClose?: () => void
   private closed = false
+  /** Aborted on close — tears down any active stream and push readers. */
+  private readonly lifetime = new AbortController()
+  /**
+   * Set once a streaming command (e.g. MONITOR) hands back a `ResponseStream`.
+   * `command()` consumes its first frame as the immediate reply; {@link pushes}
+   * drains the rest. Pub/sub doesn't set this — its messages flow through the
+   * session push channel instead (see {@link pushes}).
+   */
+  private activeStream?: ResponseStream
+  private streamFrames?: AsyncIterator<RedisResult>
 
   constructor(options: InMemoryRedisClientOptions) {
     this.session = new ClientSession({
@@ -65,6 +88,10 @@ export class InMemoryRedisClient {
    * Run a single command (e.g. `client.command('SET', 'k', 'v')`) and resolve
    * to its native reply. Throws a {@link RedisCommandError} for `-ERR` replies,
    * mirroring what a real client surfaces.
+   *
+   * Streaming commands (MONITOR / SUBSCRIBE / …) resolve to their *immediate*
+   * reply (MONITOR's `OK`, the subscribe confirmation); their server-initiated
+   * frames are delivered through {@link pushes}.
    */
   async command(
     name: string,
@@ -80,12 +107,15 @@ export class InMemoryRedisClient {
     )
 
     if (isResponseStream(result)) {
-      result.close(
-        'streaming commands are not supported by InMemoryRedisClient',
-      )
-      throw new RedisCommandError(
-        `${name.toUpperCase()} is a streaming command; use a real client`,
-      )
+      // A long-lived (MONITOR) or finite (multi-channel subscribe) stream: keep
+      // the iterator so pushes() continues it, and return the first frame as the
+      // immediate reply.
+      this.activeStream = result
+      this.streamFrames = result
+        .frames(this.lifetime.signal)
+        [Symbol.asyncIterator]()
+      const first = await this.streamFrames.next()
+      return first.done ? null : this.decode(first.value.value)
     }
 
     return this.decode((result as RedisResult).value)
@@ -99,11 +129,81 @@ export class InMemoryRedisClient {
     return this.command(name, ...args)
   }
 
+  /**
+   * True once the last command put the connection into *push mode* — an active
+   * MONITOR stream, or a SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE that entered subscribed
+   * mode. Consumers should switch to draining {@link pushes} while this holds.
+   */
+  get streaming(): boolean {
+    return this.activeStream !== undefined || this.session.mode === 'subscribed'
+  }
+
+  /**
+   * Server-initiated frames for a connection in *push mode* — pub/sub messages
+   * (via the session push channel) and the tail of a MONITOR stream — decoded to
+   * native replies. Iterate it after issuing SUBSCRIBE/PSUBSCRIBE/MONITOR. Ends
+   * when `signal` (or the connection) is closed.
+   */
+  async *pushes(signal?: AbortSignal): AsyncIterable<RedisNativeReply> {
+    const sig = signal
+      ? anySignal([this.lifetime.signal, signal])
+      : this.lifetime.signal
+
+    const sources: AsyncIterator<RedisResult>[] = []
+    if (this.streamFrames) {
+      sources.push(this.streamFrames)
+    }
+    sources.push(this.session.readPushes(sig)[Symbol.asyncIterator]())
+
+    const queue: RedisResult[] = []
+    let finished = 0
+    let wake: (() => void) | null = null
+    const ping = () => {
+      wake?.()
+      wake = null
+    }
+
+    for (const source of sources) {
+      void (async () => {
+        try {
+          for (;;) {
+            const { value, done } = await source.next()
+            if (done) {
+              break
+            }
+            queue.push(value)
+            ping()
+          }
+        } finally {
+          finished++
+          ping()
+        }
+      })()
+    }
+
+    while (!sig.aborted) {
+      const frame = queue.shift()
+      if (frame) {
+        yield this.decode(frame.value)
+        continue
+      }
+      if (finished === sources.length) {
+        return
+      }
+      await new Promise<void>(resolve => {
+        wake = resolve
+        sig.addEventListener('abort', () => resolve(), { once: true })
+      })
+    }
+  }
+
   close(): void {
     if (this.closed) {
       return
     }
     this.closed = true
+    this.lifetime.abort()
+    this.activeStream?.close('client closed')
     this.session.close()
     this.onClose?.()
   }
@@ -134,8 +234,12 @@ export class InMemoryRedisClient {
         return value.value
       case 'array':
       case 'set':
-      case 'push':
         return value.items.map(item => this.decode(item))
+      case 'push':
+        // RESP2 encodes a push as `[name, ...items]` on the wire (e.g. a pub/sub
+        // message is `["message", channel, payload]`); keep the type tag so
+        // push-mode consumers see the same shape a real client would.
+        return [value.name, ...value.items.map(item => this.decode(item))]
       case 'map':
       case 'map-pairs': {
         const out: { [key: string]: RedisNativeReply } = {}
@@ -154,35 +258,67 @@ export class InMemoryRedisClient {
       case 'null-array':
         return null
       case 'error':
-        throw new RedisCommandError(value.message)
+        // Surface the full error text a real client sees — `<CODE> <message>`
+        // (e.g. `MOVED 1234 host:port`, `WRONGTYPE …`), not just the detail.
+        throw new RedisCommandError(
+          value.code ? `${value.code} ${value.message}` : value.message,
+          value.code,
+        )
     }
   }
 }
 
-export type CreateInMemoryClientOptions = {
+export type CreateInMemoryRedisOptions = {
   /** Logical database count (defaults to 16, matching real Redis). */
   databaseCount?: number
+  /** Pre-populate the keyspace before any connection is opened. */
+  seed?: readonly SeedEntry[]
+}
+
+/** Per-connection options for {@link InMemoryRedis.connect}. */
+export type ConnectOptions = {
   /** Initial selected database (default 0). */
   database?: number
   /** Return `Buffer`s for bulk-string/verbatim replies instead of utf8 strings. */
   returnBuffers?: boolean
-  /** Pre-populate the keyspace before the client is returned. */
-  seed?: readonly SeedEntry[]
 }
 
 /**
- * A socketless, in-process {@link InMemoryRedisClient} backed by its own
- * keyspace + command pipeline — the bespoke-client sibling of
- * {@link createIoredisMock} / {@link createNodeRedisMock}. Owns its state, so
- * `client.close()` tears everything down.
- *
- * Need to drive an existing mock's keyspace instead? Construct
- * {@link InMemoryRedisClient} directly with that mock's `state` and an executor
- * from `js-redis-server/core`.
+ * A socketless in-memory Redis *instance* — one shared keyspace + command
+ * pipeline that many {@link InMemoryRedisClient} connections can drive at once.
+ * Because connections share the underlying {@link RedisServerState}, a `MONITOR`
+ * / `SUBSCRIBE` on one connection observes commands run on another, and a
+ * `BLPOP` blocks until another connection writes the key — exactly like real
+ * Redis. `close()` tears the whole instance down.
  */
-export async function createInMemoryClient(
-  options: CreateInMemoryClientOptions = {},
-): Promise<InMemoryRedisClient> {
+export class InMemoryRedis {
+  constructor(
+    private readonly state: RedisServerState,
+    private readonly executor: CommandExecutor,
+  ) {}
+
+  /** Open a new connection (its own {@link ClientSession}) over this keyspace. */
+  connect(options: ConnectOptions = {}): InMemoryRedisClient {
+    return new InMemoryRedisClient({
+      server: this.state,
+      executor: this.executor,
+      database: options.database,
+      returnBuffers: options.returnBuffers,
+    })
+  }
+
+  close(): void {
+    this.state.close()
+  }
+}
+
+/**
+ * Build a socketless {@link InMemoryRedis} instance with its own keyspace +
+ * command pipeline. Open one or more connections with {@link InMemoryRedis.connect}.
+ */
+export async function createInMemoryRedis(
+  options: CreateInMemoryRedisOptions = {},
+): Promise<InMemoryRedis> {
   const state = new RedisServerState({
     databaseCount: options.databaseCount ?? DEFAULT_DATABASE_COUNT,
   })
@@ -192,13 +328,40 @@ export async function createInMemoryClient(
     await seedStandalone(state, options.seed)
   }
 
-  return new InMemoryRedisClient({
-    server: state,
-    executor,
+  return new InMemoryRedis(state, executor)
+}
+
+export type CreateInMemoryClientOptions = CreateInMemoryRedisOptions &
+  ConnectOptions
+
+/**
+ * Convenience wrapper: an {@link InMemoryRedis} instance with a single owned
+ * connection. `client.close()` tears the whole instance down. For multiple
+ * connections over one keyspace (pub/sub, MONITOR, cross-connection blocking),
+ * use {@link createInMemoryRedis} and call `connect()` per connection.
+ */
+export async function createInMemoryClient(
+  options: CreateInMemoryClientOptions = {},
+): Promise<InMemoryRedisClient> {
+  const instance = await createInMemoryRedis(options)
+  const client = instance.connect({
     database: options.database,
     returnBuffers: options.returnBuffers,
-    onClose: () => state.close(),
   })
+  return wrapWithInstanceClose(client, instance)
+}
+
+/** Wires a single client's `close()` to also tear down the instance it owns. */
+function wrapWithInstanceClose(
+  client: InMemoryRedisClient,
+  instance: InMemoryRedis,
+): InMemoryRedisClient {
+  const close = client.close.bind(client)
+  client.close = () => {
+    close()
+    instance.close()
+  }
+  return client
 }
 
 function isSafeBigInt(value: bigint): boolean {

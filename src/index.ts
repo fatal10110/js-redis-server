@@ -28,8 +28,12 @@ export {
   type CreateIoredisMockOptions,
 } from './client-mocks/ioredis-mock'
 export {
+  InMemoryRedis,
   InMemoryRedisClient,
+  createInMemoryRedis,
   createInMemoryClient,
+  type ConnectOptions,
+  type CreateInMemoryRedisOptions,
   type CreateInMemoryClientOptions,
   type InMemoryRedisClientOptions,
   type RedisCommandArgument,
@@ -52,14 +56,13 @@ export {
 
 // Cluster builder (consistent `create*` naming; `buildRedisCluster` is a
 // deprecated alias kept for back-compat).
+export { computeSlotRange, type RedisClusterOptions } from './cluster'
 export {
   RedisCluster,
   createRedisCluster,
   buildRedisCluster,
-  computeSlotRange,
   type RedisClusterNodeHandle,
-  type RedisClusterOptions,
-} from './cluster'
+} from './cluster-server'
 
 export type { Logger } from './logger'
 export type {

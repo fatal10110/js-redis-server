@@ -3,7 +3,7 @@ import {
   createRedisCluster,
   type RedisCluster,
   type RedisClusterNodeHandle,
-} from './cluster'
+} from './cluster-server'
 import type { CommandExecutor } from './core/command-executor'
 import { Resp2Server } from './core/transports/resp2/server'
 import { RedisServerState } from './state'
