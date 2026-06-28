@@ -105,4 +105,75 @@ describe(`Redis commands (${testRunner.getBackendName()})`, () => {
       )
     })
   })
+
+  describe('Lua value and sandbox compatibility', () => {
+    test('non-integer number return is truncated to an integer', async () => {
+      assert.strictEqual(await redisClient?.eval('return 3.7', 0), 3)
+      assert.strictEqual(await redisClient?.eval('return 3.3', 0), 3)
+    })
+
+    test('script with no return value replies with nil', async () => {
+      assert.strictEqual(await redisClient?.eval('local a = 1', 0), null)
+      assert.strictEqual(await redisClient?.eval('return', 0), null)
+    })
+
+    test('boolean true returns 1, false returns nil', async () => {
+      assert.strictEqual(await redisClient?.eval('return true', 0), 1)
+      assert.strictEqual(await redisClient?.eval('return false', 0), null)
+    })
+
+    test('array reply stops at the first nil', async () => {
+      assert.deepStrictEqual(
+        await redisClient?.eval('return {1,2,nil,4}', 0),
+        [1, 2],
+      )
+    })
+
+    test('a returned table with both ok and err is an error (err wins)', async () => {
+      await assert.rejects(
+        () => redisClient!.eval("return {ok='STAT', err='ERRR'}", 0),
+        errorWithMessage('ERRR'),
+      )
+    })
+
+    test('redis.error_reply prepends ERR only when there is no code', async () => {
+      await assert.rejects(
+        () => redisClient!.eval("return redis.error_reply('foo')", 0),
+        errorWithMessage('ERR foo'),
+      )
+      await assert.rejects(
+        () => redisClient!.eval("return redis.error_reply('WRONGTYPE x')", 0),
+        errorWithMessage('WRONGTYPE x'),
+      )
+    })
+
+    test('coroutine library is available to scripts', async () => {
+      assert.strictEqual(
+        await redisClient?.eval('return type(coroutine)', 0),
+        'table',
+      )
+    })
+
+    test('accessing a nonexistent global errors like Redis', async () => {
+      const script = "print('a')"
+      const sha = createHash('sha1').update(script).digest('hex')
+      await assert.rejects(
+        () => redisClient!.eval(script, 0),
+        errorWithMessage(
+          `ERR user_script:1: Script attempted to access nonexistent global variable 'print' script: ${sha}, on @user_script:1.`,
+        ),
+      )
+    })
+
+    test('boolean redis.call argument is rejected like Redis', async () => {
+      const script = "return redis.call('set', 'k', true)"
+      const sha = createHash('sha1').update(script).digest('hex')
+      await assert.rejects(
+        () => redisClient!.eval(script, 0),
+        errorWithMessage(
+          `ERR Lua redis lib command arguments must be strings or integers script: ${sha}, on @user_script:1.`,
+        ),
+      )
+    })
+  })
 })

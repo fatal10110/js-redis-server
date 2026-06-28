@@ -14,6 +14,7 @@ import {
   UnknownRedisCommandError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
+import type { CompatibilityProfile } from './compatibility/profile'
 import { RedisValue } from './redis-value'
 
 type LuaHostState = {
@@ -163,13 +164,42 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   }
 
   if ('err' in value) {
-    return RedisValue.error(
-      value.err.toString(),
-      value.code?.toString() ?? 'ERR',
-    )
+    // The engine supplies an explicit code (or none, for verbatim returned error
+    // tables); the host does not infer one.
+    return RedisValue.error(value.err.toString(), value.code?.toString())
   }
 
   return RedisValue.bulkString(Buffer.from(String(value)))
+}
+
+/**
+ * Re-renders engine-originated script errors whose user-facing wording is
+ * Redis-version specific. The Lua engine reports such errors with structured
+ * metadata (including the script sha it already computed); the message is
+ * rebuilt from that metadata for the active profile rather than string-matched.
+ * Other replies pass through untouched.
+ */
+export function remapScriptErrorForProfile(
+  value: ReplyValue,
+  profile: CompatibilityProfile,
+): ReplyValue {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Buffer.isBuffer(value) ||
+    !('err' in value) ||
+    value.meta?.kind !== 'global-write'
+  ) {
+    return value
+  }
+
+  const { name, line, sha } = value.meta
+  const body = profile.has('script.globals-readonly-table')
+    ? 'Attempt to modify a readonly table'
+    : `Script attempted to create global variable '${name}'`
+  const message = `user_script:${line}: ${body} script: ${sha}, on @user_script:${line}.`
+  return { err: Buffer.from(message, 'utf8'), code: value.code }
 }
 
 function redisValueToLuaReply(value: RedisValue): ReplyValue {

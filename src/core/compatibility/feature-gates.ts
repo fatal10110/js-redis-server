@@ -17,4 +17,9 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
   'stream.xautoclaim-deleted-ids': { redis: '7.0.0', valkey: '7.2.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
+  // Redis 7.0 reimplemented script globals protection as a readonly table
+  // ("Attempt to modify a readonly table"); earlier versions reported
+  // "Script attempted to create global variable '<name>'". Valkey (>= 7.2)
+  // inherits the readonly-table behavior.
+  'script.globals-readonly-table': { redis: '7.0.0', valkey: '7.2.0' },
 }
