@@ -9,10 +9,12 @@ import { TabManager } from './tabs'
 
 // Load the Lua WASM + Emscripten glue from jsDelivr instead of bundling the
 // ~260 kB of assets into the GitHub Pages deploy. lua-redis-wasm's browser
-// loader fetches these URLs directly (EVAL works on first use).
-const LUA_WASM_VERSION = '1.4.0'
+// loader fetches these URLs directly (EVAL works on first use). The version is
+// injected by vite.config from the installed package, so the CDN assets always
+// match the bundled loader.
+declare const __LUA_WASM_VERSION__: string
 const cdn = (file: string) =>
-  `https://cdn.jsdelivr.net/npm/lua-redis-wasm@${LUA_WASM_VERSION}/dist/${file}`
+  `https://cdn.jsdelivr.net/npm/lua-redis-wasm@${__LUA_WASM_VERSION__}/dist/${file}`
 setLuaWasmLoadOptions({
   modulePath: cdn('redis_lua.mjs'),
   wasmPath: cdn('redis_lua.wasm'),
@@ -23,43 +25,115 @@ const tabbar = $('tabbar')
 const terminals = $('terminals')
 const panel = $('panel')
 
-let backend: DemoBackend
-let tabs: TabManager
-let mode: 'single' | 'cluster' = 'single'
+// Supported compatibility presets (see src/core/compatibility). Default first.
+const PROFILES = [
+  'redis-8.0',
+  'redis-7.4',
+  'redis-7.2',
+  'redis-7.0',
+  'redis-6.2',
+  'valkey-9.0',
+  'valkey-8.0',
+] as const
+type Profile = (typeof PROFILES)[number]
 
-async function buildBackend(next: 'single' | 'cluster'): Promise<DemoBackend> {
-  return next === 'single' ? createSingleBackend() : createClusterBackend(3)
+interface Server {
+  name: string
+  profile: Profile
+  backend: DemoBackend
+  tabs: TabManager
+  host: HTMLDivElement
 }
 
-async function setMode(next: 'single' | 'cluster'): Promise<void> {
-  tabs?.dispose()
-  backend?.close()
-  mode = next
-  backend = await buildBackend(next)
-  tabs = new TabManager(backend, tabbar, terminals, renderPanel)
-  renderPanel()
+const servers: Server[] = []
+let active = -1
+let newProfile: Profile = 'redis-8.0'
+const counts = { single: 0, cluster: 0 }
+
+async function addServer(
+  kind: 'single' | 'cluster',
+  profile: Profile,
+): Promise<void> {
+  const backend =
+    kind === 'single'
+      ? await createSingleBackend(profile)
+      : createClusterBackend(3, profile)
+  const host = document.createElement('div')
+  host.className = 'terminal-host'
+  terminals.appendChild(host)
+  const name = `${kind} ${++counts[kind]} · ${profile}`
+  const tabs = new TabManager(backend, tabbar, host, renderPanel)
+  servers.push({ name, profile, backend, tabs, host })
   await tabs.boot()
+  selectServer(servers.length - 1)
+}
+
+function selectServer(index: number): void {
+  active = index
+  servers.forEach((s, i) => {
+    s.host.style.display = i === index ? 'block' : 'none'
+  })
+  servers[index]?.tabs.activate()
+  renderPanel()
 }
 
 function renderPanel(): void {
   panel.replaceChildren()
-
-  const modeBox = document.createElement('div')
-  modeBox.className = 'panel-section'
-  modeBox.appendChild(heading('Mode'))
-  const toggle = document.createElement('div')
-  toggle.className = 'toggle'
-  for (const m of ['single', 'cluster'] as const) {
-    const btn = document.createElement('button')
-    btn.textContent = m
-    btn.className = m === mode ? 'active' : ''
-    btn.onclick = () => {
-      if (m !== mode) void setMode(m)
-    }
-    toggle.appendChild(btn)
+  const backend = servers[active]?.backend
+  if (!backend) {
+    return
   }
-  modeBox.appendChild(toggle)
-  panel.appendChild(modeBox)
+
+  // Active-server switcher.
+  const serverBox = document.createElement('div')
+  serverBox.className = 'panel-section'
+  serverBox.appendChild(heading('Active server'))
+  const select = document.createElement('select')
+  select.className = 'server-select'
+  servers.forEach((s, i) => {
+    const opt = document.createElement('option')
+    opt.value = String(i)
+    opt.textContent = s.name
+    opt.selected = i === active
+    select.appendChild(opt)
+  })
+  select.onchange = () => selectServer(Number(select.value))
+  serverBox.appendChild(select)
+  panel.appendChild(serverBox)
+
+  // Create a new server — profile applies to whichever button is clicked.
+  const newBox = document.createElement('div')
+  newBox.className = 'panel-section'
+  newBox.appendChild(heading('New server'))
+  const profileSelect = document.createElement('select')
+  profileSelect.className = 'server-select'
+  profileSelect.setAttribute(
+    'aria-label',
+    'Compatibility profile for new server',
+  )
+  for (const p of PROFILES) {
+    const opt = document.createElement('option')
+    opt.value = p
+    opt.textContent = p
+    opt.selected = p === newProfile
+    profileSelect.appendChild(opt)
+  }
+  profileSelect.onchange = () => {
+    newProfile = profileSelect.value as Profile
+  }
+  newBox.appendChild(fieldLabel('Compatibility'))
+  newBox.appendChild(profileSelect)
+
+  const addRow = document.createElement('div')
+  addRow.className = 'toggle'
+  for (const kind of ['single', 'cluster'] as const) {
+    const btn = document.createElement('button')
+    btn.textContent = `+ ${kind === 'single' ? 'instance' : 'cluster'}`
+    btn.onclick = () => void addServer(kind, newProfile)
+    addRow.appendChild(btn)
+  }
+  newBox.appendChild(addRow)
+  panel.appendChild(newBox)
 
   if (backend.mode === 'cluster') {
     const nodesBox = document.createElement('div')
@@ -116,4 +190,11 @@ function heading(text: string): HTMLElement {
   return h
 }
 
-void setMode('single')
+function fieldLabel(text: string): HTMLElement {
+  const l = document.createElement('div')
+  l.className = 'field-label'
+  l.textContent = text
+  return l
+}
+
+void addServer('single', 'redis-8.0')

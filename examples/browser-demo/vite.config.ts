@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
@@ -17,6 +18,13 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 // where the shim isn't installed. Alias the three shims to absolute paths in the
 // demo's own node_modules so they resolve regardless of importer location.
 const abs = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
+
+// Pin the CDN-loaded WASM + glue to the SAME version we bundle the JS loader
+// from, so a root-level `lua-redis-wasm` bump can't leave the loader and the
+// jsDelivr assets on mismatched (ABI-incompatible) versions.
+const luaWasmVersion = JSON.parse(
+  readFileSync(abs('./node_modules/lua-redis-wasm/package.json'), 'utf8'),
+).version as string
 
 const shim = (name: string) =>
   abs(`./node_modules/vite-plugin-node-polyfills/shims/${name}/dist/index.js`)
@@ -50,6 +58,7 @@ const stripBundledLuaAssets = {
 
 export default defineConfig({
   base: '/js-redis-server/',
+  define: { __LUA_WASM_VERSION__: JSON.stringify(luaWasmVersion) },
   plugins: [stripBundledLuaAssets, nodePolyfills()],
   resolve: {
     alias: {
