@@ -191,14 +191,12 @@ describe(
       )
     })
 
-    test('script globals-write error wording matches the profile', async () => {
+    test('writing a global is rejected by the readonly table', async () => {
+      // The Lua engine blocks global writes via Lua's native readonly table, so
+      // the wording is version-invariant across profiles.
       const reply = await send('EVAL', 'x = 5', '0')
       assert.ok(reply.startsWith('-'), `expected an error, got ${reply}`)
-      if (supportsReadonlyGlobals()) {
-        assert.match(reply, /Attempt to modify a readonly table/)
-      } else {
-        assert.match(reply, /Script attempted to create global variable 'x'/)
-      }
+      assert.match(reply, /Attempt to modify a readonly table/)
     })
 
     async function send(...args: string[]): Promise<string> {
@@ -247,12 +245,6 @@ describe(
     }
   },
 )
-
-function supportsReadonlyGlobals(): boolean {
-  // Redis 7.0 (and Valkey) reimplemented script globals protection as a readonly
-  // table; only redis-6.2 still reports "create global variable".
-  return profile !== 'redis-6.2'
-}
 
 function supportsExpireConditions(): boolean {
   return profile !== 'redis-6.2'

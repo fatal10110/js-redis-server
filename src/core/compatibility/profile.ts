@@ -18,7 +18,6 @@ export type FeatureId =
   | 'pubsub.sharded'
   | 'stream.xautoclaim-deleted-ids'
   | 'cluster.multi-db'
-  | 'script.globals-readonly-table'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

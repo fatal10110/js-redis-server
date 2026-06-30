@@ -14,7 +14,6 @@ import {
   UnknownRedisCommandError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
-import type { CompatibilityProfile } from './compatibility/profile'
 import { RedisValue } from './redis-value'
 
 type LuaHostState = {
@@ -151,6 +150,11 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
     return RedisValue.integer(value)
   }
 
+  // RESP3 boolean reply (redis.setresp(3) + a Lua boolean).
+  if (typeof value === 'boolean') {
+    return RedisValue.boolean(value)
+  }
+
   if (Buffer.isBuffer(value)) {
     return RedisValue.bulkString(value)
   }
@@ -169,23 +173,52 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
     return RedisValue.error(value.err.toString(), value.code?.toString())
   }
 
+  // RESP3 reply shapes the engine produces under redis.setresp(3).
+  if ('double' in value) {
+    return RedisValue.double(value.double)
+  }
+
+  if ('big_number' in value) {
+    return RedisValue.bigNumber(BigInt(value.big_number.toString()))
+  }
+
+  if ('verbatim_string' in value) {
+    return RedisValue.verbatim(
+      value.verbatim_string.format.toString(),
+      value.verbatim_string.string,
+    )
+  }
+
+  if ('map' in value) {
+    return RedisValue.map(
+      value.map.map(([k, v]) => [
+        luaReplyToRedisValue(k),
+        luaReplyToRedisValue(v),
+      ]),
+    )
+  }
+
+  if ('set' in value) {
+    return RedisValue.set(value.set.map(luaReplyToRedisValue))
+  }
+
   return RedisValue.bulkString(Buffer.from(String(value)))
 }
 
 /**
  * Renders a script-aborting error into its final Redis wire message. The engine
  * classifies these errors and attaches metadata — `{ line, sha }` always, plus a
- * machine `kind`/`name` for its own globals protection — but composes no
- * user-facing prose, so the host owns both the version-specific wording and the
+ * machine `kind`/`name` for the errors it originates itself — but composes no
+ * user-facing prose, so the host owns the wording and the
  * `... script: <sha>, on @user_script:<line>.` decoration.
  *
- * Replies without metadata (returned error tables, redis.error_reply, host-side
- * limit errors) are emitted verbatim, matching real Redis.
+ * Errors carrying their own message (Lua runtime errors, propagated command
+ * errors, and global writes — which Lua's native readonly table rejects with
+ * "Attempt to modify a readonly table") have no kind and pass through. Replies
+ * without metadata (returned error tables, redis.error_reply, host-side limit
+ * errors) are emitted verbatim, matching real Redis.
  */
-export function renderScriptError(
-  value: ReplyValue,
-  profile: CompatibilityProfile,
-): ReplyValue {
+export function renderScriptError(value: ReplyValue): ReplyValue {
   if (
     value === null ||
     typeof value !== 'object' ||
@@ -204,16 +237,13 @@ export function renderScriptError(
   let body: string
   switch (kind) {
     case 'global-read':
-      // Version-stable wording.
       body = `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`
       break
-    case 'global-write':
-      body = profile.has('script.globals-readonly-table')
-        ? `user_script:${line}: Attempt to modify a readonly table`
-        : `user_script:${line}: Script attempted to create global variable '${name}'`
+    case 'command-arg-type':
+      // Raised by redis.call/pcall without a script-position prefix.
+      body = 'Lua redis lib command arguments must be strings or integers'
       break
     default:
-      // Lua runtime / propagated command errors already carry their own message.
       body = value.err.toString('utf8')
   }
 
