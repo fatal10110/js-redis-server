@@ -222,6 +222,9 @@ class Tab {
     if (!res.ok) {
       this.term.writeln(RED('(error) ' + res.error))
     } else if (res.streaming) {
+      // Print the subscribe/psubscribe confirmation reply first, like redis-cli,
+      // then begin streaming pushes.
+      this.term.writeln(formatReply(res.reply as Reply))
       this.startStreaming()
       return
     } else {

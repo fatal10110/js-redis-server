@@ -9,7 +9,7 @@ import {
   WrongNumberOfKeysError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
-import { luaReplyToRedisValue } from '../core/lua-runtime'
+import { luaReplyToRedisValue, renderScriptError } from '../core/lua-runtime'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -255,7 +255,7 @@ async function runLuaScript(
   const runtime = await ctx.server.getLuaRuntime()
 
   try {
-    const reply = runtime.eval(script, keys, argv, ctx)
+    const reply = renderScriptError(runtime.eval(script, keys, argv, ctx))
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {
     if (err instanceof RedisCommandError) {

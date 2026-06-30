@@ -186,6 +186,11 @@ function parseRespFrame(buffer: Buffer, index: number): ParsedFrame {
     return parseBooleanFrame(buffer, index + 1)
   }
 
+  if (prefix === LEFT_PAREN) {
+    // RESP3 big number: an arbitrary-precision integer carried as a line.
+    return parseLineString(buffer, index + 1)
+  }
+
   if (prefix === UNDERSCORE) {
     if (!hasCrlf(buffer, index + 1)) {
       return { complete: false }
@@ -361,6 +366,7 @@ const EQUALS = '='.charCodeAt(0)
 const GREATER_THAN = '>'.charCodeAt(0)
 const HASH = '#'.charCodeAt(0)
 const LF = '\n'.charCodeAt(0)
+const LEFT_PAREN = '('.charCodeAt(0)
 const LOWER_T = 't'.charCodeAt(0)
 const MINUS = '-'.charCodeAt(0)
 const PERCENT = '%'.charCodeAt(0)

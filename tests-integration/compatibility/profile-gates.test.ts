@@ -191,6 +191,14 @@ describe(
       )
     })
 
+    test('writing a global is rejected by the readonly table', async () => {
+      // The Lua engine blocks global writes via Lua's native readonly table, so
+      // the wording is version-invariant across profiles.
+      const reply = await send('EVAL', 'x = 5', '0')
+      assert.ok(reply.startsWith('-'), `expected an error, got ${reply}`)
+      assert.match(reply, /Attempt to modify a readonly table/)
+    })
+
     async function send(...args: string[]): Promise<string> {
       connection.write(commandFrame(...args))
       return (await connection.readRawFrame()).toString()

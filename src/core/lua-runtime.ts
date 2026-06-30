@@ -150,6 +150,11 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
     return RedisValue.integer(value)
   }
 
+  // RESP3 boolean reply (redis.setresp(3) + a Lua boolean).
+  if (typeof value === 'boolean') {
+    return RedisValue.boolean(value)
+  }
+
   if (Buffer.isBuffer(value)) {
     return RedisValue.bulkString(value)
   }
@@ -163,13 +168,87 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   }
 
   if ('err' in value) {
-    return RedisValue.error(
-      value.err.toString(),
-      value.code?.toString() ?? 'ERR',
+    // The engine supplies an explicit code (or none, for verbatim returned error
+    // tables); the host does not infer one.
+    return RedisValue.error(value.err.toString(), value.code?.toString())
+  }
+
+  // RESP3 reply shapes the engine produces under redis.setresp(3).
+  if ('double' in value) {
+    return RedisValue.double(value.double)
+  }
+
+  if ('big_number' in value) {
+    return RedisValue.bigNumber(BigInt(value.big_number.toString()))
+  }
+
+  if ('verbatim_string' in value) {
+    return RedisValue.verbatim(
+      value.verbatim_string.format.toString(),
+      value.verbatim_string.string,
     )
   }
 
+  if ('map' in value) {
+    return RedisValue.map(
+      value.map.map(([k, v]) => [
+        luaReplyToRedisValue(k),
+        luaReplyToRedisValue(v),
+      ]),
+    )
+  }
+
+  if ('set' in value) {
+    return RedisValue.set(value.set.map(luaReplyToRedisValue))
+  }
+
   return RedisValue.bulkString(Buffer.from(String(value)))
+}
+
+/**
+ * Renders a script-aborting error into its final Redis wire message. The engine
+ * classifies these errors and attaches metadata — `{ line, sha }` always, plus a
+ * machine `kind`/`name` for the errors it originates itself — but composes no
+ * user-facing prose, so the host owns the wording and the
+ * `... script: <sha>, on @user_script:<line>.` decoration.
+ *
+ * Errors carrying their own message (Lua runtime errors, propagated command
+ * errors, and global writes — which Lua's native readonly table rejects with
+ * "Attempt to modify a readonly table") have no kind and pass through. Replies
+ * without metadata (returned error tables, redis.error_reply, host-side limit
+ * errors) are emitted verbatim, matching real Redis.
+ */
+export function renderScriptError(value: ReplyValue): ReplyValue {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Buffer.isBuffer(value) ||
+    !('err' in value)
+  ) {
+    return value
+  }
+  const meta = value.meta
+  if (!meta) {
+    return value
+  }
+
+  const { line, sha, kind, name } = meta
+  let body: string
+  switch (kind) {
+    case 'global-read':
+      body = `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`
+      break
+    case 'command-arg-type':
+      // Raised by redis.call/pcall without a script-position prefix.
+      body = 'Lua redis lib command arguments must be strings or integers'
+      break
+    default:
+      body = value.err.toString('utf8')
+  }
+
+  const message = `${body} script: ${sha}, on @user_script:${line}.`
+  return { err: Buffer.from(message, 'utf8'), code: value.code }
 }
 
 function redisValueToLuaReply(value: RedisValue): ReplyValue {
