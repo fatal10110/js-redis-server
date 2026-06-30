@@ -18,6 +18,7 @@ export type FeatureId =
   | 'info.multi-section'
   | 'shutdown.now-force-abort'
   | 'pubsub.sharded'
+  | 'pubsub.resp3-publish-reply-first'
   | 'stream.xautoclaim-deleted-ids'
   | 'cluster.multi-db'
 

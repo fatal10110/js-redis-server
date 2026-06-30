@@ -115,6 +115,20 @@ describe('compatibility registry filtering', () => {
       assert.strictEqual(redis70.has(command), true, command)
     }
 
+    const redis72 = createRedisCommandRegistry(
+      [],
+      resolveCompatibilityProfile('redis-7.2'),
+    )
+    for (const command of redis70Commands) {
+      assert.strictEqual(redis72.has(command), true, command)
+    }
+    for (const command of hashFieldExpirationCommands) {
+      assert.strictEqual(redis72.has(command), false, command)
+    }
+    for (const command of ['hgetdel', 'hgetex']) {
+      assert.strictEqual(redis72.has(command), false, command)
+    }
+
     const redis74 = createRedisCommandRegistry(
       [],
       resolveCompatibilityProfile('redis-7.4'),

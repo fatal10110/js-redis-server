@@ -87,15 +87,21 @@ describe('compatibility profiles', () => {
       redis70.has('client.setinfo.unknown-subcommand-error'),
       true,
     )
+    assert.strictEqual(redis70.has('pubsub.resp3-publish-reply-first'), false)
+
+    const redis72 = resolveCompatibilityProfile('redis-7.2')
+    assert.strictEqual(redis72.has('pubsub.resp3-publish-reply-first'), true)
 
     const valkey72 = resolveCompatibilityProfile({
       flavor: 'valkey',
       version: '7.2.4',
     })
     assert.strictEqual(valkey72.has('command.docs'), true)
+    assert.strictEqual(valkey72.has('pubsub.resp3-publish-reply-first'), false)
     assert.strictEqual(valkey72.has('cluster.multi-db'), false)
 
     const valkey9 = resolveCompatibilityProfile('valkey-9.0')
+    assert.strictEqual(valkey9.has('pubsub.resp3-publish-reply-first'), true)
     assert.strictEqual(valkey9.has('cluster.multi-db'), true)
   })
 })

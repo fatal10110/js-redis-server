@@ -148,8 +148,26 @@ export const publishCommand = defineCommand({
     categories: ['@pubsub', '@fast'],
   },
   keys: () => [],
-  execute: (args, ctx) =>
-    integer(ctx.server.pubsubBroker.publish(args.channel, args.message)),
+  execute: (args, ctx) => {
+    if (
+      ctx.session.mode !== 'subscribed' ||
+      ctx.session.protocolVersion !== 3 ||
+      !ctx.server.profile.has('pubsub.resp3-publish-reply-first')
+    ) {
+      return integer(
+        ctx.server.pubsubBroker.publish(args.channel, args.message),
+      )
+    }
+
+    const flushPushes = ctx.session.deferPushesUntilAfterReply()
+    const delivered = ctx.server.pubsubBroker.publish(
+      args.channel,
+      args.message,
+    )
+    return RedisResult.create(RedisValue.integer(delivered), {
+      afterReply: flushPushes,
+    })
+  },
 })
 
 export const spublishCommand = defineCommand({

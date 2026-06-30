@@ -4,6 +4,7 @@ export type RedisResultOptions = {
   close?: boolean
   disconnect?: boolean
   omitReply?: boolean
+  afterReply?: () => void
 }
 
 export class RedisResult {

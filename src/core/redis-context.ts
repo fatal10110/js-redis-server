@@ -60,6 +60,7 @@ export interface RedisClientSession {
   subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
   unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
+  deferPushesUntilAfterReply(): () => void
   registerResponseStreamCleanup(cleanup: () => void): () => void
   resetResponseStreams(): void
 }
