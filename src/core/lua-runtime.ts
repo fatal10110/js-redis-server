@@ -1,10 +1,12 @@
 import {
   load,
+  type CompatProfile,
   type LoadOptions,
   type LuaEngine,
   type LuaWasmModule,
   type ReplyValue,
 } from 'lua-redis-wasm'
+import type { CompatibilityProfile } from './compatibility/profile'
 import type { CommandPlan } from './command-definition'
 import {
   RedisCommandError,
@@ -136,9 +138,34 @@ export function setLuaWasmLoadOptions(options: LoadOptions): void {
   luaWasmLoadOptions = options
 }
 
-export async function createRedisLuaRuntime(): Promise<RedisLuaRuntime> {
-  const module = await load(luaWasmLoadOptions)
+export async function createRedisLuaRuntime(
+  profile?: CompatibilityProfile,
+): Promise<RedisLuaRuntime> {
+  const module = await load({
+    ...luaWasmLoadOptions,
+    ...(profile ? { profile: toLuaCompatProfile(profile) } : {}),
+  })
   return new RedisLuaRuntime(module)
+}
+
+/**
+ * Map a server compatibility profile to the Lua engine's compat profile. The
+ * engine collapses aliases (redis-7.0 == 7.2, redis-7.4 == 8.0, valkey-8.0 ==
+ * 9.0), so only the behavioral groups matter — they gate whether the sandbox
+ * keeps `print` (6.2 only), exposes `os` (7.4+), and aliases `server` (valkey).
+ */
+function toLuaCompatProfile(profile: CompatibilityProfile): CompatProfile {
+  if (profile.flavor === 'valkey') {
+    return 'valkey-8.0'
+  }
+  const [major, minor] = profile.version.split('.').map(n => parseInt(n, 10))
+  if (major < 7) {
+    return 'redis-6.2'
+  }
+  if (major === 7 && minor < 4) {
+    return 'redis-7.0'
+  }
+  return 'redis-8.0'
 }
 
 export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
