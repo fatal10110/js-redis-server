@@ -11,7 +11,6 @@ import {
   NoProtoError,
   RedisCommandError,
   RedisSyntaxError,
-  UnknownRedisCommandError,
   WrongNumberOfArgumentsError,
   WrongPassError,
 } from '../core/redis-error'
@@ -827,16 +826,11 @@ export const aclCommand = defineCommand({
         throw new RedisCommandError(`User '${username}' not found`)
       }
 
-      try {
-        ctx.executor.plan(args.args[1], args.args.slice(2))
-      } catch (err) {
-        if (err instanceof UnknownRedisCommandError) {
-          throw new RedisCommandError(
-            `Command '${args.args[1].toString()}' not found`,
-          )
-        }
-        throw err
+      const command = args.args[1]
+      if (!ctx.executor.getCommandDefinition(command.toString())) {
+        throw new RedisCommandError(`Command '${command.toString()}' not found`)
       }
+      ctx.executor.plan(command, args.args.slice(2))
       return ok()
     }
 
