@@ -19,23 +19,36 @@ export type Reply =
 export function tokenize(line: string): string[] {
   const tokens: string[] = []
   let token = ''
-  let inQuotes = false
+  let quote: '"' | "'" | null = null
   let started = false
 
   for (let i = 0; i < line.length; i++) {
     const ch = line[i]
-    if (inQuotes) {
+    if (quote === '"') {
+      // Double quotes process backslash escapes (like redis-cli).
       if (ch === '\\' && i + 1 < line.length) {
         token += line[++i]
       } else if (ch === '"') {
-        inQuotes = false
+        quote = null
       } else {
         token += ch
       }
       continue
     }
-    if (ch === '"') {
-      inQuotes = true
+    if (quote === "'") {
+      // Single quotes are literal, except \' is an escaped quote (redis-cli).
+      if (ch === '\\' && line[i + 1] === "'") {
+        token += "'"
+        i++
+      } else if (ch === "'") {
+        quote = null
+      } else {
+        token += ch
+      }
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
       started = true
     } else if (ch === ' ' || ch === '\t') {
       if (started) {
