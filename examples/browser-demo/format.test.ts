@@ -23,6 +23,18 @@ describe('tokenize', () => {
   test('preserves an empty quoted arg', () => {
     assert.deepStrictEqual(tokenize('SET k ""'), ['SET', 'k', ''])
   })
+
+  test('keeps a single-quoted token whole', () => {
+    assert.deepStrictEqual(tokenize("eval 'return 1' 0"), [
+      'eval',
+      'return 1',
+      '0',
+    ])
+  })
+
+  test('treats an escaped single quote as a literal inside single quotes', () => {
+    assert.deepStrictEqual(tokenize("SET k 'a\\'b'"), ['SET', 'k', "a'b"])
+  })
 })
 
 describe('formatReply', () => {

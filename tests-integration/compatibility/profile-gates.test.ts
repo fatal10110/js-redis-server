@@ -199,6 +199,27 @@ describe(
       assert.match(reply, /Attempt to modify a readonly table/)
     })
 
+    test('Lua sandbox globals (print / os) match the profile', async () => {
+      // print: only redis-6.2 still exposes it (returns nil, not an error).
+      const printReply = await send('EVAL', "print('x')", '0')
+      if (profile === 'redis-6.2') {
+        assert.ok(
+          !printReply.startsWith('-'),
+          `print should be available on ${profile}, got ${printReply}`,
+        )
+      } else {
+        assert.match(printReply, /nonexistent global variable 'print'/)
+      }
+
+      // os: exposed only from redis-7.4 / valkey-8.0 onward.
+      const osReply = await send('EVAL', 'return type(os)', '0')
+      if (supportsLuaOsLib()) {
+        assert.match(osReply, /table/)
+      } else {
+        assert.match(osReply, /nonexistent global variable 'os'/)
+      }
+    })
+
     async function send(...args: string[]): Promise<string> {
       connection.write(commandFrame(...args))
       return (await connection.readRawFrame()).toString()
@@ -245,6 +266,13 @@ describe(
     }
   },
 )
+
+function supportsLuaOsLib(): boolean {
+  // The sandboxed Lua `os` library is exposed from Redis 7.4 / Valkey 8.0 on.
+  return ['redis-7.4', 'redis-8.0', 'valkey-8.0', 'valkey-9.0'].includes(
+    profile,
+  )
+}
 
 function supportsExpireConditions(): boolean {
   return profile !== 'redis-6.2'

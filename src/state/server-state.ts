@@ -100,7 +100,7 @@ export class RedisServerState {
    * server/cluster nodes never collide (issue #130).
    */
   getLuaRuntime(): Promise<RedisLuaRuntime> {
-    this.luaRuntimePromise ??= createRedisLuaRuntime()
+    this.luaRuntimePromise ??= createRedisLuaRuntime(this.profile)
     return this.luaRuntimePromise
   }
 
