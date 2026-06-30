@@ -166,6 +166,28 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       }
     })
 
+    test('a redis.call error reports its call-site line', async () => {
+      const tag = `{script-callsite:${randomKey()}}`
+      const listKey = `${tag}:list`
+      const directClient = await connectToSlotOwner(redisClient!, listKey)
+      // The failing redis.call is on line 3; the error must reference line 3, not 1.
+      const script = `local a = 1\nlocal b = 2\nreturn redis.call('get', KEYS[1])`
+      const sha = createHash('sha1').update(script).digest('hex')
+
+      try {
+        await directClient.lpush(listKey, 'value')
+        await assert.rejects(
+          () => directClient.eval(script, 1, listKey),
+          errorWithMessage(
+            `WRONGTYPE Operation against a key holding the wrong kind of value script: ${sha}, on @user_script:3.`,
+          ),
+        )
+      } finally {
+        await directClient.del(listKey)
+        directClient.disconnect()
+      }
+    })
+
     test('AUTH and HELLO are rejected from scripts (noscript)', async () => {
       const tag = `{noscript:${randomKey()}}`
       const directClient = await connectToSlotOwner(redisClient!, tag)
