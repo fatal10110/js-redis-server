@@ -13,6 +13,7 @@ import {
   createSubscribedModePolicy,
   createTransactionPolicy,
 } from '../core/execution-policies'
+import { bitmapsCommands } from './bitmaps'
 import { commandCommand } from './command'
 import { configCommands } from './config'
 import { connectionCommands } from './connection'
@@ -36,6 +37,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...transactionCommands,
   ...monitorCommands,
   ...stringsCommands,
+  ...bitmapsCommands,
   ...keysCommands,
   ...scanCommands,
   ...hashesCommands,
@@ -130,6 +132,16 @@ export {
   getexCommand,
   stringsCommands,
 } from './strings'
+export {
+  bitmapsCommands,
+  setbitCommand,
+  getbitCommand,
+  bitcountCommand,
+  bitposCommand,
+  bitopCommand,
+  bitfieldCommand,
+  bitfieldRoCommand,
+} from './bitmaps'
 export {
   discardCommand,
   execCommand,

@@ -506,6 +506,41 @@ The auth system (`requirepass` / `AUTH`) is functional for the built-in
 - [ ] `ACL LOAD` - Reload ACL rules from the `aclfile`
 - [x] `ACL HELP`
 
+## 17. Bitmap Commands
+
+Bitmaps are not a distinct type — they operate on the String value stored at a
+key. None of these are implemented yet.
+
+- [x] `SETBIT key offset value` - Set or clear the bit at `offset`
+- [x] `GETBIT key offset` - Return the bit value at `offset`
+- [x] `BITCOUNT key [start end [BYTE | BIT]]` - Count set bits, optionally within a byte or bit range
+- [x] `BITPOS key bit [start [end [BYTE | BIT]]]` - Find the first bit set to `bit`
+- [x] `BITOP AND | OR | XOR | NOT destkey key [key ...]` - Bitwise operation across keys, storing the result
+- [x] `BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment] [OVERFLOW WRAP | SAT | FAIL]` - Operate on arbitrary-width integer fields
+- [x] `BITFIELD_RO key [GET type offset ...]` - Read-only variant of `BITFIELD`
+
+## 18. HyperLogLog Commands
+
+HyperLogLogs are stored in the String type. None of these are implemented yet.
+
+- [ ] `PFADD key [element ...]` - Add elements to the HyperLogLog
+- [ ] `PFCOUNT key [key ...]` - Return the approximated cardinality
+- [ ] `PFMERGE destkey [sourcekey ...]` - Merge multiple HyperLogLogs into one
+- [ ] `PFDEBUG`, `PFSELFTEST` - Internal/debug subcommands
+
+## 19. Geo Commands
+
+Geo commands are stored in the Sorted Set type (members scored by geohash).
+None of these are implemented yet.
+
+- [ ] `GEOADD key [NX | XX] [CH] longitude latitude member [longitude latitude member ...]` - Add geospatial members
+- [ ] `GEOPOS key member [member ...]` - Return longitude/latitude of members
+- [ ] `GEODIST key member1 member2 [m | km | ft | mi]` - Distance between two members
+- [ ] `GEOHASH key member [member ...]` - Return Geohash strings for members
+- [ ] `GEOSEARCH key <FROMMEMBER member | FROMLONLAT longitude latitude> <BYRADIUS radius unit | BYBOX width height unit> [ASC | DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]` - Search within a radius or box
+- [ ] `GEOSEARCHSTORE destination source <FROMMEMBER ... | FROMLONLAT ...> <BYRADIUS ... | BYBOX ...> [STOREDIST]` - Store a `GEOSEARCH` result
+- [ ] `GEORADIUS` / `GEORADIUSBYMEMBER` (and `_RO` variants) - Deprecated radius queries
+
 ## Implementation Notes
 
 - `[x]` indicates implemented commands; `[ ]` indicates planned or

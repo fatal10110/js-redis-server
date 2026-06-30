@@ -137,6 +137,25 @@ describe(
       await expectGate(true, 'SET', key, 'expires', 'EXAT', '4102444800')
       await expectGate(true, 'SLOWLOG', 'GET', '-1')
 
+      // BITCOUNT/BITPOS BYTE|BIT range modifier is Redis 7.0+ (Valkey 7.2+).
+      await expectGate(
+        supportsBitByteBitRange(),
+        'BITCOUNT',
+        key,
+        '0',
+        '0',
+        'BYTE',
+      )
+      await expectGate(
+        supportsBitByteBitRange(),
+        'BITPOS',
+        key,
+        '1',
+        '0',
+        '-1',
+        'BIT',
+      )
+
       await expectGate(supportsCommandDocs(), 'COMMAND', 'DOCS')
       await expectGate(
         supportsCommandDocs(),
@@ -369,6 +388,10 @@ function supportsShardedPubSub(): boolean {
 }
 
 function supportsZintercard(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsBitByteBitRange(): boolean {
   return profile !== 'redis-6.2'
 }
 

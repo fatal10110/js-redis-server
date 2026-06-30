@@ -19,5 +19,7 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.resp3-publish-reply-first': { redis: '7.2.0', valkey: '8.0.0' },
   'stream.xautoclaim-deleted-ids': { redis: '7.0.0', valkey: '7.2.0' },
+  // BITCOUNT/BITPOS BYTE|BIT range modifier — Redis 7.0 / Valkey 7.2.
+  'bit.byte-bit-range': { redis: '7.0.0', valkey: '7.2.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
 }

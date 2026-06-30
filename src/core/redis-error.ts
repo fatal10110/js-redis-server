@@ -180,6 +180,57 @@ export class OffsetOutOfRangeError extends RedisCommandError {
   }
 }
 
+/** SETBIT/GETBIT/BITFIELD offset that is negative, non-integer, or >= 2^32. */
+export class BitOffsetError extends RedisCommandError {
+  constructor() {
+    super('bit offset is not an integer or out of range')
+  }
+}
+
+/** SETBIT value that is not exactly 0 or 1. */
+export class BitValueError extends RedisCommandError {
+  constructor() {
+    super('bit is not an integer or out of range')
+  }
+}
+
+/** BITPOS bit argument that is not 0 or 1. */
+export class BitPosBitError extends RedisCommandError {
+  constructor() {
+    super('The bit argument must be 1 or 0.')
+  }
+}
+
+/** BITOP NOT invoked with more than one source key. */
+export class BitOpNotSingleKeyError extends RedisCommandError {
+  constructor() {
+    super('BITOP NOT must be called with a single source key.')
+  }
+}
+
+/** BITFIELD type token that is malformed or u64 (only i64 is allowed at 64 bits). */
+export class BitfieldTypeError extends RedisCommandError {
+  constructor() {
+    super(
+      'Invalid bitfield type. Use something like i16 u8. Note that u64 is not supported but i64 is.',
+    )
+  }
+}
+
+/** BITFIELD OVERFLOW with a mode other than WRAP/SAT/FAIL. */
+export class BitfieldOverflowTypeError extends RedisCommandError {
+  constructor() {
+    super('Invalid OVERFLOW type specified')
+  }
+}
+
+/** A non-GET subcommand passed to BITFIELD_RO. */
+export class BitfieldRoGetOnlyError extends RedisCommandError {
+  constructor() {
+    super('BITFIELD_RO only supports the GET subcommand')
+  }
+}
+
 export class WrongTypeRedisError extends RedisCommandError {
   constructor() {
     super(
