@@ -109,6 +109,7 @@ export class ClientSession implements RedisClientSession {
   private readonly pubsubPatterns = new Map<string, PubSubRegistration>()
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
+  private deferredPushes: RedisResult[] | null = null
   private pushQueueClosed = false
   private readonly responseStreamCleanups = new Set<() => void>()
   private unregisterClientSession?: Unsubscribe
@@ -688,6 +689,17 @@ export class ClientSession implements RedisClientSession {
     this.refreshPubSubMode()
   }
 
+  deferPushesUntilAfterReply(): () => void {
+    const deferred: RedisResult[] = []
+    this.deferredPushes = deferred
+    return () => {
+      this.deferredPushes = null
+      for (const result of deferred) {
+        this.enqueuePush(result)
+      }
+    }
+  }
+
   registerResponseStreamCleanup(cleanup: () => void): Unsubscribe {
     this.responseStreamCleanups.add(cleanup)
     return () => {
@@ -706,6 +718,11 @@ export class ClientSession implements RedisClientSession {
 
   enqueuePush(result: RedisResult): void {
     if (this.pushQueueClosed || this.signal.aborted) {
+      return
+    }
+
+    if (this.deferredPushes) {
+      this.deferredPushes.push(result)
       return
     }
 

@@ -129,6 +129,8 @@ export class Resp2SessionAdapter {
         )
       }
 
+      result.options?.afterReply?.()
+
       if (result.options?.close || result.options?.disconnect) {
         this.transport.close('command requested close')
       }

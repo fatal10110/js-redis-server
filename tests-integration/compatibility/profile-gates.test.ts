@@ -3,7 +3,12 @@ import assert from 'node:assert'
 
 import { TestRunner } from '../test-config'
 import { commandFrame } from '../utils'
-import { RawRedisConnection } from '../raw-tcp/raw-connection'
+import {
+  RawRedisConnection,
+  respMapGet,
+  respNumber,
+  type RespWireValue,
+} from '../raw-tcp/raw-connection'
 
 type ProfileName =
   | 'redis-6.2'
@@ -242,6 +247,45 @@ describe(
       }
     })
 
+    test('RESP3 subscribed PUBLISH self-reply order matches the profile', async () => {
+      const channel = `compat:${profile}:self-publish`
+
+      connection.write(commandFrame('HELLO', '3'))
+      const hello = await connection.readFrame()
+      assert.ok(hello instanceof Map)
+      assert.strictEqual(respNumber(respMapGet(hello, 'proto')), 3)
+
+      connection.write(commandFrame('SUBSCRIBE', channel))
+      assert.deepStrictEqual(normalizeFrame(await connection.readFrame()), [
+        'subscribe',
+        channel,
+        1,
+      ])
+
+      connection.write(commandFrame('PUBLISH', channel, 'self'))
+      const first = await connection.readFrame()
+      const second = await connection.readFrame()
+      const message = ['message', channel, 'self']
+
+      if (supportsResp3PublishReplyBeforeSelfMessage()) {
+        assert.strictEqual(first, 1)
+        assert.deepStrictEqual(normalizeFrame(second), message)
+      } else {
+        assert.deepStrictEqual(normalizeFrame(first), message)
+        assert.strictEqual(second, 1)
+      }
+
+      connection.write(commandFrame('UNSUBSCRIBE', channel))
+      assert.deepStrictEqual(normalizeFrame(await connection.readFrame()), [
+        'unsubscribe',
+        channel,
+        0,
+      ])
+
+      connection.write(commandFrame('HELLO', '2'))
+      await connection.readFrame()
+    })
+
     async function send(...args: string[]): Promise<string> {
       connection.write(commandFrame(...args))
       return (await connection.readRawFrame()).toString()
@@ -296,6 +340,10 @@ function supportsLuaOsLib(): boolean {
   )
 }
 
+function supportsResp3PublishReplyBeforeSelfMessage(): boolean {
+  return !['redis-6.2', 'redis-7.0'].includes(profile)
+}
+
 function supportsExpireConditions(): boolean {
   return profile !== 'redis-6.2'
 }
@@ -344,4 +392,16 @@ function bulkStringFrame(value: string): RegExp {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeFrame(value: RespWireValue): RespWireValue {
+  if (Buffer.isBuffer(value)) {
+    return value.toString()
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeFrame)
+  }
+
+  return value
 }
