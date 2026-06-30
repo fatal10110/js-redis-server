@@ -20,6 +20,7 @@ export type FeatureId =
   | 'pubsub.sharded'
   | 'pubsub.resp3-publish-reply-first'
   | 'stream.xautoclaim-deleted-ids'
+  | 'bit.byte-bit-range'
   | 'cluster.multi-db'
 
 export interface CompatibilityProfile {
