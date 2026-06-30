@@ -3,6 +3,7 @@ import { RedisValue } from './redis-value'
 export type RedisResultOptions = {
   close?: boolean
   disconnect?: boolean
+  omitReply?: boolean
 }
 
 export class RedisResult {

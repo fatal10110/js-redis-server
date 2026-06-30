@@ -130,6 +130,7 @@ describe(
       await expectGate(true, 'SET', key, 'next', 'GET')
       await expectGate(supportsSetNxGet(), 'SET', key, 'guarded', 'NX', 'GET')
       await expectGate(true, 'SET', key, 'expires', 'EXAT', '4102444800')
+      await expectGate(true, 'SLOWLOG', 'GET', '-1')
 
       await expectGate(supportsCommandDocs(), 'COMMAND', 'DOCS')
       await expectGate(
@@ -155,6 +156,27 @@ describe(
         `compat:{${profile}}`,
         'message',
       )
+      await expectGate(
+        supportsRedis70Commands(),
+        'ACL',
+        'DRYRUN',
+        'default',
+        'PING',
+      )
+      await expectGate(supportsRedis70Commands(), 'EVAL_RO', 'return 1', '0')
+      if (supportsRedis70Commands()) {
+        await expectGate(
+          true,
+          'FUNCTION',
+          'LOAD',
+          '#!lua name=compatlib\nredis.register_function{function_name="compat_echo", callback=function(keys, args) return args[1] end, flags={"no-writes"}}',
+        )
+        await expectGate(true, 'FCALL', 'compat_echo', '0', 'hello')
+        await expectGate(true, 'FCALL_RO', 'compat_echo', '0', 'hello')
+      } else {
+        await expectGate(false, 'FUNCTION', 'HELP')
+        await expectGate(false, 'FCALL', 'missing', '0')
+      }
       await expectGate(
         supportsZintercard(),
         'ZINTERCARD',

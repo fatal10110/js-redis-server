@@ -132,10 +132,10 @@ surface.
 
 #### SLOWLOG
 
-- [ ] `SLOWLOG GET [count]` - Return the slow-log entries
-- [ ] `SLOWLOG LEN` - Return the number of entries in the slow log
-- [ ] `SLOWLOG RESET` - Clear the slow log
-- [ ] `SLOWLOG HELP`
+- [x] `SLOWLOG GET [count]` - Return slow-log entries (empty; this mock does not record command timings)
+- [x] `SLOWLOG LEN` - Return the number of entries in the slow log
+- [x] `SLOWLOG RESET` - Clear the slow log
+- [x] `SLOWLOG HELP`
 
 #### LATENCY
 
@@ -395,6 +395,8 @@ flip its session into transaction mode or register a `WATCH`.
 
 - [x] `EVAL script numkeys [key ...] [arg ...]` - Execute a Lua script
 - [x] `EVALSHA sha1 numkeys [key ...] [arg ...]` - Execute a cached Lua script by its SHA1
+- [x] `EVAL_RO script numkeys [key ...] [arg ...]` - Read-only `EVAL` variant
+- [x] `EVALSHA_RO sha1 numkeys [key ...] [arg ...]` - Read-only `EVALSHA` variant
 - [x] `SCRIPT LOAD script` - Load a script into the script cache
 - [x] `SCRIPT EXISTS sha1 [sha1 ...]` - Check existence of scripts in the cache
 - [x] `SCRIPT FLUSH [ASYNC|SYNC]` - Remove all scripts from the cache
@@ -402,26 +404,24 @@ flip its session into transaction mode or register a `WATCH`.
 - [x] `SCRIPT DEBUG YES|SYNC|NO` - Validates the mode and returns `OK` (debug mode itself is a no-op)
 - [x] `SCRIPT HELP` - Return subcommand help
 
-`EVAL`/`EVALSHA` run via `executePlanSync` against the same command registry
+`EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO` run via `executePlanSync` against the same command registry
 and policies as normal commands, so every command's `noscript`/`readonly`
 flags are enforced inside `redis.call`/`redis.pcall`.
 
-#### Not implemented
+- [x] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
+- [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
+- [x] `FUNCTION LOAD [REPLACE] function-code` - Load a Lua function library
+- [x] `FUNCTION DELETE library-name` - Delete a function library
+- [x] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
+- [x] `FUNCTION STATS` - Return loaded-library/function counts
+- [x] `FUNCTION DUMP` - Dump loaded libraries to a mock-local serialized payload
+- [x] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
+- [x] `FUNCTION FLUSH [ASYNC|SYNC]` - Delete all function libraries
+- [x] `FUNCTION HELP`
 
-- [ ] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
-- [ ] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
-- [ ] `FUNCTION LOAD [REPLACE] function-code` - Load a library of functions
-- [ ] `FUNCTION DELETE library-name` - Delete a function library
-- [ ] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
-- [ ] `FUNCTION STATS` - Return runtime stats for the running script and loaded libraries
-- [ ] `FUNCTION DUMP` - Dump all function libraries to a binary payload
-- [ ] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
-- [ ] `FUNCTION FLUSH [ASYNC|SYNC]` - Delete all function libraries
-- [ ] `FUNCTION HELP`
-
-> Redis Functions (Redis 7.0) are a named, persistent alternative to ad-hoc `EVAL` Lua scripts.
-> They are stored in named libraries and survive flushes/restarts, unlike `EVAL` scripts.
-> `FCALL` / `FCALL_RO` are the call sites; the `FUNCTION` family manages the library registry.
+Redis Functions support plain Lua libraries that declare `#!lua name=<library>`
+and register functions with `redis.register_function("name", function(keys, args)
+...)`. Advanced Redis function metadata and flags are not modeled.
 
 ## 13. Cluster Commands
 
@@ -485,14 +485,16 @@ Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
 - [ ] `BGSAVE [SCHEDULE]` - Asynchronously save the dataset to disk in the background
 - [ ] `BGREWRITEAOF` - Asynchronously rewrite the append-only file
 - [x] `LASTSAVE` - Return the Unix timestamp of the last successful save (returns process start time, since there is no persistence)
-- [ ] `SHUTDOWN [NOSAVE|SAVE|ABORT]` - Synchronously save and shut down the server
+- [x] `SHUTDOWN [NOSAVE|SAVE] [NOW] [FORCE]` - Close the current connection without a reply; persistence is not implemented
+- [x] `SHUTDOWN ABORT` - Return Redis' no-shutdown-in-progress error
 
 ## 16. ACL Commands
 
-All `ACL` subcommands are unimplemented. The auth system (`requirepass` / `AUTH`) is functional;
-the full multi-user ACL layer (Redis 6.0+) is not.
+The auth system (`requirepass` / `AUTH`) is functional for the built-in
+`default` user. The full multi-user ACL rule engine is not implemented.
 
-- [ ] `ACL WHOAMI` - Return the username of the current connection
+- [x] `ACL WHOAMI` - Return the username of the current connection (`default`)
+- [x] `ACL DRYRUN username command [arg ...]` - Validate whether the built-in `default` user can run a syntactically valid command
 - [ ] `ACL LIST` - List all user accounts in the ACL config format
 - [ ] `ACL USERS` - Return a list of all usernames
 - [ ] `ACL GETUSER username` - Return the full ACL definition for a user
@@ -502,7 +504,7 @@ the full multi-user ACL layer (Redis 6.0+) is not.
 - [ ] `ACL LOG [count | RESET]` - Return or clear the ACL security-event log
 - [ ] `ACL SAVE` - Save the current ACL rules to the `aclfile`
 - [ ] `ACL LOAD` - Reload ACL rules from the `aclfile`
-- [ ] `ACL HELP`
+- [x] `ACL HELP`
 
 ## Implementation Notes
 

@@ -45,6 +45,12 @@ export {
 } from './keyspace-notifier'
 export { RedisScriptCache } from './script-cache'
 export {
+  RedisFunctionRegistry,
+  parseFunctionLibrary,
+  type RedisFunctionDefinition,
+  type RedisFunctionLibrary,
+} from './function-registry'
+export {
   RedisPubSubBroker,
   type RedisPubSubMessage,
   type RedisPubSubMessageListener,

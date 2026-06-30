@@ -308,6 +308,112 @@ describe('compatibility behavior gates', () => {
     assert.doesNotMatch(text, /^# Keyspace$/m)
   })
 
+  test('ACL default-user commands and DRYRUN gate are implemented', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertErrorMessage(
+      (await redis62.execute(
+        'acl',
+        buf('DRYRUN', 'default', 'ping'),
+      )) as RedisResult,
+      "Unknown subcommand or wrong number of arguments for 'DRYRUN'. Try ACL HELP.",
+    )
+
+    const redis70 = createSession('redis-7.0')
+    assert.deepStrictEqual(
+      await redis70.execute('acl', buf('whoami')),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('default'))),
+    )
+    assert.deepStrictEqual(
+      await redis70.execute('acl', buf('dryrun', 'default', 'ping')),
+      RedisResult.ok(),
+    )
+    assertError(
+      (await redis70.execute(
+        'acl',
+        buf('dryrun', 'alice', 'ping'),
+      )) as RedisResult,
+      /User 'alice' not found/,
+    )
+  })
+
+  test('SLOWLOG exposes an empty in-memory slow log', async () => {
+    const redis62 = createSession('redis-6.2')
+    assert.deepStrictEqual(
+      await redis62.execute('slowlog', buf('get', '-1')),
+      RedisResult.create(RedisValue.array([])),
+    )
+    assert.deepStrictEqual(
+      await redis62.execute('slowlog', buf('len')),
+      RedisResult.create(RedisValue.integer(0)),
+    )
+    assert.deepStrictEqual(
+      await redis62.execute('slowlog', buf('reset')),
+      RedisResult.ok(),
+    )
+    assertErrorMessage(
+      (await redis62.execute('slowlog', buf('get', 'nope'))) as RedisResult,
+      'count should be greater than or equal to -1',
+    )
+    assertErrorMessage(
+      (await redis62.execute('slowlog', buf('BOGUS'))) as RedisResult,
+      "unknown subcommand 'BOGUS'. Try SLOWLOG HELP.",
+    )
+  })
+
+  test('SHUTDOWN Redis 7.0 options follow their feature gate', async () => {
+    const redis62 = createSession('redis-6.2')
+    assertError(
+      (await redis62.execute('shutdown', buf('abort'))) as RedisResult,
+      /syntax/i,
+    )
+
+    const redis70 = createSession('redis-7.0')
+    assertError(
+      (await redis70.execute('shutdown', buf('abort'))) as RedisResult,
+      /No shutdown in progress/,
+    )
+    assert.deepStrictEqual(
+      await redis70.execute('shutdown', buf('now', 'force')),
+      RedisResult.create(RedisValue.null(), { close: true, omitReply: true }),
+    )
+  })
+
+  test('ACL DRYRUN and unknown subcommands use Redis-compatible errors', async () => {
+    const redis70 = createSession('redis-7.0')
+
+    assertErrorMessage(
+      (await redis70.execute(
+        'acl',
+        buf('dryrun', 'default', 'nosuchcmd'),
+      )) as RedisResult,
+      "Command 'nosuchcmd' not found",
+    )
+    assertErrorMessage(
+      (await redis70.execute('acl', buf('BOGUS'))) as RedisResult,
+      "unknown subcommand 'BOGUS'. Try ACL HELP.",
+    )
+  })
+
+  test('COMMAND INFO exposes Redis-compatible admin command flags', async () => {
+    const redis70 = createSession('redis-7.0')
+    const info = (await redis70.execute(
+      'command',
+      buf('info', 'acl', 'slowlog', 'shutdown'),
+    )) as RedisResult
+
+    assert.strictEqual(info.value.kind, 'array')
+    assert.deepStrictEqual(commandInfoFlags(info.value.items[0]), [])
+    assert.deepStrictEqual(commandInfoFlags(info.value.items[1]), [])
+    assert.deepStrictEqual(commandInfoFlags(info.value.items[2]), [
+      'admin',
+      'noscript',
+      'loading',
+      'stale',
+      'no_multi',
+      'allow_busy',
+    ])
+  })
+
   test('LPOP and RPOP count on missing keys return nil arrays', async () => {
     for (const profile of ['redis-6.2', 'redis-7.0'] as const) {
       const session = createSession(profile)
@@ -488,6 +594,13 @@ function helloField(result: RedisResult, key: string): string {
     }
   }
   throw new Error(`Missing HELLO field ${key}`)
+}
+
+function commandInfoFlags(value: RedisValue): string[] {
+  assert.strictEqual(value.kind, 'array')
+  const flags = value.items[2]
+  assert.strictEqual(flags.kind, 'array')
+  return flags.items.map(bulkStringText)
 }
 
 function bulkStringText(value: RedisValue): string {

@@ -89,9 +89,13 @@ function filterCompatibleCommands(
 }
 
 export {
+  aclCommand,
+  clientCommand,
   pingCommand,
   quitCommand,
   selectCommand,
+  shutdownCommand,
+  slowlogCommand,
   connectionCommands,
 } from './connection'
 export { monitorCommand, monitorCommands } from './monitor'
@@ -249,7 +253,12 @@ export {
 } from './sets'
 export {
   evalCommand,
+  evalRoCommand,
   evalshaCommand,
+  evalshaRoCommand,
+  fcallCommand,
+  fcallRoCommand,
+  functionCommand,
   scriptCommand,
   scriptsCommands,
 } from './scripts'

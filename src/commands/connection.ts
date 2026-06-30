@@ -776,6 +776,238 @@ export const lastsaveCommand = defineCommand({
   execute: () => integer(serverStartTimeSeconds),
 })
 
+export const aclCommand = defineCommand({
+  name: 'acl',
+  schema: t.object({
+    subcommand: t.string(),
+    args: t.variadic(t.bulk()),
+  }),
+  flags: ['admin', 'noscript'],
+  introspection: {
+    arity: -2,
+    flags: [],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow', '@dangerous'],
+    keySpecs: [],
+    subcommands: [
+      commandSubcommandInfo('acl|whoami', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('acl|dryrun', -4, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('acl|help', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+    ],
+  },
+  keys: () => [],
+  execute: (args, ctx) => {
+    const subcommand = args.subcommand.toLowerCase()
+
+    if (subcommand === 'whoami') {
+      expectArgCount('acl|whoami', args.args, 0)
+      return bulk(Buffer.from(DEFAULT_ACL_USER))
+    }
+
+    if (subcommand === 'dryrun') {
+      if (!ctx.server.profile.has('acl.dryrun')) {
+        throw unavailableAclSubcommand(args.subcommand)
+      }
+
+      if (args.args.length < 2) {
+        throw new WrongNumberOfArgumentsError('acl|dryrun')
+      }
+
+      const username = args.args[0].toString()
+      if (username !== DEFAULT_ACL_USER) {
+        throw new RedisCommandError(`User '${username}' not found`)
+      }
+
+      const command = args.args[1]
+      if (!ctx.executor.getCommandDefinition(command.toString())) {
+        throw new RedisCommandError(`Command '${command.toString()}' not found`)
+      }
+      ctx.executor.plan(command, args.args.slice(2))
+      return ok()
+    }
+
+    if (subcommand === 'help') {
+      expectArgCount('acl|help', args.args, 0)
+      const lines = [
+        value('ACL <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'),
+        value('WHOAMI'),
+        value('    Return the current ACL username.'),
+      ]
+      if (ctx.server.profile.has('acl.dryrun')) {
+        lines.push(
+          value('DRYRUN <username> <command> [<arg> ...]'),
+          value('    Check whether a user can run a command.'),
+        )
+      }
+      lines.push(value('HELP'), value('    Prints this help.'))
+      return array(lines)
+    }
+
+    throw unknownAclSubcommand(args.subcommand)
+  },
+})
+
+export const slowlogCommand = defineCommand({
+  name: 'slowlog',
+  schema: t.object({
+    subcommand: t.string(),
+    args: t.variadic(t.bulk()),
+  }),
+  flags: ['readonly', 'admin'],
+  introspection: {
+    arity: -2,
+    flags: [],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow', '@dangerous'],
+    keySpecs: [],
+    subcommands: [
+      commandSubcommandInfo('slowlog|get', -2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('slowlog|len', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('slowlog|reset', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+      commandSubcommandInfo('slowlog|help', 2, {
+        categories: ['@admin', '@slow', '@dangerous'],
+      }),
+    ],
+  },
+  keys: () => [],
+  execute: args => {
+    const subcommand = args.subcommand.toLowerCase()
+
+    if (subcommand === 'get') {
+      if (args.args.length > 1) {
+        throw new WrongNumberOfArgumentsError('slowlog|get')
+      }
+      if (args.args.length === 1) {
+        const count = args.args[0].toString()
+        if (!isIntegerToken(count) || Number(count) < -1) {
+          throw new RedisCommandError(
+            'count should be greater than or equal to -1',
+          )
+        }
+      }
+      return array([])
+    }
+
+    if (subcommand === 'len') {
+      expectArgCount('slowlog|len', args.args, 0)
+      return integer(0)
+    }
+
+    if (subcommand === 'reset') {
+      expectArgCount('slowlog|reset', args.args, 0)
+      return ok()
+    }
+
+    if (subcommand === 'help') {
+      expectArgCount('slowlog|help', args.args, 0)
+      return array([
+        value(
+          'SLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+        ),
+        value('GET [<count>]'),
+        value('    Return slow log entries.'),
+        value('LEN'),
+        value('    Return the slow log length.'),
+        value('RESET'),
+        value('    Reset the slow log.'),
+        value('HELP'),
+        value('    Prints this help.'),
+      ])
+    }
+
+    throw new RedisCommandError(
+      `unknown subcommand '${args.subcommand}'. Try SLOWLOG HELP.`,
+    )
+  },
+})
+
+export const shutdownCommand = defineCommand({
+  name: 'shutdown',
+  schema: t.object({
+    args: t.variadic(t.bulk()),
+  }),
+  flags: ['admin', 'noscript'],
+  introspection: {
+    arity: -1,
+    flags: ['admin', 'noscript', 'loading', 'stale', 'no_multi', 'allow_busy'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow', '@dangerous', '@connection'],
+    keySpecs: [],
+  },
+  keys: () => [],
+  execute: (args, ctx) => {
+    const options = parseShutdownOptions(args.args, ctx)
+    if (options.abort) {
+      throw new RedisCommandError('No shutdown in progress.')
+    }
+
+    return RedisResult.create(RedisValue.null(), {
+      close: true,
+      omitReply: true,
+    })
+  },
+})
+
+function unknownAclSubcommand(subcommand: string): RedisCommandError {
+  return new RedisCommandError(
+    `unknown subcommand '${subcommand}'. Try ACL HELP.`,
+  )
+}
+
+function unavailableAclSubcommand(subcommand: string): RedisCommandError {
+  return new RedisCommandError(
+    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try ACL HELP.`,
+  )
+}
+
+function parseShutdownOptions(
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): { abort: boolean } {
+  let abort = false
+
+  for (const arg of args) {
+    const option = arg.toString().toLowerCase()
+    if (option === 'save' || option === 'nosave') {
+      continue
+    }
+
+    if (option === 'now' || option === 'force' || option === 'abort') {
+      if (!ctx.server.profile.has('shutdown.now-force-abort')) {
+        throw new RedisSyntaxError()
+      }
+      abort ||= option === 'abort'
+      continue
+    }
+
+    throw new RedisSyntaxError()
+  }
+
+  if (abort && args.length > 1) {
+    throw new RedisSyntaxError()
+  }
+
+  return { abort }
+}
+
 export const connectionCommands = [
   pingCommand,
   quitCommand,
@@ -787,4 +1019,7 @@ export const connectionCommands = [
   resetCommand,
   timeCommand,
   lastsaveCommand,
+  aclCommand,
+  slowlogCommand,
+  shutdownCommand,
 ]
