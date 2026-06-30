@@ -169,7 +169,7 @@ describe(
           true,
           'FUNCTION',
           'LOAD',
-          '#!lua name=compatlib\nredis.register_function("compat_echo", function(keys, args) return args[1] end)',
+          '#!lua name=compatlib\nredis.register_function{function_name="compat_echo", callback=function(keys, args) return args[1] end, flags={"no-writes"}}',
         )
         await expectGate(true, 'FCALL', 'compat_echo', '0', 'hello')
         await expectGate(true, 'FCALL_RO', 'compat_echo', '0', 'hello')

@@ -26,7 +26,10 @@ type LuaHostState = {
 export type LuaReplyValue = ReplyValue
 
 export class RedisLuaRuntime {
-  private readonly hostState: LuaHostState = { ctx: null, readOnly: false }
+  private readonly hostState: LuaHostState = {
+    ctx: null,
+    readOnly: false,
+  }
   private readonly engine: LuaEngine
 
   constructor(module: LuaWasmModule) {

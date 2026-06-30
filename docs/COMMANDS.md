@@ -485,7 +485,7 @@ Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
 - [ ] `BGSAVE [SCHEDULE]` - Asynchronously save the dataset to disk in the background
 - [ ] `BGREWRITEAOF` - Asynchronously rewrite the append-only file
 - [x] `LASTSAVE` - Return the Unix timestamp of the last successful save (returns process start time, since there is no persistence)
-- [x] `SHUTDOWN [NOSAVE|SAVE] [NOW] [FORCE]` - Return `OK` and close the current connection; persistence is not implemented
+- [x] `SHUTDOWN [NOSAVE|SAVE] [NOW] [FORCE]` - Close the current connection without a reply; persistence is not implemented
 - [x] `SHUTDOWN ABORT` - Return Redis' no-shutdown-in-progress error
 
 ## 16. ACL Commands

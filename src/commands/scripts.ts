@@ -13,7 +13,11 @@ import { luaReplyToRedisValue, renderScriptError } from '../core/lua-runtime'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { parseFunctionLibrary, type RedisFunctionLibrary } from '../state'
+import {
+  parseFunctionLibrary,
+  type RedisFunctionDefinition,
+  type RedisFunctionLibrary,
+} from '../state'
 import { array, bulk, ok } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
@@ -44,6 +48,15 @@ type FcallArgs = {
   numKeys: number
   rest: Buffer[]
 }
+
+const DYNAMIC_SCRIPT_FLAGS = [
+  'noscript',
+  'stale',
+  'skip_monitor',
+  'no_mandatory_keys',
+  'movablekeys',
+]
+const READONLY_DYNAMIC_SCRIPT_FLAGS = ['readonly', ...DYNAMIC_SCRIPT_FLAGS]
 
 export const scriptCommand = defineCommand({
   name: 'script',
@@ -110,6 +123,15 @@ export const evalCommand = defineCommand<EvalArgs>({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
+  introspection: {
+    arity: -3,
+    flags: DYNAMIC_SCRIPT_FLAGS,
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -128,6 +150,15 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
+  introspection: {
+    arity: -3,
+    flags: DYNAMIC_SCRIPT_FLAGS,
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -146,6 +177,15 @@ export const evalRoCommand = defineCommand<EvalArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: evalCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
+  introspection: {
+    arity: -3,
+    flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -160,6 +200,15 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: evalshaCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
+  introspection: {
+    arity: -3,
+    flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -183,7 +232,7 @@ export const functionCommand = defineCommand<FunctionArgs>({
   flags: ['admin', 'noscript'],
   introspection: {
     arity: -2,
-    flags: ['admin', 'noscript'],
+    flags: [],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
@@ -256,6 +305,15 @@ export const fcallCommand = defineCommand<FcallArgs>({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
+  introspection: {
+    arity: -3,
+    flags: DYNAMIC_SCRIPT_FLAGS,
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: fcallKeys,
   execute: (args, ctx) => runFunction(args, ctx, false),
@@ -266,6 +324,15 @@ export const fcallRoCommand = defineCommand<FcallArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: fcallCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
+  introspection: {
+    arity: -3,
+    flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    keySpecs: [],
+  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: fcallKeys,
   execute: (args, ctx) => runFunction(args, ctx, true),
@@ -487,20 +554,29 @@ function functionStats(
     0,
   )
 
-  return array([
-    RedisValue.bulkString(Buffer.from('running_script')),
-    RedisValue.null(),
-    RedisValue.bulkString(Buffer.from('engines')),
-    RedisValue.array([
-      RedisValue.bulkString(Buffer.from('LUA')),
-      RedisValue.array([
-        RedisValue.bulkString(Buffer.from('libraries_count')),
-        RedisValue.integer(libraries.length),
-        RedisValue.bulkString(Buffer.from('functions_count')),
-        RedisValue.integer(functionCount),
-      ]),
+  return RedisResult.create(
+    RedisValue.map([
+      [RedisValue.bulkString(Buffer.from('running_script')), RedisValue.null()],
+      [
+        RedisValue.bulkString(Buffer.from('engines')),
+        RedisValue.map([
+          [
+            RedisValue.bulkString(Buffer.from('LUA')),
+            RedisValue.map([
+              [
+                RedisValue.bulkString(Buffer.from('libraries_count')),
+                RedisValue.integer(libraries.length),
+              ],
+              [
+                RedisValue.bulkString(Buffer.from('functions_count')),
+                RedisValue.integer(functionCount),
+              ],
+            ]),
+          ],
+        ]),
+      ],
     ]),
-  ])
+  )
 }
 
 function functionRestore(
@@ -514,7 +590,7 @@ function functionRestore(
   const mode = args.rest[1]?.toString().toLowerCase() ?? 'append'
   if (mode !== 'append' && mode !== 'flush' && mode !== 'replace') {
     throw new RedisCommandError(
-      'FUNCTION RESTORE only supports FLUSH|APPEND|REPLACE',
+      'Wrong restore policy given, value should be either FLUSH, APPEND or REPLACE.',
     )
   }
 
@@ -585,6 +661,12 @@ async function runFunction(
     throw new RedisCommandError('Function not found')
   }
 
+  if (readOnly && !fn.flags.includes('no-writes')) {
+    throw new RedisCommandError(
+      'Can not execute a script with write flag using *_ro command.',
+    )
+  }
+
   const { keys, argv } = splitFcallArgs(args)
   return runLuaScript(fn.script, keys, argv, ctx, readOnly)
 }
@@ -653,14 +735,16 @@ function functionLibraryReply(
   return RedisValue.array(items)
 }
 
-function functionReply(fn: { name: string }): RedisValue {
+function functionReply(fn: RedisFunctionDefinition): RedisValue {
   return RedisValue.array([
     RedisValue.bulkString(Buffer.from('name')),
     RedisValue.bulkString(Buffer.from(fn.name)),
     RedisValue.bulkString(Buffer.from('description')),
     RedisValue.bulkString(null),
     RedisValue.bulkString(Buffer.from('flags')),
-    RedisValue.array([]),
+    RedisValue.array(
+      fn.flags.map(flag => RedisValue.bulkString(Buffer.from(flag))),
+    ),
   ])
 }
 

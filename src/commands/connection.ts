@@ -11,19 +11,13 @@ import {
   NoProtoError,
   RedisCommandError,
   RedisSyntaxError,
+  UnknownRedisCommandError,
   WrongNumberOfArgumentsError,
   WrongPassError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import {
-  array,
-  bulk,
-  integer,
-  ok,
-  parseIntegerToken,
-  simpleString,
-} from './helpers'
+import { array, bulk, integer, ok, simpleString } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
@@ -833,7 +827,16 @@ export const aclCommand = defineCommand({
         throw new RedisCommandError(`User '${username}' not found`)
       }
 
-      ctx.executor.plan(args.args[1], args.args.slice(2))
+      try {
+        ctx.executor.plan(args.args[1], args.args.slice(2))
+      } catch (err) {
+        if (err instanceof UnknownRedisCommandError) {
+          throw new RedisCommandError(
+            `Command '${args.args[1].toString()}' not found`,
+          )
+        }
+        throw err
+      }
       return ok()
     }
 
@@ -854,7 +857,7 @@ export const aclCommand = defineCommand({
       return array(lines)
     }
 
-    throw unknownAclSubcommand(subcommand)
+    throw unknownAclSubcommand(args.subcommand)
   },
 })
 
@@ -897,7 +900,12 @@ export const slowlogCommand = defineCommand({
         throw new WrongNumberOfArgumentsError('slowlog|get')
       }
       if (args.args.length === 1) {
-        parseIntegerToken(args.args[0])
+        const count = args.args[0].toString()
+        if (!isIntegerToken(count) || Number(count) < -1) {
+          throw new RedisCommandError(
+            'count should be greater than or equal to -1',
+          )
+        }
       }
       return array([])
     }
@@ -930,7 +938,7 @@ export const slowlogCommand = defineCommand({
     }
 
     throw new RedisCommandError(
-      `unknown subcommand '${subcommand}'. Try SLOWLOG HELP.`,
+      `unknown subcommand '${args.subcommand}'. Try SLOWLOG HELP.`,
     )
   },
 })
@@ -941,6 +949,15 @@ export const shutdownCommand = defineCommand({
     args: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
+  introspection: {
+    arity: -1,
+    flags: ['admin', 'noscript', 'loading', 'stale', 'no_multi', 'allow_busy'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow', '@dangerous', '@connection'],
+    keySpecs: [],
+  },
   keys: () => [],
   execute: (args, ctx) => {
     const options = parseShutdownOptions(args.args, ctx)
@@ -948,7 +965,10 @@ export const shutdownCommand = defineCommand({
       throw new RedisCommandError('No shutdown in progress.')
     }
 
-    return RedisResult.create(RedisValue.simpleString('OK'), { close: true })
+    return RedisResult.create(RedisValue.null(), {
+      close: true,
+      omitReply: true,
+    })
   },
 })
 

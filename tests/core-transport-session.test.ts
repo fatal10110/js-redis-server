@@ -113,6 +113,21 @@ describe('new transport-neutral session path', () => {
     assert.strictEqual(transport.getWrittenBuffer().toString(), '+OK\r\n')
   })
 
+  test('can close without writing a reply', async () => {
+    const { session } = createHarness()
+    const transport = new InMemoryConnectionTransport()
+    const adapter = new Resp2SessionAdapter({ transport, session })
+    const running = adapter.run()
+
+    transport.feed(commandFrame('SHUTDOWN', 'NOSAVE'))
+    transport.endRead()
+
+    await running
+
+    assert.strictEqual(transport.signal.aborted, true)
+    assert.strictEqual(transport.getWrittenBuffer().length, 0)
+  })
+
   test('flushes responses for valid pipelined frames before a protocol error', async () => {
     const { session } = createHarness()
     const transport = new InMemoryConnectionTransport()

@@ -350,9 +350,13 @@ describe('compatibility behavior gates', () => {
       await redis62.execute('slowlog', buf('reset')),
       RedisResult.ok(),
     )
-    assertError(
+    assertErrorMessage(
       (await redis62.execute('slowlog', buf('get', 'nope'))) as RedisResult,
-      /value is not an integer/i,
+      'count should be greater than or equal to -1',
+    )
+    assertErrorMessage(
+      (await redis62.execute('slowlog', buf('BOGUS'))) as RedisResult,
+      "unknown subcommand 'BOGUS'. Try SLOWLOG HELP.",
     )
   })
 
@@ -370,8 +374,44 @@ describe('compatibility behavior gates', () => {
     )
     assert.deepStrictEqual(
       await redis70.execute('shutdown', buf('now', 'force')),
-      RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
+      RedisResult.create(RedisValue.null(), { close: true, omitReply: true }),
     )
+  })
+
+  test('ACL DRYRUN and unknown subcommands use Redis-compatible errors', async () => {
+    const redis70 = createSession('redis-7.0')
+
+    assertErrorMessage(
+      (await redis70.execute(
+        'acl',
+        buf('dryrun', 'default', 'nosuchcmd'),
+      )) as RedisResult,
+      "Command 'nosuchcmd' not found",
+    )
+    assertErrorMessage(
+      (await redis70.execute('acl', buf('BOGUS'))) as RedisResult,
+      "unknown subcommand 'BOGUS'. Try ACL HELP.",
+    )
+  })
+
+  test('COMMAND INFO exposes Redis-compatible admin command flags', async () => {
+    const redis70 = createSession('redis-7.0')
+    const info = (await redis70.execute(
+      'command',
+      buf('info', 'acl', 'slowlog', 'shutdown'),
+    )) as RedisResult
+
+    assert.strictEqual(info.value.kind, 'array')
+    assert.deepStrictEqual(commandInfoFlags(info.value.items[0]), [])
+    assert.deepStrictEqual(commandInfoFlags(info.value.items[1]), [])
+    assert.deepStrictEqual(commandInfoFlags(info.value.items[2]), [
+      'admin',
+      'noscript',
+      'loading',
+      'stale',
+      'no_multi',
+      'allow_busy',
+    ])
   })
 
   test('LPOP and RPOP count on missing keys return nil arrays', async () => {
@@ -554,6 +594,13 @@ function helloField(result: RedisResult, key: string): string {
     }
   }
   throw new Error(`Missing HELLO field ${key}`)
+}
+
+function commandInfoFlags(value: RedisValue): string[] {
+  assert.strictEqual(value.kind, 'array')
+  const flags = value.items[2]
+  assert.strictEqual(flags.kind, 'array')
+  return flags.items.map(bulkStringText)
 }
 
 function bulkStringText(value: RedisValue): string {
