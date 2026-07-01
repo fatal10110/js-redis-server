@@ -307,6 +307,12 @@ export {
   geoposCommand,
   geodistCommand,
   geohashCommand,
+  geosearchCommand,
+  geosearchstoreCommand,
+  georadiusCommand,
+  georadiusRoCommand,
+  georadiusbymemberCommand,
+  georadiusbymemberRoCommand,
 } from './geo'
 export {
   zsetsCommands,
