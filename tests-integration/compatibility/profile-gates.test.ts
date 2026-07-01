@@ -305,6 +305,136 @@ describe(
       await connection.readFrame()
     })
 
+    test('XREADGROUP and XAUTOCLAIM create the consumer entry even when nothing is delivered or claimed', async () => {
+      const key = `compat:${profile}:consumer-create-on-empty`
+
+      connection.write(commandFrame('XADD', key, '1-1', 'f', 'v'))
+      await connection.readFrame()
+      connection.write(commandFrame('XGROUP', 'CREATE', key, 'g', '0'))
+      await connection.readFrame()
+      connection.write(
+        commandFrame(
+          'XREADGROUP',
+          'GROUP',
+          'g',
+          'alice',
+          'COUNT',
+          '10',
+          'STREAMS',
+          key,
+          '>',
+        ),
+      )
+      await connection.readFrame()
+
+      // bob delivers nothing (alice already consumed the only entry) but must
+      // still be created as a consumer: ensureConsumer() runs unconditionally
+      // before the empty-delivery check.
+      connection.write(
+        commandFrame(
+          'XREADGROUP',
+          'GROUP',
+          'g',
+          'bob',
+          'COUNT',
+          '10',
+          'STREAMS',
+          key,
+          '>',
+        ),
+      )
+      assert.strictEqual(await connection.readFrame(), null)
+
+      const bob = await findConsumer(key, 'g', 'bob')
+      assert.ok(
+        bob,
+        `bob should be created as a consumer for ${profile} despite an empty XREADGROUP delivery`,
+      )
+      assert.strictEqual(bob.pending, 0)
+
+      // carol's min-idle-time (999999999ms) is never met, so nothing is
+      // actually claimed, but ensureConsumer() still runs first.
+      connection.write(
+        commandFrame(
+          'XAUTOCLAIM',
+          key,
+          'g',
+          'carol',
+          '999999999',
+          '0',
+          'COUNT',
+          '10',
+        ),
+      )
+      const autoclaim = normalizeFrame(
+        await connection.readFrame(),
+      ) as RespWireValue[]
+      assert.deepStrictEqual(autoclaim[1], [])
+
+      const carol = await findConsumer(key, 'g', 'carol')
+      assert.ok(
+        carol,
+        `carol should be created as a consumer for ${profile} despite an empty XAUTOCLAIM claim`,
+      )
+      assert.strictEqual(carol.pending, 0)
+    })
+
+    test('XINFO CONSUMERS reports idle and inactive fields', async () => {
+      const key = `compat:${profile}:consumers-idle-inactive`
+
+      connection.write(commandFrame('XADD', key, '1-1', 'f', 'v'))
+      await connection.readFrame()
+      connection.write(commandFrame('XGROUP', 'CREATE', key, 'g', '0'))
+      await connection.readFrame()
+      connection.write(
+        commandFrame(
+          'XREADGROUP',
+          'GROUP',
+          'g',
+          'alice',
+          'COUNT',
+          '10',
+          'STREAMS',
+          key,
+          '>',
+        ),
+      )
+      await connection.readFrame()
+
+      const alice = await findConsumer(key, 'g', 'alice')
+      assert.ok(alice)
+      assert.strictEqual(typeof alice.idle, 'number')
+      assert.ok((alice.idle as number) >= 0)
+      assert.strictEqual(typeof alice.inactive, 'number')
+      assert.ok((alice.inactive as number) >= 0)
+    })
+
+    async function findConsumer(
+      key: string,
+      group: string,
+      name: string,
+    ): Promise<Record<string, RespWireValue> | undefined> {
+      connection.write(commandFrame('XINFO', 'CONSUMERS', key, group))
+      const reply = normalizeFrame(await connection.readFrame())
+      assert.ok(Array.isArray(reply))
+      for (const entry of reply) {
+        assert.ok(Array.isArray(entry))
+        const record = flatToRecord(entry)
+        if (record.name === name) return record
+      }
+      return undefined
+    }
+
+    function flatToRecord(
+      flat: RespWireValue[],
+    ): Record<string, RespWireValue> {
+      const record: Record<string, RespWireValue> = {}
+      for (let i = 0; i < flat.length; i += 2) {
+        record[String(flat[i])] = flat[i + 1]
+      }
+      return record
+    }
+
     async function send(...args: string[]): Promise<string> {
       connection.write(commandFrame(...args))
       return (await connection.readRawFrame()).toString()
