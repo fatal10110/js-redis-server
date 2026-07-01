@@ -209,6 +209,7 @@ describe(
       )
 
       await send('HSET', hash, 'field', 'value', 'delete-me', 'gone')
+      await expectGate(supportsHscanNoValues(), 'HSCAN', hash, '0', 'NOVALUES')
       await expectGate(
         supportsHashFieldExpiration(),
         'HEXPIRE',
@@ -526,6 +527,10 @@ function supportsBitByteBitRange(): boolean {
 }
 
 function supportsHashFieldExpiration(): boolean {
+  return ['redis-7.4', 'redis-8.0', 'valkey-9.0'].includes(profile)
+}
+
+function supportsHscanNoValues(): boolean {
   return ['redis-7.4', 'redis-8.0', 'valkey-9.0'].includes(profile)
 }
 

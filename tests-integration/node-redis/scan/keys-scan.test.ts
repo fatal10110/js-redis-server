@@ -382,9 +382,39 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
     assertBufferSetsEqual(zscan[1], [rawZsetMember, Buffer.from('1')])
   })
 
+  test('HSCAN NOVALUES returns only matching fields', async () => {
+    const key = taggedKey('hscan-novalues')
+    const directClient = await connectToNodeRedisSlotOwner(redisClient, key)
+
+    try {
+      await directClient.hSet(key, {
+        'hit:1': 'v1',
+        'hit:2': 'v2',
+        miss: 'v3',
+      })
+
+      assert.deepStrictEqual(
+        await collectHashScanNoValues(directClient, key, [
+          'MATCH',
+          'hit:*',
+          'COUNT',
+          '1',
+          'NOVALUES',
+          'novalues',
+        ]),
+        ['hit:1', 'hit:2'],
+      )
+    } finally {
+      await directClient.del(key)
+      directClient.destroy()
+    }
+  })
+
   test('scan COUNT errors match Redis', async () => {
     const key = taggedKey('errors')
+    const setKey = taggedKey('errors-set')
     await redisClient.hSet(key, 'field', 'value')
+    await redisClient.sAdd(setKey, 'member')
 
     await assert.rejects(
       () => redisClient.sendCommand(undefined, true, ['SCAN']),
@@ -426,6 +456,31 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
     await assert.rejects(
       () =>
         redisClient.sendCommand(key, true, ['HSCAN', key, '0', 'COUNT', '0']),
+      errorWithMessage('ERR syntax error'),
+    )
+    await assert.rejects(
+      () => redisClient.sendCommand(undefined, true, ['SCAN', '0', 'NOVALUES']),
+      errorWithMessage('ERR NOVALUES option can only be used in HSCAN'),
+    )
+    await assert.rejects(
+      () =>
+        redisClient.sendCommand(setKey, true, [
+          'SSCAN',
+          setKey,
+          '0',
+          'NOVALUES',
+        ]),
+      errorWithMessage('ERR NOVALUES option can only be used in HSCAN'),
+    )
+    await assert.rejects(
+      () =>
+        redisClient.sendCommand(key, true, [
+          'HSCAN',
+          key,
+          '0',
+          'NOVALUES',
+          'EXTRA',
+        ]),
       errorWithMessage('ERR syntax error'),
     )
   })
@@ -493,6 +548,31 @@ async function collectTopLevelScanBuffers(
   } while (cursor.toString() !== '0')
 
   return values
+}
+
+async function collectHashScanNoValues(
+  client: RedisClientType,
+  key: string,
+  options: Array<string | Buffer>,
+): Promise<string[]> {
+  const values: string[] = []
+  let cursor = '0'
+  let iterations = 0
+
+  do {
+    const [nextCursor, items] = (await client.sendCommand([
+      'HSCAN',
+      key,
+      cursor,
+      ...options,
+    ])) as ScanReply
+    values.push(...items)
+    cursor = nextCursor
+    iterations++
+    assert.ok(iterations < 1000)
+  } while (cursor !== '0')
+
+  return values.sort()
 }
 
 function stripTag(keys: string[], tag: string): string[] {
