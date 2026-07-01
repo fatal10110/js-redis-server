@@ -238,6 +238,7 @@ with `GT` or `LT`.
 - [x] `HDEL key field [field ...]` - Delete one or more hash fields
 - [x] `HGETDEL key FIELDS numfields field [field ...]` - Get and delete one or more hash fields
 - [x] `HGETEX key [EX seconds|PX ms|EXAT unix-s|PXAT unix-ms|PERSIST] FIELDS numfields field [field ...]` - Get one or more hash fields and optionally update their TTLs
+- [x] `HSETEX key [FNX|FXX] [EX seconds|PX ms|EXAT unix-s|PXAT unix-ms|KEEPTTL] FIELDS numfields field value [field value ...]` - Set one or more hash fields and optionally their TTLs
 - [x] `HEXPIRE key seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in seconds
 - [x] `HPEXPIRE key milliseconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field TTLs in milliseconds
 - [x] `HEXPIREAT key unix-time-seconds [NX|XX|GT|LT] FIELDS numfields field [field ...]` - Set hash-field expiration timestamps in seconds
