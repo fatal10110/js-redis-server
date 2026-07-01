@@ -17,6 +17,7 @@ import { bitmapsCommands } from './bitmaps'
 import { commandCommand } from './command'
 import { configCommands } from './config'
 import { connectionCommands } from './connection'
+import { geoCommands } from './geo'
 import { hashesCommands } from './hashes'
 import { keysCommands } from './keys'
 import { listsCommands } from './lists'
@@ -44,6 +45,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...listsCommands,
   ...setsCommands,
   ...zsetsCommands,
+  ...geoCommands,
   ...pubsubCommands,
   ...streamsCommands,
   ...scriptsCommands,
@@ -291,6 +293,13 @@ export {
   streamsCommands,
   xtrimCommand,
 } from './streams'
+export {
+  geoCommands,
+  geoaddCommand,
+  geoposCommand,
+  geodistCommand,
+  geohashCommand,
+} from './geo'
 export {
   zsetsCommands,
   zaddCommand,

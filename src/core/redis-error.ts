@@ -174,6 +174,18 @@ export class ZaddIncrPairError extends RedisCommandError {
   }
 }
 
+export class InvalidLongitudeLatitudeError extends RedisCommandError {
+  constructor(lon: number, lat: number) {
+    super(`invalid longitude,latitude pair ${lon.toFixed(6)},${lat.toFixed(6)}`)
+  }
+}
+
+export class GeoUnsupportedUnitError extends RedisCommandError {
+  constructor() {
+    super('unsupported unit provided. please use M, KM, FT, MI')
+  }
+}
+
 export class OffsetOutOfRangeError extends RedisCommandError {
   constructor() {
     super('offset is out of range')
