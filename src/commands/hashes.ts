@@ -18,6 +18,7 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
+import type { RedisHashData } from '../state'
 import type { TrackedHashData } from '../state/tracked-values'
 import {
   array,
@@ -49,6 +50,7 @@ type HashExpireMode =
 const HASH_FIELD_EXPIRATION_SINCE = { redis: '7.4.0', valkey: '9.0.0' } as const
 const HGETEX_SINCE = { redis: '8.0.0', valkey: '9.0.0' } as const
 const HGETDEL_SINCE = { redis: '8.0.0', valkey: '9.1.0' } as const
+const HSETEX_SINCE = { redis: '8.0.0', valkey: '9.0.0' } as const
 type HashExpireArgs = {
   key: Buffer
   rawArgs: Buffer[]
@@ -70,6 +72,21 @@ type HgetexArgs = {
   key: Buffer
   expiration: HgetexExpiration
   fields: Buffer[]
+}
+type HsetexCondition = 'FNX' | 'FXX'
+type HsetexExpiration =
+  | { kind: 'clear' }
+  | { kind: 'keepttl' }
+  | { kind: 'set'; mode: HashExpireMode; time: bigint }
+type HsetexPlan =
+  | { kind: 'clear' }
+  | { kind: 'keepttl' }
+  | { kind: 'expireAt'; at: number }
+type HsetexArgs = {
+  key: Buffer
+  condition: HsetexCondition | undefined
+  expiration: HsetexExpiration
+  pairs: FieldValuePair[]
 }
 
 const LONG_MAX = 9223372036854775807n
@@ -241,6 +258,187 @@ function hgetexExpireMode(
   if (token === 'EXAT') return 'unix-seconds'
   if (token === 'PXAT') return 'unix-milliseconds'
   return undefined
+}
+
+function createHsetexSchema() {
+  return t.custom<HsetexArgs>(
+    (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      const key = input[index]
+      if (!key || input.length - index < 5) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      let cursor = index + 1
+      let condition: HsetexCondition | undefined
+      let expiration: HsetexExpiration = { kind: 'clear' }
+      let expirationSet = false
+
+      // FNX/FXX and the expiration clause may appear in either order, same
+      // as real Redis — keep consuming recognized tokens until FIELDS.
+      while (cursor < input.length) {
+        const token = input[cursor].toString().toUpperCase()
+
+        if (token === 'FNX' || token === 'FXX') {
+          if (condition) {
+            throw new RedisCommandError(
+              'Only one of FXX or FNX arguments can be specified',
+            )
+          }
+          condition = token
+          cursor += 1
+          continue
+        }
+
+        if (token === 'KEEPTTL') {
+          if (expirationSet) {
+            throw new RedisCommandError(
+              'Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified',
+            )
+          }
+          expiration = { kind: 'keepttl' }
+          expirationSet = true
+          cursor += 1
+          continue
+        }
+
+        const mode = hgetexExpireMode(token)
+        if (mode) {
+          if (expirationSet) {
+            throw new RedisCommandError(
+              'Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified',
+            )
+          }
+          const timeToken = input[cursor + 1]
+          if (!timeToken) {
+            throw new WrongNumberOfArgumentsError(ctx.commandName)
+          }
+          expiration = {
+            kind: 'set',
+            mode,
+            time: parseHashExpireTime(timeToken),
+          }
+          expirationSet = true
+          cursor += 2
+          continue
+        }
+
+        break
+      }
+
+      const fieldsToken = input[cursor]
+      if (!fieldsToken) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+        throw new RedisCommandError(`unknown argument: ${fieldsToken}`)
+      }
+      cursor += 1
+
+      const fieldCountToken = input[cursor]
+      if (!fieldCountToken) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      const fieldCount = parseHsetexFieldCount(fieldCountToken)
+      cursor += 1
+
+      const rest = input.slice(cursor)
+      if (BigInt(rest.length) !== fieldCount * 2n) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
+      const pairs: FieldValuePair[] = []
+      for (let i = 0; i < rest.length; i += 2) {
+        pairs.push({ field: rest[i], value: rest[i + 1] })
+      }
+
+      return {
+        value: { key, condition, expiration, pairs },
+        nextIndex: input.length,
+      }
+    },
+  )
+}
+
+function parseHsetexFieldCount(token: Buffer): bigint {
+  const raw = token.toString()
+  if (!isIntegerToken(raw)) {
+    throw new RedisCommandError('invalid number of fields')
+  }
+
+  const value = BigInt(raw)
+  if (value < 1n || value > LONG_MAX) {
+    throw new RedisCommandError('invalid number of fields')
+  }
+
+  return value
+}
+
+function hashFieldIsLive(
+  hash: RedisHashData | null,
+  field: Buffer,
+  now: number,
+): boolean {
+  const entry = hash?.fields.get(field.toString('hex'))
+  if (!entry) return false
+  return entry.expiresAt === undefined || entry.expiresAt > now
+}
+
+function resolveHsetexPlan(expiration: HsetexExpiration): HsetexPlan {
+  if (expiration.kind === 'set') {
+    return {
+      kind: 'expireAt',
+      at: hashExpireTimeToTimestamp(expiration.time, expiration.mode, 'hsetex'),
+    }
+  }
+  return expiration
+}
+
+function setexHashFields(
+  args: HsetexArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
+  // Resolve the target timestamp up front so an invalid expire time is
+  // reported even when the condition would otherwise skip the write,
+  // matching the HGETEX ordering.
+  const plan = resolveHsetexPlan(args.expiration)
+  const now = Date.now()
+
+  if (args.condition) {
+    const existingHash = ctx.db.getHash(args.key)
+    const conditionMet = args.pairs.every(({ field }) => {
+      const exists = hashFieldIsLive(existingHash, field, now)
+      return args.condition === 'FNX' ? !exists : exists
+    })
+    if (!conditionMet) {
+      return integer(0)
+    }
+  }
+
+  let remaining = 0
+  ctx.db.updateHash(args.key, hash => {
+    for (const { field, value } of args.pairs) {
+      if (plan.kind === 'keepttl') {
+        hash.setField(field, value, { forceDirty: true, keepTtl: true })
+        continue
+      }
+
+      hash.setField(field, value, { forceDirty: true })
+      if (plan.kind === 'expireAt') {
+        if (plan.at <= now) {
+          hash.deleteField(field)
+        } else {
+          hash.setFieldExpiration(field, plan.at)
+        }
+      }
+    }
+    remaining = hash.size
+  })
+
+  if (remaining === 0) {
+    ctx.db.delete(args.key)
+  }
+
+  return integer(1)
 }
 
 function persistHashFields(
@@ -738,6 +936,15 @@ export const hgetexCommand = defineCommand({
   execute: getexHashFields,
 })
 
+export const hsetexCommand = defineCommand({
+  name: 'hsetex',
+  since: HSETEX_SINCE,
+  schema: createHsetexSchema(),
+  flags: ['write', 'denyoom', 'fast'],
+  keys: args => [args.key],
+  execute: setexHashFields,
+})
+
 export const hpersistCommand = defineCommand({
   name: 'hpersist',
   since: HASH_FIELD_EXPIRATION_SINCE,
@@ -1055,6 +1262,7 @@ export const hashesCommands = [
   hdelCommand,
   hgetdelCommand,
   hgetexCommand,
+  hsetexCommand,
   hpersistCommand,
   hexpireCommand,
   hpexpireCommand,

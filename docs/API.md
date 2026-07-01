@@ -142,6 +142,7 @@ Current profile gates:
 | `XREAD ... +` latest-entry stream ID | `redis-7.4+` | unsupported |
 | `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
+| Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options | `redis-7.0+` | `valkey-8.0+` |
