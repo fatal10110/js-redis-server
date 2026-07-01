@@ -252,6 +252,13 @@ export class WrongTypeRedisError extends RedisCommandError {
   }
 }
 
+/** A string-type key whose contents are not a valid HyperLogLog encoding. */
+export class InvalidHllError extends RedisCommandError {
+  constructor() {
+    super('Key is not a valid HyperLogLog string value.', 'WRONGTYPE')
+  }
+}
+
 export class InvalidExpireTimeError extends RedisCommandError {
   constructor(commandName: string) {
     super(`invalid expire time in '${commandName}' command`)
