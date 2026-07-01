@@ -251,7 +251,7 @@ with `GT` or `LT`.
 - [x] `HINCRBY key field increment` - Increment the integer value of a hash field
 - [x] `HINCRBYFLOAT key field increment` - Increment the float value of a hash field
 - [x] `HRANDFIELD key [count [WITHVALUES]]` - Return one or more random hash fields, optionally with values
-- [x] `HSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate hash fields and values (see [Scan Family](#10-scan-family))
+- [x] `HSCAN key cursor [MATCH pattern] [COUNT count] [NOVALUES]` - Incrementally iterate hash fields and values (see [Scan Family](#10-scan-family))
 
 ## 6. List Commands
 
@@ -365,7 +365,7 @@ with `GT` or `LT`.
 ## 10. Scan Family
 
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Iterate the keyspace
-- [x] `HSCAN key cursor [MATCH pattern] [COUNT count]` - Iterate hash fields/values
+- [x] `HSCAN key cursor [MATCH pattern] [COUNT count] [NOVALUES]` - Iterate hash fields/values
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Iterate set members
 - [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Iterate sorted set members/scores
 - [x] `KEYS pattern` - Return all keys matching a glob pattern
@@ -373,7 +373,7 @@ with `GT` or `LT`.
 `TYPE` is only accepted by `SCAN` (matching real Redis); `HSCAN`/`SSCAN`/`ZSCAN`
 reject it.
 
-- [ ] `HSCAN ... NOVALUES` (Redis 7.4)
+`NOVALUES` is only accepted by `HSCAN` for Redis 7.4+ / Valkey 9.0+ profiles.
 
 ## 11. Transaction Commands
 

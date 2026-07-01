@@ -21,5 +21,6 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'stream.xautoclaim-deleted-ids': { redis: '7.0.0', valkey: '7.2.0' },
   // BITCOUNT/BITPOS BYTE|BIT range modifier — Redis 7.0 / Valkey 7.2.
   'bit.byte-bit-range': { redis: '7.0.0', valkey: '7.2.0' },
+  'hscan.novalues': { redis: '7.4.0', valkey: '9.0.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
 }

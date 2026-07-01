@@ -137,7 +137,8 @@ Current profile gates:
 | --- | --- | --- |
 | Redis 6.2 root commands: `BLMOVE`, `COPY`, `GETDEL`, `GETEX`, `HRANDFIELD`, `LMOVE`, `RESET`, `SMISMEMBER`, `XAUTOCLAIM`, `ZMSCORE` | `redis-6.2+` | `valkey-8.0+` |
 | Redis 7.0 root commands: `BLMPOP`, `BZMPOP`, `EXPIRETIME`, `LMPOP`, `PEXPIRETIME`, `SINTERCARD`, `SORT_RO`, `SPUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `ZINTERCARD`, `ZMPOP` | `redis-7.0+` | `valkey-8.0+` |
-| Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
+| Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HEXPIRETIME`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPEXPIRETIME`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
+| `HSCAN ... NOVALUES` | `redis-7.4+` | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |

@@ -16,6 +16,7 @@ type ScanOptions = {
   match?: Buffer
   count?: number
   type?: string
+  noValues?: boolean
 }
 
 type KeyedScanOptions = {
@@ -23,6 +24,7 @@ type KeyedScanOptions = {
   cursor: bigint
   match?: Buffer
   count?: number
+  noValues?: boolean
 }
 
 type ScanResultOptions = {
@@ -76,6 +78,10 @@ export const hscanCommand = defineCommand({
   flags: ['readonly', 'random'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    if (args.noValues && !ctx.server.profile.has('hscan.novalues')) {
+      throw new RedisSyntaxError()
+    }
+
     const hash = ctx.db.getHash(args.key)
     if (!hash) {
       return scanResult([], args)
@@ -86,7 +92,9 @@ export const hscanCommand = defineCommand({
     )
     const items: ScanItem[] = entries.map(({ field, value }) => ({
       matchValue: field,
-      values: [RedisValue.bulkString(field), RedisValue.bulkString(value)],
+      values: args.noValues
+        ? [RedisValue.bulkString(field)]
+        : [RedisValue.bulkString(field), RedisValue.bulkString(value)],
     }))
 
     return scanResult(items, args)
@@ -171,7 +179,13 @@ function createKeyedScanOptionsSchema() {
   return t.custom<KeyedScanOptions>((input, index, ctx) => {
     const key = readRequired(input, index, ctx.commandName)
     const cursor = parseCursor(readRequired(input, index + 1, ctx.commandName))
-    const options = parseScanOptions(input, index + 2, ctx.commandName, false)
+    const options = parseScanOptions(
+      input,
+      index + 2,
+      ctx.commandName,
+      false,
+      ctx.commandName === 'hscan',
+    )
 
     return {
       value: { key, cursor, ...options },
@@ -185,6 +199,7 @@ function parseScanOptions(
   index: number,
   commandName: string,
   allowType: boolean,
+  allowNoValues = false,
 ): Omit<ScanOptions, 'cursor'> {
   const options: Omit<ScanOptions, 'cursor'> = {}
   let cursor = index
@@ -209,6 +224,15 @@ function parseScanOptions(
         .toString()
         .toLowerCase()
       cursor += 2
+      continue
+    }
+
+    if (option === 'novalues') {
+      if (!allowNoValues) {
+        throw new RedisCommandError('NOVALUES option can only be used in HSCAN')
+      }
+      options.noValues = true
+      cursor++
       continue
     }
 

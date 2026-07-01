@@ -48,6 +48,27 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
     return { entries, iterations }
   }
 
+  async function collectHashScanNoValues(
+    key: string,
+    count: number,
+    match?: string,
+  ): Promise<string[]> {
+    const fields: string[] = []
+    await new Promise<void>((resolve, reject) => {
+      const stream = redisClient!.hscanStream(key, {
+        count,
+        ...(match ? { match } : {}),
+        noValues: true,
+      })
+
+      stream.on('data', (items: string[]) => fields.push(...items))
+      stream.on('error', reject)
+      stream.on('end', resolve)
+    })
+
+    return fields.sort()
+  }
+
   async function collectSetScan(
     key: string,
     count: number,
@@ -169,6 +190,21 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
       sortedEntries(result.entries),
       sortedEntries(expected),
     )
+  })
+
+  test('HSCAN NOVALUES returns only matching fields', async () => {
+    const key = taggedKey('hash-novalues')
+
+    try {
+      await redisClient!.hset(key, 'hit:1', 'v1', 'hit:2', 'v2', 'miss', 'v3')
+
+      assert.deepStrictEqual(await collectHashScanNoValues(key, 1, 'hit:*'), [
+        'hit:1',
+        'hit:2',
+      ])
+    } finally {
+      await redisClient!.del(key)
+    }
   })
 
   test('keyed scan MATCH advances across non-matching COUNT batches', async () => {

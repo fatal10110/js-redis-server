@@ -21,6 +21,7 @@ export type FeatureId =
   | 'pubsub.resp3-publish-reply-first'
   | 'stream.xautoclaim-deleted-ids'
   | 'bit.byte-bit-range'
+  | 'hscan.novalues'
   | 'cluster.multi-db'
 
 export interface CompatibilityProfile {
