@@ -30,6 +30,7 @@ export type ClientSessionOptions = {
   signal?: AbortSignal
   park?: ParkHandler
   turnQueue?: RedisTurnQueue
+  closeConnection?: (reason?: string) => void
 }
 
 /**
@@ -75,6 +76,7 @@ export class ClientSession implements RedisClientSession {
 
   readonly id: string
   readonly clientAddress?: string
+  readonly connectedAtMs: number
   readonly server: RedisServerState
   /** Aborted when the connection closes; threaded into every command's ctx. */
   readonly signal: AbortSignal
@@ -84,6 +86,7 @@ export class ClientSession implements RedisClientSession {
   private readonly nodeRole?: RedisClusterNodeRole
   private readonly parkHandler: ParkHandler
   private readonly turnQueueOverride?: RedisTurnQueue
+  private readonly closeConnection?: (reason?: string) => void
   /**
    * The turn handle of the command currently executing on this session,
    * exposed so {@link executeTransaction} can hand the turn off to another
@@ -117,12 +120,14 @@ export class ClientSession implements RedisClientSession {
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
     this.clientAddress = options.clientAddress
+    this.connectedAtMs = Date.now()
     this.server = options.server
     this.executor = options.executor
     this.selectedDatabaseId = options.database ?? 0
     this.nodeRole = options.nodeRole
     this.parkHandler = options.park ?? createDefaultParkHandler()
     this.turnQueueOverride = options.turnQueue
+    this.closeConnection = options.closeConnection
 
     if (options.signal) {
       this.signal = options.signal
@@ -832,6 +837,15 @@ export class ClientSession implements RedisClientSession {
     this.transactionDirty = false
     this.sessionMode = 'normal'
     this.clusterReadOnlyMode = false
+  }
+
+  disconnect(reason = 'client disconnected'): void {
+    if (this.closeConnection) {
+      this.closeConnection(reason)
+      return
+    }
+
+    this.close()
   }
 
   /**

@@ -573,18 +573,19 @@ export const copyCommand = defineCommand({
   },
 })
 
-// SORT key [LIMIT offset count] [ASC | DESC] [ALPHA] [STORE destination]
+// SORT key [BY pattern] [LIMIT offset count] [GET pattern ...] [ASC | DESC]
+//      [ALPHA] [STORE destination]
 // Sorts the elements of a list, set, or zset (zset is sorted by member value,
 // not score). Numeric by default — every element must parse as a double, or
 // the command errors; ALPHA switches to a byte-wise lexicographic sort. STORE
 // writes the sorted result to a destination list and replies with its length.
-// BY/GET external-key pattern dereference is intentionally not implemented yet
-// (tracked as a follow-up); passing either yields a syntax error.
 type SortArgs = {
   key: Buffer
   desc: boolean
   alpha: boolean
   limit?: { offset: number; count: number }
+  by?: Buffer
+  get: Buffer[]
   store?: Buffer
 }
 
@@ -601,10 +602,28 @@ function parseSort(
   let desc = false
   let alpha = false
   let limit: { offset: number; count: number } | undefined
+  let by: Buffer | undefined
+  const get: Buffer[] = []
   let store: Buffer | undefined
 
   while (cursor < input.length) {
     const option = input[cursor]!.toString().toUpperCase()
+
+    if (option === 'BY') {
+      const pattern = input[cursor + 1]
+      if (!pattern) throw new RedisSyntaxError()
+      by = pattern
+      cursor += 2
+      continue
+    }
+
+    if (option === 'GET') {
+      const pattern = input[cursor + 1]
+      if (!pattern) throw new RedisSyntaxError()
+      get.push(pattern)
+      cursor += 2
+      continue
+    }
 
     if (option === 'ASC') {
       desc = false
@@ -647,7 +666,7 @@ function parseSort(
     throw new RedisSyntaxError()
   }
 
-  return { key, desc, alpha, limit, store }
+  return { key, desc, alpha, limit, by, get, store }
 }
 
 function sortSchema(allowStore: boolean) {
@@ -676,16 +695,26 @@ function sortNumericScore(element: Buffer): number {
   return value
 }
 
-function sortElements(elements: readonly Buffer[], args: SortArgs): Buffer[] {
+function sortElements(
+  elements: readonly Buffer[],
+  args: SortArgs,
+  db: RedisDatabase,
+): Buffer[] {
+  if (args.by && isNoSortPattern(args.by)) {
+    return [...elements]
+  }
+
   if (args.alpha) {
-    const sorted = [...elements].sort((a, b) => Buffer.compare(a, b))
+    const sorted = [...elements].sort((a, b) =>
+      Buffer.compare(sortByValue(a, args, db), sortByValue(b, args, db)),
+    )
     if (args.desc) sorted.reverse()
     return sorted
   }
 
   const scored = elements.map(element => ({
     element,
-    score: sortNumericScore(element),
+    score: sortNumericScore(sortByValue(element, args, db)),
   }))
   scored.sort((a, b) => a.score - b.score)
   if (args.desc) scored.reverse()
@@ -706,24 +735,114 @@ function applySortLimit(
 
 function runSort(args: SortArgs, db: RedisDatabase) {
   const source = readSortSource(db, args.key)
-  const sorted = applySortLimit(sortElements(source, args), args.limit)
+  const sorted = applySortLimit(sortElements(source, args, db), args.limit)
+  const output = projectSortOutput(sorted, args, db)
 
   if (args.store) {
     db.delete(args.store)
-    if (sorted.length > 0) {
-      db.updateList(args.store, list => list.pushRight(sorted))
+    if (output.length > 0) {
+      db.updateList(args.store, list =>
+        list.pushRight(output.map(value => value ?? Buffer.alloc(0))),
+      )
     }
-    return integer(sorted.length)
+    return integer(output.length)
   }
 
-  return array(sorted.map(element => RedisValue.bulkString(element)))
+  return array(output.map(element => RedisValue.bulkString(element)))
+}
+
+function sortByValue(
+  element: Buffer,
+  args: SortArgs,
+  db: RedisDatabase,
+): Buffer {
+  if (!args.by) {
+    return element
+  }
+
+  return readSortPattern(db, args.by, element) ?? Buffer.alloc(0)
+}
+
+function projectSortOutput(
+  elements: readonly Buffer[],
+  args: SortArgs,
+  db: RedisDatabase,
+): Array<Buffer | null> {
+  if (args.get.length === 0) {
+    return elements.map(element => Buffer.from(element))
+  }
+
+  const output: Array<Buffer | null> = []
+  for (const element of elements) {
+    for (const pattern of args.get) {
+      output.push(
+        isSelfSortPattern(pattern)
+          ? Buffer.from(element)
+          : readSortPattern(db, pattern, element),
+      )
+    }
+  }
+  return output
+}
+
+function readSortPattern(
+  db: RedisDatabase,
+  pattern: Buffer,
+  element: Buffer,
+): Buffer | null {
+  const key = expandSortPattern(pattern, element)
+  const type = db.getType(key)
+  if (type === null) {
+    return null
+  }
+  if (type !== 'string') {
+    throw new WrongTypeRedisError()
+  }
+  return db.getString(key)
+}
+
+function expandSortPattern(pattern: Buffer, element: Buffer): Buffer {
+  const index = pattern.indexOf(0x2a)
+  if (index === -1) {
+    return Buffer.from(pattern)
+  }
+
+  return Buffer.concat([
+    pattern.subarray(0, index),
+    element,
+    pattern.subarray(index + 1),
+  ])
+}
+
+function isSelfSortPattern(pattern: Buffer): boolean {
+  return pattern.length === 1 && pattern[0] === 0x23
+}
+
+function isNoSortPattern(pattern: Buffer): boolean {
+  return pattern.toString().toLowerCase() === 'nosort'
+}
+
+function sortRoutingKeys(args: SortArgs): Buffer[] {
+  const keys = [args.key]
+  if (args.by && !isNoSortPattern(args.by)) {
+    keys.push(args.by)
+  }
+  for (const pattern of args.get) {
+    if (!isSelfSortPattern(pattern)) {
+      keys.push(pattern)
+    }
+  }
+  if (args.store) {
+    keys.push(args.store)
+  }
+  return keys
 }
 
 export const sortCommand = defineCommand({
   name: 'sort',
   schema: sortSchema(true),
   flags: ['write', 'denyoom'],
-  keys: args => (args.store ? [args.key, args.store] : [args.key]),
+  keys: sortRoutingKeys,
   execute: (args, ctx) => runSort(args, ctx.db),
 })
 
@@ -732,7 +851,7 @@ export const sortRoCommand = defineCommand({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: sortSchema(false),
   flags: ['readonly'],
-  keys: args => [args.key],
+  keys: sortRoutingKeys,
   execute: (args, ctx) => runSort(args, ctx.db),
 })
 

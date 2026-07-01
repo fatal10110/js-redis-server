@@ -13,6 +13,7 @@ export type FeatureId =
   | 'command.getkeysandflags'
   | 'acl.dryrun'
   | 'client.no-evict'
+  | 'client.kill.maxage'
   | 'client.setinfo'
   | 'client.setinfo.unknown-subcommand-error'
   | 'info.multi-section'
@@ -22,6 +23,7 @@ export type FeatureId =
   | 'stream.xautoclaim-deleted-ids'
   | 'bit.byte-bit-range'
   | 'hscan.novalues'
+  | 'xread.plus-id'
   | 'cluster.multi-db'
 
 export interface CompatibilityProfile {

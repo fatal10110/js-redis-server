@@ -16,7 +16,14 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { array, bulk, integer, ok, simpleString } from './helpers'
+import {
+  array,
+  bulk,
+  integer,
+  ok,
+  parseIntegerToken,
+  simpleString,
+} from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
@@ -245,7 +252,7 @@ function formatClientLine(session: RedisClientSession): string {
     'fd=0',
     `name=${name}`,
     `db=${session.selectedDatabase}`,
-    'age=0',
+    `age=${clientAgeSeconds(session)}`,
     'idle=0',
     `flags=${clientFlags(session)}`,
     `sub=${session.pubsubChannelCount}`,
@@ -284,6 +291,97 @@ function clientFlags(session: RedisClientSession): string {
     flags += 'e'
   }
   return flags
+}
+
+type ClientKillOptions = {
+  id?: number
+  maxAgeSeconds?: number
+  skipMe: boolean
+}
+
+function clientAgeSeconds(session: RedisClientSession): number {
+  return Math.max(0, Math.floor((Date.now() - session.connectedAtMs) / 1000))
+}
+
+function parseClientKillOptions(
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): ClientKillOptions {
+  if (args.length === 0) {
+    throw new WrongNumberOfArgumentsError('client|kill')
+  }
+
+  const options: ClientKillOptions = { skipMe: true }
+
+  for (let i = 0; i < args.length; i++) {
+    const option = args[i].toString().toLowerCase()
+
+    if (option === 'id') {
+      const value = args[++i]
+      if (!value) {
+        throw new RedisSyntaxError()
+      }
+      options.id = parseIntegerToken(value)
+      continue
+    }
+
+    if (option === 'maxage') {
+      if (!ctx.server.profile.has('client.kill.maxage')) {
+        throw new RedisSyntaxError()
+      }
+
+      const value = args[++i]
+      if (!value) {
+        throw new RedisSyntaxError()
+      }
+
+      options.maxAgeSeconds = parseIntegerToken(value)
+      if (options.maxAgeSeconds < 0) {
+        throw new RedisCommandError('value is out of range')
+      }
+      continue
+    }
+
+    if (option === 'skipme') {
+      const value = args[++i]?.toString().toLowerCase()
+      if (value === 'yes') {
+        options.skipMe = true
+        continue
+      }
+      if (value === 'no') {
+        options.skipMe = false
+        continue
+      }
+      throw new RedisSyntaxError()
+    }
+
+    throw new RedisSyntaxError()
+  }
+
+  return options
+}
+
+function matchesClientKillFilter(
+  session: RedisClientSession,
+  currentSession: RedisClientSession,
+  options: ClientKillOptions,
+): boolean {
+  if (options.skipMe && session === currentSession) {
+    return false
+  }
+
+  if (options.id !== undefined && getClientId(session) !== options.id) {
+    return false
+  }
+
+  if (
+    options.maxAgeSeconds !== undefined &&
+    clientAgeSeconds(session) < options.maxAgeSeconds
+  ) {
+    return false
+  }
+
+  return true
 }
 
 const HELLO_NOAUTH_MESSAGE =
@@ -486,6 +584,7 @@ export const clientCommand = defineCommand({
     subcommands: [
       commandSubcommandInfo('client|id', 2),
       commandSubcommandInfo('client|info', 2),
+      commandSubcommandInfo('client|kill', -3),
       commandSubcommandInfo('client|list', 2),
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
@@ -543,6 +642,29 @@ export const clientCommand = defineCommand({
       throw new RedisSyntaxError()
     }
 
+    if (subcommand === 'kill') {
+      const options = parseClientKillOptions(args.args, ctx)
+      const victims = ctx.server
+        .getConnectedClients()
+        .filter(session =>
+          matchesClientKillFilter(session, ctx.session, options),
+        )
+
+      for (const victim of victims) {
+        if (victim !== ctx.session) {
+          victim.disconnect('client kill')
+        }
+      }
+
+      if (!victims.includes(ctx.session)) {
+        return integer(victims.length)
+      }
+
+      return RedisResult.create(RedisValue.integer(victims.length), {
+        afterReply: () => ctx.session.disconnect('client kill'),
+      })
+    }
+
     if (subcommand === 'id') {
       expectArgCount('client|id', args.args, 0)
       return integer(getClientId(ctx.session))
@@ -568,6 +690,11 @@ export const clientCommand = defineCommand({
         value('ID'),
         value('INFO'),
         value('LIST'),
+        value(
+          ctx.server.profile.has('client.kill.maxage')
+            ? 'KILL [ID <client-id>] [MAXAGE <seconds>] [SKIPME <YES|NO>]'
+            : 'KILL [ID <client-id>] [SKIPME <YES|NO>]',
+        ),
         value('GETNAME'),
         value('SETNAME <connection-name>'),
       ]

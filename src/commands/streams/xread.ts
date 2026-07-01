@@ -13,8 +13,8 @@ import { compareStreamId, MIN_ID, parseExactId } from './ids'
 import { entryToReply } from './replies'
 
 // XREAD [COUNT count] STREAMS key [key ...] id [id ...]
-// `$` means "start after the stream's current last id" (returns nothing on a non-blocking call).
-type XreadStream = { key: Buffer; afterId: StreamId | '$' }
+// `$` means "start after the stream's current last id"; `+` means "return the stream's latest entry".
+type XreadStream = { key: Buffer; afterId: StreamId | '$' | '+' }
 
 function createXreadSchema() {
   return t.custom<{
@@ -72,7 +72,14 @@ function createXreadSchema() {
     for (let i = 0; i < half; i++) {
       const key = input[cursor + i]
       const idTok = input[cursor + half + i].toString()
-      const afterId: StreamId | '$' = idTok === '$' ? '$' : parseExactId(idTok)
+      let afterId: XreadStream['afterId']
+      if (idTok === '$') {
+        afterId = '$'
+      } else if (idTok === '+' && ctx.profile.has('xread.plus-id')) {
+        afterId = '+'
+      } else {
+        afterId = parseExactId(idTok)
+      }
       streams.push({ key, afterId })
     }
 
@@ -80,7 +87,9 @@ function createXreadSchema() {
   })
 }
 
-type ResolvedXreadStream = { key: Buffer; afterId: StreamId }
+type ResolvedXreadStream =
+  | { key: Buffer; kind: 'after'; afterId: StreamId }
+  | { key: Buffer; kind: 'latest' }
 
 function readStreamEntries(
   streams: ResolvedXreadStream[],
@@ -89,15 +98,24 @@ function readStreamEntries(
 ): RedisResult | null {
   const results: [RedisValue, RedisValue][] = []
 
-  for (const { key, afterId } of streams) {
+  for (const request of streams) {
+    const { key } = request
     const stream = ctx.db.getStream(key)
     if (!stream) continue
 
     const entries: RedisValue[] = []
-    for (const entry of stream.entries) {
-      if (compareStreamId(entry.id, afterId) > 0) {
+
+    if (request.kind === 'latest') {
+      const entry = stream.entries.at(-1)
+      if (entry) {
         entries.push(entryToReply(entry.id, entry.fields))
-        if (count !== null && count > 0 && entries.length >= count) break
+      }
+    } else {
+      for (const entry of stream.entries) {
+        if (compareStreamId(entry.id, request.afterId) > 0) {
+          entries.push(entryToReply(entry.id, entry.fields))
+          if (count !== null && count > 0 && entries.length >= count) break
+        }
       }
     }
 
@@ -171,13 +189,20 @@ export const xreadCommand = defineCommand({
 
     // Resolve '$' to the stream's current last ID before any blocking,
     // so entries added after this call (not before) are returned.
-    const resolved: ResolvedXreadStream[] = streams.map(s => ({
-      key: s.key,
-      afterId:
-        s.afterId === '$'
-          ? (ctx.db.getStream(s.key)?.lastId ?? MIN_ID)
-          : s.afterId,
-    }))
+    const resolved: ResolvedXreadStream[] = streams.map(s => {
+      if (s.afterId === '+') {
+        return { key: s.key, kind: 'latest' }
+      }
+
+      return {
+        key: s.key,
+        kind: 'after',
+        afterId:
+          s.afterId === '$'
+            ? (ctx.db.getStream(s.key)?.lastId ?? MIN_ID)
+            : s.afterId,
+      }
+    })
 
     const immediate = readStreamEntries(resolved, count, ctx)
     if (immediate || blockMs === null) return immediate ?? bulk(null)

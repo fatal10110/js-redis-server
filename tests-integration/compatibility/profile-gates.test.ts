@@ -128,6 +128,7 @@ describe(
     test('applies parser, subcommand, and behavior gates', async () => {
       const key = `compat:${profile}:key`
       const hash = `compat:${profile}:hash`
+      const stream = `compat:${profile}:stream`
 
       await send('SET', key, 'v')
       await expectGate(supportsExpireConditions(), 'EXPIRE', key, '10', 'NX')
@@ -171,6 +172,13 @@ describe(
         'lib-name',
         'compat',
       )
+      await expectGate(
+        supportsClientKillMaxAge(),
+        'CLIENT',
+        'KILL',
+        'MAXAGE',
+        '999999',
+      )
       await expectGate(supportsRedis70Commands(), 'CLIENT', 'NO-EVICT', 'ON')
       await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDCHANNELS')
       await expectGate(supportsShardedPubSub(), 'PUBSUB', 'SHARDNUMSUB')
@@ -207,6 +215,9 @@ describe(
         '1',
         `compat:${profile}:zset`,
       )
+
+      await send('XADD', stream, '1-1', 'field', 'value')
+      await expectGate(supportsXreadPlusId(), 'XREAD', 'STREAMS', stream, '+')
 
       await send('HSET', hash, 'field', 'value', 'delete-me', 'gone')
       await expectGate(supportsHscanNoValues(), 'HSCAN', hash, '0', 'NOVALUES')
@@ -514,6 +525,10 @@ function supportsClientSetinfo(): boolean {
   return !['redis-6.2', 'redis-7.0'].includes(profile)
 }
 
+function supportsClientKillMaxAge(): boolean {
+  return ['redis-7.4', 'redis-8.0', 'valkey-9.0'].includes(profile)
+}
+
 function supportsShardedPubSub(): boolean {
   return profile !== 'redis-6.2'
 }
@@ -532,6 +547,10 @@ function supportsHashFieldExpiration(): boolean {
 
 function supportsHscanNoValues(): boolean {
   return ['redis-7.4', 'redis-8.0', 'valkey-9.0'].includes(profile)
+}
+
+function supportsXreadPlusId(): boolean {
+  return ['redis-7.4', 'redis-8.0'].includes(profile)
 }
 
 function supportsHgetex(): boolean {

@@ -115,6 +115,36 @@ describe(`Stream Commands Integration (node-redis, ${testRunner.getBackendName()
     }
   })
 
+  test('XREAD with + id returns the last entry from each stream', async () => {
+    const tag = Math.random().toString(36).substring(2, 8)
+    const key1 = `{${tag}}latest-a`
+    const key2 = `{${tag}}latest-b`
+    const node = await connectToNodeRedisSlotOwner(redisClient, key1)
+
+    try {
+      await node.xAdd(key1, '1-1', { f: 'old-a' })
+      await node.xAdd(key1, '2-1', { f: 'new-a' })
+      await node.xAdd(key2, '1-1', { f: 'old-b' })
+      await node.xAdd(key2, '3-1', { f: 'new-b' })
+
+      const result = await node.xRead(
+        [
+          { key: key1, id: '+' },
+          { key: key2, id: '+' },
+        ],
+        { COUNT: 2 },
+      )
+
+      assert.deepStrictEqual(result, [
+        { name: key1, messages: [{ id: '2-1', message: { f: 'new-a' } }] },
+        { name: key2, messages: [{ id: '3-1', message: { f: 'new-b' } }] },
+      ])
+    } finally {
+      await node.del(key1, key2)
+      node.destroy()
+    }
+  })
+
   test('XREAD on a missing key returns null', async () => {
     const key = randomKey()
     const node = await connectToNodeRedisSlotOwner(redisClient, key)
