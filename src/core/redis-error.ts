@@ -186,6 +186,70 @@ export class GeoUnsupportedUnitError extends RedisCommandError {
   }
 }
 
+export class GeoMissingMemberError extends RedisCommandError {
+  constructor() {
+    super('could not decode requested zset member')
+  }
+}
+
+export class GeoCountNotPositiveError extends RedisCommandError {
+  constructor() {
+    super('COUNT must be > 0')
+  }
+}
+
+export class GeoAnyRequiresCountError extends RedisCommandError {
+  constructor() {
+    super('the ANY argument requires COUNT argument')
+  }
+}
+
+export class GeoRadiusNotNumericError extends RedisCommandError {
+  constructor() {
+    super('need numeric radius')
+  }
+}
+
+export class GeoRadiusNegativeError extends RedisCommandError {
+  constructor() {
+    super('radius cannot be negative')
+  }
+}
+
+export class GeoWidthNotNumericError extends RedisCommandError {
+  constructor() {
+    super('need numeric width')
+  }
+}
+
+export class GeoHeightNotNumericError extends RedisCommandError {
+  constructor() {
+    super('need numeric height')
+  }
+}
+
+export class GeoBoxNegativeError extends RedisCommandError {
+  constructor() {
+    super('height or width cannot be negative')
+  }
+}
+
+export class GeoRadiusStoreWithOptionsError extends RedisCommandError {
+  constructor() {
+    super(
+      'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
+    )
+  }
+}
+
+export class GeoSearchStoreWithOptionsError extends RedisCommandError {
+  constructor() {
+    super(
+      'GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
+    )
+  }
+}
+
 export class OffsetOutOfRangeError extends RedisCommandError {
   constructor() {
     super('offset is out of range')

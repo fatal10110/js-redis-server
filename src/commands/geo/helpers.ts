@@ -29,6 +29,10 @@ export function metersToUnit(meters: number, unit: string): number {
   return meters / UNIT_TO_METERS[unit.toLowerCase()]!
 }
 
+export function unitToMeters(value: number, unit: string): number {
+  return value * UNIT_TO_METERS[unit.toLowerCase()]!
+}
+
 export function assertValidCoordinates(lon: number, lat: number): void {
   if (
     lon < GEO_LON_MIN ||

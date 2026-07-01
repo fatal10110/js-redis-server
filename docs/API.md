@@ -143,6 +143,7 @@ Current profile gates:
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `GEOSEARCH`, `GEOSEARCHSTORE` | `redis-6.2+` | `valkey-8.0+` |
 | `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
 | Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |
