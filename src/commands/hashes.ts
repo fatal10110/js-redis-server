@@ -18,7 +18,6 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import type { RedisHashData } from '../state'
 import type { TrackedHashData } from '../state/tracked-values'
 import {
   array,
@@ -373,16 +372,6 @@ function parseHsetexFieldCount(token: Buffer): bigint {
   return value
 }
 
-function hashFieldIsLive(
-  hash: RedisHashData | null,
-  field: Buffer,
-  now: number,
-): boolean {
-  const entry = hash?.fields.get(field.toString('hex'))
-  if (!entry) return false
-  return entry.expiresAt === undefined || entry.expiresAt > now
-}
-
 function resolveHsetexPlan(expiration: HsetexExpiration): HsetexPlan {
   if (expiration.kind === 'set') {
     return {
@@ -403,19 +392,21 @@ function setexHashFields(
   const plan = resolveHsetexPlan(args.expiration)
   const now = Date.now()
 
-  if (args.condition) {
-    const existingHash = ctx.db.getHash(args.key)
-    const conditionMet = args.pairs.every(({ field }) => {
-      const exists = hashFieldIsLive(existingHash, field, now)
-      return args.condition === 'FNX' ? !exists : exists
-    })
-    if (!conditionMet) {
-      return integer(0)
-    }
-  }
-
   let remaining = 0
-  ctx.db.updateHash(args.key, hash => {
+  // The condition check and the write share one updateHash call: TrackedHashData
+  // (unlike the raw getHash() result) already knows how to check field
+  // existence with expiry, and skipping any mutating call when the condition
+  // fails means the framework never persists a hash for a previously-missing
+  // key (see keyspace.ts's dirty/committed tracking).
+  const conditionMet = ctx.db.updateHash(args.key, hash => {
+    if (args.condition) {
+      const met = args.pairs.every(({ field }) => {
+        const exists = hash.hasField(field)
+        return args.condition === 'FNX' ? !exists : exists
+      })
+      if (!met) return false
+    }
+
     for (const { field, value } of args.pairs) {
       if (plan.kind === 'keepttl') {
         hash.setField(field, value, { forceDirty: true, keepTtl: true })
@@ -432,7 +423,12 @@ function setexHashFields(
       }
     }
     remaining = hash.size
+    return true
   })
+
+  if (!conditionMet) {
+    return integer(0)
+  }
 
   if (remaining === 0) {
     ctx.db.delete(args.key)
