@@ -18,6 +18,7 @@ import { commandCommand } from './command'
 import { configCommands } from './config'
 import { connectionCommands } from './connection'
 import { hashesCommands } from './hashes'
+import { hyperloglogCommands } from './hyperloglog'
 import { keysCommands } from './keys'
 import { listsCommands } from './lists'
 import { monitorCommands } from './monitor'
@@ -38,6 +39,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...monitorCommands,
   ...stringsCommands,
   ...bitmapsCommands,
+  ...hyperloglogCommands,
   ...keysCommands,
   ...scanCommands,
   ...hashesCommands,
@@ -142,6 +144,12 @@ export {
   bitfieldCommand,
   bitfieldRoCommand,
 } from './bitmaps'
+export {
+  hyperloglogCommands,
+  pfaddCommand,
+  pfcountCommand,
+  pfmergeCommand,
+} from './hyperloglog'
 export {
   discardCommand,
   execCommand,

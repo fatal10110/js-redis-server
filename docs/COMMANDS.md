@@ -521,11 +521,14 @@ key. None of these are implemented yet.
 
 ## 18. HyperLogLog Commands
 
-HyperLogLogs are stored in the String type. None of these are implemented yet.
+HyperLogLogs are stored in the String type. Cardinality is approximate, same
+as real Redis, but the on-disk encoding is a dense 16384-byte register array
+rather than Redis's sparse/dense HLL format — not byte-compatible, no
+`DUMP`/`RESTORE` parity for this type.
 
-- [ ] `PFADD key [element ...]` - Add elements to the HyperLogLog
-- [ ] `PFCOUNT key [key ...]` - Return the approximated cardinality
-- [ ] `PFMERGE destkey [sourcekey ...]` - Merge multiple HyperLogLogs into one
+- [x] `PFADD key [element ...]` - Add elements to the HyperLogLog
+- [x] `PFCOUNT key [key ...]` - Return the approximated cardinality
+- [x] `PFMERGE destkey [sourcekey ...]` - Merge multiple HyperLogLogs into one
 - [ ] `PFDEBUG`, `PFSELFTEST` - Internal/debug subcommands
 
 ## 19. Geo Commands
