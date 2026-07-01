@@ -29,6 +29,7 @@ export type RedisMonitorContext = {
 export interface RedisClientSession {
   readonly id: string
   readonly clientAddress?: string
+  readonly connectedAtMs: number
   readonly selectedDatabase: number
   readonly mode: ClientSessionMode
   readonly protocolVersion: RespVersion
@@ -63,6 +64,7 @@ export interface RedisClientSession {
   deferPushesUntilAfterReply(): () => void
   registerResponseStreamCleanup(cleanup: () => void): () => void
   resetResponseStreams(): void
+  disconnect(reason?: string): void
 }
 
 export interface RedisExecutionContext {

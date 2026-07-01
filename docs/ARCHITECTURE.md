@@ -322,7 +322,7 @@ flowchart LR
 is server-wide rather than per-DB: the cluster topology, the Lua
 [`RedisScriptCache`](../src/state/script-cache.ts) (so `FLUSHALL`/`FLUSHDB`
 clear keyspace data but **not** cached scripts — only `SCRIPT FLUSH` does),
-a registry of connected client sessions for `CLIENT LIST`, and the
+a registry of connected client sessions for `CLIENT LIST` / `CLIENT KILL`, and the
 [`RedisPubSubBroker`](../src/state/pubsub-broker.ts) used by client Pub/Sub
 commands for channel and pattern fan-out within that server state, plus the
 [`RedisMonitorFeed`](../src/state/monitor-feed.ts) used by `MONITOR` to fan out

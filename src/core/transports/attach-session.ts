@@ -44,6 +44,7 @@ export function attachSession(
     executor: opts.executor,
     nodeRole: opts.nodeRole,
     clientAddress: opts.clientAddress,
+    closeConnection: reason => transport.close(reason ?? 'client disconnected'),
   })
 
   const adapter = new Resp2SessionAdapter({

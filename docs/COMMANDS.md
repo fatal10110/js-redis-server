@@ -39,9 +39,10 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
 - [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
+- [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
-- [ ] `CLIENT KILL`, `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 
 ## 2. Server Commands
 
@@ -168,8 +169,8 @@ surface.
 - [x] `MOVE key db` - Move a key to another database, preserving TTL; returns `0` if the source is missing or the destination already exists; rejected in cluster mode
 - [x] `KEYS pattern` - Find all keys matching a glob pattern
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Incrementally iterate the keyspace (see [Scan Family](#10-scan-family))
-- [x] `SORT key [LIMIT offset count] [ASC | DESC] [ALPHA] [STORE destination]` - Sort a list, set, or zset (zset sorted by member value, not score); numeric by default, `ALPHA` for lexicographic; `STORE` writes the result to a destination list and returns its length
-- [x] `SORT_RO key [LIMIT offset count] [ASC | DESC] [ALPHA]` - Read-only variant of `SORT`; rejects `STORE`
+- [x] `SORT key [BY pattern] [LIMIT offset count] [GET pattern ...] [ASC | DESC] [ALPHA] [STORE destination]` - Sort a list, set, or zset (zset sorted by member value, not score); `BY` / `GET` support string-key pattern expansion and `GET #`; numeric by default, `ALPHA` for lexicographic; `STORE` writes the result to a destination list and returns its length
+- [x] `SORT_RO key [BY pattern] [LIMIT offset count] [GET pattern ...] [ASC | DESC] [ALPHA]` - Read-only variant of `SORT`; rejects `STORE`
 
 #### Expiration
 
@@ -188,8 +189,9 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- `SORT` / `SORT_RO` do not support the `BY` or `GET` external-key pattern
-  dereference — passing either yields a syntax error (tracked as a follow-up)
+- `SORT` / `SORT_RO` `BY` / `GET` patterns must use the same hash tag as the
+  source key in cluster mode, matching Redis' cluster safety rule. Hash-field
+  dereference patterns such as `object_*->field` are not modeled.
 
 #### Not implemented
 
@@ -345,7 +347,7 @@ with `GT` or `LT`.
 - [x] `XREVRANGE key end start [COUNT count]` - Return entries in descending ID order
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
 - [x] `XTRIM key MAXLEN|MINID [~] threshold [LIMIT count]` - Trim a stream to a size or minimum ID
-- [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs)
+- [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id|+ [id|+ ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs); Redis 7.4+ profiles accept `+` to return the latest entry from each stream
 - [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER ...` - Manage stream consumer groups and consumers
 - [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery
 - [x] `XACK key group ID [ID ...]` - Acknowledge pending stream entries

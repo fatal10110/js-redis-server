@@ -139,6 +139,38 @@ describe(`Stream Commands Integration (${testRunner.getBackendName()})`, () => {
     }
   })
 
+  test('XREAD with + id returns the last entry from each stream', async () => {
+    const tag = Math.random().toString(36).substring(2, 8)
+    const key1 = `{${tag}}latest-a`
+    const key2 = `{${tag}}latest-b`
+    const node = await connectToSlotOwner(redisClient!, key1)
+
+    try {
+      await node.xadd(key1, '1-1', 'f', 'old-a')
+      await node.xadd(key1, '2-1', 'f', 'new-a')
+      await node.xadd(key2, '1-1', 'f', 'old-b')
+      await node.xadd(key2, '3-1', 'f', 'new-b')
+
+      const result = (await node.xread(
+        'COUNT',
+        2,
+        'STREAMS',
+        key1,
+        key2,
+        '+',
+        '+',
+      )) as [string, [string, string[]][]][]
+
+      assert.deepStrictEqual(result, [
+        [key1, [['2-1', ['f', 'new-a']]]],
+        [key2, [['3-1', ['f', 'new-b']]]],
+      ])
+    } finally {
+      await node.del(key1, key2)
+      node.disconnect()
+    }
+  })
+
   test('XREAD on a missing key returns null', async () => {
     const key = randomKey()
     const node = await connectToSlotOwner(redisClient!, key)

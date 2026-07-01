@@ -1,4 +1,5 @@
 import type { ExecutionPolicy } from './index'
+import type { CommandPlan } from '../command-definition'
 import {
   RedisClusterDownError,
   RedisCommandError,
@@ -70,6 +71,11 @@ export function createClusterPolicy(
         transactionSlots.delete(ctx.session)
       }
 
+      const sortPatternError = getSortClusterPatternError(plan, topology)
+      if (sortPatternError) {
+        throw sortPatternError
+      }
+
       const slot = validateClusterSlot(
         topology,
         options.localNodeId,
@@ -95,6 +101,80 @@ export function createClusterPolicy(
       }
     },
   }
+}
+
+function getSortClusterPatternError(
+  plan: CommandPlan,
+  topology: RedisClusterTopology,
+): RedisCommandError | null {
+  if (plan.definition.name !== 'sort' && plan.definition.name !== 'sort_ro') {
+    return null
+  }
+
+  const args = plan.args as {
+    key?: unknown
+    by?: unknown
+    get?: unknown
+  }
+  if (!Buffer.isBuffer(args.key)) {
+    return null
+  }
+
+  if (
+    Buffer.isBuffer(args.by) &&
+    sortPatternMayCrossSlot(args.key, args.by, topology)
+  ) {
+    return new RedisCommandError(
+      'BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
+    )
+  }
+
+  const get = Array.isArray(args.get) ? args.get : []
+  for (const pattern of get) {
+    if (
+      Buffer.isBuffer(pattern) &&
+      !isSelfSortPattern(pattern) &&
+      sortPatternMayCrossSlot(args.key, pattern, topology)
+    ) {
+      return new RedisCommandError(
+        'GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
+      )
+    }
+  }
+
+  return null
+}
+
+function sortPatternMayCrossSlot(
+  source: Buffer,
+  pattern: Buffer,
+  topology: RedisClusterTopology,
+): boolean {
+  if (!pattern.includes(0x2a)) {
+    return topology.calculateSlotForKeys([source, pattern]) === -1
+  }
+
+  const sourceTag = hashTag(source)
+  const patternTag = hashTag(pattern)
+  return !sourceTag || !patternTag || !sourceTag.equals(patternTag)
+}
+
+function hashTag(key: Buffer): Buffer | null {
+  const open = key.indexOf(0x7b)
+  if (open === -1) {
+    return null
+  }
+
+  const close = key.indexOf(0x7d, open + 1)
+  if (close <= open + 1) {
+    return null
+  }
+
+  return key.subarray(open + 1, close)
+}
+
+function isSelfSortPattern(pattern: Buffer): boolean {
+  return pattern.length === 1 && pattern[0] === 0x23
 }
 
 function validateClusterSlot(

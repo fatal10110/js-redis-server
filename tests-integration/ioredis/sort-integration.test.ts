@@ -164,6 +164,84 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  // ------------------------------------------------------------------- BY/GET
+
+  test('SORT BY orders by external keys and GET returns pattern values', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('ids'), '2', '1', '3')
+      await c.set(k('weight:1'), '20')
+      await c.set(k('weight:2'), '10')
+      await c.set(k('weight:3'), '30')
+      await c.set(k('name:1'), 'one')
+      await c.set(k('name:2'), 'two')
+      await c.set(k('name:3'), 'three')
+
+      assert.deepStrictEqual(
+        await c.sort(k('ids'), 'BY', k('weight:*'), 'GET', k('name:*')),
+        ['two', 'one', 'three'],
+      )
+    })
+  })
+
+  test('SORT GET # returns source elements and missing pattern values as null', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('ids'), '2', '1', '3')
+      await c.set(k('weight:1'), '20')
+      await c.set(k('weight:2'), '10')
+      await c.set(k('weight:3'), '30')
+
+      assert.deepStrictEqual(
+        await c.sort(
+          k('ids'),
+          'BY',
+          k('weight:*'),
+          'GET',
+          '#',
+          'GET',
+          k('missing:*'),
+        ),
+        ['2', null, '1', null, '3', null],
+      )
+    })
+  })
+
+  test('SORT_RO supports BY and GET external patterns', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('ids'), 'a', 'b')
+      await c.set(k('weight:a'), '2')
+      await c.set(k('weight:b'), '1')
+      await c.set(k('name:a'), 'alpha')
+      await c.set(k('name:b'), 'bravo')
+
+      assert.deepStrictEqual(
+        await c.sort_ro(k('ids'), 'BY', k('weight:*'), 'GET', k('name:*')),
+        ['bravo', 'alpha'],
+      )
+    })
+  })
+
+  test('SORT rejects BY or GET patterns that hash to a different slot', async () => {
+    await withOps(async (c, k) => {
+      const otherTag = `{sort-other:${randomKey()}}`
+      await c.rpush(k('ids'), '1')
+      await c.set(k('weight:1'), '1')
+
+      await assert.rejects(
+        () => c.sort(k('ids'), 'BY', `${otherTag}:weight:*`),
+        errorWithMessage(
+          'ERR BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
+        ),
+      )
+      await assert.rejects(
+        () =>
+          c.sort(k('ids'), 'BY', k('weight:*'), 'GET', `${otherTag}:name:*`),
+        errorWithMessage(
+          'ERR GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
+        ),
+      )
+    })
+  })
+
   // --------------------------------------------------------------- edge cases
 
   test('SORT on a missing key returns an empty array', async () => {

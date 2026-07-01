@@ -9,6 +9,7 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'command.getkeysandflags': { redis: '7.0.0', valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
+  'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
   'client.setinfo.unknown-subcommand-error': {
     redis: '7.0.0',
@@ -22,5 +23,6 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // BITCOUNT/BITPOS BYTE|BIT range modifier — Redis 7.0 / Valkey 7.2.
   'bit.byte-bit-range': { redis: '7.0.0', valkey: '7.2.0' },
   'hscan.novalues': { redis: '7.4.0', valkey: '9.0.0' },
+  'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
 }
