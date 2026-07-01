@@ -534,12 +534,12 @@ rather than Redis's sparse/dense HLL format — not byte-compatible, no
 ## 19. Geo Commands
 
 Geo commands are stored in the Sorted Set type (members scored by geohash).
-None of these are implemented yet.
+Geo core (GEOADD/GEOPOS/GEODIST/GEOHASH) is implemented; geo search is not.
 
-- [ ] `GEOADD key [NX | XX] [CH] longitude latitude member [longitude latitude member ...]` - Add geospatial members
-- [ ] `GEOPOS key member [member ...]` - Return longitude/latitude of members
-- [ ] `GEODIST key member1 member2 [m | km | ft | mi]` - Distance between two members
-- [ ] `GEOHASH key member [member ...]` - Return Geohash strings for members
+- [x] `GEOADD key [NX | XX] [CH] longitude latitude member [longitude latitude member ...]` - Add geospatial members
+- [x] `GEOPOS key member [member ...]` - Return longitude/latitude of members
+- [x] `GEODIST key member1 member2 [m | km | ft | mi]` - Distance between two members
+- [x] `GEOHASH key member [member ...]` - Return Geohash strings for members
 - [ ] `GEOSEARCH key <FROMMEMBER member | FROMLONLAT longitude latitude> <BYRADIUS radius unit | BYBOX width height unit> [ASC | DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]` - Search within a radius or box
 - [ ] `GEOSEARCHSTORE destination source <FROMMEMBER ... | FROMLONLAT ...> <BYRADIUS ... | BYBOX ...> [STOREDIST]` - Store a `GEOSEARCH` result
 - [ ] `GEORADIUS` / `GEORADIUSBYMEMBER` (and `_RO` variants) - Deprecated radius queries
