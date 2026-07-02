@@ -237,6 +237,7 @@ export {
   hgetallCommand,
   hgetdelCommand,
   hgetexCommand,
+  hsetexCommand,
   hgetCommand,
   hdelCommand,
   hincrbyfloatCommand,
