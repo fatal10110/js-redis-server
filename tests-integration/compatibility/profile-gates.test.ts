@@ -123,6 +123,7 @@ describe(
 
       await expectRootCommand('HGETEX', supportsHgetex())
       await expectRootCommand('HGETDEL', supportsHgetdel())
+      await expectRootCommand('HSETEX', supportsHsetex())
     })
 
     test('applies parser, subcommand, and behavior gates', async () => {
@@ -239,6 +240,15 @@ describe(
         'field',
       )
       await expectGate(supportsHgetex(), 'HGETEX', hash, 'FIELDS', '1', 'field')
+      await expectGate(
+        supportsHsetex(),
+        'HSETEX',
+        hash,
+        'FIELDS',
+        '1',
+        'field',
+        'updated',
+      )
       await expectGate(
         supportsHgetdel(),
         'HGETDEL',
@@ -559,6 +569,10 @@ function supportsHgetex(): boolean {
 
 function supportsHgetdel(): boolean {
   return profile === 'redis-8.0'
+}
+
+function supportsHsetex(): boolean {
+  return ['redis-8.0', 'valkey-9.0'].includes(profile)
 }
 
 function bulkStringFrame(value: string): RegExp {
