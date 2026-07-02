@@ -43,6 +43,8 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
 - [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
+- [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
 
 ## 2. Server Commands
 
@@ -143,6 +145,9 @@ surface.
 - [ ] `LATENCY LATEST` - Return the latest samples for all event types
 - [ ] `LATENCY HISTORY event` - Return latency history for a given event
 - [ ] `LATENCY RESET [event ...]` - Reset latency data
+- [ ] `LATENCY DOCTOR` - Return a human-readable latency analysis report
+- [ ] `LATENCY GRAPH event` - Return an ASCII-art latency graph for an event
+- [ ] `LATENCY HELP`
 
 #### DEBUG
 
@@ -154,6 +159,23 @@ surface.
 #### LOLWUT
 
 - [ ] `LOLWUT [VERSION version]` - Return a version-specific ASCII art rendering
+
+#### Replication / node role
+
+- [ ] `ROLE` - Return the replication role of the instance (master/replica/sentinel)
+- [ ] `REPLICAOF host port` / `SLAVEOF host port` - Configure replication source (or `NO ONE` to promote)
+- [ ] `WAIT numreplicas timeout` - Block until N replicas acknowledge prior writes, or timeout
+- [ ] `WAITAOF numlocal numreplicas timeout` - Block until AOF fsync acknowledgment (Redis 7.2+)
+- [ ] `FAILOVER [TO host port [FORCE]] [ABORT] [TIMEOUT milliseconds]` - Coordinate a replication failover
+- [ ] `SYNC` / `PSYNC` / `REPLCONF` - Internal replication protocol commands
+
+> Not implemented by design: this mock has no replication topology to
+> coordinate. `ROLE` could report a static `master` result cheaply; the rest
+> require an actual replica link.
+
+#### SWAPDB
+
+- [ ] `SWAPDB index1 index2` - Swap the contents of two databases
 
 ## 3. Generic Key Commands
 
@@ -443,6 +465,7 @@ and register functions with `redis.register_function("name", function(keys, args
 - [ ] `CLUSTER ADDSLOTS` / `DELSLOTS` / `FLUSHSLOTS` / `SETSLOT`
 - [ ] `CLUSTER KEYSLOT` / `COUNTKEYSINSLOT` / `GETKEYSINSLOT`
 - [ ] `CLUSTER BUMPEPOCH` / `RESET` / `FAILOVER`
+- [ ] `CLUSTER LINKS` / `REPLICAS` / `SLAVES` / `COUNT-FAILURE-REPORTS` / `SET-CONFIG-EPOCH`
 
 ## 14. Pub/Sub Commands
 
@@ -507,12 +530,13 @@ The auth system (`requirepass` / `AUTH`) is functional for the built-in
 - [ ] `ACL LOG [count | RESET]` - Return or clear the ACL security-event log
 - [ ] `ACL SAVE` - Save the current ACL rules to the `aclfile`
 - [ ] `ACL LOAD` - Reload ACL rules from the `aclfile`
+- [ ] `ACL GENPASS [bits]` - Generate a pseudo-random hex password
 - [x] `ACL HELP`
 
 ## 17. Bitmap Commands
 
 Bitmaps are not a distinct type — they operate on the String value stored at a
-key. None of these are implemented yet.
+key.
 
 - [x] `SETBIT key offset value` - Set or clear the bit at `offset`
 - [x] `GETBIT key offset` - Return the bit value at `offset`
@@ -532,7 +556,8 @@ rather than Redis's sparse/dense HLL format — not byte-compatible, no
 - [x] `PFADD key [element ...]` - Add elements to the HyperLogLog
 - [x] `PFCOUNT key [key ...]` - Return the approximated cardinality
 - [x] `PFMERGE destkey [sourcekey ...]` - Merge multiple HyperLogLogs into one
-- [ ] `PFDEBUG`, `PFSELFTEST` - Internal/debug subcommands
+- [ ] `PFDEBUG subcommand key` - Internal debug subcommand
+- [ ] `PFSELFTEST` - Run an internal self-test
 
 ## 19. Geo Commands
 
@@ -545,6 +570,24 @@ Geo commands are stored in the Sorted Set type (members scored by geohash).
 - [x] `GEOSEARCH key <FROMMEMBER member | FROMLONLAT longitude latitude> <BYRADIUS radius unit | BYBOX width height unit> [ASC | DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]` - Search within a radius or box
 - [x] `GEOSEARCHSTORE destination source <FROMMEMBER ... | FROMLONLAT ...> <BYRADIUS ... | BYBOX ...> [STOREDIST]` - Store a `GEOSEARCH` result
 - [x] `GEORADIUS` / `GEORADIUSBYMEMBER` (and `_RO` variants) - Deprecated radius queries
+
+## 20. Vector Set Commands (Redis 8.0+)
+
+Vector sets store elements with an associated embedding vector for
+approximate/exact similarity search. Not implemented; gated behind the
+`redis-8.0`+ profiles (Valkey has no vector set type).
+
+- [ ] `VADD key [REDUCE dim] <FP32 | VALUES num> vector element [CAS] [NOQUANT | Q8 | BIN] [EF build-exploration-factor] [SETATTR attributes] [M numlinks]` - Add an element with its vector
+- [ ] `VSIM key <ELE element | FP32 vector | VALUES num vector> [WITHSCORES] [COUNT num] [EF search-exploration-factor] [FILTER expression] [FILTER-EF max-filtering-effort] [TRUTH] [NOTHREAD]` - Search for similar elements
+- [ ] `VREM key element` - Remove an element
+- [ ] `VCARD key` - Return the number of elements
+- [ ] `VDIM key` - Return the vector dimension
+- [ ] `VEMB key element [RAW]` - Return an element's vector
+- [ ] `VGETATTR key element` - Return an element's JSON attributes
+- [ ] `VSETATTR key element json` - Set an element's JSON attributes
+- [ ] `VLINKS key element [WITHSCORES]` - Return an element's HNSW graph neighbors
+- [ ] `VRANDMEMBER key [count]` - Return one or more random elements
+- [ ] `VINFO key` - Return vector set metadata
 
 ## Implementation Notes
 
