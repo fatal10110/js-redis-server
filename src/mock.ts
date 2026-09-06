@@ -74,7 +74,7 @@ function createStandalonePipeline(
  *
  * For tests prefer {@link createRedisMock}, which wraps this and adds seeding,
  * reset-between-tests, and an in-process socketless client. Drop to
- * `js-redis-server/core` only when you need to assemble the pipeline by hand.
+ * `valkey-server/core` only when you need to assemble the pipeline by hand.
  *
  * @see {@link createRedisMock} — the test-mock facade (use this for test suites)
  */
@@ -257,3 +257,6 @@ async function flushCluster(cluster: RedisCluster): Promise<void> {
     node.server.flushAllDatabases()
   }
 }
+
+/** Alias for {@link createRedisMock} — preferred Valkey-first name. */
+export const createValkeyMock = createRedisMock
