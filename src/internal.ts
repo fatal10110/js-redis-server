@@ -1,8 +1,8 @@
 // Deep internals — building blocks for power users who assemble the pipeline by
 // hand (custom commands, policies, transports, schema parsing, Lua, …).
 //
-// Published as the `js-redis-server/core` subpath. The package root
-// (`js-redis-server`) intentionally exposes only the curated consumer facade;
+// Published as the `valkey-server/core` subpath. The package root
+// (`valkey-server`) intentionally exposes only the curated consumer facade;
 // import from this subpath when you need these lower-level pieces.
 
 export type {
