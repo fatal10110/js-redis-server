@@ -5,6 +5,7 @@ import assert from 'node:assert'
 import * as root from '../src'
 import {
   createRedisMock,
+  createValkeyMock,
   createRedisServer,
   createInMemoryClient,
   InMemoryRedisClient,
@@ -18,7 +19,7 @@ import {
   WrongTypeRedisError,
   type RedisMock,
 } from '../src'
-// Hand-wiring building blocks live on the `js-redis-server/core` subpath, NOT
+// Hand-wiring building blocks live on the `valkey-server/core` subpath, NOT
 // on the root.
 import {
   Resp2Server,
@@ -30,6 +31,7 @@ describe('public interface — exported symbols', () => {
   test('facade, builders, and helpers are all exported as the right kind', () => {
     for (const fn of [
       createRedisMock,
+      createValkeyMock,
       createRedisServer,
       createInMemoryClient,
       seedStandalone,
@@ -55,6 +57,10 @@ describe('public interface — exported symbols', () => {
     assert.strictEqual(buildRedisCluster, createRedisCluster)
   })
 
+  test('createValkeyMock is an alias of createRedisMock', () => {
+    assert.strictEqual(createValkeyMock, createRedisMock)
+  })
+
   test('hand-wiring building blocks ARE exported from the core subpath', () => {
     assert.strictEqual(typeof Resp2Server, 'function')
     assert.strictEqual(typeof RedisServerState, 'function')
@@ -73,7 +79,7 @@ describe('public interface — exported symbols', () => {
       assert.strictEqual(
         name in root,
         false,
-        `${name} should only be exported from js-redis-server/core`,
+        `${name} should only be exported from valkey-server/core`,
       )
     }
   })
