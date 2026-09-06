@@ -7,7 +7,7 @@ asking](https://github.com/redis/node-redis/issues)). Both projects sit on the
 same fault line: they fake the **client API**, not the **protocol**. That
 choice causes most of the pain people run into.
 
-`js-redis-server` takes the other path: it's a real RESP2/RESP3 server that
+`valkey-server` takes the other path: it's a real RESP2/RESP3 server that
 runs in-memory, in-process, with zero external dependencies. Your client talks
 to it exactly like it would talk to real Redis — because as far as the wire is
 concerned, it *is* Redis.
@@ -37,7 +37,7 @@ bet when it works, but it means:
 
 ## What "speak the protocol, not the client" buys you
 
-`js-redis-server` is a TCP server that implements RESP2 and RESP3 directly.
+`valkey-server` is a TCP server that implements RESP2 and RESP3 directly.
 Practically, that means:
 
 - **Client-agnostic** — works with `ioredis`, `node-redis`, `redis`, or
@@ -73,7 +73,7 @@ Practically, that means:
 ## Try it
 
 ```bash
-npm install js-redis-server
+npm install valkey-server
 ```
 
 ```typescript
@@ -81,7 +81,7 @@ import {
   RedisServerState,
   createRedisCommandExecutor,
   Resp2Server,
-} from 'js-redis-server/core'
+} from 'valkey-server/core'
 
 const state = new RedisServerState()
 const executor = createRedisCommandExecutor()
@@ -91,7 +91,7 @@ await server.listen(6379)
 // point ioredis, node-redis, or redis-cli at it — it's just Redis on the wire
 ```
 
-Repo: https://github.com/fatal10110/js-redis-server
+Repo: https://github.com/fatal10110/valkey-server
 
 Feedback, command coverage gaps, and PRs welcome — it's still early, and the
 fastest way to find what's missing is people trying it against their real test
