@@ -1,6 +1,6 @@
-# Contributing to js-redis-server
+# Contributing to valkey-server
 
-Thank you for your interest in contributing to js-redis-server!
+Thank you for your interest in contributing to valkey-server!
 
 ## Development Setup
 
