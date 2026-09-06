@@ -5,11 +5,12 @@
 // Deep internals and hand-wiring building blocks (command definitions, schema
 // parsing, execution policies, transports, `Resp2Server` / `RedisServerState` /
 // `createRedisCommandExecutor`, Lua, data-type helpers, …) are intentionally
-// NOT on the root. Import them from the `js-redis-server/core` subpath instead.
+// NOT on the root. Import them from the `valkey-server/core` subpath instead.
 
 // Test-mock facade
 export {
   createRedisMock,
+  createValkeyMock,
   createRedisServer,
   type CreateRedisMockOptions,
   type CreateRedisServerOptions,
