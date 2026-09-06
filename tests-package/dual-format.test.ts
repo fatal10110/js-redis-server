@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 // Validates the published package end-to-end: the `exports` map, the dual
-// ESM + CJS builds, and the `js-redis-server/core` subpath. Resolution goes
+// ESM + CJS builds, and the `valkey-server/core` subpath. Resolution goes
 // through the package *name* (self-reference), so this exercises the real
 // `exports` conditions a consumer hits — not relative dist paths.
 //
@@ -23,6 +23,8 @@ before(() => {
 
 async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(typeof pkg.createRedisMock, 'function')
+  assert.strictEqual(typeof pkg.createValkeyMock, 'function')
+  assert.strictEqual(pkg.createValkeyMock, pkg.createRedisMock)
   assert.strictEqual(typeof pkg.createRedisServer, 'function')
   assert.strictEqual(typeof pkg.createRedisCluster, 'function')
   assert.strictEqual(typeof pkg.createInMemoryClient, 'function')
@@ -31,7 +33,7 @@ async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(pkg.buildRedisCluster, pkg.createRedisCluster)
   assert.strictEqual(typeof pkg.RedisCommandError, 'function')
   // The executor and hand-wiring building blocks are intentionally not part of
-  // the root surface — they live on `js-redis-server/core`.
+  // the root surface — they live on `valkey-server/core`.
   assert.strictEqual('executor' in pkg, false)
   assert.strictEqual('Resp2Server' in pkg, false)
   assert.strictEqual('RedisServerState' in pkg, false)
@@ -61,25 +63,25 @@ function assertCore(core: Record<string, unknown>): void {
 
 describe('package CJS entry (require)', () => {
   test('root works through the require condition', async () => {
-    await assertWorkingRoot(require('js-redis-server'))
+    await assertWorkingRoot(require('valkey-server'))
   })
 
-  test('js-redis-server/core exposes internals only', () => {
-    assertCore(require('js-redis-server/core'))
+  test('valkey-server/core exposes internals only', () => {
+    assertCore(require('valkey-server/core'))
   })
 })
 
 describe('package ESM entry (import)', () => {
   test('root works through the import condition', async () => {
-    const pkg = (await import('js-redis-server')) as unknown as Record<
+    const pkg = (await import('valkey-server')) as unknown as Record<
       string,
       unknown
     >
     await assertWorkingRoot(pkg)
   })
 
-  test('js-redis-server/core exposes internals only', async () => {
-    const core = (await import('js-redis-server/core')) as unknown as Record<
+  test('valkey-server/core exposes internals only', async () => {
+    const core = (await import('valkey-server/core')) as unknown as Record<
       string,
       unknown
     >
