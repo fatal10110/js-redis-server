@@ -1,8 +1,9 @@
 {
-  "name": "js-redis-server",
+  "name": "valkey-server",
   "version": "0.2.0",
-  "description": "In-memory Redis-compatible server implementation in JavaScript, useful for testing and client-agnostic mocks",
+  "description": "In-memory Valkey/Redis-compatible server implementation in JavaScript — Valkey-first mock for testing and client-agnostic mocks",
   "keywords": [
+    "valkey",
     "redis",
     "resp",
     "server",
@@ -17,12 +18,12 @@
   "author": "fatal10110",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fatal10110/js-redis-server.git"
+    "url": "git+https://github.com/fatal10110/valkey-server.git"
   },
   "bugs": {
-    "url": "https://github.com/fatal10110/js-redis-server/issues"
+    "url": "https://github.com/fatal10110/valkey-server/issues"
   },
-  "homepage": "https://github.com/fatal10110/js-redis-server#readme",
+  "homepage": "https://github.com/fatal10110/valkey-server#readme",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -49,7 +50,7 @@
     }
   },
   "bin": {
-    "js-redis-server": "./dist/cli.js"
+    "valkey-server": "./dist/cli.js"
   },
   "sideEffects": false,
   "files": [
