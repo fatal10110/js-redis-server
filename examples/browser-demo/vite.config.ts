@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
-// Demo-only config. Polyfills the one Node builtin the js-redis-server source
+// Demo-only config. Polyfills the one Node builtin the valkey-server source
 // graph still needs in the browser (buffer). `lua-redis-wasm` ≥1.4 ships a
 // browser build with no `node:*` imports (resolved via its `browser` export
 // condition), and main.ts points its WASM + glue at jsDelivr, so there's no fs
@@ -57,7 +57,7 @@ const stripBundledLuaAssets = {
 }
 
 export default defineConfig({
-  base: '/js-redis-server/',
+  base: '/valkey-server/',
   define: { __LUA_WASM_VERSION__: JSON.stringify(luaWasmVersion) },
   plugins: [stripBundledLuaAssets, nodePolyfills()],
   resolve: {
