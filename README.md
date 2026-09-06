@@ -6,16 +6,29 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/js-redis-server.svg)](https://nodejs.org)
 
+**In-memory Redis-compatible server for Node.js tests.** Real RESP over a real
+socket — point ioredis or node-redis at it like production Redis. No binary to
+install, no fake client API.
+
 ▶ **[Try the interactive browser demo](https://fatal10110.github.io/js-redis-server/)** —
 the whole server runs in your browser (no install, no network): type Redis
 commands in an xterm REPL, run Lua `EVAL`, toggle single/cluster mode and watch
 `MOVED` routing, and open multiple tabs that share one keyspace so `MONITOR` /
 `SUBSCRIBE` / `BLPOP` observe each other.
 
-A real, in-memory Redis-compatible server in pure JavaScript. It starts
-instantly with no Redis installation, so **the main use case is testing** — point
-your normal Redis client at it instead of a real Redis, and your tests run fast,
-isolated, and reproducible.
+### vs similar tools
+
+| | **js-redis-server** | [ioredis-mock](https://www.npmjs.com/package/ioredis-mock) | [redis-memory-server](https://www.npmjs.com/package/redis-memory-server) |
+| --- | --- | --- | --- |
+| What it is | Real Redis **protocol server** in pure JS | Fake **client** API that mimics ioredis | Spins up a **real Redis binary** |
+| Your tests talk to | Real TCP + RESP (ioredis / node-redis) | Mocked client methods | Real Redis over TCP |
+| Dependencies | None beyond Node | None | Downloads Redis binary |
+| Cluster / Lua `EVAL` | Implemented in JS | Limited / client-level | Full (real Redis) |
+| Best for | High-fidelity Node tests without a binary | Drop-in ioredis API stub | Tests that need genuine Redis |
+
+```bash
+npm install js-redis-server
+```
 
 ```typescript
 import { createRedisMock } from 'js-redis-server'
@@ -61,10 +74,11 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
 
 ## Why
 
-- **No real Redis to install, start, or clean up** — it's in-memory and starts in milliseconds.
+- **No Redis binary to install, start, or clean up** — pure JS, in-memory, starts in milliseconds.
 - **Isolated and reproducible** — a fresh keyspace per test, reset between tests.
 - **High fidelity** — your real client talks RESP over a real socket, so client-side encoding/parsing is part of the test.
 - **Standalone and cluster** — same API, just pass a `cluster` option.
+- **Protocol server, not a client stub** — unlike ioredis-mock; **no Redis download** — unlike redis-memory-server.
 
 ## Features
 
