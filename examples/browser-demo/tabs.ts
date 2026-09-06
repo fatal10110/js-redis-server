@@ -12,10 +12,6 @@ const GREEN = (s: string) => `\x1b[32m${s}\x1b[0m`
 const CYAN = (s: string) => `\x1b[36m${s}\x1b[0m`
 const HINT = (s: string) => `\x1b[90m${s}\x1b[0m` // grey, like redis-cli
 
-// Argument syntax shown dimly after the cursor once a command is recognised,
-// mirroring redis-cli. Demo-scoped — covers the commands the Try panel suggests.
-// ponytail: static map, not COMMAND DOCS — the mock's docs metadata omits most
-// optional args, so it can't produce these. Extend the map as the demo grows.
 const HINTS: Record<string, string> = {
   set: 'key value [NX|XX] [GET] [EX seconds|PX ms|EXAT ts|PXAT ts|KEEPTTL]',
   get: 'key',
@@ -44,7 +40,7 @@ const HINTS: Record<string, string> = {
 
 interface TabOptions {
   title: string
-  autoRun?: string // a command to run on open (e.g. "MONITOR")
+  autoRun?: string
 }
 
 class Tab {
@@ -83,7 +79,7 @@ class Tab {
     this.term.open(this.element)
     this.term.writeln(
       DIM(
-        `js-redis-server — ${this.backend.mode} mode. Type Redis commands; ` +
+        `valkey-server — ${this.backend.mode} mode. Type Redis commands; ` +
           `try SET/GET, HSET, EVAL, SUBSCRIBE, MONITOR, BLPOP.`,
       ),
     )
@@ -91,7 +87,6 @@ class Tab {
   }
 
   async runAuto(command: string): Promise<void> {
-    // open() has already drawn the prompt; echo the command onto it.
     this.term.writeln(command)
     await this.execute(command)
   }
@@ -118,11 +113,10 @@ class Tab {
 
     switch (data) {
       case '\r':
-        // Redraw without the inline hint (\x1b[K erases it), then commit.
         this.term.write('\r' + this.promptText() + this.line + '\x1b[K\r\n')
         await this.submit()
         return
-      case '\x7f': // backspace
+      case '\x7f':
         if (this.cursor > 0) {
           this.line =
             this.line.slice(0, this.cursor - 1) + this.line.slice(this.cursor)
@@ -130,23 +124,23 @@ class Tab {
           this.render()
         }
         return
-      case '\x03': // Ctrl-C
+      case '\x03':
         this.term.write('\r' + this.promptText() + this.line + '\x1b[K^C')
         this.prompt()
         return
-      case '\x1b[A': // up
+      case '\x1b[A':
         this.recall(-1)
         return
-      case '\x1b[B': // down
+      case '\x1b[B':
         this.recall(1)
         return
-      case '\x1b[C': // right
+      case '\x1b[C':
         if (this.cursor < this.line.length) {
           this.cursor++
           this.term.write('\x1b[C')
         }
         return
-      case '\x1b[D': // left
+      case '\x1b[D':
         if (this.cursor > 0) {
           this.cursor--
           this.term.write('\x1b[D')
@@ -164,9 +158,7 @@ class Tab {
     }
   }
 
-  // ponytail: full-line redraw per keystroke, O(line length) — fine for a REPL.
   private render(): void {
-    // Hint only when the cursor sits at the end of the line, like redis-cli.
     const hint = this.cursor === this.line.length ? this.hintFor(this.line) : ''
     this.term.write(
       '\r' + this.promptText() + '\x1b[K' + this.line + (hint && HINT(hint)),
@@ -222,8 +214,6 @@ class Tab {
     if (!res.ok) {
       this.term.writeln(RED('(error) ' + res.error))
     } else if (res.streaming) {
-      // Print the subscribe/psubscribe confirmation reply first, like redis-cli,
-      // then begin streaming pushes.
       this.term.writeln(formatReply(res.reply as Reply))
       this.startStreaming()
       return
@@ -279,8 +269,6 @@ export class TabManager {
     this.select(0)
   }
 
-  // Show this manager's tabs again after another server was active: redraw the
-  // shared tab bar and re-focus the current tab.
   activate(): void {
     this.select(this.active < 0 ? 0 : this.active)
   }
