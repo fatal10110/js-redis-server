@@ -141,7 +141,7 @@ function createLogger(debug = false): Logger {
 }
 
 function printHelp() {
-  console.log(`Usage: js-redis-server [options]
+  console.log(`Usage: valkey-server [options]
 
 Modes:
   --single               Run a single Redis server (default)
