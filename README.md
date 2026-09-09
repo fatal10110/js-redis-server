@@ -2,557 +2,168 @@
 
 [![CI](https://github.com/fatal10110/js-redis-server/actions/workflows/ci.yml/badge.svg)](https://github.com/fatal10110/js-redis-server/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/js-redis-server.svg)](https://www.npmjs.com/package/js-redis-server)
-[![npm downloads](https://img.shields.io/npm/dm/js-redis-server.svg)](https://www.npmjs.com/package/js-redis-server)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/js-redis-server.svg)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**An in-memory Redis-compatible server implemented in JavaScript/TypeScript
-for Node.js tests.** Use real ioredis or node-redis clients over TCP and RESP,
-without installing a Redis binary or running Docker. Lua scripting uses
-WebAssembly.
+**An in-memory Redis-compatible server implemented in JavaScript/TypeScript.**
+Run it from the CLI, start a TCP server from code, or use a socketless mock.
+No native Redis binary or Docker required. Lua scripting runs via WebAssembly.
 
-▶ **[Try the interactive browser demo](https://fatal10110.github.io/js-redis-server/)** —
-the server executes locally in your browser (no Redis backend): type Redis
-commands in an xterm REPL, run Lua `EVAL`, toggle single/cluster mode and watch
-`MOVED` routing, and open multiple tabs that share one keyspace so `MONITOR` /
-`SUBSCRIBE` / `BLPOP` observe each other.
+[Try the browser demo](https://fatal10110.github.io/js-redis-server/) ·
+[Supported commands](https://github.com/fatal10110/js-redis-server/blob/main/docs/COMMANDS.md) · [Testing guide](https://github.com/fatal10110/js-redis-server/blob/main/docs/TESTING.md) ·
+[Server API](https://github.com/fatal10110/js-redis-server/blob/main/docs/API.md)
 
-### vs similar tools
+## Choose how to run it
 
-| | **js-redis-server** | [ioredis-mock](https://www.npmjs.com/package/ioredis-mock) | [redis-memory-server](https://www.npmjs.com/package/redis-memory-server) |
-| --- | --- | --- | --- |
-| What it is | Redis-compatible **protocol server** in JavaScript/TypeScript | **Client API mock** that mimics ioredis | Starts a **real Redis binary** |
-| Your tests talk to | Real TCP + RESP (ioredis / node-redis) | Mocked client methods | Real Redis over TCP |
-| Redis binary required | No | No | Yes |
-| Best for | Real-client tests without a Redis binary | ioredis API-level tests | Tests that need genuine Redis |
+| Mode                                                      | Entry point                                 | Real TCP? |
+| --------------------------------------------------------- | ------------------------------------------- | --------- |
+| CLI server for local development                          | `npx js-redis-server`                       | Yes       |
+| Server started from code / isolated test server           | `createRedisServer()` / `createRedisMock()` | Yes       |
+| Socketless mock backed by the same command implementation | `createIoredisMock()`                       | No        |
 
-The server has its own command implementation and compatibility limits; it is
-not the native Redis or Valkey engine. It depends on `cluster-key-slot` and
-`lua-redis-wasm`, with Lua running via WebAssembly. Keep real-server integration
-tests for production compatibility and failure behavior.
+TCP mode lets unmodified ioredis or node-redis clients connect normally.
+Socketless mode runs entirely in-process; it does not open a listening port
+or make a real TCP connection.
+
+## Install
+
+Requires **Node.js 22+**. Examples below use ESM: save JavaScript snippets as
+`.mjs` files and run them with `node`.
 
 ```bash
-npm install --save-dev js-redis-server ioredis
+npm install --save-dev js-redis-server
 ```
 
-```typescript
+For the ioredis examples, also install its supported major version:
+
+```bash
+npm install --save-dev ioredis@5
+```
+
+The upcoming `0.3.0` release adds `js-valkey-server` as an alternative package
+name and `createValkeyMock` as an alias of `createRedisMock`. Publication is
+pending; use `js-redis-server` for now. The existing package and GitHub repository
+are not being renamed or deprecated.
+
+## 1. Run from the CLI
+
+```bash
+npx js-redis-server --port 6380
+```
+
+Connect your application to `redis://127.0.0.1:6380`; press Ctrl+C to stop.
+The default port is 6379. For a cluster or the full option list:
+
+```bash
+npx js-redis-server --cluster --masters 3 --base-port 30000
+npx js-redis-server --help
+```
+
+[CLI options](https://github.com/fatal10110/js-redis-server/blob/main/docs/API.md#cli)
+
+## 2. Start a TCP server from code
+
+`createRedisServer()` starts listening immediately. This example stays running
+until Ctrl+C so another process can connect:
+
+```javascript
+import { once } from 'node:events'
+import { createRedisServer } from 'js-redis-server'
+
+const server = await createRedisServer({ port: 6380 })
+try {
+  console.log(`Connect to redis://${server.host}:${server.port}`)
+  await once(process, 'SIGINT')
+} finally {
+  await server.close()
+}
+```
+
+Omit `port` to choose an available port. Call `await server.close()` when your
+application is done. [Server and cluster API](https://github.com/fatal10110/js-redis-server/blob/main/docs/API.md)
+
+### Use a TCP server in tests
+
+`createRedisMock()` adds a connection URL, seeding, and reset helpers around
+the listening server. **It still uses real TCP.** Here is a complete
+`node:test` example; save it as `redis.test.mjs` and run
+`node --test redis.test.mjs`:
+
+```javascript
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { Redis } from 'ioredis'
 import { createRedisMock } from 'js-redis-server'
-import { Redis } from 'ioredis'
 
-const mock = await createRedisMock()
-const redis = new Redis(mock.addresses()[0])
+test('stores a value', async t => {
+  const mock = await createRedisMock()
+  let client
+  t.after(async () => {
+    client?.disconnect()
+    await mock.close()
+  })
+  client = new Redis(mock.url)
 
-await redis.set('foo', 'bar')
-await redis.get('foo') // 'bar'
-
-redis.disconnect()
-await mock.close()
-```
-
-That's the recommended path: a real server + your real client over a real
-socket, so your client's own encoding and parsing are exercised exactly as in
-production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests).
-
-## Table of Contents
-
-- [Why](#why)
-- [Features](#features)
-- [Installation](#installation)
-- [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests)
-  - [Connecting your client](#connecting-your-client)
-  - [node:test](#nodetest)
-  - [vitest / jest](#vitest--jest)
-  - [Cluster mocks](#cluster-mocks)
-  - [Compatibility profiles](#compatibility-profiles)
-  - [Seeding](#seeding)
-  - [`createRedisMock` options](#createredismock-options)
-- [Experimental: socketless client mocks](#experimental-socketless-client-mocks)
-  - [`createIoredisMock` — ioredis-mock replacement](#createioredismock--ioredis-mock-replacement)
-  - [`createNodeRedisMock` — node-redis in-memory mock](#createnoderedismock--node-redis-in-memory-mock)
-  - [`createInMemoryClient` — our own socketless client](#createinmemoryclient--our-own-socketless-client)
-- [Running a server (not a test mock)](#running-a-server-not-a-test-mock)
-- [Supported Commands](docs/COMMANDS.md)
-- [Requirements](#requirements)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Why
-
-- **No Redis binary to install, start, or clean up** — the JavaScript server runs in-process and keeps its data in memory.
-- **Isolated and reproducible** — a fresh keyspace per test, reset between tests.
-- **High fidelity** — your real client talks RESP over a real socket, so client-side encoding/parsing is part of the test.
-- **Standalone and cluster** — same API, just pass a `cluster` option.
-- **Protocol server, not a client stub** — unlike ioredis-mock; **no Redis download** — unlike redis-memory-server.
-
-## Features
-
-- **RESP2 and RESP3 protocols** - Per-session version negotiation via `HELLO`
-- **Standalone and Cluster modes** - Run a single server or a full cluster
-- **Redis / Valkey compatibility profiles** - Pin implemented command behavior to
-  older Redis or Valkey versions
-- **Lua scripting support** - Execute Redis Lua scripts via WebAssembly
-- **No Redis installation required** - JavaScript server with Lua via WebAssembly; no Redis binary or Docker needed
-- **TypeScript support** - Ships with full type definitions
-
-## Installation
-
-```bash
-npm install js-redis-server
-```
-
-Starting with the next release, **0.3.0**, the same implementation is also
-published as `js-valkey-server`. Choose one package; you do not need both:
-
-```bash
-npm install js-valkey-server
-```
-
-Both names share the same version, API, compatibility defaults, and GitHub
-repository. `js-redis-server` remains supported and is not deprecated. The
-repository and browser demo URLs are unchanged.
-
-Both packages export `createRedisMock` and `createValkeyMock`; the latter is an
-alias, not a different engine or default compatibility profile:
-
-```typescript
-import { createValkeyMock } from 'js-valkey-server'
-
-const mock = await createValkeyMock({ compatibility: 'valkey-9.0' })
-// Connect your normal client to mock.url.
-await mock.close()
-```
-
-The `/core` subpath is available under either package name. Each package also
-provides its matching CLI: `npx js-redis-server` or `npx js-valkey-server`.
-Neither package downloads or wraps the official Redis/Valkey binary; the
-server is implemented in JavaScript/TypeScript and Lua uses WebAssembly.
-
-## Use as a Redis mock in tests
-
-`createRedisMock()` owns the whole lifecycle: it spins up a standalone server
-(16 databases, random free port) or a whole cluster, seeds data, and resets
-between tests — you just connect your real client library to it.
-
-`RedisMock` surface:
-
-| Member                  | Description                                                                         |
-| :---------------------- | :---------------------------------------------------------------------------------- |
-| `host` / `port` / `url` | Connection coordinates of the (first) node.                                         |
-| `addresses()`           | `{ host, port }[]` — one entry standalone, every node for cluster. Client-agnostic. |
-| `seed(entries)`         | Preload data (see [Seeding](#seeding)).                                             |
-| `flush()` / `reset()`   | Clear all keyspace data between tests.                                              |
-| `close()`               | Shut down the server / cluster.                                                     |
-| `state` / `nodes`       | Escape hatches to the underlying `RedisServerState` / node handles.                 |
-
-### Connecting your client
-
-A mock is a real server on a random free port, so connect any standard client
-to `mock.addresses()` / `mock.url`:
-
-```typescript
-// ioredis
-import { Redis } from 'ioredis'
-const redis = new Redis(mock.addresses()[0])
-
-// node-redis
-import { createClient } from 'redis'
-const client = createClient({ url: mock.url })
-await client.connect()
-```
-
-Connections start on RESP2 and upgrade to RESP3 when the client asks for it
-(ioredis sends `HELLO 3`; node-redis takes a `RESP: 3` option) — negotiated
-per-connection, no special setup.
-
-### node:test
-
-```typescript
-import { test, beforeEach, afterEach } from 'node:test'
-import assert from 'node:assert'
-import { Redis } from 'ioredis'
-import { createRedisMock, type RedisMock } from 'js-redis-server'
-
-let mock: RedisMock
-let client: Redis
-
-beforeEach(async () => {
-  mock = await createRedisMock()
-  client = new Redis(mock.addresses()[0])
-})
-
-afterEach(async () => {
-  client.disconnect()
-  await mock.close()
-})
-
-test('basic set/get operations', async () => {
-  await client.set('foo', 'bar')
-  assert.strictEqual(await client.get('foo'), 'bar')
+  await client.set('greeting', 'hello')
+  assert.equal(await client.get('greeting'), 'hello')
 })
 ```
 
-### vitest / jest
+Use a fresh mock per test, or `await mock.flush()` between tests. Close all
+clients before closing their server. For apps that connect at import time,
+supply the mock URL before importing the app.
 
-```typescript
-import { beforeEach, afterEach, test, expect } from 'vitest' // or '@jest/globals'
-import { Redis } from 'ioredis'
-import { createRedisMock, type RedisMock } from 'js-redis-server'
+[node-redis, Vitest/Jest, seeding and options](https://github.com/fatal10110/js-redis-server/blob/main/docs/TESTING.md)
 
-let mock: RedisMock
-let client: Redis
+## 3. Mock without real TCP
 
-beforeEach(async () => {
-  mock = await createRedisMock()
-  await mock.seed([{ key: 'counter', type: 'string', value: 1 }])
-  client = new Redis(mock.addresses()[0])
-})
+`createIoredisMock()` connects a real ioredis client to the in-memory command
+pipeline through a virtual socket. No Redis process, listening port, or real
+TCP connection is involved:
 
-afterEach(async () => {
-  client.disconnect()
-  await mock.close()
-})
-
-test('increments a seeded counter', async () => {
-  expect(await client.incr('counter')).toBe(2)
-})
-```
-
-Prefer a fresh `createRedisMock()` per test for full isolation; to reuse one
-instance across a file, call `await mock.flush()` in `afterEach` instead.
-
-### Cluster mocks
-
-Same facade — pass `cluster`, then point a cluster client at every node via
-`mock.addresses()`:
-
-```typescript
-const mock = await createRedisMock({ cluster: { masters: 3, replicas: 1 } })
-```
-
-```typescript
-// ioredis
-const cluster = new Redis.Cluster(mock.addresses())
-```
-
-```typescript
-// node-redis
-import { createCluster } from 'redis'
-const cluster = createCluster({
-  rootNodes: mock
-    .addresses()
-    .map(n => ({ url: `redis://${n.host}:${n.port}` })),
-})
-await cluster.connect()
-```
-
-### Compatibility profiles
-
-By default the mock exposes the newest implemented Redis behavior. Pass
-`compatibility` when a test needs to match an older Redis or Valkey target:
-
-```typescript
-const redis62 = await createRedisMock({ compatibility: 'redis-6.2' })
-
-const valkeyCluster = await createRedisMock({
-  cluster: { masters: 3 },
-  compatibility: 'valkey-9.0',
-})
-```
-
-Profiles gate implemented commands, subcommands, options, and known behavioral
-differences. For example, `EXPIRETIME key` is unavailable under `redis-6.2` but
-available under newer Redis profiles. Unsupported commands remain unsupported
-regardless of profile. See the current gate matrix in
-[Compatibility Profiles](docs/API.md#compatibility-profiles).
-
-Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
-`redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
-
-Valkey profiles model the Redis 7.0-era gates as enabled:
-
-| Profile | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate |
-| --- | --- | --- |
-| `valkey-8.0` | enabled | cluster multi-DB disabled |
-| `valkey-9.0` | enabled | cluster multi-DB enabled |
-
-### Seeding
-
-`seed()` takes an explicit entries array — you supply keys, types, values, and
-optional `ttlMs` / `db`; the mock owns placement (including cluster slot
-routing) and the internal value conversion.
-
-```typescript
-const mock = await createRedisMock()
-
-await mock.seed([
-  { key: 'user:1', type: 'string', value: 'alice' },
-  { key: 'counter', type: 'string', value: 42 },
-  { key: 'h:1', type: 'hash', value: { name: 'bob', age: 30 } },
-  { key: 'l:1', type: 'list', value: ['a', 'b', 1] },
-  { key: 's:1', type: 'set', value: ['x', 'y'] },
-  { key: 'z:1', type: 'zset', value: { a: 1, b: 2 } },
-  { key: 'ttl:1', type: 'string', value: 'temp', ttlMs: 50_000 },
-  { key: 'in-db-3', type: 'string', value: 'scoped', db: 3 },
-])
-
-// any client connected to the mock now sees the seeded keys
-// (e.g. new Redis(mock.addresses()[0]) — GET user:1 → 'alice')
-```
-
-Each entry's shape is checked against its `type`:
-
-```typescript
-type SeedEntry =
-  | {
-      key: string
-      type: 'string'
-      value: string | number
-      ttlMs?: number
-      db?: number
-    }
-  | {
-      key: string
-      type: 'hash'
-      value: Record<string, string | number>
-      ttlMs?: number
-      db?: number
-    }
-  | {
-      key: string
-      type: 'list'
-      value: (string | number)[]
-      ttlMs?: number
-      db?: number
-    }
-  | {
-      key: string
-      type: 'set'
-      value: (string | number)[]
-      ttlMs?: number
-      db?: number
-    }
-  | {
-      key: string
-      type: 'zset'
-      value: Record<string, number>
-      ttlMs?: number
-      db?: number
-    }
-```
-
-`db` selects the logical database (standalone mocks). Streams are not seedable
-yet. For anything beyond these shapes, drive your client directly or reach for
-the `mock.state` escape hatch.
-
-### `createRedisMock` options
-
-```typescript
-createRedisMock(options?: CreateRedisMockOptions): Promise<RedisMock>
-```
-
-| Parameter       | Type                                     | Default       | Description                                                  |
-| :-------------- | :--------------------------------------- | :------------ | :----------------------------------------------------------- |
-| `cluster`       | `{ masters: number; replicas?: number }` | `undefined`   | When set, builds a cluster mock instead of a standalone one. |
-| `databaseCount` | `number`                                 | `16`          | Standalone-only: logical database count.                     |
-| `compatibility` | `CompatibilitySpec`                      | `'redis-8.0'` | Redis / Valkey compatibility profile.                        |
-| `port`          | `number`                                 | `0`           | Standalone bind port (`0` = OS-assigned).                    |
-| `basePort`      | `number`                                 | `0`           | Cluster base port (`0` = each node OS-assigned).             |
-| `logger`        | `Pick<Logger, 'error'>`                  | `undefined`   | Optional logger.                                             |
-
-## Experimental: socketless client mocks
-
-> ⚠️ **Not recommended.** These return a client object directly — no socket, no
-> port — so they skip the real network round-trip and (in some cases) real RESP
-> encoding. They're faster and need no `addresses()` wiring, but they're
-> **lower fidelity** than the recommended path and the surfaces are still
-> evolving. Prefer [`createRedisMock`](#use-as-a-redis-mock-in-tests) + a real
-> client unless you have a specific reason not to.
-
-Three flavours, depending on which client you want to look like:
-
-| Helper                 | Looks like      | How                                                        |
-| :--------------------- | :-------------- | :--------------------------------------------------------- |
-| `createIoredisMock`    | `ioredis`       | the **real** ioredis client over a fake `net.Socket`       |
-| `createNodeRedisMock`  | `node-redis`    | a hand-written facade mirroring node-redis' public surface |
-| `createInMemoryClient` | our own bespoke | a thin client that returns native JS replies, no RESP      |
-
-### `createIoredisMock` — ioredis-mock replacement
-
-A drop-in alternative to the [`ioredis-mock`](https://www.npmjs.com/package/ioredis-mock)
-library. `createIoredisMock()` returns a **real** `ioredis` client wired to the
-in-memory pipeline over a fake `net.Socket` — no TCP port, no loopback. Because
-it's the genuine client speaking real RESP, typed methods, pipelines, `multi`,
-pub/sub, and `scanStream` all work unchanged. `ioredis` is an optional peer
-dependency, imported lazily — install `ioredis` yourself to use this helper.
-
-```typescript
+```javascript
 import { createIoredisMock } from 'js-redis-server'
-import type { Redis } from 'ioredis'
 
-const redis = (await createIoredisMock()) as Redis // 16 logical DBs by default
-
-await redis.set('k', 'v')
-await redis.get('k') // 'v'
-await redis.hset('h', 'f1', 'a', 'f2', 'b')
-await redis.hgetall('h') // { f1: 'a', f2: 'b' }
-
-await redis.quit() // tears down the in-memory state
+const client = await createIoredisMock()
+try {
+  await client.set('greeting', 'hello')
+  console.log(await client.get('greeting')) // hello
+} finally {
+  await client.quit()
+}
 ```
 
-Pass `cluster` for a real `Cluster` client; keyed commands follow `MOVED`
-in-process across the synthetic nodes:
+This helper is **experimental**: it exercises ioredis' RESP handling but skips
+the operating-system network path. It is not a guaranteed drop-in replacement
+for every `ioredis-mock` test or every Redis behavior.
 
-```typescript
-import type { Cluster } from 'ioredis'
+Also available: `createNodeRedisMock()` provides a node-redis-shaped facade
+(not the real node-redis client); `createInMemoryClient()` exposes a
+client-independent `command()` API with native JavaScript replies and no RESP
+encoding. [Socketless APIs and examples](https://github.com/fatal10110/js-redis-server/blob/main/docs/TESTING.md#experimental-socketless-client-mocks)
 
-const cluster = (await createIoredisMock({
-  cluster: { masters: 3, replicasPerMaster: 1 }, // replicasPerMaster optional
-})) as Cluster
+## Capabilities and limits
 
-await cluster.set('alpha', '1') // routed to its owning master
-await cluster.get('alpha') // '1'
+- Standalone and cluster modes; RESP2 and RESP3; Lua scripting via WebAssembly.
+- Strings, hashes, lists, sets, sorted sets, streams, transactions and pub/sub:
+  check [command coverage](https://github.com/fatal10110/js-redis-server/blob/main/docs/COMMANDS.md) for specific operations.
+- Redis/Valkey compatibility profiles gate implemented behavior; the default
+  is `redis-8.0`. [Profiles and differences](https://github.com/fatal10110/js-redis-server/blob/main/docs/API.md#compatibility-profiles)
+- TypeScript definitions and both ESM/CommonJS exports are included.
+- This is a separate in-memory implementation, **not the native Redis/Valkey
+  engine or a production datastore**. Keep real-server tests for compatibility,
+  persistence, failover, timing and failure behavior.
+- Unlike an API-only client mock, TCP mode exercises the real client and wire
+  protocol. Unlike a binary-backed test server, it does not run genuine Redis.
 
-await cluster.quit()
-```
+## Documentation and contributing
 
-Preload data with a `seed` array (same [`SeedEntry`](#seeding) shapes as
-`createRedisMock().seed()`). The keyspace is populated before the client
-connects, so it's ready on the first command. In cluster mode each key is
-routed to its slot-owning master:
+- [Testing guide](https://github.com/fatal10110/js-redis-server/blob/main/docs/TESTING.md) — clients, test frameworks, seeding, reset and socketless APIs
+- [Server API and CLI](https://github.com/fatal10110/js-redis-server/blob/main/docs/API.md) — standalone, cluster, profiles and low-level building blocks
+- [Supported commands](https://github.com/fatal10110/js-redis-server/blob/main/docs/COMMANDS.md) · [Architecture](https://github.com/fatal10110/js-redis-server/blob/main/docs/ARCHITECTURE.md)
+- [Contributing](https://github.com/fatal10110/js-redis-server/blob/main/CONTRIBUTING.md) · [Integration test setup](https://github.com/fatal10110/js-redis-server/blob/main/docs/TEST-INTEGRATION.md)
 
-```typescript
-const redis = (await createIoredisMock({
-  seed: [
-    { key: 'user:1', type: 'string', value: 'alice' },
-    { key: 'h:1', type: 'hash', value: { name: 'bob', age: 30 } },
-    { key: 'temp', type: 'string', value: 'x', ttlMs: 50_000 },
-  ],
-})) as Redis
+For repository development, use **Node.js 24**, as CI does. Run `npm ci`,
+`npm run build`, `npm test` and `npm run lint`. Runtime consumers require Node.js
+22 or newer.
 
-await redis.get('user:1') // 'alice'
-
-// cluster: createIoredisMock({ cluster: { masters: 3 }, seed: [...] })
-```
-
-### `createNodeRedisMock` — node-redis in-memory mock
-
-node-redis exposes no socket hook, so this can't drive the real client over a
-virtual socket the way `createIoredisMock` does. Instead `createNodeRedisMock()`
-returns a **hand-written facade** that mirrors node-redis' public surface — a
-curated set of camelCase methods with node-redis-correct return types — and
-routes every command through the same in-memory pipeline. Anything not curated
-falls through to the generic `sendCommand()` escape hatch, which decodes replies
-to native JS.
-
-```typescript
-import { createNodeRedisMock } from 'js-redis-server'
-
-const client = await createNodeRedisMock() // 16 logical DBs by default
-
-await client.set('k', 'v')
-await client.get('k') // 'v'
-await client.sendCommand(['HSET', 'h', 'f1', 'a']) // escape hatch
-
-await client.quit() // tears down the in-memory state
-```
-
-Pass `cluster` for a cluster facade; keyed commands route by slot in-process:
-
-```typescript
-const cluster = await createNodeRedisMock({
-  cluster: { masters: 3, replicas: 1 },
-})
-
-await cluster.set('alpha', '1')
-await cluster.get('alpha') // '1'
-
-await cluster.quit()
-```
-
-### `createInMemoryClient` — our own socketless client
-
-If you don't need to look like any particular client library,
-`createInMemoryClient()` returns an in-process client with its **own** keyspace
-that drives the command pipeline directly — no TCP loopback, no RESP encoding —
-and resolves to native JS replies (throwing `RedisCommandError` on `-ERR`).
-Standalone only.
-
-```typescript
-import { createInMemoryClient } from 'js-redis-server'
-
-const client = await createInMemoryClient({
-  // databaseCount?, database?, returnBuffers?, seed?
-})
-
-await client.command('SET', 'k', 'v')
-await client.command('GET', 'k') // 'v'
-await client.command('INCR', 'n') // 1 (number)
-await client.command('HGETALL', 'h') // { field: 'value', ... }
-
-client.close() // tears down its keyspace
-```
-
-It takes the same `seed` array as `createRedisMock().seed()` to pre-populate its
-keyspace before the first command. Need to drive an existing `createRedisMock()`'s
-keyspace instead of an independent one? Construct `InMemoryRedisClient` directly
-with that mock's `state` and an executor from `js-redis-server/core`.
-
-## Running a server (not a test mock)
-
-Need a real, **listening** server a separate process connects to (a CLI, a dev
-tool), or want to assemble the pipeline by hand with custom commands/policies?
-That lives in the **[Server & Low-Level API](docs/API.md)** doc:
-`createRedisServer`, `createRedisCluster`, the CLI, `Resp2Server`,
-`RedisServerState`, and package entry points.
-
-## Requirements
-
-- Node.js >= 24
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Run tests
-npm test
-
-# Lint and format
-npm run lint
-npm run format
-
-# Run integration tests (mock backend)
-npm run test:integration:mock
-
-# Run integration tests (real Redis)
-# Requires a Redis cluster — start one with docker-compose.test.yml first:
-#   docker compose -f docker-compose.test.yml up -d --wait
-npm run test:integration:real
-
-# Run all tests
-npm run test:all
-```
-
-> **CI** runs four jobs on every push and pull request: lint + format check,
-> unit tests, mock-backend integration tests, and real-backend integration
-> tests against a Redis cluster spun up via `docker-compose.test.yml`.
-
-## Further Documentation
-
-- [Server & Low-Level API](docs/API.md) — running a listening server, the CLI, cluster builders, and the `core` building blocks
-- [Architecture](docs/ARCHITECTURE.md) — layers, command pipeline, execution policies, cluster routing, RESP2/RESP3, and diagrams
-- [Detailed Command Implementation Status](docs/COMMANDS.md)
-- [Integration Testing Infrastructure](docs/TEST-INTEGRATION.md)
-
-## Contributing
-
-Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTING.md) before submitting a pull request.
-
-## License
-
-MIT - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).

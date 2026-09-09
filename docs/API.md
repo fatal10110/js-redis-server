@@ -1,11 +1,11 @@
 # Server & Low-Level API
 
-The [README](../README.md) covers the primary use case — an in-memory Redis
-mock for tests. This document covers the rest: running a **real, listening**
-server, building a cluster, and assembling the pipeline by hand.
+The [README](../README.md) introduces CLI, TCP and socketless usage. This
+reference covers listening TCP servers, clusters, and low-level APIs. All
+modes use the JavaScript implementation, not a native Redis binary.
 
-> Most users never need anything here. If you're writing tests, use
-> [`createRedisMock`](../README.md#use-as-a-redis-mock-in-tests).
+For test lifecycle helpers, seeding and socketless APIs, see the
+[testing guide](TESTING.md).
 
 ## Table of Contents
 
