@@ -103,6 +103,23 @@ npm run test:all
 - Update documentation if needed
 - Ensure CI passes before requesting review
 
+## Releasing both npm packages
+
+`js-redis-server` and `js-valkey-server` share this repository, version, source,
+and API. Neither name replaces the other. Keep the checked-in package name
+`js-redis-server`; the release workflow selects the other name and its matching
+CLI in a separate job, after installing dependencies from the shared lockfile.
+
+Update the version in `package.json` and `package-lock.json` together. After CI
+passes, a `v<version>` tag runs both publish jobs. The tag must match the package
+version. The `NPM_TOKEN` secret needs permission to publish **both** names;
+verify access to `js-valkey-server` before the first release.
+
+Each job builds and tests its selected identity, including CommonJS, ESM, and
+`/core`. npm cannot publish two packages atomically: if one job publishes and
+the other fails, rerun only the failed job after resolving the failure. Do not
+deprecate either package or change the GitHub repository/demo URLs.
+
 ## Questions?
 
 Feel free to open an issue for any questions or discussions.

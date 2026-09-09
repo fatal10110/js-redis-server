@@ -101,6 +101,33 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
 npm install js-redis-server
 ```
 
+Starting with the next release, **0.3.0**, the same implementation is also
+published as `js-valkey-server`. Choose one package; you do not need both:
+
+```bash
+npm install js-valkey-server
+```
+
+Both names share the same version, API, compatibility defaults, and GitHub
+repository. `js-redis-server` remains supported and is not deprecated. The
+repository and browser demo URLs are unchanged.
+
+Both packages export `createRedisMock` and `createValkeyMock`; the latter is an
+alias, not a different engine or default compatibility profile:
+
+```typescript
+import { createValkeyMock } from 'js-valkey-server'
+
+const mock = await createValkeyMock({ compatibility: 'valkey-9.0' })
+// Connect your normal client to mock.url.
+await mock.close()
+```
+
+The `/core` subpath is available under either package name. Each package also
+provides its matching CLI: `npx js-redis-server` or `npx js-valkey-server`.
+Neither package downloads or wraps the official Redis/Valkey binary; the
+server is implemented in JavaScript/TypeScript and Lua uses WebAssembly.
+
 ## Use as a Redis mock in tests
 
 `createRedisMock()` owns the whole lifecycle: it spins up a standalone server

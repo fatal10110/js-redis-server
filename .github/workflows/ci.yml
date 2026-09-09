@@ -54,6 +54,32 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+  packages:
+    name: package (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [js-redis-server, js-valkey-server]
+    env:
+      NPM_PACKAGE_NAME: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+      - run: npm ci
+      - name: Select npm package identity
+        run: |
+          npm pkg set "name=$NPM_PACKAGE_NAME"
+          npm pkg delete bin
+          npm pkg set "bin.$NPM_PACKAGE_NAME=./dist/cli.js"
+      - name: Verify both module formats and package contents
+        run: |
+          npm run test:package
+          npm pack --dry-run --ignore-scripts
+
   integration:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest

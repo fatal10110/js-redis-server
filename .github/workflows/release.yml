@@ -8,6 +8,12 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [js-redis-server, js-valkey-server]
+    env:
+      NPM_PACKAGE_NAME: ${{ matrix.package }}
 
     permissions:
       contents: read
@@ -27,6 +33,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify release tag matches package version
+        run: node -e 'require("node:assert/strict").equal(process.env.GITHUB_REF_NAME, "v" + require("./package.json").version)'
+
+      - name: Select npm package identity
+        run: |
+          npm pkg set "name=$NPM_PACKAGE_NAME"
+          npm pkg delete bin
+          npm pkg set "bin.$NPM_PACKAGE_NAME=./dist/cli.js"
+
       - name: Build
         run: npm run build
 
@@ -35,7 +50,7 @@ jobs:
 
       - name: Verify dual ESM/CJS package
         # Resolves the built package by name through both the `require` and
-        # `import` conditions for the root and the `js-redis-server/core`
+        # `import` conditions for the root and the selected package's `/core`
         # subpath — guards the exports map and dual output before publish.
         run: npm run test:package
 
