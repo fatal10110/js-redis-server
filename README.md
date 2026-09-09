@@ -6,16 +6,34 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/js-redis-server.svg)](https://nodejs.org)
 
+**An in-memory Redis-compatible server implemented in JavaScript/TypeScript
+for Node.js tests.** Use real ioredis or node-redis clients over TCP and RESP,
+without installing a Redis binary or running Docker. Lua scripting uses
+WebAssembly.
+
 ▶ **[Try the interactive browser demo](https://fatal10110.github.io/js-redis-server/)** —
-the whole server runs in your browser (no install, no network): type Redis
+the server executes locally in your browser (no Redis backend): type Redis
 commands in an xterm REPL, run Lua `EVAL`, toggle single/cluster mode and watch
 `MOVED` routing, and open multiple tabs that share one keyspace so `MONITOR` /
 `SUBSCRIBE` / `BLPOP` observe each other.
 
-A real, in-memory Redis-compatible server in pure JavaScript. It starts
-instantly with no Redis installation, so **the main use case is testing** — point
-your normal Redis client at it instead of a real Redis, and your tests run fast,
-isolated, and reproducible.
+### vs similar tools
+
+| | **js-redis-server** | [ioredis-mock](https://www.npmjs.com/package/ioredis-mock) | [redis-memory-server](https://www.npmjs.com/package/redis-memory-server) |
+| --- | --- | --- | --- |
+| What it is | Redis-compatible **protocol server** in JavaScript/TypeScript | **Client API mock** that mimics ioredis | Starts a **real Redis binary** |
+| Your tests talk to | Real TCP + RESP (ioredis / node-redis) | Mocked client methods | Real Redis over TCP |
+| Redis binary required | No | No | Yes |
+| Best for | Real-client tests without a Redis binary | ioredis API-level tests | Tests that need genuine Redis |
+
+The server has its own command implementation and compatibility limits; it is
+not the native Redis or Valkey engine. It depends on `cluster-key-slot` and
+`lua-redis-wasm`, with Lua running via WebAssembly. Keep real-server integration
+tests for production compatibility and failure behavior.
+
+```bash
+npm install --save-dev js-redis-server ioredis
+```
 
 ```typescript
 import { createRedisMock } from 'js-redis-server'
@@ -61,10 +79,11 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
 
 ## Why
 
-- **No real Redis to install, start, or clean up** — it's in-memory and starts in milliseconds.
+- **No Redis binary to install, start, or clean up** — the JavaScript server runs in-process and keeps its data in memory.
 - **Isolated and reproducible** — a fresh keyspace per test, reset between tests.
 - **High fidelity** — your real client talks RESP over a real socket, so client-side encoding/parsing is part of the test.
 - **Standalone and cluster** — same API, just pass a `cluster` option.
+- **Protocol server, not a client stub** — unlike ioredis-mock; **no Redis download** — unlike redis-memory-server.
 
 ## Features
 
@@ -73,7 +92,7 @@ production. Jump to [Use as a Redis mock in tests](#use-as-a-redis-mock-in-tests
 - **Redis / Valkey compatibility profiles** - Pin implemented command behavior to
   older Redis or Valkey versions
 - **Lua scripting support** - Execute Redis Lua scripts via WebAssembly
-- **No external dependencies** - Pure JavaScript, no Redis installation needed
+- **No Redis installation required** - JavaScript server with Lua via WebAssembly; no Redis binary or Docker needed
 - **TypeScript support** - Ships with full type definitions
 
 ## Installation
@@ -338,8 +357,7 @@ library. `createIoredisMock()` returns a **real** `ioredis` client wired to the
 in-memory pipeline over a fake `net.Socket` — no TCP port, no loopback. Because
 it's the genuine client speaking real RESP, typed methods, pipelines, `multi`,
 pub/sub, and `scanStream` all work unchanged. `ioredis` is an optional peer
-dependency, imported lazily, so the core stays dependency-free — install
-`ioredis` yourself to use this.
+dependency, imported lazily — install `ioredis` yourself to use this helper.
 
 ```typescript
 import { createIoredisMock } from 'js-redis-server'
