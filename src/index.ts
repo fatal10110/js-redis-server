@@ -10,6 +10,7 @@
 // Test-mock facade
 export {
   createRedisMock,
+  createValkeyMock,
   createRedisServer,
   type CreateRedisMockOptions,
   type CreateRedisServerOptions,

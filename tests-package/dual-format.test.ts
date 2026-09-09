@@ -1,17 +1,20 @@
 import { test, describe, before } from 'node:test'
 import assert from 'node:assert'
 import { createRequire } from 'node:module'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 // Validates the published package end-to-end: the `exports` map, the dual
-// ESM + CJS builds, and the `js-redis-server/core` subpath. Resolution goes
+// ESM + CJS builds, and the `/core` subpath under either npm name. Resolution goes
 // through the package *name* (self-reference), so this exercises the real
 // `exports` conditions a consumer hits — not relative dist paths.
 //
 // Requires `dist/` to exist; run via `npm run test:package` (which builds first).
 
 const require = createRequire(import.meta.url)
+const { name: packageName } = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { name: string }
 const distIndex = fileURLToPath(new URL('../dist/index.js', import.meta.url))
 
 before(() => {
@@ -23,6 +26,8 @@ before(() => {
 
 async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(typeof pkg.createRedisMock, 'function')
+  assert.strictEqual(typeof pkg.createValkeyMock, 'function')
+  assert.strictEqual(pkg.createValkeyMock, pkg.createRedisMock)
   assert.strictEqual(typeof pkg.createRedisServer, 'function')
   assert.strictEqual(typeof pkg.createRedisCluster, 'function')
   assert.strictEqual(typeof pkg.createInMemoryClient, 'function')
@@ -61,25 +66,25 @@ function assertCore(core: Record<string, unknown>): void {
 
 describe('package CJS entry (require)', () => {
   test('root works through the require condition', async () => {
-    await assertWorkingRoot(require('js-redis-server'))
+    await assertWorkingRoot(require(packageName))
   })
 
-  test('js-redis-server/core exposes internals only', () => {
-    assertCore(require('js-redis-server/core'))
+  test(`${packageName}/core exposes internals only`, () => {
+    assertCore(require(`${packageName}/core`))
   })
 })
 
 describe('package ESM entry (import)', () => {
   test('root works through the import condition', async () => {
-    const pkg = (await import('js-redis-server')) as unknown as Record<
+    const pkg = (await import(packageName)) as unknown as Record<
       string,
       unknown
     >
     await assertWorkingRoot(pkg)
   })
 
-  test('js-redis-server/core exposes internals only', async () => {
-    const core = (await import('js-redis-server/core')) as unknown as Record<
+  test(`${packageName}/core exposes internals only`, async () => {
+    const core = (await import(`${packageName}/core`)) as unknown as Record<
       string,
       unknown
     >
