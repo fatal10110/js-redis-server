@@ -77,8 +77,13 @@ export class CommandExecutor {
 
   /**
    * Resolve a raw command + args into a {@link CommandPlan} without executing it.
-   * The registry matches the name case-insensitively, so the raw wire bytes go
-   * in as-is.
+   * The name is handed to the registry unfolded; `registry.get` does the
+   * case-insensitive match.
+   *
+   * Note that the decode + `String.toLowerCase()` this ends up doing is a
+   * *Unicode* fold, while real Redis folds ASCII only — so e.g. U+212A KELVIN
+   * SIGN + "eys" dispatches KEYS here and is rejected by Redis. Pre-existing
+   * (the old `normalizeCommandName` folded the same way); tracked in #382.
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    */
@@ -319,8 +324,8 @@ export class CommandExecutor {
   /**
    * Build a {@link CommandPlan} from a resolved definition: parse the raw buffers
    * against the command's schema (may throw arity/type errors) and extract the
-   * routing keys used for cluster slot validation. Flags are copied onto the plan
-   * so policies can inspect them without re-resolving the definition.
+   * routing keys used for cluster slot validation. The definition rides along on
+   * the plan, so policies read flags off `plan.definition.flags`.
    */
   private createPlan<TArgs>(
     definition: CommandDefinition<TArgs>,

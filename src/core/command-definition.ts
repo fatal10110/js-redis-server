@@ -107,13 +107,20 @@ export type CommandPlan<TArgs = unknown> = {
 }
 
 /**
- * Identity helper that exists purely for type inference: it pins `TArgs` from
- * the schema so `keys`/`execute` get their arguments typed without a manual
- * annotation. Name casing is normalized by {@link CommandRegistry.register},
- * not here.
+ * Builds a command definition, pinning `TArgs` from the schema so `keys` and
+ * `execute` get their arguments typed without a manual annotation.
+ *
+ * This is also where a declared name is lowercased, and it is the only safe
+ * place to do it: the copy happens before the caller holds a reference to the
+ * result, so nothing downstream can observe an identity change.
+ * {@link CommandRegistry.register} deliberately does *not* re-normalize — it
+ * stores definitions by reference (see the note there).
  */
 export function defineCommand<TArgs>(
   definition: CommandDefinition<TArgs>,
 ): CommandDefinition<TArgs> {
-  return definition
+  return {
+    ...definition,
+    name: definition.name.toLowerCase(),
+  }
 }

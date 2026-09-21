@@ -1,14 +1,19 @@
 import type { CommandDefinition } from './command-definition'
 
-/**
- * The single place a command name is normalized. A definition may declare any
- * casing and a lookup may use any casing; everything downstream of
- * {@link CommandRegistry.register} — `plan.definition.name`, the policies that
- * match on it, COMMAND introspection — sees the lowercase form.
- */
 export class CommandRegistry {
   private readonly commands = new Map<string, CommandDefinition<unknown>>()
 
+  /**
+   * Registers a definition under its lowercased name.
+   *
+   * The definition object is stored **by reference**, never copied: a
+   * `CommandDefinition` is an interface, so it may legally be a class instance
+   * whose `keys`/`execute` live on the prototype, and callers may key
+   * side-metadata off the object itself (`weakMap.get(plan.definition)`).
+   * A spread here would strip the prototype and break that identity — so the
+   * name a definition *carries* is normalized by {@link defineCommand}, and
+   * this only normalizes the key it is filed under.
+   */
   register<TArgs>(
     definition: CommandDefinition<TArgs>,
     options?: { override?: boolean },
@@ -18,10 +23,7 @@ export class CommandRegistry {
       throw new Error(`Command '${name}' is already registered`)
     }
 
-    const normalized =
-      definition.name === name ? definition : { ...definition, name }
-
-    this.commands.set(name, normalized as CommandDefinition<unknown>)
+    this.commands.set(name, definition as CommandDefinition<unknown>)
   }
 
   registerAll(
