@@ -82,8 +82,10 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
   })
 
   test('MSET cross-slot error', async () => {
-    // Every MSET key is a routing key, so a pair in different slots must be
-    // refused outright rather than routed by whichever key comes first.
+    // Pins the per-command CROSSSLOT wording against a real client on both
+    // backends — `TEST_BACKEND=real` checks it byte-for-byte against Redis.
+    // Not a guard for any client-side routing: this suite drives the real
+    // node-redis client over TCP, so the error comes from ClusterPolicy.
     await assert.rejects(
       () =>
         redisClient.mSet([

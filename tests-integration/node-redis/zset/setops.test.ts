@@ -154,8 +154,10 @@ describe(`Sorted Set Set-Operations (node-redis, ${testRunner.getBackendName()})
   })
 
   test('ZUNIONSTORE rejects sources outside the destination slot', async () => {
-    // ZUNIONSTORE's keys are the destination *and* every source, so a source in
-    // another slot must be refused rather than routed by the destination alone.
+    // ZUNIONSTORE's keys are the destination *and* every source. Pins that
+    // wording against a real client on both backends — `TEST_BACKEND=real`
+    // checks it byte-for-byte against Redis. The error itself comes from
+    // ClusterPolicy; this suite never instantiates the client-side mocks.
     await assert.rejects(
       () =>
         redisClient.zUnionStore('{zunion-slot-a}dest', [

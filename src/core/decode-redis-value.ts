@@ -26,8 +26,11 @@ export type DecodeRedisValueOptions = {
    *  - `'always'`: node-redis parses a RESP2 `:` with plain JS number
    *    arithmetic, so the reply is a `number` — precision loss past 2^53
    *    included. Only RESP3's `(` BIG_NUMBER yields a bigint there.
-   *  - `'when-safe'`: keep a plain `number` like a real client, and widen to
-   *    `bigint` only when the value genuinely overflows a JS safe integer.
+   *  - `'when-safe'`: widen to `bigint` past `Number.MAX_SAFE_INTEGER`. This is
+   *    the *less* faithful option — no real client does it, they all lose
+   *    precision past 2^53 — and it is a deliberate lossless-over-faithful
+   *    choice for the socketless client, whose callers read replies directly
+   *    rather than comparing against a real client's output.
    */
   narrowBigInt: 'always' | 'when-safe'
   /**
@@ -106,7 +109,9 @@ export function decodeRedisValue(
       return out
     }
     case 'flat-pairs':
-      // Flat on the wire in RESP2; keep the flat array shape here too.
+      // Flat on the wire in RESP2; keep the flat array shape here too. Note
+      // that real node-redis negotiates RESP3, where these arrive as
+      // `[field, value]` tuples — tracked in #385, not changed here.
       return value.entries.flatMap(([key, val]) => [decode(key), decode(val)])
     case 'null':
     case 'null-array':

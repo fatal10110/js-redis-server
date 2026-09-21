@@ -6,11 +6,10 @@ import type { CommandExecutor } from '../core/command-executor'
 import {
   decodeRedisValue,
   redisErrorText,
-  toRedisArgument,
   type DecodeRedisValueOptions,
   type NativeRedisReply,
 } from '../core/decode-redis-value'
-import { RedisCommandError, RedisCrossSlotError } from '../core/redis-error'
+import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
 import { isResponseStream, type ResponseStream } from '../core/response-stream'
@@ -486,8 +485,11 @@ export class NodeRedisMockClient extends CommandRunner {
    * The push-drain loop settles on the next tick via the abort signal.
    */
   destroy(): void {
-    // teardown() is async (it awaits the push-drain loop); surface a rejection
-    // as an 'error' event rather than dropping it as an unhandled rejection.
+    // teardown() is async (it awaits the push-drain loop). Re-emit a rejection
+    // as an 'error' event, which is what node-redis does with a teardown
+    // failure — and, like any EventEmitter, that itself throws when nothing is
+    // listening. teardown() releases everything it owns before this point, so
+    // the throw leaks nothing.
     void this.teardown().catch(err => this.emit('error', err))
     this.emit('end')
   }
@@ -498,22 +500,27 @@ export class NodeRedisMockClient extends CommandRunner {
     }
     this.closed = true
     this.session.close()
-    if (this.pubsub) {
-      const pubsub = this.pubsub
-      this.pubsub = undefined
-      pubsub.abort.abort()
-      pubsub.session.close()
-      // Wait for the drain loop to observe the abort and finish, so no async
-      // iteration dangles past teardown.
-      await pubsub.drained
-      pubsub.listeners.clear()
-      pubsub.patternListeners.clear()
-    }
-    if (this.ownsState) {
-      // Only the creating client owns the state graph; closing it clears the
-      // self-rescheduling active-expiry timer. Duplicates share this state and
+    try {
+      if (this.pubsub) {
+        const pubsub = this.pubsub
+        this.pubsub = undefined
+        pubsub.abort.abort()
+        pubsub.session.close()
+        // Wait for the drain loop to observe the abort and finish, so no async
+        // iteration dangles past teardown.
+        await pubsub.drained
+        pubsub.listeners.clear()
+        pubsub.patternListeners.clear()
+      }
+    } finally {
+      // In a `finally` because a push-drain loop that rejects must not strand
+      // the state: closing it is what clears the self-rescheduling
+      // active-expiry timer, and a live timer keeps the process alive.
+      // Only the creating client owns the state graph — duplicates share it and
       // must not close it out from under their siblings.
-      this.backend.state.close()
+      if (this.ownsState) {
+        this.backend.state.close()
+      }
     }
   }
 
@@ -777,21 +784,19 @@ export class NodeRedisMockCluster extends CommandRunner {
   /**
    * Resolve (and cache) a session on the master that owns the slot for the
    * command's keys. Keyless commands run on the first master.
+   *
+   * There is deliberately no client-side rejection here. A key set spanning
+   * slots gives `-1`, which owns no node and falls through to the first master;
+   * that node's `ClusterPolicy` recomputes the same keys and raises the real
+   * error, which `decodeReply` surfaces as the same `ErrorReply`. Refusing here
+   * instead would mean a second copy of rules the policy already owns, and
+   * would pre-empt the ones it does not share — `SORT`'s routing keys include
+   * its BY/GET *patterns* (see `sortRoutingKeys` in `src/commands/keys.ts`),
+   * which look cross-slot but must surface `BY option of SORT denied in Cluster
+   * mode …` rather than `CROSSSLOT`.
    */
   private sessionForCommand(args: NodeRedisCommandArgument[]): ClientSession {
     const slot = this.topology.calculateSlotForKeys(this.routingKeys(args))
-
-    if (slot === -1) {
-      // generateMulti() returns -1 when the keys span multiple slots. Match the
-      // real cluster (ClusterPolicy) and refuse, rather than silently running
-      // the whole command against the first key's node with a wrong result.
-      // Surface it the way node-redis would parse `-CROSSSLOT …` off the wire:
-      // an ErrorReply whose message carries the code prefix.
-      const crossSlot = new RedisCrossSlotError()
-      const ErrorReply = resolvedRedisErrors?.ErrorReply
-      throw ErrorReply ? new ErrorReply(redisErrorText(crossSlot)) : crossSlot
-    }
-
     const owner =
       slot === null
         ? this.masters[0]
@@ -804,16 +809,27 @@ export class NodeRedisMockCluster extends CommandRunner {
    * The command's routing keys, taken from the executor's own
    * {@link CommandExecutor.plan} — the exact extraction `ClusterPolicy` routes
    * on. Guessing them from the argument list gets multi-key commands (`MSET`,
-   * `RENAME`), numkeys-prefixed ones (`EVAL`, `ZUNIONSTORE`, `LMPOP`) and STORE
-   * targets (`GEORADIUS … STORE`) wrong, which picks the wrong node.
+   * `RENAME`), numkeys-prefixed ones (`EVAL`, `ZDIFF`, `LMPOP`), subcommand-
+   * prefixed ones (`BITOP`) and STORE targets (`GEORADIUS … STORE`) wrong,
+   * which picks the wrong node.
    *
-   * Planning is registry + schema only (no policies run), so any master's
-   * executor answers identically.
+   * Two invariants this leans on, neither enforced by a type:
    *
-   * A command the pipeline cannot even plan — unknown name, bad arity — has no
-   * keys to route on. Route it to the first master and let the normal pipeline
-   * turn it into the canonical error reply, exactly as the standalone client
-   * does, rather than inventing a second error path here.
+   *  - Planning is registry + schema only — no policy runs — so any master's
+   *    executor answers identically. True because `buildClusterNodes` hands
+   *    every node one hoisted profile and the same registry, differing only in
+   *    their `CLUSTER` definitions. Per-node profiles would break it.
+   *  - Every `RedisCommandError` out of `plan()` means "no keys we can route
+   *    on" — an unregistered name, or an argument list the schema rejects.
+   *    True while no registered command declares keys it cannot extract. Such
+   *    a command goes to the first master and the normal pipeline turns it
+   *    into the canonical error reply, exactly as the standalone client does,
+   *    rather than growing a second error path here.
+   *
+   * Planning is not free — `session.execute` plans the command again, so a
+   * cluster command pays two schema parses. A `routingKeysFor()` seam on the
+   * executor would be cheaper and tidier, but with one call site it is not yet
+   * worth the API.
    */
   private routingKeys(args: NodeRedisCommandArgument[]): readonly Buffer[] {
     if (args.length === 0) {
@@ -822,10 +838,8 @@ export class NodeRedisMockCluster extends CommandRunner {
 
     const [name, ...rest] = args
     try {
-      return this.masters[0].executor.plan(
-        toRedisArgument(name),
-        rest.map(toRedisArgument),
-      ).keys
+      return this.masters[0].executor.plan(toBuffer(name), rest.map(toBuffer))
+        .keys
     } catch (err) {
       if (err instanceof RedisCommandError) {
         return []
@@ -874,10 +888,7 @@ async function runOnSession(
   }
 
   const [name, ...rest] = args
-  const result = await session.execute(
-    toRedisArgument(name),
-    rest.map(toRedisArgument),
-  )
+  const result = await session.execute(toBuffer(name), rest.map(toBuffer))
 
   if (isResponseStream(result)) {
     // A multi-channel SUBSCRIBE/PSUBSCRIBE returns the per-channel confirmation
@@ -904,6 +915,17 @@ async function drainSubscribeAck(stream: ResponseStream): Promise<RedisValue> {
     last = frame.value
   }
   return last
+}
+
+/**
+ * Deliberately narrower than the shared `toRedisArgument`, which also accepts
+ * `number` for {@link InMemoryRedisClient}. Real node-redis rejects a number
+ * argument with a TypeError rather than stringifying it, and a facade that
+ * quietly accepted one would green-light test code that throws against the real
+ * client. `Buffer.from` raises that TypeError for us.
+ */
+function toBuffer(arg: NodeRedisCommandArgument): Buffer {
+  return Buffer.isBuffer(arg) ? arg : Buffer.from(arg)
 }
 
 function addListener(
