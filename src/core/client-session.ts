@@ -298,9 +298,7 @@ export class ClientSession implements RedisClientSession {
     let currentDbId = this.selectedDatabaseId
 
     for (const plan of plans) {
-      if (this.signal.aborted) {
-        throw createAbortError()
-      }
+      this.signal.throwIfAborted()
 
       // A queued SELECT on a previous iteration may have switched databases.
       // Move the held turn onto the now-selected database's queue so its
@@ -758,9 +756,7 @@ export class ClientSession implements RedisClientSession {
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
   ): Promise<ExecutorResult> {
-    if (this.signal.aborted) {
-      throw createAbortError()
-    }
+    this.signal.throwIfAborted()
 
     let turn: RedisTurnHandle | undefined = await this.db.turnQueue.waitTurn()
     const turnAccess: TurnAccess = {
@@ -937,10 +933,4 @@ function encodeTransactionArray(encodedValues: readonly Buffer[]): Buffer {
     Buffer.from(`*${encodedValues.length}\r\n`),
     ...encodedValues,
   ])
-}
-
-function createAbortError(): Error {
-  const err = new Error('The operation was aborted')
-  err.name = 'AbortError'
-  return err
 }
