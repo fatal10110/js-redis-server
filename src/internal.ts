@@ -25,6 +25,7 @@ export type {
   ClientSessionMode,
   ParkHandler,
   ParkRequest,
+  PubSubKind,
   RedisExecutionContext,
 } from './core/redis-context'
 

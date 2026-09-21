@@ -6,6 +6,7 @@ import {
   type ClientSessionMode,
   type ParkHandler,
   type ParkRequest,
+  type PubSubKind,
   type RedisClientSession,
   type RedisExecutionContext,
   type RedisMonitorContext,
@@ -19,6 +20,7 @@ import type { RedisClusterNodeRole } from '../state/cluster-topology'
 import type { RedisDatabase } from '../state/database'
 import type { RedisServerState } from '../state/server-state'
 import type { Unsubscribe } from '../state/mutation-events'
+import type { RedisPubSubBroker } from '../state/pubsub-broker'
 
 export type ClientSessionOptions = {
   id?: string
@@ -53,6 +55,91 @@ type PubSubRegistration = {
   value: Buffer
   unsubscribe: Unsubscribe
 }
+
+/**
+ * The command-name prefix each kind's frames carry. All nine frame names are
+ * derived from these three, so a row cannot borrow another kind's names.
+ */
+type PubSubFramePrefix = {
+  channel: ''
+  shard: 's'
+  pattern: 'p'
+}
+
+/**
+ * Everything that distinguishes one pub/sub kind from the other two. The three
+ * `SUBSCRIBE`/`UNSUBSCRIBE` families are otherwise identical bookkeeping, so
+ * they are driven from this table instead of being written out per kind.
+ *
+ * The kind parameter defaults to the full union so the type stays usable bare
+ * (see `pubsubCount` and `PUBSUB_KIND_ENTRIES`); the table below binds each row
+ * to its own kind, which is what makes a crossed frame name a compile error.
+ */
+type PubSubKindSpec<TKind extends PubSubKind = PubSubKind> = {
+  /**
+   * Registers the session's listener with the broker and builds the items of
+   * every push frame it delivers — `pmessage` carries the matched pattern in
+   * front of the channel, the other two do not.
+   */
+  readonly listen: (
+    broker: RedisPubSubBroker,
+    target: Buffer,
+    emit: (items: RedisValue[]) => void,
+  ) => Unsubscribe
+  /** Push frame name used to deliver a message to a subscriber. */
+  readonly message: `${PubSubFramePrefix[TKind]}message`
+  /** Confirmation frame name echoed back by SUBSCRIBE/SSUBSCRIBE/PSUBSCRIBE. */
+  readonly subscribed: `${PubSubFramePrefix[TKind]}subscribe`
+  /** Confirmation frame name echoed back by the matching UNSUBSCRIBE. */
+  readonly unsubscribed: `${PubSubFramePrefix[TKind]}unsubscribe`
+  /**
+   * Which counter the confirmation frames report. Redis reports channels and
+   * patterns together, but keeps the shard count separate — do not unify.
+   */
+  readonly counter: 'regular' | 'shard'
+}
+
+const PUBSUB_KINDS: { readonly [TKind in PubSubKind]: PubSubKindSpec<TKind> } =
+  {
+    channel: {
+      listen: (broker, target, emit) =>
+        broker.subscribe(target, m => emit([bulk(m.channel), bulk(m.message)])),
+      message: 'message',
+      subscribed: 'subscribe',
+      unsubscribed: 'unsubscribe',
+      counter: 'regular',
+    },
+    shard: {
+      listen: (broker, target, emit) =>
+        broker.ssubscribe(target, m =>
+          emit([bulk(m.channel), bulk(m.message)]),
+        ),
+      message: 'smessage',
+      subscribed: 'ssubscribe',
+      unsubscribed: 'sunsubscribe',
+      counter: 'shard',
+    },
+    pattern: {
+      listen: (broker, target, emit) =>
+        broker.psubscribe(target, m =>
+          emit([bulk(m.pattern), bulk(m.channel), bulk(m.message)]),
+        ),
+      message: 'pmessage',
+      subscribed: 'psubscribe',
+      unsubscribed: 'punsubscribe',
+      counter: 'regular',
+    },
+  }
+
+/**
+ * `Object.entries` widens the key to `string`; the table is keyed by
+ * `PubSubKind`, so narrowing it back is sound and keeps the kind list derived
+ * from the table instead of restated beside it.
+ */
+const PUBSUB_KIND_ENTRIES = Object.entries(PUBSUB_KINDS) as [
+  PubSubKind,
+  PubSubKindSpec,
+][]
 
 /**
  * Per-connection server state and the concrete {@link RedisClientSession}.
@@ -107,9 +194,15 @@ export class ClientSession implements RedisClientSession {
   private readonly watches = new Map<string, WatchRegistration>()
   /** Subset of watched keys mutated since WATCH — non-empty fails the next EXEC. */
   private readonly dirtyWatches = new Set<string>()
-  private readonly pubsubChannels = new Map<string, PubSubRegistration>()
-  private readonly pubsubShardChannels = new Map<string, PubSubRegistration>()
-  private readonly pubsubPatterns = new Map<string, PubSubRegistration>()
+  /** Active pub/sub registrations per kind, keyed by `channelOrPatternHex`. */
+  private readonly pubsubSubscriptions: Record<
+    PubSubKind,
+    Map<string, PubSubRegistration>
+  > = {
+    channel: new Map(),
+    shard: new Map(),
+    pattern: new Map(),
+  }
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
   private deferredPushes: RedisResult[] | null = null
@@ -165,23 +258,24 @@ export class ClientSession implements RedisClientSession {
   }
 
   get pubsubChannelCount(): number {
-    return this.pubsubChannels.size
+    return this.pubsubSubscriptions.channel.size
   }
 
   get pubsubShardChannelCount(): number {
-    return this.pubsubShardChannels.size
+    return this.pubsubSubscriptions.shard.size
   }
 
   get pubsubPatternCount(): number {
-    return this.pubsubPatterns.size
-  }
-
-  get pubsubRegularSubscriptionCount(): number {
-    return this.pubsubChannelCount + this.pubsubPatternCount
+    return this.pubsubSubscriptions.pattern.size
   }
 
   get pubsubSubscriptionCount(): number {
-    return this.pubsubRegularSubscriptionCount + this.pubsubShardChannelCount
+    let total = 0
+    for (const registrations of Object.values(this.pubsubSubscriptions)) {
+      total += registrations.size
+    }
+
+    return total
   }
 
   setAuthenticated(value: boolean): void {
@@ -445,36 +539,37 @@ export class ClientSession implements RedisClientSession {
     return this.dirtyWatches.size > 0
   }
 
-  subscribePubSubChannels(channels: readonly Buffer[]): RedisResult[] {
+  /**
+   * SUBSCRIBE / SSUBSCRIBE / PSUBSCRIBE bookkeeping for one kind.
+   *
+   * Registering an already-subscribed target is a no-op on the broker but still
+   * produces a confirmation frame, exactly like real Redis.
+   */
+  pubsubSubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[] {
+    const spec = PUBSUB_KINDS[kind]
+    const registrations = this.pubsubSubscriptions[kind]
     const frames: RedisResult[] = []
 
-    for (const channel of channels) {
-      const key = pubsubId(channel)
-      if (!this.pubsubChannels.has(key)) {
-        const subscribedChannel = Buffer.from(channel)
-        const unsubscribe = this.server.pubsubBroker.subscribe(
-          subscribedChannel,
-          message => {
-            this.enqueuePush(
-              pubsubFrame('message', [
-                RedisValue.bulkString(Buffer.from(message.channel)),
-                RedisValue.bulkString(Buffer.from(message.message)),
-              ]),
-            )
+    for (const target of targets) {
+      const key = pubsubId(target)
+      if (!registrations.has(key)) {
+        const value = Buffer.from(target)
+        const unsubscribe = spec.listen(
+          this.server.pubsubBroker,
+          value,
+          items => {
+            this.enqueuePush(pubsubFrame(spec.message, items))
           },
         )
 
-        this.pubsubChannels.set(key, {
-          value: subscribedChannel,
-          unsubscribe,
-        })
+        registrations.set(key, { value, unsubscribe })
       }
 
       this.refreshPubSubMode()
       frames.push(
-        pubsubFrame('subscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+        pubsubFrame(spec.subscribed, [
+          bulk(target),
+          RedisValue.integer(this.pubsubCount(spec.counter)),
         ]),
       )
     }
@@ -482,194 +577,55 @@ export class ClientSession implements RedisClientSession {
     return frames
   }
 
-  unsubscribePubSubChannels(channels: readonly Buffer[]): RedisResult[] {
-    const targets =
-      channels.length > 0
-        ? channels
-        : Array.from(
-            this.pubsubChannels.values(),
-            entry => entry.value,
-          ).reverse()
+  /**
+   * UNSUBSCRIBE / SUNSUBSCRIBE / PUNSUBSCRIBE bookkeeping for one kind.
+   *
+   * With no targets Redis drops every current subscription of that kind and
+   * replies with a single nil-named frame when there was nothing to drop.
+   *
+   * Real Redis emits those frames in the iteration order of the client's
+   * subscription dict. That order is stable within one `redis-server` process
+   * and changes across restarts, because the dict hash seed is randomized at
+   * startup — so it is not a documented contract and not reproducible. We emit
+   * in reverse insertion order instead, purely because a mock should be
+   * deterministic. Do not pin this order in a test as though it were Redis
+   * behavior.
+   */
+  pubsubUnsubscribe(
+    kind: PubSubKind,
+    targets: readonly Buffer[],
+  ): RedisResult[] {
+    const spec = PUBSUB_KINDS[kind]
+    const registrations = this.pubsubSubscriptions[kind]
+    const resolved =
+      targets.length > 0
+        ? targets
+        : Array.from(registrations.values(), entry => entry.value).reverse()
 
-    if (targets.length === 0) {
+    if (resolved.length === 0) {
       this.refreshPubSubMode()
       return [
-        pubsubFrame('unsubscribe', [
+        pubsubFrame(spec.unsubscribed, [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+          RedisValue.integer(this.pubsubCount(spec.counter)),
         ]),
       ]
     }
 
     const frames: RedisResult[] = []
-    for (const channel of targets) {
-      const key = pubsubId(channel)
-      const existing = this.pubsubChannels.get(key)
+    for (const target of resolved) {
+      const key = pubsubId(target)
+      const existing = registrations.get(key)
       if (existing) {
         existing.unsubscribe()
-        this.pubsubChannels.delete(key)
+        registrations.delete(key)
       }
 
       this.refreshPubSubMode()
       frames.push(
-        pubsubFrame('unsubscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  subscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[] {
-    const frames: RedisResult[] = []
-
-    for (const channel of channels) {
-      const key = pubsubId(channel)
-      if (!this.pubsubShardChannels.has(key)) {
-        const subscribedChannel = Buffer.from(channel)
-        const unsubscribe = this.server.pubsubBroker.ssubscribe(
-          subscribedChannel,
-          message => {
-            this.enqueuePush(
-              pubsubFrame('smessage', [
-                RedisValue.bulkString(Buffer.from(message.channel)),
-                RedisValue.bulkString(Buffer.from(message.message)),
-              ]),
-            )
-          },
-        )
-
-        this.pubsubShardChannels.set(key, {
-          value: subscribedChannel,
-          unsubscribe,
-        })
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('ssubscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubShardChannelCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  unsubscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[] {
-    const targets =
-      channels.length > 0
-        ? channels
-        : Array.from(
-            this.pubsubShardChannels.values(),
-            entry => entry.value,
-          ).reverse()
-
-    if (targets.length === 0) {
-      this.refreshPubSubMode()
-      return [
-        pubsubFrame('sunsubscribe', [
-          RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubShardChannelCount),
-        ]),
-      ]
-    }
-
-    const frames: RedisResult[] = []
-    for (const channel of targets) {
-      const key = pubsubId(channel)
-      const existing = this.pubsubShardChannels.get(key)
-      if (existing) {
-        existing.unsubscribe()
-        this.pubsubShardChannels.delete(key)
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('sunsubscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubShardChannelCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[] {
-    const frames: RedisResult[] = []
-
-    for (const pattern of patterns) {
-      const key = pubsubId(pattern)
-      if (!this.pubsubPatterns.has(key)) {
-        const subscribedPattern = Buffer.from(pattern)
-        const unsubscribe = this.server.pubsubBroker.psubscribe(
-          subscribedPattern,
-          message => {
-            this.enqueuePush(
-              pubsubFrame('pmessage', [
-                RedisValue.bulkString(Buffer.from(message.pattern)),
-                RedisValue.bulkString(Buffer.from(message.channel)),
-                RedisValue.bulkString(Buffer.from(message.message)),
-              ]),
-            )
-          },
-        )
-
-        this.pubsubPatterns.set(key, {
-          value: subscribedPattern,
-          unsubscribe,
-        })
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('psubscribe', [
-          RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[] {
-    const targets =
-      patterns.length > 0
-        ? patterns
-        : Array.from(
-            this.pubsubPatterns.values(),
-            entry => entry.value,
-          ).reverse()
-
-    if (targets.length === 0) {
-      this.refreshPubSubMode()
-      return [
-        pubsubFrame('punsubscribe', [
-          RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
-        ]),
-      ]
-    }
-
-    const frames: RedisResult[] = []
-    for (const pattern of targets) {
-      const key = pubsubId(pattern)
-      const existing = this.pubsubPatterns.get(key)
-      if (existing) {
-        existing.unsubscribe()
-        this.pubsubPatterns.delete(key)
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('punsubscribe', [
-          RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+        pubsubFrame(spec.unsubscribed, [
+          bulk(target),
+          RedisValue.integer(this.pubsubCount(spec.counter)),
         ]),
       )
     }
@@ -678,19 +634,14 @@ export class ClientSession implements RedisClientSession {
   }
 
   resetPubSub(): void {
-    for (const subscription of this.pubsubChannels.values()) {
-      subscription.unsubscribe()
-    }
-    for (const subscription of this.pubsubShardChannels.values()) {
-      subscription.unsubscribe()
-    }
-    for (const subscription of this.pubsubPatterns.values()) {
-      subscription.unsubscribe()
+    for (const registrations of Object.values(this.pubsubSubscriptions)) {
+      for (const registration of registrations.values()) {
+        registration.unsubscribe()
+      }
+
+      registrations.clear()
     }
 
-    this.pubsubChannels.clear()
-    this.pubsubShardChannels.clear()
-    this.pubsubPatterns.clear()
     this.refreshPubSubMode()
   }
 
@@ -882,6 +833,23 @@ export class ClientSession implements RedisClientSession {
     }
   }
 
+  /**
+   * Totals every kind that reports through the given counter — channels and
+   * patterns share the 'regular' one, shard channels have their own. Derived
+   * from the table rather than hand-enumerated so that adding a kind cannot
+   * silently under-count the frames it appears in.
+   */
+  private pubsubCount(counter: PubSubKindSpec['counter']): number {
+    let total = 0
+    for (const [kind, spec] of PUBSUB_KIND_ENTRIES) {
+      if (spec.counter === counter) {
+        total += this.pubsubSubscriptions[kind].size
+      }
+    }
+
+    return total
+  }
+
   private refreshPubSubMode(): void {
     if (this.pubsubSubscriptionCount > 0) {
       this.sessionMode = 'subscribed'
@@ -934,6 +902,14 @@ function watchId(database: number, key: Buffer): string {
 
 function pubsubId(value: Buffer): string {
   return value.toString('hex')
+}
+
+/**
+ * Defensive copy — neither broker payloads nor caller-owned command args may
+ * alias into an emitted frame.
+ */
+function bulk(value: Buffer): RedisValue {
+  return RedisValue.bulkString(Buffer.from(value))
 }
 
 function pubsubFrame(name: string, items: RedisValue[]): RedisResult {
