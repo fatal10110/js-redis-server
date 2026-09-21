@@ -90,11 +90,11 @@ export class RedisLuaRuntime {
       throw err
     }
 
-    if (plan.flags.includes('noscript')) {
+    if (plan.definition.flags.includes('noscript')) {
       return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
     }
 
-    if (this.hostState.readOnly && plan.flags.includes('write')) {
+    if (this.hostState.readOnly && plan.definition.flags.includes('write')) {
       return redisErrorToLuaReply(
         new RedisCommandError(
           'Write commands are not allowed from read-only scripts.',

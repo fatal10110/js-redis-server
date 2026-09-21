@@ -102,7 +102,6 @@ export type CommandPlan<TArgs = unknown> = {
   definition: CommandDefinition<TArgs>
   args: TArgs
   keys: readonly Buffer[]
-  flags: readonly CommandFlag[]
   rawCommand: Buffer
   rawArgs: readonly Buffer[]
 }

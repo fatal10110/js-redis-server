@@ -345,7 +345,6 @@ export class CommandExecutor {
       definition,
       args,
       keys,
-      flags: definition.flags,
       rawCommand: Buffer.from(rawCommand),
       rawArgs: rawArgs.map(arg => Buffer.from(arg)),
     }
@@ -464,7 +463,7 @@ function isQueuedTransactionCommand(
 ): boolean {
   return (
     ctx.session.mode === 'transaction' &&
-    !plan.flags.includes('transaction') &&
+    !plan.definition.flags.includes('transaction') &&
     result.value.kind === 'simple-string' &&
     result.value.value === 'QUEUED'
   )
@@ -604,6 +603,7 @@ function shouldDirtyTransaction(
   ctx: RedisExecutionContext,
 ): boolean {
   return (
-    ctx.session.mode === 'transaction' && !plan.flags.includes('transaction')
+    ctx.session.mode === 'transaction' &&
+    !plan.definition.flags.includes('transaction')
   )
 }

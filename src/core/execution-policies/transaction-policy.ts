@@ -10,7 +10,7 @@ export function createTransactionPolicy(): ExecutionPolicy {
         return
       }
 
-      if (plan.flags.includes('transaction')) {
+      if (plan.definition.flags.includes('transaction')) {
         return
       }
 

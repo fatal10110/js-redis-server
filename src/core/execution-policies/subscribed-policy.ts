@@ -9,7 +9,7 @@ export function createSubscribedModePolicy(): ExecutionPolicy {
         return
       }
 
-      if (plan.flags.includes('subscribed')) {
+      if (plan.definition.flags.includes('subscribed')) {
         return
       }
 

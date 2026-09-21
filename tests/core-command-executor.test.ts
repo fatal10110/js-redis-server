@@ -174,7 +174,7 @@ describe('new command executor core', () => {
         {
           name: 'readonly',
           beforeExecute: plan =>
-            plan.flags.includes('write')
+            plan.definition.flags.includes('write')
               ? RedisResult.error(
                   'You cannot write against a read only replica.',
                   'READONLY',

@@ -82,7 +82,8 @@ export function createClusterPolicy(
         plan.keys,
         {
           allowReplicaRead:
-            ctx.session.clusterReadOnly && plan.flags.includes('readonly'),
+            ctx.session.clusterReadOnly &&
+            plan.definition.flags.includes('readonly'),
         },
       )
 
