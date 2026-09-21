@@ -159,19 +159,14 @@ export function createNonBlockingParkHandler(): ParkHandler {
 }
 
 /**
- * The one remaining abort-error helper, kept for the park handlers only.
+ * Deterministic `AbortError` for the park handlers: a parked command sees this
+ * however the session was aborted, so `controller.abort('bye')` cannot surface
+ * a bare string out of `ctx.park(...)`.
  *
- * `ClientSession` deliberately uses `signal.throwIfAborted()` instead: there the
- * signal belongs to the connection, and propagating the caller's own abort
- * reason is the more informative thing to do. Park handlers serve commands, so
- * they keep a deterministic `AbortError` regardless of how the session was
- * aborted — a consumer who calls `controller.abort('bye')` should not have a
- * bare string surface out of `ctx.park(...)`.
- *
- * The cost is that the two paths carry different messages ('The operation was
- * aborted' here, the platform's 'This operation was aborted' from
- * `throwIfAborted`). Neither is matched on anywhere; only `name === 'AbortError'`
- * is, and both satisfy it.
+ * `ClientSession` instead uses `signal.throwIfAborted()`, which rethrows
+ * `signal.reason` verbatim — that path yields an `AbortError` only for the
+ * default abort. No message is matched on anywhere; `name === 'AbortError'` is
+ * the only assertion in the tree.
  */
 function createAbortError(): Error {
   const err = new Error('The operation was aborted')

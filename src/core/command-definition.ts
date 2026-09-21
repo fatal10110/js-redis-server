@@ -108,13 +108,22 @@ export type CommandPlan<TArgs = unknown> = {
 
 /**
  * Builds a command definition, pinning `TArgs` from the schema so `keys` and
- * `execute` get their arguments typed without a manual annotation.
+ * `execute` get their arguments typed without a manual annotation, and
+ * lowercasing the declared name.
  *
- * This is also where a declared name is lowercased, and it is the only safe
- * place to do it: the copy happens before the caller holds a reference to the
- * result, so nothing downstream can observe an identity change.
- * {@link CommandRegistry.register} deliberately does *not* re-normalize — it
- * stores definitions by reference (see the note there).
+ * It returns a **copy**. That is unobservable for the idiomatic literal form —
+ * `export const getCommand = defineCommand({ ... })`, where nothing else ever
+ * held the argument — but it is not unobservable in general:
+ *
+ *  - a definition you already hold a reference to comes back as a *different*
+ *    object, so metadata keyed off the one you authored will not match the one
+ *    that ends up registered;
+ *  - a class instance loses the `keys`/`execute` that live on its prototype,
+ *    because a spread copies own enumerable properties only. This type-checks —
+ *    `CommandDefinition` is an interface — and fails at the first invocation.
+ *
+ * Register those with {@link CommandRegistry.register} directly: it stores by
+ * reference, at the cost of leaving the name's casing alone.
  */
 export function defineCommand<TArgs>(
   definition: CommandDefinition<TArgs>,

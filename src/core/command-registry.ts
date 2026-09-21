@@ -10,9 +10,18 @@ export class CommandRegistry {
    * `CommandDefinition` is an interface, so it may legally be a class instance
    * whose `keys`/`execute` live on the prototype, and callers may key
    * side-metadata off the object itself (`weakMap.get(plan.definition)`).
-   * A spread here would strip the prototype and break that identity — so the
-   * name a definition *carries* is normalized by {@link defineCommand}, and
-   * this only normalizes the key it is filed under.
+   * A spread here would strip the prototype and break that identity.
+   *
+   * Only the map key is normalized. The name a definition *carries* is
+   * lowercased by {@link defineCommand} — but that returns a copy, with the
+   * same prototype-stripping problem, so a class instance belongs here
+   * directly rather than routed through it.
+   *
+   * The tradeoff of leaving the carried name alone: a directly-registered
+   * mixed-case definition keeps its casing all the way to the client, so
+   * `COMMAND INFO` and arity errors echo `ClassCmd` where real Redis
+   * lowercases every built-in name. Normalizing here instead is what broke
+   * definition identity, so the split stands.
    */
   register<TArgs>(
     definition: CommandDefinition<TArgs>,

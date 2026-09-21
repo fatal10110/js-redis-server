@@ -48,6 +48,10 @@ describe('CommandRegistry', () => {
     // The name is deliberately mixed-case: a registry that normalized by
     // copying would take its copy branch here and nowhere else, since every
     // in-repo definition already declares a lowercase name.
+    //
+    // Note the instance is registered *directly*. That is the supported path
+    // for a class-based definition, not an incidental detail of the test:
+    // `defineCommand` would spread it and strip the prototype right here.
     class ClassCommand implements CommandDefinition<Record<string, never>> {
       readonly name = 'ClassCmd'
       readonly schema = t.object({})
