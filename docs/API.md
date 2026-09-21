@@ -155,6 +155,8 @@ Current profile gates:
 | `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
+| `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |
+| `SORT`/`SORT_RO` cluster `GET '#'` exempt from that slot comparison | `redis-8.0+` | `valkey-9.0+` |
 
 ## Package Entry Points
 

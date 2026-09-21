@@ -8,6 +8,7 @@ import {
 } from '../redis-error'
 import type { RedisClientSession } from '../redis-context'
 import type { RedisClusterTopology } from '../../state'
+import type { CompatibilityProfile } from '../compatibility'
 
 export type ClusterPolicyOptions = {
   localNodeId: string
@@ -71,7 +72,11 @@ export function createClusterPolicy(
         transactionSlots.delete(ctx.session)
       }
 
-      const sortPatternError = getSortClusterPatternError(plan, topology)
+      const sortPatternError = getSortClusterPatternError(
+        plan,
+        topology,
+        ctx.server.profile,
+      )
       if (sortPatternError) {
         throw sortPatternError
       }
@@ -104,9 +109,33 @@ export function createClusterPolicy(
   }
 }
 
+const SORT_BY_DENIED_LEGACY = 'BY option of SORT denied in Cluster mode.'
+const SORT_GET_DENIED_LEGACY = 'GET option of SORT denied in Cluster mode.'
+const SORT_BY_DENIED =
+  'BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+const SORT_GET_DENIED =
+  'GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+
+/**
+ * Mirrors the cluster guards `sortCommand()` applies while parsing BY/GET.
+ *
+ * Two behaviours differ by version, so both are profile-gated:
+ *
+ * - `sort.cluster-pattern-slot` (Redis 7.4 / Valkey 8.0) replaced a blanket
+ *   refusal of every BY glob and *every* GET pattern with a slot comparison —
+ *   the pattern is accepted when the keys it can form provably hash to the
+ *   sort key's slot — and switched to the longer error wording.
+ * - `sort.cluster-get-hash` (Redis 8.0 / Valkey 9.0) exempts `GET #`, which
+ *   returns the element itself and reads no other key, from that comparison.
+ *
+ * A BY pattern with no `*` is constant on every version: real Redis sets
+ * `dontsort`, never looks a weight key up, and so never reaches the guard —
+ * which is why the documented `BY nosort` works in cluster mode.
+ */
 function getSortClusterPatternError(
   plan: CommandPlan,
   topology: RedisClusterTopology,
+  profile: CompatibilityProfile,
 ): RedisCommandError | null {
   if (plan.definition.name !== 'sort' && plan.definition.name !== 'sort_ro') {
     return null
@@ -121,57 +150,78 @@ function getSortClusterPatternError(
     return null
   }
 
-  if (
-    Buffer.isBuffer(args.by) &&
-    sortPatternMayCrossSlot(args.key, args.by, topology)
-  ) {
-    return new RedisCommandError(
-      'BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
-    )
+  const comparesPatternSlots = profile.has('sort.cluster-pattern-slot')
+  const keySlot = topology.calculateSlot(args.key)
+
+  if (Buffer.isBuffer(args.by) && args.by.includes(0x2a)) {
+    if (!comparesPatternSlots) {
+      return new RedisCommandError(SORT_BY_DENIED_LEGACY)
+    }
+    if (patternHashSlot(args.by, topology) !== keySlot) {
+      return new RedisCommandError(SORT_BY_DENIED)
+    }
   }
 
   const get = Array.isArray(args.get) ? args.get : []
   for (const pattern of get) {
-    if (
-      Buffer.isBuffer(pattern) &&
-      !isSelfSortPattern(pattern) &&
-      sortPatternMayCrossSlot(args.key, pattern, topology)
-    ) {
-      return new RedisCommandError(
-        'GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
-      )
+    if (!Buffer.isBuffer(pattern)) {
+      continue
+    }
+    if (!comparesPatternSlots) {
+      return new RedisCommandError(SORT_GET_DENIED_LEGACY)
+    }
+    if (isSelfSortPattern(pattern) && profile.has('sort.cluster-get-hash')) {
+      continue
+    }
+    if (patternHashSlot(pattern, topology) !== keySlot) {
+      return new RedisCommandError(SORT_GET_DENIED)
     }
   }
 
   return null
 }
 
-function sortPatternMayCrossSlot(
-  source: Buffer,
+/**
+ * Port of `patternHashSlot()` from Redis `cluster.c`: the slot every key a
+ * glob pattern can match must belong to, or `-1` when that cannot be inferred.
+ *
+ * A wildcard or an escape before the closing brace makes the match set
+ * unbounded; a non-empty `{...}` tag pins the slot to the tag; anything else
+ * is a literal key and hashes as one.
+ */
+function patternHashSlot(
   pattern: Buffer,
   topology: RedisClusterTopology,
-): boolean {
-  if (!pattern.includes(0x2a)) {
-    return topology.calculateSlotForKeys([source, pattern]) === -1
+): number {
+  let tagStart = -1
+
+  for (let i = 0; i < pattern.length; i++) {
+    const byte = pattern[i]
+
+    // '*', '?', '[' or '\' — keys can be in any slot.
+    if (byte === 0x2a || byte === 0x3f || byte === 0x5b || byte === 0x5c) {
+      return -1
+    }
+
+    if (tagStart === -1 && byte === 0x7b) {
+      tagStart = i
+      continue
+    }
+
+    if (tagStart < 0 || byte !== 0x7d) {
+      continue
+    }
+
+    // '{}' hashes the whole key; -2 stops any later brace from opening a tag.
+    if (i === tagStart + 1) {
+      tagStart = -2
+      continue
+    }
+
+    return topology.calculateSlot(pattern.subarray(tagStart + 1, i))
   }
 
-  const sourceTag = hashTag(source)
-  const patternTag = hashTag(pattern)
-  return !sourceTag || !patternTag || !sourceTag.equals(patternTag)
-}
-
-function hashTag(key: Buffer): Buffer | null {
-  const open = key.indexOf(0x7b)
-  if (open === -1) {
-    return null
-  }
-
-  const close = key.indexOf(0x7d, open + 1)
-  if (close <= open + 1) {
-    return null
-  }
-
-  return key.subarray(open + 1, close)
+  return topology.calculateSlot(pattern)
 }
 
 function isSelfSortPattern(pattern: Buffer): boolean {

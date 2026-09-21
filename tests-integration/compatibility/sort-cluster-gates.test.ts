@@ -1,0 +1,153 @@
+import { after, before, describe, test } from 'node:test'
+import assert from 'node:assert'
+import type { Cluster, Redis } from 'ioredis'
+
+import { TestRunner } from '../test-config'
+import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
+
+type ProfileName =
+  | 'redis-6.2'
+  | 'redis-7.0'
+  | 'redis-7.2'
+  | 'redis-7.4'
+  | 'redis-8.0'
+  | 'valkey-8.0'
+  | 'valkey-9.0'
+
+const testRunner = new TestRunner()
+const profile = (process.env.REDIS_COMPAT ?? 'redis-8.0') as ProfileName
+
+/**
+ * `sort.cluster-pattern-slot` — Redis 7.4 / Valkey 8.0 replaced the blanket
+ * "denied in Cluster mode" refusal with a per-pattern slot comparison
+ * (`patternHashSlot()` vs the sort key's slot) and the longer error wording.
+ */
+const patternSlotProfiles: ProfileName[] = [
+  'redis-7.4',
+  'redis-8.0',
+  'valkey-8.0',
+  'valkey-9.0',
+]
+
+/**
+ * `sort.cluster-get-hash` — Redis 8.0 / Valkey 9.0 additionally exempt the
+ * `GET #` self pattern from that slot comparison. Before that, `GET #` is
+ * hashed like any other pattern and therefore refused.
+ */
+const getHashProfiles: ProfileName[] = ['redis-8.0', 'valkey-9.0']
+
+const comparesPatternSlots = patternSlotProfiles.includes(profile)
+const allowsGetHash = getHashProfiles.includes(profile)
+
+const byError = comparesPatternSlots
+  ? 'ERR BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+  : 'ERR BY option of SORT denied in Cluster mode.'
+const getError = comparesPatternSlots
+  ? 'ERR GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+  : 'ERR GET option of SORT denied in Cluster mode.'
+
+describe(
+  `SORT cluster gates (${testRunner.getBackendName()}, ${profile})`,
+  { skip: testRunner.backend === 'real' && 'profiles are mock-only' },
+  () => {
+    let redisClient: Cluster
+
+    before(async () => {
+      redisClient = await testRunner.setupIoredisCluster('sort-cluster-gates')
+    })
+
+    after(async () => {
+      await testRunner.cleanup()
+    })
+
+    async function withOps(
+      fn: (client: Redis, k: (name: string) => string) => Promise<void>,
+    ): Promise<void> {
+      const tag = `{sort-gate:${randomKey()}}`
+      const k = (name: string) => `${tag}:${name}`
+      const directClient = await connectToSlotOwner(redisClient, k('seed'))
+      try {
+        await fn(directClient, k)
+      } finally {
+        directClient.disconnect()
+      }
+    }
+
+    test('BY nosort is accepted on every profile', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('l'), '3', '1', '2')
+        assert.deepStrictEqual(await c.sort(k('l'), 'BY', 'nosort'), [
+          '3',
+          '1',
+          '2',
+        ])
+      })
+    })
+
+    test('a same-slot BY glob is accepted only once pattern slots are compared', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '2', '1')
+        await c.set(k('weight:1'), '20')
+        await c.set(k('weight:2'), '10')
+
+        if (!comparesPatternSlots) {
+          await assert.rejects(
+            () => c.sort(k('ids'), 'BY', k('weight:*')),
+            errorWithMessage(byError),
+          )
+          return
+        }
+
+        assert.deepStrictEqual(await c.sort(k('ids'), 'BY', k('weight:*')), [
+          '2',
+          '1',
+        ])
+      })
+    })
+
+    test('a cross-slot BY glob is always refused, with profile-specific wording', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '1')
+        await assert.rejects(
+          () => c.sort(k('ids'), 'BY', `{sort-other:${randomKey()}}:weight:*`),
+          errorWithMessage(byError),
+        )
+      })
+    })
+
+    test('a same-slot GET glob is accepted only once pattern slots are compared', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '1')
+        await c.set(k('name:1'), 'one')
+
+        if (!comparesPatternSlots) {
+          await assert.rejects(
+            () => c.sort(k('ids'), 'GET', k('name:*')),
+            errorWithMessage(getError),
+          )
+          return
+        }
+
+        assert.deepStrictEqual(await c.sort(k('ids'), 'GET', k('name:*')), [
+          'one',
+        ])
+      })
+    })
+
+    test("GET '#' is exempt from the slot comparison only on the newest profiles", async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '2', '1')
+
+        if (!allowsGetHash) {
+          await assert.rejects(
+            () => c.sort(k('ids'), 'GET', '#'),
+            errorWithMessage(getError),
+          )
+          return
+        }
+
+        assert.deepStrictEqual(await c.sort(k('ids'), 'GET', '#'), ['1', '2'])
+      })
+    })
+  },
+)

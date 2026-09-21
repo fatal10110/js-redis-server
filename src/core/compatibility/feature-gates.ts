@@ -25,4 +25,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'hscan.novalues': { redis: '7.4.0', valkey: '9.0.0' },
   'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
+  // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
+  // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
+  // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.
+  'sort.cluster-pattern-slot': { redis: '7.4.0', valkey: '8.0.0' },
+  // SORT GET '#' (the element itself) is exempt from that slot comparison —
+  // Redis 8.0 / Valkey 9.0. Before that it is hashed like any other pattern.
+  'sort.cluster-get-hash': { redis: '8.0.0', valkey: '9.0.0' },
 }

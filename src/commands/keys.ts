@@ -700,7 +700,7 @@ function sortElements(
   args: SortArgs,
   db: RedisDatabase,
 ): Buffer[] {
-  if (args.by && isNoSortPattern(args.by)) {
+  if (args.by && isConstantSortPattern(args.by)) {
     return [...elements]
   }
 
@@ -818,13 +818,22 @@ function isSelfSortPattern(pattern: Buffer): boolean {
   return pattern.length === 1 && pattern[0] === 0x23
 }
 
-function isNoSortPattern(pattern: Buffer): boolean {
-  return pattern.toString().toLowerCase() === 'nosort'
+/**
+ * A BY pattern with no `*` is constant: every element resolves to the same
+ * weight key, so real Redis sets `dontsort` and skips both the lookup and the
+ * sort. `BY nosort` is just the documented spelling of such a pattern — there
+ * is nothing special about the literal.
+ */
+function isConstantSortPattern(pattern: Buffer): boolean {
+  return !pattern.includes(0x2a)
 }
 
 function sortRoutingKeys(args: SortArgs): Buffer[] {
   const keys = [args.key]
-  if (args.by && !isNoSortPattern(args.by)) {
+  // A constant BY is never looked up, so it is not a key this command touches
+  // and must not take part in slot routing (real Redis routes SORT on its
+  // source key and STORE destination alone).
+  if (args.by && !isConstantSortPattern(args.by)) {
     keys.push(args.by)
   }
   for (const pattern of args.get) {

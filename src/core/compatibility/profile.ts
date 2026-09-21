@@ -25,6 +25,8 @@ export type FeatureId =
   | 'hscan.novalues'
   | 'xread.plus-id'
   | 'cluster.multi-db'
+  | 'sort.cluster-pattern-slot'
+  | 'sort.cluster-get-hash'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor
