@@ -6,6 +6,8 @@ import {
   WrongTypeRedisError,
   createRedisCommandExecutor,
   createStringData,
+  formatMonitorTimestamp,
+  monitorTimestampMicros,
 } from '../src/internal'
 import type {
   RedisDataValue,
@@ -256,7 +258,7 @@ describe('new Redis state core', () => {
     const value = Buffer.from('value')
 
     server.monitorFeed.publish({
-      timestampMs: 1234,
+      timestampMicros: 1234,
       database: 2,
       clientId: 'client-1',
       clientAddress: '127.0.0.1:5000',
@@ -282,6 +284,49 @@ describe('new Redis state core', () => {
 
     unsubscribeFirst()
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
+  })
+
+  // The wire behavior is pinned by the raw-TCP MONITOR suite, but a live feed
+  // cannot be made to produce a chosen microsecond value, so the formatting
+  // edge cases (zero-padding a small fraction, an exact second boundary) are
+  // only reachable as a unit test (#388).
+  test('formats monitor timestamps with six fractional digits', () => {
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_000_000),
+      '1695000000.000000',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_000_001),
+      '1695000000.000001',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_012_345),
+      '1695000000.012345',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_999_999),
+      '1695000000.999999',
+    )
+  })
+
+  test('monitor timestamps track wall-clock time with sub-millisecond resolution', () => {
+    const samples: number[] = []
+    for (let i = 0; i < 64; i++) {
+      samples.push(monitorTimestampMicros())
+    }
+
+    // Near Date.now(), so the epoch anchor is real wall-clock time and not a
+    // raw monotonic counter.
+    for (const sample of samples) {
+      assert.ok(Math.abs(sample / 1000 - Date.now()) < 1000)
+      assert.ok(Number.isSafeInteger(sample))
+    }
+
+    // Non-decreasing, and not quantized to whole milliseconds.
+    for (let i = 1; i < samples.length; i++) {
+      assert.ok(samples[i] >= samples[i - 1])
+    }
+    assert.ok(samples.some(sample => sample % 1000 !== 0))
   })
 })
 

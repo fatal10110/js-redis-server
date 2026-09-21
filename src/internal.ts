@@ -116,6 +116,8 @@ export {
   RedisServerState,
   RedisMonitorFeed,
   RedisMutationBus,
+  formatMonitorTimestamp,
+  monitorTimestampMicros,
   RedisFunctionRegistry,
   RedisPubSubBroker,
   RedisScriptCache,

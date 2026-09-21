@@ -205,8 +205,13 @@ export const configCommand = defineCommand({
       return configRewrite(args.args)
     }
 
+    // Matches the generic unknown-subcommand reply real Redis sends for a
+    // container command, echoing the subcommand with the casing the client
+    // sent. Captured byte-for-byte from redis-server 7.2.1 and 8.0.6 (identical
+    // on both, so no compatibility gate applies) and pinned by
+    // tests-integration/raw-tcp/command-errors-config.test.ts (#388).
     throw new RedisCommandError(
-      `Unknown CONFIG subcommand or wrong number of arguments for '${args.subcommand}'. Try CONFIG HELP.`,
+      `unknown subcommand '${args.subcommand}'. Try CONFIG HELP.`,
     )
   },
 })

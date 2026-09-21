@@ -11,7 +11,10 @@ import {
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
-import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
+import {
+  monitorTimestampMicros,
+  type RedisMonitorCommandEvent,
+} from '../state/monitor-feed'
 import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
@@ -360,7 +363,7 @@ function publishMonitorEvent(
   }
 
   const event: RedisMonitorCommandEvent = {
-    timestampMs: Date.now(),
+    timestampMicros: monitorTimestampMicros(),
     database: ctx.session.selectedDatabase,
     clientId: ctx.session.id,
     clientAddress: ctx.monitor?.clientAddress ?? ctx.session.clientAddress,

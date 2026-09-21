@@ -30,7 +30,11 @@ export type {
   RedisMonitorCommandEvent,
   RedisMonitorCommandListener,
 } from './monitor-feed'
-export { RedisMonitorFeed } from './monitor-feed'
+export {
+  formatMonitorTimestamp,
+  monitorTimestampMicros,
+  RedisMonitorFeed,
+} from './monitor-feed'
 
 export type { ExpirationState, KeyspaceEntry, SetOptions } from './keyspace'
 

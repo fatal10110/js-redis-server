@@ -4,7 +4,11 @@ import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { ResponseStream } from '../core/response-stream'
-import type { RedisMonitorCommandEvent, Unsubscribe } from '../state'
+import {
+  formatMonitorTimestamp,
+  type RedisMonitorCommandEvent,
+  type Unsubscribe,
+} from '../state'
 import { commandDocs } from './introspection'
 
 export const monitorCommand = defineCommand({
@@ -110,7 +114,7 @@ function createMonitorStream(ctx: RedisExecutionContext): ResponseStream {
 }
 
 function formatMonitorCommandEvent(event: RedisMonitorCommandEvent): string {
-  const timestamp = (event.timestampMs / 1000).toFixed(6)
+  const timestamp = formatMonitorTimestamp(event.timestampMicros)
   const source = event.clientAddress ?? event.clientId
   const argv = [event.command, ...event.args]
     .map(formatMonitorArgument)
