@@ -1,12 +1,10 @@
 version: 2
 
 updates:
-  # The server itself.
-  #
-  # NOTE: lua-redis-wasm is declared here *and* in examples/browser-demo, and
-  # the two copies are ABI-coupled (see that entry below). `groups` only groups
-  # within a single `updates` entry, so Dependabot cannot move them together;
-  # the demo build job asserts the two resolved versions match.
+  # The server itself. This is also the only tree that declares
+  # `lua-redis-wasm`: the demo reads its version from here to build the
+  # jsDelivr URL, so one bump moves the bundled loader and the CDN assets
+  # together and they cannot drift apart.
   - package-ecosystem: npm
     directory: '/'
     schedule:
@@ -40,11 +38,6 @@ updates:
   # Dependabot never opens *version* update PRs for a directory that is not
   # listed here — which is why this sub-project's deps only ever moved when a
   # security update touched them (security updates need no config at all).
-  #
-  # NOTE: lua-redis-wasm must stay in lockstep with the root declaration. The
-  # root tree provides the bundled JS loader; this tree provides the version in
-  # the jsDelivr URL for the WASM + glue. See examples/browser-demo/
-  # vite.config.ts, and the version-agreement check in deploy-demo.yml.
   - package-ecosystem: npm
     directory: '/examples/browser-demo'
     schedule:

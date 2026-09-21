@@ -12,9 +12,11 @@ on:
   push:
     branches: [main]
     # Only redeploy when the demo or the inputs it actually consumes change.
-    # The root manifests and tsconfig are in here because the job runs `npm ci`
-    # at the root too, and the demo has no tsconfig of its own — the root one
-    # governs both `tsx` and Vite's esbuild transform of the demo and src/**.
+    # The root manifests are in here because the job runs `npm ci` at the root
+    # too. The root tsconfig is in here because the demo has none of its own,
+    # so it supplies esbuild's `target` (and the handful of other keys esbuild
+    # reads) when Vite transforms the demo and src/**, and it is the config
+    # `tsx` loads for `test:demo`.
     paths:
       - 'examples/browser-demo/**'
       - 'src/**'
@@ -59,34 +61,25 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          # Both lockfiles, or a demo-only dependency change hits the root
+          # cache key exactly, restores stale demo tarballs, re-downloads the
+          # new ones and never saves them — on precisely the Dependabot PRs
+          # this job exists to gate.
+          cache-dependency-path: |
+            package-lock.json
+            examples/browser-demo/package-lock.json
 
-      # Root deps: the demo imports ../../src, which pulls in respjs and
-      # cluster-key-slot from the root node_modules. Also provides tsx for the
-      # demo's own tests below.
+      # Root deps, and this step must stay ahead of the demo build: the demo
+      # imports ../../src, which pulls respjs, cluster-key-slot and
+      # lua-redis-wasm from the root node_modules, and vite.config.ts reads
+      # that same lua-redis-wasm to build the jsDelivr URL. Also provides tsx
+      # for the demo's own tests below.
       - name: Install root deps
         run: npm ci
 
       - name: Install demo deps
         run: npm ci
         working-directory: examples/browser-demo
-
-      # lua-redis-wasm is declared in BOTH manifests and the two copies are
-      # ABI-coupled: src/core/lua-runtime.ts bundles the JS loader out of the
-      # root tree, while vite.config.ts reads the demo tree to build the
-      # jsDelivr URL for the matching WASM + glue. Dependabot cannot move them
-      # together — `groups` only groups within one `updates` entry — and a
-      # drift installs, builds and tests green, breaking only in a visitor's
-      # browser. So assert the invariant vite.config.ts documents.
-      - name: Check lua-redis-wasm versions agree
-        run: |
-          root=$(node -p "require('./node_modules/lua-redis-wasm/package.json').version")
-          demo=$(node -p "require('./examples/browser-demo/node_modules/lua-redis-wasm/package.json').version")
-          echo "bundled loader (root): $root"
-          echo "jsDelivr WASM (demo):  $demo"
-          if [ "$root" != "$demo" ]; then
-            echo "::error file=examples/browser-demo/package.json::lua-redis-wasm drift: the bundled JS loader is $root but the demo fetches WASM + glue from jsDelivr at $demo. These are ABI-coupled (see examples/browser-demo/vite.config.ts) — bump both manifests together."
-            exit 1
-          fi
 
       # Note: these run transpile-only. The demo has no tsconfig, so nothing
       # typechecks format.ts — adding one is blocked on the pre-existing
