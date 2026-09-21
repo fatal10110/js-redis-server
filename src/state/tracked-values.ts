@@ -703,8 +703,9 @@ export class TrackedStreamData {
   // XGROUP CREATE. Adding a group does not dirty a WATCH on an existing stream
   // key in real Redis, but XGROUP CREATE ... MKSTREAM can create a brand-new
   // key that still must be persisted (and, as a key creation, does dirty the
-  // WATCH). markCommitted() commits the value while letting keyspace.update
-  // decide the dirty signal based on whether the key already existed.
+  // WATCH). markCommitted() commits the value while letting
+  // RedisDatabase.update decide the dirty signal based on whether the key
+  // already existed.
   addGroup(groupId: string, group: RedisStreamConsumerGroup): void {
     this.stream.groups.set(groupId, group)
     this.tracker.markCommitted()
