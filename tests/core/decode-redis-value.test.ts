@@ -1,57 +1,63 @@
-import { test, describe } from 'node:test'
+import { test, describe, before } from 'node:test'
 import assert from 'node:assert'
+import { ErrorReply } from 'redis'
+import {
+  createNodeRedisMock,
+  NODE_REDIS_DECODE_OPTIONS,
+} from '../../src/client-mocks/node-redis-mock'
+import { IN_MEMORY_DECODE_OPTIONS } from '../../src/in-memory-client'
 import {
   decodeRedisValue,
   decodeRedisKey,
   redisErrorText,
   toRedisArgument,
-  type DecodeRedisValueOptions,
 } from '../../src/core/decode-redis-value'
 import { RedisCommandError } from '../../src/core/redis-error'
 import type { RedisValue } from '../../src/core/redis-value'
 
-// The node-redis facade and InMemoryRedisClient share this decoder and differ
-// only through its options. Those differences are deliberate, so they are
-// asserted here: flipping either client onto the other's option value must
-// fail a test rather than pass silently.
-
-const NODE_REDIS: DecodeRedisValueOptions = {
-  narrowBigInt: 'always',
-  pushShape: 'items',
-  error: text => new Error(text),
-}
-
-const IN_MEMORY: DecodeRedisValueOptions = {
-  narrowBigInt: 'when-safe',
-  pushShape: 'tagged',
-  error: (text, code) => new RedisCommandError(text, code),
-}
+// The node-redis facade and InMemoryRedisClient share one decoder and differ
+// only through its options. These import the option objects the clients
+// *actually* pass — not local copies — so flipping either client onto the
+// other's value fails here. That tripwire is the point of the file: the
+// divergences are deliberate, and a silent re-convergence is what would
+// otherwise go unnoticed.
 
 const bulk = (value: string): RedisValue => ({
   kind: 'bulk-string',
   value: Buffer.from(value),
 })
 
-describe('decodeRedisValue divergences', () => {
-  test('pushShape: node-redis drops the type tag, in-memory keeps it', () => {
+describe('decode option divergences between the two clients', () => {
+  before(async () => {
+    // Resolving node-redis' error classes is what createNodeRedisMock() does
+    // before handing back a client, and NODE_REDIS_DECODE_OPTIONS.error falls
+    // back to RedisCommandError until it has run.
+    const client = await createNodeRedisMock()
+    await client.quit()
+  })
+
+  test('pushShape: the facade drops the type tag, in-memory keeps it', () => {
     const push: RedisValue = {
       kind: 'push',
       name: 'message',
       items: [bulk('news'), bulk('hello')],
     }
 
-    assert.deepStrictEqual(decodeRedisValue(push, NODE_REDIS), [
+    assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.pushShape, 'items')
+    assert.deepStrictEqual(decodeRedisValue(push, NODE_REDIS_DECODE_OPTIONS), [
       'news',
       'hello',
     ])
-    assert.deepStrictEqual(decodeRedisValue(push, IN_MEMORY), [
+
+    assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.pushShape, 'tagged')
+    assert.deepStrictEqual(decodeRedisValue(push, IN_MEMORY_DECODE_OPTIONS), [
       'message',
       'news',
       'hello',
     ])
   })
 
-  test('narrowBigInt: node-redis always narrows, in-memory widens past 2^53', () => {
+  test('narrowBigInt: the facade always narrows, in-memory widens past 2^53', () => {
     const unsafe: RedisValue = {
       kind: 'integer',
       value: BigInt(Number.MAX_SAFE_INTEGER) + 2n,
@@ -59,24 +65,26 @@ describe('decodeRedisValue divergences', () => {
 
     // node-redis parses `:` with plain JS number arithmetic — precision loss
     // included — so it is never a bigint.
-    const narrowed = decodeRedisValue(unsafe, NODE_REDIS)
+    assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.narrowBigInt, 'always')
+    const narrowed = decodeRedisValue(unsafe, NODE_REDIS_DECODE_OPTIONS)
     assert.strictEqual(typeof narrowed, 'number')
     assert.strictEqual(narrowed, 9007199254740992)
 
     // The in-memory client keeps the exact value instead.
+    assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.narrowBigInt, 'when-safe')
     assert.strictEqual(
-      decodeRedisValue(unsafe, IN_MEMORY),
+      decodeRedisValue(unsafe, IN_MEMORY_DECODE_OPTIONS),
       BigInt(Number.MAX_SAFE_INTEGER) + 2n,
     )
   })
 
-  test('narrowBigInt: a safe bigint is a number under both options', () => {
+  test('narrowBigInt: a safe bigint is a number for both clients', () => {
     const safe: RedisValue = { kind: 'integer', value: 42n }
-    assert.strictEqual(decodeRedisValue(safe, NODE_REDIS), 42)
-    assert.strictEqual(decodeRedisValue(safe, IN_MEMORY), 42)
+    assert.strictEqual(decodeRedisValue(safe, NODE_REDIS_DECODE_OPTIONS), 42)
+    assert.strictEqual(decodeRedisValue(safe, IN_MEMORY_DECODE_OPTIONS), 42)
   })
 
-  test('error: the option picks the thrown class, with the wire text', () => {
+  test('error: the facade throws node-redis ErrorReply, in-memory RedisCommandError', () => {
     const error: RedisValue = {
       kind: 'error',
       code: 'WRONGTYPE',
@@ -86,9 +94,10 @@ describe('decodeRedisValue divergences', () => {
       'WRONGTYPE Operation against a key holding the wrong kind of value'
 
     assert.throws(
-      () => decodeRedisValue(error, NODE_REDIS),
+      () => decodeRedisValue(error, NODE_REDIS_DECODE_OPTIONS),
       (err: unknown) => {
-        assert.ok(err instanceof Error)
+        // `instanceof ErrorReply` is node-redis' documented idiom.
+        assert.ok(err instanceof ErrorReply)
         assert.ok(!(err instanceof RedisCommandError))
         assert.strictEqual(err.message, text)
         return true
@@ -96,9 +105,10 @@ describe('decodeRedisValue divergences', () => {
     )
 
     assert.throws(
-      () => decodeRedisValue(error, IN_MEMORY),
+      () => decodeRedisValue(error, IN_MEMORY_DECODE_OPTIONS),
       (err: unknown) => {
         assert.ok(err instanceof RedisCommandError)
+        assert.ok(!(err instanceof ErrorReply))
         assert.strictEqual(err.message, text)
         assert.strictEqual(err.code, 'WRONGTYPE')
         return true
@@ -106,13 +116,20 @@ describe('decodeRedisValue divergences', () => {
     )
   })
 
-  test('returnBuffers keeps bulk-string and verbatim replies as Buffers', () => {
-    const options = { ...IN_MEMORY, returnBuffers: true }
+  test('returnBuffers is the in-memory client alone, and off by default', () => {
+    // The facade never sets it; the in-memory client layers it per connection.
+    assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.returnBuffers, undefined)
+    assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.returnBuffers, undefined)
+
+    const options = { ...IN_MEMORY_DECODE_OPTIONS, returnBuffers: true }
     assert.deepStrictEqual(
       decodeRedisValue(bulk('v'), options),
       Buffer.from('v'),
     )
-    assert.strictEqual(decodeRedisValue(bulk('v'), IN_MEMORY), 'v')
+    assert.strictEqual(
+      decodeRedisValue(bulk('v'), IN_MEMORY_DECODE_OPTIONS),
+      'v',
+    )
     // A null bulk-string is still null, not an empty Buffer.
     assert.strictEqual(
       decodeRedisValue({ kind: 'bulk-string', value: null }, options),
@@ -126,7 +143,10 @@ describe('decodeRedisValue divergences', () => {
       entries: [[bulk('field'), bulk('value')]],
     }
     assert.deepStrictEqual(
-      decodeRedisValue(map, { ...IN_MEMORY, returnBuffers: true }),
+      decodeRedisValue(map, {
+        ...IN_MEMORY_DECODE_OPTIONS,
+        returnBuffers: true,
+      }),
       { field: Buffer.from('value') },
     )
   })

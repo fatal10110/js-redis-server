@@ -499,8 +499,8 @@ export class NodeRedisMockClient extends CommandRunner {
       return
     }
     this.closed = true
-    this.session.close()
     try {
+      this.session.close()
       if (this.pubsub) {
         const pubsub = this.pubsub
         this.pubsub = undefined
@@ -794,6 +794,17 @@ export class NodeRedisMockCluster extends CommandRunner {
    * its BY/GET *patterns* (see `sortRoutingKeys` in `src/commands/keys.ts`),
    * which look cross-slot but must surface `BY option of SORT denied in Cluster
    * mode …` rather than `CROSSSLOT`.
+   *
+   * KNOWN LIMITATION — pub/sub is not supported through this cluster facade.
+   * It exposes no subscribe API, and a raw `sendCommand(['SUBSCRIBE', …])` puts
+   * the cached session for its node into subscriber mode for good: every later
+   * command on that node is then refused with `ERR Can't execute …`. Because
+   * `SUBSCRIBE` has no keys it lands on `masters[0]`, which also serves every
+   * keyless command and the first slot range, so the blast radius is wide.
+   * Fixing it properly means what the standalone client already does — a
+   * dedicated pub/sub session plus a push-drain loop ({@link
+   * NodeRedisMockClient.ensurePubSub}) — which is a feature, not a routing
+   * change. Use {@link NodeRedisMockClient} for pub/sub.
    */
   private sessionForCommand(args: NodeRedisCommandArgument[]): ClientSession {
     const slot = this.topology.calculateSlotForKeys(this.routingKeys(args))
@@ -838,8 +849,10 @@ export class NodeRedisMockCluster extends CommandRunner {
 
     const [name, ...rest] = args
     try {
-      return this.masters[0].executor.plan(toBuffer(name), rest.map(toBuffer))
-        .keys
+      return this.masters[0].executor.plan(
+        toBuffer(name),
+        rest.map((arg, index) => toBuffer(arg, index + 1)),
+      ).keys
     } catch (err) {
       if (err instanceof RedisCommandError) {
         return []
@@ -888,7 +901,10 @@ async function runOnSession(
   }
 
   const [name, ...rest] = args
-  const result = await session.execute(toBuffer(name), rest.map(toBuffer))
+  const result = await session.execute(
+    toBuffer(name),
+    rest.map((arg, index) => toBuffer(arg, index + 1)),
+  )
 
   if (isResponseStream(result)) {
     // A multi-channel SUBSCRIBE/PSUBSCRIBE returns the per-channel confirmation
@@ -919,13 +935,24 @@ async function drainSubscribeAck(stream: ResponseStream): Promise<RedisValue> {
 
 /**
  * Deliberately narrower than the shared `toRedisArgument`, which also accepts
- * `number` for {@link InMemoryRedisClient}. Real node-redis rejects a number
- * argument with a TypeError rather than stringifying it, and a facade that
- * quietly accepted one would green-light test code that throws against the real
- * client. `Buffer.from` raises that TypeError for us.
+ * `number` for {@link InMemoryRedisClient}. `@redis/client`'s encoder takes
+ * `string | Buffer` and nothing else, so a facade that coerced anything wider
+ * would green-light test code that throws against the real client.
+ *
+ * `Buffer.from` alone is not narrow enough: it happily converts arrays and
+ * TypedArrays that node-redis rejects. Hence the explicit check, whose message
+ * mirrors the encoder's.
  */
-function toBuffer(arg: NodeRedisCommandArgument): Buffer {
-  return Buffer.isBuffer(arg) ? arg : Buffer.from(arg)
+function toBuffer(arg: NodeRedisCommandArgument, index = 0): Buffer {
+  if (Buffer.isBuffer(arg)) {
+    return arg
+  }
+  if (typeof arg !== 'string') {
+    throw new TypeError(
+      `"arguments[${index}]" must be of type "string | Buffer", got ${typeof arg} instead.`,
+    )
+  }
+  return Buffer.from(arg)
 }
 
 function addListener(
@@ -959,7 +986,13 @@ function notify(
 // curated methods are thin coercions over that decoder rather than per-command
 // reply tables — uncommon commands get the same native shapes via sendCommand.
 
-const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
+/**
+ * How this facade reads a {@link RedisValue}, and therefore where it diverges
+ * from `IN_MEMORY_DECODE_OPTIONS`. Exported so a test can assert the two apart —
+ * the divergences are deliberate, and a silent re-convergence is the failure
+ * mode worth catching.
+ */
+export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
   // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic, so
   // it is always a `number` (precision loss past 2^53 included) — never a
   // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint.

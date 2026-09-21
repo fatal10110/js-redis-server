@@ -34,6 +34,26 @@ export type InMemoryRedisClientOptions = {
   onClose?: () => void
 }
 
+/**
+ * How this client reads a {@link RedisValue}, and therefore where it diverges
+ * from the node-redis facade's `NODE_REDIS_DECODE_OPTIONS`. Exported so a test
+ * can assert the two apart — the divergences are deliberate, and a silent
+ * re-convergence is the failure mode worth catching.
+ *
+ * `returnBuffers` is per-connection and layered on top in the constructor.
+ */
+export const IN_MEMORY_DECODE_OPTIONS: DecodeRedisValueOptions = {
+  // Widen past Number.MAX_SAFE_INTEGER rather than lose precision. Deliberately
+  // *unlike* a real client (none of them widen) — callers here read replies
+  // directly rather than comparing against real-client output.
+  narrowBigInt: 'when-safe',
+  // RESP2 encodes a push as `[name, ...items]` on the wire (a pub/sub message
+  // is `["message", channel, payload]`); keep the type tag so push-mode
+  // consumers see the same shape a real client would.
+  pushShape: 'tagged',
+  error: (text, code) => new RedisCommandError(text, code),
+}
+
 /** Aborts when any of the given signals abort (or immediately if one already has). */
 function anySignal(signals: readonly AbortSignal[]): AbortSignal {
   const controller = new AbortController()
@@ -80,14 +100,7 @@ export class InMemoryRedisClient {
       database: options.database,
     })
     this.decodeOptions = {
-      // A real client reads a `:` reply as a plain number; only widen when the
-      // value genuinely overflows a JS safe integer.
-      narrowBigInt: 'when-safe',
-      // RESP2 encodes a push as `[name, ...items]` on the wire (a pub/sub
-      // message is `["message", channel, payload]`); keep the type tag so
-      // push-mode consumers see the same shape a real client would.
-      pushShape: 'tagged',
-      error: (text, code) => new RedisCommandError(text, code),
+      ...IN_MEMORY_DECODE_OPTIONS,
       returnBuffers: options.returnBuffers ?? false,
     }
     this.onClose = options.onClose

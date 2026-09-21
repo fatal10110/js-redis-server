@@ -225,19 +225,36 @@ describe('createNodeRedisMock (standalone)', () => {
     client.on('end', removed).off('end', removed)
 
     await client.quit()
-    await client.quit() // 'once' must not fire a second time
+    // A second 'end' — emitted directly rather than by quitting twice, which
+    // real node-redis rejects with ClientClosedError. 'once' must not re-fire.
+    client.emit('end')
 
     assert.deepStrictEqual(seen, ['on', 'once', 'on'])
   })
 
-  test('rejects a non string/Buffer argument the way node-redis does', async () => {
+  test('rejects arguments node-redis would not encode', async () => {
     const client = await makeClient()
-    // Real node-redis throws a TypeError rather than stringifying a number, so
-    // the facade must not quietly accept one either.
-    await assert.rejects(
-      () => client.sendCommand(['SET', 'n', 5 as unknown as string]),
-      TypeError,
-    )
+    // @redis/client's encoder takes string | Buffer and nothing else, so the
+    // facade must reject the same values — including the arrays and TypedArrays
+    // Buffer.from would happily convert.
+    for (const [label, value] of [
+      ['number', 5],
+      ['array', [104, 105]],
+      ['TypedArray', new Uint8Array([104, 105])],
+      ['object', {}],
+    ] as const) {
+      await assert.rejects(
+        () => client.sendCommand(['SET', 'n', value as unknown as string]),
+        (err: unknown) => {
+          assert.ok(err instanceof TypeError, `${label} should be a TypeError`)
+          assert.strictEqual(
+            err.message,
+            `"arguments[2]" must be of type "string | Buffer", got ${typeof value} instead.`,
+          )
+          return true
+        },
+      )
+    }
   })
 
   test('quit() tears down the session (no further commands)', async () => {
