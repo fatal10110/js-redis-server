@@ -77,13 +77,18 @@ export class CommandExecutor {
 
   /**
    * Resolve a raw command + args into a {@link CommandPlan} without executing it.
-   * The command name is matched case-insensitively against the registry.
+   * The name is handed to the registry unfolded; `registry.get` does the
+   * case-insensitive match.
+   *
+   * Note that the decode + `String.toLowerCase()` this ends up doing is a
+   * *Unicode* fold, while real Redis folds ASCII only — so e.g. U+212A KELVIN
+   * SIGN + "eys" dispatches KEYS here and is rejected by Redis. Pre-existing
+   * (the old `normalizeCommandName` folded the same way); tracked in #382.
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
-    const commandName = CommandExecutor.normalizeCommandName(rawCommand)
-    const definition = this.registry.get(commandName)
+    const definition = this.registry.get(rawCommand.toString())
 
     if (!definition) {
       throw new UnknownRedisCommandError(rawCommand, rawArgs)
@@ -129,12 +134,6 @@ export class CommandExecutor {
     }
   }
 
-  private static normalizeCommandName(rawCommand: Buffer | string): string {
-    return typeof rawCommand === 'string'
-      ? rawCommand.toLowerCase()
-      : rawCommand.toString().toLowerCase()
-  }
-
   private rawCommandErrorResult(
     err: RedisCommandError,
     rawCommand: Buffer | string,
@@ -147,7 +146,7 @@ export class CommandExecutor {
     if (
       err instanceof WrongNumberOfArgumentsError &&
       ctx.session.mode === 'transaction' &&
-      CommandExecutor.normalizeCommandName(rawCommand) === 'exec'
+      rawCommand.toString().toLowerCase() === 'exec'
     ) {
       ctx.session.discardTransaction()
       const abortError = new ExecCommandAbortError(err.message)
@@ -325,8 +324,8 @@ export class CommandExecutor {
   /**
    * Build a {@link CommandPlan} from a resolved definition: parse the raw buffers
    * against the command's schema (may throw arity/type errors) and extract the
-   * routing keys used for cluster slot validation. Flags are copied onto the plan
-   * so policies can inspect them without re-resolving the definition.
+   * routing keys used for cluster slot validation. The definition rides along on
+   * the plan, so policies read flags off `plan.definition.flags`.
    */
   private createPlan<TArgs>(
     definition: CommandDefinition<TArgs>,
@@ -345,7 +344,6 @@ export class CommandExecutor {
       definition,
       args,
       keys,
-      flags: definition.flags,
       rawCommand: Buffer.from(rawCommand),
       rawArgs: rawArgs.map(arg => Buffer.from(arg)),
     }
@@ -464,7 +462,7 @@ function isQueuedTransactionCommand(
 ): boolean {
   return (
     ctx.session.mode === 'transaction' &&
-    !plan.flags.includes('transaction') &&
+    !plan.definition.flags.includes('transaction') &&
     result.value.kind === 'simple-string' &&
     result.value.value === 'QUEUED'
   )
@@ -604,6 +602,7 @@ function shouldDirtyTransaction(
   ctx: RedisExecutionContext,
 ): boolean {
   return (
-    ctx.session.mode === 'transaction' && !plan.flags.includes('transaction')
+    ctx.session.mode === 'transaction' &&
+    !plan.definition.flags.includes('transaction')
   )
 }

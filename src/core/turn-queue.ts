@@ -3,13 +3,9 @@ export interface RedisTurnHandle {
   suspend(waitFor: Promise<unknown>): Promise<RedisTurnHandle>
 }
 
-export interface RedisTurnQueue {
-  waitTurn(): Promise<RedisTurnHandle>
-}
-
 type TurnResolver = () => void
 
-export class SerialTurnQueue implements RedisTurnQueue {
+export class SerialTurnQueue {
   private readonly queue: TurnResolver[] = []
   private locked = false
 

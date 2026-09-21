@@ -7,7 +7,7 @@ import {
   RedisResult,
   RedisServerState,
   RedisValue,
-  createNoopParkHandler,
+  createDefaultParkHandler,
   defineCommand,
   isResponseStream,
   t,
@@ -44,7 +44,7 @@ function createContext(executor?: CommandExecutor): RedisExecutionContext {
     },
     executor: contextExecutor,
     signal: new AbortController().signal,
-    park: createNoopParkHandler(),
+    park: createDefaultParkHandler(),
   }
 }
 
@@ -130,7 +130,7 @@ describe('new command executor core', () => {
       RedisValue.error("wrong number of arguments for 'get' command", 'ERR'),
     )
 
-    registry.override(
+    registry.register(
       defineCommand({
         name: 'get',
         schema: t.object({
@@ -142,6 +142,7 @@ describe('new command executor core', () => {
           throw new RedisCommandError('runtime failure')
         },
       }),
+      { override: true },
     )
 
     const plan = executor.plan('get', [Buffer.from('key')])
@@ -173,7 +174,7 @@ describe('new command executor core', () => {
         {
           name: 'readonly',
           beforeExecute: plan =>
-            plan.flags.includes('write')
+            plan.definition.flags.includes('write')
               ? RedisResult.error(
                   'You cannot write against a read only replica.',
                   'READONLY',
@@ -306,7 +307,7 @@ describe('new command executor core', () => {
     registry.register(first)
     assert.throws(() => registry.register(second), /already registered/)
 
-    registry.override(second)
+    registry.register(second, { override: true })
     assert.strictEqual(registry.get('PING'), second)
   })
 
@@ -517,7 +518,7 @@ describe('new command executor core', () => {
   })
 
   test('park handler supports timeout and abort', async () => {
-    const park = createNoopParkHandler()
+    const park = createDefaultParkHandler()
     const timeoutResult = await park({
       waitFor: new Promise<null>(() => {}),
       timeoutMs: 1,

@@ -126,10 +126,6 @@ export function createDefaultParkHandler(): ParkHandler {
     })
 }
 
-export function createNoopParkHandler(): ParkHandler {
-  return createDefaultParkHandler()
-}
-
 /**
  * Park handler for commands replayed inside MULTI/EXEC.
  *
@@ -165,6 +161,16 @@ export function createNonBlockingParkHandler(): ParkHandler {
   }
 }
 
+/**
+ * Deterministic `AbortError` for the park handlers: a parked command sees this
+ * however the session was aborted, so `controller.abort('bye')` cannot surface
+ * a bare string out of `ctx.park(...)`.
+ *
+ * `ClientSession` instead uses `signal.throwIfAborted()`, which rethrows
+ * `signal.reason` verbatim — that path yields an `AbortError` only for the
+ * default abort. No message is matched on anywhere; `name === 'AbortError'` is
+ * the only assertion in the tree.
+ */
 function createAbortError(): Error {
   const err = new Error('The operation was aborted')
   err.name = 'AbortError'
