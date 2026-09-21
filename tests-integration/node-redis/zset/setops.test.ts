@@ -153,6 +153,21 @@ describe(`Sorted Set Set-Operations (node-redis, ${testRunner.getBackendName()})
     })
   })
 
+  test('ZUNIONSTORE rejects sources outside the destination slot', async () => {
+    // ZUNIONSTORE's keys are the destination *and* every source. Pins that
+    // wording against a real client on both backends — `TEST_BACKEND=real`
+    // checks it byte-for-byte against Redis. The error itself comes from
+    // ClusterPolicy; this suite never instantiates the client-side mocks.
+    await assert.rejects(
+      () =>
+        redisClient.zUnionStore('{zunion-slot-a}dest', [
+          '{zunion-slot-a}src',
+          '{zunion-slot-b}src',
+        ]),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
+  })
+
   // ---------------------------------------------------------------- ZINTERSTORE
 
   test('ZINTERSTORE keeps only common members, summing scores', async () => {
