@@ -251,7 +251,7 @@ describe('createNodeRedisMock (cluster)', () => {
     assert.strictEqual(await cluster.get('{user1}:age'), '30')
   })
 
-  test('cluster sendCommand routes by first key', async () => {
+  test('cluster sendCommand routes by the command keys', async () => {
     cluster = (await createNodeRedisMock({
       cluster: { masters: 3 },
     })) as NodeRedisMockCluster
@@ -275,6 +275,89 @@ describe('createNodeRedisMock (cluster)', () => {
       (err: unknown) => {
         assert.ok(err instanceof Error)
         assert.match(err.message, /CROSSSLOT/)
+        return true
+      },
+    )
+  })
+
+  test("routes by the command's real keys, not its first argument", async () => {
+    cluster = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+
+    // One key per master: with 3 masters the slot space is split into 3 ranges
+    // and these three keys land in three different ones. EVAL's first argument
+    // is the *script text*, which hashes to exactly one of those ranges — so a
+    // router that keys off the first argument sends at least two of these to a
+    // node that does not own the key, and the node answers -MOVED.
+    const script = "return redis.call('SET', KEYS[1], ARGV[1])"
+    for (const key of ['alpha', 'abc', 'k1']) {
+      assert.strictEqual(
+        await cluster.eval(script, {
+          keys: [key],
+          arguments: [`${key}-value`],
+        }),
+        'OK',
+      )
+      assert.strictEqual(await cluster.get(key), `${key}-value`)
+    }
+  })
+
+  test('mSet across slots is refused with CROSSSLOT', async () => {
+    cluster = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+
+    await assert.rejects(
+      () =>
+        cluster!.mSet([
+          ['{x}:a', '1'],
+          ['{y}:b', '2'],
+        ]),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.match(err.message, /CROSSSLOT/)
+        return true
+      },
+    )
+  })
+
+  test('zUnionStore across slots is refused with CROSSSLOT', async () => {
+    cluster = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+
+    await assert.rejects(
+      () => cluster!.zUnionStore('{x}:dest', ['{x}:a', '{y}:b']),
+      (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.match(err.message, /CROSSSLOT/)
+        return true
+      },
+    )
+  })
+
+  test('an unplannable command still yields the pipeline error reply', async () => {
+    cluster = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+
+    // Routing asks the executor to plan the command; an unknown name and a bad
+    // arity both fail to plan. Neither may crash the facade — each must come
+    // back as the normal server error reply.
+    await assert.rejects(
+      () => cluster!.sendCommand(['NOSUCHCOMMAND', 'k']),
+      (err: unknown) => {
+        assert.ok(err instanceof ErrorReply)
+        assert.match(err.message, /^ERR unknown command/)
+        return true
+      },
+    )
+    await assert.rejects(
+      () => cluster!.sendCommand(['GET']),
+      (err: unknown) => {
+        assert.ok(err instanceof ErrorReply)
+        assert.match(err.message, /wrong number of arguments/)
         return true
       },
     )

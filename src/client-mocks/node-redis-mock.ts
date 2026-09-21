@@ -192,6 +192,16 @@ abstract class CommandRunner {
     return asNumber(await this.run(['DEL', ...keys]))
   }
 
+  async mSet(
+    entries: [key: string, value: string | number][],
+  ): Promise<string> {
+    const args: NodeRedisCommandArgument[] = ['MSET']
+    for (const [key, value] of entries) {
+      args.push(key, String(value))
+    }
+    return asString(await this.run(args))
+  }
+
   async exists(...keys: string[]): Promise<number> {
     return asNumber(await this.run(['EXISTS', ...keys]))
   }
@@ -269,6 +279,35 @@ abstract class CommandRunner {
   async zRange(key: string, start: number, stop: number): Promise<string[]> {
     return asStringArray(
       await this.run(['ZRANGE', key, String(start), String(stop)]),
+    )
+  }
+
+  async zUnionStore(destination: string, keys: string[]): Promise<number> {
+    return asNumber(
+      await this.run([
+        'ZUNIONSTORE',
+        destination,
+        String(keys.length),
+        ...keys,
+      ]),
+    )
+  }
+
+  // --- scripting -----------------------------------------------------------
+
+  /**
+   * EVAL with node-redis' options shape. The declared `keys` — not the script
+   * text — are the command's routing keys, which is exactly what the executor's
+   * plan reports.
+   */
+  async eval(
+    script: string,
+    options: { keys?: string[]; arguments?: string[] } = {},
+  ): Promise<NodeRedisReply> {
+    const keys = options.keys ?? []
+    const args = options.arguments ?? []
+    return decodeReply(
+      await this.run(['EVAL', script, String(keys.length), ...keys, ...args]),
     )
   }
 }
@@ -776,9 +815,7 @@ export class NodeRedisMockCluster extends CommandRunner {
    * command's keys. Keyless commands run on the first master.
    */
   private sessionForCommand(args: NodeRedisCommandArgument[]): ClientSession {
-    const keys = extractRoutingKeys(args)
-    const slot =
-      keys.length > 0 ? this.topology.calculateSlotForKeys(keys) : null
+    const slot = this.topology.calculateSlotForKeys(this.routingKeys(args))
 
     if (slot === -1) {
       // generateMulti() returns -1 when the keys span multiple slots. Match the
@@ -797,6 +834,38 @@ export class NodeRedisMockCluster extends CommandRunner {
         : (this.topology.getSlotOwner(slot) ?? this.masters[0])
 
     return this.sessionFor(owner.id)
+  }
+
+  /**
+   * The command's routing keys, taken from the executor's own
+   * {@link CommandExecutor.plan} — the exact extraction `ClusterPolicy` routes
+   * on. Guessing them from the argument list gets multi-key commands (`MSET`,
+   * `RENAME`), numkeys-prefixed ones (`EVAL`, `ZUNIONSTORE`, `LMPOP`) and STORE
+   * targets (`GEORADIUS … STORE`) wrong, which picks the wrong node.
+   *
+   * Planning is registry + schema only (no policies run), so any master's
+   * executor answers identically.
+   *
+   * A command the pipeline cannot even plan — unknown name, bad arity — has no
+   * keys to route on. Route it to the first master and let the normal pipeline
+   * turn it into the canonical error reply, exactly as the standalone client
+   * does, rather than inventing a second error path here.
+   */
+  private routingKeys(args: NodeRedisCommandArgument[]): readonly Buffer[] {
+    if (args.length === 0) {
+      return []
+    }
+
+    const [name, ...rest] = args
+    try {
+      return this.masters[0].executor.plan(toBuffer(name), rest.map(toBuffer))
+        .keys
+    } catch (err) {
+      if (err instanceof RedisCommandError) {
+        return []
+      }
+      throw err
+    }
   }
 
   private sessionFor(nodeId: string): ClientSession {
@@ -866,36 +935,6 @@ async function drainSubscribeAck(stream: ResponseStream): Promise<RedisValue> {
     last = frame.value
   }
   return last
-}
-
-// Commands whose keys are every positional argument after the name. The router
-// extracts all of them so a cross-slot invocation (e.g. `del('a','b')` across
-// slots) is detected and refused rather than silently run on the first key's
-// node. Other commands route by their first key argument.
-const MULTI_KEY_COMMANDS = new Set([
-  'DEL',
-  'EXISTS',
-  'UNLINK',
-  'TOUCH',
-  'MGET',
-  'WATCH',
-  'SINTER',
-  'SUNION',
-  'SDIFF',
-  'PFCOUNT',
-])
-
-function extractRoutingKeys(args: NodeRedisCommandArgument[]): Buffer[] {
-  if (args.length < 2) {
-    return []
-  }
-  if (MULTI_KEY_COMMANDS.has(String(args[0]).toUpperCase())) {
-    return args.slice(1).map(toBuffer)
-  }
-  // Single-key heuristic: every other routed command keys off its first arg.
-  // Uncommon multi-key commands sent via the generic sendCommand fall through
-  // here and route by first key (documented honest scope).
-  return [toBuffer(args[1])]
 }
 
 function addListener(

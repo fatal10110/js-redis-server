@@ -153,6 +153,19 @@ describe(`Sorted Set Set-Operations (node-redis, ${testRunner.getBackendName()})
     })
   })
 
+  test('ZUNIONSTORE rejects sources outside the destination slot', async () => {
+    // ZUNIONSTORE's keys are the destination *and* every source, so a source in
+    // another slot must be refused rather than routed by the destination alone.
+    await assert.rejects(
+      () =>
+        redisClient.zUnionStore('{zunion-slot-a}dest', [
+          '{zunion-slot-a}src',
+          '{zunion-slot-b}src',
+        ]),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
+  })
+
   // ---------------------------------------------------------------- ZINTERSTORE
 
   test('ZINTERSTORE keeps only common members, summing scores', async () => {

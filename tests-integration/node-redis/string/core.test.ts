@@ -81,6 +81,19 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
     assert.strictEqual(get3, 'value3')
   })
 
+  test('MSET cross-slot error', async () => {
+    // Every MSET key is a routing key, so a pair in different slots must be
+    // refused outright rather than routed by whichever key comes first.
+    await assert.rejects(
+      () =>
+        redisClient.mSet([
+          ['{mset-slot-a}key', 'value1'],
+          ['{mset-slot-b}key', 'value2'],
+        ]),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
+  })
+
   test('MSETNX command', async () => {
     // All keys new
     const result1 = await redisClient.mSetNX([
