@@ -9,6 +9,7 @@ import { IN_MEMORY_DECODE_OPTIONS } from '../../src/in-memory-client'
 import {
   decodeRedisValue,
   decodeRedisKey,
+  flatPairsShapeFor,
   redisErrorText,
   toRedisArgument,
 } from '../../src/core/decode-redis-value'
@@ -134,6 +135,45 @@ describe('decode option divergences between the two clients', () => {
     assert.strictEqual(
       decodeRedisValue({ kind: 'bulk-string', value: null }, options),
       null,
+    )
+  })
+
+  test('flatPairsShape is RESP2-flat on both constants and per-protocol at decode time', () => {
+    // Unlike the other knobs this one is not a per-client divergence: both
+    // clients start from the RESP2 shape and override it from the session's
+    // negotiated version (see flatPairsShapeFor). #385.
+    assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.flatPairsShape, 'flat')
+    assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.flatPairsShape, 'flat')
+
+    assert.strictEqual(flatPairsShapeFor(2), 'flat')
+    assert.strictEqual(flatPairsShapeFor(3), 'tuples')
+
+    const withScores: RedisValue = {
+      kind: 'flat-pairs',
+      entries: [
+        [bulk('a'), { kind: 'double', value: 1 }],
+        [bulk('b'), { kind: 'double', value: 2 }],
+      ],
+    }
+
+    // Real node-redis, sendCommand against Redis 8.0.6:
+    //   RESP2 → ["a","1","b","2"]   RESP3 → [["a",1],["b",2]]
+    assert.deepStrictEqual(
+      decodeRedisValue(withScores, {
+        ...NODE_REDIS_DECODE_OPTIONS,
+        flatPairsShape: flatPairsShapeFor(2),
+      }),
+      ['a', 1, 'b', 2],
+    )
+    assert.deepStrictEqual(
+      decodeRedisValue(withScores, {
+        ...NODE_REDIS_DECODE_OPTIONS,
+        flatPairsShape: flatPairsShapeFor(3),
+      }),
+      [
+        ['a', 1],
+        ['b', 2],
+      ],
     )
   })
 

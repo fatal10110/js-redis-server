@@ -5,6 +5,7 @@ import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
 import {
   decodeRedisValue,
+  flatPairsShapeFor,
   redisErrorText,
   type DecodeRedisValueOptions,
   type NativeRedisReply,
@@ -12,6 +13,7 @@ import {
 import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
+import type { RespVersion } from '../core/resp-encoder'
 import { isResponseStream, type ResponseStream } from '../core/response-stream'
 import { RedisServerState, RedisClusterTopology } from '../state'
 
@@ -164,9 +166,17 @@ abstract class CommandRunner extends EventEmitter {
    */
   protected abstract run(args: NodeRedisCommandArgument[]): Promise<RedisValue>
 
+  /**
+   * RESP version this client's replies decode under — what the `flat-pairs`
+   * shape keys off. `HELLO` switches it mid-connection, so it is read per
+   * reply rather than fixed at construction.
+   */
+  protected abstract get respVersion(): RespVersion
+
   /** Generic escape hatch for any command, decoded to a native JS reply. */
   async sendCommand(args: NodeRedisCommandArgument[]): Promise<NodeRedisReply> {
-    return decodeReply(await this.run(args))
+    const value = await this.run(args)
+    return decodeReply(value, this.respVersion)
   }
 
   // --- strings -------------------------------------------------------------
@@ -226,7 +236,8 @@ abstract class CommandRunner extends EventEmitter {
   }
 
   async hGetAll(key: string): Promise<{ [field: string]: string }> {
-    const reply = decodeReply(await this.run(['HGETALL', key]))
+    const value = await this.run(['HGETALL', key])
+    const reply = decodeReply(value, this.respVersion)
     // decode() turns a RESP2 map reply into a plain object already.
     return (reply as { [field: string]: string }) ?? {}
   }
@@ -301,9 +312,14 @@ abstract class CommandRunner extends EventEmitter {
   ): Promise<NodeRedisReply> {
     const keys = options.keys ?? []
     const args = options.arguments ?? []
-    return decodeReply(
-      await this.run(['EVAL', script, String(keys.length), ...keys, ...args]),
-    )
+    const value = await this.run([
+      'EVAL',
+      script,
+      String(keys.length),
+      ...keys,
+      ...args,
+    ])
+    return decodeReply(value, this.respVersion)
   }
 }
 
@@ -369,6 +385,10 @@ export class NodeRedisMockClient extends CommandRunner {
       ...this.backend,
       database: this.database,
     })
+  }
+
+  protected get respVersion(): RespVersion {
+    return this.session.protocolVersion
   }
 
   protected run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
@@ -449,8 +469,9 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /** Begin a MULTI transaction. Commands are queued, then replayed on exec(). */
   multi(): NodeRedisMockMulti {
-    return new NodeRedisMockMulti(queued =>
-      this.runExclusive(() => this.runTransactionSpan(queued)),
+    return new NodeRedisMockMulti(
+      queued => this.runExclusive(() => this.runTransactionSpan(queued)),
+      () => this.session.protocolVersion,
     )
   }
 
@@ -576,7 +597,9 @@ export class NodeRedisMockClient extends CommandRunner {
     // A push frame's type is its `name` ('message' / 'pmessage' / 'subscribe' /
     // …); `items` is just the payload. We only deliver actual messages —
     // subscribe/unsubscribe confirmations are consumed elsewhere.
-    const items = value.items.map(item => String(decodeReply(item)))
+    const items = value.items.map(item =>
+      String(decodeReply(item, pubsub.session.protocolVersion)),
+    )
 
     if (value.name === 'message') {
       const [channel, message] = items
@@ -605,6 +628,8 @@ export class NodeRedisMockMulti {
     private readonly runTransaction: (
       queued: NodeRedisCommandArgument[][],
     ) => Promise<RedisValue>,
+    /** RESP version of the owning session, read when EXEC's replies decode. */
+    private readonly respVersion: () => RespVersion,
   ) {}
 
   set(key: string, value: string | number): this {
@@ -652,6 +677,7 @@ export class NodeRedisMockMulti {
     this.settled = true
 
     const result = await this.runTransaction(this.queued)
+    const respVersion = this.respVersion()
     const errors = await ensureRedisErrors()
 
     if (result.kind === 'null' || result.kind === 'null-array') {
@@ -660,7 +686,7 @@ export class NodeRedisMockMulti {
     }
     if (result.kind !== 'array' && result.kind !== 'set') {
       // Defensive: any non-array EXEC reply (shouldn't happen) → decode as-is.
-      return [decodeReply(result)]
+      return [decodeReply(result, respVersion)]
     }
 
     const replies: unknown[] = []
@@ -671,7 +697,7 @@ export class NodeRedisMockMulti {
         errorIndexes.push(index)
         return
       }
-      replies.push(decodeReply(item))
+      replies.push(decodeReply(item, respVersion))
     })
 
     if (errorIndexes.length > 0) {
@@ -707,6 +733,7 @@ export class NodeRedisMockCluster extends CommandRunner {
   private readonly masters: ClusterNodePipeline[]
   private readonly sessions = new Map<string, ClientSession>()
   private readonly replicationLinks: { close(): void }[]
+  private lastRespVersion: RespVersion = 2
   private closed = false
 
   private constructor(
@@ -738,9 +765,21 @@ export class NodeRedisMockCluster extends CommandRunner {
     return this
   }
 
+  /**
+   * The version negotiated on the node session that served the last command.
+   * There is no single connection to read here: `HELLO` has no keys, so it
+   * lands on `masters[0]` and leaves the other nodes' sessions where they were
+   * — the same per-node caveat {@link sessionForCommand} documents for pub/sub.
+   */
+  protected get respVersion(): RespVersion {
+    return this.lastRespVersion
+  }
+
   protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
     const session = this.sessionForCommand(args)
-    return runOnSession(session, args, this.closed)
+    const value = await runOnSession(session, args, this.closed)
+    this.lastRespVersion = session.protocolVersion
+    return value
   }
 
   // quit()/disconnect() are async to match node-redis' signatures, but cluster
@@ -1000,6 +1039,10 @@ export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
   // node-redis routes a push frame by its type tag and hands listeners only the
   // payload, so the tag is not part of the decoded reply.
   pushShape: 'items',
+  // The RESP2 default. Overridden per reply from the RESP version negotiated
+  // on the session that served it, so a `HELLO 3` yields `[k, v]` tuples the
+  // way a RESP3 node-redis connection does.
+  flatPairsShape: 'flat',
   // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches the
   // documented idiom). Falls back to RedisCommandError if `redis` is absent.
   error: (text, code) => {
@@ -1008,12 +1051,32 @@ export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
   },
 }
 
-function decodeReply(value: RedisValue): NodeRedisReply {
+/**
+ * Decode a reply the caller hands back whole. `respVersion` is the version
+ * negotiated on the session that served it — it decides the `flat-pairs` shape
+ * (flat on RESP2, `[k, v]` tuples on RESP3), so it is never defaulted.
+ */
+function decodeReply(
+  value: RedisValue,
+  respVersion: RespVersion,
+): NodeRedisReply {
+  return decodeRedisValue(value, {
+    ...NODE_REDIS_DECODE_OPTIONS,
+    flatPairsShape: flatPairsShapeFor(respVersion),
+  })
+}
+
+/**
+ * Decode a reply a curated method immediately narrows to a scalar (or a flat
+ * string array). No `flat-pairs` can reach these, so the protocol-independent
+ * defaults are enough.
+ */
+function decodeScalarReply(value: RedisValue): NodeRedisReply {
   return decodeRedisValue(value, NODE_REDIS_DECODE_OPTIONS)
 }
 
 function asNumber(value: RedisValue): number {
-  const reply = decodeReply(value)
+  const reply = decodeScalarReply(value)
   if (typeof reply === 'number') {
     return reply
   }
@@ -1024,12 +1087,12 @@ function asNumber(value: RedisValue): number {
 }
 
 function asString(value: RedisValue): string {
-  const reply = decodeReply(value)
+  const reply = decodeScalarReply(value)
   return typeof reply === 'string' ? reply : String(reply)
 }
 
 function asStringOrNull(value: RedisValue): string | null {
-  const reply = decodeReply(value)
+  const reply = decodeScalarReply(value)
   if (reply === null) {
     return null
   }
@@ -1040,7 +1103,7 @@ function asStringOrNull(value: RedisValue): string | null {
 }
 
 function asStringArray(value: RedisValue): string[] {
-  const reply = decodeReply(value)
+  const reply = decodeScalarReply(value)
   if (!Array.isArray(reply)) {
     return []
   }

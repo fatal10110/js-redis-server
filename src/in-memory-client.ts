@@ -4,6 +4,7 @@ import type { CompatibilitySpec } from './core/compatibility'
 import type { CommandExecutor } from './core/command-executor'
 import {
   decodeRedisValue,
+  flatPairsShapeFor,
   toRedisArgument,
   type DecodeRedisValueOptions,
   type NativeRedisReply,
@@ -51,6 +52,9 @@ export const IN_MEMORY_DECODE_OPTIONS: DecodeRedisValueOptions = {
   // is `["message", channel, payload]`); keep the type tag so push-mode
   // consumers see the same shape a real client would.
   pushShape: 'tagged',
+  // The RESP2 default. Overridden per reply from the session's negotiated
+  // version, so a connection that sent `HELLO 3` reads `[k, v]` tuples.
+  flatPairsShape: 'flat',
   error: (text, code) => new RedisCommandError(text, code),
 }
 
@@ -231,7 +235,13 @@ export class InMemoryRedisClient {
   }
 
   private decode(value: RedisValue): RedisNativeReply {
-    return decodeRedisValue(value, this.decodeOptions)
+    // WITHSCORES-style pairs are flat on RESP2 and tuples on RESP3, so the
+    // shape has to be read off the session at decode time — `HELLO` can switch
+    // it mid-connection.
+    return decodeRedisValue(value, {
+      ...this.decodeOptions,
+      flatPairsShape: flatPairsShapeFor(this.session.protocolVersion),
+    })
   }
 }
 

@@ -255,6 +255,13 @@ Three flavours, depending on which client you want to look like:
 | `createNodeRedisMock`  | `node-redis`    | a hand-written facade mirroring node-redis' public surface |
 | `createInMemoryClient` | our own bespoke | a thin client that returns native JS replies, no RESP      |
 
+The two hand-rolled clients (`createNodeRedisMock`, `createInMemoryClient`)
+start on RESP2 and follow a `HELLO 3` the way a real connection does, so the
+pair-shaped replies change with the protocol: `WITHSCORES` / `WITHVALUES` come
+back flat (`['a', 1, 'b', 2]`) on RESP2 and as tuples (`[['a', 1], ['b', 2]]`)
+on RESP3, matching node-redis. (`createIoredisMock` drives the real `ioredis@5`,
+which is RESP2-only.)
+
 ### `createIoredisMock` — virtual-socket ioredis client
 
 `createIoredisMock()` is an option for tests otherwise using

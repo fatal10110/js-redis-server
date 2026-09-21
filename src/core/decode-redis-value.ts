@@ -1,4 +1,5 @@
 import type { RedisValue } from './redis-value'
+import type { RespVersion } from './resp-encoder'
 
 /**
  * Native JS value a {@link RedisValue} decodes to — the shape a real client
@@ -41,10 +42,32 @@ export type DecodeRedisValueOptions = {
    *    push-mode consumer sees what a real client would read off the socket.
    */
   pushShape: 'items' | 'tagged'
+  /**
+   * Shape of a `flat-pairs` reply — WITHSCORES / WITHVALUES and friends.
+   *  - `'flat'`: `[k, v, k, v, …]`, the RESP2 wire shape.
+   *  - `'tuples'`: `[[k, v], …]`, the RESP3 wire shape.
+   *
+   * Protocol-dependent rather than per-client: a RESP3 consumer iterating
+   * `for (const [field, value] of reply)` must not be handed a flat array.
+   * Both socketless clients derive it from their session's negotiated version
+   * via {@link flatPairsShapeFor}. (ioredis is RESP2-only, so a real ioredis
+   * always sees `'flat'`.)
+   */
+  flatPairsShape: 'flat' | 'tuples'
   /** Builds the error thrown for an `error` reply, from its on-the-wire text. */
   error: (text: string, code?: string) => Error
   /** Return `Buffer`s for bulk-string/verbatim replies instead of utf8 strings. */
   returnBuffers?: boolean
+}
+
+/**
+ * The {@link DecodeRedisValueOptions.flatPairsShape} a connection speaking
+ * `version` must decode to — the one place the RESP2/RESP3 rule lives.
+ */
+export function flatPairsShapeFor(
+  version: RespVersion,
+): DecodeRedisValueOptions['flatPairsShape'] {
+  return version === 3 ? 'tuples' : 'flat'
 }
 
 /**
@@ -109,9 +132,9 @@ export function decodeRedisValue(
       return out
     }
     case 'flat-pairs':
-      // Flat on the wire in RESP2; keep the flat array shape here too. Note
-      // that real node-redis negotiates RESP3, where these arrive as
-      // `[field, value]` tuples — tracked in #385, not changed here.
+      if (options.flatPairsShape === 'tuples') {
+        return value.entries.map(([key, val]) => [decode(key), decode(val)])
+      }
       return value.entries.flatMap(([key, val]) => [decode(key), decode(val)])
     case 'null':
     case 'null-array':
