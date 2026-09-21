@@ -108,34 +108,8 @@ npm run test:all
 The package publishes two entry points: the curated root (`src/index.ts`) and
 the `/core` hand-wiring subpath (`src/internal.ts`). Both are public API.
 
-The full exported symbol list for both is pinned in
-`tests-package/export-surface.json` and checked by `npm run test:package`. Per
-symbol it records:
-
-- `kind` — `value` (has a runtime binding) or `type` (type-only). A downgrade
-  from one to the other is breaking and is reported.
-- `members` — own properties and methods of an exported interface, class,
-  object type alias or `const` namespace. Statics are prefixed `static:`.
-  Inherited members are not walked.
-- `variants` — the literal constituents of a union, so dropping `'noscript'`
-  from `CommandFlag` reads as a removal.
-
-Then:
-
-- **A removal fails the build**, naming the symbol, member or variant. If it is
-  intentional, add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md)
-  and refresh the baseline in the same commit.
-- **An addition also fails the build**, in a separate test that says so. It is
-  not a breaking change — just run the refresh so the next PR that deletes the
-  new symbol is caught.
-
-Refresh with:
-
-```bash
-npm run export-baseline
-```
-
-and commit the updated `tests-package/export-surface.json`.
+Removing or renaming anything exported from either is a breaking change. Note it
+under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) in the same PR.
 
 ## Releasing both npm packages
 
