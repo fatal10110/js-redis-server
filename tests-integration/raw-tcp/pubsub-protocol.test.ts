@@ -251,7 +251,9 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     const publisher = await connect()
     const channel = `raw-reset:${randomKey()}`
 
-    const pattern = `raw-reset-pattern:${randomKey()}:*`
+    const patternPrefix = `raw-reset-pattern:${randomKey()}`
+    const pattern = `${patternPrefix}:*`
+    const patternMatch = `${patternPrefix}:matched`
     const shardChannel = `raw-reset-shard:${randomKey()}`
 
     subscriber.write(commandFrame('SUBSCRIBE', channel))
@@ -281,9 +283,7 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     publisher.write(commandFrame('PUBLISH', channel, 'dropped'))
     assert.deepStrictEqual(await publisher.readFrame(), 0)
 
-    publisher.write(
-      commandFrame('PUBLISH', pattern.replace('*', 'x'), 'dropped'),
-    )
+    publisher.write(commandFrame('PUBLISH', patternMatch, 'dropped'))
     assert.deepStrictEqual(await publisher.readFrame(), 0)
 
     publisher.write(commandFrame('SPUBLISH', shardChannel, 'dropped'))
