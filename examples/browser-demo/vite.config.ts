@@ -20,10 +20,20 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 const abs = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
 
 // Pin the CDN-loaded WASM + glue to the SAME version we bundle the JS loader
-// from, so a root-level `lua-redis-wasm` bump can't leave the loader and the
-// jsDelivr assets on mismatched (ABI-incompatible) versions.
+// from, so a `lua-redis-wasm` bump can't leave the loader and the jsDelivr
+// assets on mismatched (ABI-incompatible) versions.
+//
+// Read from the ROOT node_modules deliberately — that is the copy Rollup
+// resolves, because the only import of this package is src/core/lua-runtime.ts
+// (see the note above about `../../src` resolving from the repo root). The demo
+// does not declare `lua-redis-wasm` at all: one tree, one version, so loader
+// and CDN URL cannot diverge. Declaring it here too would reintroduce a second
+// version that nothing imports and that Dependabot would bump separately.
+// Bare-specifier resolution is not an option: the package's `exports` map has
+// only ".", so `require.resolve('lua-redis-wasm/package.json')` throws
+// ERR_PACKAGE_PATH_NOT_EXPORTED.
 const luaWasmVersion = JSON.parse(
-  readFileSync(abs('./node_modules/lua-redis-wasm/package.json'), 'utf8'),
+  readFileSync(abs('../../node_modules/lua-redis-wasm/package.json'), 'utf8'),
 ).version as string
 
 const shim = (name: string) =>

@@ -1,30 +1,60 @@
 name: Deploy browser demo
 
 # Builds examples/browser-demo and publishes it to GitHub Pages.
+#
+# The build job also runs on pull requests, with the Pages steps skipped, so a
+# change that breaks the demo's install or build fails in review instead of
+# turning main red after the merge. Before this, the demo was only ever built
+# post-merge and a broken lockfile sat on main for two months (#391).
+#
 # One-time setup: repo Settings → Pages → Source → "GitHub Actions".
 on:
   push:
     branches: [main]
-    # Only redeploy when the demo or the source it imports actually changes.
+    # Only redeploy when the demo or the inputs it actually consumes change.
+    # The root manifests are in here because the job runs `npm ci` at the root
+    # too. The root tsconfig is in here because the demo has none of its own,
+    # so it is the nearest config for Vite's transform of the demo and src/**
+    # (`module: nodenext` infers target es2022, which defaults
+    # useDefineForClassFields to true — worth 70 bytes and a different content
+    # hash), and it is the config `tsx` loads for `test:demo`.
     paths:
       - 'examples/browser-demo/**'
       - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
       - '.github/workflows/deploy-demo.yml'
+  # Deliberately NOT paths-filtered. The build is ~1 minute, and an unfiltered
+  # check is one that always reports, so it stays eligible as a required check
+  # — a paths-filtered one sits on "Expected — Waiting for status" forever and
+  # can only ever be advisory. It also keeps this list from drifting out of
+  # sync with a second copy. This workflow is the only place `test:demo` runs.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# One deploy at a time; let an in-progress run finish.
+# One deploy at a time; let an in-progress run finish. PR builds get their own
+# per-ref group so they never queue behind a deploy, and a superseded PR build
+# is cancelled.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Scoped per job rather than workflow-wide: this job runs `npm ci` twice
+    # over a lockfile the PR author controls, so install lifecycle scripts
+    # execute here. `id-token: write` belongs to `deploy` alone — only
+    # actions/deploy-pages consumes it. `pages: write` is for configure-pages,
+    # which is skipped on pull_request.
+    permissions:
+      contents: read
+      pages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -32,9 +62,19 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          # Both lockfiles, or a demo-only dependency change hits the root
+          # cache key exactly, restores stale demo tarballs, re-downloads the
+          # new ones and never saves them — on precisely the Dependabot PRs
+          # this job exists to gate.
+          cache-dependency-path: |
+            package-lock.json
+            examples/browser-demo/package-lock.json
 
-      # Root deps: the demo imports ../../src, which pulls in respjs and
-      # cluster-key-slot from the root node_modules.
+      # Root deps, and this step must stay ahead of the demo build: the demo
+      # imports ../../src, which pulls cluster-key-slot and lua-redis-wasm
+      # from the root node_modules, and vite.config.ts reads that same
+      # lua-redis-wasm to build the jsDelivr URL. Also provides tsx for the
+      # demo's own tests below.
       - name: Install root deps
         run: npm ci
 
@@ -42,19 +82,32 @@ jobs:
         run: npm ci
         working-directory: examples/browser-demo
 
+      # Note: these run transpile-only. The demo has no tsconfig, so nothing
+      # typechecks format.ts — adding one is blocked on the pre-existing
+      # Reply/Buffer errors tracked in #396.
+      - name: Run demo tests
+        run: npm run test:demo
+
       - name: Build demo
         run: npm run build
         working-directory: examples/browser-demo
 
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: examples/browser-demo/dist
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
