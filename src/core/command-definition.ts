@@ -106,11 +106,14 @@ export type CommandPlan<TArgs = unknown> = {
   rawArgs: readonly Buffer[]
 }
 
+/**
+ * Identity helper that exists purely for type inference: it pins `TArgs` from
+ * the schema so `keys`/`execute` get their arguments typed without a manual
+ * annotation. Name casing is normalized by {@link CommandRegistry.register},
+ * not here.
+ */
 export function defineCommand<TArgs>(
   definition: CommandDefinition<TArgs>,
 ): CommandDefinition<TArgs> {
-  return {
-    ...definition,
-    name: definition.name.toLowerCase(),
-  }
+  return definition
 }

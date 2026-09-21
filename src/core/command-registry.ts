@@ -1,5 +1,11 @@
 import type { CommandDefinition } from './command-definition'
 
+/**
+ * The single place a command name is normalized. A definition may declare any
+ * casing and a lookup may use any casing; everything downstream of
+ * {@link CommandRegistry.register} — `plan.definition.name`, the policies that
+ * match on it, COMMAND introspection — sees the lowercase form.
+ */
 export class CommandRegistry {
   private readonly commands = new Map<string, CommandDefinition<unknown>>()
 
@@ -12,7 +18,10 @@ export class CommandRegistry {
       throw new Error(`Command '${name}' is already registered`)
     }
 
-    this.commands.set(name, definition as CommandDefinition<unknown>)
+    const normalized =
+      definition.name === name ? definition : { ...definition, name }
+
+    this.commands.set(name, normalized as CommandDefinition<unknown>)
   }
 
   registerAll(

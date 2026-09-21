@@ -25,7 +25,7 @@ function makeCommand(
 describe('CommandRegistry', () => {
   test('registers and retrieves commands case-insensitively', () => {
     const registry = new CommandRegistry()
-    const command = makeCommand('GET')
+    const command = makeCommand('get')
 
     registry.register(command)
 
@@ -33,6 +33,22 @@ describe('CommandRegistry', () => {
     assert.strictEqual(registry.get('GET'), command)
     assert.strictEqual(registry.get('Get'), command)
     assert.strictEqual(registry.get('nope'), undefined)
+  })
+
+  test('register is the one place a command name is lowercased', () => {
+    const registry = new CommandRegistry()
+
+    registry.register(makeCommand('GeT'))
+
+    // The definition kept its declared casing, but everything the registry
+    // hands back — and therefore every policy matching on `definition.name` —
+    // sees the normalized form.
+    assert.strictEqual(registry.get('get')?.name, 'get')
+    assert.strictEqual(registry.get('GET')?.name, 'get')
+    assert.deepStrictEqual(
+      registry.getAll().map(definition => definition.name),
+      ['get'],
+    )
   })
 
   test('rejects duplicate registration unless override is explicit', () => {
@@ -45,7 +61,7 @@ describe('CommandRegistry', () => {
     assert.throws(() => registry.register(replacement), /already registered/)
 
     registry.register(replacement, { override: true })
-    assert.strictEqual(registry.get('get'), replacement)
+    assert.deepStrictEqual(registry.get('get')?.flags, ['write'])
   })
 
   test('registerAll preserves registered commands and names', () => {

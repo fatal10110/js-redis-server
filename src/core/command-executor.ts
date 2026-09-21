@@ -77,13 +77,13 @@ export class CommandExecutor {
 
   /**
    * Resolve a raw command + args into a {@link CommandPlan} without executing it.
-   * The command name is matched case-insensitively against the registry.
+   * The registry matches the name case-insensitively, so the raw wire bytes go
+   * in as-is.
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
-    const commandName = CommandExecutor.normalizeCommandName(rawCommand)
-    const definition = this.registry.get(commandName)
+    const definition = this.registry.get(rawCommand.toString())
 
     if (!definition) {
       throw new UnknownRedisCommandError(rawCommand, rawArgs)
@@ -129,12 +129,6 @@ export class CommandExecutor {
     }
   }
 
-  private static normalizeCommandName(rawCommand: Buffer | string): string {
-    return typeof rawCommand === 'string'
-      ? rawCommand.toLowerCase()
-      : rawCommand.toString().toLowerCase()
-  }
-
   private rawCommandErrorResult(
     err: RedisCommandError,
     rawCommand: Buffer | string,
@@ -147,7 +141,7 @@ export class CommandExecutor {
     if (
       err instanceof WrongNumberOfArgumentsError &&
       ctx.session.mode === 'transaction' &&
-      CommandExecutor.normalizeCommandName(rawCommand) === 'exec'
+      rawCommand.toString().toLowerCase() === 'exec'
     ) {
       ctx.session.discardTransaction()
       const abortError = new ExecCommandAbortError(err.message)
