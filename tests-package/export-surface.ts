@@ -15,8 +15,10 @@
 //      class, function, const) or `type` (interface / type alias only),
 //   2. `members` — the *own* members declared on each exported interface,
 //      class, object type alias, or `const` object namespace, and
-//   3. `variants` — the literal constituents of a union type alias, so that
-//      dropping `'noscript'` from `CommandFlag` reads as a removal.
+//   3. `variants` — every non-object constituent of a union, by source text, so
+//      that dropping `'noscript'` from `CommandFlag` or an arm from
+//      `RedisDataValue` reads as a removal. Source text rather than the
+//      literal's value, so `2 | 3` and `'2' | '3'` are not byte-identical.
 //
 // Levels 2 and 3 are what make this guard worth having. Of the four `/core`
 // breaks it responds to, two were invisible to a symbol-list-only snapshot:
@@ -31,8 +33,27 @@
 // each snapshotting `message`/`stack`/`cause` out of `lib.es5.d.ts`, which would
 // churn the baseline on every TypeScript bump while proving nothing about this
 // package. `RedisCommandError` still snapshots its own `code`, so deleting it
-// there is still caught. Statics are recorded too, prefixed `static:` so a class
-// carrying both `static create()` and an instance `create()` pins both.
+// there is still caught. Members carry a namespace prefix where two namespaces
+// would otherwise collide in one list: `static:` for class statics (so
+// `static create()` cannot mask an instance `create()`), and `type:` for the
+// type half of a declaration-merged symbol (`RedisValue` is the only one — its
+// union arms' field names are not callable factories).
+//
+// A symbol whose declaration lives in `node_modules` is pinned by name only.
+// Nothing re-exports a dependency's type today, but doing so would otherwise
+// snapshot that dependency's declared members, turning every version bump of it
+// into baseline churn and its API changes into "breaks" in this package.
+// (A re-exported Node *builtin* never reaches that guard: under this program's
+// options `export type { Socket } from 'net'` does not resolve at all and trips
+// the unresolvable-declaration invariant first.)
+//
+// `FEATURE_GATES.members` deliberately repeats `FeatureId.variants`. TypeScript
+// keeps them in sync today only because the const is annotated
+// `Record<FeatureId, VersionGate>`; loosen that to `Partial<Record<…>>` and a
+// dropped key would break consumers reading the object at runtime while the
+// type union still advertised it. Measured cost of the redundancy: adding one
+// feature gate is a 3-line baseline diff, not the wholesale churn that would
+// make the file rubber-stampable.
 
 import ts from 'typescript'
 import { fileURLToPath } from 'node:url'
@@ -43,7 +64,10 @@ export type ExportEntry = {
   readonly kind: ExportKind
   /** Own members of the declaration, sorted. Omitted when there are none. */
   readonly members?: readonly string[]
-  /** Literal constituents of a union, sorted. Omitted when there are none. */
+  /**
+   * Non-object constituents of a union, by source text, sorted. Omitted when
+   * there are none.
+   */
   readonly variants?: readonly string[]
 }
 
@@ -105,60 +129,115 @@ function collectFromTypeNode(
     return
   }
 
-  if (ts.isIntersectionTypeNode(node) || ts.isUnionTypeNode(node)) {
-    // Intersection: `NodePipeline & { host: string; port: number }` contributes
-    // the literal's own members; the referenced half is snapshotted under its
-    // own name.
-    //
-    // Union: every constituent contributes. That is deliberately the *union* of
-    // members, not the intersection — a field present on only one arm still
-    // counts as published surface. The cost is that moving a field from one arm
-    // to another is invisible; the benefit is that deleting it outright is not,
-    // and before this branch existed a union-typed export recorded nothing at
-    // all (`CreateIoredisMockOptions`, `CompatibilitySpec`, `SeedEntry`, …).
+  if (ts.isIntersectionTypeNode(node)) {
+    // `NodePipeline & { host: string; port: number }` contributes the literal's
+    // own members; the referenced half is snapshotted under its own name.
     for (const constituent of node.types) {
       collectFromTypeNode(constituent, into)
     }
     return
   }
 
-  if (ts.isLiteralTypeNode(node)) {
-    const literal = node.literal
+  if (ts.isUnionTypeNode(node)) {
+    // Every constituent contributes. Object-shaped arms contribute their
+    // members — deliberately the *union* of them, not the intersection: a field
+    // present on only one arm still counts as published surface. The cost is
+    // that moving a field between arms is invisible; the benefit is that
+    // deleting it outright is not, and before this branch existed a union-typed
+    // export recorded nothing at all (`CreateIoredisMockOptions`,
+    // `CompatibilitySpec`, `SeedEntry`, …).
+    //
+    // Every other arm is recorded in `variants` by its *source text*. Recording
+    // only string and numeric literals would have been worse than recording
+    // nothing: the entry would look pinned while `-1` (a `PrefixUnaryExpression`,
+    // and the canonical Redis sentinel), `1n`, `undefined` and template-literal
+    // arms vanished silently next to their captured siblings. Partial-but-
+    // plausible is the same failure shape as a half-resolved program.
+    for (const constituent of node.types) {
+      if (isMemberBearing(constituent)) {
+        collectFromTypeNode(constituent, into)
+        continue
+      }
 
-    if (ts.isStringLiteral(literal) || ts.isNumericLiteral(literal)) {
-      into.variants.add(literal.text)
-      return
+      into.variants.add(sourceTextOf(constituent))
     }
-
-    if (
-      literal.kind === ts.SyntaxKind.TrueKeyword ||
-      literal.kind === ts.SyntaxKind.FalseKeyword ||
-      literal.kind === ts.SyntaxKind.NullKeyword
-    ) {
-      into.variants.add(literal.getText())
-    }
-
     return
   }
 
-  // Type references, mapped types, keyof, … have no own members to pin
-  // syntactically. Variable declarations get a checker-based pass below.
+  if (ts.isLiteralTypeNode(node)) {
+    // A literal reached outside a union — a single-arm alias such as
+    // `type Only = 'x'`.
+    into.variants.add(sourceTextOf(node))
+    return
+  }
+
+  // Type references, mapped types, keyof, … reached outside a union have no own
+  // members to pin syntactically. Variable declarations get a checker-based
+  // pass below.
+}
+
+function unwrapParens(node: ts.TypeNode): ts.TypeNode {
+  return ts.isParenthesizedTypeNode(node) ? unwrapParens(node.type) : node
+}
+
+/** Union arms worth descending into for members rather than recording as text. */
+function isMemberBearing(node: ts.TypeNode): boolean {
+  const inner = unwrapParens(node)
+
+  return (
+    ts.isTypeLiteralNode(inner) ||
+    ts.isIntersectionTypeNode(inner) ||
+    ts.isUnionTypeNode(inner)
+  )
+}
+
+/**
+ * A union arm's source text, whitespace-collapsed.
+ *
+ * Source text rather than `literal.text`, because `.text` strips the quotes and
+ * makes `2 | 3` and `'2' | '3'` byte-identical in the baseline — so normalising
+ * `RespVersion` from numbers to strings, which breaks every consumer passing
+ * `{ version: 2 }`, would diff to nothing. `getText()` keeps them apart and
+ * handles `-1`, `1n`, `undefined` and template-literal arms for free.
+ */
+function sourceTextOf(node: ts.Node): string {
+  return node.getText().replace(/\s+/g, ' ').trim()
 }
 
 /**
  * Members of a `const` object namespace, resolved through the checker so that
- * `Record<FeatureId, VersionGate>`, `Omit<…>` and other utility types answer
- * with their real keys instead of nothing.
+ * `Record<FeatureId, VersionGate>` and other mapped types answer with their real
+ * keys instead of nothing.
  *
- * Gated on the type being anonymous or mapped. A const annotated with a *named*
- * type — `export const getCommand: CommandDefinition<…>`, or any of the
- * command arrays — resolves to that interface's (or `Array`'s) members, which
- * are either snapshotted under their own exported name or pure `lib` noise.
+ * Two gates, both meaning "pin only what is written *here*":
+ *
+ *  - the type must be anonymous or mapped. A const annotated with an interface
+ *    — `export const getCommand: CommandDefinition<…>`, or any of the command
+ *    arrays — would otherwise resolve to that interface's (or `Array`'s)
+ *    members, which are either snapshotted under their own exported name or
+ *    pure `lib` noise. On the current `/core` build this blocks 55 of 59
+ *    consts and 742 member entries.
+ *
+ *  - `aliasSymbol` must not name something this surface already exports. A type
+ *    *alias* creates no distinct type, so `const DEFAULTS: Opts` where
+ *    `type Opts = { alpha, beta }` is "anonymous" and would duplicate `Opts`'s
+ *    own entry. Worse, it made the outcome depend on whether `Opts` was spelled
+ *    `type` or `interface`: converting one to the other is invisible to every
+ *    consumer, but flipped `DEFAULTS` between having members and not, which the
+ *    diff then reported as BREAKING and sent the author off to write a
+ *    changelog entry for a no-op.
+ *
+ * Intersections are not descended here: `type.flags & Object` is false for
+ * them, so `const wired: Opts & Named` records nothing while the structurally
+ * identical `type Wired = Opts & Named` records everything. That asymmetry is
+ * deliberate rather than fixed — for the const the members are already pinned
+ * under `Opts` and `Named`, which is exactly what the second gate is for.
  */
 function checkerMembersOfConst(
   checker: ts.TypeChecker,
   symbol: ts.Symbol,
   declaration: ts.VariableDeclaration,
+  exportedNames: ReadonlySet<string>,
 ): string[] {
   const type = checker.getTypeOfSymbolAtLocation(symbol, declaration)
 
@@ -172,19 +251,56 @@ function checkerMembersOfConst(
     return []
   }
 
+  const alias = type.aliasSymbol?.getName()
+
+  if (alias !== undefined && exportedNames.has(alias)) {
+    return []
+  }
+
   return type
     .getProperties()
     .filter(property => !property.getName().startsWith('#'))
     .map(property => property.getName())
 }
 
+/**
+ * Re-exporting a dependency's type would snapshot that dependency's own
+ * declared members, so every version bump of it would churn the baseline and
+ * the removal check would start reporting its API changes as breaks in this
+ * package. Nothing does so today; this keeps it that way by construction. The
+ * symbol itself is still pinned, just without members.
+ */
+function isThirdPartyDeclaration(declaration: ts.Declaration): boolean {
+  return declaration.getSourceFile().fileName.includes('/node_modules/')
+}
+
 function describeSymbol(
   checker: ts.TypeChecker,
   symbol: ts.Symbol,
+  exportedNames: ReadonlySet<string>,
 ): ExportEntry {
   const collected: Collected = { members: new Set(), variants: new Set() }
+  const declarations = symbol.declarations ?? []
 
-  for (const declaration of symbol.declarations ?? []) {
+  // A declaration-merged symbol — `RedisValue` is the only one on either entry
+  // point — has a type half and a value half whose names mean different things.
+  // `RedisValue.kind` is a field of the union; `RedisValue.push()` is a factory
+  // on the const. Flattening both into one list re-introduces, one level up,
+  // exactly the masking `static:` was added to stop: a future factory named
+  // `name` or `items` could be deleted unreported because a union arm already
+  // contributed that string. It also makes the entry unreviewable — you cannot
+  // tell which of the 24 names are callable.
+  const isMerged =
+    declarations.some(ts.isTypeAliasDeclaration) &&
+    declarations.some(
+      d => ts.isVariableDeclaration(d) || ts.isFunctionDeclaration(d),
+    )
+
+  for (const declaration of declarations) {
+    if (isThirdPartyDeclaration(declaration)) {
+      continue
+    }
+
     if (
       ts.isInterfaceDeclaration(declaration) ||
       ts.isClassDeclaration(declaration)
@@ -198,13 +314,41 @@ function describeSymbol(
       continue
     }
 
+    if (ts.isEnumDeclaration(declaration)) {
+      for (const member of declaration.members) {
+        const name = memberName(member)
+        if (name !== undefined) {
+          collected.members.add(name)
+        }
+      }
+      continue
+    }
+
     if (ts.isTypeAliasDeclaration(declaration)) {
-      collectFromTypeNode(declaration.type, collected)
+      if (!isMerged) {
+        collectFromTypeNode(declaration.type, collected)
+        continue
+      }
+
+      const typeHalf: Collected = { members: new Set(), variants: new Set() }
+      collectFromTypeNode(declaration.type, typeHalf)
+
+      for (const name of typeHalf.members) {
+        collected.members.add(`type:${name}`)
+      }
+      for (const variant of typeHalf.variants) {
+        collected.variants.add(variant)
+      }
       continue
     }
 
     if (ts.isVariableDeclaration(declaration)) {
-      for (const name of checkerMembersOfConst(checker, symbol, declaration)) {
+      for (const name of checkerMembersOfConst(
+        checker,
+        symbol,
+        declaration,
+        exportedNames,
+      )) {
         collected.members.add(name)
       }
     }
@@ -273,6 +417,7 @@ export function readExportSurface(entryDeclarationFile: string): ExportSurface {
 
   const surface: ExportSurface = {}
   const unresolved: string[] = []
+  const exportedNames = new Set(exported.map(symbol => symbol.getName()))
 
   for (const symbol of exported) {
     const resolved =
@@ -288,7 +433,7 @@ export function readExportSurface(entryDeclarationFile: string): ExportSurface {
       continue
     }
 
-    surface[symbol.getName()] = describeSymbol(checker, resolved)
+    surface[symbol.getName()] = describeSymbol(checker, resolved, exportedNames)
   }
 
   if (unresolved.length > 0) {
@@ -381,6 +526,18 @@ export function findAdditions(
     if (!before) {
       added.push(`${name} (${entry.kind})`)
       continue
+    }
+
+    if (before.kind === 'type' && entry.kind === 'value') {
+      // Not breaking in itself — but leaving it unreported disarms the
+      // downgrade check in `findRemovals` permanently. A type-only export that
+      // gains a runtime binding (an interface replaced by a class, a type alias
+      // joined by a same-named const) would never prompt a refresh, so the
+      // baseline would keep `kind: "type"` forever; when the binding is removed
+      // again, baseline `type` vs current `type` reports nothing and the
+      // consumer's `import { Foo }` breaks at runtime with CI green. That is
+      // the #375 shape — the one this field exists to catch.
+      added.push(`${name} — is now a value export (was type-only)`)
     }
 
     for (const member of missing(entry.members, before.members)) {

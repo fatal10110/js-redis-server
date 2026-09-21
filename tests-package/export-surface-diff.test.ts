@@ -210,6 +210,36 @@ describe('findAdditions', () => {
     assert.deepStrictEqual(added, [])
   })
 
+  test('reports a type-only export that gained a runtime binding', () => {
+    // Not breaking in itself, but leaving it unreported disarms the downgrade
+    // check permanently: nobody refreshes, the baseline keeps `kind: "type"`,
+    // and when the binding is later removed, baseline `type` vs current `type`
+    // reports nothing while the consumer's `import { … }` breaks at runtime.
+    const upgraded = mutate(draft => {
+      draft.RedisTurnQueue = { kind: 'value' }
+    })
+
+    assert.deepStrictEqual(findAdditions(BASELINE, upgraded), [
+      'RedisTurnQueue — is now a value export (was type-only)',
+    ])
+    assert.deepStrictEqual(findRemovals(BASELINE, upgraded), [])
+  })
+
+  test('the downgrade check survives a refreshed upgrade', () => {
+    // End to end: upgrade is reported, baseline is refreshed, the later removal
+    // of the binding is then caught as BREAKING.
+    const upgraded = mutate(draft => {
+      draft.RedisTurnQueue = { kind: 'value' }
+    })
+    const removedAgain = mutate(draft => {
+      draft.RedisTurnQueue = { kind: 'type' }
+    })
+
+    assert.deepStrictEqual(findRemovals(upgraded, removedAgain), [
+      'RedisTurnQueue — was a value export, is now type-only (no runtime binding)',
+    ])
+  })
+
   test('an empty baseline reports the whole surface as added', () => {
     // The "no baseline for this entry" path: it must not read as "all clear".
     const added = findAdditions({}, BASELINE)
