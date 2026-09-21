@@ -8,7 +8,8 @@
 //
 // This test snapshots the *whole* surface into `export-surface.json` and diffs:
 //
-//   - a symbol or member that disappears  -> FAIL, named individually. Breaking.
+//   - a symbol, member or union variant that disappears -> FAIL, named
+//     individually. Breaking.
 //   - a `value` export that becomes type-only -> FAIL. Breaking: it still type
 //     checks at the import site but the runtime binding is gone.
 //   - an addition -> FAIL, in its own test, labelled as *not* a break.
@@ -21,6 +22,10 @@
 // the PR body. The two failures are separate tests with distinct wording so
 // nobody has to guess whether they just broke consumers or forgot a snapshot.
 //
+// The diff functions themselves are unit-tested in `export-surface-diff.test.ts`
+// against synthetic surfaces — every assertion here is `deepStrictEqual(x, [])`,
+// which also passes when the producer is broken.
+//
 // Requires `dist/`; run via `npm run test:package`, which builds first.
 
 import { test, describe, before } from 'node:test'
@@ -28,8 +33,11 @@ import assert from 'node:assert'
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import {
-  PUBLISHED_ENTRIES,
+  PUBLISHED_ENTRY_NAMES,
   declarationFileFor,
+  findAdditions,
+  findRemovals,
+  importPathFor,
   readExportSurface,
   type ExportBaseline,
   type ExportSurface,
@@ -47,11 +55,8 @@ const baseline = JSON.parse(
 
 const REFRESH = 'npm run export-baseline'
 
-const entryNames = Object.keys(PUBLISHED_ENTRIES) as PublishedEntry[]
-
-/** How a consumer spells the import for this entry, for failure messages. */
 function importPath(entry: PublishedEntry): string {
-  return entry === 'index' ? packageName : `${packageName}/core`
+  return importPathFor(packageName, entry)
 }
 
 before(() => {
@@ -61,72 +66,24 @@ before(() => {
   )
 })
 
-const actual = new Map<PublishedEntry, ExportSurface>()
+/** Current `.d.ts` and `.d.mts` surfaces, read once. */
+const current = new Map<PublishedEntry, ExportSurface>()
+const currentEsm = new Map<PublishedEntry, ExportSurface>()
 
 before(() => {
-  for (const entry of entryNames) {
-    actual.set(entry, readExportSurface(declarationFileFor(entry)))
+  for (const entry of PUBLISHED_ENTRY_NAMES) {
+    current.set(entry, readExportSurface(declarationFileFor(entry)))
+    currentEsm.set(
+      entry,
+      readExportSurface(declarationFileFor(entry, '.d.mts')),
+    )
   }
 })
 
-type Change = { readonly symbol: string; readonly detail: string }
-
-function removals(
-  before_: ExportSurface,
-  after: ExportSurface,
-): readonly Change[] {
-  const out: Change[] = []
-
-  for (const [name, entry] of Object.entries(before_)) {
-    const current = after[name]
-
-    if (!current) {
-      out.push({ symbol: name, detail: `${name} (${entry.kind}) — gone` })
-      continue
-    }
-
-    if (entry.kind === 'value' && current.kind === 'type') {
-      out.push({
-        symbol: name,
-        detail: `${name} — was a value export, is now type-only (no runtime binding)`,
-      })
-    }
-
-    for (const member of entry.members ?? []) {
-      if (!(current.members ?? []).includes(member)) {
-        out.push({
-          symbol: name,
-          detail: `${name}.${member} — member gone`,
-        })
-      }
-    }
-  }
-
-  return out
-}
-
-function additions(
-  before_: ExportSurface,
-  after: ExportSurface,
-): readonly string[] {
-  const out: string[] = []
-
-  for (const [name, entry] of Object.entries(after)) {
-    const previous = before_[name]
-
-    if (!previous) {
-      out.push(`${name} (${entry.kind})`)
-      continue
-    }
-
-    for (const member of entry.members ?? []) {
-      if (!(previous.members ?? []).includes(member)) {
-        out.push(`${name}.${member}`)
-      }
-    }
-  }
-
-  return out
+function surfaceOf(entry: PublishedEntry): ExportSurface {
+  const surface = current.get(entry)
+  assert.ok(surface, `no surface read for the "${entry}" entry`)
+  return surface
 }
 
 function bullets(lines: readonly string[]): string {
@@ -134,31 +91,31 @@ function bullets(lines: readonly string[]): string {
 }
 
 describe('published export surface', () => {
-  for (const entry of entryNames) {
+  for (const entry of PUBLISHED_ENTRY_NAMES) {
     describe(`${importPath(entry)}`, () => {
-      test('no exported symbol or member was removed', () => {
+      test('no exported symbol, member or variant was removed', () => {
         const recorded = baseline.entries[entry]
         assert.ok(
           recorded,
           `export-surface.json has no baseline for the "${entry}" entry — run \`${REFRESH}\``,
         )
 
-        const gone = removals(recorded, actual.get(entry) ?? {})
+        const gone = findRemovals(recorded, surfaceOf(entry))
 
         assert.deepStrictEqual(
-          gone.map(change => change.detail),
+          gone,
           [],
           `BREAKING: ${gone.length} export(s) disappeared from "${importPath(entry)}".\n` +
-            `${bullets(gone.map(change => change.detail))}\n` +
+            `${bullets(gone)}\n` +
             `If the removal is intentional, record it under "Unreleased" in CHANGELOG.md, ` +
             `then refresh the baseline with \`${REFRESH}\` in the same commit.`,
         )
       })
 
       test('baseline records every current export', () => {
-        const added = additions(
+        const added = findAdditions(
           baseline.entries[entry] ?? {},
-          actual.get(entry) ?? {},
+          surfaceOf(entry),
         )
 
         assert.deepStrictEqual(
@@ -172,16 +129,15 @@ describe('published export surface', () => {
         )
       })
 
-      test('ESM and CJS declarations expose the same symbols', () => {
-        const cjs = Object.keys(actual.get(entry) ?? {})
-        const esm = Object.keys(
-          readExportSurface(declarationFileFor(entry, '.d.mts')),
-        )
-
+      test('ESM and CJS declarations describe the same surface', () => {
+        // Deep, not just the symbol names: the baseline is only ever read from
+        // `.d.ts`, so this is the sole thing pinning `.d.mts` at member and
+        // kind level. A dual-emit drift that dropped a method from the ESM
+        // declarations alone would otherwise ship green.
         assert.deepStrictEqual(
-          esm,
-          cjs,
-          `"${importPath(entry)}" resolves to different symbols under the ` +
+          currentEsm.get(entry),
+          surfaceOf(entry),
+          `"${importPath(entry)}" describes a different surface under the ` +
             `import and require conditions — the dual build has drifted.`,
         )
       })
@@ -193,20 +149,24 @@ describe('published export surface reaches the runtime', () => {
   // The declaration bundle is a claim about the JS. These two tests check it is
   // true for the half of the surface that has a runtime binding: a symbol the
   // types promise but the bundler dropped would otherwise ship broken.
-  for (const entry of entryNames) {
-    const expectedValues = () =>
-      Object.entries(baseline.entries[entry] ?? {})
+  //
+  // Driven from the *current* declarations rather than the committed baseline,
+  // so a newly added export that the bundler drops fails on the same run that
+  // introduces it, not on the next one.
+  for (const entry of PUBLISHED_ENTRY_NAMES) {
+    const expectedValues = (): string[] =>
+      Object.entries(surfaceOf(entry))
         .filter(([, record]) => record.kind === 'value')
         .map(([name]) => name)
 
     test(`${importPath(entry)} exports every value symbol (require)`, () => {
       const loaded = require(importPath(entry)) as Record<string, unknown>
-      const missing = expectedValues().filter(name => !(name in loaded))
+      const absent = expectedValues().filter(name => !(name in loaded))
 
       assert.deepStrictEqual(
-        missing,
+        absent,
         [],
-        `declared by dist/${entry}.d.ts but absent from dist/${entry}.js:\n${bullets(missing)}`,
+        `declared by the emitted .d.ts but absent from the CJS build:\n${bullets(absent)}`,
       )
     })
 
@@ -215,12 +175,12 @@ describe('published export surface reaches the runtime', () => {
         string,
         unknown
       >
-      const missing = expectedValues().filter(name => !(name in loaded))
+      const absent = expectedValues().filter(name => !(name in loaded))
 
       assert.deepStrictEqual(
-        missing,
+        absent,
         [],
-        `declared by dist/${entry}.d.mts but absent from dist/${entry}.mjs:\n${bullets(missing)}`,
+        `declared by the emitted .d.mts but absent from the ESM build:\n${bullets(absent)}`,
       )
     })
   }

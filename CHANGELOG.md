@@ -51,10 +51,11 @@ naming the symbol, which is the prompt to write the entry below.
                                      Use pubsubChannelCount + pubsubPatternCount.
   ```
 
-  Wire output is unchanged — `pmessage` still carries three items, channel and
-  pattern confirmations still report the combined regular count while shard
-  confirmations report the shard count, and the two counters are still not
-  unified.
+  Wire output is unchanged — `pmessage` still carries the pattern ahead of the
+  channel (a 4-element push frame, against 3 for `message` / `smessage`),
+  channel and pattern confirmations still report the combined regular count
+  while shard confirmations report the shard count, and the two counters are
+  still not unified.
 
 - **BREAKING (`/core`)** `RedisKeyspace` and `WrongRedisTypeError` are no longer
   re-exported ([#375]). The keyspace was collapsed into `RedisDatabase`, which
@@ -81,8 +82,16 @@ naming the symbol, which is the prompt to write the entry below.
   Nothing changed on the root barrel. One residue worth knowing about for
   `/core` consumers who pass their own `signal` to `ClientSession`: aborts now
   surface the caller's `signal.reason` (a `DOMException`, or whatever was passed
-  to `abort()`) instead of a fixed `Error`. No wire-visible change — the adapter
-  maps any non-`RedisCommandError` to `-ERR internal server error` either way.
+  to `abort()`) instead of a fixed `Error`, because `ClientSession` uses
+  `signal.throwIfAborted()`, which rethrows the reason verbatim.
+
+  For an ordinary reason there is no wire-visible change — the adapter maps it
+  to `-ERR internal server error` either way. But the mapping is not
+  unconditional: `Resp2SessionAdapter.writeError` passes a `RedisCommandError`
+  (and a `Resp2ParseError`) straight through to the client. So
+  `controller.abort(new WrongTypeRedisError(...))` now puts `-WRONGTYPE …` on
+  the wire where it previously produced `-ERR internal server error`. Only
+  reasons that are neither of those two classes are masked.
 
 - **BREAKING (`/core`)** The `encoder` option was removed from
   `Resp2ServerOptions`, `AttachSessionOptions`, `Resp2SessionAdapterOptions` and

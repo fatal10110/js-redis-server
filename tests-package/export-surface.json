@@ -6,7 +6,19 @@
         "kind": "type",
         "members": ["flavor", "has", "version", "versionNum"]
       },
-      "CompatibilitySpec": { "kind": "type" },
+      "CompatibilitySpec": {
+        "kind": "type",
+        "members": ["flavor", "version"],
+        "variants": [
+          "redis-6.2",
+          "redis-7.0",
+          "redis-7.2",
+          "redis-7.4",
+          "redis-8.0",
+          "valkey-8.0",
+          "valkey-9.0"
+        ]
+      },
       "ConnectOptions": {
         "kind": "type",
         "members": ["database", "returnBuffers"]
@@ -17,8 +29,14 @@
         "kind": "type",
         "members": ["compatibility", "databaseCount", "seed"]
       },
-      "CreateIoredisMockOptions": { "kind": "type" },
-      "CreateNodeRedisMockOptions": { "kind": "type" },
+      "CreateIoredisMockOptions": {
+        "kind": "type",
+        "members": ["cluster", "databaseCount", "seed"]
+      },
+      "CreateNodeRedisMockOptions": {
+        "kind": "type",
+        "members": ["cluster", "databaseCount"]
+      },
       "CreateRedisMockOptions": {
         "kind": "type",
         "members": [
@@ -48,7 +66,31 @@
       "ExecWithoutMultiError": { "kind": "value" },
       "ExpectedFloatError": { "kind": "value" },
       "ExpectedIntegerError": { "kind": "value" },
-      "FeatureId": { "kind": "type" },
+      "FeatureId": {
+        "kind": "type",
+        "variants": [
+          "acl.dryrun",
+          "bit.byte-bit-range",
+          "client.kill.maxage",
+          "client.no-evict",
+          "client.setinfo",
+          "client.setinfo.unknown-subcommand-error",
+          "cluster.multi-db",
+          "command.docs",
+          "command.getkeysandflags",
+          "expire.conditions",
+          "hscan.novalues",
+          "info.multi-section",
+          "pubsub.resp3-publish-reply-first",
+          "pubsub.sharded",
+          "set.exat-pxat",
+          "set.get",
+          "set.nx-get",
+          "shutdown.now-force-abort",
+          "stream.xautoclaim-deleted-ids",
+          "xread.plus-id"
+        ]
+      },
       "HashValueNotFloatError": { "kind": "value" },
       "HashValueNotIntegerError": { "kind": "value" },
       "InMemoryRedis": { "kind": "value", "members": ["close", "connect"] },
@@ -96,7 +138,7 @@
       },
       "NodeRedisMockCluster": {
         "kind": "value",
-        "members": ["connect", "create", "destroy", "disconnect", "quit"]
+        "members": ["connect", "destroy", "disconnect", "quit", "static:create"]
       },
       "NodeRedisMockClusterOptions": {
         "kind": "type",
@@ -148,7 +190,7 @@
       "RedisCommandArgument": { "kind": "type" },
       "RedisCommandError": { "kind": "value", "members": ["code"] },
       "RedisCrossSlotError": { "kind": "value" },
-      "RedisFlavor": { "kind": "type" },
+      "RedisFlavor": { "kind": "type", "variants": ["redis", "valkey"] },
       "RedisMock": {
         "kind": "type",
         "members": [
@@ -180,7 +222,10 @@
       "ScriptDebugModeError": { "kind": "value" },
       "ScriptFlushOptionError": { "kind": "value" },
       "ScriptUnknownCommandError": { "kind": "value" },
-      "SeedEntry": { "kind": "type" },
+      "SeedEntry": {
+        "kind": "type",
+        "members": ["db", "key", "ttlMs", "type", "value"]
+      },
       "StreamElementTooLargeError": { "kind": "value" },
       "StreamIdExhaustedError": { "kind": "value" },
       "TransactionDiscardedError": { "kind": "value" },
@@ -275,7 +320,10 @@
           "watch"
         ]
       },
-      "ClientSessionMode": { "kind": "type" },
+      "ClientSessionMode": {
+        "kind": "type",
+        "variants": ["normal", "subscribed", "transaction"]
+      },
       "ClientSessionOptions": {
         "kind": "type",
         "members": [
@@ -329,7 +377,23 @@
           "profile"
         ]
       },
-      "CommandFlag": { "kind": "type" },
+      "CommandFlag": {
+        "kind": "type",
+        "variants": [
+          "admin",
+          "blocking",
+          "denyoom",
+          "fast",
+          "movablekeys",
+          "noscript",
+          "pubsub",
+          "random",
+          "readonly",
+          "subscribed",
+          "transaction",
+          "write"
+        ]
+      },
       "CommandPlan": {
         "kind": "type",
         "members": ["args", "definition", "keys", "rawArgs", "rawCommand"]
@@ -343,12 +407,27 @@
         "kind": "type",
         "members": ["flavor", "has", "version", "versionNum"]
       },
-      "CompatibilitySpec": { "kind": "type" },
+      "CompatibilitySpec": {
+        "kind": "type",
+        "members": ["flavor", "version"],
+        "variants": [
+          "redis-6.2",
+          "redis-7.0",
+          "redis-7.2",
+          "redis-7.4",
+          "redis-8.0",
+          "valkey-8.0",
+          "valkey-9.0"
+        ]
+      },
       "ConnectionTransport": {
         "kind": "type",
         "members": ["close", "id", "on", "read", "signal", "write"]
       },
-      "ConnectionTransportEvent": { "kind": "type" },
+      "ConnectionTransportEvent": {
+        "kind": "type",
+        "variants": ["close", "drain", "error"]
+      },
       "ConnectionTransportListener": { "kind": "type" },
       "ConnectionTransportUnsubscribe": { "kind": "type" },
       "CountGreaterThanZeroError": { "kind": "value" },
@@ -370,11 +449,59 @@
       "ExecutorResult": { "kind": "type" },
       "ExpectedFloatError": { "kind": "value" },
       "ExpectedIntegerError": { "kind": "value" },
-      "ExpirationState": { "kind": "type" },
+      "ExpirationState": { "kind": "type", "members": ["expiresAt", "kind"] },
       "ExpireGtLtConflictError": { "kind": "value" },
       "ExpireNxXxGtLtConflictError": { "kind": "value" },
-      "FEATURE_GATES": { "kind": "value" },
-      "FeatureId": { "kind": "type" },
+      "FEATURE_GATES": {
+        "kind": "value",
+        "members": [
+          "acl.dryrun",
+          "bit.byte-bit-range",
+          "client.kill.maxage",
+          "client.no-evict",
+          "client.setinfo",
+          "client.setinfo.unknown-subcommand-error",
+          "cluster.multi-db",
+          "command.docs",
+          "command.getkeysandflags",
+          "expire.conditions",
+          "hscan.novalues",
+          "info.multi-section",
+          "pubsub.resp3-publish-reply-first",
+          "pubsub.sharded",
+          "set.exat-pxat",
+          "set.get",
+          "set.nx-get",
+          "shutdown.now-force-abort",
+          "stream.xautoclaim-deleted-ids",
+          "xread.plus-id"
+        ]
+      },
+      "FeatureId": {
+        "kind": "type",
+        "variants": [
+          "acl.dryrun",
+          "bit.byte-bit-range",
+          "client.kill.maxage",
+          "client.no-evict",
+          "client.setinfo",
+          "client.setinfo.unknown-subcommand-error",
+          "cluster.multi-db",
+          "command.docs",
+          "command.getkeysandflags",
+          "expire.conditions",
+          "hscan.novalues",
+          "info.multi-section",
+          "pubsub.resp3-publish-reply-first",
+          "pubsub.sharded",
+          "set.exat-pxat",
+          "set.get",
+          "set.nx-get",
+          "shutdown.now-force-abort",
+          "stream.xautoclaim-deleted-ids",
+          "xread.plus-id"
+        ]
+      },
       "GeoAnyRequiresCountError": { "kind": "value" },
       "GeoBoxNegativeError": { "kind": "value" },
       "GeoCountNotPositiveError": { "kind": "value" },
@@ -447,7 +574,10 @@
       "ParseContext": { "kind": "type", "members": ["commandName", "profile"] },
       "ParseNodeResult": { "kind": "type", "members": ["nextIndex", "value"] },
       "PositiveCountError": { "kind": "value" },
-      "PubSubKind": { "kind": "type" },
+      "PubSubKind": {
+        "kind": "type",
+        "variants": ["channel", "pattern", "shard"]
+      },
       "REDIS_CLUSTER_SLOT_COUNT": { "kind": "value" },
       "RedisClientSession": {
         "kind": "type",
@@ -501,7 +631,10 @@
         "kind": "type",
         "members": ["host", "id", "port", "role", "server"]
       },
-      "RedisClusterNodeRole": { "kind": "type" },
+      "RedisClusterNodeRole": {
+        "kind": "type",
+        "variants": ["master", "replica"]
+      },
       "RedisClusterOptions": {
         "kind": "type",
         "members": [
@@ -529,7 +662,10 @@
       },
       "RedisCommandError": { "kind": "value", "members": ["code"] },
       "RedisCrossSlotError": { "kind": "value" },
-      "RedisDataTypeName": { "kind": "type" },
+      "RedisDataTypeName": {
+        "kind": "type",
+        "variants": ["hash", "list", "set", "stream", "string", "zset"]
+      },
       "RedisDataValue": { "kind": "type" },
       "RedisDatabase": {
         "kind": "value",
@@ -579,7 +715,7 @@
           "transactionReplay"
         ]
       },
-      "RedisFlavor": { "kind": "type" },
+      "RedisFlavor": { "kind": "type", "variants": ["redis", "valkey"] },
       "RedisFunctionRegistry": {
         "kind": "value",
         "members": [
@@ -620,7 +756,10 @@
         "kind": "value",
         "members": ["emit", "subscribe", "subscribeKey"]
       },
-      "RedisMutationEvent": { "kind": "type" },
+      "RedisMutationEvent": {
+        "kind": "type",
+        "members": ["database", "expiresAt", "key", "type", "value"]
+      },
       "RedisMutationListener": { "kind": "type" },
       "RedisPubSubBroker": {
         "kind": "value",
@@ -640,13 +779,13 @@
       "RedisResult": {
         "kind": "value",
         "members": [
-          "create",
           "encoded",
-          "error",
-          "nil",
-          "ok",
           "options",
-          "preEncoded",
+          "static:create",
+          "static:error",
+          "static:nil",
+          "static:ok",
+          "static:preEncoded",
           "value"
         ]
       },
@@ -720,17 +859,25 @@
           "bigNumber",
           "boolean",
           "bulkString",
+          "code",
           "double",
+          "entries",
           "error",
           "flatPairs",
+          "format",
           "integer",
+          "items",
+          "kind",
           "map",
           "mapPairs",
+          "message",
+          "name",
           "null",
           "nullArray",
           "push",
           "set",
           "simpleString",
+          "value",
           "verbatim"
         ]
       },
@@ -752,7 +899,7 @@
         "members": ["logger", "session", "transport"]
       },
       "RespEncodeOptions": { "kind": "type", "members": ["version"] },
-      "RespVersion": { "kind": "type" },
+      "RespVersion": { "kind": "type", "variants": ["2", "3"] },
       "ResponseStream": {
         "kind": "type",
         "members": ["close", "closed", "frames", "kind"]
