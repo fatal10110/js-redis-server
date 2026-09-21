@@ -2,6 +2,12 @@ import { createRedisCommandExecutor } from './commands'
 import { ClientSession } from './core/client-session'
 import type { CompatibilitySpec } from './core/compatibility'
 import type { CommandExecutor } from './core/command-executor'
+import {
+  decodeRedisValue,
+  toRedisArgument,
+  type DecodeRedisValueOptions,
+  type NativeRedisReply,
+} from './core/decode-redis-value'
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
 import { RedisResult } from './core/redis-result'
@@ -15,15 +21,7 @@ const DEFAULT_DATABASE_COUNT = 16
 export type RedisCommandArgument = string | number | Buffer
 
 /** Native JS value an in-memory reply decodes to. */
-export type RedisNativeReply =
-  | string
-  | number
-  | bigint
-  | boolean
-  | Buffer
-  | null
-  | RedisNativeReply[]
-  | { [key: string]: RedisNativeReply }
+export type RedisNativeReply = NativeRedisReply
 
 export type InMemoryRedisClientOptions = {
   server: RedisServerState
@@ -34,6 +32,26 @@ export type InMemoryRedisClientOptions = {
   returnBuffers?: boolean
   /** Called once when the client is closed — used to tear down owned state. */
   onClose?: () => void
+}
+
+/**
+ * How this client reads a {@link RedisValue}, and therefore where it diverges
+ * from the node-redis facade's `NODE_REDIS_DECODE_OPTIONS`. Exported so a test
+ * can assert the two apart — the divergences are deliberate, and a silent
+ * re-convergence is the failure mode worth catching.
+ *
+ * `returnBuffers` is per-connection and layered on top in the constructor.
+ */
+export const IN_MEMORY_DECODE_OPTIONS: DecodeRedisValueOptions = {
+  // Widen past Number.MAX_SAFE_INTEGER rather than lose precision. Deliberately
+  // *unlike* a real client (none of them widen) — callers here read replies
+  // directly rather than comparing against real-client output.
+  narrowBigInt: 'when-safe',
+  // RESP2 encodes a push as `[name, ...items]` on the wire (a pub/sub message
+  // is `["message", channel, payload]`); keep the type tag so push-mode
+  // consumers see the same shape a real client would.
+  pushShape: 'tagged',
+  error: (text, code) => new RedisCommandError(text, code),
 }
 
 /** Aborts when any of the given signals abort (or immediately if one already has). */
@@ -61,7 +79,7 @@ function anySignal(signals: readonly AbortSignal[]): AbortSignal {
  */
 export class InMemoryRedisClient {
   private readonly session: ClientSession
-  private readonly returnBuffers: boolean
+  private readonly decodeOptions: DecodeRedisValueOptions
   private readonly onClose?: () => void
   private closed = false
   /** Aborted on close — tears down any active stream and push readers. */
@@ -81,7 +99,10 @@ export class InMemoryRedisClient {
       executor: options.executor,
       database: options.database,
     })
-    this.returnBuffers = options.returnBuffers ?? false
+    this.decodeOptions = {
+      ...IN_MEMORY_DECODE_OPTIONS,
+      returnBuffers: options.returnBuffers ?? false,
+    }
     this.onClose = options.onClose
   }
 
@@ -104,7 +125,7 @@ export class InMemoryRedisClient {
 
     const result = await this.session.execute(
       Buffer.from(name),
-      args.map(toBuffer),
+      args.map(toRedisArgument),
     )
 
     if (isResponseStream(result)) {
@@ -210,62 +231,7 @@ export class InMemoryRedisClient {
   }
 
   private decode(value: RedisValue): RedisNativeReply {
-    switch (value.kind) {
-      case 'simple-string':
-        return value.value
-      case 'bulk-string':
-        if (value.value === null) {
-          return null
-        }
-        return this.returnBuffers ? value.value : value.value.toString('utf8')
-      case 'verbatim':
-        return this.returnBuffers ? value.value : value.value.toString('utf8')
-      case 'integer':
-        // Integer replies are plain numbers in real clients; only widen to
-        // bigint when the value genuinely overflows a JS safe integer.
-        if (typeof value.value === 'bigint') {
-          return isSafeBigInt(value.value) ? Number(value.value) : value.value
-        }
-        return value.value
-      case 'double':
-        return value.value
-      case 'boolean':
-        return value.value
-      case 'big-number':
-        return value.value
-      case 'array':
-      case 'set':
-        return value.items.map(item => this.decode(item))
-      case 'push':
-        // RESP2 encodes a push as `[name, ...items]` on the wire (e.g. a pub/sub
-        // message is `["message", channel, payload]`); keep the type tag so
-        // push-mode consumers see the same shape a real client would.
-        return [value.name, ...value.items.map(item => this.decode(item))]
-      case 'map':
-      case 'map-pairs': {
-        const out: { [key: string]: RedisNativeReply } = {}
-        for (const [key, val] of value.entries) {
-          out[decodeKey(key)] = this.decode(val)
-        }
-        return out
-      }
-      case 'flat-pairs':
-        // Flat on the wire in RESP2; keep the flat array shape here too.
-        return value.entries.flatMap(([key, val]) => [
-          this.decode(key),
-          this.decode(val),
-        ])
-      case 'null':
-      case 'null-array':
-        return null
-      case 'error':
-        // Surface the full error text a real client sees — `<CODE> <message>`
-        // (e.g. `MOVED 1234 host:port`, `WRONGTYPE …`), not just the detail.
-        throw new RedisCommandError(
-          value.code ? `${value.code} ${value.message}` : value.message,
-          value.code,
-        )
-    }
+    return decodeRedisValue(value, this.decodeOptions)
   }
 }
 
@@ -368,38 +334,4 @@ function wrapWithInstanceClose(
     instance.close()
   }
   return client
-}
-
-function isSafeBigInt(value: bigint): boolean {
-  return (
-    value >= BigInt(Number.MIN_SAFE_INTEGER) &&
-    value <= BigInt(Number.MAX_SAFE_INTEGER)
-  )
-}
-
-function toBuffer(arg: RedisCommandArgument): Buffer {
-  if (Buffer.isBuffer(arg)) {
-    return arg
-  }
-  return Buffer.from(typeof arg === 'number' ? String(arg) : arg)
-}
-
-/** Map keys are always plain strings, regardless of `returnBuffers`. */
-function decodeKey(value: RedisValue): string {
-  switch (value.kind) {
-    case 'simple-string':
-      return value.value
-    case 'bulk-string':
-      return value.value === null ? '' : value.value.toString('utf8')
-    case 'verbatim':
-      return value.value.toString('utf8')
-    case 'integer':
-    case 'double':
-    case 'big-number':
-      return String(value.value)
-    case 'boolean':
-      return String(value.value)
-    default:
-      return ''
-  }
 }

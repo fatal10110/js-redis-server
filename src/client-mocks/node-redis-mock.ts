@@ -3,7 +3,13 @@ import { createRedisCommandExecutor } from '../commands'
 import { buildClusterNodes, type ClusterNodePipeline } from '../cluster'
 import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
-import { RedisCommandError, RedisCrossSlotError } from '../core/redis-error'
+import {
+  decodeRedisValue,
+  redisErrorText,
+  type DecodeRedisValueOptions,
+  type NativeRedisReply,
+} from '../core/decode-redis-value'
+import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
 import { isResponseStream, type ResponseStream } from '../core/response-stream'
@@ -92,25 +98,11 @@ async function ensureRedisErrors(): Promise<RedisErrorConstructors> {
   return resolvedRedisErrors
 }
 
-function errorReplyText(value: { code?: string; message: string }): string {
-  // Reconstruct the on-the-wire `CODE message` (e.g. `WRONGTYPE Operation …`)
-  // so the surfaced text matches what node-redis parses off the wire.
-  return value.code ? `${value.code} ${value.message}` : value.message
-}
-
 /** A command argument node-redis accepts on the wire. */
 export type NodeRedisCommandArgument = string | Buffer
 
 /** Native JS value a reply decodes to (mirrors node-redis RESP2 defaults). */
-export type NodeRedisReply =
-  | string
-  | number
-  | bigint
-  | boolean
-  | Buffer
-  | null
-  | NodeRedisReply[]
-  | { [key: string]: NodeRedisReply }
+export type NodeRedisReply = NativeRedisReply
 
 export type NodeRedisMockClusterOptions = {
   masters: number
@@ -160,8 +152,11 @@ type FacadeBackend = {
  * cluster routes by slot to the owning node's session — but the curated method
  * bodies are identical, so they live in this base and dispatch through the
  * abstract {@link CommandRunner.run}.
+ *
+ * Extends `EventEmitter` because a real node-redis client is one: `on`/`once`/
+ * `off` (and the rest of the emitter surface) come for free on both clients.
  */
-abstract class CommandRunner {
+abstract class CommandRunner extends EventEmitter {
   /**
    * Execute one already-tokenised command and return its decoded reply.
    * Implementations pick the session (standalone: the only one; cluster: the
@@ -190,6 +185,16 @@ abstract class CommandRunner {
 
   async del(...keys: string[]): Promise<number> {
     return asNumber(await this.run(['DEL', ...keys]))
+  }
+
+  async mSet(
+    entries: [key: string, value: string | number][],
+  ): Promise<string> {
+    const args: NodeRedisCommandArgument[] = ['MSET']
+    for (const [key, value] of entries) {
+      args.push(key, String(value))
+    }
+    return asString(await this.run(args))
   }
 
   async exists(...keys: string[]): Promise<number> {
@@ -271,6 +276,35 @@ abstract class CommandRunner {
       await this.run(['ZRANGE', key, String(start), String(stop)]),
     )
   }
+
+  async zUnionStore(destination: string, keys: string[]): Promise<number> {
+    return asNumber(
+      await this.run([
+        'ZUNIONSTORE',
+        destination,
+        String(keys.length),
+        ...keys,
+      ]),
+    )
+  }
+
+  // --- scripting -----------------------------------------------------------
+
+  /**
+   * EVAL with node-redis' options shape. The declared `keys` — not the script
+   * text — are the command's routing keys, which is exactly what the executor's
+   * plan reports.
+   */
+  async eval(
+    script: string,
+    options: { keys?: string[]; arguments?: string[] } = {},
+  ): Promise<NodeRedisReply> {
+    const keys = options.keys ?? []
+    const args = options.arguments ?? []
+    return decodeReply(
+      await this.run(['EVAL', script, String(keys.length), ...keys, ...args]),
+    )
+  }
 }
 
 export type NodeRedisMockClientInit = FacadeBackend & {
@@ -286,7 +320,6 @@ export type NodeRedisMockClientInit = FacadeBackend & {
  * subscribed connection is reserved for pub/sub.
  */
 export class NodeRedisMockClient extends CommandRunner {
-  private readonly emitter = new EventEmitter()
   private readonly backend: FacadeBackend
   private readonly database?: number
   private readonly ownsState: boolean
@@ -320,24 +353,9 @@ export class NodeRedisMockClient extends CommandRunner {
     })
     // node-redis emits 'connect' then 'ready' once the handshake completes.
     queueMicrotask(() => {
-      this.emitter.emit('connect')
-      this.emitter.emit('ready')
+      this.emit('connect')
+      this.emit('ready')
     })
-  }
-
-  on(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.on(event, listener)
-    return this
-  }
-
-  once(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.once(event, listener)
-    return this
-  }
-
-  off(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.off(event, listener)
-    return this
   }
 
   /** node-redis clients require an explicit connect(); here it is a no-op. */
@@ -452,14 +470,14 @@ export class NodeRedisMockClient extends CommandRunner {
   /** Gracefully close: tear down pub/sub + the command session. */
   async quit(): Promise<string> {
     await this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
     return 'OK'
   }
 
   /** Hard close (node-redis `disconnect()`). Same teardown as quit(). */
   async disconnect(): Promise<void> {
     await this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
   }
 
   /**
@@ -467,10 +485,13 @@ export class NodeRedisMockClient extends CommandRunner {
    * The push-drain loop settles on the next tick via the abort signal.
    */
   destroy(): void {
-    // teardown() is async (it awaits the push-drain loop); surface a rejection
-    // as an 'error' event rather than dropping it as an unhandled rejection.
-    void this.teardown().catch(err => this.emitter.emit('error', err))
-    this.emitter.emit('end')
+    // teardown() is async (it awaits the push-drain loop). Re-emit a rejection
+    // as an 'error' event, which is what node-redis does with a teardown
+    // failure — and, like any EventEmitter, that itself throws when nothing is
+    // listening. teardown() releases everything it owns before this point, so
+    // the throw leaks nothing.
+    void this.teardown().catch(err => this.emit('error', err))
+    this.emit('end')
   }
 
   private async teardown(): Promise<void> {
@@ -478,23 +499,28 @@ export class NodeRedisMockClient extends CommandRunner {
       return
     }
     this.closed = true
-    this.session.close()
-    if (this.pubsub) {
-      const pubsub = this.pubsub
-      this.pubsub = undefined
-      pubsub.abort.abort()
-      pubsub.session.close()
-      // Wait for the drain loop to observe the abort and finish, so no async
-      // iteration dangles past teardown.
-      await pubsub.drained
-      pubsub.listeners.clear()
-      pubsub.patternListeners.clear()
-    }
-    if (this.ownsState) {
-      // Only the creating client owns the state graph; closing it clears the
-      // self-rescheduling active-expiry timer. Duplicates share this state and
+    try {
+      this.session.close()
+      if (this.pubsub) {
+        const pubsub = this.pubsub
+        this.pubsub = undefined
+        pubsub.abort.abort()
+        pubsub.session.close()
+        // Wait for the drain loop to observe the abort and finish, so no async
+        // iteration dangles past teardown.
+        await pubsub.drained
+        pubsub.listeners.clear()
+        pubsub.patternListeners.clear()
+      }
+    } finally {
+      // In a `finally` because a push-drain loop that rejects must not strand
+      // the state: closing it is what clears the self-rescheduling
+      // active-expiry timer, and a live timer keeps the process alive.
+      // Only the creating client owns the state graph — duplicates share it and
       // must not close it out from under their siblings.
-      this.backend.state.close()
+      if (this.ownsState) {
+        this.backend.state.close()
+      }
     }
   }
 
@@ -534,7 +560,7 @@ export class NodeRedisMockClient extends CommandRunner {
       }
     } catch (err) {
       if (!signal.aborted) {
-        this.emitter.emit('error', err)
+        this.emit('error', err)
       }
     }
   }
@@ -641,7 +667,7 @@ export class NodeRedisMockMulti {
     const errorIndexes: number[] = []
     result.items.forEach((item, index) => {
       if (item.kind === 'error') {
-        replies.push(new errors.ErrorReply(errorReplyText(item)))
+        replies.push(new errors.ErrorReply(redisErrorText(item)))
         errorIndexes.push(index)
         return
       }
@@ -677,7 +703,6 @@ export class NodeRedisMockMulti {
  * method surface is inherited unchanged from {@link CommandRunner}.
  */
 export class NodeRedisMockCluster extends CommandRunner {
-  private readonly emitter = new EventEmitter()
   private readonly topology: RedisClusterTopology
   private readonly masters: ClusterNodePipeline[]
   private readonly sessions = new Map<string, ClientSession>()
@@ -694,8 +719,8 @@ export class NodeRedisMockCluster extends CommandRunner {
     this.masters = masters
     this.replicationLinks = [...replicationLinks]
     queueMicrotask(() => {
-      this.emitter.emit('connect')
-      this.emitter.emit('ready')
+      this.emit('connect')
+      this.emit('ready')
     })
   }
 
@@ -707,21 +732,6 @@ export class NodeRedisMockCluster extends CommandRunner {
     })
     const masters = nodes.filter(node => node.role === 'master')
     return new NodeRedisMockCluster(topology, masters, replicationLinks)
-  }
-
-  on(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.on(event, listener)
-    return this
-  }
-
-  once(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.once(event, listener)
-    return this
-  }
-
-  off(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.off(event, listener)
-    return this
   }
 
   async connect(): Promise<this> {
@@ -738,18 +748,18 @@ export class NodeRedisMockCluster extends CommandRunner {
   // standalone client whose teardown awaits its pub/sub drain.
   async quit(): Promise<string> {
     this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
     return 'OK'
   }
 
   async disconnect(): Promise<void> {
     this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
   }
 
   destroy(): void {
     this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
   }
 
   private teardown(): void {
@@ -774,29 +784,81 @@ export class NodeRedisMockCluster extends CommandRunner {
   /**
    * Resolve (and cache) a session on the master that owns the slot for the
    * command's keys. Keyless commands run on the first master.
+   *
+   * There is deliberately no client-side rejection here. A key set spanning
+   * slots gives `-1`, which owns no node and falls through to the first master;
+   * that node's `ClusterPolicy` recomputes the same keys and raises the real
+   * error, which `decodeReply` surfaces as the same `ErrorReply`. Refusing here
+   * instead would mean a second copy of rules the policy already owns, and
+   * would pre-empt the ones it does not share — `SORT`'s routing keys include
+   * its BY/GET *patterns* (see `sortRoutingKeys` in `src/commands/keys.ts`),
+   * which look cross-slot but must surface `BY option of SORT denied in Cluster
+   * mode …` rather than `CROSSSLOT`.
+   *
+   * KNOWN LIMITATION — pub/sub is not supported through this cluster facade.
+   * It exposes no subscribe API, and a raw `sendCommand(['SUBSCRIBE', …])` puts
+   * the cached session for its node into subscriber mode for good: every later
+   * command on that node is then refused with `ERR Can't execute …`. Because
+   * `SUBSCRIBE` has no keys it lands on `masters[0]`, which also serves every
+   * keyless command and the first slot range, so the blast radius is wide.
+   * Fixing it properly means what the standalone client already does — a
+   * dedicated pub/sub session plus a push-drain loop ({@link
+   * NodeRedisMockClient.ensurePubSub}) — which is a feature, not a routing
+   * change. Use {@link NodeRedisMockClient} for pub/sub.
    */
   private sessionForCommand(args: NodeRedisCommandArgument[]): ClientSession {
-    const keys = extractRoutingKeys(args)
-    const slot =
-      keys.length > 0 ? this.topology.calculateSlotForKeys(keys) : null
-
-    if (slot === -1) {
-      // generateMulti() returns -1 when the keys span multiple slots. Match the
-      // real cluster (ClusterPolicy) and refuse, rather than silently running
-      // the whole command against the first key's node with a wrong result.
-      // Surface it the way node-redis would parse `-CROSSSLOT …` off the wire:
-      // an ErrorReply whose message carries the code prefix.
-      const crossSlot = new RedisCrossSlotError()
-      const ErrorReply = resolvedRedisErrors?.ErrorReply
-      throw ErrorReply ? new ErrorReply(errorReplyText(crossSlot)) : crossSlot
-    }
-
+    const slot = this.topology.calculateSlotForKeys(this.routingKeys(args))
     const owner =
       slot === null
         ? this.masters[0]
         : (this.topology.getSlotOwner(slot) ?? this.masters[0])
 
     return this.sessionFor(owner.id)
+  }
+
+  /**
+   * The command's routing keys, taken from the executor's own
+   * {@link CommandExecutor.plan} — the exact extraction `ClusterPolicy` routes
+   * on. Guessing them from the argument list gets multi-key commands (`MSET`,
+   * `RENAME`), numkeys-prefixed ones (`EVAL`, `ZDIFF`, `LMPOP`), subcommand-
+   * prefixed ones (`BITOP`) and STORE targets (`GEORADIUS … STORE`) wrong,
+   * which picks the wrong node.
+   *
+   * Two invariants this leans on, neither enforced by a type:
+   *
+   *  - Planning is registry + schema only — no policy runs — so any master's
+   *    executor answers identically. True because `buildClusterNodes` hands
+   *    every node one hoisted profile and the same registry, differing only in
+   *    their `CLUSTER` definitions. Per-node profiles would break it.
+   *  - Every `RedisCommandError` out of `plan()` means "no keys we can route
+   *    on" — an unregistered name, or an argument list the schema rejects.
+   *    True while no registered command declares keys it cannot extract. Such
+   *    a command goes to the first master and the normal pipeline turns it
+   *    into the canonical error reply, exactly as the standalone client does,
+   *    rather than growing a second error path here.
+   *
+   * Planning is not free — `session.execute` plans the command again, so a
+   * cluster command pays two schema parses. A `routingKeysFor()` seam on the
+   * executor would be cheaper and tidier, but with one call site it is not yet
+   * worth the API.
+   */
+  private routingKeys(args: NodeRedisCommandArgument[]): readonly Buffer[] {
+    if (args.length === 0) {
+      return []
+    }
+
+    const [name, ...rest] = args
+    try {
+      return this.masters[0].executor.plan(
+        toBuffer(name),
+        rest.map((arg, index) => toBuffer(arg, index + 1)),
+      ).keys
+    } catch (err) {
+      if (err instanceof RedisCommandError) {
+        return []
+      }
+      throw err
+    }
   }
 
   private sessionFor(nodeId: string): ClientSession {
@@ -839,7 +901,10 @@ async function runOnSession(
   }
 
   const [name, ...rest] = args
-  const result = await session.execute(toBuffer(name), rest.map(toBuffer))
+  const result = await session.execute(
+    toBuffer(name),
+    rest.map((arg, index) => toBuffer(arg, index + 1)),
+  )
 
   if (isResponseStream(result)) {
     // A multi-channel SUBSCRIBE/PSUBSCRIBE returns the per-channel confirmation
@@ -868,34 +933,26 @@ async function drainSubscribeAck(stream: ResponseStream): Promise<RedisValue> {
   return last
 }
 
-// Commands whose keys are every positional argument after the name. The router
-// extracts all of them so a cross-slot invocation (e.g. `del('a','b')` across
-// slots) is detected and refused rather than silently run on the first key's
-// node. Other commands route by their first key argument.
-const MULTI_KEY_COMMANDS = new Set([
-  'DEL',
-  'EXISTS',
-  'UNLINK',
-  'TOUCH',
-  'MGET',
-  'WATCH',
-  'SINTER',
-  'SUNION',
-  'SDIFF',
-  'PFCOUNT',
-])
-
-function extractRoutingKeys(args: NodeRedisCommandArgument[]): Buffer[] {
-  if (args.length < 2) {
-    return []
+/**
+ * Deliberately narrower than the shared `toRedisArgument`, which also accepts
+ * `number` for {@link InMemoryRedisClient}. `@redis/client`'s encoder takes
+ * `string | Buffer` and nothing else, so a facade that coerced anything wider
+ * would green-light test code that throws against the real client.
+ *
+ * `Buffer.from` alone is not narrow enough: it happily converts arrays and
+ * TypedArrays that node-redis rejects. Hence the explicit check, whose message
+ * mirrors the encoder's.
+ */
+function toBuffer(arg: NodeRedisCommandArgument, index = 0): Buffer {
+  if (Buffer.isBuffer(arg)) {
+    return arg
   }
-  if (MULTI_KEY_COMMANDS.has(String(args[0]).toUpperCase())) {
-    return args.slice(1).map(toBuffer)
+  if (typeof arg !== 'string') {
+    throw new TypeError(
+      `"arguments[${index}]" must be of type "string | Buffer", got ${typeof arg} instead.`,
+    )
   }
-  // Single-key heuristic: every other routed command keys off its first arg.
-  // Uncommon multi-key commands sent via the generic sendCommand fall through
-  // here and route by first key (documented honest scope).
-  return [toBuffer(args[1])]
+  return Buffer.from(arg)
 }
 
 function addListener(
@@ -921,87 +978,38 @@ function notify(
   }
 }
 
-function toBuffer(arg: NodeRedisCommandArgument): Buffer {
-  return Buffer.isBuffer(arg) ? arg : Buffer.from(arg)
-}
-
 // --- reply decoding --------------------------------------------------------
 //
-// node-redis leaves most RESP2 replies untransformed, and the in-memory decode()
-// (RedisValue → native JS) already matches those defaults: bulk-string → utf8
-// string, integer → number, map → object, array/set → array. So the curated
-// methods are thin coercions over this shared decoder rather than per-command
+// node-redis leaves most RESP2 replies untransformed, and the shared
+// RedisValue → native JS decoder already matches those defaults: bulk-string →
+// utf8 string, integer → number, map → object, array/set → array. So the
+// curated methods are thin coercions over that decoder rather than per-command
 // reply tables — uncommon commands get the same native shapes via sendCommand.
 
-function decodeReply(value: RedisValue): NodeRedisReply {
-  switch (value.kind) {
-    case 'simple-string':
-      return value.value
-    case 'bulk-string':
-      return value.value === null ? null : value.value.toString('utf8')
-    case 'verbatim':
-      return value.value.toString('utf8')
-    case 'integer':
-      // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic,
-      // so it is always a `number` (precision loss past 2^53 included) — never a
-      // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint, handled below.
-      return typeof value.value === 'bigint' ? Number(value.value) : value.value
-    case 'double':
-      return value.value
-    case 'boolean':
-      return value.value
-    case 'big-number':
-      return value.value
-    case 'array':
-    case 'set':
-    case 'push':
-      return value.items.map(item => decodeReply(item))
-    case 'map':
-    case 'map-pairs': {
-      const out: { [key: string]: NodeRedisReply } = {}
-      for (const [key, val] of value.entries) {
-        out[decodeKey(key)] = decodeReply(val)
-      }
-      return out
-    }
-    case 'flat-pairs':
-      return value.entries.flatMap(([key, val]) => [
-        decodeReply(key),
-        decodeReply(val),
-      ])
-    case 'null':
-    case 'null-array':
-      return null
-    case 'error': {
-      // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches
-      // the documented idiom) with the reconstructed on-the-wire `CODE message`.
-      // Falls back to RedisCommandError only if the redis package is absent.
-      const text = errorReplyText(value)
-      const ErrorReply = resolvedRedisErrors?.ErrorReply
-      throw ErrorReply
-        ? new ErrorReply(text)
-        : new RedisCommandError(text, value.code)
-    }
-  }
+/**
+ * How this facade reads a {@link RedisValue}, and therefore where it diverges
+ * from `IN_MEMORY_DECODE_OPTIONS`. Exported so a test can assert the two apart —
+ * the divergences are deliberate, and a silent re-convergence is the failure
+ * mode worth catching.
+ */
+export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
+  // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic, so
+  // it is always a `number` (precision loss past 2^53 included) — never a
+  // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint.
+  narrowBigInt: 'always',
+  // node-redis routes a push frame by its type tag and hands listeners only the
+  // payload, so the tag is not part of the decoded reply.
+  pushShape: 'items',
+  // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches the
+  // documented idiom). Falls back to RedisCommandError if `redis` is absent.
+  error: (text, code) => {
+    const ErrorReply = resolvedRedisErrors?.ErrorReply
+    return ErrorReply ? new ErrorReply(text) : new RedisCommandError(text, code)
+  },
 }
 
-function decodeKey(value: RedisValue): string {
-  switch (value.kind) {
-    case 'simple-string':
-      return value.value
-    case 'bulk-string':
-      return value.value === null ? '' : value.value.toString('utf8')
-    case 'verbatim':
-      return value.value.toString('utf8')
-    case 'integer':
-    case 'double':
-    case 'big-number':
-      return String(value.value)
-    case 'boolean':
-      return String(value.value)
-    default:
-      return ''
-  }
+function decodeReply(value: RedisValue): NodeRedisReply {
+  return decodeRedisValue(value, NODE_REDIS_DECODE_OPTIONS)
 }
 
 function asNumber(value: RedisValue): number {

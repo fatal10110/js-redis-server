@@ -1,247 +1,208 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert'
-import { RedisKeyspace } from '../src/state/keyspace'
-import {
-  RedisMutationBus,
-  type RedisMutationEvent,
-} from '../src/state/mutation-events'
-import {
-  createHashData,
-  createListData,
-  createSetData,
-  createSortedSetData,
-  createStreamData,
-  createStringData,
-  type RedisHashData,
-  type RedisListData,
-  type RedisSetData,
-  type RedisSortedSetData,
-  type RedisStreamData,
-  type RedisStringData,
-} from '../src/state/data-types'
+import { RedisDatabase } from '../src/state/database'
+import { type RedisMutationEvent } from '../src/state/mutation-events'
+import { WrongTypeRedisError } from '../src/core/redis-error'
 
 function setup() {
-  const bus = new RedisMutationBus()
+  const db = new RedisDatabase(0)
   const events: RedisMutationEvent[] = []
-  bus.subscribe(event => events.push(event))
-  const keyspace = new RedisKeyspace(0, bus)
-  return { keyspace, events }
+  db.subscribe(event => events.push(event))
+  return { db, events }
 }
 
-describe('RedisKeyspace.update — ghost entries and empty-collection cleanup (#124)', () => {
+// These exercise the shared read-modify-write path behind updateHash/
+// updateList/... — `RedisDatabase.update` — through the typed wrappers, which
+// is the only way production reaches it.
+describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#124)', () => {
   test('mutator throwing on a fresh key leaves no ghost entry and emits no event', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('h')
 
     assert.throws(() => {
-      keyspace.update<RedisHashData, void>(key, 'hash', createHashData, () => {
+      db.updateHash(key, () => {
         throw new Error('boom')
       })
     }, /boom/)
 
-    assert.strictEqual(keyspace.get(key), null)
-    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(db.get(key), null)
+    assert.strictEqual(db.getType(key), null)
     assert.strictEqual(events.length, 0)
   })
 
   test('a mutation that leaves a freshly-created collection empty creates no key and emits no event', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('h')
 
     // e.g. HDEL on a non-existent key: there is nothing to remove, the
     // collection stays empty, so the key must never appear.
-    keyspace.update<RedisHashData, void>(key, 'hash', createHashData, () => {
-      // no change
+    db.updateHash(key, hash => {
+      hash.deleteField(Buffer.from('missing'))
     })
 
-    assert.strictEqual(keyspace.get(key), null)
-    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(db.get(key), null)
+    assert.strictEqual(db.getType(key), null)
     assert.strictEqual(events.length, 0)
   })
 
   test('a no-op mutation on an existing collection emits no event', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('h')
 
-    keyspace.update<RedisHashData, void>(
-      key,
-      'hash',
-      createHashData,
-      (hash, tracker) => {
-        hash.fields.set('f', {
-          field: Buffer.from('f'),
-          value: Buffer.from('v'),
-        })
-        tracker.markChanged()
-      },
-    )
+    db.updateHash(key, hash => {
+      hash.setField(Buffer.from('f'), Buffer.from('v'))
+    })
     events.length = 0
 
-    keyspace.update<RedisHashData, number>(
-      key,
-      'hash',
-      createHashData,
-      hash => {
-        const deleted = hash.fields.delete('missing') ? 1 : 0
-        return deleted
-      },
+    const deleted = db.updateHash(key, hash =>
+      hash.deleteField(Buffer.from('missing')) ? 1 : 0,
     )
 
-    assert.strictEqual(keyspace.getType(key), 'hash')
+    assert.strictEqual(deleted, 0)
+    assert.strictEqual(db.getType(key), 'hash')
     assert.strictEqual(events.length, 0)
   })
 
   test('emptying an existing collection deletes the key and emits a single delete event', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('h')
 
-    keyspace.update<RedisHashData, void>(
-      key,
-      'hash',
-      createHashData,
-      (hash, tracker) => {
-        hash.fields.set('f', {
-          field: Buffer.from('f'),
-          value: Buffer.from('v'),
-        })
-        tracker.markChanged()
-      },
-    )
-    assert.strictEqual(keyspace.getType(key), 'hash')
+    db.updateHash(key, hash => {
+      hash.setField(Buffer.from('f'), Buffer.from('v'))
+    })
+    assert.strictEqual(db.getType(key), 'hash')
     events.length = 0
 
-    keyspace.update<RedisHashData, void>(
-      key,
-      'hash',
-      createHashData,
-      (hash, tracker) => {
-        hash.fields.delete('f')
-        tracker.markChanged()
-      },
-    )
+    db.updateHash(key, hash => {
+      hash.deleteField(Buffer.from('f'))
+    })
 
-    assert.strictEqual(keyspace.get(key), null)
-    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(db.get(key), null)
+    assert.strictEqual(db.getType(key), null)
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0]!.type, 'delete')
   })
 
   test('emptying an existing list deletes the key and emits a single delete event', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('l')
 
-    keyspace.update<RedisListData, void>(
-      key,
-      'list',
-      createListData,
-      (list, tracker) => {
-        list.values.push(Buffer.from('a'))
-        tracker.markChanged()
-      },
-    )
-    assert.strictEqual(keyspace.getType(key), 'list')
+    db.updateList(key, list => {
+      list.pushRight([Buffer.from('a')])
+    })
+    assert.strictEqual(db.getType(key), 'list')
     events.length = 0
 
     // e.g. LTRIM that removes every element
-    keyspace.update<RedisListData, void>(
-      key,
-      'list',
-      createListData,
-      (list, tracker) => {
-        list.values.length = 0
-        tracker.markChanged()
-      },
-    )
+    db.updateList(key, list => {
+      list.trim(1, 0)
+    })
 
-    assert.strictEqual(keyspace.get(key), null)
-    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(db.get(key), null)
+    assert.strictEqual(db.getType(key), null)
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0]!.type, 'delete')
   })
 
   test('emptying an existing zset deletes the key and emits a single delete event', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('z')
 
-    keyspace.update<RedisSortedSetData, void>(
-      key,
-      'zset',
-      createSortedSetData,
-      (zset, tracker) => {
-        zset.members.set('m', { member: Buffer.from('m'), score: 1 })
-        tracker.markChanged()
-      },
-    )
-    assert.strictEqual(keyspace.getType(key), 'zset')
+    db.updateSortedSet(key, zset => {
+      zset.setScore(Buffer.from('m'), 1)
+    })
+    assert.strictEqual(db.getType(key), 'zset')
     events.length = 0
 
     // e.g. ZREM that removes the last member
-    keyspace.update<RedisSortedSetData, void>(
-      key,
-      'zset',
-      createSortedSetData,
-      (zset, tracker) => {
-        zset.members.delete('m')
-        tracker.markChanged()
-      },
-    )
+    db.updateSortedSet(key, zset => {
+      zset.deleteMember(Buffer.from('m'))
+    })
 
-    assert.strictEqual(keyspace.get(key), null)
-    assert.strictEqual(keyspace.getType(key), null)
+    assert.strictEqual(db.get(key), null)
+    assert.strictEqual(db.getType(key), null)
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0]!.type, 'delete')
   })
 
   test('a populating mutation emits a write event and keeps the key', () => {
-    const { keyspace, events } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('s')
 
-    keyspace.update<RedisSetData, void>(
-      key,
-      'set',
-      createSetData,
-      (set, tracker) => {
-        set.members.set('m', Buffer.from('m'))
-        tracker.markChanged()
-      },
-    )
+    db.updateSet(key, set => {
+      set.addMember(Buffer.from('m'))
+    })
 
-    assert.strictEqual(keyspace.getType(key), 'set')
+    assert.strictEqual(db.getType(key), 'set')
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0]!.type, 'write')
   })
 
-  test('an empty string value is a real value and is never auto-deleted', () => {
-    const { keyspace } = setup()
-    const key = Buffer.from('str')
-
-    keyspace.update<RedisStringData, void>(
-      key,
-      'string',
-      () => createStringData(Buffer.alloc(0)),
-      (str, tracker) => {
-        str.value = Buffer.alloc(0)
-        tracker.markChanged()
-      },
-    )
-
-    assert.strictEqual(keyspace.getType(key), 'string')
-  })
-
   test('an empty stream is preserved (matches real Redis keeping empty streams)', () => {
-    const { keyspace } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('stream')
 
-    keyspace.update<RedisStreamData, void>(
-      key,
-      'stream',
-      createStreamData,
-      (_stream, tracker) => {
-        // Create the stream without adding entries (e.g. XGROUP CREATE MKSTREAM).
-        tracker.markChanged()
+    // XGROUP CREATE ... MKSTREAM: creates the key with zero entries. The group
+    // is committed rather than marked changed, but creating the key still
+    // dirties a WATCH, so this emits a write.
+    db.updateStream(key, stream => {
+      stream.addGroup('g', {
+        name: Buffer.from('g'),
+        lastDeliveredId: { ms: 0, seq: 0 },
+        entriesRead: 0,
+        consumers: new Map(),
+        pending: new Map(),
+      })
+    })
+
+    assert.strictEqual(db.getType(key), 'stream')
+    assert.strictEqual(db.getStream(key)!.entries.length, 0)
+    assert.strictEqual(events.length, 1)
+    assert.strictEqual(events[0]!.type, 'write')
+  })
+
+  test('updating a key held at another type throws the client-visible WRONGTYPE error', () => {
+    const { db, events } = setup()
+    const key = Buffer.from('str')
+
+    db.setString(key, Buffer.from('v'))
+    events.length = 0
+
+    assert.throws(
+      () => {
+        db.updateHash(key, hash => {
+          hash.setField(Buffer.from('f'), Buffer.from('v'))
+        })
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof WrongTypeRedisError)
+        assert.strictEqual(err.code, 'WRONGTYPE')
+        return true
       },
     )
 
-    assert.strictEqual(keyspace.getType(key), 'stream')
+    assert.strictEqual(db.getType(key), 'string')
+    assert.deepStrictEqual(db.getString(key), Buffer.from('v'))
+    assert.strictEqual(events.length, 0)
+  })
+})
+
+describe('RedisDatabase.set — empty values', () => {
+  // Not an `update` test: strings never reach `update` in production. There is
+  // no `updateString` wrapper, so they are written whole via `set`/`setString`,
+  // which has no empty-collection rule at all. This pins the user-visible
+  // invariant (`SET k ""` keeps the key) on the path that actually serves it.
+  //
+  // Note this does NOT cover `isEmptyCollection`'s `case 'string'` arm, which
+  // is unreachable while `update` is private — see the comment on that arm in
+  // src/state/database.ts.
+  test('an empty string value is a real value and is never auto-deleted', () => {
+    const { db } = setup()
+    const key = Buffer.from('str')
+
+    db.setString(key, Buffer.alloc(0))
+
+    assert.strictEqual(db.getType(key), 'string')
+    assert.deepStrictEqual(db.getString(key), Buffer.alloc(0))
   })
 })

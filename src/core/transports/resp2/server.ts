@@ -2,7 +2,6 @@ import { Server, Socket, createServer } from 'net'
 import type { CommandExecutor } from '../../command-executor'
 import type { Logger } from '../../../logger'
 import type { RedisClusterNodeRole, RedisServerState } from '../../../state'
-import type { RespEncodeOptions } from '../../resp-encoder'
 import { formatHostPort, formatSocketAddressParts } from '../../network-address'
 import { attachSession } from '../attach-session'
 import { SocketConnectionTransport } from '../socket-connection-transport'
@@ -11,7 +10,6 @@ export type Resp2ServerOptions = {
   server: RedisServerState
   executor: CommandExecutor
   logger?: Pick<Logger, 'error'>
-  encoder?: RespEncodeOptions
   nodeRole?: RedisClusterNodeRole
 }
 
@@ -21,14 +19,12 @@ export class Resp2Server {
   private readonly state: RedisServerState
   private readonly executor: CommandExecutor
   private readonly logger?: Pick<Logger, 'error'>
-  private readonly encoder?: RespEncodeOptions
   private readonly nodeRole?: RedisClusterNodeRole
 
   constructor(options: Resp2ServerOptions) {
     this.state = options.server
     this.executor = options.executor
     this.logger = options.logger
-    this.encoder = options.encoder
     this.nodeRole = options.nodeRole
 
     this.server = createServer({ keepAlive: true })
@@ -87,7 +83,6 @@ export class Resp2Server {
       executor: this.executor,
       nodeRole: this.nodeRole,
       logger: this.logger,
-      encoder: this.encoder,
       clientAddress: formatSocketAddressParts(
         socket.remoteAddress,
         socket.remotePort,

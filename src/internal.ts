@@ -25,6 +25,7 @@ export type {
   ClientSessionMode,
   ParkHandler,
   ParkRequest,
+  PubSubKind,
   RedisExecutionContext,
 } from './core/redis-context'
 
@@ -113,13 +114,11 @@ export {
   RedisClusterTopology,
   RedisDatabase,
   RedisServerState,
-  RedisKeyspace,
   RedisMonitorFeed,
   RedisMutationBus,
   RedisFunctionRegistry,
   RedisPubSubBroker,
   RedisScriptCache,
-  WrongRedisTypeError,
   cloneRedisDataValue,
   createHashData,
   createListData,

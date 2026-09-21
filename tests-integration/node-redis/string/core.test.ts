@@ -81,6 +81,21 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
     assert.strictEqual(get3, 'value3')
   })
 
+  test('MSET cross-slot error', async () => {
+    // Pins the per-command CROSSSLOT wording against a real client on both
+    // backends — `TEST_BACKEND=real` checks it byte-for-byte against Redis.
+    // Not a guard for any client-side routing: this suite drives the real
+    // node-redis client over TCP, so the error comes from ClusterPolicy.
+    await assert.rejects(
+      () =>
+        redisClient.mSet([
+          ['{mset-slot-a}key', 'value1'],
+          ['{mset-slot-b}key', 'value2'],
+        ]),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
+  })
+
   test('MSETNX command', async () => {
     // All keys new
     const result1 = await redisClient.mSetNX([
