@@ -103,6 +103,40 @@ npm run test:all
 - Update documentation if needed
 - Ensure CI passes before requesting review
 
+## Changing the published API surface
+
+The package publishes two entry points: the curated root (`src/index.ts`) and
+the `/core` hand-wiring subpath (`src/internal.ts`). Both are public API.
+
+The full exported symbol list for both is pinned in
+`tests-package/export-surface.json` and checked by `npm run test:package`. Per
+symbol it records:
+
+- `kind` — `value` (has a runtime binding) or `type` (type-only). A downgrade
+  from one to the other is breaking and is reported.
+- `members` — own properties and methods of an exported interface, class,
+  object type alias or `const` namespace. Statics are prefixed `static:`.
+  Inherited members are not walked.
+- `variants` — the literal constituents of a union, so dropping `'noscript'`
+  from `CommandFlag` reads as a removal.
+
+Then:
+
+- **A removal fails the build**, naming the symbol, member or variant. If it is
+  intentional, add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md)
+  and refresh the baseline in the same commit.
+- **An addition also fails the build**, in a separate test that says so. It is
+  not a breaking change — just run the refresh so the next PR that deletes the
+  new symbol is caught.
+
+Refresh with:
+
+```bash
+npm run export-baseline
+```
+
+and commit the updated `tests-package/export-surface.json`.
+
 ## Releasing both npm packages
 
 `js-redis-server` and `js-valkey-server` share this repository, version, source,
@@ -110,8 +144,10 @@ and API. Neither name replaces the other. Keep the checked-in package name
 `js-redis-server`; the release workflow selects the other name and its matching
 CLI in a separate job, after installing dependencies from the shared lockfile.
 
-Update the version in `package.json` and `package-lock.json` together. After CI
-passes, a `v<version>` tag runs both publish jobs. The tag must match the package
+Update the version in `package.json` and `package-lock.json` together, and
+rename the `Unreleased` section in [CHANGELOG.md](CHANGELOG.md) to the new
+version with its date. After CI passes, a `v<version>` tag runs both publish
+jobs. The tag must match the package
 version. The `NPM_TOKEN` secret needs permission to publish **both** names;
 verify access to `js-valkey-server` before the first release.
 
