@@ -130,7 +130,7 @@ describe('new command executor core', () => {
       RedisValue.error("wrong number of arguments for 'get' command", 'ERR'),
     )
 
-    registry.override(
+    registry.register(
       defineCommand({
         name: 'get',
         schema: t.object({
@@ -142,6 +142,7 @@ describe('new command executor core', () => {
           throw new RedisCommandError('runtime failure')
         },
       }),
+      { override: true },
     )
 
     const plan = executor.plan('get', [Buffer.from('key')])
@@ -306,7 +307,7 @@ describe('new command executor core', () => {
     registry.register(first)
     assert.throws(() => registry.register(second), /already registered/)
 
-    registry.override(second)
+    registry.register(second, { override: true })
     assert.strictEqual(registry.get('PING'), second)
   })
 

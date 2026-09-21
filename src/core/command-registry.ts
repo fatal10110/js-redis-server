@@ -15,10 +15,6 @@ export class CommandRegistry {
     this.commands.set(name, definition as CommandDefinition<unknown>)
   }
 
-  override<TArgs>(definition: CommandDefinition<TArgs>): void {
-    this.register(definition, { override: true })
-  }
-
   registerAll(
     definitions: readonly CommandDefinition<unknown>[],
     options?: { override?: boolean },
@@ -32,15 +28,7 @@ export class CommandRegistry {
     return this.commands.get(name.toLowerCase())
   }
 
-  has(name: string): boolean {
-    return this.commands.has(name.toLowerCase())
-  }
-
   getAll(): CommandDefinition<unknown>[] {
     return Array.from(this.commands.values())
-  }
-
-  getNames(): string[] {
-    return Array.from(this.commands.keys())
   }
 }

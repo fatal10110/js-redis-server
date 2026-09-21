@@ -29,11 +29,10 @@ describe('CommandRegistry', () => {
 
     registry.register(command)
 
-    assert.strictEqual(registry.has('get'), true)
-    assert.strictEqual(registry.has('GET'), true)
-    assert.strictEqual(registry.has('Get'), true)
     assert.strictEqual(registry.get('get'), command)
     assert.strictEqual(registry.get('GET'), command)
+    assert.strictEqual(registry.get('Get'), command)
+    assert.strictEqual(registry.get('nope'), undefined)
   })
 
   test('rejects duplicate registration unless override is explicit', () => {
@@ -49,17 +48,6 @@ describe('CommandRegistry', () => {
     assert.strictEqual(registry.get('get'), replacement)
   })
 
-  test('override replaces an existing command', () => {
-    const registry = new CommandRegistry()
-    const first = makeCommand('get')
-    const replacement = makeCommand('get', ['write'])
-
-    registry.register(first)
-    registry.override(replacement)
-
-    assert.strictEqual(registry.get('get'), replacement)
-  })
-
   test('registerAll preserves registered commands and names', () => {
     const registry = new CommandRegistry()
     const get = makeCommand('get')
@@ -68,6 +56,9 @@ describe('CommandRegistry', () => {
     registry.registerAll([get, set])
 
     assert.deepStrictEqual(registry.getAll(), [get, set])
-    assert.deepStrictEqual(registry.getNames(), ['get', 'set'])
+    assert.deepStrictEqual(
+      registry.getAll().map(definition => definition.name),
+      ['get', 'set'],
+    )
   })
 })
