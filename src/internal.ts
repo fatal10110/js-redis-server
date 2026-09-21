@@ -55,7 +55,7 @@ export type {
 export type { RedisResultOptions } from './core/redis-result'
 export type { RespEncodeOptions, RespVersion } from './core/resp-encoder'
 export type { ResponseStream } from './core/response-stream'
-export type { RedisTurnHandle, RedisTurnQueue } from './core/turn-queue'
+export type { RedisTurnHandle } from './core/turn-queue'
 export type {
   CompatibilityProfile,
   CompatibilitySpec,

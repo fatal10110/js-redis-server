@@ -14,7 +14,7 @@ import { RedisCommandError } from './redis-error'
 import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
 import { encodeRedisValue, type RespVersion } from './resp-encoder'
-import { type RedisTurnHandle, type RedisTurnQueue } from './turn-queue'
+import { type RedisTurnHandle } from './turn-queue'
 import type { RedisClusterNodeRole } from '../state/cluster-topology'
 import type { RedisDatabase } from '../state/database'
 import type { RedisServerState } from '../state/server-state'
@@ -29,7 +29,6 @@ export type ClientSessionOptions = {
   nodeRole?: RedisClusterNodeRole
   signal?: AbortSignal
   park?: ParkHandler
-  turnQueue?: RedisTurnQueue
   closeConnection?: (reason?: string) => void
 }
 
@@ -85,7 +84,6 @@ export class ClientSession implements RedisClientSession {
   private readonly signalSource?: AbortController
   private readonly nodeRole?: RedisClusterNodeRole
   private readonly parkHandler: ParkHandler
-  private readonly turnQueueOverride?: RedisTurnQueue
   private readonly closeConnection?: (reason?: string) => void
   /**
    * The turn handle of the command currently executing on this session,
@@ -126,7 +124,6 @@ export class ClientSession implements RedisClientSession {
     this.selectedDatabaseId = options.database ?? 0
     this.nodeRole = options.nodeRole
     this.parkHandler = options.park ?? createDefaultParkHandler()
-    this.turnQueueOverride = options.turnQueue
     this.closeConnection = options.closeConnection
 
     if (options.signal) {
@@ -385,13 +382,9 @@ export class ClientSession implements RedisClientSession {
    * databases mid-EXEC so subsequent commands run under the correct
    * per-database turn (see {@link executeTransaction}).
    *
-   * No-op when a fixed turn-queue override is in force (a single queue already
-   * serializes every database) or when no managed turn is active.
+   * No-op when no managed turn is active.
    */
   private async handoffTurnToSelectedDb(): Promise<void> {
-    if (this.turnQueueOverride) {
-      return
-    }
     const turnAccess = this.activeTurnAccess
     if (!turnAccess) {
       return
@@ -769,8 +762,7 @@ export class ClientSession implements RedisClientSession {
       throw createAbortError()
     }
 
-    const turnQueue = this.turnQueueOverride ?? this.db.turnQueue
-    let turn: RedisTurnHandle | undefined = await turnQueue.waitTurn()
+    let turn: RedisTurnHandle | undefined = await this.db.turnQueue.waitTurn()
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {

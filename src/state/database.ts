@@ -25,7 +25,7 @@ import {
   RedisMutationListener,
   Unsubscribe,
 } from './mutation-events'
-import { SerialTurnQueue, type RedisTurnQueue } from '../core/turn-queue'
+import { SerialTurnQueue } from '../core/turn-queue'
 import { WrongTypeRedisError } from '../core/redis-error'
 import {
   TrackedHashData,
@@ -45,7 +45,7 @@ export class RedisDatabase {
    * databases. Acceptable for a mock; do not rely on cross-database
    * serialization in tests.
    */
-  readonly turnQueue: RedisTurnQueue = new SerialTurnQueue()
+  readonly turnQueue = new SerialTurnQueue()
   /**
    * Name of the command currently executing against this database, set by the
    * CommandExecutor around `definition.execute`. Keyspace notifications read it
