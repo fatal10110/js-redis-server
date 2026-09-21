@@ -251,6 +251,9 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     const publisher = await connect()
     const channel = `raw-reset:${randomKey()}`
 
+    const pattern = `raw-reset-pattern:${randomKey()}:*`
+    const shardChannel = `raw-reset-shard:${randomKey()}`
+
     subscriber.write(commandFrame('SUBSCRIBE', channel))
     assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
       'subscribe',
@@ -258,10 +261,32 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
       1,
     ])
 
+    subscriber.write(commandFrame('PSUBSCRIBE', pattern))
+    assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
+      'psubscribe',
+      pattern,
+      2,
+    ])
+
+    subscriber.write(commandFrame('SSUBSCRIBE', shardChannel))
+    assert.deepStrictEqual(normalizeFrame(await subscriber.readFrame()), [
+      'ssubscribe',
+      shardChannel,
+      1,
+    ])
+
     subscriber.write(commandFrame('RESET'))
     assert.deepStrictEqual(await subscriber.readFrame(), 'RESET')
 
     publisher.write(commandFrame('PUBLISH', channel, 'dropped'))
+    assert.deepStrictEqual(await publisher.readFrame(), 0)
+
+    publisher.write(
+      commandFrame('PUBLISH', pattern.replace('*', 'x'), 'dropped'),
+    )
+    assert.deepStrictEqual(await publisher.readFrame(), 0)
+
+    publisher.write(commandFrame('SPUBLISH', shardChannel, 'dropped'))
     assert.deepStrictEqual(await publisher.readFrame(), 0)
 
     subscriber.write(commandFrame('GET', 'still-normal'))

@@ -67,17 +67,17 @@ type PubSubKindSpec = {
    * every push frame it delivers — `pmessage` carries the matched pattern in
    * front of the channel, the other two do not.
    */
-  listen(
+  readonly listen: (
     broker: RedisPubSubBroker,
     target: Buffer,
     emit: (items: RedisValue[]) => void,
-  ): Unsubscribe
+  ) => Unsubscribe
   /** Push frame name used to deliver a message to a subscriber. */
-  readonly message: string
+  readonly message: 'message' | 'smessage' | 'pmessage'
   /** Confirmation frame name echoed back by SUBSCRIBE/SSUBSCRIBE/PSUBSCRIBE. */
-  readonly subscribed: string
+  readonly subscribed: 'subscribe' | 'ssubscribe' | 'psubscribe'
   /** Confirmation frame name echoed back by the matching UNSUBSCRIBE. */
-  readonly unsubscribed: string
+  readonly unsubscribed: 'unsubscribe' | 'sunsubscribe' | 'punsubscribe'
   /**
    * Which counter the confirmation frames report. Redis reports channels and
    * patterns together, but keeps the shard count separate — do not unify.
@@ -113,6 +113,16 @@ const PUBSUB_KINDS: Record<PubSubKind, PubSubKindSpec> = {
     counter: 'regular',
   },
 }
+
+/**
+ * `Object.entries` widens the key to `string`; the table is a `Record` over
+ * `PubSubKind`, so narrowing it back is sound and keeps the kind list derived
+ * from the table instead of restated beside it.
+ */
+const PUBSUB_KIND_ENTRIES = Object.entries(PUBSUB_KINDS) as [
+  PubSubKind,
+  PubSubKindSpec,
+][]
 
 /**
  * Per-connection server state and the concrete {@link RedisClientSession}.
@@ -243,11 +253,16 @@ export class ClientSession implements RedisClientSession {
   }
 
   get pubsubRegularSubscriptionCount(): number {
-    return this.pubsubChannelCount + this.pubsubPatternCount
+    return this.pubsubCount('regular')
   }
 
   get pubsubSubscriptionCount(): number {
-    return this.pubsubRegularSubscriptionCount + this.pubsubShardChannelCount
+    let total = 0
+    for (const registrations of Object.values(this.pubsubSubscriptions)) {
+      total += registrations.size
+    }
+
+    return total
   }
 
   setAuthenticated(value: boolean): void {
@@ -552,9 +567,15 @@ export class ClientSession implements RedisClientSession {
   /**
    * UNSUBSCRIBE / SUNSUBSCRIBE / PUNSUBSCRIBE bookkeeping for one kind.
    *
-   * With no targets Redis drops every current subscription of that kind, in
-   * reverse insertion order, and replies with a single nil-named frame when
-   * there was nothing to drop.
+   * With no targets Redis drops every current subscription of that kind and
+   * replies with a single nil-named frame when there was nothing to drop.
+   *
+   * Real Redis emits those frames in the iteration order of the client's
+   * subscription dict — effectively hash order, and *not* a documented
+   * contract: subscribing `k1..k6` to Redis 7.2.1 and sending a bare
+   * UNSUBSCRIBE came back as `k4 k2 k1 k5 k6 k3`. We emit in reverse insertion
+   * order instead, purely because a mock should be deterministic. Do not pin
+   * this order in a test as though it were Redis behavior.
    */
   unsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[] {
     const spec = PUBSUB_KINDS[kind]
@@ -796,15 +817,20 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * Resolves the counter a confirmation frame reports. Channels and patterns
-   * share one count; shard channels are counted on their own.
+   * Totals every kind that reports through the given counter — channels and
+   * patterns share the 'regular' one, shard channels have their own. Derived
+   * from the table rather than hand-enumerated so that adding a kind cannot
+   * silently under-count the frames it appears in.
    */
   private pubsubCount(counter: PubSubKindSpec['counter']): number {
-    if (counter === 'shard') {
-      return this.pubsubShardChannelCount
+    let total = 0
+    for (const [kind, spec] of PUBSUB_KIND_ENTRIES) {
+      if (spec.counter === counter) {
+        total += this.pubsubSubscriptions[kind].size
+      }
     }
 
-    return this.pubsubRegularSubscriptionCount
+    return total
   }
 
   private refreshPubSubMode(): void {
@@ -861,7 +887,10 @@ function pubsubId(value: Buffer): string {
   return value.toString('hex')
 }
 
-/** Defensive copy — broker payloads must never alias into a reply frame. */
+/**
+ * Defensive copy — neither broker payloads nor caller-owned command args may
+ * alias into an emitted frame.
+ */
 function bulk(value: Buffer): RedisValue {
   return RedisValue.bulkString(Buffer.from(value))
 }
