@@ -11,29 +11,28 @@ name: Deploy browser demo
 on:
   push:
     branches: [main]
-    # Only redeploy when the demo or the source it imports actually changes.
-    # The root manifests are in here because the job runs `npm ci` at the root
-    # too — a root dependency change alters what the demo bundles.
+    # Only redeploy when the demo or the inputs it actually consumes change.
+    # The root manifests and tsconfig are in here because the job runs `npm ci`
+    # at the root too, and the demo has no tsconfig of its own — the root one
+    # governs both `tsx` and Vite's esbuild transform of the demo and src/**.
     paths:
       - 'examples/browser-demo/**'
       - 'src/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'tsconfig.json'
       - '.github/workflows/deploy-demo.yml'
+  # Deliberately NOT paths-filtered. The build is ~1 minute, and an unfiltered
+  # check is one that always reports, so it stays eligible as a required check
+  # — a paths-filtered one sits on "Expected — Waiting for status" forever and
+  # can only ever be advisory. It also keeps this list from drifting out of
+  # sync with a second copy. This workflow is the only place `test:demo` runs.
   pull_request:
     branches: [main]
-    paths:
-      - 'examples/browser-demo/**'
-      - 'src/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/deploy-demo.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # One deploy at a time; let an in-progress run finish. PR builds get their own
 # per-ref group so they never queue behind a deploy, and a superseded PR build
@@ -45,6 +44,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Scoped per job rather than workflow-wide: this job runs `npm ci` twice
+    # over a lockfile the PR author controls, so install lifecycle scripts
+    # execute here. `id-token: write` belongs to `deploy` alone — only
+    # actions/deploy-pages consumes it. `pages: write` is for configure-pages,
+    # which is skipped on pull_request.
+    permissions:
+      contents: read
+      pages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +70,27 @@ jobs:
         run: npm ci
         working-directory: examples/browser-demo
 
+      # lua-redis-wasm is declared in BOTH manifests and the two copies are
+      # ABI-coupled: src/core/lua-runtime.ts bundles the JS loader out of the
+      # root tree, while vite.config.ts reads the demo tree to build the
+      # jsDelivr URL for the matching WASM + glue. Dependabot cannot move them
+      # together — `groups` only groups within one `updates` entry — and a
+      # drift installs, builds and tests green, breaking only in a visitor's
+      # browser. So assert the invariant vite.config.ts documents.
+      - name: Check lua-redis-wasm versions agree
+        run: |
+          root=$(node -p "require('./node_modules/lua-redis-wasm/package.json').version")
+          demo=$(node -p "require('./examples/browser-demo/node_modules/lua-redis-wasm/package.json').version")
+          echo "bundled loader (root): $root"
+          echo "jsDelivr WASM (demo):  $demo"
+          if [ "$root" != "$demo" ]; then
+            echo "::error file=examples/browser-demo/package.json::lua-redis-wasm drift: the bundled JS loader is $root but the demo fetches WASM + glue from jsDelivr at $demo. These are ABI-coupled (see examples/browser-demo/vite.config.ts) — bump both manifests together."
+            exit 1
+          fi
+
+      # Note: these run transpile-only. The demo has no tsconfig, so nothing
+      # typechecks format.ts — adding one is blocked on the pre-existing
+      # Reply/Buffer errors tracked in #396.
       - name: Run demo tests
         run: npm run test:demo
 
@@ -82,6 +110,10 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
