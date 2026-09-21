@@ -19,6 +19,13 @@ export type ParkHandler = <TValue>(
 
 export type ClientSessionMode = 'normal' | 'transaction' | 'subscribed'
 
+/**
+ * The three independent pub/sub registries a session can hold subscriptions in:
+ * plain channels (`SUBSCRIBE`), shard channels (`SSUBSCRIBE`) and glob patterns
+ * (`PSUBSCRIBE`).
+ */
+export type PubSubKind = 'channel' | 'shard' | 'pattern'
+
 export type RedisMonitorContext = {
   readonly disabled?: boolean
   readonly defer?: boolean
@@ -54,12 +61,8 @@ export interface RedisClientSession {
   readonly pubsubShardChannelCount: number
   readonly pubsubPatternCount: number
   readonly pubsubSubscriptionCount: number
-  subscribePubSubChannels(channels: readonly Buffer[]): RedisResult[]
-  unsubscribePubSubChannels(channels: readonly Buffer[]): RedisResult[]
-  subscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[]
-  unsubscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[]
-  subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
-  unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
+  subscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
+  unsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
   registerResponseStreamCleanup(cleanup: () => void): () => void
