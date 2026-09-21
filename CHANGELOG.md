@@ -22,10 +22,6 @@ Entries are added when a change lands on `main`, not when a release is cut —
 releases are manual (`git tag vX.Y.Z` triggers `.github/workflows/release.yml`),
 so the PR body is not a durable home for a breaking-change note.
 
-The published export surface of both entry points is pinned in
-`tests-package/export-surface.json`. A removal fails `npm run test:package`
-naming the symbol, which is the prompt to write the entry below.
-
 ## [Unreleased]
 
 ### Removed
