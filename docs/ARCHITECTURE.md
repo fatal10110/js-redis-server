@@ -105,8 +105,7 @@ graph TD
 
     subgraph "State layer — src/state/*"
         SS[RedisServerState]
-        RD["RedisDatabase ×N"]
-        KS[RedisKeyspace]
+        RD["RedisDatabase ×N<br/>(owns the keyspace map)"]
         MB[RedisMutationBus]
         CT[RedisClusterTopology]
         SCC[RedisScriptCache]
@@ -130,8 +129,7 @@ graph TD
     SS --> SCC
     SS --> PB
     SS --> MF
-    RD --> KS
-    KS --> MB
+    RD --> MB
 ```
 
 | Layer         | Responsibility                                                                                                     | Key types                                                                                                                                                                                                                                                                                                                          |
@@ -140,7 +138,7 @@ graph TD
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
 | **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
-| **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts), [`RedisKeyspace`](../src/state/keyspace.ts)                                                                                                                                                                                       |
+| **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts)                                                                                                                                                                                       |
 
 Commands never touch the transport — they return a `RedisResult` (or a
 `ResponseStream` for push-style replies) and let the executor/session/adapter
@@ -308,10 +306,9 @@ flowchart LR
     SS --> PB[RedisPubSubBroker]
     SS --> MF[RedisMonitorFeed]
 
-    RD0 --> KS[RedisKeyspace]
-    KS --> ME["Map&lt;keyId, KeyspaceEntry&gt;<br/>{ key, value, expiresAt? }"]
+    RD0 --> ME["Map&lt;keyId, KeyspaceEntry&gt;<br/>{ key, value, expiresAt? }"]
     ME --> DT["RedisDataValue<br/>string · hash · list · set · zset · stream"]
-    KS -- "emit on write/delete/expire/<br/>persist/evict/flush" --> MB[RedisMutationBus]
+    RD0 -- "emit on write/delete/expire/<br/>persist/evict/flush" --> MB[RedisMutationBus]
 
     MB -- "global listeners" --> KN["KeyspaceNotifier<br/>→ PubSubBroker (keyspace/keyevent)"]
     MB -- "per-key listeners" --> WL["ClientSession WATCH<br/>→ marks session dirty"]
@@ -328,8 +325,11 @@ commands for channel and pattern fan-out within that server state, plus the
 [`RedisMonitorFeed`](../src/state/monitor-feed.ts) used by `MONITOR` to fan out
 cloned command events without any command writing directly to a transport.
 
-Each database wraps a [`RedisKeyspace`](../src/state/keyspace.ts#L34): a
-`Map<keyId, KeyspaceEntry>` holding byte-safe `Buffer` keys and typed
+Each database _is_ its keyspace — [`RedisDatabase`](../src/state/database.ts)
+owns the `Map<keyId, KeyspaceEntry>` directly, with
+[`src/state/keyspace.ts`](../src/state/keyspace.ts) holding only the data-model
+types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`,
+`KeyspaceMutationTracker`). The map holds byte-safe `Buffer` keys and typed
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
 `set`, `zset`, `stream`). Hash values store byte-safe field entries and can
 attach an `expiresAt` timestamp to individual fields for the hash-field TTL
@@ -341,7 +341,7 @@ both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass across its databases, under each database's
 `SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
 the master's replicated deletion. `getLiveEntry` still calls
-[`evictIfExpired`](../src/state/keyspace.ts#L240) on reads that encounter an
+[`evictIfExpired`](../src/state/database.ts) on reads that encounter an
 expired key before the next sweep. Either path deletes the entry and emits an
 `evict` mutation event so `WATCH` observes expiry exactly like a real delete.
 Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
