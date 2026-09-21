@@ -297,6 +297,7 @@ new Resp2Server(options: Resp2ServerOptions)
 | `server`   | `RedisServerState`      | Yes      | The database server state containing database instances.       |
 | `executor` | `CommandExecutor`       | Yes      | The command executor handling pipeline and execution policies. |
 | `logger`   | `Pick<Logger, 'error'>` | No       | Optional logger for error logging.                             |
+| `nodeRole` | `RedisClusterNodeRole`  | No       | Cluster role; a replica redirects keyed commands to master.    |
 
 ---
 
