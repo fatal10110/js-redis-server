@@ -124,8 +124,8 @@ describe('new foundation commands', () => {
     })
     assert.ok(clientCommand)
 
-    session.subscribe('channel', [Buffer.from('updates')])
-    session.subscribe('pattern', [Buffer.from('events:*')])
+    session.pubsubSubscribe('channel', [Buffer.from('updates')])
+    session.pubsubSubscribe('pattern', [Buffer.from('events:*')])
 
     const ctx = session.createExecutionContext()
     const info = clientCommand.execute({ subcommand: 'info', args: [] }, ctx)

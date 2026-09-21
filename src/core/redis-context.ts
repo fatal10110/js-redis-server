@@ -61,8 +61,8 @@ export interface RedisClientSession {
   readonly pubsubShardChannelCount: number
   readonly pubsubPatternCount: number
   readonly pubsubSubscriptionCount: number
-  subscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
-  unsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
+  pubsubSubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
+  pubsubUnsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
   registerResponseStreamCleanup(cleanup: () => void): () => void

@@ -57,11 +57,25 @@ type PubSubRegistration = {
 }
 
 /**
+ * The command-name prefix each kind's frames carry. All nine frame names are
+ * derived from these three, so a row cannot borrow another kind's names.
+ */
+type PubSubFramePrefix = {
+  channel: ''
+  shard: 's'
+  pattern: 'p'
+}
+
+/**
  * Everything that distinguishes one pub/sub kind from the other two. The three
  * `SUBSCRIBE`/`UNSUBSCRIBE` families are otherwise identical bookkeeping, so
  * they are driven from this table instead of being written out per kind.
+ *
+ * The kind parameter defaults to the full union so the type stays usable bare
+ * (see `pubsubCount` and `PUBSUB_KIND_ENTRIES`); the table below binds each row
+ * to its own kind, which is what makes a crossed frame name a compile error.
  */
-type PubSubKindSpec = {
+type PubSubKindSpec<TKind extends PubSubKind = PubSubKind> = {
   /**
    * Registers the session's listener with the broker and builds the items of
    * every push frame it delivers — `pmessage` carries the matched pattern in
@@ -73,11 +87,11 @@ type PubSubKindSpec = {
     emit: (items: RedisValue[]) => void,
   ) => Unsubscribe
   /** Push frame name used to deliver a message to a subscriber. */
-  readonly message: 'message' | 'smessage' | 'pmessage'
+  readonly message: `${PubSubFramePrefix[TKind]}message`
   /** Confirmation frame name echoed back by SUBSCRIBE/SSUBSCRIBE/PSUBSCRIBE. */
-  readonly subscribed: 'subscribe' | 'ssubscribe' | 'psubscribe'
+  readonly subscribed: `${PubSubFramePrefix[TKind]}subscribe`
   /** Confirmation frame name echoed back by the matching UNSUBSCRIBE. */
-  readonly unsubscribed: 'unsubscribe' | 'sunsubscribe' | 'punsubscribe'
+  readonly unsubscribed: `${PubSubFramePrefix[TKind]}unsubscribe`
   /**
    * Which counter the confirmation frames report. Redis reports channels and
    * patterns together, but keeps the shard count separate — do not unify.
@@ -85,37 +99,40 @@ type PubSubKindSpec = {
   readonly counter: 'regular' | 'shard'
 }
 
-const PUBSUB_KINDS: Record<PubSubKind, PubSubKindSpec> = {
-  channel: {
-    listen: (broker, target, emit) =>
-      broker.subscribe(target, m => emit([bulk(m.channel), bulk(m.message)])),
-    message: 'message',
-    subscribed: 'subscribe',
-    unsubscribed: 'unsubscribe',
-    counter: 'regular',
-  },
-  shard: {
-    listen: (broker, target, emit) =>
-      broker.ssubscribe(target, m => emit([bulk(m.channel), bulk(m.message)])),
-    message: 'smessage',
-    subscribed: 'ssubscribe',
-    unsubscribed: 'sunsubscribe',
-    counter: 'shard',
-  },
-  pattern: {
-    listen: (broker, target, emit) =>
-      broker.psubscribe(target, m =>
-        emit([bulk(m.pattern), bulk(m.channel), bulk(m.message)]),
-      ),
-    message: 'pmessage',
-    subscribed: 'psubscribe',
-    unsubscribed: 'punsubscribe',
-    counter: 'regular',
-  },
-}
+const PUBSUB_KINDS: { readonly [TKind in PubSubKind]: PubSubKindSpec<TKind> } =
+  {
+    channel: {
+      listen: (broker, target, emit) =>
+        broker.subscribe(target, m => emit([bulk(m.channel), bulk(m.message)])),
+      message: 'message',
+      subscribed: 'subscribe',
+      unsubscribed: 'unsubscribe',
+      counter: 'regular',
+    },
+    shard: {
+      listen: (broker, target, emit) =>
+        broker.ssubscribe(target, m =>
+          emit([bulk(m.channel), bulk(m.message)]),
+        ),
+      message: 'smessage',
+      subscribed: 'ssubscribe',
+      unsubscribed: 'sunsubscribe',
+      counter: 'shard',
+    },
+    pattern: {
+      listen: (broker, target, emit) =>
+        broker.psubscribe(target, m =>
+          emit([bulk(m.pattern), bulk(m.channel), bulk(m.message)]),
+        ),
+      message: 'pmessage',
+      subscribed: 'psubscribe',
+      unsubscribed: 'punsubscribe',
+      counter: 'regular',
+    },
+  }
 
 /**
- * `Object.entries` widens the key to `string`; the table is a `Record` over
+ * `Object.entries` widens the key to `string`; the table is keyed by
  * `PubSubKind`, so narrowing it back is sound and keeps the kind list derived
  * from the table instead of restated beside it.
  */
@@ -250,10 +267,6 @@ export class ClientSession implements RedisClientSession {
 
   get pubsubPatternCount(): number {
     return this.pubsubSubscriptions.pattern.size
-  }
-
-  get pubsubRegularSubscriptionCount(): number {
-    return this.pubsubCount('regular')
   }
 
   get pubsubSubscriptionCount(): number {
@@ -532,7 +545,7 @@ export class ClientSession implements RedisClientSession {
    * Registering an already-subscribed target is a no-op on the broker but still
    * produces a confirmation frame, exactly like real Redis.
    */
-  subscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[] {
+  pubsubSubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[] {
     const spec = PUBSUB_KINDS[kind]
     const registrations = this.pubsubSubscriptions[kind]
     const frames: RedisResult[] = []
@@ -571,13 +584,17 @@ export class ClientSession implements RedisClientSession {
    * replies with a single nil-named frame when there was nothing to drop.
    *
    * Real Redis emits those frames in the iteration order of the client's
-   * subscription dict — effectively hash order, and *not* a documented
-   * contract: subscribing `k1..k6` to Redis 7.2.1 and sending a bare
-   * UNSUBSCRIBE came back as `k4 k2 k1 k5 k6 k3`. We emit in reverse insertion
-   * order instead, purely because a mock should be deterministic. Do not pin
-   * this order in a test as though it were Redis behavior.
+   * subscription dict. That order is stable within one `redis-server` process
+   * and changes across restarts, because the dict hash seed is randomized at
+   * startup — so it is not a documented contract and not reproducible. We emit
+   * in reverse insertion order instead, purely because a mock should be
+   * deterministic. Do not pin this order in a test as though it were Redis
+   * behavior.
    */
-  unsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[] {
+  pubsubUnsubscribe(
+    kind: PubSubKind,
+    targets: readonly Buffer[],
+  ): RedisResult[] {
     const spec = PUBSUB_KINDS[kind]
     const registrations = this.pubsubSubscriptions[kind]
     const resolved =

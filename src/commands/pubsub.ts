@@ -32,7 +32,7 @@ export const subscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.subscribe('channel', args.channels)),
+    framesResult(ctx.session.pubsubSubscribe('channel', args.channels)),
 })
 
 export const unsubscribeCommand = defineCommand({
@@ -51,7 +51,7 @@ export const unsubscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.unsubscribe('channel', args.channels)),
+    framesResult(ctx.session.pubsubUnsubscribe('channel', args.channels)),
 })
 
 export const ssubscribeCommand = defineCommand({
@@ -71,7 +71,7 @@ export const ssubscribeCommand = defineCommand({
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
-    framesResult(ctx.session.subscribe('shard', args.channels)),
+    framesResult(ctx.session.pubsubSubscribe('shard', args.channels)),
 })
 
 export const sunsubscribeCommand = defineCommand({
@@ -91,7 +91,7 @@ export const sunsubscribeCommand = defineCommand({
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
-    framesResult(ctx.session.unsubscribe('shard', args.channels)),
+    framesResult(ctx.session.pubsubUnsubscribe('shard', args.channels)),
 })
 
 export const psubscribeCommand = defineCommand({
@@ -110,7 +110,7 @@ export const psubscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.subscribe('pattern', args.patterns)),
+    framesResult(ctx.session.pubsubSubscribe('pattern', args.patterns)),
 })
 
 export const punsubscribeCommand = defineCommand({
@@ -129,7 +129,7 @@ export const punsubscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.unsubscribe('pattern', args.patterns)),
+    framesResult(ctx.session.pubsubUnsubscribe('pattern', args.patterns)),
 })
 
 export const publishCommand = defineCommand({
