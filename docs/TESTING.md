@@ -338,7 +338,11 @@ await client.sendCommand(['HSET', 'h', 'f1', 'a']) // escape hatch
 await client.quit() // tears down the in-memory state
 ```
 
-Pass `cluster` for a cluster facade; keyed commands route by slot in-process:
+Pass `cluster` for a cluster facade; keyed commands route by slot in-process.
+Routing keys come from `CommandExecutor.plan()` — the same extraction
+`ClusterPolicy` uses — so multi-key commands (`MSET`, `RENAME`), numkeys-prefixed
+ones (`EVAL`, `ZUNIONSTORE`) and STORE targets all reach the right node, and a
+key set spanning slots is refused with `CROSSSLOT`:
 
 ```typescript
 const cluster = await createNodeRedisMock({

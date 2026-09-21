@@ -3,6 +3,13 @@ import { createRedisCommandExecutor } from '../commands'
 import { buildClusterNodes, type ClusterNodePipeline } from '../cluster'
 import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
+import {
+  decodeRedisValue,
+  redisErrorText,
+  toRedisArgument,
+  type DecodeRedisValueOptions,
+  type NativeRedisReply,
+} from '../core/decode-redis-value'
 import { RedisCommandError, RedisCrossSlotError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
@@ -92,25 +99,11 @@ async function ensureRedisErrors(): Promise<RedisErrorConstructors> {
   return resolvedRedisErrors
 }
 
-function errorReplyText(value: { code?: string; message: string }): string {
-  // Reconstruct the on-the-wire `CODE message` (e.g. `WRONGTYPE Operation …`)
-  // so the surfaced text matches what node-redis parses off the wire.
-  return value.code ? `${value.code} ${value.message}` : value.message
-}
-
 /** A command argument node-redis accepts on the wire. */
 export type NodeRedisCommandArgument = string | Buffer
 
 /** Native JS value a reply decodes to (mirrors node-redis RESP2 defaults). */
-export type NodeRedisReply =
-  | string
-  | number
-  | bigint
-  | boolean
-  | Buffer
-  | null
-  | NodeRedisReply[]
-  | { [key: string]: NodeRedisReply }
+export type NodeRedisReply = NativeRedisReply
 
 export type NodeRedisMockClusterOptions = {
   masters: number
@@ -160,8 +153,11 @@ type FacadeBackend = {
  * cluster routes by slot to the owning node's session — but the curated method
  * bodies are identical, so they live in this base and dispatch through the
  * abstract {@link CommandRunner.run}.
+ *
+ * Extends `EventEmitter` because a real node-redis client is one: `on`/`once`/
+ * `off` (and the rest of the emitter surface) come for free on both clients.
  */
-abstract class CommandRunner {
+abstract class CommandRunner extends EventEmitter {
   /**
    * Execute one already-tokenised command and return its decoded reply.
    * Implementations pick the session (standalone: the only one; cluster: the
@@ -325,7 +321,6 @@ export type NodeRedisMockClientInit = FacadeBackend & {
  * subscribed connection is reserved for pub/sub.
  */
 export class NodeRedisMockClient extends CommandRunner {
-  private readonly emitter = new EventEmitter()
   private readonly backend: FacadeBackend
   private readonly database?: number
   private readonly ownsState: boolean
@@ -359,24 +354,9 @@ export class NodeRedisMockClient extends CommandRunner {
     })
     // node-redis emits 'connect' then 'ready' once the handshake completes.
     queueMicrotask(() => {
-      this.emitter.emit('connect')
-      this.emitter.emit('ready')
+      this.emit('connect')
+      this.emit('ready')
     })
-  }
-
-  on(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.on(event, listener)
-    return this
-  }
-
-  once(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.once(event, listener)
-    return this
-  }
-
-  off(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.off(event, listener)
-    return this
   }
 
   /** node-redis clients require an explicit connect(); here it is a no-op. */
@@ -491,14 +471,14 @@ export class NodeRedisMockClient extends CommandRunner {
   /** Gracefully close: tear down pub/sub + the command session. */
   async quit(): Promise<string> {
     await this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
     return 'OK'
   }
 
   /** Hard close (node-redis `disconnect()`). Same teardown as quit(). */
   async disconnect(): Promise<void> {
     await this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
   }
 
   /**
@@ -508,8 +488,8 @@ export class NodeRedisMockClient extends CommandRunner {
   destroy(): void {
     // teardown() is async (it awaits the push-drain loop); surface a rejection
     // as an 'error' event rather than dropping it as an unhandled rejection.
-    void this.teardown().catch(err => this.emitter.emit('error', err))
-    this.emitter.emit('end')
+    void this.teardown().catch(err => this.emit('error', err))
+    this.emit('end')
   }
 
   private async teardown(): Promise<void> {
@@ -573,7 +553,7 @@ export class NodeRedisMockClient extends CommandRunner {
       }
     } catch (err) {
       if (!signal.aborted) {
-        this.emitter.emit('error', err)
+        this.emit('error', err)
       }
     }
   }
@@ -680,7 +660,7 @@ export class NodeRedisMockMulti {
     const errorIndexes: number[] = []
     result.items.forEach((item, index) => {
       if (item.kind === 'error') {
-        replies.push(new errors.ErrorReply(errorReplyText(item)))
+        replies.push(new errors.ErrorReply(redisErrorText(item)))
         errorIndexes.push(index)
         return
       }
@@ -716,7 +696,6 @@ export class NodeRedisMockMulti {
  * method surface is inherited unchanged from {@link CommandRunner}.
  */
 export class NodeRedisMockCluster extends CommandRunner {
-  private readonly emitter = new EventEmitter()
   private readonly topology: RedisClusterTopology
   private readonly masters: ClusterNodePipeline[]
   private readonly sessions = new Map<string, ClientSession>()
@@ -733,8 +712,8 @@ export class NodeRedisMockCluster extends CommandRunner {
     this.masters = masters
     this.replicationLinks = [...replicationLinks]
     queueMicrotask(() => {
-      this.emitter.emit('connect')
-      this.emitter.emit('ready')
+      this.emit('connect')
+      this.emit('ready')
     })
   }
 
@@ -746,21 +725,6 @@ export class NodeRedisMockCluster extends CommandRunner {
     })
     const masters = nodes.filter(node => node.role === 'master')
     return new NodeRedisMockCluster(topology, masters, replicationLinks)
-  }
-
-  on(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.on(event, listener)
-    return this
-  }
-
-  once(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.once(event, listener)
-    return this
-  }
-
-  off(event: string, listener: (...args: unknown[]) => void): this {
-    this.emitter.off(event, listener)
-    return this
   }
 
   async connect(): Promise<this> {
@@ -777,18 +741,18 @@ export class NodeRedisMockCluster extends CommandRunner {
   // standalone client whose teardown awaits its pub/sub drain.
   async quit(): Promise<string> {
     this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
     return 'OK'
   }
 
   async disconnect(): Promise<void> {
     this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
   }
 
   destroy(): void {
     this.teardown()
-    this.emitter.emit('end')
+    this.emit('end')
   }
 
   private teardown(): void {
@@ -825,7 +789,7 @@ export class NodeRedisMockCluster extends CommandRunner {
       // an ErrorReply whose message carries the code prefix.
       const crossSlot = new RedisCrossSlotError()
       const ErrorReply = resolvedRedisErrors?.ErrorReply
-      throw ErrorReply ? new ErrorReply(errorReplyText(crossSlot)) : crossSlot
+      throw ErrorReply ? new ErrorReply(redisErrorText(crossSlot)) : crossSlot
     }
 
     const owner =
@@ -858,8 +822,10 @@ export class NodeRedisMockCluster extends CommandRunner {
 
     const [name, ...rest] = args
     try {
-      return this.masters[0].executor.plan(toBuffer(name), rest.map(toBuffer))
-        .keys
+      return this.masters[0].executor.plan(
+        toRedisArgument(name),
+        rest.map(toRedisArgument),
+      ).keys
     } catch (err) {
       if (err instanceof RedisCommandError) {
         return []
@@ -908,7 +874,10 @@ async function runOnSession(
   }
 
   const [name, ...rest] = args
-  const result = await session.execute(toBuffer(name), rest.map(toBuffer))
+  const result = await session.execute(
+    toRedisArgument(name),
+    rest.map(toRedisArgument),
+  )
 
   if (isResponseStream(result)) {
     // A multi-channel SUBSCRIBE/PSUBSCRIBE returns the per-channel confirmation
@@ -960,87 +929,32 @@ function notify(
   }
 }
 
-function toBuffer(arg: NodeRedisCommandArgument): Buffer {
-  return Buffer.isBuffer(arg) ? arg : Buffer.from(arg)
-}
-
 // --- reply decoding --------------------------------------------------------
 //
-// node-redis leaves most RESP2 replies untransformed, and the in-memory decode()
-// (RedisValue → native JS) already matches those defaults: bulk-string → utf8
-// string, integer → number, map → object, array/set → array. So the curated
-// methods are thin coercions over this shared decoder rather than per-command
+// node-redis leaves most RESP2 replies untransformed, and the shared
+// RedisValue → native JS decoder already matches those defaults: bulk-string →
+// utf8 string, integer → number, map → object, array/set → array. So the
+// curated methods are thin coercions over that decoder rather than per-command
 // reply tables — uncommon commands get the same native shapes via sendCommand.
 
-function decodeReply(value: RedisValue): NodeRedisReply {
-  switch (value.kind) {
-    case 'simple-string':
-      return value.value
-    case 'bulk-string':
-      return value.value === null ? null : value.value.toString('utf8')
-    case 'verbatim':
-      return value.value.toString('utf8')
-    case 'integer':
-      // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic,
-      // so it is always a `number` (precision loss past 2^53 included) — never a
-      // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint, handled below.
-      return typeof value.value === 'bigint' ? Number(value.value) : value.value
-    case 'double':
-      return value.value
-    case 'boolean':
-      return value.value
-    case 'big-number':
-      return value.value
-    case 'array':
-    case 'set':
-    case 'push':
-      return value.items.map(item => decodeReply(item))
-    case 'map':
-    case 'map-pairs': {
-      const out: { [key: string]: NodeRedisReply } = {}
-      for (const [key, val] of value.entries) {
-        out[decodeKey(key)] = decodeReply(val)
-      }
-      return out
-    }
-    case 'flat-pairs':
-      return value.entries.flatMap(([key, val]) => [
-        decodeReply(key),
-        decodeReply(val),
-      ])
-    case 'null':
-    case 'null-array':
-      return null
-    case 'error': {
-      // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches
-      // the documented idiom) with the reconstructed on-the-wire `CODE message`.
-      // Falls back to RedisCommandError only if the redis package is absent.
-      const text = errorReplyText(value)
-      const ErrorReply = resolvedRedisErrors?.ErrorReply
-      throw ErrorReply
-        ? new ErrorReply(text)
-        : new RedisCommandError(text, value.code)
-    }
-  }
+const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
+  // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic, so
+  // it is always a `number` (precision loss past 2^53 included) — never a
+  // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint.
+  narrowBigInt: 'always',
+  // node-redis routes a push frame by its type tag and hands listeners only the
+  // payload, so the tag is not part of the decoded reply.
+  pushShape: 'items',
+  // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches the
+  // documented idiom). Falls back to RedisCommandError if `redis` is absent.
+  error: (text, code) => {
+    const ErrorReply = resolvedRedisErrors?.ErrorReply
+    return ErrorReply ? new ErrorReply(text) : new RedisCommandError(text, code)
+  },
 }
 
-function decodeKey(value: RedisValue): string {
-  switch (value.kind) {
-    case 'simple-string':
-      return value.value
-    case 'bulk-string':
-      return value.value === null ? '' : value.value.toString('utf8')
-    case 'verbatim':
-      return value.value.toString('utf8')
-    case 'integer':
-    case 'double':
-    case 'big-number':
-      return String(value.value)
-    case 'boolean':
-      return String(value.value)
-    default:
-      return ''
-  }
+function decodeReply(value: RedisValue): NodeRedisReply {
+  return decodeRedisValue(value, NODE_REDIS_DECODE_OPTIONS)
 }
 
 function asNumber(value: RedisValue): number {
