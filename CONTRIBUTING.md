@@ -115,12 +115,14 @@ symbol it records:
 - `kind` — `value` (has a runtime binding) or `type` (type-only). A downgrade
   from one to the other is breaking and is reported.
 - `members` — own properties and methods of an exported interface, class, enum,
-  object type alias or `const` namespace. Statics are prefixed `static:`, and
-  the type half of a declaration-merged symbol `type:`. Inherited members and
-  anything declared in `node_modules` are not walked.
-- `variants` — every non-object constituent of a union, by source text, so
-  dropping `'noscript'` from `CommandFlag` or an arm from `RedisDataValue`
-  reads as a removal.
+  namespace, object type alias or `const` namespace. Each carries a prefix
+  naming the namespace it was declared in: `static:` for class statics, `type:`
+  for anything on an interface or type alias, bare for the value side.
+  Inherited members and anything declared in a dependency are not walked.
+- `variants` — every union arm the extractor does not descend into (anything
+  other than an inline object literal, an intersection or a nested union), by
+  canonicalised source text, so dropping `'noscript'` from `CommandFlag` or an
+  arm from `RedisDataValue` reads as a removal.
 
 Then:
 

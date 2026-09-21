@@ -18,19 +18,24 @@
 // nothing and needs no build.
 //
 // Every fixture is written to a scratch directory at run time; nothing here
-// reads the built declarations. The scratch lives under `dist/` (gitignored)
-// rather than the OS temp dir so that module resolution still walks up to the
-// repo's `node_modules` — a fixture in `/tmp` cannot resolve `@types/node`, and
-// would make the builtin case below fail for the wrong reason.
+// reads the built declarations. The scratch must sit inside a tree that
+// resolves the repo's own `node_modules` — the `ioredis` case below needs that
+// dependency to resolve — so it lives under `dist/` (gitignored) rather than
+// the OS temp dir. Moving it to `/tmp` silently breaks that one test.
 
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import { readExportSurface, type ExportSurface } from './export-surface.js'
+import {
+  findAdditions,
+  findRemovals,
+  readExportSurface,
+  type ExportSurface,
+} from './export-surface.js'
 
-let scratch: string
+let scratch: string | undefined
 
 before(() => {
   const distDir = fileURLToPath(new URL('../dist/', import.meta.url))
@@ -39,19 +44,29 @@ before(() => {
 })
 
 after(() => {
-  rmSync(scratch, { recursive: true, force: true })
+  // Guarded: if `before` threw — a full or read-only disk — an unguarded
+  // `rmSync(undefined)` would land an ERR_INVALID_ARG_TYPE at the top of the
+  // log, on top of the real failure.
+  if (scratch) {
+    rmSync(scratch, { recursive: true, force: true })
+  }
 })
+
+function scratchDir(): string {
+  assert.ok(scratch, 'scratch directory was not created')
+  return scratch
+}
 
 /** Write a `.d.ts` fixture and extract its surface. */
 function surfaceOf(name: string, source: string): ExportSurface {
-  const file = join(scratch, `${name}.d.ts`)
+  const file = join(scratchDir(), `${name}.d.ts`)
   writeFileSync(file, source, 'utf8')
   return readExportSurface(file)
 }
 
 describe('readExportSurface invariants', () => {
   test('throws when the entry resolves to zero exports', () => {
-    const file = join(scratch, 'empty.d.ts')
+    const file = join(scratchDir(), 'empty.d.ts')
     writeFileSync(file, 'declare const unused: number;\nexport {};\n', 'utf8')
 
     assert.throws(
@@ -64,7 +79,7 @@ describe('readExportSurface invariants', () => {
     // The orphaned-chunk shape: tsup hoists most of `/core` into a shared
     // chunk, and reading the entry without it yields a full symbol list whose
     // declarations are all missing.
-    const file = join(scratch, 'orphan.d.ts')
+    const file = join(scratchDir(), 'orphan.d.ts')
     writeFileSync(
       file,
       "export { Alpha, Beta } from './missing-chunk.js';\n",
@@ -110,6 +125,26 @@ describe('readExportSurface extraction rules', () => {
     })
   })
 
+  test('a surface read from inside node_modules keeps its members', () => {
+    // The guard used to match `/node_modules/` in the file's own path, so a
+    // `dist/` that itself lives under one — a linked or vendored checkout, a
+    // workspace install, CI against an installed copy — lost every member and
+    // variant while still looking plausible. Neither invariant catches that:
+    // the declarations all resolve. Run `export-baseline` there and the
+    // emptied baseline gets committed, disarming the guard permanently.
+    const source = `export type Foo = { alpha: string; beta: number };
+       export declare class Bar { go(): void }\n`
+
+    const normal = surfaceOf('located-normally', source)
+
+    const nested = join(scratchDir(), 'node_modules', 'js-redis-server', 'dist')
+    mkdirSync(nested, { recursive: true })
+    const nestedFile = join(nested, 'located-under-node-modules.d.ts')
+    writeFileSync(nestedFile, source, 'utf8')
+
+    assert.deepStrictEqual(readExportSurface(nestedFile), normal)
+  })
+
   test('keeps numeric and string literal unions apart', () => {
     // `.text` strips quotes, which made these byte-identical — so normalising
     // `RespVersion` from `2 | 3` to `'2' | '3'`, which breaks every consumer
@@ -145,9 +180,28 @@ describe('readExportSurface extraction rules', () => {
     assert.deepStrictEqual(surface.Refs.variants, ['Date', 'RegExp'])
   })
 
+  test('canonicalises quoting so the baseline does not track source style', () => {
+    // Raw `getText()` copied the source's quote characters into the baseline,
+    // coupling 87 of 107 variants to `.prettierrc`: flipping `singleQuote`
+    // would have reported a pure reformat as 87 breaking removals.
+    const single = surfaceOf('quote-single', "export type Q = 'a' | 'b';\n")
+    const double = surfaceOf('quote-double', 'export type Q = "a" | "b";\n')
+
+    assert.deepStrictEqual(single.Q.variants, ["'a'", "'b'"])
+    assert.deepStrictEqual(single.Q, double.Q)
+  })
+
+  test('ignores redundant parentheses around a union arm', () => {
+    const plain = surfaceOf('paren-plain', "export type P = 'a' | 'b';\n")
+    const parens = surfaceOf('paren-extra', "export type P = ('a') | 'b';\n")
+
+    assert.deepStrictEqual(parens.P, plain.P)
+  })
+
   test('takes the union of members across object-shaped union arms', () => {
     // The `CreateIoredisMockOptions` shape: anonymous arms exported nowhere
-    // else, so nothing else pins `seed`.
+    // else, so nothing else pins `seed`. Both arms declare `seed`, which must
+    // not make the second arm look like it contributed nothing.
     const surface = surfaceOf(
       'arms-object',
       `export type Opts =
@@ -157,8 +211,28 @@ describe('readExportSurface extraction rules', () => {
 
     assert.deepStrictEqual(surface.Opts, {
       kind: 'type',
-      members: ['cluster', 'seed'],
+      members: ['type:cluster', 'type:seed'],
     })
+  })
+
+  test('records a union arm that contributes no nameable members', () => {
+    // An arm the extractor descends into but which yields nothing — an
+    // intersection of two named types, or an index-signature-only object —
+    // used to vanish on both paths, leaving the entry looking pinned by its
+    // literal siblings while deleting the whole arm diffed to nothing.
+    const surface = surfaceOf(
+      'arms-empty',
+      `export type Foo = { f: string };
+       export type Bar = { b: string };
+       export type U = 'lit' | (Foo & Bar);
+       export type U2 = 'lit' | { [k: string]: number };\n`,
+    )
+
+    assert.deepStrictEqual(surface.U.variants, ["'lit'", 'Foo & Bar'])
+    assert.deepStrictEqual(surface.U2.variants, [
+      "'lit'",
+      '{ [k: string]: number }',
+    ])
   })
 
   test('descends intersections without recording the referenced half twice', () => {
@@ -168,11 +242,11 @@ describe('readExportSurface extraction rules', () => {
        export type Wired = Base & { beta: number };\n`,
     )
 
-    assert.deepStrictEqual(surface.Base.members, ['alpha'])
-    assert.deepStrictEqual(surface.Wired.members, ['beta'])
+    assert.deepStrictEqual(surface.Base.members, ['type:alpha'])
+    assert.deepStrictEqual(surface.Wired.members, ['type:beta'])
   })
 
-  test('prefixes the type half of a declaration-merged symbol', () => {
+  test('namespaces members by the declaration they were written on', () => {
     // The `RedisValue` shape: a union type and a factory const sharing a name.
     // `Merged.kind` is a field of the union, not something a consumer calls.
     const surface = surfaceOf(
@@ -187,15 +261,94 @@ describe('readExportSurface extraction rules', () => {
     })
   })
 
-  test('pins enum members', () => {
+  test('namespaces the interface spelling of a merge identically', () => {
+    // `interface Foo {} + declare const Foo` is the other, more idiomatic way
+    // to spell the merge. It used to take the interface branch and flatten
+    // unprefixed, so the factory `Coll.name()` could be deleted unreported
+    // because the interface half still contributed `name`.
+    const surface = surfaceOf(
+      'merged-interface',
+      `export interface Coll { name: string }
+       export declare const Coll: { name(): void; other(): void };\n`,
+    )
+
+    assert.deepStrictEqual(surface.Coll, {
+      kind: 'value',
+      members: ['name', 'other', 'type:name'],
+    })
+  })
+
+  test('adding a value half is purely additive, not a removal', () => {
+    // The prefix follows the declaration, not whether some other declaration
+    // exists. A conditional prefix renamed every member of a type alias the
+    // moment a const was added beside it, so the diff reported a strictly
+    // additive change as BREAKING.
+    const before = surfaceOf(
+      'additive-before',
+      'export type Foo = { a: string };\n',
+    )
+    const after = surfaceOf(
+      'additive-after',
+      `export type Foo = { a: string };
+       export declare const Foo: { make(): void };\n`,
+    )
+
+    assert.deepStrictEqual(findRemovals(before, after), [])
+    assert.deepStrictEqual(findAdditions(before, after), [
+      'Foo — is now a value export (was type-only)',
+      'Foo.make',
+    ])
+  })
+
+  test('converting an interface to a type alias is invisible', () => {
+    const asInterface = surfaceOf(
+      'flip-interface',
+      'export interface Shape { alpha: string }\n',
+    )
+    const asAlias = surfaceOf(
+      'flip-alias',
+      'export type Shape = { alpha: string };\n',
+    )
+
+    assert.deepStrictEqual(asInterface.Shape, asAlias.Shape)
+    assert.deepStrictEqual(findRemovals(asInterface, asAlias), [])
+    assert.deepStrictEqual(findAdditions(asInterface, asAlias), [])
+  })
+
+  test('pins enum members with their values', () => {
+    // A `const enum` value is inlined into a consumer's build, so changing
+    // `A = 0` to `A = 5` is a break of the same class as `2 | 3` becoming
+    // `'2' | '3'`, which the union handling goes out of its way to surface.
     const surface = surfaceOf(
       'enum',
-      'export declare enum Level { Low = 0, High = 1 }\n',
+      'export declare const enum Level { Low = 0, High = 1 }\n',
     )
 
     assert.deepStrictEqual(surface.Level, {
       kind: 'value',
-      members: ['High', 'Low'],
+      members: ['High=1', 'Low=0'],
+    })
+
+    const changed = surfaceOf(
+      'enum-changed',
+      'export declare const enum Level { Low = 0, High = 5 }\n',
+    )
+
+    assert.deepStrictEqual(findRemovals(surface, changed), [
+      'Level.High=1 — member gone',
+    ])
+  })
+
+  test('pins the members of a merged namespace', () => {
+    const surface = surfaceOf(
+      'namespace',
+      `export declare function fn(): void;
+       export declare namespace fn { const helper: number; function sub(): void }\n`,
+    )
+
+    assert.deepStrictEqual(surface.fn, {
+      kind: 'value',
+      members: ['helper', 'sub'],
     })
   })
 
@@ -232,7 +385,50 @@ describe('readExportSurface extraction rules', () => {
 
     assert.deepStrictEqual(asAlias.DEFAULTS, { kind: 'value' })
     assert.deepStrictEqual(asAlias.DEFAULTS, asInterface.DEFAULTS)
-    assert.deepStrictEqual(asAlias.Opts.members, ['alpha', 'beta'])
+    assert.deepStrictEqual(asAlias.Opts.members, ['type:alpha', 'type:beta'])
+  })
+
+  test('the const gate fires through a renamed re-export', () => {
+    // Matched against the *export* names, the gate missed this: the alias is
+    // still called `Opts` while the surface holds `Options`, so `DEFAULTS`
+    // duplicated the members and the `type`/`interface` flip-flop stayed
+    // reachable through the rename.
+    const renamed = `type Opts = { alpha: string; beta: number };
+       declare const DEFAULTS: Opts;
+       export { type Opts as Options, DEFAULTS };\n`
+
+    const asAlias = surfaceOf('renamed-alias', renamed)
+    const asInterface = surfaceOf(
+      'renamed-interface',
+      renamed.replace(
+        'type Opts = { alpha: string; beta: number };',
+        'interface Opts { alpha: string; beta: number }',
+      ),
+    )
+
+    assert.deepStrictEqual(asAlias.DEFAULTS, { kind: 'value' })
+    assert.deepStrictEqual(asAlias.Options.members, ['type:alpha', 'type:beta'])
+    assert.deepStrictEqual(findRemovals(asAlias, asInterface), [])
+    assert.deepStrictEqual(findAdditions(asAlias, asInterface), [])
+  })
+
+  test('the const gate does not fire on a mere name collision', () => {
+    // The other direction, and the worse one: `DEFAULTS` is annotated with a
+    // *non-exported* alias whose name happens to match an unrelated export.
+    // Compared by name the gate drops its members, and nothing else pins them.
+    const surface = surfaceOf(
+      'alias-collision',
+      `type Opts = { alpha: string; beta: number };
+       declare const DEFAULTS: Opts;
+       interface Unrelated { gamma: string }
+       export { DEFAULTS, type Unrelated as Opts };\n`,
+    )
+
+    assert.deepStrictEqual(surface.DEFAULTS, {
+      kind: 'value',
+      members: ['alpha', 'beta'],
+    })
+    assert.deepStrictEqual(surface.Opts.members, ['type:gamma'])
   })
 
   test('does not pull members out of node_modules', () => {

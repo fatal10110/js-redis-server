@@ -4,11 +4,16 @@
     "index": {
       "CompatibilityProfile": {
         "kind": "type",
-        "members": ["flavor", "has", "version", "versionNum"]
+        "members": [
+          "type:flavor",
+          "type:has",
+          "type:version",
+          "type:versionNum"
+        ]
       },
       "CompatibilitySpec": {
         "kind": "type",
-        "members": ["flavor", "version"],
+        "members": ["type:flavor", "type:version"],
         "variants": [
           "'redis-6.2'",
           "'redis-7.0'",
@@ -22,46 +27,51 @@
       },
       "ConnectOptions": {
         "kind": "type",
-        "members": ["database", "returnBuffers"]
+        "members": ["type:database", "type:returnBuffers"]
       },
       "CountGreaterThanZeroError": { "kind": "value" },
       "CreateInMemoryClientOptions": { "kind": "type" },
       "CreateInMemoryRedisOptions": {
         "kind": "type",
-        "members": ["compatibility", "databaseCount", "seed"]
+        "members": ["type:compatibility", "type:databaseCount", "type:seed"]
       },
       "CreateIoredisMockOptions": {
         "kind": "type",
-        "members": ["cluster", "databaseCount", "seed"]
+        "members": ["type:cluster", "type:databaseCount", "type:seed"]
       },
       "CreateNodeRedisMockOptions": {
         "kind": "type",
-        "members": ["cluster", "databaseCount"]
+        "members": ["type:cluster", "type:databaseCount"]
       },
       "CreateRedisMockOptions": {
         "kind": "type",
         "members": [
-          "basePort",
-          "cluster",
-          "compatibility",
-          "databaseCount",
-          "logger",
-          "port"
+          "type:basePort",
+          "type:cluster",
+          "type:compatibility",
+          "type:databaseCount",
+          "type:logger",
+          "type:port"
         ]
       },
       "CreateRedisServerClusterOptions": {
         "kind": "type",
         "members": [
-          "basePort",
-          "cluster",
-          "compatibility",
-          "databasesPerNode",
-          "logger"
+          "type:basePort",
+          "type:cluster",
+          "type:compatibility",
+          "type:databasesPerNode",
+          "type:logger"
         ]
       },
       "CreateRedisServerOptions": {
         "kind": "type",
-        "members": ["compatibility", "databaseCount", "logger", "port"]
+        "members": [
+          "type:compatibility",
+          "type:databaseCount",
+          "type:logger",
+          "type:port"
+        ]
       },
       "DiscardWithoutMultiError": { "kind": "value" },
       "ExecWithoutMultiError": { "kind": "value" },
@@ -102,17 +112,20 @@
       "InMemoryRedisClientOptions": {
         "kind": "type",
         "members": [
-          "database",
-          "executor",
-          "onClose",
-          "returnBuffers",
-          "server"
+          "type:database",
+          "type:executor",
+          "type:onClose",
+          "type:returnBuffers",
+          "type:server"
         ]
       },
       "IndexOutOfRangeError": { "kind": "value" },
       "InvalidExpireTimeError": { "kind": "value" },
       "LimitCantBeNegativeError": { "kind": "value" },
-      "Logger": { "kind": "type", "members": ["debug", "error", "info"] },
+      "Logger": {
+        "kind": "type",
+        "members": ["type:debug", "type:error", "type:info"]
+      },
       "MinMaxNotFloatError": { "kind": "value" },
       "NoAuthError": { "kind": "value" },
       "NoPasswordConfiguredError": { "kind": "value" },
@@ -146,7 +159,7 @@
       },
       "NodeRedisMockClusterOptions": {
         "kind": "type",
-        "members": ["masters", "replicas"]
+        "members": ["type:masters", "type:replicas"]
       },
       "NodeRedisMockMulti": {
         "kind": "value",
@@ -164,11 +177,14 @@
       },
       "NodeRedisPubSubListener": { "kind": "type" },
       "NodeRedisReply": { "kind": "type" },
-      "NodeRedisZMember": { "kind": "type", "members": ["score", "value"] },
+      "NodeRedisZMember": {
+        "kind": "type",
+        "members": ["type:score", "type:value"]
+      },
       "NumKeysGreaterThanZeroError": { "kind": "value" },
       "OffsetOutOfRangeError": { "kind": "value" },
       "PositiveCountError": { "kind": "value" },
-      "RedisAddress": { "kind": "type", "members": ["host", "port"] },
+      "RedisAddress": { "kind": "type", "members": ["type:host", "type:port"] },
       "RedisCluster": {
         "kind": "value",
         "members": ["close", "getAddresses", "listen", "nodes", "topology"]
@@ -176,19 +192,25 @@
       "RedisClusterDownError": { "kind": "value" },
       "RedisClusterNodeHandle": {
         "kind": "type",
-        "members": ["host", "id", "port", "role", "server"]
+        "members": [
+          "type:host",
+          "type:id",
+          "type:port",
+          "type:role",
+          "type:server"
+        ]
       },
       "RedisClusterOptions": {
         "kind": "type",
         "members": [
-          "basePort",
-          "compatibility",
-          "databasesPerNode",
-          "host",
-          "logger",
-          "masters",
-          "replicaUpdateDelayMs",
-          "replicasPerMaster"
+          "type:basePort",
+          "type:compatibility",
+          "type:databasesPerNode",
+          "type:host",
+          "type:logger",
+          "type:masters",
+          "type:replicaUpdateDelayMs",
+          "type:replicasPerMaster"
         ]
       },
       "RedisCommandArgument": {
@@ -201,27 +223,33 @@
       "RedisMock": {
         "kind": "type",
         "members": [
-          "addresses",
-          "close",
-          "flush",
-          "host",
-          "nodes",
-          "port",
-          "reset",
-          "seed",
-          "state",
-          "url"
+          "type:addresses",
+          "type:close",
+          "type:flush",
+          "type:host",
+          "type:nodes",
+          "type:port",
+          "type:reset",
+          "type:seed",
+          "type:state",
+          "type:url"
         ]
       },
       "RedisMockClusterOptions": {
         "kind": "type",
-        "members": ["masters", "replicas"]
+        "members": ["type:masters", "type:replicas"]
       },
       "RedisMovedError": { "kind": "value" },
       "RedisNativeReply": { "kind": "type" },
       "RedisServerHandle": {
         "kind": "type",
-        "members": ["close", "host", "port", "server", "state"]
+        "members": [
+          "type:close",
+          "type:host",
+          "type:port",
+          "type:server",
+          "type:state"
+        ]
       },
       "RedisSyntaxError": { "kind": "value" },
       "ResultingScoreNaNError": { "kind": "value" },
@@ -231,7 +259,13 @@
       "ScriptUnknownCommandError": { "kind": "value" },
       "SeedEntry": {
         "kind": "type",
-        "members": ["db", "key", "ttlMs", "type", "value"]
+        "members": [
+          "type:db",
+          "type:key",
+          "type:ttlMs",
+          "type:type",
+          "type:value"
+        ]
       },
       "StreamElementTooLargeError": { "kind": "value" },
       "StreamIdExhaustedError": { "kind": "value" },
@@ -239,7 +273,10 @@
       "UnknownClusterSubcommandError": { "kind": "value" },
       "UnknownRedisCommandError": { "kind": "value" },
       "UnknownScriptSubcommandError": { "kind": "value" },
-      "VersionGate": { "kind": "type", "members": ["redis", "valkey"] },
+      "VersionGate": {
+        "kind": "type",
+        "members": ["type:redis", "type:valkey"]
+      },
       "WatchInsideMultiError": { "kind": "value" },
       "WrongNumberOfArgumentsError": { "kind": "value" },
       "WrongNumberOfKeysError": { "kind": "value" },
@@ -267,11 +304,17 @@
       "AtLeastOneInputKeyError": { "kind": "value" },
       "AttachSessionOptions": {
         "kind": "type",
-        "members": ["clientAddress", "executor", "logger", "nodeRole", "state"]
+        "members": [
+          "type:clientAddress",
+          "type:executor",
+          "type:logger",
+          "type:nodeRole",
+          "type:state"
+        ]
       },
       "AttachedSession": {
         "kind": "type",
-        "members": ["adapter", "close", "done", "session"]
+        "members": ["type:adapter", "type:close", "type:done", "type:session"]
       },
       "BitOffsetError": { "kind": "value" },
       "BitOpNotSingleKeyError": { "kind": "value" },
@@ -334,40 +377,40 @@
       "ClientSessionOptions": {
         "kind": "type",
         "members": [
-          "clientAddress",
-          "closeConnection",
-          "database",
-          "executor",
-          "id",
-          "nodeRole",
-          "park",
-          "server",
-          "signal"
+          "type:clientAddress",
+          "type:closeConnection",
+          "type:database",
+          "type:executor",
+          "type:id",
+          "type:nodeRole",
+          "type:park",
+          "type:server",
+          "type:signal"
         ]
       },
       "CommandCapabilities": {
         "kind": "type",
         "members": [
-          "blocking",
-          "clusterMode",
-          "movableKeys",
-          "pushOnly",
-          "scriptKeys",
-          "transactionBoundary"
+          "type:blocking",
+          "type:clusterMode",
+          "type:movableKeys",
+          "type:pushOnly",
+          "type:scriptKeys",
+          "type:transactionBoundary"
         ]
       },
       "CommandDefinition": {
         "kind": "type",
         "members": [
-          "capabilities",
-          "execute",
-          "flags",
-          "introspection",
-          "keys",
-          "monitor",
-          "name",
-          "schema",
-          "since"
+          "type:capabilities",
+          "type:execute",
+          "type:flags",
+          "type:introspection",
+          "type:keys",
+          "type:monitor",
+          "type:name",
+          "type:schema",
+          "type:since"
         ]
       },
       "CommandExecutionResult": {
@@ -406,20 +449,31 @@
       },
       "CommandPlan": {
         "kind": "type",
-        "members": ["args", "definition", "keys", "rawArgs", "rawCommand"]
+        "members": [
+          "type:args",
+          "type:definition",
+          "type:keys",
+          "type:rawArgs",
+          "type:rawCommand"
+        ]
       },
       "CommandRegistry": {
         "kind": "value",
         "members": ["get", "getAll", "register", "registerAll"]
       },
-      "CommandSchema": { "kind": "type", "members": ["parse"] },
+      "CommandSchema": { "kind": "type", "members": ["type:parse"] },
       "CompatibilityProfile": {
         "kind": "type",
-        "members": ["flavor", "has", "version", "versionNum"]
+        "members": [
+          "type:flavor",
+          "type:has",
+          "type:version",
+          "type:versionNum"
+        ]
       },
       "CompatibilitySpec": {
         "kind": "type",
-        "members": ["flavor", "version"],
+        "members": ["type:flavor", "type:version"],
         "variants": [
           "'redis-6.2'",
           "'redis-7.0'",
@@ -433,7 +487,14 @@
       },
       "ConnectionTransport": {
         "kind": "type",
-        "members": ["close", "id", "on", "read", "signal", "write"]
+        "members": [
+          "type:close",
+          "type:id",
+          "type:on",
+          "type:read",
+          "type:signal",
+          "type:write"
+        ]
       },
       "ConnectionTransportEvent": {
         "kind": "type",
@@ -445,12 +506,12 @@
       "CreateVirtualConnectionOptions": {
         "kind": "type",
         "members": [
-          "executor",
-          "logger",
-          "nodeRole",
-          "remoteAddress",
-          "remotePort",
-          "state"
+          "type:executor",
+          "type:logger",
+          "type:nodeRole",
+          "type:remoteAddress",
+          "type:remotePort",
+          "type:state"
         ]
       },
       "DbIndexOutOfRangeError": { "kind": "value" },
@@ -463,7 +524,10 @@
       },
       "ExpectedFloatError": { "kind": "value" },
       "ExpectedIntegerError": { "kind": "value" },
-      "ExpirationState": { "kind": "type", "members": ["expiresAt", "kind"] },
+      "ExpirationState": {
+        "kind": "type",
+        "members": ["type:expiresAt", "type:kind"]
+      },
       "ExpireGtLtConflictError": { "kind": "value" },
       "ExpireNxXxGtLtConflictError": { "kind": "value" },
       "FEATURE_GATES": {
@@ -561,7 +625,7 @@
       "InvalidStreamIdError": { "kind": "value" },
       "KeyspaceEntry": {
         "kind": "type",
-        "members": ["expiresAt", "key", "value"]
+        "members": ["type:expiresAt", "type:key", "type:value"]
       },
       "LimitCantBeNegativeError": { "kind": "value" },
       "LposCountNegativeError": { "kind": "value" },
@@ -576,17 +640,23 @@
       "NoSuchKeyError": { "kind": "value" },
       "NodePipeline": {
         "kind": "type",
-        "members": ["executor", "nodeRole", "state"]
+        "members": ["type:executor", "type:nodeRole", "type:state"]
       },
       "NumKeysGreaterThanZeroError": { "kind": "value" },
       "OffsetOutOfRangeError": { "kind": "value" },
       "ParkHandler": { "kind": "type" },
       "ParkRequest": {
         "kind": "type",
-        "members": ["signal", "timeoutMs", "waitFor"]
+        "members": ["type:signal", "type:timeoutMs", "type:waitFor"]
       },
-      "ParseContext": { "kind": "type", "members": ["commandName", "profile"] },
-      "ParseNodeResult": { "kind": "type", "members": ["nextIndex", "value"] },
+      "ParseContext": {
+        "kind": "type",
+        "members": ["type:commandName", "type:profile"]
+      },
+      "ParseNodeResult": {
+        "kind": "type",
+        "members": ["type:nextIndex", "type:value"]
+      },
       "PositiveCountError": { "kind": "value" },
       "PubSubKind": {
         "kind": "type",
@@ -596,40 +666,40 @@
       "RedisClientSession": {
         "kind": "type",
         "members": [
-          "beginTransaction",
-          "clientAddress",
-          "clusterReadOnly",
-          "connectedAtMs",
-          "deferPushesUntilAfterReply",
-          "discardTransaction",
-          "disconnect",
-          "drainTransaction",
-          "executeTransaction",
-          "id",
-          "isAuthenticated",
-          "isTransactionDirty",
-          "isWatchDirty",
-          "markTransactionDirty",
-          "mode",
-          "protocolVersion",
-          "pubsubChannelCount",
-          "pubsubPatternCount",
-          "pubsubShardChannelCount",
-          "pubsubSubscribe",
-          "pubsubSubscriptionCount",
-          "pubsubUnsubscribe",
-          "queueTransaction",
-          "registerResponseStreamCleanup",
-          "resetPubSub",
-          "resetResponseStreams",
-          "selectDatabase",
-          "selectedDatabase",
-          "setAuthenticated",
-          "setClusterReadOnly",
-          "setProtocolVersion",
-          "unwatch",
-          "usesSubscribedReplyMode",
-          "watch"
+          "type:beginTransaction",
+          "type:clientAddress",
+          "type:clusterReadOnly",
+          "type:connectedAtMs",
+          "type:deferPushesUntilAfterReply",
+          "type:discardTransaction",
+          "type:disconnect",
+          "type:drainTransaction",
+          "type:executeTransaction",
+          "type:id",
+          "type:isAuthenticated",
+          "type:isTransactionDirty",
+          "type:isWatchDirty",
+          "type:markTransactionDirty",
+          "type:mode",
+          "type:protocolVersion",
+          "type:pubsubChannelCount",
+          "type:pubsubPatternCount",
+          "type:pubsubShardChannelCount",
+          "type:pubsubSubscribe",
+          "type:pubsubSubscriptionCount",
+          "type:pubsubUnsubscribe",
+          "type:queueTransaction",
+          "type:registerResponseStreamCleanup",
+          "type:resetPubSub",
+          "type:resetResponseStreams",
+          "type:selectDatabase",
+          "type:selectedDatabase",
+          "type:setAuthenticated",
+          "type:setClusterReadOnly",
+          "type:setProtocolVersion",
+          "type:unwatch",
+          "type:usesSubscribedReplyMode",
+          "type:watch"
         ]
       },
       "RedisCluster": {
@@ -639,11 +709,24 @@
       "RedisClusterDownError": { "kind": "value" },
       "RedisClusterNode": {
         "kind": "type",
-        "members": ["host", "id", "masterId", "port", "role", "slots"]
+        "members": [
+          "type:host",
+          "type:id",
+          "type:masterId",
+          "type:port",
+          "type:role",
+          "type:slots"
+        ]
       },
       "RedisClusterNodeHandle": {
         "kind": "type",
-        "members": ["host", "id", "port", "role", "server"]
+        "members": [
+          "type:host",
+          "type:id",
+          "type:port",
+          "type:role",
+          "type:server"
+        ]
       },
       "RedisClusterNodeRole": {
         "kind": "type",
@@ -652,14 +735,14 @@
       "RedisClusterOptions": {
         "kind": "type",
         "members": [
-          "basePort",
-          "compatibility",
-          "databasesPerNode",
-          "host",
-          "logger",
-          "masters",
-          "replicaUpdateDelayMs",
-          "replicasPerMaster"
+          "type:basePort",
+          "type:compatibility",
+          "type:databasesPerNode",
+          "type:host",
+          "type:logger",
+          "type:masters",
+          "type:replicaUpdateDelayMs",
+          "type:replicasPerMaster"
         ]
       },
       "RedisClusterTopology": {
@@ -735,15 +818,15 @@
       "RedisExecutionContext": {
         "kind": "type",
         "members": [
-          "db",
-          "executor",
-          "monitor",
-          "nodeRole",
-          "park",
-          "server",
-          "session",
-          "signal",
-          "transactionReplay"
+          "type:db",
+          "type:executor",
+          "type:monitor",
+          "type:nodeRole",
+          "type:park",
+          "type:server",
+          "type:session",
+          "type:signal",
+          "type:transactionReplay"
         ]
       },
       "RedisFlavor": { "kind": "type", "variants": ["'redis'", "'valkey'"] },
@@ -759,22 +842,28 @@
           "restore"
         ]
       },
-      "RedisHashData": { "kind": "type", "members": ["fields", "type"] },
+      "RedisHashData": {
+        "kind": "type",
+        "members": ["type:fields", "type:type"]
+      },
       "RedisHashField": {
         "kind": "type",
-        "members": ["expiresAt", "field", "value"]
+        "members": ["type:expiresAt", "type:field", "type:value"]
       },
-      "RedisListData": { "kind": "type", "members": ["type", "values"] },
+      "RedisListData": {
+        "kind": "type",
+        "members": ["type:type", "type:values"]
+      },
       "RedisLuaRuntime": { "kind": "value", "members": ["eval"] },
       "RedisMonitorCommandEvent": {
         "kind": "type",
         "members": [
-          "args",
-          "clientAddress",
-          "clientId",
-          "command",
-          "database",
-          "timestampMs"
+          "type:args",
+          "type:clientAddress",
+          "type:clientId",
+          "type:command",
+          "type:database",
+          "type:timestampMs"
         ]
       },
       "RedisMonitorCommandListener": { "kind": "type" },
@@ -789,7 +878,13 @@
       },
       "RedisMutationEvent": {
         "kind": "type",
-        "members": ["database", "expiresAt", "key", "type", "value"]
+        "members": [
+          "type:database",
+          "type:expiresAt",
+          "type:key",
+          "type:type",
+          "type:value"
+        ]
       },
       "RedisMutationListener": { "kind": "type" },
       "RedisPubSubBroker": {
@@ -822,7 +917,12 @@
       },
       "RedisResultOptions": {
         "kind": "type",
-        "members": ["afterReply", "close", "disconnect", "omitReply"]
+        "members": [
+          "type:afterReply",
+          "type:close",
+          "type:disconnect",
+          "type:omitReply"
+        ]
       },
       "RedisScriptCache": {
         "kind": "value",
@@ -852,37 +952,49 @@
       "RedisServerStateOptions": {
         "kind": "type",
         "members": [
-          "activeExpiryIntervalMs",
-          "clusterTopology",
-          "compatibility",
-          "databaseCount",
-          "functionRegistry",
-          "monitorFeed",
-          "pubsubBroker",
-          "requirepass",
-          "scriptCache"
+          "type:activeExpiryIntervalMs",
+          "type:clusterTopology",
+          "type:compatibility",
+          "type:databaseCount",
+          "type:functionRegistry",
+          "type:monitorFeed",
+          "type:pubsubBroker",
+          "type:requirepass",
+          "type:scriptCache"
         ]
       },
-      "RedisSetData": { "kind": "type", "members": ["members", "type"] },
-      "RedisSortedSetData": { "kind": "type", "members": ["members", "type"] },
+      "RedisSetData": {
+        "kind": "type",
+        "members": ["type:members", "type:type"]
+      },
+      "RedisSortedSetData": {
+        "kind": "type",
+        "members": ["type:members", "type:type"]
+      },
       "RedisSortedSetMember": {
         "kind": "type",
-        "members": ["member", "score"]
+        "members": ["type:member", "type:score"]
       },
       "RedisStreamData": {
         "kind": "type",
         "members": [
-          "entries",
-          "entriesAdded",
-          "groups",
-          "lastId",
-          "maxDeletedEntryId",
-          "type"
+          "type:entries",
+          "type:entriesAdded",
+          "type:groups",
+          "type:lastId",
+          "type:maxDeletedEntryId",
+          "type:type"
         ]
       },
-      "RedisStringData": { "kind": "type", "members": ["type", "value"] },
+      "RedisStringData": {
+        "kind": "type",
+        "members": ["type:type", "type:value"]
+      },
       "RedisSyntaxError": { "kind": "value" },
-      "RedisTurnHandle": { "kind": "type", "members": ["release", "suspend"] },
+      "RedisTurnHandle": {
+        "kind": "type",
+        "members": ["type:release", "type:suspend"]
+      },
       "RedisValue": {
         "kind": "value",
         "members": [
@@ -912,9 +1024,15 @@
           "verbatim"
         ]
       },
-      "RegisteredNode": { "kind": "type", "members": ["host", "port"] },
+      "RegisteredNode": {
+        "kind": "type",
+        "members": ["type:host", "type:port"]
+      },
       "Resp2CommandDecoder": { "kind": "value", "members": ["push"] },
-      "Resp2CommandFrame": { "kind": "type", "members": ["args", "command"] },
+      "Resp2CommandFrame": {
+        "kind": "type",
+        "members": ["type:args", "type:command"]
+      },
       "Resp2ParseError": { "kind": "value" },
       "Resp2Server": {
         "kind": "value",
@@ -922,18 +1040,23 @@
       },
       "Resp2ServerOptions": {
         "kind": "type",
-        "members": ["executor", "logger", "nodeRole", "server"]
+        "members": [
+          "type:executor",
+          "type:logger",
+          "type:nodeRole",
+          "type:server"
+        ]
       },
       "Resp2SessionAdapter": { "kind": "value", "members": ["run"] },
       "Resp2SessionAdapterOptions": {
         "kind": "type",
-        "members": ["logger", "session", "transport"]
+        "members": ["type:logger", "type:session", "type:transport"]
       },
-      "RespEncodeOptions": { "kind": "type", "members": ["version"] },
+      "RespEncodeOptions": { "kind": "type", "members": ["type:version"] },
       "RespVersion": { "kind": "type", "variants": ["2", "3"] },
       "ResponseStream": {
         "kind": "type",
-        "members": ["close", "closed", "frames", "kind"]
+        "members": ["type:close", "type:closed", "type:frames", "type:kind"]
       },
       "ResultingScoreNaNError": { "kind": "value" },
       "SameObjectError": { "kind": "value" },
@@ -943,12 +1066,18 @@
       "ScriptNotAllowedCommandError": { "kind": "value" },
       "ScriptUnknownCommandError": { "kind": "value" },
       "SerialTurnQueue": { "kind": "value", "members": ["waitTurn"] },
-      "SetOptions": { "kind": "type", "members": ["expiresAt", "keepTtl"] },
+      "SetOptions": {
+        "kind": "type",
+        "members": ["type:expiresAt", "type:keepTtl"]
+      },
       "SocketConnectionTransport": {
         "kind": "value",
         "members": ["close", "id", "on", "read", "signal", "write"]
       },
-      "SocketConnectionTransportOptions": { "kind": "type", "members": ["id"] },
+      "SocketConnectionTransportOptions": {
+        "kind": "type",
+        "members": ["type:id"]
+      },
       "SortScoreNotDoubleError": { "kind": "value" },
       "StreamElementTooLargeError": { "kind": "value" },
       "StreamIdEqualOrSmallerError": { "kind": "value" },
@@ -964,7 +1093,10 @@
       "UnknownScriptSubcommandError": { "kind": "value" },
       "Unsubscribe": { "kind": "type" },
       "UnsupportedOptionError": { "kind": "value" },
-      "VersionGate": { "kind": "type", "members": ["redis", "valkey"] },
+      "VersionGate": {
+        "kind": "type",
+        "members": ["type:redis", "type:valkey"]
+      },
       "VirtualClientSocket": {
         "kind": "value",
         "members": [
@@ -987,7 +1119,7 @@
       },
       "VirtualConnection": {
         "kind": "type",
-        "members": ["clientSocket", "close", "done"]
+        "members": ["type:clientSocket", "type:close", "type:done"]
       },
       "WatchInsideMultiError": { "kind": "value" },
       "WeightNotFloatError": { "kind": "value" },

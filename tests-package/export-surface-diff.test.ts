@@ -18,7 +18,12 @@ import {
 } from './export-surface.js'
 
 const BASELINE: ExportSurface = {
-  CommandFlag: { kind: 'type', variants: ['admin', 'noscript', 'readonly'] },
+  // Variants carry their canonical quoting, as the extractor records them —
+  // the message template must not add a second pair around it.
+  CommandFlag: {
+    kind: 'type',
+    variants: ["'admin'", "'noscript'", "'readonly'"],
+  },
   CommandRegistry: {
     kind: 'value',
     members: ['get', 'getAll', 'has', 'register'],
@@ -99,10 +104,14 @@ describe('findRemovals', () => {
     const gone = findRemovals(
       BASELINE,
       mutate(draft => {
-        draft.CommandFlag = { kind: 'type', variants: ['admin', 'readonly'] }
+        draft.CommandFlag = {
+          kind: 'type',
+          variants: ["'admin'", "'readonly'"],
+        }
       }),
     )
 
+    // Exactly one pair of quotes — the variant carries its own.
     assert.deepStrictEqual(gone, [
       "CommandFlag — union variant 'noscript' gone",
     ])
@@ -152,7 +161,10 @@ describe('findRemovals', () => {
     const gone = findRemovals(
       BASELINE,
       mutate(draft => {
-        draft.PubSubKind = { kind: 'type', variants: ['channel', 'pattern'] }
+        draft.PubSubKind = {
+          kind: 'type',
+          variants: ["'channel'", "'pattern'"],
+        }
         draft.CommandRegistry = {
           kind: 'value',
           members: ['get', 'getAll', 'has', 'register', 'registerAll'],
@@ -179,14 +191,14 @@ describe('findAdditions', () => {
     const added = findAdditions(
       BASELINE,
       mutate(draft => {
-        draft.PubSubKind = { kind: 'type', variants: ['channel'] }
+        draft.PubSubKind = { kind: 'type', variants: ["'channel'"] }
         draft.CommandRegistry = {
           kind: 'value',
           members: ['get', 'getAll', 'has', 'register', 'registerAll'],
         }
         draft.CommandFlag = {
           kind: 'type',
-          variants: ['admin', 'noscript', 'readonly', 'write'],
+          variants: ["'admin'", "'noscript'", "'readonly'", "'write'"],
         }
       }),
     )
