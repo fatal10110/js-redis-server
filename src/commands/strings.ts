@@ -13,9 +13,11 @@ import {
   InvalidExpireTimeError,
   OffsetOutOfRangeError,
   RedisSyntaxError,
+  StringExceedsMaxSizeError,
   WrongTypeRedisError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
+import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
@@ -26,7 +28,6 @@ import {
   integer,
   ok,
   parseInt64Token,
-  parseIntegerToken,
   parsePositiveExpireToken,
   requireNextOptionValue,
 } from './helpers'
@@ -163,7 +164,18 @@ export const appendCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const existing = ensureStringOrMissing(ctx.db, args.key)
-    const next = existing ? Buffer.concat([existing, args.value]) : args.value
+    if (!existing) {
+      // Redis only size-checks APPEND when the key already holds a value; a
+      // fresh value is already bounded by the protocol's own bulk limit.
+      ctx.db.setString(args.key, args.value, { keepTtl: true })
+      return integer(args.value.length)
+    }
+
+    assertWithinProtoMaxBulkLen(
+      ctx,
+      BigInt(existing.length) + BigInt(args.value.length),
+    )
+    const next = Buffer.concat([existing, args.value])
     ctx.db.setString(args.key, next, { keepTtl: true })
     return integer(next.length)
   },
@@ -388,8 +400,11 @@ export const getrangeCommand = defineCommand({
   name: 'getrange',
   schema: t.object({
     key: t.key(),
-    start: t.integer(),
-    end: t.integer(),
+    // Redis reads both ends as int64 and clamps them to the value's length, so
+    // magnitudes above 2^53 are legal input rather than a parse error. GETRANGE
+    // only ever reads an existing value, so proto-max-bulk-len never applies.
+    start: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
+    end: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
   }),
   flags: ['readonly'],
   keys: args => [args.key],
@@ -399,18 +414,18 @@ export const getrangeCommand = defineCommand({
       return bulk(Buffer.alloc(0))
     }
 
-    const length = existing.length
-    let startIdx = args.start < 0 ? length + args.start : args.start
-    let endIdx = args.end < 0 ? length + args.end : args.end
+    const length = BigInt(existing.length)
+    let startIdx = args.start < 0n ? length + args.start : args.start
+    let endIdx = args.end < 0n ? length + args.end : args.end
 
-    if (startIdx < 0) startIdx = 0
-    if (endIdx >= length) endIdx = length - 1
+    if (startIdx < 0n) startIdx = 0n
+    if (endIdx >= length) endIdx = length - 1n
 
     if (startIdx > endIdx || startIdx >= length) {
       return bulk(Buffer.alloc(0))
     }
 
-    return bulk(existing.slice(startIdx, endIdx + 1))
+    return bulk(existing.slice(Number(startIdx), Number(endIdx) + 1))
   },
 })
 
@@ -431,12 +446,16 @@ export const setrangeCommand = defineCommand({
   execute: (args, ctx) => {
     const existing = ensureStringOrMissing(ctx.db, args.key)
 
+    // Redis short-circuits an empty value before the size check, so a huge
+    // offset with nothing to write is not an error and creates no key.
     if (args.value.length === 0) {
       return integer(existing?.length ?? 0)
     }
 
+    assertWithinProtoMaxBulkLen(ctx, args.offset + BigInt(args.value.length))
+
     const current = existing ?? Buffer.alloc(0)
-    const requiredSize = args.offset + args.value.length
+    const requiredSize = Number(args.offset) + args.value.length
     const target =
       requiredSize > current.length ? Buffer.alloc(requiredSize) : current
 
@@ -444,7 +463,7 @@ export const setrangeCommand = defineCommand({
       current.copy(target, 0)
     }
 
-    args.value.copy(target, args.offset)
+    args.value.copy(target, Number(args.offset))
     ctx.db.setString(args.key, target, { keepTtl: true })
     return integer(target.length)
   },
@@ -660,20 +679,35 @@ function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
   )
 }
 
-function createSetrangeOffsetSchema(): CommandSchema<number> {
+// SETRANGE reads its offset as an int64: values above 2^53 are legal input that
+// Redis then rejects with the proto-max-bulk-len error, not a parse error.
+function createSetrangeOffsetSchema(): CommandSchema<bigint> {
   return t.custom((input, index, ctx) => {
     const token = input[index]
     if (!token) {
       throwWrongArity(ctx.commandName)
     }
 
-    const offset = parseIntegerToken(token)
-    if (offset < 0) {
+    const offset = parseInt64Token(token)
+    if (offset < 0n) {
       throw new OffsetOutOfRangeError()
     }
 
     return { value: offset, nextIndex: index + 1 }
   })
+}
+
+/**
+ * Redis refuses to grow a string past `proto-max-bulk-len` rather than
+ * allocating it (server.c: checkStringLength).
+ */
+function assertWithinProtoMaxBulkLen(
+  ctx: RedisExecutionContext,
+  totalLength: bigint,
+): void {
+  if (totalLength > ctx.server.protoMaxBulkLen) {
+    throw new StringExceedsMaxSizeError()
+  }
 }
 
 function createGetexSchema(): CommandSchema<GetexArgs> {

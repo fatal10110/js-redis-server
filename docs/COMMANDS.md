@@ -100,11 +100,20 @@ surface.
 > in-memory per-server store seeded with plausible defaults (`maxmemory`,
 > `appendonly`, `save`, listpack thresholds, etc.), enough to satisfy client
 > library initialization. Most parameters are inert: `CONFIG SET` stores the
-> value but does not change server behavior. The exception is
-> `notify-keyspace-events`, which is a real, behavior-driving setting — see
-> [Keyspace notifications](#14-pubsub-commands). Its value is validated and
-> normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as `AKE`;
-> an unknown class character is rejected). Since there is no backing config file,
+> value but does not change server behavior. There are two exceptions, both
+> real, behavior-driving settings:
+>
+> - `notify-keyspace-events` — see
+>   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
+>   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
+>   `AKE`; an unknown class character is rejected).
+> - `proto-max-bulk-len` — caps how large a single string value may grow;
+>   `APPEND` and `SETRANGE` reject rather than allocate past it. Accepts Redis
+>   memory values (`1048576`, `1mb`, `512MB`, ...) and enforces Redis' own
+>   `[1048576, 9223372036854775807]` bounds, with the same two CONFIG SET
+>   failure messages.
+>
+> Since there is no backing config file,
 > `CONFIG REWRITE` reports the same no-config-file error as Redis.
 
 #### DBSIZE
@@ -236,11 +245,11 @@ with `GT` or `LT`.
 - [x] `GETSET key value` - Set a key's value and return its old value
 - [x] `GETDEL key` - Get the value of a key and delete it
 - [x] `GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]` - Get the value and optionally manage its TTL
-- [x] `APPEND key value` - Append a value to a key
+- [x] `APPEND key value` - Append a value to a key (rejects a result larger than `proto-max-bulk-len`, like Redis)
 - [x] `STRLEN key` - Get the length of the value stored at key
 - [x] `GETRANGE key start end` - Get a substring of the value
 - [x] `SUBSTR key start end` - Alias for `GETRANGE` (deprecated)
-- [x] `SETRANGE key offset value` - Overwrite part of a string at the given offset
+- [x] `SETRANGE key offset value` - Overwrite part of a string at the given offset (rejects an `offset + length` beyond `proto-max-bulk-len`, like Redis)
 - [x] `INCR key` / `DECR key` - Increment/decrement the integer value of a key by one
 - [x] `INCRBY key increment` / `DECRBY key decrement` - Increment/decrement by the given integer
 - [x] `INCRBYFLOAT key increment` - Increment the float value of a key

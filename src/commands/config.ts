@@ -14,6 +14,54 @@ import { commandSubcommandInfo } from './introspection'
 // Behavior-driving parameters whose authoritative value lives on the server
 // state (not the inert defaults map below), so other subsystems can read them.
 const KEYSPACE_NOTIFY_PARAM = 'notify-keyspace-events'
+const PROTO_MAX_BULK_LEN_PARAM = 'proto-max-bulk-len'
+
+// Redis' bounds for `proto-max-bulk-len` (config.c: createSizeTConfig).
+const PROTO_MAX_BULK_LEN_MIN = 1048576n
+const PROTO_MAX_BULK_LEN_MAX = 9223372036854775807n
+
+// Redis memory-value suffixes (util.c: memtoull) — the bare `k`/`m`/`g` forms
+// are decimal, the `b`-suffixed ones binary.
+const MEMORY_UNITS: Readonly<Record<string, bigint>> = {
+  b: 1n,
+  k: 1000n,
+  kb: 1024n,
+  m: 1000000n,
+  mb: 1048576n,
+  g: 1000000000n,
+  gb: 1073741824n,
+}
+
+function configSetFailed(name: string, detail: string): RedisCommandError {
+  return new RedisCommandError(
+    `CONFIG SET failed (possibly related to argument '${name}') - ${detail}`,
+  )
+}
+
+/**
+ * Parse a Redis memory value (`1048576`, `1mb`, `512MB`, ...) into bytes and
+ * range-check it, reproducing CONFIG SET's two distinct failure messages.
+ */
+function parseProtoMaxBulkLen(raw: string): bigint {
+  const match = /^(\d+)([a-zA-Z]*)$/.exec(raw)
+  const unit = match ? MEMORY_UNITS[match[2].toLowerCase() || 'b'] : undefined
+  if (!match || unit === undefined) {
+    throw configSetFailed(
+      PROTO_MAX_BULK_LEN_PARAM,
+      'argument must be a memory value',
+    )
+  }
+
+  const value = BigInt(match[1]) * unit
+  if (value < PROTO_MAX_BULK_LEN_MIN || value > PROTO_MAX_BULK_LEN_MAX) {
+    throw configSetFailed(
+      PROTO_MAX_BULK_LEN_PARAM,
+      `argument must be between ${PROTO_MAX_BULK_LEN_MIN} and ${PROTO_MAX_BULK_LEN_MAX} inclusive`,
+    )
+  }
+
+  return value
+}
 
 /**
  * Plausible Redis defaults for the parameters client libraries probe during
@@ -35,7 +83,6 @@ const CONFIG_DEFAULTS: Readonly<Record<string, string>> = {
   'maxmemory-clients': '0',
   'maxmemory-policy': 'noeviction',
   'maxmemory-samples': '5',
-  'proto-max-bulk-len': '536870912',
   save: '3600 1 300 100 60 10000',
   'set-max-intset-entries': '512',
   'set-max-listpack-entries': '128',
@@ -87,6 +134,7 @@ function configGet(
   // Overlay server-backed params so CONFIG GET reflects their live values.
   const effective = new Map(store)
   effective.set(KEYSPACE_NOTIFY_PARAM, ctx.server.notifyKeyspaceEvents)
+  effective.set(PROTO_MAX_BULK_LEN_PARAM, ctx.server.protoMaxBulkLen.toString())
 
   const patterns = args.map(arg => arg.toString())
   const matched = new Map<string, string>()
@@ -124,6 +172,10 @@ function configSet(
       updates.push([name, normalizeKeyspaceNotifyConfig(value)])
       continue
     }
+    if (name === PROTO_MAX_BULK_LEN_PARAM) {
+      updates.push([name, parseProtoMaxBulkLen(value).toString()])
+      continue
+    }
     if (!store.has(name)) {
       throw new RedisCommandError(
         `Unknown option or number of arguments for CONFIG SET - '${args[i].toString()}'`,
@@ -136,6 +188,10 @@ function configSet(
   for (const [name, value] of updates) {
     if (name === KEYSPACE_NOTIFY_PARAM) {
       ctx.server.notifyKeyspaceEvents = value
+      continue
+    }
+    if (name === PROTO_MAX_BULK_LEN_PARAM) {
+      ctx.server.protoMaxBulkLen = BigInt(value)
       continue
     }
     store.set(name, value)
