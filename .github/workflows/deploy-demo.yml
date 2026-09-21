@@ -1,14 +1,32 @@
 name: Deploy browser demo
 
 # Builds examples/browser-demo and publishes it to GitHub Pages.
+#
+# The build job also runs on pull requests, with the Pages steps skipped, so a
+# change that breaks the demo's install or build fails in review instead of
+# turning main red after the merge. Before this, the demo was only ever built
+# post-merge and a broken lockfile sat on main for two months (#391).
+#
 # One-time setup: repo Settings → Pages → Source → "GitHub Actions".
 on:
   push:
     branches: [main]
     # Only redeploy when the demo or the source it imports actually changes.
+    # The root manifests are in here because the job runs `npm ci` at the root
+    # too — a root dependency change alters what the demo bundles.
     paths:
       - 'examples/browser-demo/**'
       - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-demo.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/browser-demo/**'
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/deploy-demo.yml'
   workflow_dispatch:
 
@@ -17,10 +35,12 @@ permissions:
   pages: write
   id-token: write
 
-# One deploy at a time; let an in-progress run finish.
+# One deploy at a time; let an in-progress run finish. PR builds get their own
+# per-ref group so they never queue behind a deploy, and a superseded PR build
+# is cancelled.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -34,7 +54,8 @@ jobs:
           cache: npm
 
       # Root deps: the demo imports ../../src, which pulls in respjs and
-      # cluster-key-slot from the root node_modules.
+      # cluster-key-slot from the root node_modules. Also provides tsx for the
+      # demo's own tests below.
       - name: Install root deps
         run: npm ci
 
@@ -42,18 +63,24 @@ jobs:
         run: npm ci
         working-directory: examples/browser-demo
 
+      - name: Run demo tests
+        run: npm run test:demo
+
       - name: Build demo
         run: npm run build
         working-directory: examples/browser-demo
 
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: examples/browser-demo/dist
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

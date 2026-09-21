@@ -6,4 +6,6 @@ package-lock.json
 docker-data
 redis-data
 .grepai
-.md
+# Markdown is hand-formatted (tables, diagrams); prettier would reflow it.
+# This was `.md`, which only ever matched a file literally named ".md".
+*.md
