@@ -180,13 +180,30 @@ export class RedisDatabase {
   }
 
   /**
-   * Read-modify-write a single key under its expected type. The mutator is
-   * handed the live value plus a tracker; nothing is persisted (and no event is
-   * emitted) unless the mutator marks the change. Prefer the typed
-   * `updateHash`/`updateList`/... wrappers — they hand the mutator a tracked
-   * value instead of the raw one.
+   * Read-modify-write a single key under its expected type, shared by the typed
+   * `updateHash`/`updateList`/... wrappers. Private on purpose: it hands the
+   * mutator the *untracked* value, which skips the `Tracked*` layer and with it
+   * hash-field TTL expiry. Go through a wrapper.
+   *
+   * The mutator gets the value plus a tracker, and must mark what it did:
+   * `markChanged` for a WATCH-dirtying write, `markCommitted` to persist
+   * without dirtying. An unmarked mutation emits no event.
+   *
+   * Two sharp edges, both pre-existing:
+   *
+   * - Only a **brand-new** key is rolled back on a throw. For an existing key
+   *   the mutator writes straight through the stored object (`getLiveEntry`
+   *   returns the entry, not a copy), so a mutator that throws or forgets to
+   *   mark leaves its partial edit in the keyspace with no event emitted — e.g.
+   *   a ghost empty hash that `getType` still reports as `hash`, a state real
+   *   Redis cannot represent.
+   * - `markCommitted` suppresses the mutation event *outright*, and that same
+   *   bus also drives keyspace notifications. So the WATCH semantics below are
+   *   faithful to real Redis, but the notification that real Redis would still
+   *   fire is lost with it — real Redis keeps `signalModifiedKey` and
+   *   `notifyKeyspaceEvent` independent. See #379.
    */
-  update<TValue extends RedisDataValue, TResult>(
+  private update<TValue extends RedisDataValue, TResult>(
     key: Buffer,
     expectedType: TValue['type'],
     createValue: () => TValue,

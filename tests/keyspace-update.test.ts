@@ -3,20 +3,6 @@ import assert from 'node:assert'
 import { RedisDatabase } from '../src/state/database'
 import { type RedisMutationEvent } from '../src/state/mutation-events'
 import { WrongTypeRedisError } from '../src/core/redis-error'
-import {
-  createHashData,
-  createListData,
-  createSetData,
-  createSortedSetData,
-  createStreamData,
-  createStringData,
-  type RedisHashData,
-  type RedisListData,
-  type RedisSetData,
-  type RedisSortedSetData,
-  type RedisStreamData,
-  type RedisStringData,
-} from '../src/state/data-types'
 
 function setup() {
   const db = new RedisDatabase(0)
@@ -25,13 +11,16 @@ function setup() {
   return { db, events }
 }
 
+// These exercise the shared read-modify-write path behind updateHash/
+// updateList/... — `RedisDatabase.update` — through the typed wrappers, which
+// is the only way production reaches it.
 describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#124)', () => {
   test('mutator throwing on a fresh key leaves no ghost entry and emits no event', () => {
     const { db, events } = setup()
     const key = Buffer.from('h')
 
     assert.throws(() => {
-      db.update<RedisHashData, void>(key, 'hash', createHashData, () => {
+      db.updateHash(key, () => {
         throw new Error('boom')
       })
     }, /boom/)
@@ -47,8 +36,8 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
 
     // e.g. HDEL on a non-existent key: there is nothing to remove, the
     // collection stays empty, so the key must never appear.
-    db.update<RedisHashData, void>(key, 'hash', createHashData, () => {
-      // no change
+    db.updateHash(key, hash => {
+      hash.deleteField(Buffer.from('missing'))
     })
 
     assert.strictEqual(db.get(key), null)
@@ -60,25 +49,16 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db, events } = setup()
     const key = Buffer.from('h')
 
-    db.update<RedisHashData, void>(
-      key,
-      'hash',
-      createHashData,
-      (hash, tracker) => {
-        hash.fields.set('f', {
-          field: Buffer.from('f'),
-          value: Buffer.from('v'),
-        })
-        tracker.markChanged()
-      },
-    )
+    db.updateHash(key, hash => {
+      hash.setField(Buffer.from('f'), Buffer.from('v'))
+    })
     events.length = 0
 
-    db.update<RedisHashData, number>(key, 'hash', createHashData, hash => {
-      const deleted = hash.fields.delete('missing') ? 1 : 0
-      return deleted
-    })
+    const deleted = db.updateHash(key, hash =>
+      hash.deleteField(Buffer.from('missing')) ? 1 : 0,
+    )
 
+    assert.strictEqual(deleted, 0)
     assert.strictEqual(db.getType(key), 'hash')
     assert.strictEqual(events.length, 0)
   })
@@ -87,30 +67,15 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db, events } = setup()
     const key = Buffer.from('h')
 
-    db.update<RedisHashData, void>(
-      key,
-      'hash',
-      createHashData,
-      (hash, tracker) => {
-        hash.fields.set('f', {
-          field: Buffer.from('f'),
-          value: Buffer.from('v'),
-        })
-        tracker.markChanged()
-      },
-    )
+    db.updateHash(key, hash => {
+      hash.setField(Buffer.from('f'), Buffer.from('v'))
+    })
     assert.strictEqual(db.getType(key), 'hash')
     events.length = 0
 
-    db.update<RedisHashData, void>(
-      key,
-      'hash',
-      createHashData,
-      (hash, tracker) => {
-        hash.fields.delete('f')
-        tracker.markChanged()
-      },
-    )
+    db.updateHash(key, hash => {
+      hash.deleteField(Buffer.from('f'))
+    })
 
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(db.getType(key), null)
@@ -122,28 +87,16 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db, events } = setup()
     const key = Buffer.from('l')
 
-    db.update<RedisListData, void>(
-      key,
-      'list',
-      createListData,
-      (list, tracker) => {
-        list.values.push(Buffer.from('a'))
-        tracker.markChanged()
-      },
-    )
+    db.updateList(key, list => {
+      list.pushRight([Buffer.from('a')])
+    })
     assert.strictEqual(db.getType(key), 'list')
     events.length = 0
 
     // e.g. LTRIM that removes every element
-    db.update<RedisListData, void>(
-      key,
-      'list',
-      createListData,
-      (list, tracker) => {
-        list.values.length = 0
-        tracker.markChanged()
-      },
-    )
+    db.updateList(key, list => {
+      list.trim(1, 0)
+    })
 
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(db.getType(key), null)
@@ -155,28 +108,16 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db, events } = setup()
     const key = Buffer.from('z')
 
-    db.update<RedisSortedSetData, void>(
-      key,
-      'zset',
-      createSortedSetData,
-      (zset, tracker) => {
-        zset.members.set('m', { member: Buffer.from('m'), score: 1 })
-        tracker.markChanged()
-      },
-    )
+    db.updateSortedSet(key, zset => {
+      zset.setScore(Buffer.from('m'), 1)
+    })
     assert.strictEqual(db.getType(key), 'zset')
     events.length = 0
 
     // e.g. ZREM that removes the last member
-    db.update<RedisSortedSetData, void>(
-      key,
-      'zset',
-      createSortedSetData,
-      (zset, tracker) => {
-        zset.members.delete('m')
-        tracker.markChanged()
-      },
-    )
+    db.updateSortedSet(key, zset => {
+      zset.deleteMember(Buffer.from('m'))
+    })
 
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(db.getType(key), null)
@@ -188,9 +129,8 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db, events } = setup()
     const key = Buffer.from('s')
 
-    db.update<RedisSetData, void>(key, 'set', createSetData, (set, tracker) => {
-      set.members.set('m', Buffer.from('m'))
-      tracker.markChanged()
+    db.updateSet(key, set => {
+      set.addMember(Buffer.from('m'))
     })
 
     assert.strictEqual(db.getType(key), 'set')
@@ -202,34 +142,37 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db } = setup()
     const key = Buffer.from('str')
 
-    db.update<RedisStringData, void>(
-      key,
-      'string',
-      () => createStringData(Buffer.alloc(0)),
-      (str, tracker) => {
-        str.value = Buffer.alloc(0)
-        tracker.markChanged()
-      },
-    )
+    // Strings never go through `update` in production (there is no
+    // `updateString` wrapper) — they are written whole via `set`/`setString`,
+    // which has no empty-collection rule at all. `isEmptyCollection` returning
+    // false for 'string' keeps the two consistent.
+    db.setString(key, Buffer.alloc(0))
 
     assert.strictEqual(db.getType(key), 'string')
+    assert.deepStrictEqual(db.getString(key), Buffer.alloc(0))
   })
 
   test('an empty stream is preserved (matches real Redis keeping empty streams)', () => {
-    const { db } = setup()
+    const { db, events } = setup()
     const key = Buffer.from('stream')
 
-    db.update<RedisStreamData, void>(
-      key,
-      'stream',
-      createStreamData,
-      (_stream, tracker) => {
-        // Create the stream without adding entries (e.g. XGROUP CREATE MKSTREAM).
-        tracker.markChanged()
-      },
-    )
+    // XGROUP CREATE ... MKSTREAM: creates the key with zero entries. The group
+    // is committed rather than marked changed, but creating the key still
+    // dirties a WATCH, so this emits a write.
+    db.updateStream(key, stream => {
+      stream.addGroup('g', {
+        name: Buffer.from('g'),
+        lastDeliveredId: { ms: 0, seq: 0 },
+        entriesRead: 0,
+        consumers: new Map(),
+        pending: new Map(),
+      })
+    })
 
     assert.strictEqual(db.getType(key), 'stream')
+    assert.strictEqual(db.getStream(key)!.entries.length, 0)
+    assert.strictEqual(events.length, 1)
+    assert.strictEqual(events[0]!.type, 'write')
   })
 
   test('updating a key held at another type throws the client-visible WRONGTYPE error', () => {
@@ -241,18 +184,9 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
 
     assert.throws(
       () => {
-        db.update<RedisHashData, void>(
-          key,
-          'hash',
-          createHashData,
-          (hash, tracker) => {
-            hash.fields.set('f', {
-              field: Buffer.from('f'),
-              value: Buffer.from('v'),
-            })
-            tracker.markChanged()
-          },
-        )
+        db.updateHash(key, hash => {
+          hash.setField(Buffer.from('f'), Buffer.from('v'))
+        })
       },
       (err: unknown) => {
         assert.ok(err instanceof WrongTypeRedisError)
@@ -262,6 +196,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     )
 
     assert.strictEqual(db.getType(key), 'string')
+    assert.deepStrictEqual(db.getString(key), Buffer.from('v'))
     assert.strictEqual(events.length, 0)
   })
 })

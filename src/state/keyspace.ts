@@ -29,5 +29,11 @@ export type KeyspaceMutationTracker = {
   // brand-new key still dirties — coming into existence is itself a write — so
   // `RedisDatabase.update` only suppresses the dirty signal for in-place
   // changes to an already-existing key.
+  //
+  // Caveat: this is WATCH-faithful but not notification-faithful. It suppresses
+  // the mutation event outright, and the same bus drives keyspace
+  // notifications, so the notification real Redis would still fire is lost with
+  // it. Real Redis keeps the two signals independent (`signalModifiedKey` vs
+  // `notifyKeyspaceEvent`); splitting them here is tracked in #379.
   markCommitted(): void
 }

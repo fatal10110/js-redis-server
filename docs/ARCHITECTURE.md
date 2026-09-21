@@ -34,7 +34,7 @@ flowchart LR
     G[(CommandRegistry)]
     H[[Execution Policies<br/>cluster · transaction]]
     I["Command<br/>execute(args, ctx)"]
-    J[(RedisServerState<br/>→ Database → Keyspace)]
+    J[(RedisServerState<br/>→ RedisDatabase)]
 
     A -- "TCP (RESP bytes)" --> B
     B --> C
