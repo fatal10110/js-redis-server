@@ -138,20 +138,6 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     assert.strictEqual(events[0]!.type, 'write')
   })
 
-  test('an empty string value is a real value and is never auto-deleted', () => {
-    const { db } = setup()
-    const key = Buffer.from('str')
-
-    // Strings never go through `update` in production (there is no
-    // `updateString` wrapper) — they are written whole via `set`/`setString`,
-    // which has no empty-collection rule at all. `isEmptyCollection` returning
-    // false for 'string' keeps the two consistent.
-    db.setString(key, Buffer.alloc(0))
-
-    assert.strictEqual(db.getType(key), 'string')
-    assert.deepStrictEqual(db.getString(key), Buffer.alloc(0))
-  })
-
   test('an empty stream is preserved (matches real Redis keeping empty streams)', () => {
     const { db, events } = setup()
     const key = Buffer.from('stream')
@@ -198,5 +184,25 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     assert.strictEqual(db.getType(key), 'string')
     assert.deepStrictEqual(db.getString(key), Buffer.from('v'))
     assert.strictEqual(events.length, 0)
+  })
+})
+
+describe('RedisDatabase.set — empty values', () => {
+  // Not an `update` test: strings never reach `update` in production. There is
+  // no `updateString` wrapper, so they are written whole via `set`/`setString`,
+  // which has no empty-collection rule at all. This pins the user-visible
+  // invariant (`SET k ""` keeps the key) on the path that actually serves it.
+  //
+  // Note this does NOT cover `isEmptyCollection`'s `case 'string'` arm, which
+  // is unreachable while `update` is private — see the comment on that arm in
+  // src/state/database.ts.
+  test('an empty string value is a real value and is never auto-deleted', () => {
+    const { db } = setup()
+    const key = Buffer.from('str')
+
+    db.setString(key, Buffer.alloc(0))
+
+    assert.strictEqual(db.getType(key), 'string')
+    assert.deepStrictEqual(db.getString(key), Buffer.alloc(0))
   })
 })

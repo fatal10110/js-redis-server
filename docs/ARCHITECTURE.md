@@ -138,7 +138,7 @@ graph TD
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
 | **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
-| **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts)                                                                                                                                                                                       |
+| **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts)                                                                                                                                                                                                                                    |
 
 Commands never touch the transport — they return a `RedisResult` (or a
 `ResponseStream` for push-style replies) and let the executor/session/adapter
@@ -353,7 +353,8 @@ the `RedisPubSubBroker` when `notify-keyspace-events` is enabled. Lifecycle
 events (`del`/`expire`/`persist`/`expired`) come straight from the mutation
 type; write event names (`set`/`lpush`/…) come from the active command, which
 the `CommandExecutor` records on the `RedisDatabase` around `execute`.
-In-place collection updates run through a keyspace-owned mutation tracker and
+In-place collection updates run through a mutation tracker owned by
+`RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and
 `TrackedListData.trim()`. Dirty tracking is operation-based rather than a
 before/after value diff: effective helper operations mark the key dirty as they

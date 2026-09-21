@@ -1,6 +1,8 @@
-// Data model for a database's keyspace. The storage itself lives on
-// `RedisDatabase` (src/state/database.ts) — these are the shapes it stores and
-// the contract its `update` mutators are handed.
+// Data model for a database's keyspace. The storage and all of the behavior
+// live on `RedisDatabase` (src/state/database.ts); these are just the shapes it
+// stores. `KeyspaceMutationTracker` is internal to its private `update` — code
+// outside goes through `updateHash`/`updateList`/..., which hand the mutator a
+// `Tracked*` wrapper and do the marking for it.
 
 import type { RedisDataValue } from './data-types'
 
@@ -30,10 +32,11 @@ export type KeyspaceMutationTracker = {
   // `RedisDatabase.update` only suppresses the dirty signal for in-place
   // changes to an already-existing key.
   //
-  // Caveat: this is WATCH-faithful but not notification-faithful. It suppresses
-  // the mutation event outright, and the same bus drives keyspace
-  // notifications, so the notification real Redis would still fire is lost with
-  // it. Real Redis keeps the two signals independent (`signalModifiedKey` vs
-  // `notifyKeyspaceEvent`); splitting them here is tracked in #379.
+  // Caveat: WATCH-faithful, but not notification-faithful. In that in-place
+  // case the dirty signal is suppressed by dropping the mutation event
+  // outright, and the same bus drives keyspace notifications, so the
+  // notification real Redis would still fire is lost with it. Real Redis keeps
+  // the two signals independent (`signalModifiedKey` vs `notifyKeyspaceEvent`);
+  // splitting them here is tracked in #379.
   markCommitted(): void
 }

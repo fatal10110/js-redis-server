@@ -186,8 +186,10 @@ export class RedisDatabase {
    * hash-field TTL expiry. Go through a wrapper.
    *
    * The mutator gets the value plus a tracker, and must mark what it did:
-   * `markChanged` for a WATCH-dirtying write, `markCommitted` to persist
-   * without dirtying. An unmarked mutation emits no event.
+   * `markChanged` for a WATCH-dirtying write, `markCommitted` to persist an
+   * in-place change to an **already-existing** key without dirtying. Creating
+   * the key dirties either way — see `if (dirty || !existing)` below. An
+   * unmarked mutation emits no event.
    *
    * Two sharp edges, both pre-existing:
    *
@@ -197,10 +199,11 @@ export class RedisDatabase {
    *   mark leaves its partial edit in the keyspace with no event emitted — e.g.
    *   a ghost empty hash that `getType` still reports as `hash`, a state real
    *   Redis cannot represent.
-   * - `markCommitted` suppresses the mutation event *outright*, and that same
-   *   bus also drives keyspace notifications. So the WATCH semantics below are
-   *   faithful to real Redis, but the notification that real Redis would still
-   *   fire is lost with it — real Redis keeps `signalModifiedKey` and
+   * - Where `markCommitted` does suppress — an in-place change to an existing
+   *   key — it suppresses the mutation event *outright*, and that same bus also
+   *   drives keyspace notifications. So the WATCH semantics below are faithful
+   *   to real Redis, but the notification that real Redis would still fire is
+   *   lost with it — real Redis keeps `signalModifiedKey` and
    *   `notifyKeyspaceEvent` independent. See #379.
    */
   private update<TValue extends RedisDataValue, TResult>(
@@ -455,6 +458,14 @@ function isEmptyCollection(value: RedisDataValue): boolean {
     case 'set':
     case 'zset':
       return value.members.size === 0
+    // 'string' is unreachable today and therefore untested: `update` is private
+    // and its only caller, `updateTyped`, is reached through the five typed
+    // wrappers, none of which passes 'string' (there is no `updateString` —
+    // strings are written whole via `set`/`setString`, which has no
+    // empty-collection rule). Kept for exhaustiveness: the switch has no
+    // `default`, so deleting the arm breaks the build. If a future
+    // `updateString` wrapper appears, or `update` is widened, this arm becomes
+    // live and must stay `false` — otherwise `SET k ""` starts deleting the key.
     case 'string':
     case 'stream':
       return false

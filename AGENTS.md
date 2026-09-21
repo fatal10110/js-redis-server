@@ -66,7 +66,7 @@ Redis-compatible server (standalone + cluster modes) built as a layered pipeline
 - `RedisServerState` owns one or more `RedisDatabase` instances plus server-wide state: cluster topology, Lua script cache, pub/sub broker
 - Each `RedisDatabase` owns its keyspace directly: a `Map<keyId, KeyspaceEntry>` of byte-safe `Buffer` keys → typed `RedisDataValue`s with an optional `expiresAt`. [src/state/keyspace.ts](src/state/keyspace.ts) holds only the data-model types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`, `KeyspaceMutationTracker`)
 - Expiration is lazy — `getLiveEntry` evicts expired keys on read and emits an `evict` mutation event so `WATCH` sees expiry like a real delete
-- Every mutation flows through `RedisMutationBus` ([src/state/mutation-events.ts](src/state/mutation-events.ts)), which clones values before fan-out (drives `WATCH` today, keyspace notifications later)
+- Every mutation flows through `RedisMutationBus` ([src/state/mutation-events.ts](src/state/mutation-events.ts)), which clones values before fan-out. It drives both `WATCH` and — via `KeyspaceNotifier`, wired in `RedisServerState` and a no-op until `notify-keyspace-events` is set — keyspace notifications. One bus for both signals, where real Redis keeps `signalModifiedKey` and `notifyKeyspaceEvent` independent (#379)
 - `FLUSHALL`/`FLUSHDB` clear keyspace data but **not** the script cache — only `SCRIPT FLUSH` does
 
 #### 2. CommandExecutor & ExecutionPolicy ([src/core/command-executor.ts](src/core/command-executor.ts), [src/core/execution-policies/](src/core/execution-policies/))
