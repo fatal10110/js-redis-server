@@ -1,4 +1,5 @@
 import {
+  cloneRedisDataValue,
   createHashData,
   createListData,
   createSetData,
@@ -16,9 +17,7 @@ import {
   ExpirationState,
   KeyspaceEntry,
   type KeyspaceMutationTracker,
-  RedisKeyspace,
   SetOptions,
-  WrongRedisTypeError,
 } from './keyspace'
 import {
   RedisMutationBus,
@@ -54,18 +53,21 @@ export class RedisDatabase {
    * execution.
    */
   activeNotifyCommand: string | null = null
-  private readonly keyspace: RedisKeyspace
+  private readonly entries = new Map<string, KeyspaceEntry>()
 
-  constructor(public readonly id: number) {
-    this.keyspace = new RedisKeyspace(this.id, this.mutations)
-  }
+  constructor(public readonly id: number) {}
 
   get(key: Buffer): RedisDataValue | null {
-    return this.keyspace.get(key)
+    const entry = this.getLiveEntry(key)
+    if (!entry) {
+      return null
+    }
+
+    return cloneRedisDataValue(entry.value)
   }
 
   getString(key: Buffer): Buffer | null {
-    const value = this.keyspace.get(key)
+    const value = this.get(key)
     if (!value || value.type !== 'string') {
       return null
     }
@@ -74,31 +76,87 @@ export class RedisDatabase {
   }
 
   getType(key: Buffer): RedisDataValue['type'] | null {
-    return this.keyspace.getType(key)
+    return this.getLiveEntry(key)?.value.type ?? null
   }
 
   set(key: Buffer, value: RedisDataValue, options?: SetOptions): void {
-    this.keyspace.set(key, value, options)
+    const id = keyId(key)
+    const existing = this.getLiveEntry(key)
+    const expiresAt = options?.keepTtl
+      ? existing?.expiresAt
+      : options?.expiresAt
+    const entry: KeyspaceEntry = {
+      key: Buffer.from(key),
+      value: cloneRedisDataValue(value),
+      expiresAt,
+    }
+
+    this.entries.set(id, entry)
+    this.emitWrite(entry)
   }
 
   setString(key: Buffer, value: Buffer, options?: SetOptions): void {
-    this.keyspace.set(key, createStringData(value), options)
+    this.set(key, createStringData(value), options)
   }
 
   delete(key: Buffer): boolean {
-    return this.keyspace.delete(key)
+    const id = keyId(key)
+    const existing = this.getLiveEntry(key)
+    if (!existing) {
+      return false
+    }
+
+    this.entries.delete(id)
+    this.mutations.emit({
+      type: 'delete',
+      database: this.id,
+      key: existing.key,
+    })
+    return true
   }
 
   expire(key: Buffer, expiresAt: number): boolean {
-    return this.keyspace.expire(key, expiresAt)
+    const entry = this.getLiveEntry(key)
+    if (!entry) {
+      return false
+    }
+
+    entry.expiresAt = expiresAt
+    this.mutations.emit({
+      type: 'expire',
+      database: this.id,
+      key: entry.key,
+      expiresAt,
+    })
+    return true
   }
 
   persist(key: Buffer): boolean {
-    return this.keyspace.persist(key)
+    const entry = this.getLiveEntry(key)
+    if (!entry || entry.expiresAt === undefined) {
+      return false
+    }
+
+    delete entry.expiresAt
+    this.mutations.emit({
+      type: 'persist',
+      database: this.id,
+      key: entry.key,
+    })
+    return true
   }
 
   getExpiration(key: Buffer): ExpirationState {
-    return this.keyspace.getExpiration(key)
+    const entry = this.getLiveEntry(key)
+    if (!entry) {
+      return { kind: 'missing' }
+    }
+
+    if (entry.expiresAt === undefined) {
+      return { kind: 'persistent' }
+    }
+
+    return { kind: 'expires', expiresAt: entry.expiresAt }
   }
 
   getHash(key: Buffer): RedisHashData | null {
@@ -119,6 +177,95 @@ export class RedisDatabase {
 
   getStream(key: Buffer): RedisStreamData | null {
     return this.getTyped<RedisStreamData>(key, 'stream')
+  }
+
+  /**
+   * Read-modify-write a single key under its expected type, shared by the typed
+   * `updateHash`/`updateList`/... wrappers. Private on purpose: it hands the
+   * mutator the *untracked* value, which skips the `Tracked*` layer and with it
+   * hash-field TTL expiry. Go through a wrapper.
+   *
+   * The mutator gets the value plus a tracker, and must mark what it did:
+   * `markChanged` for a WATCH-dirtying write, `markCommitted` to persist an
+   * in-place change to an **already-existing** key without dirtying. Creating
+   * the key dirties either way — see `if (dirty || !existing)` below. An
+   * unmarked mutation emits no event.
+   *
+   * Two sharp edges, both pre-existing:
+   *
+   * - Only a **brand-new** key is rolled back on a throw. For an existing key
+   *   the mutator writes straight through the stored object (`getLiveEntry`
+   *   returns the entry, not a copy), so a mutator that throws or forgets to
+   *   mark leaves its partial edit in the keyspace with no event emitted — e.g.
+   *   a ghost empty hash that `getType` still reports as `hash`, a state real
+   *   Redis cannot represent.
+   * - Where `markCommitted` does suppress — an in-place change to an existing
+   *   key — it suppresses the mutation event *outright*, and that same bus also
+   *   drives keyspace notifications. So the WATCH semantics below are faithful
+   *   to real Redis, but the notification that real Redis would still fire is
+   *   lost with it — real Redis keeps `signalModifiedKey` and
+   *   `notifyKeyspaceEvent` independent. See #379.
+   */
+  private update<TValue extends RedisDataValue, TResult>(
+    key: Buffer,
+    expectedType: TValue['type'],
+    createValue: () => TValue,
+    mutator: (value: TValue, tracker: KeyspaceMutationTracker) => TResult,
+  ): TResult {
+    const existing = this.getLiveEntry(key)
+
+    if (existing && existing.value.type !== expectedType) {
+      throw new WrongTypeRedisError()
+    }
+
+    // For a new key, mutate a not-yet-committed entry: if the mutator throws,
+    // the keyspace is left untouched (no ghost empty collection persists).
+    const entry: KeyspaceEntry = existing ?? {
+      key: Buffer.from(key),
+      value: createValue(),
+    }
+
+    let dirty = false
+    let committed = false
+    const tracker: KeyspaceMutationTracker = {
+      markChanged: () => {
+        dirty = true
+      },
+      markCommitted: () => {
+        committed = true
+      },
+    }
+
+    const result = mutator(entry.value as TValue, tracker)
+    const id = keyId(key)
+
+    if (!dirty && !committed) {
+      return result
+    }
+
+    // Centralized "delete the key when its collection is empty" rule, so each
+    // command no longer has to remember to clean up emptied hashes/lists/etc.
+    if (isEmptyCollection(entry.value)) {
+      if (existing) {
+        this.entries.delete(id)
+        this.mutations.emit({
+          type: 'delete',
+          database: this.id,
+          key: entry.key,
+        })
+      }
+      return result
+    }
+
+    this.entries.set(id, entry)
+    // A markChanged write always dirties WATCH. A markCommitted-only change
+    // dirties only when it creates the key (`!existing`): real Redis treats
+    // bringing a watched key into existence as a write, but leaves a WATCH
+    // intact for in-place metadata changes to an already-existing key.
+    if (dirty || !existing) {
+      this.emitWrite(entry)
+    }
+    return result
   }
 
   updateHash<TResult>(
@@ -190,7 +337,7 @@ export class RedisDatabase {
     key: Buffer,
     expectedType: TValue['type'],
   ): TValue | null {
-    const value = this.keyspace.get(key)
+    const value = this.get(key)
     if (!value) return null
     if (value.type !== expectedType) throw new WrongTypeRedisError()
     return value as TValue
@@ -203,33 +350,49 @@ export class RedisDatabase {
     mutator: (value: TTracked) => TResult,
     track: (value: TValue, tracker: KeyspaceMutationTracker) => TTracked,
   ): TResult {
-    try {
-      return this.keyspace.update(
-        key,
-        expectedType,
-        createValue,
-        (value, tracker) => mutator(track(value as TValue, tracker)),
-      )
-    } catch (err) {
-      if (err instanceof WrongRedisTypeError) throw new WrongTypeRedisError()
-      throw err
-    }
+    return this.update(key, expectedType, createValue, (value, tracker) =>
+      mutator(track(value as TValue, tracker)),
+    )
   }
 
   flush(): void {
-    this.keyspace.flush()
+    this.entries.clear()
+    this.mutations.emit({
+      type: 'flush',
+      database: this.id,
+    })
   }
 
   size(): number {
-    return this.keyspace.size()
+    this.sweepExpired()
+    return this.entries.size
   }
 
   entriesSnapshot(): KeyspaceEntry[] {
-    return this.keyspace.entriesSnapshot()
+    this.sweepExpired()
+    const entries: KeyspaceEntry[] = []
+
+    for (const entry of this.entries.values()) {
+      entries.push({
+        key: Buffer.from(entry.key),
+        value: cloneRedisDataValue(entry.value),
+        expiresAt: entry.expiresAt,
+      })
+    }
+
+    return entries
   }
 
-  sweepExpired(now?: number): number {
-    return this.keyspace.sweepExpired(now)
+  sweepExpired(now = Date.now()): number {
+    let count = 0
+
+    for (const entry of Array.from(this.entries.values())) {
+      if (this.evictIfExpired(entry, now)) {
+        count += 1
+      }
+    }
+
+    return count
   }
 
   subscribe(listener: RedisMutationListener): Unsubscribe {
@@ -238,5 +401,73 @@ export class RedisDatabase {
 
   subscribeKey(key: Buffer, listener: RedisMutationListener): Unsubscribe {
     return this.mutations.subscribeKey(key, listener)
+  }
+
+  private getLiveEntry(key: Buffer): KeyspaceEntry | null {
+    const entry = this.entries.get(keyId(key))
+    if (!entry) {
+      return null
+    }
+
+    if (this.evictIfExpired(entry)) {
+      return null
+    }
+
+    return entry
+  }
+
+  private evictIfExpired(entry: KeyspaceEntry, now = Date.now()): boolean {
+    if (entry.expiresAt === undefined || entry.expiresAt > now) {
+      return false
+    }
+
+    this.entries.delete(keyId(entry.key))
+    this.mutations.emit({
+      type: 'evict',
+      database: this.id,
+      key: entry.key,
+    })
+    return true
+  }
+
+  private emitWrite(entry: KeyspaceEntry): void {
+    this.mutations.emit({
+      type: 'write',
+      database: this.id,
+      key: entry.key,
+      value: entry.value,
+      expiresAt: entry.expiresAt,
+    })
+  }
+}
+
+function keyId(key: Buffer): string {
+  return key.toString('hex')
+}
+
+// A collection-typed value is "empty" when it holds no elements; such keys are
+// deleted from the keyspace (matching real Redis). Strings are always a real
+// value (even ""), and empty streams persist (e.g. XGROUP CREATE MKSTREAM), so
+// neither is ever auto-deleted here.
+function isEmptyCollection(value: RedisDataValue): boolean {
+  switch (value.type) {
+    case 'hash':
+      return value.fields.size === 0
+    case 'list':
+      return value.values.length === 0
+    case 'set':
+    case 'zset':
+      return value.members.size === 0
+    // 'string' is unreachable today and therefore untested: `update` is private
+    // and its only caller, `updateTyped`, is reached through the five typed
+    // wrappers, none of which passes 'string' (there is no `updateString` —
+    // strings are written whole via `set`/`setString`, which has no
+    // empty-collection rule). Kept for exhaustiveness: the switch has no
+    // `default`, so deleting the arm breaks the build. If a future
+    // `updateString` wrapper appears, or `update` is widened, this arm becomes
+    // live and must stay `false` — otherwise `SET k ""` starts deleting the key.
+    case 'string':
+    case 'stream':
+      return false
   }
 }

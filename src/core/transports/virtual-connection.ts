@@ -1,6 +1,5 @@
 import { Duplex } from 'node:stream'
 import type { CommandExecutor } from '../command-executor'
-import type { RespEncodeOptions } from '../resp-encoder'
 import type { Logger } from '../../logger'
 import type { RedisClusterNodeRole, RedisServerState } from '../../state'
 import { formatSocketAddressParts } from '../network-address'
@@ -17,7 +16,6 @@ export type CreateVirtualConnectionOptions = {
   executor: CommandExecutor
   nodeRole?: RedisClusterNodeRole
   logger?: Pick<Logger, 'error'>
-  encoder?: RespEncodeOptions
   /** Synthetic remote address reported to the client lib. Default 127.0.0.1. */
   remoteAddress?: string
   /** Synthetic remote port reported to the client lib. Default 6379. */
@@ -308,7 +306,6 @@ export function createVirtualConnection(
     executor: opts.executor,
     nodeRole: opts.nodeRole,
     logger: opts.logger,
-    encoder: opts.encoder,
     clientAddress: formatSocketAddressParts(
       opts.remoteAddress ?? '127.0.0.1',
       opts.remotePort ?? 6379,

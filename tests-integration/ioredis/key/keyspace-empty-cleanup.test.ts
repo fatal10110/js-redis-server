@@ -8,7 +8,7 @@ const testRunner = new TestRunner()
 // Issue #124: the "delete a key when its collection becomes empty" and
 // "don't create a ghost key for a no-op mutation" rules used to live in each
 // command (HDEL/SREM/... pre-check existence and self-delete) rather than in
-// RedisKeyspace.update(). The root-cause fix centralizes both rules in
+// RedisDatabase.update(). The root-cause fix centralizes both rules in
 // update(). These wire-level tests guard that the centralized behavior matches
 // real Redis end-to-end: no-op mutations on a missing key don't disturb a
 // WATCH, emptying a key removes it, and a real emptying still dirties a WATCH.
