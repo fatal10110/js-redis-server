@@ -123,10 +123,6 @@ export function createDefaultParkHandler(): ParkHandler {
     })
 }
 
-export function createNoopParkHandler(): ParkHandler {
-  return createDefaultParkHandler()
-}
-
 /**
  * Park handler for commands replayed inside MULTI/EXEC.
  *

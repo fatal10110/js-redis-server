@@ -94,7 +94,6 @@ export {
 } from './core/execution-policies'
 export {
   createDefaultParkHandler,
-  createNoopParkHandler,
   createNonBlockingParkHandler,
 } from './core/redis-context'
 export {

@@ -7,7 +7,7 @@ import {
   RedisResult,
   RedisServerState,
   RedisValue,
-  createNoopParkHandler,
+  createDefaultParkHandler,
   defineCommand,
   isResponseStream,
   t,
@@ -44,7 +44,7 @@ function createContext(executor?: CommandExecutor): RedisExecutionContext {
     },
     executor: contextExecutor,
     signal: new AbortController().signal,
-    park: createNoopParkHandler(),
+    park: createDefaultParkHandler(),
   }
 }
 
@@ -517,7 +517,7 @@ describe('new command executor core', () => {
   })
 
   test('park handler supports timeout and abort', async () => {
-    const park = createNoopParkHandler()
+    const park = createDefaultParkHandler()
     const timeoutResult = await park({
       waitFor: new Promise<null>(() => {}),
       timeoutMs: 1,
