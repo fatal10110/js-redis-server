@@ -5,7 +5,6 @@ import { encodeRedisResult } from '../../resp-encoder'
 import { isResponseStream } from '../../response-stream'
 import type { ResponseStream } from '../../response-stream'
 import type { ExecutorResult } from '../../command-executor'
-import type { RespEncodeOptions } from '../../resp-encoder'
 import type { Logger } from '../../../logger'
 import type { ConnectionTransport } from '../connection-transport'
 import {
@@ -18,7 +17,6 @@ export type Resp2SessionAdapterOptions = {
   transport: ConnectionTransport
   session: ClientSession
   logger?: Pick<Logger, 'error'>
-  encoder?: RespEncodeOptions
 }
 
 export class Resp2SessionAdapter {
@@ -26,7 +24,6 @@ export class Resp2SessionAdapter {
   private readonly transport: ConnectionTransport
   private readonly session: ClientSession
   private readonly logger?: Pick<Logger, 'error'>
-  private readonly encoder?: RespEncodeOptions
   private writeChain: Promise<void> = Promise.resolve()
   private readonly activeStreams = new Set<Promise<void>>()
 
@@ -34,7 +31,6 @@ export class Resp2SessionAdapter {
     this.transport = options.transport
     this.session = options.session
     this.logger = options.logger
-    this.encoder = options.encoder
   }
 
   async run(): Promise<void> {
@@ -123,7 +119,6 @@ export class Resp2SessionAdapter {
       if (!result.options?.omitReply) {
         await this.transport.write(
           encodeRedisResult(result, {
-            ...this.encoder,
             version: this.session.protocolVersion,
           }),
         )
