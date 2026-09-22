@@ -166,11 +166,16 @@ The `docker-compose.test.yml` file defines three services, all on the official `
 - Ports: 30000-30005 (bus ports 40000-4000x stay container-internal).
 - All six `redis-server` processes run in **one** container so they reach each other over 127.0.0.1 and the host port map is 1:1.
 - Mac-compatible networking via `--cluster-announce-ip 127.0.0.1`, so MOVED/ASK redirects resolve from the host.
-- Startup is driven by [`docker/redis-cluster-init.sh`](../docker/redis-cluster-init.sh), mounted read-only into the container. It waits for **all six** nodes to answer `PING` and report `cluster_enabled:1`, then retries `redis-cli --cluster create` (up to 5 times, resetting the nodes between attempts) until every node reports `cluster_state:ok`, all 16384 slots are assigned, and the topology has settled into 3 masters + 3 replicas.
-- Each `redis-server` logs to `/var/log/redis-cluster/<port>.log` inside the container; those logs plus `CLUSTER INFO`/`CLUSTER NODES` are dumped to stdout if formation fails, so `docker compose logs redis-cluster` explains the failure.
-- Healthcheck requires both the init script's ready marker (`/run/redis-cluster-ready`) and a live `cluster_state:ok` on every node, so `docker compose up --wait` cannot return while the cluster is still forming, and a node dying later marks the container unhealthy.
+- Startup is driven by [`docker/redis-cluster-init.sh`](../docker/redis-cluster-init.sh), mounted read-only into the container. It clears any stale `nodes-*.conf` from the `/data` volume, waits for **all six** nodes to answer `PING` and report `cluster_enabled:1`, then retries `redis-cli --cluster create` (up to 3 times, resetting the nodes between attempts) until the readiness gate below passes.
+- The readiness gate requires, **on every node**: `cluster_state:ok`, all 16384 slots assigned, `cluster_known_nodes:6`, and exactly 3 masters + 3 replicas with no `fail`/`fail?`/`handshake`/`noaddr` flags. Each condition catches something the others miss — in particular a dead *replica* leaves `cluster_state` at `ok`, because the surviving masters still cover every slot.
+- Each `redis-server` logs to `/var/log/redis-cluster/<port>.log` inside the container; those logs plus every node's `CLUSTER INFO` and `CLUSTER NODES` are dumped to stdout if formation fails, so `docker compose logs redis-cluster` explains the failure.
+- The healthcheck runs the same script in `check` mode, so the liveness probe applies exactly the gate above plus the ready marker. `docker compose up --wait` therefore cannot return while the cluster is still forming, and a node dying mid-run marks the container unhealthy.
 
-Tunables (env vars on the `redis-cluster` service): `NODE_READY_TIMEOUT`, `CLUSTER_READY_TIMEOUT`, `CREATE_ATTEMPTS`, `CLUSTER_NODE_TIMEOUT`.
+**Timeout budget.** The init script is the authoritative budget: worst case ~315s (30s node gate + 3 attempts x (60s create + 30s settle) + backoff), after which it exits non-zero having dumped diagnostics. The workflow's `--wait-timeout` (420s) is only an outer backstop, and the healthcheck's `start_period` (330s) covers the whole script budget so a slow-but-healthy boot can never exhaust its retries. Keep that ordering if you change any of them — inverting it is how a failure ends up with no diagnostics at all.
+
+Tunables (env vars on the `redis-cluster` service): `NODE_READY_TIMEOUT`, `CLUSTER_READY_TIMEOUT`, `CREATE_TIMEOUT`, `CREATE_ATTEMPTS`, `CLUSTER_NODE_TIMEOUT`, `CONFIG_DIR`.
+
+Either compose spelling works for the commands in this document: the `docker compose` v2 plugin and the standalone `docker-compose` v2 binary are the same implementation, and everything used here (`--wait`, `--wait-timeout`) needs only v2.17+.
 
 ## Benefits
 

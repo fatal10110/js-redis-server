@@ -18,25 +18,28 @@ services:
       - ./docker/redis-cluster-init.sh:/usr/local/bin/redis-cluster-init.sh:ro
     command: ['sh', '/usr/local/bin/redis-cluster-init.sh']
     healthcheck:
-      # Two conditions, both required:
-      #   * the init script signed off (marker file) — so `up --wait` can never
-      #     return while it is still retrying or waiting for roles to settle;
-      #   * EVERY node still reports cluster_state:ok — so a node dying later
-      #     turns the container unhealthy.
-      # `get a` answers before the cluster has finished forming, which lets
-      # clients connect to a half-built cluster and hang on slot lookups; and
-      # checking node 30000 alone still passes while another node is unjoined.
-      test:
-        [
-          'CMD-SHELL',
-          'test -f /run/redis-cluster-ready && for p in 30000 30001 30002 30003 30004 30005; do redis-cli -p $$p cluster info 2>/dev/null | grep -q cluster_state:ok || exit 1; done',
-        ]
+      # The probe delegates to the init script's own `check` mode instead of
+      # inlining a one-liner, so it applies exactly the gate that startup
+      # applied: the ready marker, plus cluster_state:ok / all 16384 slots /
+      # 6 known nodes / 3 clean masters + 3 clean replicas on EVERY node.
+      # A `get a` or a single-node cluster_state check is not equivalent —
+      # both answer happily for a half-built cluster (clients then hang on slot
+      # lookups) and both stay green with a dead replica, since covered slots
+      # keep cluster_state at ok.
+      test: ['CMD', 'sh', '/usr/local/bin/redis-cluster-init.sh', 'check']
       interval: 5s
-      timeout: 10s
-      # 30s grace + 40 x 5s = 230s, just inside the workflow's --wait-timeout,
-      # so a stuck cluster fails the step with logs rather than the job's clock.
-      retries: 40
-      start_period: 30s
+      # The probe makes 12 redis-cli calls (2 per node); 15s is head-room for a
+      # loaded machine, not an expected duration.
+      timeout: 15s
+      # start_period covers the init script's entire worst-case budget (~315s,
+      # see its header), and probe failures inside it do not count against
+      # retries — so a slow-but-healthy boot can never exhaust the retry count.
+      # retries is therefore sized for STEADY STATE: once formed, 3 consecutive
+      # failures (<= 60s) mark the container unhealthy, which is what surfaces
+      # a node that dies mid-run. Nothing here bounds a hung boot; that is the
+      # init script's own budget, backstopped by the workflow's --wait-timeout.
+      retries: 3
+      start_period: 330s
 
   # Standalone (non-cluster) Redis. Cluster mode rejects SELECT and exposes a
   # single logical database, so integration tests that need multiple databases
