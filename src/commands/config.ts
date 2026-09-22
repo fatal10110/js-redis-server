@@ -9,7 +9,7 @@ import {
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { normalizeKeyspaceNotifyConfig } from '../state'
-import { ok } from './helpers'
+import { INT64_MAX, ok } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 // Behavior-driving parameters whose authoritative value lives on the server
@@ -35,9 +35,6 @@ const MEMORY_UNITS = new Map<string, bigint>([
   ['g', 1000000000n],
   ['gb', 1073741824n],
 ])
-
-/** `strtoll`'s saturation point, which Redis 6.2's memory parse clamps to. */
-const INT64_MAX = 9223372036854775807n
 
 /**
  * CONFIG SET's failure wording, which Redis 7.0 changed wholesale when it
@@ -71,8 +68,8 @@ function configSetFailed(
  * Empty input is *not* a parse failure: Redis' `memtoull` reads it as 0, which
  * then fails the range check instead.
  *
- * Redis 6.2 parses the decimal literal with `strtoll`, which saturates at int64
- * max rather than failing, and only *then* runs the parameter's boundary check;
+ * Redis 6.2 parses the decimal literal with `strtoll`, which saturates at
+ * {@link INT64_MAX} rather than failing, and only *then* runs the parameter's boundary check;
  * 7.0+ rejects an over-long literal outright. So the saturation below clamps to
  * int64 max and falls through to the boundary check, rather than clamping to
  * `max` — for a parameter whose maximum is under int64 max, 6.2 clamps and then

@@ -315,6 +315,14 @@ describe(
         // Saturation is limited to the bare literal. Once a unit multiplier
         // pushes the product over the maximum, real 6.2 errors as well, so the
         // gate must not swallow these.
+        //
+        // Only the `-ERR Invalid argument ` prefix is asserted, deliberately:
+        // which *detail* follows is a known, documented divergence. Real 6.2
+        // computes the product in 64 bits and reports `argument must be a
+        // memory value` when it wraps negative, where exact arithmetic here
+        // reports the range error — `10000000000g` is such a row, while
+        // `17179869184gb` wraps to zero and matches. See parseMemoryValue's
+        // docblock. Tightening this to the full message would fail.
         for (const value of ['10000000000g', '17179869184gb']) {
           assert.match(
             await send('CONFIG', 'SET', 'proto-max-bulk-len', value),

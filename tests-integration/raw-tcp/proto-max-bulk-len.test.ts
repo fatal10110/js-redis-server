@@ -130,26 +130,41 @@ describe(
       }
     }
 
-    // Offsets chosen to sit on the dangerous side of the old cap. With the
-    // ceiling at buffer.constants.MAX_LENGTH these all passed the guard and
-    // then threw RangeError inside Buffer.alloc, which is not a
-    // RedisCommandError: the adapter answered -ERR internal server error (or
-    // nothing) and closed the transport.
+    /**
+     * Offsets that must be refused with the size error rather than allocated.
+     *
+     * Order matters, and the two groups pin different things:
+     *
+     * 1. The **ceiling** row goes first, and is the only one here that pins
+     *    `MAX_MATERIALISABLE_LENGTH`. If the ceiling is raised or removed, the
+     *    guard admits it, `Buffer.alloc` succeeds (512MB — a real but bounded
+     *    allocation), and the reply is `:536870913` instead of the error, so
+     *    this row fails immediately and the rest never run.
+     * 2. The rows after it sit in the band where `Buffer.alloc` *throws*, so
+     *    they pin the `allocateStringBuffer` backstop, not the ceiling — with
+     *    the ceiling reverted but the backstop kept, all of them stay green.
+     *    That is deliberate and worth stating, because it is easy to read the
+     *    whole array as ceiling coverage when only the first row is.
+     *
+     * A lazily-mapped terabyte (offset 1000000000000) is deliberately **not**
+     * here. It is the one input that distinguishes the ceiling end to end, but
+     * `Buffer.alloc` accepts it and the process is then SIGKILLed during
+     * zero-fill — so on a regression it would take the runner down instead of
+     * failing an assertion, and no ordering changes that. The invariant it
+     * stood for is pinned allocation-free in tests/commands-strings-limits.test.ts.
+     */
     const offsets: [label: string, offset: string][] = [
-      ['one past buffer.constants.MAX_LENGTH', String(BUFFER_MAX_LENGTH - 1)],
-      ['exactly buffer.constants.MAX_LENGTH', String(BUFFER_MAX_LENGTH - 2)],
-      ['inside the unallocatable band', '9007199254740000'],
-      ['inside the unallocatable band, lower', '8000000000000000'],
-      // Accepted lazily by Buffer.alloc and then SIGKILLs the process during
-      // zero-fill — the case a representability limit cannot catch.
-      ['a lazily-mapped terabyte', '1000000000000'],
       [
         'just past the materialisable ceiling',
         String(MAX_MATERIALISABLE_LENGTH - 1),
       ],
+      ['one past buffer.constants.MAX_LENGTH', String(BUFFER_MAX_LENGTH - 1)],
+      ['exactly buffer.constants.MAX_LENGTH', String(BUFFER_MAX_LENGTH - 2)],
+      ['inside the unallocatable band', '9007199254740000'],
+      ['inside the unallocatable band, lower', '8000000000000000'],
     ]
 
-    test('SETRANGE answers the size error and keeps the connection alive at every unallocatable offset', async () => {
+    test('SETRANGE answers the size error and keeps the connection alive at every unservable offset', async () => {
       const conn = await connect()
 
       conn.write(

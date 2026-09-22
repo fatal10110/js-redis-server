@@ -61,7 +61,7 @@ import {
  * a gigabyte is already a problem, and one that vanishes mid-suite is worse
  * than one that answers an error.
  */
-const MAX_MATERIALISABLE_LENGTH = 536870912n
+export const MAX_MATERIALISABLE_LENGTH = 536870912n
 
 type SetCondition = 'NX' | 'XX'
 
