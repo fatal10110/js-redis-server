@@ -38,24 +38,14 @@ export class SocketConnectionTransport implements ConnectionTransport {
   }
 
   async *read(): AsyncIterable<Buffer> {
-    // A real socket keeps Node's default and is destroyed when this loop exits,
-    // as on main. On peer EOF that is Redis's freeClient — output the peer
-    // never read is dropped — and it must happen here, not in the adapter's
-    // finally: that awaits pending writes first, which never flush to a peer
-    // that has stopped reading, so the socket would stay open for good.
-    //
-    // The in-process wire (a duplexPair, no destroySoon) opts out. The default
-    // destroys with an AbortError, and from Node 24 a duplexPair answers an
-    // errored destroy by destroying its peer — the client — which would strand
-    // a reply it has not read yet (e.g. after QUIT). Its writes cannot back up
-    // (unbounded high-water mark), so the adapter's close() is enough there.
-    //
-    // `readable.iterator()` and its `destroyOnReturn` option are documented as
-    // experimental.
-    const chunks = this.socket.iterator({
-      destroyOnReturn:
-        typeof (this.socket as MaybeSocket).destroySoon === 'function',
-    })
+    // `destroyOnReturn: false`: when the SERVER ends first (QUIT, a protocol
+    // error, the owner's close()) the consumer leaves this loop early, and that
+    // must not destroy the stream. The default destroys it with an AbortError,
+    // and from Node 24 a duplexPair answers an errored destroy by destroying
+    // its peer — the client — which strands a reply it has not read yet.
+    // close() half-closes instead. `readable.iterator()` and `destroyOnReturn`
+    // are documented as experimental.
+    const chunks = this.socket.iterator({ destroyOnReturn: false })
 
     try {
       for await (const chunk of chunks) {
@@ -78,6 +68,10 @@ export class SocketConnectionTransport implements ConnectionTransport {
         throw err
       }
     }
+
+    // Only reached when the CLIENT ended first: its EOF arrived, or its end
+    // was destroyed. (An early exit by the consumer returns above instead.)
+    this.dropOnPeerEof()
   }
 
   write(chunk: Buffer): Promise<void> {
@@ -114,6 +108,29 @@ export class SocketConnectionTransport implements ConnectionTransport {
     this.closed = true
     this.abort()
     this.destroySoon()
+  }
+
+  /**
+   * The client ended its side first. Tear the connection down now, as Redis's
+   * freeClient does (and main did over TCP): output the client has not read is
+   * dropped. Waiting on it instead — which close()'s half-close does — would
+   * park the session, and leak the stream, behind a client that stopped
+   * reading, whatever kind of Duplex this is. `abort()` settles the in-flight
+   * writes first, so the adapter's pending drains finish; `end()` still hands
+   * EOF to a client that is reading.
+   */
+  private dropOnPeerEof(): void {
+    if (this.closed) {
+      return
+    }
+
+    this.closed = true
+    this.abort()
+
+    if (this.socket.writable) {
+      this.socket.end()
+    }
+    this.socket.destroy()
   }
 
   /**

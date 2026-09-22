@@ -508,6 +508,48 @@ describe('createVirtualConnection — writing after the server has closed', () =
     assert.deepStrictEqual(errors, [])
   })
 
+  test("a write inside the client's 'end' handler is accepted, and a later one fails quietly", async () => {
+    const { conn } = await halfOpenAfterQuit()
+    const errors: string[] = []
+    conn.clientSocket.on('error', err =>
+      errors.push((err as NodeJS.ErrnoException).code ?? err.message),
+    )
+
+    // Real Redis 7.2 accepts this write (cb ok, then finish); failing it with
+    // EPIPE would also emit 'error' and crash a consumer with no handler.
+    let inEnd: Promise<Error | null | undefined> | undefined
+    conn.clientSocket.once('end', () => {
+      inEnd = new Promise(resolve =>
+        conn.clientSocket.write(commandFrame('PING'), resolve),
+      )
+    })
+
+    const seen = record(conn.clientSocket)
+    conn.clientSocket.resume()
+    await within(seen.closed, 'the client to close')
+
+    assert.ok(inEnd, "no write was made in the 'end' handler")
+    assert.strictEqual(
+      (await within(inEnd, 'the write callback')) ?? null,
+      null,
+    )
+    assert.strictEqual(seen.bytes(), UNREAD)
+    assert.deepStrictEqual(seen.events, ['data', 'end', 'finish', 'close'])
+
+    // By now allowHalfOpen: false has ended the writable, so a further write
+    // fails its callback — ERR_STREAM_WRITE_AFTER_END, where a net.Socket says
+    // EPIPE — and, like a net.Socket, emits no 'error'.
+    const after = new Promise<NodeJS.ErrnoException | null | undefined>(
+      resolve => conn.clientSocket.write(commandFrame('PING'), resolve),
+    )
+    assert.strictEqual(
+      (await within(after, 'the late write callback'))?.code,
+      'ERR_STREAM_WRITE_AFTER_END',
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepStrictEqual(errors, [])
+  })
+
   test('end(cb) calls back, and the unread reply is still delivered', async () => {
     const { conn } = await halfOpenAfterQuit()
 

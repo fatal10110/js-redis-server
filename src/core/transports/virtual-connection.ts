@@ -222,27 +222,24 @@ type WriteCallback = (error?: Error | null) => void
  * handed to `_write` — so client code awaiting a write or `end(cb)` would hang
  * for good. Answer them the way a TCP socket whose peer has closed does:
  * `end()` completes, and a write is accepted (the kernel buffers it; the data
- * goes nowhere) for as long as the client still has the unread reply and EOF
- * to take in. Failing it instead would destroy the client and discard that
- * reply, and crash a consumer with no 'error' handler. Only once the client
- * has read to EOF does a write fail with EPIPE — and by then a client with
- * allowHalfOpen: false has usually ended its own writable anyway.
+ * goes nowhere). Failing it instead would destroy the client, discard a reply
+ * it has not read yet, and crash a consumer with no 'error' handler — real TCP
+ * accepts it, including a write made synchronously inside the client's own
+ * 'end' handler. A write any later than that is refused before it gets here:
+ * allowHalfOpen: false has ended the client's writable by then, so it fails
+ * with ERR_STREAM_WRITE_AFTER_END (a net.Socket reports EPIPE there; both
+ * fail the callback without an 'error' event).
  */
 function settleWritesOnPeerClose(stream: Duplex, peer: Duplex): void {
-  const writeToClosedPeer = () => (stream.readableEnded ? epipe() : undefined)
+  const pending = new Set<WriteCallback>()
 
-  const pending = new Map<WriteCallback, () => Error | undefined>()
-
-  const track = (
-    callback: WriteCallback,
-    onPeerClose: () => Error | undefined,
-  ): WriteCallback => {
+  const track = (callback: WriteCallback): WriteCallback => {
     const settle: WriteCallback = error => {
       if (pending.delete(settle)) {
         callback(error)
       }
     }
-    pending.set(settle, onPeerClose)
+    pending.add(settle)
     return settle
   }
 
@@ -251,10 +248,10 @@ function settleWritesOnPeerClose(stream: Duplex, peer: Duplex): void {
 
   stream._write = (chunk, encoding, callback) => {
     if (peer.destroyed) {
-      callback(writeToClosedPeer())
+      callback()
       return
     }
-    write(chunk, encoding, track(callback, writeToClosedPeer))
+    write(chunk, encoding, track(callback))
   }
 
   if (final) {
@@ -263,22 +260,13 @@ function settleWritesOnPeerClose(stream: Duplex, peer: Duplex): void {
         callback()
         return
       }
-      final(track(callback, () => undefined))
+      final(track(callback))
     }
   }
 
   peer.once('close', () => {
-    for (const [settle, onPeerClose] of [...pending]) {
-      settle(onPeerClose())
+    for (const settle of [...pending]) {
+      settle()
     }
-  })
-}
-
-/** Shaped like the error a net.Socket reports writing to a closed peer. */
-function epipe(): NodeJS.ErrnoException {
-  return Object.assign(new Error('write EPIPE'), {
-    code: 'EPIPE',
-    errno: -32,
-    syscall: 'write',
   })
 }

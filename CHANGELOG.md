@@ -74,13 +74,24 @@ so the PR body is not a durable home for a breaking-change note.
     resumes later. Previously a client that was not reading at that moment
     lost its buffered reply and never saw `'end'`. A client that never reads
     stays half-open until its owner destroys it, as a real socket would.
-  - While half-open, a client write is accepted, as a TCP kernel accepts the
-    first write to a closed peer, and `end(cb)` calls back; the unread reply and
-    EOF are still delivered. Only after the client has read to EOF does a write
-    fail with `EPIPE`. Previously the client socket was destroyed outright, so
-    writes failed with `ERR_STREAM_DESTROYED` (without an `'error'` event).
+  - While half-open, a client write is accepted, as a TCP kernel accepts a
+    write to a closed peer, and `end(cb)` calls back; the unread reply and EOF
+    are still delivered. That includes a write made synchronously in the
+    client's `'end'` handler. Any later write fails its callback with
+    `ERR_STREAM_WRITE_AFTER_END`, because the client (`allowHalfOpen: false`)
+    has ended its own writable by then; a `net.Socket` reports `EPIPE` there.
+    Neither emits `'error'`. Previously the client socket was destroyed
+    outright, so writes failed with `ERR_STREAM_DESTROYED`, also without an
+    `'error'` event.
   - A client `end()` (as ioredis `disconnect()` sends) makes the server close
     its side too, so the client sees `'finish'`, `'end'`, `'close'`.
+
+  For `SocketConnectionTransport` over any `Duplex`, what matters is which side
+  ended first. If the client ends first (EOF, or it destroys its end), the
+  connection is torn down at once and output it has not read is dropped, like
+  Redis's `freeClient` and like main over TCP. That holds even when the
+  server's writes are backed up behind a paused client. If the server ends
+  first, the connection half-closes as described above.
   - An error passed to `destroy()` on one end is not carried to the other; the
     far end is torn down cleanly, which is what Node 24's own `duplexPair`
     does.
