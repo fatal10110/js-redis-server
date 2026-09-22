@@ -113,6 +113,10 @@ surface.
 >   `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure wording
 >   follows the profile (Redis 7.0 changed it — see
 >   [compatibility profiles](API.md#compatibility-profiles)).
+>   Raising it past **512MB**, Redis' own default, does not raise what the mock
+>   will allocate: beyond that the size error is returned rather than a buffer
+>   the test process may not survive producing. At or below the default the
+>   behavior is Redis'.
 >   **Enforcement is not yet general**: real Redis' primary check is in the
 >   protocol reader, so it also bounds every bulk argument (`SET`, `MSET`,
 >   `LPUSH`, `HSET`, ...) and the `SETBIT`/`BITFIELD` bit-offset ceiling. Neither

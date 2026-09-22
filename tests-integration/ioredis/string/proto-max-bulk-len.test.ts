@@ -227,6 +227,12 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
     )
   })
 
+  // A prototype key as a memory-unit suffix (`constructor`) is covered in
+  // tests-integration/raw-tcp/proto-max-bulk-len.test.ts, for the same reason
+  // as the allocation ceiling: when it regresses the server hangs up, and a
+  // client-driven assertion then hangs on ioredis' retry instead of failing.
+  // Measured — this test wedged the runner before it was moved.
+
   // Redis' memtoull reads an empty string as 0, so it fails the *range* check
   // rather than the memory-value check.
   test('CONFIG SET reports an empty proto-max-bulk-len as out of range', async () => {
@@ -322,38 +328,9 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
     },
   )
 
-  // `proto-max-bulk-len` can be raised past what a Buffer can hold. The size
-  // check has to refuse first: letting Buffer.alloc throw a RangeError would
-  // escape the command-error path as `-ERR internal server error` and drop the
-  // connection. Mock-only because it needs the limit raised, and pointless
-  // against a real server, which simply allocates.
-  test(
-    'SETRANGE refuses an offset beyond Buffer.alloc rather than killing the connection',
-    mockOnly,
-    async () => {
-      const key = `overflow:${randomKey()}`
-
-      try {
-        await standaloneClient!.config(
-          'SET',
-          'proto-max-bulk-len',
-          '9223372036854775807',
-        )
-
-        await assert.rejects(
-          () => standaloneClient!.setrange(key, '9007199254740992', 'xx'),
-          errorWithMessage(EXCEEDS_MAX_SIZE),
-        )
-        // Still usable: the failure stayed a command error.
-        assert.strictEqual(await standaloneClient!.ping(), 'PONG')
-        assert.strictEqual(await standaloneClient!.exists(key), 0)
-      } finally {
-        await standaloneClient!.config(
-          'SET',
-          'proto-max-bulk-len',
-          String(DEFAULT_PROTO_MAX_BULK_LEN),
-        )
-      }
-    },
-  )
+  // The allocation ceiling behind a raised `proto-max-bulk-len` is covered in
+  // tests-integration/raw-tcp/proto-max-bulk-len-allocation.test.ts. It cannot
+  // live here: if the server ever drops the connection again, ioredis re-queues
+  // the in-flight command across its reconnect and the assertion never settles,
+  // so this suite would hang rather than fail.
 })

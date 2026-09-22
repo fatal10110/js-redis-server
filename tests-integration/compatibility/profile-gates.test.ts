@@ -267,7 +267,7 @@ describe(
       const range =
         'argument must be between 1048576 and 9223372036854775807 inclusive'
 
-      if (supportsRedis70Commands()) {
+      if (supportsConfigSetFailureWording()) {
         assert.strictEqual(
           tooSmall,
           `-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - ${range}\r\n`,
@@ -287,22 +287,42 @@ describe(
         )
       }
 
+      // A bare literal over int64 max: 7.0+ rejects it, 6.2's strtoll parse
+      // saturates and the value is accepted. A unit multiplier is deliberately
+      // absent — with one, 6.2 errors too.
       const overflow = await send(
         'CONFIG',
         'SET',
         'proto-max-bulk-len',
         '99999999999999999999',
       )
-      if (supportsRedis70Commands()) {
+      if (supportsMemoryValueOverflowRejection()) {
         assert.strictEqual(
           overflow,
           `-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - ${range}\r\n`,
         )
-      } else {
-        // 6.2 saturates to the maximum instead of failing.
+        return
+      }
+
+      // Below the gate the SET succeeded, so the limit is now server-wide at
+      // int64 max. Restore it even if the readback assertion fails, or every
+      // later test in this file inherits it.
+      try {
         assert.strictEqual(overflow, '+OK\r\n')
         const reply = await send('CONFIG', 'GET', 'proto-max-bulk-len')
         assert.match(reply, /9223372036854775807/)
+
+        // Saturation is limited to the bare literal. Once a unit multiplier
+        // pushes the product over the maximum, real 6.2 errors as well, so the
+        // gate must not swallow these.
+        for (const value of ['10000000000g', '17179869184gb']) {
+          assert.match(
+            await send('CONFIG', 'SET', 'proto-max-bulk-len', value),
+            /^-ERR Invalid argument /,
+            `CONFIG SET proto-max-bulk-len ${value} on ${profile}`,
+          )
+        }
+      } finally {
         await send('CONFIG', 'SET', 'proto-max-bulk-len', '536870912')
       }
     })
@@ -572,6 +592,14 @@ function supportsRedis70Commands(): boolean {
 }
 
 function supportsSetNxGet(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsConfigSetFailureWording(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsMemoryValueOverflowRejection(): boolean {
   return profile !== 'redis-6.2'
 }
 

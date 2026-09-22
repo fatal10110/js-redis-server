@@ -22,16 +22,22 @@ const PROTO_MAX_BULK_LEN_MIN = 1048576n
 const PROTO_MAX_BULK_LEN_MAX = 9223372036854775807n
 
 // Redis memory-value suffixes (util.c: memtoull) — the bare `k`/`m`/`g` forms
-// are decimal, the `b`-suffixed ones binary.
-const MEMORY_UNITS: Readonly<Record<string, bigint>> = {
-  b: 1n,
-  k: 1000n,
-  kb: 1024n,
-  m: 1000000n,
-  mb: 1048576n,
-  g: 1000000000n,
-  gb: 1073741824n,
-}
+// are decimal, the `b`-suffixed ones binary. A Map, not an object literal: the
+// suffix comes straight off the wire, and an object literal would resolve
+// `constructor` (already lower-case, so `toLowerCase()` does not save us)
+// through the prototype chain and hand the caller `Object` instead of undefined.
+const MEMORY_UNITS = new Map<string, bigint>([
+  ['b', 1n],
+  ['k', 1000n],
+  ['kb', 1024n],
+  ['m', 1000000n],
+  ['mb', 1048576n],
+  ['g', 1000000000n],
+  ['gb', 1073741824n],
+])
+
+/** `strtoll`'s saturation point, which Redis 6.2's memory parse clamps to. */
+const INT64_MAX = 9223372036854775807n
 
 /**
  * CONFIG SET's failure wording, which Redis 7.0 changed wholesale when it
@@ -63,8 +69,23 @@ function configSetFailed(
  * distinct failure messages.
  *
  * Empty input is *not* a parse failure: Redis' `memtoull` reads it as 0, which
- * then fails the range check instead. Above the maximum, Redis 6.2 saturates to
- * the maximum where 7.0+ rejects.
+ * then fails the range check instead.
+ *
+ * Redis 6.2 parses the decimal literal with `strtoll`, which saturates at int64
+ * max rather than failing, and only *then* runs the parameter's boundary check;
+ * 7.0+ rejects an over-long literal outright. So the saturation below clamps to
+ * int64 max and falls through to the boundary check, rather than clamping to
+ * `max` — for a parameter whose maximum is under int64 max, 6.2 clamps and then
+ * still fails the check. It is also narrowed to an absent/`b` unit: once a
+ * multiplier is involved the C multiply overflows and 6.2 errors too.
+ *
+ * Two known approximations on the multiply path, both requiring a 19+ digit
+ * literal. Real Redis multiplies in 64-bit and wraps, so
+ * `9007199254740993mb` is accepted as `1048576` on 6.2, 7.2 and 8.0 alike where
+ * the exact arithmetic here range-errors; and on 6.2 a product that wraps
+ * negative reports `argument must be a memory value` where this reports the
+ * range error. Modelling C's overflow was judged not worth it — see the
+ * discussion on PR #409.
  */
 function parseMemoryValue(
   profile: CompatibilityProfile,
@@ -74,16 +95,23 @@ function parseMemoryValue(
   max: bigint,
 ): bigint {
   const match = /^(\d*)([a-zA-Z]*)$/.exec(raw)
-  const unit = match ? MEMORY_UNITS[match[2].toLowerCase() || 'b'] : undefined
+  const unit = match
+    ? MEMORY_UNITS.get(match[2].toLowerCase() || 'b')
+    : undefined
   if (!match || unit === undefined) {
     throw configSetFailed(profile, name, raw, 'argument must be a memory value')
   }
 
-  const value = (match[1] === '' ? 0n : BigInt(match[1])) * unit
-  if (value > max && !profile.has('config.memory-value.reject-overflow')) {
-    return max
+  let literal = match[1] === '' ? 0n : BigInt(match[1])
+  if (
+    unit === 1n &&
+    literal > INT64_MAX &&
+    !profile.has('config.memory-value.reject-overflow')
+  ) {
+    literal = INT64_MAX
   }
 
+  const value = literal * unit
   if (value < min || value > max) {
     throw configSetFailed(
       profile,

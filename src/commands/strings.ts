@@ -1,4 +1,3 @@
-import { constants as bufferConstants } from 'node:buffer'
 import { defineCommand } from '../core/command-definition'
 import {
   parseFiniteFloatToken,
@@ -38,8 +37,31 @@ import {
   commandKeySpec,
 } from './introspection'
 
-/** Largest length `Buffer.alloc` will accept on this runtime. */
-const BUFFER_MAX_LENGTH = BigInt(bufferConstants.MAX_LENGTH)
+/**
+ * Largest string this mock will actually materialise, regardless of how high
+ * `proto-max-bulk-len` is set: 512MB, which is Redis' own default for that
+ * parameter.
+ *
+ * `buffer.constants.MAX_LENGTH` is deliberately *not* used. It is the largest
+ * length `Buffer.alloc` will accept as an argument, not the largest it will
+ * serve — `Buffer.alloc` throws `RangeError: Array buffer allocation failed`
+ * at that value and across a wide band below it, and worse, a length like 1e12
+ * is mapped lazily and only kills the process during zero-fill. Either way the
+ * failure escapes the command-error path: a RangeError is not a
+ * `RedisCommandError`, so the adapter answers `-ERR internal server error` and
+ * drops the connection, and the lazy case takes the whole test process with it.
+ *
+ * The ceiling therefore has to be a size the process can genuinely produce, and
+ * a fixed one, so behaviour does not vary with the host's free memory. 512MB is
+ * the smallest value that leaves the default configuration untouched: at the
+ * default `proto-max-bulk-len` the limit below is the binding one and the mock
+ * matches Redis exactly. Above the default the mock refuses with Redis' normal
+ * size error instead of attempting the allocation — a deliberate, loud
+ * divergence, on the principle issue #383 raised: a test double allocating half
+ * a gigabyte is already a problem, and one that vanishes mid-suite is worse
+ * than one that answers an error.
+ */
+const MAX_MATERIALISABLE_LENGTH = 536870912n
 
 type SetCondition = 'NX' | 'XX'
 
@@ -465,7 +487,9 @@ export const setrangeCommand = defineCommand({
     const current = existing ?? Buffer.alloc(0)
     const requiredSize = Number(args.offset) + args.value.length
     const target =
-      requiredSize > current.length ? Buffer.alloc(requiredSize) : current
+      requiredSize > current.length
+        ? allocateStringBuffer(requiredSize)
+        : current
 
     if (target !== current) {
       current.copy(target, 0)
@@ -709,20 +733,36 @@ function createSetrangeOffsetSchema(): CommandSchema<bigint> {
  * Redis refuses to grow a string past `proto-max-bulk-len` rather than
  * allocating it (server.c: checkStringLength).
  *
- * The effective ceiling is additionally capped at `buffer.constants.MAX_LENGTH`:
- * `proto-max-bulk-len` is configurable up to int64 max, and handing `Buffer`
- * a larger length throws a `RangeError`, which is not a `RedisCommandError` and
- * would therefore surface as `-ERR internal server error` and close the
- * connection. Refusing with the normal size error keeps the failure inside the
- * command-error path.
+ * The effective ceiling is additionally capped at
+ * {@link MAX_MATERIALISABLE_LENGTH}, because `proto-max-bulk-len` is
+ * configurable far past anything this process can allocate.
  */
 function assertWithinProtoMaxBulkLen(
   ctx: RedisExecutionContext,
   totalLength: bigint,
 ): void {
   const configured = ctx.server.protoMaxBulkLen
-  const limit = configured < BUFFER_MAX_LENGTH ? configured : BUFFER_MAX_LENGTH
+  const limit =
+    configured < MAX_MATERIALISABLE_LENGTH
+      ? configured
+      : MAX_MATERIALISABLE_LENGTH
   if (totalLength > limit) {
+    throw new StringExceedsMaxSizeError()
+  }
+}
+
+/**
+ * Allocate a string buffer, converting an allocation failure into the ordinary
+ * Redis size error. {@link MAX_MATERIALISABLE_LENGTH} already keeps requests
+ * inside what a healthy process can produce; this is the backstop for a host
+ * that is too short on memory to honour even that, so the failure still reaches
+ * the client as `-ERR` on a live connection instead of a `RangeError` that
+ * escapes the command-error path.
+ */
+function allocateStringBuffer(size: number): Buffer {
+  try {
+    return Buffer.alloc(size)
+  } catch {
     throw new StringExceedsMaxSizeError()
   }
 }
