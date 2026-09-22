@@ -20,7 +20,7 @@ export type Resp2SessionAdapterOptions = {
 }
 
 export class Resp2SessionAdapter {
-  private readonly decoder = new Resp2CommandDecoder()
+  private readonly decoder: Resp2CommandDecoder
   private readonly transport: ConnectionTransport
   private readonly session: ClientSession
   private readonly logger?: Pick<Logger, 'error'>
@@ -31,6 +31,11 @@ export class Resp2SessionAdapter {
     this.transport = options.transport
     this.session = options.session
     this.logger = options.logger
+    this.decoder = new Resp2CommandDecoder({
+      // Read per bulk header, not captured once: `CONFIG SET
+      // proto-max-bulk-len` moves the ceiling for every connection immediately.
+      maxBulkLength: () => this.session.server.protoMaxBulkLen,
+    })
   }
 
   async run(): Promise<void> {
@@ -38,20 +43,34 @@ export class Resp2SessionAdapter {
 
     try {
       for await (const chunk of this.transport.read()) {
-        const { frames, error } = this.decoder.push(chunk)
-        for (const frame of frames) {
+        this.decoder.push(chunk)
+
+        for (;;) {
+          let frame: Resp2CommandFrame | null
+          try {
+            // Pulled one at a time so each command has run — and any config it
+            // changed has landed — before the next frame is parsed.
+            frame = this.decoder.next()
+          } catch (err) {
+            if (!(err instanceof Resp2ParseError)) {
+              throw err
+            }
+            // Valid frames before the bad one were answered by earlier passes
+            // of this loop; now report the protocol error and close, matching
+            // real Redis.
+            await this.writeError(err)
+            this.transport.close('resp2 protocol error')
+            return
+          }
+
+          if (!frame) {
+            break
+          }
+
           await this.handleFrame(frame)
           if (this.transport.signal.aborted) {
             return
           }
-        }
-
-        if (error) {
-          // Valid frames before the bad one have already been answered above;
-          // now report the protocol error and close, matching real Redis.
-          await this.writeError(error)
-          this.transport.close('resp2 protocol error')
-          return
         }
       }
     } catch (err) {

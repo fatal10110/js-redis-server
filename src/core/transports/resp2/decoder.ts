@@ -3,9 +3,13 @@ export type Resp2CommandFrame = {
   args: Buffer[]
 }
 
-export type Resp2DecodeResult = {
-  frames: Resp2CommandFrame[]
-  error?: Resp2ParseError
+export type Resp2CommandDecoderOptions = {
+  /**
+   * The live `proto-max-bulk-len`, read afresh for every bulk header so a
+   * `CONFIG SET` takes effect on the very next command. Defaults to Redis'
+   * compiled-in 512MB when the decoder is used without a server behind it.
+   */
+  maxBulkLength?: () => bigint
 }
 
 export class Resp2ParseError extends Error {
@@ -20,39 +24,55 @@ type ParseOutcome =
   | { kind: 'skip'; nextIndex: number }
   | { kind: 'incomplete' }
 
+/**
+ * Redis' compiled-in default for `proto-max-bulk-len`: 512MB. Duplicated from
+ * `RedisServerState` rather than imported, so the transport layer keeps no
+ * dependency on server state — the real value arrives through
+ * {@link Resp2CommandDecoderOptions.maxBulkLength}.
+ */
+const DEFAULT_PROTO_MAX_BULK_LEN = 536870912n
+
 export class Resp2CommandDecoder {
   private buffered = Buffer.alloc(0)
+  private readonly maxBulkLength: () => bigint
 
-  push(chunk: Buffer): Resp2DecodeResult {
+  constructor(options?: Resp2CommandDecoderOptions) {
+    this.maxBulkLength =
+      options?.maxBulkLength ?? (() => DEFAULT_PROTO_MAX_BULK_LEN)
+  }
+
+  /** Append freshly-read bytes; call {@link next} to drain complete frames. */
+  push(chunk: Buffer): void {
     this.buffered = Buffer.concat([this.buffered, chunk])
-    const frames: Resp2CommandFrame[] = []
-    let cursor = 0
-    let error: Resp2ParseError | undefined
+  }
 
-    try {
-      while (cursor < this.buffered.length) {
-        const outcome = this.parseFrame(cursor)
-        if (outcome.kind === 'incomplete') {
-          break
-        }
+  /**
+   * Take the next complete command frame off the buffer, or `null` when more
+   * bytes are needed.
+   *
+   * Pull-based rather than "decode the whole chunk at once" because the bulk
+   * limit is live: the caller runs each frame before asking for the next, so a
+   * `CONFIG SET proto-max-bulk-len` applies to everything parsed after it, even
+   * when it arrived in the same TCP read as the commands that follow it.
+   *
+   * @throws {Resp2ParseError} on a malformed frame. Frames already returned
+   * stay valid — real Redis answers the good commands that preceded the bad
+   * one, then reports the protocol error and closes the connection.
+   */
+  next(): Resp2CommandFrame | null {
+    while (this.buffered.length > 0) {
+      const outcome = this.parseFrame(0)
+      if (outcome.kind === 'incomplete') {
+        return null
+      }
 
-        if (outcome.kind === 'frame') {
-          frames.push(outcome.frame)
-        }
-        cursor = outcome.nextIndex
+      this.buffered = this.buffered.subarray(outcome.nextIndex)
+      if (outcome.kind === 'frame') {
+        return outcome.frame
       }
-    } catch (err) {
-      if (!(err instanceof Resp2ParseError)) {
-        throw err
-      }
-      // Surface the protocol error alongside the frames already parsed from
-      // earlier in this pipeline so the caller can respond to the valid
-      // commands before reporting the error and closing the connection.
-      error = err
     }
 
-    this.buffered = this.buffered.subarray(cursor)
-    return { frames, error }
+    return null
   }
 
   private parseFrame(index: number): ParseOutcome {
@@ -101,8 +121,14 @@ export class Resp2CommandDecoder {
         return { kind: 'incomplete' }
       }
 
+      // Redis' primary `proto-max-bulk-len` enforcement point: the header is
+      // judged before a single byte of the payload is read, so an oversized
+      // argument to *any* command is refused at parse time rather than by the
+      // command that would have received it (networking.c,
+      // `processMultibulkBuffer`). `>` and not `>=` — a bulk exactly the size
+      // of the limit is accepted. Verified on redis 6.2.24, 7.2.16 and 8.0.6.
       const length = parseLength(bulkHeader.line, 'bulk')
-      if (length < 0) {
+      if (length < 0 || BigInt(length) > this.maxBulkLength()) {
         throw new Resp2ParseError('Protocol error: invalid bulk length')
       }
 
