@@ -349,6 +349,24 @@ await client.sendCommand(['HSET', 'h', 'f1', 'a']) // escape hatch
 await client.quit() // tears down the in-memory state
 ```
 
+The close path matches real node-redis v6: `quit()` resolves `'OK'`,
+`disconnect()` resolves `undefined`, `destroy()` returns synchronously, `'end'`
+is emitted exactly **once**, and a clean close emits no `'error'`. Closing an
+already-closed client — or sending it a command — throws node-redis' own
+`ClientClosedError` (`'The client is closed'`), as a rejection from
+`quit()`/`disconnect()` and synchronously from `destroy()`. Teardown that may
+close twice has to tolerate it, exactly as it would against the real client:
+
+```typescript
+import { ClientClosedError } from 'redis'
+
+try {
+  await client.quit()
+} catch (err) {
+  if (!(err instanceof ClientClosedError)) throw err
+}
+```
+
 Pass `cluster` for a cluster facade; keyed commands route by slot in-process.
 Routing keys come from `CommandExecutor.plan()` — the same extraction
 `ClusterPolicy` uses — so multi-key commands (`MSET`, `RENAME`), numkeys-prefixed

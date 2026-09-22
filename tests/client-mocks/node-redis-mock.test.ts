@@ -1,6 +1,11 @@
 import { test, describe, afterEach } from 'node:test'
 import assert from 'node:assert'
-import { ErrorReply, MultiErrorReply, WatchError } from 'redis'
+import {
+  ClientClosedError,
+  ErrorReply,
+  MultiErrorReply,
+  WatchError,
+} from 'redis'
 import {
   createNodeRedisMock,
   type NodeRedisMockClient,
@@ -11,13 +16,29 @@ import {
 // These are unit tests because the facade IS the client surface — there is no
 // separate client library transformation to exercise (unlike the ioredis path).
 
+/**
+ * Close a client the way teardown code has to against the *real* node-redis:
+ * closing an already-closed client throws `ClientClosedError`, so a defensive
+ * `afterEach` quit must tolerate it.
+ */
+async function quitIfOpen(
+  client: NodeRedisMockClient | NodeRedisMockCluster | undefined,
+): Promise<void> {
+  try {
+    await client?.quit()
+  } catch (err) {
+    if (!(err instanceof ClientClosedError)) {
+      throw err
+    }
+  }
+}
+
 describe('createNodeRedisMock (standalone)', () => {
   const openClients: NodeRedisMockClient[] = []
 
   afterEach(async () => {
     while (openClients.length > 0) {
-      const client = openClients.pop()
-      await client?.quit()
+      await quitIfOpen(openClients.pop())
     }
   })
 
@@ -225,8 +246,9 @@ describe('createNodeRedisMock (standalone)', () => {
     client.on('end', removed).off('end', removed)
 
     await client.quit()
-    // A second 'end' — emitted directly rather than by quitting twice, which
-    // real node-redis rejects with ClientClosedError. 'once' must not re-fire.
+    // Real node-redis emits 'end' exactly once per close, so a second 'end' can
+    // only be provoked by emitting it directly — quitting twice throws instead
+    // (see the close-path tests below). 'once' must not re-fire.
     client.emit('end')
 
     assert.deepStrictEqual(seen, ['on', 'once', 'on'])
@@ -261,7 +283,82 @@ describe('createNodeRedisMock (standalone)', () => {
     const client = (await createNodeRedisMock()) as NodeRedisMockClient
     await client.set('x', '1')
     await client.quit()
-    await assert.rejects(() => client.get('x'))
+    await assert.rejects(() => client.get('x'), ClientClosedError)
+  })
+
+  // Close-path behaviour below is pinned to what real node-redis v6 does when
+  // driven against a real redis-server: every close method on an already-closed
+  // client throws `ClientClosedError('The client is closed')` — quit() and
+  // disconnect() as a rejection, destroy() synchronously — 'end' is emitted
+  // exactly once per close, and a clean close emits no 'error'.
+
+  test("double quit() throws ClientClosedError and 'end' fires once", async () => {
+    const client = await makeClient()
+    let ends = 0
+    client.on('end', () => ends++)
+
+    assert.strictEqual(await client.quit(), 'OK')
+    await assert.rejects(() => client.quit(), ClientClosedError)
+    await assert.rejects(() => client.quit(), ClientClosedError)
+
+    assert.strictEqual(ends, 1, "'end' must fire exactly once")
+  })
+
+  test('every close method throws ClientClosedError once closed', async () => {
+    // quit() -> disconnect()
+    const afterQuit = await makeClient()
+    await afterQuit.quit()
+    await assert.rejects(() => afterQuit.disconnect(), ClientClosedError)
+    assert.throws(() => afterQuit.destroy(), ClientClosedError)
+
+    // disconnect() -> quit(); disconnect() itself resolves undefined
+    const afterDisconnect = await makeClient()
+    assert.strictEqual(await afterDisconnect.disconnect(), undefined)
+    await assert.rejects(() => afterDisconnect.quit(), ClientClosedError)
+    await assert.rejects(() => afterDisconnect.disconnect(), ClientClosedError)
+
+    // destroy() -> quit(); destroy() is synchronous and returns undefined
+    const afterDestroy = await makeClient()
+    assert.strictEqual(afterDestroy.destroy(), undefined)
+    await assert.rejects(() => afterDestroy.quit(), ClientClosedError)
+    assert.throws(() => afterDestroy.destroy(), ClientClosedError)
+  })
+
+  test("disconnect()/destroy() emit 'end' exactly once and no 'error'", async () => {
+    for (const close of [
+      (c: NodeRedisMockClient) => c.disconnect(),
+      (c: NodeRedisMockClient) => c.destroy(),
+    ]) {
+      const client = await makeClient()
+      let ends = 0
+      const errors: unknown[] = []
+      client.on('end', () => ends++)
+      client.on('error', err => errors.push(err))
+
+      await close(client)
+      // A second close throws; it must not emit another 'end'.
+      await assert.rejects(async () => close(client), ClientClosedError)
+      await new Promise(resolve => setImmediate(resolve))
+
+      assert.strictEqual(ends, 1, "'end' must fire exactly once")
+      assert.deepStrictEqual(errors, [], 'a clean close emits no error')
+    }
+  })
+
+  test('closing a client with a live subscription still emits one end', async () => {
+    const client = await makeClient()
+    let ends = 0
+    const errors: unknown[] = []
+    client.on('end', () => ends++)
+    client.on('error', err => errors.push(err))
+    await client.subscribe('news', () => {})
+
+    await client.quit()
+    await assert.rejects(() => client.quit(), ClientClosedError)
+    await new Promise(resolve => setImmediate(resolve))
+
+    assert.strictEqual(ends, 1)
+    assert.deepStrictEqual(errors, [])
   })
 })
 
@@ -269,7 +366,7 @@ describe('createNodeRedisMock (cluster)', () => {
   let cluster: NodeRedisMockCluster | undefined
 
   afterEach(async () => {
-    await cluster?.quit()
+    await quitIfOpen(cluster)
     cluster = undefined
   })
 
@@ -468,5 +565,21 @@ describe('createNodeRedisMock (cluster)', () => {
         return true
       },
     )
+  })
+
+  test('the close path matches the standalone client', async () => {
+    cluster = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+    let ends = 0
+    cluster.on('end', () => ends++)
+
+    assert.strictEqual(await cluster.quit(), 'OK')
+    await assert.rejects(() => cluster!.quit(), ClientClosedError)
+    await assert.rejects(() => cluster!.disconnect(), ClientClosedError)
+    assert.throws(() => cluster!.destroy(), ClientClosedError)
+    await assert.rejects(() => cluster!.get('alpha'), ClientClosedError)
+
+    assert.strictEqual(ends, 1, "'end' must fire exactly once")
   })
 })
