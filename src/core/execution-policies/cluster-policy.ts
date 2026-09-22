@@ -9,6 +9,8 @@ import {
 import type { RedisClientSession } from '../redis-context'
 import type { RedisClusterTopology } from '../../state'
 import type { CompatibilityProfile } from '../compatibility'
+import { isConstantSortPattern, isSelfSortPattern } from '../sort-patterns'
+import type { SortArgs } from '../../commands/keys'
 
 export type ClusterPolicyOptions = {
   localNodeId: string
@@ -72,15 +74,9 @@ export function createClusterPolicy(
         transactionSlots.delete(ctx.session)
       }
 
-      const sortPatternError = getSortClusterPatternError(
-        plan,
-        topology,
-        ctx.server.profile,
-      )
-      if (sortPatternError) {
-        throw sortPatternError
-      }
-
+      // Redirection is decided in processCommand(), before sortCommand() ever
+      // parses BY/GET — so a stale slot map must still get a MOVED it can
+      // follow rather than a terminal "denied in Cluster mode".
       const slot = validateClusterSlot(
         topology,
         options.localNodeId,
@@ -91,6 +87,15 @@ export function createClusterPolicy(
             plan.definition.flags.includes('readonly'),
         },
       )
+
+      const sortPatternError = getSortClusterPatternError(
+        plan,
+        topology,
+        ctx.server.profile,
+      )
+      if (sortPatternError) {
+        throw sortPatternError
+      }
 
       if (slot === null || ctx.session.mode !== 'transaction') {
         return
@@ -125,7 +130,7 @@ const SORT_GET_DENIED =
  *   refusal of every BY glob and *every* GET pattern with a slot comparison —
  *   the pattern is accepted when the keys it can form provably hash to the
  *   sort key's slot — and switched to the longer error wording.
- * - `sort.cluster-get-hash` (Redis 8.0 / Valkey 9.0) exempts `GET #`, which
+ * - `sort.cluster-get-hash` (Redis 7.4.2 / Valkey 8.0.2) exempts `GET #`, which
  *   returns the element itself and reads no other key, from that comparison.
  *
  * A BY pattern with no `*` is constant on every version: real Redis sets
@@ -141,36 +146,32 @@ function getSortClusterPatternError(
     return null
   }
 
-  const args = plan.args as {
-    key?: unknown
-    by?: unknown
-    get?: unknown
-  }
-  if (!Buffer.isBuffer(args.key)) {
+  const args = plan.args as SortArgs
+  const comparesPatternSlots = profile.has('sort.cluster-pattern-slot')
+
+  if (!comparesPatternSlots) {
+    if (args.by && !isConstantSortPattern(args.by)) {
+      return new RedisCommandError(SORT_BY_DENIED_LEGACY)
+    }
+    if (args.get.length > 0) {
+      return new RedisCommandError(SORT_GET_DENIED_LEGACY)
+    }
     return null
   }
 
-  const comparesPatternSlots = profile.has('sort.cluster-pattern-slot')
   const keySlot = topology.calculateSlot(args.key)
+  const exemptsGetSelf = profile.has('sort.cluster-get-hash')
 
-  if (Buffer.isBuffer(args.by) && args.by.includes(0x2a)) {
-    if (!comparesPatternSlots) {
-      return new RedisCommandError(SORT_BY_DENIED_LEGACY)
-    }
-    if (patternHashSlot(args.by, topology) !== keySlot) {
-      return new RedisCommandError(SORT_BY_DENIED)
-    }
+  if (
+    args.by &&
+    !isConstantSortPattern(args.by) &&
+    patternHashSlot(args.by, topology) !== keySlot
+  ) {
+    return new RedisCommandError(SORT_BY_DENIED)
   }
 
-  const get = Array.isArray(args.get) ? args.get : []
-  for (const pattern of get) {
-    if (!Buffer.isBuffer(pattern)) {
-      continue
-    }
-    if (!comparesPatternSlots) {
-      return new RedisCommandError(SORT_GET_DENIED_LEGACY)
-    }
-    if (isSelfSortPattern(pattern) && profile.has('sort.cluster-get-hash')) {
+  for (const pattern of args.get) {
+    if (isSelfSortPattern(pattern) && exemptsGetSelf) {
       continue
     }
     if (patternHashSlot(pattern, topology) !== keySlot) {
@@ -222,10 +223,6 @@ function patternHashSlot(
   }
 
   return topology.calculateSlot(pattern)
-}
-
-function isSelfSortPattern(pattern: Buffer): boolean {
-  return pattern.length === 1 && pattern[0] === 0x23
 }
 
 function validateClusterSlot(

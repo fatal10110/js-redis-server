@@ -76,6 +76,12 @@ export interface RedisExecutionContext {
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
   readonly transactionReplay?: boolean
+  /**
+   * Set while the command runs inside a Lua script (`redis.call`/`pcall`),
+   * mirroring real Redis' `CLIENT_SCRIPT` flag. Commands whose reply must be
+   * reproducible across replicas — `SORT` over a set, today — branch on it.
+   */
+  readonly inScript?: boolean
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

@@ -120,6 +120,7 @@ function createLuaMonitorContext(
     server: ctx.server,
     session: ctx.session,
     executor: ctx.executor,
+    inScript: true,
     ...(ctx.transactionReplay
       ? { transactionReplay: ctx.transactionReplay }
       : {}),

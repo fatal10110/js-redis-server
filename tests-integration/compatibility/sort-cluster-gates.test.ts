@@ -30,11 +30,16 @@ const patternSlotProfiles: ProfileName[] = [
 ]
 
 /**
- * `sort.cluster-get-hash` — Redis 8.0 / Valkey 9.0 additionally exempt the
+ * `sort.cluster-get-hash` — Redis 7.4.2 / Valkey 8.0.2 additionally exempt the
  * `GET #` self pattern from that slot comparison. Before that, `GET #` is
- * hashed like any other pattern and therefore refused.
+ * hashed like any other pattern and therefore refused. Bisected on single-node
+ * clusters: redis 7.4.0/7.4.1 refuse, 7.4.2+ accept; valkey 8.0.0/8.0.1
+ * refuse, 8.0.2+ accept.
+ *
+ * The preset versions decide which profiles land on which side: `redis-7.4`
+ * pins 7.4.4 (exempt) while `valkey-8.0` pins 8.0.0 (still refused).
  */
-const getHashProfiles: ProfileName[] = ['redis-8.0', 'valkey-9.0']
+const getHashProfiles: ProfileName[] = ['redis-7.4', 'redis-8.0', 'valkey-9.0']
 
 const comparesPatternSlots = patternSlotProfiles.includes(profile)
 const allowsGetHash = getHashProfiles.includes(profile)

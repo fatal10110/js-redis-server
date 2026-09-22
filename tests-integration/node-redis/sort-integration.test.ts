@@ -254,6 +254,85 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('SORT breaks equal numeric weights lexicographically', async () => {
+    await withOps(async (c, k) => {
+      // Every weight key is missing, so all elements score 0 and sortCompare()
+      // falls through to comparing the elements themselves.
+      await c.rPush(k('l'), ['3', '1', '2'])
+      assert.deepStrictEqual(await c.sort(k('l'), { BY: k('missing:*') }), [
+        '1',
+        '2',
+        '3',
+      ])
+    })
+  })
+
+  test('SORT ALPHA BY missing weights keeps the source order', async () => {
+    await withOps(async (c, k) => {
+      // ALPHA with a BY whose weights are all absent genuinely compares equal
+      // in sortCompare(), so this one is *not* re-ordered.
+      await c.rPush(k('l'), ['c', 'a', 'b'])
+      assert.deepStrictEqual(
+        await c.sort(k('l'), { BY: k('missing:*'), ALPHA: true }),
+        ['c', 'a', 'b'],
+      )
+    })
+  })
+
+  test('SORT GET with a constant pattern yields nil for every element', async () => {
+    await withOps(async (c, k) => {
+      // lookupKeyByPattern() bails out when the pattern has no '*', so the
+      // constant key is never read even though it exists.
+      await c.rPush(k('l'), ['3', '1', '2'])
+      await c.set(k('const'), 'HELLO')
+      assert.deepStrictEqual(
+        await c.sort(k('l'), { BY: 'nosort', GET: k('const') }),
+        [null, null, null],
+      )
+    })
+  })
+
+  test('SORT treats a non-string weight or GET key as missing', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['3', '1', '2'])
+      await c.rPush(k('w:1'), ['not-a-string'])
+      await c.set(k('w:2'), '5')
+      await c.set(k('w:3'), '1')
+
+      assert.deepStrictEqual(await c.sort(k('l'), { BY: k('w:*') }), [
+        '1',
+        '3',
+        '2',
+      ])
+      assert.deepStrictEqual(await c.sort(k('l'), { GET: k('w:*') }), [
+        null,
+        '5',
+        '1',
+      ])
+    })
+  })
+
+  test('SORT force-sorts a set with a constant BY when the order must be reproducible', async () => {
+    await withOps(async (c, k) => {
+      await c.sAdd(k('s'), ['c', 'a', 'b'])
+
+      // STORE and scripts must be reproducible, so ALPHA is forced.
+      assert.strictEqual(await c.sortStore(k('s'), k('d'), { BY: 'nosort' }), 3)
+      assert.deepStrictEqual(await c.lRange(k('d'), 0, -1), ['a', 'b', 'c'])
+      assert.deepStrictEqual(
+        await c.eval("return redis.call('SORT', KEYS[1], 'BY', 'nosort')", {
+          keys: [k('s')],
+        }),
+        ['a', 'b', 'c'],
+      )
+
+      // A list already has a defined order, so it is not force-sorted.
+      await c.rPush(k('ll'), ['c', 'a', 'b'])
+      await c.sortStore(k('ll'), k('ld'), { BY: 'nosort' })
+      assert.deepStrictEqual(await c.lRange(k('ld'), 0, -1), ['c', 'a', 'b'])
+    })
+  })
+
   test('SORT BY nosort skips sorting in cluster mode', async () => {
     await withOps(async (c, k) => {
       await c.rPush(k('l'), ['3', '1', '2'])
@@ -284,7 +363,6 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
   })
 
   test('SORT BY a glob hash-tagged to an untagged source key is allowed', async () => {
-    assert.ok(redisClient)
     // The source key carries no hash tag of its own, so the BY pattern's tag
     // has to be compared by *slot* against the key, not by tag bytes.
     const key = `sort-untagged:${randomKey()}`

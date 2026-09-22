@@ -14,6 +14,12 @@ import {
   WrongTypeRedisError,
 } from '../core/redis-error'
 import { RedisValue } from '../core/redis-value'
+import type { RedisExecutionContext } from '../core/redis-context'
+import {
+  isConstantSortPattern,
+  isSelfSortPattern,
+  sortPatternWildcardIndex,
+} from '../core/sort-patterns'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
   array,
@@ -579,7 +585,7 @@ export const copyCommand = defineCommand({
 // not score). Numeric by default — every element must parse as a double, or
 // the command errors; ALPHA switches to a byte-wise lexicographic sort. STORE
 // writes the sorted result to a destination list and replies with its length.
-type SortArgs = {
+export type SortArgs = {
   key: Buffer
   desc: boolean
   alpha: boolean
@@ -716,7 +722,11 @@ function sortElements(
     element,
     score: sortNumericScore(sortByValue(element, args, db)),
   }))
-  scored.sort((a, b) => a.score - b.score)
+  // sortCompare() falls through to compareStringObjects() on equal scores, so
+  // ties are broken lexicographically rather than left in insertion order.
+  scored.sort(
+    (a, b) => a.score - b.score || Buffer.compare(a.element, b.element),
+  )
   if (args.desc) scored.reverse()
   return scored.map(entry => entry.element)
 }
@@ -733,9 +743,36 @@ function applySortLimit(
   return elements.slice(start, start + limit.count)
 }
 
-function runSort(args: SortArgs, db: RedisDatabase) {
+/**
+ * Mirrors `sortCommand()`'s determinism override: a constant `BY` normally
+ * means "do not sort", but an unordered SET source whose output has to be
+ * reproducible — it is written by STORE, or returned to a script — is
+ * force-sorted ALPHA with the `BY` dropped. Lists and zsets already have a
+ * defined order, so only sets are overridden.
+ */
+function forceDeterministicSetOrder(
+  args: SortArgs,
+  db: RedisDatabase,
+  ctx: RedisExecutionContext,
+): SortArgs {
+  if (!args.by || !isConstantSortPattern(args.by)) {
+    return args
+  }
+  if (!args.store && !ctx.inScript) {
+    return args
+  }
+  if (db.getType(args.key) !== 'set') {
+    return args
+  }
+
+  return { ...args, by: undefined, alpha: true }
+}
+
+function runSort(args: SortArgs, ctx: RedisExecutionContext) {
+  const db = ctx.db
   const source = readSortSource(db, args.key)
-  const sorted = applySortLimit(sortElements(source, args, db), args.limit)
+  const effective = forceDeterministicSetOrder(args, db, ctx)
+  const sorted = applySortLimit(sortElements(source, effective, db), args.limit)
   const output = projectSortOutput(sorted, args, db)
 
   if (args.store) {
@@ -785,66 +822,48 @@ function projectSortOutput(
   return output
 }
 
+/**
+ * Mirrors `lookupKeyByPattern()`: a pattern with no `*` resolves to nothing,
+ * and a key holding anything other than a string resolves to nothing either —
+ * real Redis never turns that into a WRONGTYPE for the whole SORT.
+ */
 function readSortPattern(
   db: RedisDatabase,
   pattern: Buffer,
   element: Buffer,
 ): Buffer | null {
-  const key = expandSortPattern(pattern, element)
-  const type = db.getType(key)
-  if (type === null) {
+  const wildcard = sortPatternWildcardIndex(pattern)
+  if (wildcard === -1) {
     return null
   }
-  if (type !== 'string') {
-    throw new WrongTypeRedisError()
+
+  const key = expandSortPattern(pattern, wildcard, element)
+  if (db.getType(key) !== 'string') {
+    return null
   }
   return db.getString(key)
 }
 
-function expandSortPattern(pattern: Buffer, element: Buffer): Buffer {
-  const index = pattern.indexOf(0x2a)
-  if (index === -1) {
-    return Buffer.from(pattern)
-  }
-
+function expandSortPattern(
+  pattern: Buffer,
+  wildcard: number,
+  element: Buffer,
+): Buffer {
   return Buffer.concat([
-    pattern.subarray(0, index),
+    pattern.subarray(0, wildcard),
     element,
-    pattern.subarray(index + 1),
+    pattern.subarray(wildcard + 1),
   ])
 }
 
-function isSelfSortPattern(pattern: Buffer): boolean {
-  return pattern.length === 1 && pattern[0] === 0x23
-}
-
 /**
- * A BY pattern with no `*` is constant: every element resolves to the same
- * weight key, so real Redis sets `dontsort` and skips both the lookup and the
- * sort. `BY nosort` is just the documented spelling of such a pattern — there
- * is nothing special about the literal.
+ * `sortGetKeys()` reports the source key and, when present, the STORE
+ * destination — never the BY/GET patterns. Cluster safety for the patterns is
+ * enforced separately by `ClusterPolicy`, which compares each pattern's
+ * inferable slot against the source key's.
  */
-function isConstantSortPattern(pattern: Buffer): boolean {
-  return !pattern.includes(0x2a)
-}
-
 function sortRoutingKeys(args: SortArgs): Buffer[] {
-  const keys = [args.key]
-  // A constant BY is never looked up, so it is not a key this command touches
-  // and must not take part in slot routing (real Redis routes SORT on its
-  // source key and STORE destination alone).
-  if (args.by && !isConstantSortPattern(args.by)) {
-    keys.push(args.by)
-  }
-  for (const pattern of args.get) {
-    if (!isSelfSortPattern(pattern)) {
-      keys.push(pattern)
-    }
-  }
-  if (args.store) {
-    keys.push(args.store)
-  }
-  return keys
+  return args.store ? [args.key, args.store] : [args.key]
 }
 
 export const sortCommand = defineCommand({
@@ -852,7 +871,7 @@ export const sortCommand = defineCommand({
   schema: sortSchema(true),
   flags: ['write', 'denyoom'],
   keys: sortRoutingKeys,
-  execute: (args, ctx) => runSort(args, ctx.db),
+  execute: (args, ctx) => runSort(args, ctx),
 })
 
 export const sortRoCommand = defineCommand({
@@ -861,7 +880,7 @@ export const sortRoCommand = defineCommand({
   schema: sortSchema(false),
   flags: ['readonly'],
   keys: sortRoutingKeys,
-  execute: (args, ctx) => runSort(args, ctx.db),
+  execute: (args, ctx) => runSort(args, ctx),
 })
 
 export const keysCommands = [

@@ -217,8 +217,10 @@ with `GT` or `LT`.
   skips both the weight lookup and the sort and is always accepted. The exact
   rule is profile-gated: before `redis-7.4` / `valkey-8.0` every `BY` glob and
   every `GET` pattern is refused with the shorter `denied in Cluster mode.`
-  wording, and `GET '#'` only becomes exempt from the slot check in
-  `redis-8.0` / `valkey-9.0`. Hash-field dereference patterns such as
+  wording, and `GET '#'` only becomes exempt from the slot check in Redis
+  7.4.2 / Valkey 8.0.2 — so the `redis-7.4` profile (pinned at 7.4.4) exempts
+  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. Hash-field
+  dereference patterns such as
   `object_*->field` are not modeled.
 
 #### Not implemented
