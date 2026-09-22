@@ -2,13 +2,14 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  randomKey,
+  waitUntilGone,
+} from '../../utils'
 
 const testRunner = new TestRunner()
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -98,7 +99,13 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [-1, -1],
       )
 
-      await delay(600)
+      // Wait out 'soon' by polling rather than sleeping a fixed 600ms: the
+      // sleep only had to overshoot the TTL by 100ms to be correct, which a
+      // loaded machine does not guarantee (#411).
+      await waitUntilGone(
+        () => directClient!.hget(key, 'soon'),
+        "hash field 'soon' (500ms TTL)",
+      )
 
       assert.strictEqual(await directClient.hget(key, 'persistent'), 'value1')
       assert.strictEqual(await directClient.hget(key, 'volatile'), 'value2')

@@ -7,13 +7,10 @@ import {
   errorWithMessage,
   flushNodeRedisCluster,
   randomKey,
+  waitUntilGone,
 } from '../../utils'
 
 const testRunner = new TestRunner()
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -54,7 +51,10 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       )
       assert.deepStrictEqual(await directClient.hpExpire(key, 'soon', 5), [1])
 
-      await delay(40)
+      await waitUntilGone(
+        () => directClient!.hGet(key, 'soon'),
+        "hash field 'soon' (5ms TTL)",
+      )
 
       assert.strictEqual(await directClient.hGet(key, 'soon'), null)
       assert.deepStrictEqual(
@@ -92,7 +92,10 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
       assert.deepStrictEqual(await directClient.hpExpire(key, 'gone', 5), [1])
 
-      await delay(40)
+      await waitUntilGone(
+        () => directClient!.hGet(key, 'gone'),
+        "hash field 'gone' (5ms TTL)",
+      )
 
       const { entries: scanEntries } = await directClient.hScan(key, '0')
       const scanned = new Map<string, string>()
@@ -205,7 +208,13 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         '2.5',
       )
 
-      await delay(600)
+      // Poll instead of sleeping past the TTL: HINCRBY kept 'counter' on its
+      // original 500ms clock, and a fixed sleep has to out-wait both that and
+      // the machine (#411).
+      await waitUntilGone(
+        () => directClient!.hGet(key, 'counter'),
+        "hash field 'counter' (500ms TTL, preserved by HINCRBY)",
+      )
 
       assert.strictEqual(await directClient.hGet(key, 'replace'), 'new')
       assert.strictEqual(await directClient.hGet(key, 'counter'), null)

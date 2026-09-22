@@ -7,13 +7,10 @@ import {
   errorWithMessage,
   flushNodeRedisCluster,
   randomKey,
+  waitUntilGone,
 } from '../../utils'
 
 const testRunner = new TestRunner()
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -87,7 +84,13 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         [-1, -1],
       )
 
-      await delay(600)
+      // Wait out 'soon' by polling rather than sleeping a fixed 600ms: the
+      // sleep only had to overshoot the TTL by 100ms to be correct, which a
+      // loaded machine does not guarantee (#411).
+      await waitUntilGone(
+        () => directClient!.hGet(key, 'soon'),
+        "hash field 'soon' (500ms TTL)",
+      )
 
       assert.strictEqual(await directClient.hGet(key, 'persistent'), 'value1')
       assert.strictEqual(await directClient.hGet(key, 'volatile'), 'value2')

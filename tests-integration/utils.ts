@@ -31,6 +31,47 @@ export function randomKey(): string {
   return Math.random().toString(36).substring(2, 10)
 }
 
+/**
+ * Wait until `read()` reports the value is gone (`null`/`undefined`), polling
+ * instead of sleeping for a fixed interval.
+ *
+ * A fixed sleep has to out-wait the TTL *plus* whatever the machine does to the
+ * event loop under load, and picking that margin is what made the hash
+ * field-TTL tests flake in both directions (#411): too small a TTL and the
+ * field dies before the assertions that need it alive; too small a gap between
+ * TTL and sleep and it is still alive when the assertions need it gone.
+ * Polling removes the guess — it waits exactly as long as the expiry takes.
+ *
+ * It is not a weaker assertion than `sleep(); assert.strictEqual(x, null)`: the
+ * value must still be gone, just within a generous deadline instead of at one
+ * arbitrary instant. A value that never expires still fails, and the message
+ * reports how long it survived, so a future regression says so directly
+ * instead of looking like one more flake.
+ */
+export async function waitUntilGone(
+  read: () => Promise<unknown>,
+  description: string,
+  { timeoutMs = 5000, intervalMs = 20 } = {},
+): Promise<void> {
+  const start = Date.now()
+
+  for (;;) {
+    const value = await read()
+    if (value === null || value === undefined) {
+      return
+    }
+
+    const elapsed = Date.now() - start
+    if (elapsed >= timeoutMs) {
+      assert.fail(
+        `${description} still present after ${elapsed}ms (last value: ${String(value)})`,
+      )
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+}
+
 export async function getTotalDbSize(redisClient: Cluster): Promise<number> {
   const masterNodes = redisClient.nodes('master')
   const sizes = await Promise.all(
