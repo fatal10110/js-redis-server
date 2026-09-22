@@ -339,7 +339,7 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
       return null
     case 'error':
       return {
-        err: Buffer.from(value.message),
+        err: value.messageBytes ?? Buffer.from(value.message),
         code: value.code ? Buffer.from(value.code) : undefined,
       }
   }

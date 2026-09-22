@@ -34,7 +34,7 @@ export class RedisResult {
     return new RedisResult(RedisValue.simpleString('OK'))
   }
 
-  static error(message: string, code?: string): RedisResult {
+  static error(message: string | Buffer, code?: string): RedisResult {
     return new RedisResult(RedisValue.error(message, code))
   }
 }

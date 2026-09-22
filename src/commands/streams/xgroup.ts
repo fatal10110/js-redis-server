@@ -6,7 +6,7 @@ import {
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
-import { integer, ok } from '../helpers'
+import { integer, ok, unknownSubcommandError } from '../helpers'
 import { BusyStreamGroupError, requireStreamGroup } from './groups'
 import {
   bufferId,
@@ -52,8 +52,11 @@ type XgroupArgs =
 function createXgroupSchema() {
   return t.custom<XgroupArgs>(
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
-      const subcommand = input[index]?.toString().toUpperCase()
-      if (!subcommand) throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const rawSubcommand = input[index]
+      if (!rawSubcommand) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      const subcommand = rawSubcommand.toString().toUpperCase()
 
       if (subcommand === 'CREATE' || subcommand === 'SETID') {
         const key = input[index + 1]
@@ -133,9 +136,7 @@ function createXgroupSchema() {
         }
       }
 
-      throw new RedisCommandError(
-        `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try XGROUP HELP.`,
-      )
+      throw unknownSubcommandError('XGROUP', rawSubcommand, ctx.profile)
     },
   )
 }

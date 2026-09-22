@@ -23,6 +23,7 @@ import {
   ok,
   parseIntegerToken,
   simpleString,
+  unknownSubcommandError,
 } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
@@ -569,7 +570,9 @@ export const infoCommand = defineCommand({
 export const clientCommand = defineCommand({
   name: 'client',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly', 'admin'],
@@ -595,7 +598,7 @@ export const clientCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = args.subcommand.toString().toLowerCase()
 
     if (subcommand === 'setname') {
       expectArgCount('client|setname', args.args, 1)
@@ -610,7 +613,11 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'setinfo') {
       if (!ctx.server.profile.has('client.setinfo')) {
-        throw clientSetInfoUnavailableError(ctx, args.subcommand)
+        throw unknownSubcommandError(
+          'CLIENT',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
 
       expectArgCount('client|setinfo', args.args, 2)
@@ -625,7 +632,11 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'no-evict') {
       if (!ctx.server.profile.has('client.no-evict')) {
-        throw clientUnavailableSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'CLIENT',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
 
       expectArgCount('client|no-evict', args.args, 1)
@@ -707,32 +718,9 @@ export const clientCommand = defineCommand({
       return array(lines)
     }
 
-    throw new RedisCommandError(
-      `unknown subcommand '${args.subcommand}'. Try CLIENT HELP.`,
-    )
+    throw unknownSubcommandError('CLIENT', args.subcommand, ctx.server.profile)
   },
 })
-
-function clientSetInfoUnavailableError(
-  ctx: RedisExecutionContext,
-  subcommand: string,
-): RedisCommandError {
-  if (!ctx.server.profile.has('client.setinfo.unknown-subcommand-error')) {
-    return clientUnavailableSubcommandError(subcommand)
-  }
-
-  return new RedisCommandError(
-    `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
-  )
-}
-
-function clientUnavailableSubcommandError(
-  subcommand: string,
-): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CLIENT HELP.`,
-  )
-}
 
 /**
  * Parse HELLO's protocol-version token. Unlike a generic `t.integer()` field,
@@ -906,7 +894,9 @@ export const lastsaveCommand = defineCommand({
 export const aclCommand = defineCommand({
   name: 'acl',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
@@ -932,7 +922,7 @@ export const aclCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = args.subcommand.toString().toLowerCase()
 
     if (subcommand === 'whoami') {
       expectArgCount('acl|whoami', args.args, 0)
@@ -941,7 +931,7 @@ export const aclCommand = defineCommand({
 
     if (subcommand === 'dryrun') {
       if (!ctx.server.profile.has('acl.dryrun')) {
-        throw unavailableAclSubcommand(args.subcommand)
+        throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
       }
 
       if (args.args.length < 2) {
@@ -978,14 +968,16 @@ export const aclCommand = defineCommand({
       return array(lines)
     }
 
-    throw unknownAclSubcommand(args.subcommand)
+    throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
   },
 })
 
 export const slowlogCommand = defineCommand({
   name: 'slowlog',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly', 'admin'],
@@ -1013,8 +1005,8 @@ export const slowlogCommand = defineCommand({
     ],
   },
   keys: () => [],
-  execute: args => {
-    const subcommand = args.subcommand.toLowerCase()
+  execute: (args, ctx) => {
+    const subcommand = args.subcommand.toString().toLowerCase()
 
     if (subcommand === 'get') {
       if (args.args.length > 1) {
@@ -1058,9 +1050,7 @@ export const slowlogCommand = defineCommand({
       ])
     }
 
-    throw new RedisCommandError(
-      `unknown subcommand '${args.subcommand}'. Try SLOWLOG HELP.`,
-    )
+    throw unknownSubcommandError('SLOWLOG', args.subcommand, ctx.server.profile)
   },
 })
 
@@ -1092,18 +1082,6 @@ export const shutdownCommand = defineCommand({
     })
   },
 })
-
-function unknownAclSubcommand(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `unknown subcommand '${subcommand}'. Try ACL HELP.`,
-  )
-}
-
-function unavailableAclSubcommand(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try ACL HELP.`,
-  )
-}
 
 function parseShutdownOptions(
   args: readonly Buffer[],

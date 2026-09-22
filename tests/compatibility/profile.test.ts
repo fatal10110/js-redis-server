@@ -76,17 +76,11 @@ describe('compatibility profiles', () => {
     assert.strictEqual(redis62.has('expire.conditions'), false)
     assert.strictEqual(redis62.has('set.get'), true)
     assert.strictEqual(redis62.has('client.setinfo'), false)
-    assert.strictEqual(
-      redis62.has('client.setinfo.unknown-subcommand-error'),
-      false,
-    )
+    assert.strictEqual(redis62.has('error.unknown-subcommand-wording'), false)
 
     const redis70 = resolveCompatibilityProfile('redis-7.0')
     assert.strictEqual(redis70.has('client.setinfo'), false)
-    assert.strictEqual(
-      redis70.has('client.setinfo.unknown-subcommand-error'),
-      true,
-    )
+    assert.strictEqual(redis70.has('error.unknown-subcommand-wording'), true)
     assert.strictEqual(redis70.has('pubsub.resp3-publish-reply-first'), false)
 
     const redis72 = resolveCompatibilityProfile('redis-7.2')

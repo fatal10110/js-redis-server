@@ -321,7 +321,7 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
     assert.deepStrictEqual(
       await session.execute('function', [Buffer.from('missing')]),
       RedisResult.error(
-        "unknown subcommand 'missing'. Try FUNCTION HELP.",
+        Buffer.from("unknown subcommand 'missing'. Try FUNCTION HELP."),
         'ERR',
       ),
     )
@@ -532,7 +532,7 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
     assert.deepStrictEqual(
       await session.execute('script', [Buffer.from('missing')]),
       RedisResult.error(
-        "unknown subcommand 'missing'. Try SCRIPT HELP.",
+        Buffer.from("unknown subcommand 'missing'. Try SCRIPT HELP."),
         'ERR',
       ),
     )

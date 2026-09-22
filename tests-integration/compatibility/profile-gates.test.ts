@@ -330,31 +330,73 @@ describe(
     // 6.2 unknown-subcommand template and adding `%.128s` truncation of the
     // echoed name. Captured from real redis-server 6.2.24, 7.0.15 and 8.0.6.
     // Valkey forked at 7.2, so every Valkey profile gets the newer wording.
-    test('CONFIG unknown-subcommand wording matches the profile', async () => {
-      const reply = await send('CONFIG', 'BOGUS')
+    //
+    // Every container shares the template, so the sweep covers several of them
+    // rather than only CONFIG: before #413 each had its own copy and they had
+    // drifted apart (XGROUP still emitted the 6.2 text on every profile).
+    test('unknown-subcommand wording matches the profile in every container', async () => {
+      for (const container of ['CONFIG', 'XGROUP', 'CLIENT', 'ACL', 'SCRIPT']) {
+        const reply = await send(container, 'BOGUS')
 
-      if (!supportsUnknownSubcommandWording()) {
         assert.strictEqual(
           reply,
-          "-ERR Unknown subcommand or wrong number of arguments for 'BOGUS'. Try CONFIG HELP.\r\n",
+          supportsUnknownSubcommandWording()
+            ? `-ERR unknown subcommand 'BOGUS'. Try ${container} HELP.\r\n`
+            : `-ERR Unknown subcommand or wrong number of arguments for 'BOGUS'. Try ${container} HELP.\r\n`,
+          `${container} BOGUS on ${profile}`,
         )
-        return
       }
-
-      assert.strictEqual(
-        reply,
-        "-ERR unknown subcommand 'BOGUS'. Try CONFIG HELP.\r\n",
-      )
     })
 
     test('the echoed unknown subcommand is truncated only from Redis 7.0', async () => {
-      const reply = await send('CONFIG', 'X'.repeat(300))
+      for (const container of ['CONFIG', 'XGROUP']) {
+        const reply = await send(container, 'X'.repeat(300))
 
-      // 7.0+ formats it with `%.128s`; 6.2 echoes all 300 bytes.
-      const expectedEcho = supportsUnknownSubcommandWording() ? 128 : 300
-      const echoed = /'(X+)'/.exec(reply)
-      assert.ok(echoed, `expected an echoed subcommand, got ${reply}`)
-      assert.strictEqual(echoed[1].length, expectedEcho)
+        // 7.0+ formats it with `%.128s`; 6.2 echoes all 300 bytes.
+        const expectedEcho = supportsUnknownSubcommandWording() ? 128 : 300
+        const echoed = /'(X+)'/.exec(reply)
+        assert.ok(echoed, `expected an echoed subcommand, got ${reply}`)
+        assert.strictEqual(echoed[1].length, expectedEcho, container)
+      }
+    })
+
+    // `addReplySubcommandSyntaxError` — a *known* subcommand given arguments it
+    // cannot use — flipped case at 7.0 too, but kept the `or wrong number of
+    // arguments` clause and gained no truncation. Captured from 6.2.24 and
+    // 8.0.6 as `PUBSUB CHANNELS a b`.
+    test('the subcommand syntax-error wording matches the profile', async () => {
+      const reply = await send('PUBSUB', 'CHANNELS', 'a', 'b')
+
+      assert.strictEqual(
+        reply,
+        supportsUnknownSubcommandWording()
+          ? "-ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.\r\n"
+          : "-ERR Unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.\r\n",
+      )
+    })
+
+    // The echoed name is raw client bytes on every profile — real 6.2.24 and
+    // 8.0.6 both answer `CONFIG \xff\xfe\xfd` with those three bytes, only the
+    // surrounding template differs.
+    test('a non-UTF-8 subcommand is echoed byte for byte on every profile', async () => {
+      const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
+      connection.write(commandFrame('CONFIG', subcommand))
+      const reply = await connection.readRawFrame()
+
+      const lead = supportsUnknownSubcommandWording()
+        ? 'unknown subcommand'
+        : 'Unknown subcommand or wrong number of arguments for'
+      assert.deepStrictEqual(
+        [...reply],
+        [
+          ...Buffer.concat([
+            Buffer.from(`-ERR ${lead} '`),
+            subcommand,
+            Buffer.from("'. Try CONFIG HELP.\r\n"),
+          ]),
+        ],
+        `got ${JSON.stringify(reply.toString('latin1'))}`,
+      )
     })
 
     test('writing a global is rejected by the readonly table', async () => {

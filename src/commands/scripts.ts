@@ -5,7 +5,6 @@ import {
   RedisCommandError,
   ScriptDebugModeError,
   ScriptFlushOptionError,
-  UnknownScriptSubcommandError,
   WrongNumberOfKeysError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
@@ -18,11 +17,11 @@ import {
   type RedisFunctionDefinition,
   type RedisFunctionLibrary,
 } from '../state'
-import { array, bulk, ok } from './helpers'
+import { array, bulk, ok, unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 type ScriptArgs = {
-  subcommand: string
+  subcommand: Buffer
   rest: Buffer[]
 }
 
@@ -39,7 +38,7 @@ type EvalShaArgs = {
 }
 
 type FunctionArgs = {
-  subcommand: string
+  subcommand: Buffer
   rest: Buffer[]
 }
 
@@ -61,7 +60,9 @@ const READONLY_DYNAMIC_SCRIPT_FLAGS = ['readonly', ...DYNAMIC_SCRIPT_FLAGS]
 export const scriptCommand = defineCommand({
   name: 'script',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
@@ -96,7 +97,7 @@ export const scriptCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    switch (args.subcommand.toLowerCase()) {
+    switch (args.subcommand.toString().toLowerCase()) {
       case 'load':
         return scriptLoad(args, ctx)
       case 'exists':
@@ -110,7 +111,11 @@ export const scriptCommand = defineCommand({
       case 'help':
         return scriptHelp(args)
       default:
-        throw new UnknownScriptSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'SCRIPT',
+          args.subcommand,
+          ctx.server.profile,
+        )
     }
   },
 })
@@ -226,7 +231,9 @@ export const functionCommand = defineCommand<FunctionArgs>({
   name: 'function',
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
@@ -269,7 +276,7 @@ export const functionCommand = defineCommand<FunctionArgs>({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    switch (args.subcommand.toLowerCase()) {
+    switch (args.subcommand.toString().toLowerCase()) {
       case 'load':
         return functionLoad(args, ctx)
       case 'delete':
@@ -289,8 +296,10 @@ export const functionCommand = defineCommand<FunctionArgs>({
       case 'help':
         return functionHelp(args)
       default:
-        throw new RedisCommandError(
-          `unknown subcommand '${args.subcommand}'. Try FUNCTION HELP.`,
+        throw unknownSubcommandError(
+          'FUNCTION',
+          args.subcommand,
+          ctx.server.profile,
         )
     }
   },
