@@ -260,7 +260,11 @@ start on RESP2 and follow a `HELLO 3` the way a real connection does, so the
 pair-shaped replies change with the protocol: `WITHSCORES` / `WITHVALUES` come
 back flat (`['a', 1, 'b', 2]`) on RESP2 and as tuples (`[['a', 1], ['b', 2]]`)
 on RESP3, matching node-redis. (`createIoredisMock` drives the real `ioredis@5`,
-which is RESP2-only.)
+which is RESP2-only.) Note the scalars inside those replies are not yet fully
+faithful at RESP2: scores decode to numbers where real node-redis at RESP2
+hands back strings (`['a', '1', 'b', '2']`), and a map reply decodes to an
+object where RESP2 puts a flat array on the wire — both tracked in
+[#414](https://github.com/fatal10110/js-redis-server/issues/414).
 
 ### `createIoredisMock` — virtual-socket ioredis client
 

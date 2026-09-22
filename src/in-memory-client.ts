@@ -4,9 +4,8 @@ import type { CompatibilitySpec } from './core/compatibility'
 import type { CommandExecutor } from './core/command-executor'
 import {
   decodeRedisValue,
-  flatPairsShapeFor,
   toRedisArgument,
-  type DecodeRedisValueOptions,
+  type ClientDecodeOptions,
   type NativeRedisReply,
 } from './core/decode-redis-value'
 import { RedisCommandError } from './core/redis-error'
@@ -43,7 +42,7 @@ export type InMemoryRedisClientOptions = {
  *
  * `returnBuffers` is per-connection and layered on top in the constructor.
  */
-export const IN_MEMORY_DECODE_OPTIONS: DecodeRedisValueOptions = {
+export const IN_MEMORY_DECODE_OPTIONS: ClientDecodeOptions = {
   // Widen past Number.MAX_SAFE_INTEGER rather than lose precision. Deliberately
   // *unlike* a real client (none of them widen) — callers here read replies
   // directly rather than comparing against real-client output.
@@ -52,9 +51,6 @@ export const IN_MEMORY_DECODE_OPTIONS: DecodeRedisValueOptions = {
   // is `["message", channel, payload]`); keep the type tag so push-mode
   // consumers see the same shape a real client would.
   pushShape: 'tagged',
-  // The RESP2 default. Overridden per reply from the session's negotiated
-  // version, so a connection that sent `HELLO 3` reads `[k, v]` tuples.
-  flatPairsShape: 'flat',
   error: (text, code) => new RedisCommandError(text, code),
 }
 
@@ -83,7 +79,7 @@ function anySignal(signals: readonly AbortSignal[]): AbortSignal {
  */
 export class InMemoryRedisClient {
   private readonly session: ClientSession
-  private readonly decodeOptions: DecodeRedisValueOptions
+  private readonly decodeOptions: ClientDecodeOptions
   private readonly onClose?: () => void
   private closed = false
   /** Aborted on close — tears down any active stream and push readers. */
@@ -235,12 +231,12 @@ export class InMemoryRedisClient {
   }
 
   private decode(value: RedisValue): RedisNativeReply {
-    // WITHSCORES-style pairs are flat on RESP2 and tuples on RESP3, so the
-    // shape has to be read off the session at decode time — `HELLO` can switch
-    // it mid-connection.
+    // The protocol is read off the session at decode time, not pinned at
+    // construction: `HELLO` can switch it mid-connection, and it decides the
+    // shape of WITHSCORES-style pair replies.
     return decodeRedisValue(value, {
       ...this.decodeOptions,
-      flatPairsShape: flatPairsShapeFor(this.session.protocolVersion),
+      version: this.session.protocolVersion,
     })
   }
 }

@@ -5,9 +5,8 @@ import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
 import {
   decodeRedisValue,
-  flatPairsShapeFor,
   redisErrorText,
-  type DecodeRedisValueOptions,
+  type ClientDecodeOptions,
   type NativeRedisReply,
 } from '../core/decode-redis-value'
 import { RedisCommandError } from '../core/redis-error'
@@ -103,7 +102,7 @@ async function ensureRedisErrors(): Promise<RedisErrorConstructors> {
 /** A command argument node-redis accepts on the wire. */
 export type NodeRedisCommandArgument = string | Buffer
 
-/** Native JS value a reply decodes to (mirrors node-redis RESP2 defaults). */
+/** Native JS value a reply decodes to. */
 export type NodeRedisReply = NativeRedisReply
 
 export type NodeRedisMockClusterOptions = {
@@ -238,7 +237,9 @@ abstract class CommandRunner extends EventEmitter {
   async hGetAll(key: string): Promise<{ [field: string]: string }> {
     const value = await this.run(['HGETALL', key])
     const reply = decodeReply(value, this.respVersion)
-    // decode() turns a RESP2 map reply into a plain object already.
+    // This decoder renders a `map` reply as a plain object at either protocol,
+    // which is what node-redis' own `hGetAll` transformReply produces — not
+    // what RESP2 puts on the wire, where a map is a flat array (see #414).
     return (reply as { [field: string]: string }) ?? {}
   }
 
@@ -469,21 +470,27 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /** Begin a MULTI transaction. Commands are queued, then replayed on exec(). */
   multi(): NodeRedisMockMulti {
-    return new NodeRedisMockMulti(
-      queued => this.runExclusive(() => this.runTransactionSpan(queued)),
-      () => this.session.protocolVersion,
+    return new NodeRedisMockMulti(queued =>
+      this.runExclusive(() => this.runTransactionSpan(queued)),
     )
   }
 
   /** Replay MULTI → queued commands → EXEC on the shared session as one span. */
   private async runTransactionSpan(
     queued: NodeRedisCommandArgument[][],
-  ): Promise<RedisValue> {
+  ): Promise<TransactionSpan> {
     await runOnSession(this.session, ['MULTI'], this.closed)
     for (const args of queued) {
       await runOnSession(this.session, args, this.closed)
     }
-    return runOnSession(this.session, ['EXEC'], this.closed)
+    const before = this.session.protocolVersion
+    const value = await runOnSession(this.session, ['EXEC'], this.closed)
+    const respVersion = this.session.protocolVersion
+    return {
+      value,
+      respVersion,
+      replyVersions: replayProtocolSwitches(queued, before, respVersion),
+    }
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -614,6 +621,68 @@ export class NodeRedisMockClient extends CommandRunner {
   }
 }
 
+/** One replayed MULTI → … → EXEC span, with what each reply must decode under. */
+type TransactionSpan = {
+  /** EXEC's reply. */
+  value: RedisValue
+  /** The protocol in force once the transaction finished. */
+  respVersion: RespVersion
+  /** Protocol each queued command's reply was produced under, by index. */
+  replyVersions: readonly RespVersion[]
+}
+
+/**
+ * The RESP version each queued reply was produced under. A `HELLO` inside a
+ * MULTI switches the protocol partway through EXEC, and real Redis encodes the
+ * items before it under the old version and the rest — including `HELLO`'s own
+ * reply — under the new one. Verified against Redis 8.0.6 with node-redis@6, in
+ * both directions:
+ *
+ *   MULTI; ZRANGE z 0 -1 WITHSCORES; HELLO 3; ZRANGE …; EXEC   (on RESP2)
+ *     → ["a","1","b","2"], <RESP3 map>, [["a",1],["b",2]]
+ *   the same with HELLO 2 on a RESP3 connection
+ *     → [["a",1],["b",2]], <RESP2 array>, ["a","1","b","2"]
+ *
+ * `ClientSession` gets this right for the wire path by pre-encoding each item
+ * as it goes (its `sawProtocolSwitch`), but hands the facade only the decoded
+ * array, so the switch is replayed here from the queue the facade owns.
+ *
+ * Only `HELLO <n>` is modelled — `RESET` is not queued by real Redis, it runs
+ * immediately and aborts the transaction (verified: `MULTI; RESET; EXEC` →
+ * `ERR EXEC without MULTI`). The replay is then checked against the version
+ * actually in force after EXEC; if it failed to predict it — a rejected
+ * `HELLO`, or any future command that moves the protocol — every item falls
+ * back to that final version.
+ */
+function replayProtocolSwitches(
+  queued: readonly NodeRedisCommandArgument[][],
+  before: RespVersion,
+  after: RespVersion,
+): RespVersion[] {
+  const versions: RespVersion[] = []
+  let current = before
+  for (const args of queued) {
+    current = protocolSwitchedBy(args) ?? current
+    versions.push(current)
+  }
+  return current === after ? versions : queued.map(() => after)
+}
+
+/** The version a queued `HELLO <2|3>` switches to, or undefined for anything else. */
+function protocolSwitchedBy(
+  args: readonly NodeRedisCommandArgument[],
+): RespVersion | undefined {
+  if (args.length < 2 || toText(args[0]).toLowerCase() !== 'hello') {
+    return undefined
+  }
+  const version = Number(toText(args[1]))
+  return version === 2 || version === 3 ? version : undefined
+}
+
+function toText(arg: NodeRedisCommandArgument): string {
+  return Buffer.isBuffer(arg) ? arg.toString('utf8') : arg
+}
+
 /**
  * MULTI builder mirroring node-redis' chainable transaction API. Queues curated
  * commands and replays them with a real MULTI/EXEC on the owning session, so the
@@ -627,9 +696,7 @@ export class NodeRedisMockMulti {
   constructor(
     private readonly runTransaction: (
       queued: NodeRedisCommandArgument[][],
-    ) => Promise<RedisValue>,
-    /** RESP version of the owning session, read when EXEC's replies decode. */
-    private readonly respVersion: () => RespVersion,
+    ) => Promise<TransactionSpan>,
   ) {}
 
   set(key: string, value: string | number): this {
@@ -676,8 +743,11 @@ export class NodeRedisMockMulti {
     this.assertOpen()
     this.settled = true
 
-    const result = await this.runTransaction(this.queued)
-    const respVersion = this.respVersion()
+    const {
+      value: result,
+      respVersion,
+      replyVersions,
+    } = await this.runTransaction(this.queued)
     const errors = await ensureRedisErrors()
 
     if (result.kind === 'null' || result.kind === 'null-array') {
@@ -697,7 +767,7 @@ export class NodeRedisMockMulti {
         errorIndexes.push(index)
         return
       }
-      replies.push(decodeReply(item, respVersion))
+      replies.push(decodeReply(item, replyVersions[index] ?? respVersion))
     })
 
     if (errorIndexes.length > 0) {
@@ -733,7 +803,17 @@ export class NodeRedisMockCluster extends CommandRunner {
   private readonly masters: ClusterNodePipeline[]
   private readonly sessions = new Map<string, ClientSession>()
   private readonly replicationLinks: { close(): void }[]
-  private lastRespVersion: RespVersion = 2
+  /**
+   * RESP version for the client as a whole, not for one node. Real node-redis
+   * hands its `RESP` setting to every node client when it builds the slot map
+   * (`@redis/client`'s `cluster-slots`), so no key can come back in the other
+   * protocol's shape. `HELLO` here is keyless, so it only ever reaches
+   * `masters[0]`; the version it negotiates is held here and replayed onto each
+   * other node session by {@link syncProtocol} before that session serves a
+   * command. Reading *this* rather than the serving session's version is also
+   * what keeps concurrent commands from decoding under each other's protocol.
+   */
+  private clientRespVersion: RespVersion = 2
   private closed = false
 
   private constructor(
@@ -765,21 +845,38 @@ export class NodeRedisMockCluster extends CommandRunner {
     return this
   }
 
-  /**
-   * The version negotiated on the node session that served the last command.
-   * There is no single connection to read here: `HELLO` has no keys, so it
-   * lands on `masters[0]` and leaves the other nodes' sessions where they were
-   * — the same per-node caveat {@link sessionForCommand} documents for pub/sub.
-   */
   protected get respVersion(): RespVersion {
-    return this.lastRespVersion
+    return this.clientRespVersion
   }
 
   protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
     const session = this.sessionForCommand(args)
+    await this.syncProtocol(session)
     const value = await runOnSession(session, args, this.closed)
-    this.lastRespVersion = session.protocolVersion
+    // A HELLO (or RESET) just switched this node's session — adopt it as the
+    // client's version so every other node is brought along on its next
+    // command. Nothing else can move a session's protocol, so this is a no-op
+    // for ordinary commands.
+    this.clientRespVersion = session.protocolVersion
     return value
+  }
+
+  /**
+   * Bring `session` up to {@link clientRespVersion} before it serves a command
+   * — the facade's stand-in for the RESP handshake node-redis performs on every
+   * node connection it opens. Done lazily, on the node's next command, which is
+   * indistinguishable from doing it eagerly: a session that has not run a
+   * command has not produced a reply to mis-shape.
+   */
+  private async syncProtocol(session: ClientSession): Promise<void> {
+    if (session.protocolVersion === this.clientRespVersion) {
+      return
+    }
+    await runOnSession(
+      session,
+      ['HELLO', String(this.clientRespVersion)],
+      this.closed,
+    )
   }
 
   // quit()/disconnect() are async to match node-redis' signatures, but cluster
@@ -810,6 +907,9 @@ export class NodeRedisMockCluster extends CommandRunner {
       session.close()
     }
     this.sessions.clear()
+    // Per-connection state goes back to its handshake default alongside the
+    // sessions it belongs to.
+    this.clientRespVersion = 2
     for (const link of this.replicationLinks) {
       link.close()
     }
@@ -1031,7 +1131,7 @@ function notify(
  * the divergences are deliberate, and a silent re-convergence is the failure
  * mode worth catching.
  */
-export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
+export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions = {
   // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic, so
   // it is always a `number` (precision loss past 2^53 included) — never a
   // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint.
@@ -1039,10 +1139,6 @@ export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
   // node-redis routes a push frame by its type tag and hands listeners only the
   // payload, so the tag is not part of the decoded reply.
   pushShape: 'items',
-  // The RESP2 default. Overridden per reply from the RESP version negotiated
-  // on the session that served it, so a `HELLO 3` yields `[k, v]` tuples the
-  // way a RESP3 node-redis connection does.
-  flatPairsShape: 'flat',
   // Surface node-redis' own ErrorReply (so `instanceof ErrorReply` matches the
   // documented idiom). Falls back to RedisCommandError if `redis` is absent.
   error: (text, code) => {
@@ -1052,9 +1148,9 @@ export const NODE_REDIS_DECODE_OPTIONS: DecodeRedisValueOptions = {
 }
 
 /**
- * Decode a reply the caller hands back whole. `respVersion` is the version
- * negotiated on the session that served it — it decides the `flat-pairs` shape
- * (flat on RESP2, `[k, v]` tuples on RESP3), so it is never defaulted.
+ * Decode a reply the caller hands back whole. `respVersion` is the version the
+ * connection served it under — it decides the protocol-dependent shapes — so it
+ * is never defaulted.
  */
 function decodeReply(
   value: RedisValue,
@@ -1062,17 +1158,17 @@ function decodeReply(
 ): NodeRedisReply {
   return decodeRedisValue(value, {
     ...NODE_REDIS_DECODE_OPTIONS,
-    flatPairsShape: flatPairsShapeFor(respVersion),
+    version: respVersion,
   })
 }
 
 /**
  * Decode a reply a curated method immediately narrows to a scalar (or a flat
- * string array). No `flat-pairs` can reach these, so the protocol-independent
- * defaults are enough.
+ * string array). No protocol-dependent kind can reach these, so the version
+ * passed is unobservable.
  */
 function decodeScalarReply(value: RedisValue): NodeRedisReply {
-  return decodeRedisValue(value, NODE_REDIS_DECODE_OPTIONS)
+  return decodeRedisValue(value, { ...NODE_REDIS_DECODE_OPTIONS, version: 2 })
 }
 
 function asNumber(value: RedisValue): number {

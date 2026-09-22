@@ -16,12 +16,33 @@ export type NativeRedisReply =
   | { [key: string]: NativeRedisReply }
 
 /**
- * The points where two socketless clients over this pipeline legitimately
- * disagree about how to present a reply. Everything else — bulk strings, maps,
- * flat pairs, nulls — decodes identically, so it lives in
+ * Everything {@link decodeRedisValue} needs: the points where two socketless
+ * clients over this pipeline legitimately disagree about how to present a reply
+ * ({@link ClientDecodeOptions}), plus the connection's negotiated RESP version.
+ * Everything else — bulk strings, nulls — decodes identically, so it lives in
  * {@link decodeRedisValue} once.
  */
-export type DecodeRedisValueOptions = {
+export type DecodeRedisValueOptions = ClientDecodeOptions & {
+  /**
+   * RESP version the connection served this reply under. Some replies are
+   * shaped by the protocol rather than by the client: `flat-pairs`
+   * (WITHSCORES / WITHVALUES) is a flat `[k, v, k, v, …]` array on RESP2 and
+   * `[[k, v], …]` tuples on RESP3, so a RESP3 consumer iterating
+   * `for (const [field, value] of reply)` must not be handed a flat array.
+   *
+   * Mirrors `encodeRedisValue`'s `{ version }`, and is read per reply: `HELLO`
+   * switches it mid-connection. (ioredis is RESP2-only, so a real ioredis only
+   * ever sees the RESP2 shapes.)
+   */
+  version: RespVersion
+}
+
+/**
+ * The half of {@link DecodeRedisValueOptions} that belongs to the *client*
+ * rather than to the connection. A client pins these once; `version` comes off
+ * its session at decode time.
+ */
+export type ClientDecodeOptions = {
   /**
    * How an integer reply that arrived as a `bigint` is narrowed.
    *  - `'always'`: node-redis parses a RESP2 `:` with plain JS number
@@ -42,32 +63,10 @@ export type DecodeRedisValueOptions = {
    *    push-mode consumer sees what a real client would read off the socket.
    */
   pushShape: 'items' | 'tagged'
-  /**
-   * Shape of a `flat-pairs` reply — WITHSCORES / WITHVALUES and friends.
-   *  - `'flat'`: `[k, v, k, v, …]`, the RESP2 wire shape.
-   *  - `'tuples'`: `[[k, v], …]`, the RESP3 wire shape.
-   *
-   * Protocol-dependent rather than per-client: a RESP3 consumer iterating
-   * `for (const [field, value] of reply)` must not be handed a flat array.
-   * Both socketless clients derive it from their session's negotiated version
-   * via {@link flatPairsShapeFor}. (ioredis is RESP2-only, so a real ioredis
-   * always sees `'flat'`.)
-   */
-  flatPairsShape: 'flat' | 'tuples'
   /** Builds the error thrown for an `error` reply, from its on-the-wire text. */
   error: (text: string, code?: string) => Error
   /** Return `Buffer`s for bulk-string/verbatim replies instead of utf8 strings. */
   returnBuffers?: boolean
-}
-
-/**
- * The {@link DecodeRedisValueOptions.flatPairsShape} a connection speaking
- * `version` must decode to — the one place the RESP2/RESP3 rule lives.
- */
-export function flatPairsShapeFor(
-  version: RespVersion,
-): DecodeRedisValueOptions['flatPairsShape'] {
-  return version === 3 ? 'tuples' : 'flat'
 }
 
 /**
@@ -132,7 +131,9 @@ export function decodeRedisValue(
       return out
     }
     case 'flat-pairs':
-      if (options.flatPairsShape === 'tuples') {
+      // `[[k, v], …]` on RESP3, flat `[k, v, k, v, …]` on RESP2 — the same
+      // split `encodeRedisValue` puts on the wire.
+      if (options.version === 3) {
         return value.entries.map(([key, val]) => [decode(key), decode(val)])
       }
       return value.entries.flatMap(([key, val]) => [decode(key), decode(val)])

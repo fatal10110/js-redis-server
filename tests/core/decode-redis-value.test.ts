@@ -9,9 +9,9 @@ import { IN_MEMORY_DECODE_OPTIONS } from '../../src/in-memory-client'
 import {
   decodeRedisValue,
   decodeRedisKey,
-  flatPairsShapeFor,
   redisErrorText,
   toRedisArgument,
+  type DecodeRedisValueOptions,
 } from '../../src/core/decode-redis-value'
 import { RedisCommandError } from '../../src/core/redis-error'
 import type { RedisValue } from '../../src/core/redis-value'
@@ -27,6 +27,18 @@ const bulk = (value: string): RedisValue => ({
   kind: 'bulk-string',
   value: Buffer.from(value),
 })
+
+// `version` belongs to the connection, not the client, so it is not part of
+// either constant. Every case below but the `version` one is
+// protocol-independent; pin RESP2 so the options are complete.
+const nodeRedisAtResp2: DecodeRedisValueOptions = {
+  ...NODE_REDIS_DECODE_OPTIONS,
+  version: 2,
+}
+const inMemoryAtResp2: DecodeRedisValueOptions = {
+  ...IN_MEMORY_DECODE_OPTIONS,
+  version: 2,
+}
 
 describe('decode option divergences between the two clients', () => {
   before(async () => {
@@ -45,13 +57,13 @@ describe('decode option divergences between the two clients', () => {
     }
 
     assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.pushShape, 'items')
-    assert.deepStrictEqual(decodeRedisValue(push, NODE_REDIS_DECODE_OPTIONS), [
+    assert.deepStrictEqual(decodeRedisValue(push, nodeRedisAtResp2), [
       'news',
       'hello',
     ])
 
     assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.pushShape, 'tagged')
-    assert.deepStrictEqual(decodeRedisValue(push, IN_MEMORY_DECODE_OPTIONS), [
+    assert.deepStrictEqual(decodeRedisValue(push, inMemoryAtResp2), [
       'message',
       'news',
       'hello',
@@ -67,22 +79,22 @@ describe('decode option divergences between the two clients', () => {
     // node-redis parses `:` with plain JS number arithmetic — precision loss
     // included — so it is never a bigint.
     assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.narrowBigInt, 'always')
-    const narrowed = decodeRedisValue(unsafe, NODE_REDIS_DECODE_OPTIONS)
+    const narrowed = decodeRedisValue(unsafe, nodeRedisAtResp2)
     assert.strictEqual(typeof narrowed, 'number')
     assert.strictEqual(narrowed, 9007199254740992)
 
     // The in-memory client keeps the exact value instead.
     assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.narrowBigInt, 'when-safe')
     assert.strictEqual(
-      decodeRedisValue(unsafe, IN_MEMORY_DECODE_OPTIONS),
+      decodeRedisValue(unsafe, inMemoryAtResp2),
       BigInt(Number.MAX_SAFE_INTEGER) + 2n,
     )
   })
 
   test('narrowBigInt: a safe bigint is a number for both clients', () => {
     const safe: RedisValue = { kind: 'integer', value: 42n }
-    assert.strictEqual(decodeRedisValue(safe, NODE_REDIS_DECODE_OPTIONS), 42)
-    assert.strictEqual(decodeRedisValue(safe, IN_MEMORY_DECODE_OPTIONS), 42)
+    assert.strictEqual(decodeRedisValue(safe, nodeRedisAtResp2), 42)
+    assert.strictEqual(decodeRedisValue(safe, inMemoryAtResp2), 42)
   })
 
   test('error: the facade throws node-redis ErrorReply, in-memory RedisCommandError', () => {
@@ -95,7 +107,7 @@ describe('decode option divergences between the two clients', () => {
       'WRONGTYPE Operation against a key holding the wrong kind of value'
 
     assert.throws(
-      () => decodeRedisValue(error, NODE_REDIS_DECODE_OPTIONS),
+      () => decodeRedisValue(error, nodeRedisAtResp2),
       (err: unknown) => {
         // `instanceof ErrorReply` is node-redis' documented idiom.
         assert.ok(err instanceof ErrorReply)
@@ -106,7 +118,7 @@ describe('decode option divergences between the two clients', () => {
     )
 
     assert.throws(
-      () => decodeRedisValue(error, IN_MEMORY_DECODE_OPTIONS),
+      () => decodeRedisValue(error, inMemoryAtResp2),
       (err: unknown) => {
         assert.ok(err instanceof RedisCommandError)
         assert.ok(!(err instanceof ErrorReply))
@@ -122,15 +134,12 @@ describe('decode option divergences between the two clients', () => {
     assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.returnBuffers, undefined)
     assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.returnBuffers, undefined)
 
-    const options = { ...IN_MEMORY_DECODE_OPTIONS, returnBuffers: true }
+    const options = { ...inMemoryAtResp2, returnBuffers: true }
     assert.deepStrictEqual(
       decodeRedisValue(bulk('v'), options),
       Buffer.from('v'),
     )
-    assert.strictEqual(
-      decodeRedisValue(bulk('v'), IN_MEMORY_DECODE_OPTIONS),
-      'v',
-    )
+    assert.strictEqual(decodeRedisValue(bulk('v'), inMemoryAtResp2), 'v')
     // A null bulk-string is still null, not an empty Buffer.
     assert.strictEqual(
       decodeRedisValue({ kind: 'bulk-string', value: null }, options),
@@ -138,16 +147,11 @@ describe('decode option divergences between the two clients', () => {
     )
   })
 
-  test('flatPairsShape is RESP2-flat on both constants and per-protocol at decode time', () => {
-    // Unlike the other knobs this one is not a per-client divergence: both
-    // clients start from the RESP2 shape and override it from the session's
-    // negotiated version (see flatPairsShapeFor). #385.
-    assert.strictEqual(NODE_REDIS_DECODE_OPTIONS.flatPairsShape, 'flat')
-    assert.strictEqual(IN_MEMORY_DECODE_OPTIONS.flatPairsShape, 'flat')
-
-    assert.strictEqual(flatPairsShapeFor(2), 'flat')
-    assert.strictEqual(flatPairsShapeFor(3), 'tuples')
-
+  test('version: flat-pairs is flat on RESP2 and tuples on RESP3, for both clients', () => {
+    // `version` is not a per-client divergence — it belongs to the connection,
+    // which is why it is not part of either constant. Both clients pass their
+    // session's negotiated version, so both must read the same reply the same
+    // way at the same protocol. #385.
     const withScores: RedisValue = {
       kind: 'flat-pairs',
       entries: [
@@ -158,23 +162,22 @@ describe('decode option divergences between the two clients', () => {
 
     // Real node-redis, sendCommand against Redis 8.0.6:
     //   RESP2 → ["a","1","b","2"]   RESP3 → [["a",1],["b",2]]
-    assert.deepStrictEqual(
-      decodeRedisValue(withScores, {
-        ...NODE_REDIS_DECODE_OPTIONS,
-        flatPairsShape: flatPairsShapeFor(2),
-      }),
-      ['a', 1, 'b', 2],
-    )
-    assert.deepStrictEqual(
-      decodeRedisValue(withScores, {
-        ...NODE_REDIS_DECODE_OPTIONS,
-        flatPairsShape: flatPairsShapeFor(3),
-      }),
-      [
-        ['a', 1],
-        ['b', 2],
-      ],
-    )
+    for (const client of [
+      NODE_REDIS_DECODE_OPTIONS,
+      IN_MEMORY_DECODE_OPTIONS,
+    ]) {
+      assert.deepStrictEqual(
+        decodeRedisValue(withScores, { ...client, version: 2 }),
+        ['a', 1, 'b', 2],
+      )
+      assert.deepStrictEqual(
+        decodeRedisValue(withScores, { ...client, version: 3 }),
+        [
+          ['a', 1],
+          ['b', 2],
+        ],
+      )
+    }
   })
 
   test('map keys stay utf8 strings even with returnBuffers', () => {
@@ -184,7 +187,7 @@ describe('decode option divergences between the two clients', () => {
     }
     assert.deepStrictEqual(
       decodeRedisValue(map, {
-        ...IN_MEMORY_DECODE_OPTIONS,
+        ...inMemoryAtResp2,
         returnBuffers: true,
       }),
       { field: Buffer.from('value') },

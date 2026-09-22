@@ -5,6 +5,7 @@ import type { InMemoryRedisClient } from '../src'
 import {
   createNodeRedisMock,
   type NodeRedisMockClient,
+  type NodeRedisMockCluster,
 } from '../src/client-mocks/node-redis-mock'
 
 /**
@@ -239,6 +240,144 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
           ['b', 2],
         ],
       ])
+    })
+
+    test('a HELLO inside MULTI only reshapes the replies from itself onward', async () => {
+      // Real node-redis@6 against Redis 8.0.6, RESP2 connection running
+      // MULTI; ZRANGE …; HELLO 3; ZRANGE …; EXEC:
+      //   item0 ["a","1","b","2"]   item1 <RESP3 map>   item2 [["a",1],["b",2]]
+      // — i.e. the switch takes effect at the HELLO's own reply, and the items
+      // queued before it keep the old shape.
+      const c = await seeded(2)
+      const replies = await c
+        .multi()
+        .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES'])
+        .addCommand(['HELLO', '3'])
+        .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES'])
+        .exec()
+
+      assert.deepStrictEqual(replies[0], ['a', 1, 'b', 2])
+      assert.deepStrictEqual(replies[2], [
+        ['a', 1],
+        ['b', 2],
+      ])
+      // And the connection is left on RESP3 afterwards.
+      assert.deepStrictEqual(
+        await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
+        [
+          ['a', 1],
+          ['b', 2],
+        ],
+      )
+    })
+
+    test('HELLO 2 and RESET put the connection back on the flat shape', async () => {
+      const c = await seeded(3)
+      assert.deepStrictEqual(
+        await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
+        [
+          ['a', 1],
+          ['b', 2],
+        ],
+      )
+
+      await c.sendCommand(['HELLO', '2'])
+      assert.deepStrictEqual(
+        await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
+        ['a', 1, 'b', 2],
+      )
+
+      await c.sendCommand(['HELLO', '3'])
+      await c.sendCommand(['RESET'])
+      assert.deepStrictEqual(
+        await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
+        ['a', 1, 'b', 2],
+      )
+    })
+  })
+
+  // The cluster facade is the one client where the protocol is not simply its
+  // own session's: `HELLO` is keyless, so it reaches `masters[0]` only. Real
+  // node-redis hands its RESP setting to every node client when it builds the
+  // slot map, so no key may come back in the other protocol's shape.
+  describe('node-redis cluster facade', () => {
+    const openClusters: NodeRedisMockCluster[] = []
+    // Six keys is enough to land on every master of a 3-master cluster.
+    const keys = ['k0', 'k1', 'k2', 'k3', 'k4', 'k5']
+
+    afterEach(async () => {
+      while (openClusters.length > 0) {
+        await openClusters.pop()?.quit()
+      }
+    })
+
+    async function seededCluster(): Promise<NodeRedisMockCluster> {
+      const cluster = (await createNodeRedisMock({
+        cluster: { masters: 3 },
+      })) as NodeRedisMockCluster
+      openClusters.push(cluster)
+      for (const key of keys) {
+        await cluster.sendCommand(['ZADD', key, '1', 'a', '2', 'b'])
+      }
+      return cluster
+    }
+
+    const zrange = (cluster: NodeRedisMockCluster, key: string) =>
+      cluster.sendCommand(['ZRANGE', key, '0', '-1', 'WITHSCORES'])
+
+    const tuples = [
+      ['a', 1],
+      ['b', 2],
+    ]
+    const flat = ['a', 1, 'b', 2]
+
+    test('HELLO 3 reaches every node, not just the one it routed to', async () => {
+      const cluster = await seededCluster()
+      await cluster.sendCommand(['HELLO', '3'])
+
+      for (const key of keys) {
+        assert.deepStrictEqual(
+          await zrange(cluster, key),
+          tuples,
+          `key ${key} came back in the wrong shape`,
+        )
+      }
+    })
+
+    test('concurrent commands on different nodes do not cross-contaminate', async () => {
+      const cluster = await seededCluster()
+      await cluster.sendCommand(['HELLO', '3'])
+
+      // k0 and k2 hash to different masters. Whichever finishes last must not
+      // decide the other's shape.
+      assert.deepStrictEqual(
+        await Promise.all([zrange(cluster, 'k2'), zrange(cluster, 'k0')]),
+        [tuples, tuples],
+      )
+      assert.deepStrictEqual(
+        await Promise.all([zrange(cluster, 'k0'), zrange(cluster, 'k2')]),
+        [tuples, tuples],
+      )
+    })
+
+    test('a RESP2 cluster client is flat on every node', async () => {
+      const cluster = await seededCluster()
+      for (const key of keys) {
+        assert.deepStrictEqual(await zrange(cluster, key), flat)
+      }
+    })
+
+    test('HELLO 2 downgrades every node back to the flat shape', async () => {
+      const cluster = await seededCluster()
+      await cluster.sendCommand(['HELLO', '3'])
+      // Touch a non-masters[0] key so more than one node session is live and
+      // has actually been switched to RESP3 before the downgrade.
+      assert.deepStrictEqual(await zrange(cluster, 'k0'), tuples)
+
+      await cluster.sendCommand(['HELLO', '2'])
+      for (const key of keys) {
+        assert.deepStrictEqual(await zrange(cluster, key), flat)
+      }
     })
   })
 })
