@@ -142,9 +142,8 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
   test('SORT with a constant BY reads a zset in rank order', async () => {
     await withOps(async (c, k) => {
       // sortCommand()'s dontsort path walks the skiplist, so the reply is in
-      // rank order. The fixture keeps all three candidate orders apart, so
-      // this cannot pass by accident:
-      //   insertion a, b, c   ALPHA a, b, c   rank c, a, b
+      // rank order. Rank order (c, a, b) differs from both insertion order and
+      // ALPHA order (both a, b, c), so this cannot pass by accident.
       await c.zadd(k('z'), '2', 'a', '3', 'b', '1', 'c')
       await c.mset(k('w_a'), 'A', k('w_b'), 'B', k('w_c'), 'C')
 
@@ -223,10 +222,10 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
 
   test('SORT with a constant BY reads the source backwards for DESC', async () => {
     await withOps(async (c, k) => {
-      // dontsort does not mean "ignore DESC": sortCommand() iterates the list
-      // from its head and the skiplist from its tail instead, with LIMIT
-      // applied to that reversed walk. A set has no such branch, so DESC is
-      // genuinely a no-op there.
+      // dontsort does not mean "ignore DESC": sortCommand() walks both the
+      // list and the skiplist from the tail toward the head instead, with
+      // LIMIT applied to that reversed walk. A set has no such branch, so
+      // DESC is genuinely a no-op there.
       await c.rpush(k('l'), 'a', 'c', 'b')
       await c.zadd(k('z'), '2', 'a', '3', 'b', '1', 'c')
       await c.sadd(k('s'), 'a', 'c', 'b')
