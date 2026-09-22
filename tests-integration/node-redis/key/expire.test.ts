@@ -415,9 +415,10 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
     })
     assert.strictEqual(await redisClient.ttl(downKey), 1)
 
-    // x999, not x900: TTL 2 holds while PTTL is in (1500, 2000], so the top of
-    // the band buys the whole ~500ms of round-trip slack it can give. 1900
-    // leaves only 400ms and reads TTL 1 under load (#411).
+    // x999, not x900: TTL 2 needs PTTL >= 1500 and PTTL < 2000 is what keeps a
+    // Math.floor regression answering 1, so the useful window is [1500, 2000).
+    // Starting at its top leaves the whole ~500ms for a slow round-trip; 1900
+    // leaves 400ms and a 401ms stall under load reads TTL 1 (#411).
     const upKey = `${tag}:up`
     await redisClient.set(upKey, 'v', {
       expiration: { type: 'PX', value: 1999 },

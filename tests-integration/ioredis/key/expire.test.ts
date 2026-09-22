@@ -394,11 +394,12 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     await redisClient!.set(downKey, 'v', 'PX', 1200)
     assert.strictEqual(await redisClient!.ttl(downKey), 1)
 
-    // Fractional part >= 0.5 rounds up — catches a Math.floor "fix". Each of
-    // these sits at the TOP of its rounding band (x999, not x900): TTL 2 holds
-    // while PTTL is in (1500, 2000], so starting at 1999 buys the whole ~500ms
-    // the band can give. Don't "tidy" these to round numbers — 1900 leaves only
-    // 400ms and a slow round-trip under load then reads TTL 1 (#411).
+    // Fractional part >= 0.5 rounds up — catches a Math.floor "fix". Each value
+    // sits at the top of the window where that check means anything: TTL 2
+    // needs PTTL >= 1500, and PTTL < 2000 is what keeps Math.floor answering 1,
+    // so the window is [1500, 2000). Starting at 1999 leaves the whole ~500ms
+    // of it for a slow round-trip. Don't "tidy" these back to round numbers —
+    // 1900 leaves 400ms and a 401ms stall under load reads TTL 1 (#411).
     const upKey = `${tag}:up`
     await redisClient!.set(upKey, 'v', 'PX', 1999)
     assert.strictEqual(await redisClient!.ttl(upKey), 2)
