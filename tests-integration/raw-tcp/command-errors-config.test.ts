@@ -11,8 +11,19 @@ import { expectReply } from './helpers'
  * `.config()` and node-redis' `configGet()` only reach the subcommands they
  * know about, and neither adds anything to a bytes-in/bytes-out assertion.
  *
- * Captured from real redis-server 7.2.1 and 8.0.6 — identical on both, so no
- * compatibility-profile gate applies.
+ * The wording IS version-specific. Redis 7.0 moved container commands into the
+ * command table, which replaced the 6.2 template and added `%.128s` truncation
+ * of the echoed name. Captured from real servers:
+ *
+ * ```
+ * 6.2.24  CONFIG BOGUS -> Unknown subcommand or wrong number of arguments for 'BOGUS'. Try CONFIG HELP.
+ * 7.0.15  CONFIG BOGUS -> unknown subcommand 'BOGUS'. Try CONFIG HELP.
+ * 8.0.6   CONFIG BOGUS -> unknown subcommand 'BOGUS'. Try CONFIG HELP.
+ * ```
+ *
+ * This suite runs on the default profile (`redis-8.0`) and against the real
+ * 8.0 backend, so it pins the 7.0+ form. The 6.2 side of the gate is asserted
+ * by the profile sweep in `tests-integration/compatibility/profile-gates.test.ts`.
  */
 const testRunner = new TestRunner()
 
@@ -71,6 +82,30 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
       ['CONFIG', 'BOGUS', 'maxmemory', '100'],
       "-ERR unknown subcommand 'BOGUS'. Try CONFIG HELP.\r\n",
     )
+  })
+
+  // Real Redis renders the echoed subcommand with `%.128s`. Verified exact
+  // against 7.0.15 and 8.0.6: 127 and 128 come back whole, 129 and 300 are both
+  // cut to 128. (Redis 6.2 does not truncate at all — covered by the gate.)
+  test('the echoed subcommand is truncated at 128 bytes', async () => {
+    const conn = await connect()
+
+    for (const length of [1, 127, 128]) {
+      const name = 'X'.repeat(length)
+      await expectReply(
+        conn,
+        ['CONFIG', name],
+        `-ERR unknown subcommand '${name}'. Try CONFIG HELP.\r\n`,
+      )
+    }
+
+    for (const length of [129, 300]) {
+      await expectReply(
+        conn,
+        ['CONFIG', 'X'.repeat(length)],
+        `-ERR unknown subcommand '${'X'.repeat(128)}'. Try CONFIG HELP.\r\n`,
+      )
+    }
   })
 
   test('CONFIG with no subcommand is a wrong-arity error for the container', async () => {

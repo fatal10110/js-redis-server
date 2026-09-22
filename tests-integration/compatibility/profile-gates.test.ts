@@ -259,6 +259,37 @@ describe(
       )
     })
 
+    // Redis 7.0 moved container commands into the command table, replacing the
+    // 6.2 unknown-subcommand template and adding `%.128s` truncation of the
+    // echoed name. Captured from real redis-server 6.2.24, 7.0.15 and 8.0.6.
+    // Valkey forked at 7.2, so every Valkey profile gets the newer wording.
+    test('CONFIG unknown-subcommand wording matches the profile', async () => {
+      const reply = await send('CONFIG', 'BOGUS')
+
+      if (!supportsUnknownSubcommandWording()) {
+        assert.strictEqual(
+          reply,
+          "-ERR Unknown subcommand or wrong number of arguments for 'BOGUS'. Try CONFIG HELP.\r\n",
+        )
+        return
+      }
+
+      assert.strictEqual(
+        reply,
+        "-ERR unknown subcommand 'BOGUS'. Try CONFIG HELP.\r\n",
+      )
+    })
+
+    test('the echoed unknown subcommand is truncated only from Redis 7.0', async () => {
+      const reply = await send('CONFIG', 'X'.repeat(300))
+
+      // 7.0+ formats it with `%.128s`; 6.2 echoes all 300 bytes.
+      const expectedEcho = supportsUnknownSubcommandWording() ? 128 : 300
+      const echoed = /'(X+)'/.exec(reply)
+      assert.ok(echoed, `expected an echoed subcommand, got ${reply}`)
+      assert.strictEqual(echoed[1].length, expectedEcho)
+    })
+
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
       // the wording is version-invariant across profiles.
@@ -528,6 +559,10 @@ function supportsSetNxGet(): boolean {
 }
 
 function supportsCommandDocs(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsUnknownSubcommandWording(): boolean {
   return profile !== 'redis-6.2'
 }
 
