@@ -66,6 +66,12 @@ export class Resp2SessionAdapter {
       // them); wait for their drain tasks to settle so nothing writes after we
       // return.
       await Promise.allSettled(this.activeStreams)
+      // The read loop is over — the client sent EOF, a command asked to close,
+      // or the stream failed — so close our side as Redis does. The transport's
+      // reader no longer destroys the stream on an early exit, so without this
+      // an abandoned connection could stay open. Idempotent if already closed;
+      // last, so pending drains above still get to write.
+      this.transport.close('session ended')
     }
   }
 

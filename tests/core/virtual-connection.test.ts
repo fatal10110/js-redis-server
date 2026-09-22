@@ -223,6 +223,7 @@ function record(socket: NodeJS.EventEmitter): Recorded {
 
   socket.on('connect', () => events.push('connect'))
   socket.on('end', () => events.push('end'))
+  socket.on('finish', () => events.push('finish'))
   socket.on('close', () => events.push('close'))
   socket.on('error', (err: Error) => events.push(`error:${err.message}`))
   socket.on('data', (chunk: Buffer) => {
@@ -313,7 +314,7 @@ describe('createVirtualConnection — server-side half-close', () => {
   ]
 
   for (const { name, send, reply } of flowingCases) {
-    test(`${name}: a reading client sees [connect, data, end, close]`, async () => {
+    test(`${name}: a reading client sees [connect, data, end, finish, close]`, async () => {
       const { state, executor } = freshPipeline()
       const conn = createVirtualConnection({ state, executor })
       const seen = record(conn.clientSocket)
@@ -323,14 +324,22 @@ describe('createVirtualConnection — server-side half-close', () => {
       await within(conn.done, 'the session to end')
       await within(seen.closed, 'the client to close')
 
-      // Real Redis 7.2 gives [connect, end, close] around the reply bytes.
-      assert.deepStrictEqual(seen.events, ['connect', 'data', 'end', 'close'])
+      // Real Redis 7.2 gives [connect, end, close] around the reply bytes. The
+      // 'finish' between them is net.Socket's allowHalfOpen: false: having read
+      // the server's EOF, the client ends its own writable before closing.
+      assert.deepStrictEqual(seen.events, [
+        'connect',
+        'data',
+        'end',
+        'finish',
+        'close',
+      ])
       assert.match(seen.bytes(), reply)
       assert.strictEqual(state.getConnectedClients().length, 0)
     })
   }
 
-  test('close() with nothing to send: a reading client sees [connect, end, close]', async () => {
+  test('close() with nothing to send: a reading client sees [connect, end, finish, close]', async () => {
     const { state, executor } = freshPipeline()
     const conn = createVirtualConnection({ state, executor })
     const seen = record(conn.clientSocket)
@@ -340,7 +349,7 @@ describe('createVirtualConnection — server-side half-close', () => {
     await within(conn.done, 'the session to end')
     await within(seen.closed, 'the client to close')
 
-    assert.deepStrictEqual(seen.events, ['connect', 'end', 'close'])
+    assert.deepStrictEqual(seen.events, ['connect', 'end', 'finish', 'close'])
     assert.strictEqual(conn.clientSocket.destroyed, true)
   })
 
@@ -365,7 +374,7 @@ describe('createVirtualConnection — server-side half-close', () => {
       await within(seen.closed, 'the client to close after resuming')
 
       assert.strictEqual(seen.bytes(), trigger.reply)
-      assert.deepStrictEqual(seen.events, ['data', 'end', 'close'])
+      assert.deepStrictEqual(seen.events, ['data', 'end', 'finish', 'close'])
     })
   }
 
@@ -400,4 +409,126 @@ describe('createVirtualConnection — server-side half-close', () => {
       assert.strictEqual(state.getConnectedClients().length, 0)
     })
   }
+})
+
+describe('createVirtualConnection — client-side half-close', () => {
+  test('client end() first: the server closes too, and the client sees finish, end, close', async () => {
+    const { state, executor } = freshPipeline()
+    const conn = createVirtualConnection({ state, executor })
+    const seen = record(conn.clientSocket)
+    await once(conn.clientSocket, 'connect')
+
+    // What ioredis disconnect() does. Redis drops a client whose connection
+    // hits EOF, so the server must answer with its own FIN — not just vanish.
+    conn.clientSocket.end()
+
+    await within(conn.done, 'the session to end')
+    await within(seen.closed, 'the client to close')
+
+    assert.deepStrictEqual(seen.events, ['connect', 'finish', 'end', 'close'])
+    assert.strictEqual(state.getConnectedClients().length, 0)
+  })
+
+  test('client end() after a pipelined command: the reply still arrives', async () => {
+    const { state, executor } = freshPipeline()
+    const conn = createVirtualConnection({ state, executor })
+    const seen = record(conn.clientSocket)
+    await once(conn.clientSocket, 'connect')
+
+    conn.clientSocket.write(commandFrame('PING'))
+    conn.clientSocket.end()
+
+    await within(conn.done, 'the session to end')
+    await within(seen.closed, 'the client to close')
+
+    assert.strictEqual(seen.bytes(), '+PONG\r\n')
+    // The relative order of 'data' and 'finish' depends on when the server
+    // consumes the EOF, as it does on a real socket; the invariants are that
+    // every reply byte precedes 'end', and 'close' comes last.
+    assert.ok(seen.events.includes('finish'), `no finish: ${seen.events}`)
+    assert.ok(
+      seen.events.indexOf('data') < seen.events.indexOf('end'),
+      `data after end: ${seen.events}`,
+    )
+    assert.strictEqual(seen.events.at(-1), 'close')
+  })
+})
+
+describe('createVirtualConnection — writing after the server has closed', () => {
+  /** QUIT, then wait until the server end is gone, leaving the client half-open. */
+  async function halfOpenAfterQuit() {
+    const { state, executor } = freshPipeline()
+    const conn = createVirtualConnection({ state, executor })
+    await once(conn.clientSocket, 'connect')
+
+    conn.clientSocket.write(commandFrame('QUIT'))
+    await within(conn.done, 'the session to end')
+    // The server end is destroyed on the immediate after close(); let it land.
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    assert.strictEqual(conn.clientSocket.destroyed, false)
+    return { state, conn }
+  }
+
+  test('a write fails with EPIPE instead of hanging', async () => {
+    const { conn } = await halfOpenAfterQuit()
+    const socketErrors: string[] = []
+    conn.clientSocket.on('error', err =>
+      socketErrors.push((err as NodeJS.ErrnoException).code ?? err.message),
+    )
+
+    const written = new Promise<NodeJS.ErrnoException | null | undefined>(
+      resolve => conn.clientSocket.write(commandFrame('PING'), resolve),
+    )
+
+    // On main this failed at once with ERR_STREAM_DESTROYED; a duplexPair end
+    // whose peer is gone would otherwise never call back at all.
+    const error = await within(written, 'the write callback')
+    assert.strictEqual(error?.code, 'EPIPE')
+    assert.deepStrictEqual(socketErrors, ['EPIPE'])
+  })
+
+  test('end(cb) calls back, and the unread reply is still delivered', async () => {
+    const { conn } = await halfOpenAfterQuit()
+
+    const ended = new Promise<Error | null | undefined>(resolve =>
+      conn.clientSocket.end(resolve),
+    )
+    // Called back without an error (Node passes null for "no error").
+    assert.strictEqual(
+      (await within(ended, 'the end() callback')) ?? null,
+      null,
+    )
+
+    const seen = record(conn.clientSocket)
+    conn.clientSocket.resume()
+    await within(seen.closed, 'the client to close')
+
+    assert.strictEqual(seen.bytes(), '+OK\r\n')
+    assert.deepStrictEqual(seen.events, ['data', 'end', 'close'])
+  })
+})
+
+describe('createVirtualConnection — errored teardown', () => {
+  // On Node 22 a duplexPair does not propagate teardown at all; on Node 24 it
+  // destroys the peer on an errored destroy, but without the error. The bridge
+  // matches Node 24 on both, so this runs the same everywhere.
+  test("a client destroy(err) ends the session, and the error stays the client's own", async () => {
+    const { state, executor } = freshPipeline()
+    const conn = createVirtualConnection({ state, executor })
+    await once(conn.clientSocket, 'connect')
+
+    const errors: string[] = []
+    conn.clientSocket.on('error', err => errors.push(err.message))
+    const closed = new Promise(resolve =>
+      conn.clientSocket.once('close', resolve),
+    )
+
+    conn.clientSocket.destroy(new Error('boom'))
+
+    await within(conn.done, 'the session to end')
+    await within(closed, 'the client to close')
+    assert.strictEqual(state.getConnectedClients().length, 0)
+    assert.deepStrictEqual(errors, ['boom'])
+  })
 })

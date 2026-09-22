@@ -73,12 +73,14 @@ let nextConnectionId = 0
  * library, the server end is driven by a {@link SocketConnectionTransport} that
  * {@link attachSession} treats exactly like a real socket connection.
  *
- * Teardown mirrors TCP. A client `destroy()` destroys the server end, which
- * aborts the adapter and closes the session. A server-side close (
+ * Teardown mirrors TCP, identically on Node 22 and 24. A client `destroy()`
+ * destroys the server end, which aborts the adapter and closes the session; a
+ * client `end()` makes the server close its side too. A server-side close (
  * {@link VirtualConnection.close}, `QUIT`, a protocol error) half-closes: the
  * session ends at once, and the client receives any buffered reply bytes, then
- * `'end'`, then `'close'` — whenever it reads them. A client that never reads
- * stays half-open until its owner destroys it, as a real socket would.
+ * `'end'`, `'finish'` and `'close'` — whenever it reads them. A client that
+ * never reads stays half-open until its owner destroys it, as a real socket
+ * would; meanwhile its writes fail with EPIPE and `end()` completes.
  */
 export function createVirtualConnection(
   opts: CreateVirtualConnectionOptions,
@@ -95,11 +97,12 @@ export function createVirtualConnection(
     remotePort,
   )
 
-  // Unlike a real socket pair, `duplexPair` does not propagate teardown between
-  // its two ends — a destroyed side leaves the other waiting forever. Bridge it
-  // both ways so closing either end ends the session.
-  propagateDestroy(clientSocket, serverEnd, { awaitReaderEof: false })
-  propagateDestroy(serverEnd, clientSocket, { awaitReaderEof: true })
+  // net.connect()'s default, which ioredis uses: once the server's EOF has
+  // been read, the client ends its own writable ('finish'), then closes.
+  clientSocket.allowHalfOpen = false
+
+  settleWritesOnPeerClose(clientSocket, serverEnd)
+  bridgeTeardown(clientSocket, serverEnd)
 
   const transport = new SocketConnectionTransport(serverEnd, {
     id: `virtual-${++nextConnectionId}`,
@@ -164,77 +167,110 @@ function asVirtualClientSocket(
   return socket
 }
 
-/** Codes Node raises for ordinary stream teardown rather than a wire failure. */
-const TEARDOWN_ERROR_CODES = new Set([
-  'ABORT_ERR',
-  'ERR_STREAM_DESTROYED',
-  'ERR_STREAM_PREMATURE_CLOSE',
-])
+/**
+ * Tear the two ends down together, the way a socket pair does. A `duplexPair`
+ * does not do this itself on Node 22, and on Node 24 does it only partly (a
+ * clean destroy just pushes EOF to the peer).
+ *
+ * No error crosses in either direction: the far end is torn down cleanly.
+ * That is also what Node 24's own `duplexPair` does — it destroys the peer
+ * without the error, so a consumer with no handler cannot crash on an
+ * unhandled 'error' it did not cause — and on this wire nothing could observe
+ * the difference anyway: the server end is never destroyed with an error, and
+ * the transport does not surface a client-side one. No 'error' listener is
+ * attached either, so a consumer's own errors surface as they would on a
+ * net.Socket.
+ */
+function bridgeTeardown(clientEnd: Duplex, serverEnd: Duplex): void {
+  // The client is gone — destroyed, or it read to EOF and closed itself — so
+  // the server end has nobody to talk to. Dropping it ends the session.
+  clientEnd.once('close', () => {
+    if (!serverEnd.destroyed) {
+      serverEnd.destroy()
+    }
+  })
 
-type PropagateDestroyOptions = {
-  /**
-   * After a clean half-close, let `to` drain to `'end'` before destroying it,
-   * instead of destroying it straight away. Set for the server → client
-   * direction only: the client may not be reading yet, and destroying a
-   * paused stream strands whatever it has buffered (a destroyed stream never
-   * starts emitting `'data'`).
-   */
-  awaitReaderEof: boolean
-}
-
-function propagateDestroy(
-  from: Duplex,
-  to: Duplex,
-  { awaitReaderEof }: PropagateDestroyOptions,
-): void {
-  // Read the failure off `from.errored` at 'close' rather than holding an
-  // 'error' listener: a permanent listener would silently swallow errors for a
-  // consumer with no handler of its own, where a net.Socket (or a bare
-  // duplexPair end) would surface them as an unhandled 'error'.
-  from.once('close', () => {
-    if (to.destroyed) {
+  serverEnd.once('close', () => {
+    if (clientEnd.destroyed) {
       return
     }
 
-    // Carrying a genuine failure across keeps an errored teardown from looking
-    // like a graceful close on the far end — the distinction a real socket pair
-    // makes. Teardown artifacts must NOT cross, though: ending a `for await`
-    // early destroys the stream with an AbortError, and a bridged destroy
-    // surfaces as a premature close. Forwarding either would turn a clean QUIT
-    // into a connection error for the client.
-    const failure = genuineFailure(from.errored)
-    if (failure) {
-      to.destroy(failure)
+    if (!serverEnd.writableEnded) {
+      clientEnd.destroy()
       return
     }
 
-    if (awaitReaderEof && from.writableEnded) {
-      // `from` half-closed, so its EOF is (or is about to be) queued on `to`
-      // behind any reply bytes. Pushing it again is a no-op if it is already
-      // there, and guarantees `to` can reach 'end' even if `from` was torn
-      // down before its `_final` ran.
-      to.push(null)
-
-      // Like a real TCP socket, `to` stays half-open until its consumer reads
-      // to EOF (or destroys it). The server side is already gone either way:
-      // `from` is destroyed and the session has ended.
-      if (to.readableEnded) {
-        to.destroy()
-      } else {
-        to.once('end', () => to.destroy())
-      }
-      return
-    }
-
-    to.destroy()
+    // A clean server-side half-close (close(), QUIT, a protocol error). Leave
+    // the client half-open, like TCP: it keeps any reply it has not read, then
+    // EOF — pushing it again is a no-op if `_final` already queued it — and
+    // closes itself once it reads that far (allowHalfOpen: false +
+    // autoDestroy). A client that never reads stays half-open until its owner
+    // destroys it; the session is already gone either way. Destroying it here
+    // instead would strand the unread reply: a destroyed stream never starts
+    // emitting 'data'.
+    clientEnd.push(null)
   })
 }
 
-function genuineFailure(err: Error | null | undefined): Error | undefined {
-  if (!err) {
-    return undefined
+type WriteCallback = (error?: Error | null) => void
+
+/**
+ * A `duplexPair` end's `_write` completes only when its peer reads, and its
+ * `_final` only when the peer emits 'end'. Once the server end is destroyed
+ * neither can happen — and `Duplex.destroy()` does not flush a callback already
+ * handed to `_write` — so client code awaiting a write or `end(cb)` would hang
+ * for good. Answer them the way a TCP socket whose peer has closed does: a
+ * write fails with EPIPE, and `end()` completes.
+ */
+function settleWritesOnPeerClose(stream: Duplex, peer: Duplex): void {
+  const pending = new Map<WriteCallback, () => Error | undefined>()
+
+  const track = (
+    callback: WriteCallback,
+    onPeerClose: () => Error | undefined,
+  ): WriteCallback => {
+    const settle: WriteCallback = error => {
+      if (pending.delete(settle)) {
+        callback(error)
+      }
+    }
+    pending.set(settle, onPeerClose)
+    return settle
   }
 
-  const code = (err as NodeJS.ErrnoException).code
-  return code && TEARDOWN_ERROR_CODES.has(code) ? undefined : err
+  const write = stream._write.bind(stream)
+  const final = stream._final?.bind(stream)
+
+  stream._write = (chunk, encoding, callback) => {
+    if (peer.destroyed) {
+      callback(epipe())
+      return
+    }
+    write(chunk, encoding, track(callback, epipe))
+  }
+
+  if (final) {
+    stream._final = callback => {
+      if (peer.destroyed) {
+        callback()
+        return
+      }
+      final(track(callback, () => undefined))
+    }
+  }
+
+  peer.once('close', () => {
+    for (const [settle, onPeerClose] of [...pending]) {
+      settle(onPeerClose())
+    }
+  })
+}
+
+/** Shaped like the error a net.Socket reports writing to a closed peer. */
+function epipe(): NodeJS.ErrnoException {
+  return Object.assign(new Error('write EPIPE'), {
+    code: 'EPIPE',
+    errno: -32,
+    syscall: 'write',
+  })
 }

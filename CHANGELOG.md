@@ -65,14 +65,25 @@ so the PR body is not a durable home for a breaking-change note.
   server never blocks on a client that has not read yet), and tearing down
   either end (client `destroy()` or server `close()`) still ends the session.
 
-  A server-side close (`close()`, `QUIT`, a protocol error) now half-closes
-  like TCP: the session ends immediately, and the client socket receives any
-  unread reply bytes, then `'end'`, then `'close'` — as against real Redis —
-  whenever it reads them, including a client that was paused at the time and
-  resumes later. Previously a client that was not reading at that moment lost
-  its buffered reply and never saw `'end'`. A client that never reads stays
-  half-open until its owner destroys it, as a real socket would; ioredis and
-  node-redis always read, so they are unaffected.
+  Virtual-connection teardown now follows TCP, the same on Node 22 and 24:
+
+  - A server-side close (`close()`, `QUIT`, a protocol error) half-closes. The
+    session ends immediately, and the client socket receives any unread reply
+    bytes, then `'end'`, `'finish'` and `'close'` — as against real Redis —
+    whenever it reads them, including a client that was paused at the time and
+    resumes later. Previously a client that was not reading at that moment
+    lost its buffered reply and never saw `'end'`. A client that never reads
+    stays half-open until its owner destroys it, as a real socket would.
+  - While half-open, a client write fails with `EPIPE` and `end(cb)` calls
+    back. Previously the client socket was destroyed outright, so writes failed
+    with `ERR_STREAM_DESTROYED`.
+  - A client `end()` (as ioredis `disconnect()` sends) makes the server close
+    its side too, so the client sees `'finish'`, `'end'`, `'close'`.
+  - An error passed to `destroy()` on one end is not carried to the other; the
+    far end is torn down cleanly, which is what Node 24's own `duplexPair`
+    does.
+
+  ioredis and node-redis always read, so none of this changes what they see.
 
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**

@@ -38,8 +38,16 @@ export class SocketConnectionTransport implements ConnectionTransport {
   }
 
   async *read(): AsyncIterable<Buffer> {
+    // `destroyOnReturn: false`: leaving this loop early (the adapter returns
+    // after QUIT) must not destroy the stream. The default iterator destroys it
+    // with an AbortError, and from Node 24 a duplexPair answers an errored
+    // destroy by destroying its peer — the client — which strands the reply it
+    // has not read yet. Closing the connection is the owner's job instead:
+    // Resp2SessionAdapter calls close() once its loop ends, for any reason.
+    const chunks = this.socket.iterator({ destroyOnReturn: false })
+
     try {
-      for await (const chunk of this.socket) {
+      for await (const chunk of chunks) {
         if (this.signal.aborted) {
           return
         }
