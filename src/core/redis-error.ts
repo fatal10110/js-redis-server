@@ -256,6 +256,16 @@ export class OffsetOutOfRangeError extends RedisCommandError {
   }
 }
 
+/**
+ * A command that grows a string value (APPEND/SETRANGE) would push it past
+ * `proto-max-bulk-len`. Redis refuses instead of allocating the value.
+ */
+export class StringExceedsMaxSizeError extends RedisCommandError {
+  constructor() {
+    super('string exceeds maximum allowed size (proto-max-bulk-len)')
+  }
+}
+
 /** SETBIT/GETBIT/BITFIELD offset that is negative, non-integer, or >= 2^32. */
 export class BitOffsetError extends RedisCommandError {
   constructor() {

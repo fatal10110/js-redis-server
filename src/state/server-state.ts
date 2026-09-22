@@ -40,6 +40,9 @@ export type RedisServerStateOptions = {
 
 const DEFAULT_ACTIVE_EXPIRY_INTERVAL_MS = 100
 
+/** Redis' compiled-in default for `proto-max-bulk-len`: 512MB. */
+const DEFAULT_PROTO_MAX_BULK_LEN = 536870912n
+
 export class RedisServerState {
   readonly databases: RedisDatabase[]
   readonly scriptCache: RedisScriptCache
@@ -55,6 +58,13 @@ export class RedisServerState {
    * CONFIG GET/SET; read by the wired {@link KeyspaceNotifier} on each mutation.
    */
   notifyKeyspaceEvents = ''
+  /**
+   * Redis `proto-max-bulk-len` (default 512MB), as a bigint so the full
+   * configurable range (up to int64 max) round-trips exactly. It caps how large
+   * a single string value may grow: APPEND and SETRANGE refuse rather than
+   * allocate past it. Managed via CONFIG GET/SET.
+   */
+  protoMaxBulkLen = DEFAULT_PROTO_MAX_BULK_LEN
   private readonly clientSessions = new Set<RedisClientSession>()
   private activeExpiryTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false

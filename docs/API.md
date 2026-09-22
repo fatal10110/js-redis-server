@@ -154,6 +154,8 @@ Current profile gates:
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
+| `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`) | `redis-7.0+` | `valkey-8.0+` |
+| `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
 | `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |
 | `SORT`/`SORT_RO` cluster `GET '#'` exempt from that slot comparison | `redis-7.4+` (7.4.2) | `valkey-9.0+` (8.0.2) |

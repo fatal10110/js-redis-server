@@ -8,6 +8,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'command.docs': { redis: '7.0.0', valkey: '7.2.0' },
   'command.getkeysandflags': { redis: '7.0.0', valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
+  // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
+  // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`.
+  'config.set.failure-message': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 6.2 saturates a memory value above the parameter's maximum to that
+  // maximum; 7.0+ rejects it with the out-of-range error instead.
+  'config.memory-value.reject-overflow': { redis: '7.0.0', valkey: '7.2.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
