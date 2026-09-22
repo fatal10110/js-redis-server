@@ -62,10 +62,17 @@ so the PR body is not a durable home for a breaking-change note.
   — a widening, so existing callers are unaffected. Behavior is unchanged:
   `createIoredisMock` keeps its backpressure-free semantics (the virtual wire
   is created with an effectively unbounded high-water mark, so an in-process
-  server never blocks on a client that has not read yet), `close()` still
-  half-closes before destroying so the client sees `'end'` then `'close'` as it
-  does against real Redis, and tearing down either end (client `destroy()` or
-  server `close()`) still ends the session.
+  server never blocks on a client that has not read yet), and tearing down
+  either end (client `destroy()` or server `close()`) still ends the session.
+
+  A server-side close (`close()`, `QUIT`, a protocol error) now half-closes
+  like TCP: the session ends immediately, and the client socket receives any
+  unread reply bytes, then `'end'`, then `'close'` — as against real Redis —
+  whenever it reads them, including a client that was paused at the time and
+  resumes later. Previously a client that was not reading at that moment lost
+  its buffered reply and never saw `'end'`. A client that never reads stays
+  half-open until its owner destroys it, as a real socket would; ioredis and
+  node-redis always read, so they are unaffected.
 
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**

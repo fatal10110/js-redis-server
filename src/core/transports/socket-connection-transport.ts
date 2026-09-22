@@ -20,6 +20,8 @@ export class SocketConnectionTransport implements ConnectionTransport {
   readonly signal: AbortSignal
 
   private readonly controller = new AbortController()
+  /** Settle callbacks for writes whose stream callback has not fired yet. */
+  private readonly pendingWrites = new Set<(err?: Error | null) => void>()
   private closed = false
 
   constructor(
@@ -47,9 +49,12 @@ export class SocketConnectionTransport implements ConnectionTransport {
     } catch (err) {
       // Destroying a stream mid-iteration rejects its async iterator with
       // ERR_STREAM_PREMATURE_CLOSE. That is an ordinary disconnect — either end
-      // tearing the wire down — so the read loop just ends. Every other error
-      // (including a `destroy(err)` carrying a real failure) still propagates,
-      // so the adapter can log it.
+      // tearing the wire down — so the read loop just ends.
+      //
+      // Any other error is rethrown rather than passed off as a clean EOF. Note
+      // it is not logged end to end: the stream's 'error' has already aborted
+      // the transport, and the adapter only logs while it is not aborted. That
+      // matches main, where e.g. a TCP ECONNRESET ends the session silently.
       if (!isPrematureClose(err)) {
         throw err
       }
@@ -62,15 +67,10 @@ export class SocketConnectionTransport implements ConnectionTransport {
     }
 
     return new Promise((resolve, reject) => {
-      let settled = false
-
       const settle = (err?: Error | null) => {
-        if (settled) {
+        if (!this.pendingWrites.delete(settle)) {
           return
         }
-        settled = true
-        this.signal.removeEventListener('abort', onTeardown)
-        this.socket.off('close', onTeardown)
 
         // A write that never made it out because the wire went away is not a
         // failure worth propagating — the session is already ending.
@@ -82,14 +82,7 @@ export class SocketConnectionTransport implements ConnectionTransport {
         resolve()
       }
 
-      // `net.Socket` fails a pending write callback with ECANCELED when it is
-      // destroyed, but a `duplexPair` end leaves that callback pending forever.
-      // Without this the adapter's write chain would stall and the session
-      // would never be torn down, so settle on teardown too.
-      const onTeardown = () => settle()
-
-      this.signal.addEventListener('abort', onTeardown, { once: true })
-      this.socket.once('close', onTeardown)
+      this.pendingWrites.add(settle)
       this.socket.write(chunk, settle)
     })
   }
@@ -109,12 +102,13 @@ export class SocketConnectionTransport implements ConnectionTransport {
    * sequence real Redis produces on `QUIT`. `net.Socket` has this built in as
    * `destroySoon()`; a plain {@link Duplex} (the virtual wire) does not.
    *
-   * The destroy cannot be synchronous or a microtask: `end()` only runs
-   * `_final` — which is what hands the peer its EOF — on a following tick, so
-   * destroying sooner drops the `'end'` entirely. Nor can it wait on `'finish'`
-   * alone: a `duplexPair` withholds `'finish'` until the peer has drained, so a
-   * client that never reads would leave the stream alive and the read loop
-   * suspended forever. Destroy on `'finish'`, with an immediate as the bound.
+   * When a write is still in flight at `close()`, `end()` defers `_final` —
+   * which is what hands the peer its EOF — until that write completes on a
+   * later tick, so a synchronous or microtask destroy drops the `'end'`. Nor can
+   * the destroy wait on `'finish'` alone: a `duplexPair` withholds `'finish'`
+   * until the peer has drained, so a client that never reads would leave the
+   * stream alive and the read loop suspended forever. Destroy on `'finish'`,
+   * with an immediate as the bound.
    */
   private destroySoon(): void {
     const socket = this.socket as MaybeSocket
@@ -137,9 +131,21 @@ export class SocketConnectionTransport implements ConnectionTransport {
     setImmediate(() => socket.destroy())
   }
 
+  /**
+   * Abort the transport and settle every in-flight write. `net.Socket` fails a
+   * pending write callback with ECANCELED when it is destroyed, but a
+   * `duplexPair` end leaves that callback pending forever; without this the
+   * adapter's write chain would stall and the session would never tear down.
+   * One listener per transport (installed in the constructor) rather than one
+   * per write, so a burst of in-flight writes cannot trip MaxListeners.
+   */
   private abort(): void {
     if (!this.controller.signal.aborted) {
       this.controller.abort()
+    }
+
+    for (const settle of [...this.pendingWrites]) {
+      settle()
     }
   }
 }

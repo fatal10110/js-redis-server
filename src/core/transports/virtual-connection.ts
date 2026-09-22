@@ -22,7 +22,10 @@ export type VirtualConnection = {
   clientSocket: VirtualClientSocket
   /** Resolves once the server-side adapter loop ends and the session is closed. */
   done: Promise<void>
-  /** Tear down both ends of the wire and the server-side session. */
+  /**
+   * End the server-side session and half-close the wire. The client socket is
+   * destroyed once it has read the remaining bytes and `'end'`.
+   */
   close(): void
 }
 
@@ -68,9 +71,14 @@ let nextConnectionId = 0
  *
  * The wire is a {@link duplexPair}: the client end is handed to the client
  * library, the server end is driven by a {@link SocketConnectionTransport} that
- * {@link attachSession} treats exactly like a real socket connection. Tearing
- * down either end (client `destroy()` or {@link VirtualConnection.close})
- * destroys the other, which aborts the adapter and closes the session.
+ * {@link attachSession} treats exactly like a real socket connection.
+ *
+ * Teardown mirrors TCP. A client `destroy()` destroys the server end, which
+ * aborts the adapter and closes the session. A server-side close (
+ * {@link VirtualConnection.close}, `QUIT`, a protocol error) half-closes: the
+ * session ends at once, and the client receives any buffered reply bytes, then
+ * `'end'`, then `'close'` — whenever it reads them. A client that never reads
+ * stays half-open until its owner destroys it, as a real socket would.
  */
 export function createVirtualConnection(
   opts: CreateVirtualConnectionOptions,
@@ -90,8 +98,8 @@ export function createVirtualConnection(
   // Unlike a real socket pair, `duplexPair` does not propagate teardown between
   // its two ends — a destroyed side leaves the other waiting forever. Bridge it
   // both ways so closing either end ends the session.
-  propagateDestroy(clientSocket, serverEnd)
-  propagateDestroy(serverEnd, clientSocket)
+  propagateDestroy(clientSocket, serverEnd, { awaitReaderEof: false })
+  propagateDestroy(serverEnd, clientSocket, { awaitReaderEof: true })
 
   const transport = new SocketConnectionTransport(serverEnd, {
     id: `virtual-${++nextConnectionId}`,
@@ -121,12 +129,18 @@ function asVirtualClientSocket(
   const chainable = () => socket
 
   // Non-writable, to match both the `readonly` on the type above and the
-  // getter-backed originals on `net.Socket`.
+  // getter-backed originals on `net.Socket`; configurable, so test doubles
+  // (sinon-style `stub(socket, 'remoteAddress')`) can still redefine them.
+  const address = (value: string | number) => ({
+    value,
+    enumerable: true,
+    configurable: true,
+  })
   Object.defineProperties(socket, {
-    remoteAddress: { value: remoteAddress, enumerable: true },
-    remotePort: { value: remotePort, enumerable: true },
-    localAddress: { value: DEFAULT_REMOTE_ADDRESS, enumerable: true },
-    localPort: { value: 0, enumerable: true },
+    remoteAddress: address(remoteAddress),
+    remotePort: address(remotePort),
+    localAddress: address(DEFAULT_REMOTE_ADDRESS),
+    localPort: address(0),
   })
 
   Object.assign(socket, {
@@ -157,28 +171,70 @@ const TEARDOWN_ERROR_CODES = new Set([
   'ERR_STREAM_PREMATURE_CLOSE',
 ])
 
-function propagateDestroy(from: Duplex, to: Duplex): void {
-  let failure: Error | undefined
+type PropagateDestroyOptions = {
+  /**
+   * After a clean half-close, let `to` drain to `'end'` before destroying it,
+   * instead of destroying it straight away. Set for the server → client
+   * direction only: the client may not be reading yet, and destroying a
+   * paused stream strands whatever it has buffered (a destroyed stream never
+   * starts emitting `'data'`).
+   */
+  awaitReaderEof: boolean
+}
 
-  // 'error' always precedes 'close', so by the time the bridge fires we know
-  // whether this was a clean teardown or a failure. Carrying a genuine failure
-  // across keeps an errored teardown from looking like a graceful close on the
-  // far end — the distinction a real socket pair makes.
-  //
-  // Teardown artifacts must NOT cross, though: ending a `for await` early
-  // destroys the stream with an AbortError, and a bridged destroy surfaces as a
-  // premature close. Forwarding either would turn a clean QUIT into a
-  // connection error for the client.
-  from.on('error', (err: Error) => {
-    const code = (err as NodeJS.ErrnoException).code
-    if (!code || !TEARDOWN_ERROR_CODES.has(code)) {
-      failure = err
-    }
-  })
-
+function propagateDestroy(
+  from: Duplex,
+  to: Duplex,
+  { awaitReaderEof }: PropagateDestroyOptions,
+): void {
+  // Read the failure off `from.errored` at 'close' rather than holding an
+  // 'error' listener: a permanent listener would silently swallow errors for a
+  // consumer with no handler of its own, where a net.Socket (or a bare
+  // duplexPair end) would surface them as an unhandled 'error'.
   from.once('close', () => {
-    if (!to.destroyed) {
-      to.destroy(failure)
+    if (to.destroyed) {
+      return
     }
+
+    // Carrying a genuine failure across keeps an errored teardown from looking
+    // like a graceful close on the far end — the distinction a real socket pair
+    // makes. Teardown artifacts must NOT cross, though: ending a `for await`
+    // early destroys the stream with an AbortError, and a bridged destroy
+    // surfaces as a premature close. Forwarding either would turn a clean QUIT
+    // into a connection error for the client.
+    const failure = genuineFailure(from.errored)
+    if (failure) {
+      to.destroy(failure)
+      return
+    }
+
+    if (awaitReaderEof && from.writableEnded) {
+      // `from` half-closed, so its EOF is (or is about to be) queued on `to`
+      // behind any reply bytes. Pushing it again is a no-op if it is already
+      // there, and guarantees `to` can reach 'end' even if `from` was torn
+      // down before its `_final` ran.
+      to.push(null)
+
+      // Like a real TCP socket, `to` stays half-open until its consumer reads
+      // to EOF (or destroys it). The server side is already gone either way:
+      // `from` is destroyed and the session has ended.
+      if (to.readableEnded) {
+        to.destroy()
+      } else {
+        to.once('end', () => to.destroy())
+      }
+      return
+    }
+
+    to.destroy()
   })
+}
+
+function genuineFailure(err: Error | null | undefined): Error | undefined {
+  if (!err) {
+    return undefined
+  }
+
+  const code = (err as NodeJS.ErrnoException).code
+  return code && TEARDOWN_ERROR_CODES.has(code) ? undefined : err
 }

@@ -129,31 +129,6 @@ describe('createVirtualConnection', () => {
     close()
   })
 
-  test('answers QUIT, then half-closes: end before close', async () => {
-    const { state, executor } = freshPipeline()
-    const { clientSocket, done } = createVirtualConnection({ state, executor })
-    await once(clientSocket, 'connect')
-
-    const events: string[] = []
-    clientSocket.on('end', () => events.push('end'))
-    clientSocket.on('error', err => events.push(`error:${err.message}`))
-    const closed = once(clientSocket, 'close')
-
-    clientSocket.write(commandFrame('QUIT'))
-    assert.strictEqual((await readBytes(clientSocket, 5)).toString(), '+OK\r\n')
-
-    // A paused reader only observes EOF on its next read, so go flowing — which
-    // is what a real client (ioredis attaches a 'data' handler) does anyway.
-    clientSocket.resume()
-
-    await done
-    await closed
-
-    // Real Redis 7.2 gives the client [connect, end, close] on QUIT. Destroying
-    // the server end without a FIN would drop the 'end'.
-    assert.deepStrictEqual(events, ['end'])
-  })
-
   test('close() tears down the server session (no leaked sessions)', async () => {
     const { state, executor } = freshPipeline()
     assert.strictEqual(state.getConnectedClients().length, 0)
@@ -170,23 +145,6 @@ describe('createVirtualConnection', () => {
     // The adapter loop tears the session down in its finally; await it.
     await done
     assert.strictEqual(state.getConnectedClients().length, 0)
-  })
-
-  test('close() also tears the client socket down', async () => {
-    const { state, executor } = freshPipeline()
-    const { clientSocket, close, done } = createVirtualConnection({
-      state,
-      executor,
-    })
-    await once(clientSocket, 'connect')
-
-    // `duplexPair` does not propagate teardown on its own — the server end
-    // closing must still reach the client, the way a real socket pair does.
-    const clientClosed = once(clientSocket, 'close')
-    close()
-    await done
-    await clientClosed
-    assert.strictEqual(clientSocket.destroyed, true)
   })
 
   test('destroying the client socket tears down the server session', async () => {
@@ -227,4 +185,219 @@ describe('createVirtualConnection', () => {
     await done
     assert.strictEqual(state.getConnectedClients().length, 0)
   })
+
+  test('the bridge attaches no error listener of its own', () => {
+    const { state, executor } = freshPipeline()
+    const { clientSocket } = createVirtualConnection({ state, executor })
+
+    // A permanent listener would silently swallow errors for a consumer that
+    // has no handler, where a net.Socket would surface an unhandled 'error'.
+    assert.strictEqual(clientSocket.listenerCount('error'), 0)
+    clientSocket.destroy()
+  })
+
+  test('address props are read-only but still stubbable', () => {
+    const { state, executor } = freshPipeline()
+    const { clientSocket } = createVirtualConnection({ state, executor })
+
+    // Reflect.set reports the refused assignment regardless of strict mode.
+    assert.strictEqual(Reflect.set(clientSocket, 'remoteAddress', 'x'), false)
+    assert.strictEqual(clientSocket.remoteAddress, '127.0.0.1')
+
+    // sinon-style stubbing redefines the property rather than assigning it.
+    Object.defineProperty(clientSocket, 'remoteAddress', { value: '10.0.0.1' })
+    assert.strictEqual(clientSocket.remoteAddress, '10.0.0.1')
+    clientSocket.destroy()
+  })
+})
+
+type Recorded = { events: string[]; bytes(): string; closed: Promise<void> }
+
+/** Record the client-visible event sequence, collapsing runs of 'data'. */
+function record(socket: NodeJS.EventEmitter): Recorded {
+  const events: string[] = []
+  let bytes = ''
+  const closed = new Promise<void>(resolve => {
+    socket.once('close', () => resolve())
+  })
+
+  socket.on('connect', () => events.push('connect'))
+  socket.on('end', () => events.push('end'))
+  socket.on('close', () => events.push('close'))
+  socket.on('error', (err: Error) => events.push(`error:${err.message}`))
+  socket.on('data', (chunk: Buffer) => {
+    bytes += chunk.toString()
+    if (events.at(-1) !== 'data') {
+      events.push('data')
+    }
+  })
+
+  return { events, bytes: () => bytes, closed }
+}
+
+/** Fail with a clear message rather than hanging the test runner. */
+async function within<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs = 2000,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timed out waiting for ${label}`)),
+          timeoutMs,
+        )
+      }),
+    ])
+  } finally {
+    if (timer) {
+      clearTimeout(timer)
+    }
+  }
+}
+
+/**
+ * Server-initiated teardown, driven two ways: the client sends QUIT, or the
+ * owner calls close() while a reply sits unread.
+ */
+type Trigger = {
+  name: string
+  reply: string
+  run(conn: ReturnType<typeof createVirtualConnection>): Promise<void>
+}
+
+const TRIGGERS: Trigger[] = [
+  {
+    name: 'QUIT',
+    reply: '+OK\r\n',
+    run: async conn => {
+      conn.clientSocket.write(commandFrame('QUIT'))
+    },
+  },
+  {
+    name: 'close() with an unread reply',
+    reply: '+PONG\r\n',
+    run: async conn => {
+      conn.clientSocket.write(commandFrame('PING'))
+      await waitForBuffered(conn.clientSocket, '+PONG\r\n'.length)
+      conn.close()
+    },
+  },
+]
+
+describe('createVirtualConnection — server-side half-close', () => {
+  // (c) A client that reads as data arrives — what ioredis and node-redis do.
+  const flowingCases: Array<{ name: string; send: Buffer; reply: RegExp }> = [
+    {
+      name: 'QUIT',
+      send: commandFrame('QUIT'),
+      reply: /^\+OK\r\n$/,
+    },
+    {
+      name: 'a protocol error',
+      send: Buffer.from('*1\r\n$abc\r\n'),
+      reply: /^-ERR Protocol error/,
+    },
+    {
+      name: 'a pipelined SET / GET / QUIT',
+      send: Buffer.concat([
+        commandFrame('SET', 'k', 'v'),
+        commandFrame('GET', 'k'),
+        commandFrame('QUIT'),
+      ]),
+      reply: /^\+OK\r\n\$1\r\nv\r\n\+OK\r\n$/,
+    },
+  ]
+
+  for (const { name, send, reply } of flowingCases) {
+    test(`${name}: a reading client sees [connect, data, end, close]`, async () => {
+      const { state, executor } = freshPipeline()
+      const conn = createVirtualConnection({ state, executor })
+      const seen = record(conn.clientSocket)
+      await once(conn.clientSocket, 'connect')
+
+      conn.clientSocket.write(send)
+      await within(conn.done, 'the session to end')
+      await within(seen.closed, 'the client to close')
+
+      // Real Redis 7.2 gives [connect, end, close] around the reply bytes.
+      assert.deepStrictEqual(seen.events, ['connect', 'data', 'end', 'close'])
+      assert.match(seen.bytes(), reply)
+      assert.strictEqual(state.getConnectedClients().length, 0)
+    })
+  }
+
+  test('close() with nothing to send: a reading client sees [connect, end, close]', async () => {
+    const { state, executor } = freshPipeline()
+    const conn = createVirtualConnection({ state, executor })
+    const seen = record(conn.clientSocket)
+    await once(conn.clientSocket, 'connect')
+
+    conn.close()
+    await within(conn.done, 'the session to end')
+    await within(seen.closed, 'the client to close')
+
+    assert.deepStrictEqual(seen.events, ['connect', 'end', 'close'])
+    assert.strictEqual(conn.clientSocket.destroyed, true)
+  })
+
+  // (a) A client that is not reading at the moment the server closes.
+  for (const trigger of TRIGGERS) {
+    test(`${trigger.name}: a paused client that resumes late gets every byte, then end, then close`, async () => {
+      const { state, executor } = freshPipeline()
+      const conn = createVirtualConnection({ state, executor })
+      await once(conn.clientSocket, 'connect')
+
+      await trigger.run(conn)
+      await within(conn.done, 'the session to end')
+      assert.strictEqual(state.getConnectedClients().length, 0)
+
+      // Destroying a paused stream strands its buffer: it never starts emitting
+      // 'data'. So the client end must still be alive, holding the reply.
+      assert.strictEqual(conn.clientSocket.destroyed, false)
+      assert.strictEqual(conn.clientSocket.readableLength, trigger.reply.length)
+
+      const seen = record(conn.clientSocket)
+      conn.clientSocket.resume()
+      await within(seen.closed, 'the client to close after resuming')
+
+      assert.strictEqual(seen.bytes(), trigger.reply)
+      assert.deepStrictEqual(seen.events, ['data', 'end', 'close'])
+    })
+  }
+
+  // (b) A client that never reads at all.
+  for (const trigger of TRIGGERS) {
+    test(`${trigger.name}: a client that never reads leaves no server-side state behind`, async () => {
+      const { state, executor } = freshPipeline()
+      const conn = createVirtualConnection({ state, executor })
+      await once(conn.clientSocket, 'connect')
+
+      await trigger.run(conn)
+
+      // The session must end promptly without any help from the client.
+      await within(conn.done, 'the session to end', 500)
+      assert.strictEqual(state.getConnectedClients().length, 0)
+
+      // Give anything still pending a chance to misbehave.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      assert.strictEqual(state.getConnectedClients().length, 0)
+
+      // Only the consumer's own socket object stays half-open, holding the
+      // unread reply — exactly what a real TCP socket does.
+      assert.strictEqual(conn.clientSocket.destroyed, false)
+      assert.strictEqual(conn.clientSocket.readableLength, trigger.reply.length)
+
+      // …and its owner can still dispose of it cleanly.
+      const closed = new Promise(resolve =>
+        conn.clientSocket.once('close', resolve),
+      )
+      conn.clientSocket.destroy()
+      await within(closed, 'the client to close on destroy()')
+      assert.strictEqual(state.getConnectedClients().length, 0)
+    })
+  }
 })

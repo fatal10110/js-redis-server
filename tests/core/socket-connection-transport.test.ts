@@ -82,6 +82,47 @@ describe('SocketConnectionTransport over a duplexPair', () => {
     assert.strictEqual(stream.destroyed, true)
   })
 
+  test('close() with a write still in flight still delivers that write, then end', async () => {
+    const { peer, stream } = pair()
+    const transport = new SocketConnectionTransport(stream)
+
+    const events: string[] = []
+    peer.on('data', chunk => events.push(`data:${String(chunk)}`))
+    peer.on('end', () => events.push('end'))
+    const closed = new Promise(resolve => stream.on('close', resolve))
+
+    // Not awaited: the write is still in flight when close() runs, so end()
+    // defers `_final` (which hands the peer its EOF) until the write completes
+    // a tick later. Destroying synchronously or on a microtask drops the 'end'.
+    const inFlight = transport.write(Buffer.from('+OK\r\n'))
+    transport.close('test')
+
+    await inFlight
+    await closed
+    await new Promise(resolve => setImmediate(resolve))
+
+    assert.deepStrictEqual(events, ['data:+OK\r\n', 'end'])
+  })
+
+  test('in-flight writes do not add a listener each', async () => {
+    const { stream } = pair()
+    const transport = new SocketConnectionTransport(stream)
+    const before = {
+      close: stream.listenerCount('close'),
+      error: stream.listenerCount('error'),
+    }
+
+    // Nothing reads the peer, so every one of these stays parked. One listener
+    // per write would trip MaxListenersExceededWarning past ten.
+    const writes = Array.from({ length: 25 }, () => transport.write(OVERSIZED))
+
+    assert.strictEqual(stream.listenerCount('close'), before.close)
+    assert.strictEqual(stream.listenerCount('error'), before.error)
+
+    transport.close('test')
+    assert.strictEqual(await settlesWithin(Promise.all(writes)), true)
+  })
+
   test('read() ends quietly when the stream is destroyed mid-iteration', async () => {
     const { peer, stream } = pair()
     const transport = new SocketConnectionTransport(stream)
@@ -101,7 +142,7 @@ describe('SocketConnectionTransport over a duplexPair', () => {
     assert.deepStrictEqual(chunks.map(String), ['hello'])
   })
 
-  test('read() propagates a genuine stream failure', async () => {
+  test('read() rethrows a genuine stream failure rather than ending as a clean EOF', async () => {
     const { stream } = pair()
     const transport = new SocketConnectionTransport(stream)
 
@@ -113,8 +154,9 @@ describe('SocketConnectionTransport over a duplexPair', () => {
 
     stream.destroy(new Error('mid-stream failure'))
 
-    // Only ERR_STREAM_PREMATURE_CLOSE is swallowed; a real error must still
-    // reach the adapter so it can be logged.
+    // Only ERR_STREAM_PREMATURE_CLOSE is swallowed. Anything else rethrows, so
+    // the adapter sees a failure rather than a clean EOF. (It is not logged:
+    // the stream's 'error' has already aborted the transport by then.)
     await assert.rejects(loop, /mid-stream failure/)
   })
 })
