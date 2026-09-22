@@ -213,7 +213,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         timeout: '3600',
       })
       await redisClient.set(`${tag}:app_version`, '1.2.3')
-      await assertNodeRedisKeyCount(redisClient, createdKeys, 2)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 2)
 
       const userActivities: Array<Promise<unknown>> = []
       for (let i = 1; i <= 10; i++) {
@@ -233,7 +233,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         )
       }
       await Promise.all(userActivities)
-      await assertNodeRedisKeyCount(redisClient, createdKeys, 32)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 32)
 
       await redisClient.sAdd(`${tag}:popular_items`, [
         'item1',
@@ -251,7 +251,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         visitors: '500',
         sales: '25',
       })
-      await assertNodeRedisKeyCount(redisClient, createdKeys, 35)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 35)
 
       const expiredSessions: Promise<number>[] = []
       for (let i = 6; i <= 10; i++) {
@@ -273,7 +273,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       assert.strictEqual(cleanedCount, 30)
 
       await redisClient.del(`${tag}:daily_stats`)
-      await assertNodeRedisKeyCount(redisClient, createdKeys, 29)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 29)
     } finally {
       await redisClient.del(createdKeys)
     }

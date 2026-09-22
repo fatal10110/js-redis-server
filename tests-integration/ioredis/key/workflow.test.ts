@@ -10,11 +10,15 @@ const testRunner = new TestRunner()
 // with each other and with their own previous run (#420).
 const RUN = randomKey()
 
+// The cluster client namespaces every key with this prefix; KEYS runs on a
+// direct connection that does not, so patterns must spell it out.
+const PREFIX = 'key-integration'
+
 describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    redisClient = await testRunner.setupIoredisCluster('key-integration')
+    redisClient = await testRunner.setupIoredisCluster(PREFIX)
   })
 
   after(async () => {
@@ -242,7 +246,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         '3600',
       )
       await redisClient?.set(`${tag}:app_version`, '1.2.3')
-      await assertKeyCount(redisClient!, createdKeys, 2)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, createdKeys, 2)
 
       const userActivities: Array<Promise<unknown>> = []
       for (let i = 1; i <= 10; i++) {
@@ -269,7 +273,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         )
       }
       await Promise.all(userActivities)
-      await assertKeyCount(redisClient!, createdKeys, 32)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, createdKeys, 32)
 
       await redisClient?.sadd(
         `${tag}:popular_items`,
@@ -295,7 +299,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
         'sales',
         '25',
       )
-      await assertKeyCount(redisClient!, createdKeys, 35)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, createdKeys, 35)
 
       const expiredSessions: Promise<number>[] = []
       for (let i = 6; i <= 10; i++) {
@@ -314,7 +318,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(cleanedCount, 30)
 
       await redisClient?.del(`${tag}:daily_stats`)
-      await assertKeyCount(redisClient!, createdKeys, 29)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, createdKeys, 29)
     } finally {
       await redisClient?.del(...createdKeys)
     }

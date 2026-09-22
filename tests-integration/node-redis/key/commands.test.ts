@@ -7,6 +7,7 @@ import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
   flushNodeRedisCluster,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -60,7 +61,10 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
     const expiringKey = `${tag}:expired`
     const missingKey = `${tag}:missing`
     const crossSlotA = `{touch-cross-a:${randomKey()}}:key`
-    const crossSlotB = `{touch-cross-b:${randomKey()}}:key`
+    const crossSlotB = keyInAnotherSlot(
+      crossSlotA,
+      () => `{touch-cross-b:${randomKey()}}:key`,
+    )
     const directClient = await connectToNodeRedisSlotOwner(
       redisClient,
       stringKey,
@@ -196,14 +200,14 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       await redisClient.lPush(keys.list, 'item')
       await redisClient.sAdd(keys.set, 'member')
       await redisClient.zAdd(keys.zset, { score: 1, value: 'member' })
-      await assertNodeRedisKeyCount(redisClient, allKeys, 5)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, allKeys, 5)
 
       await redisClient.set(keys.expiring, 'value')
       await redisClient.expire(keys.expiring, 3600)
-      await assertNodeRedisKeyCount(redisClient, allKeys, 6)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, allKeys, 6)
 
       await redisClient.del([keys.string, keys.hash])
-      await assertNodeRedisKeyCount(redisClient, allKeys, 4)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, allKeys, 4)
     } finally {
       await redisClient.del(allKeys)
     }

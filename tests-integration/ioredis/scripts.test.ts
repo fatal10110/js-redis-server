@@ -52,7 +52,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
     })
 
     test('gets utf8 value correctly', async () => {
-      redisClient?.set(`myKey:${RUN}`, 'фвфв')
+      await redisClient?.set(`myKey:${RUN}`, 'фвфв')
       const script = `
         local val = redis.call("get", KEYS[1])
 

@@ -6,6 +6,7 @@ import {
   assertKeyCount,
   connectToSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -15,11 +16,15 @@ const testRunner = new TestRunner()
 // with each other and with their own previous run (#420).
 const RUN = randomKey()
 
+// The cluster client namespaces every key with this prefix; KEYS runs on a
+// direct connection that does not, so patterns must spell it out.
+const PREFIX = 'key-integration'
+
 describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    redisClient = await testRunner.setupIoredisCluster('key-integration')
+    redisClient = await testRunner.setupIoredisCluster(PREFIX)
   })
 
   after(async () => {
@@ -58,7 +63,10 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     const expiringKey = `${tag}:expired`
     const missingKey = `${tag}:missing`
     const crossSlotA = `{touch-cross-a:${randomKey()}}:key`
-    const crossSlotB = `{touch-cross-b:${randomKey()}}:key`
+    const crossSlotB = keyInAnotherSlot(
+      crossSlotA,
+      () => `{touch-cross-b:${randomKey()}}:key`,
+    )
     const directClient = await connectToSlotOwner(redisClient!, stringKey)
 
     try {
@@ -193,14 +201,14 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       await redisClient?.lpush(keys.list, 'item')
       await redisClient?.sadd(keys.set, 'member')
       await redisClient?.zadd(keys.zset, 1, 'member')
-      await assertKeyCount(redisClient!, allKeys, 5)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, allKeys, 5)
 
       await redisClient?.set(keys.expiring, 'value')
       await redisClient?.expire(keys.expiring, 3600)
-      await assertKeyCount(redisClient!, allKeys, 6)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, allKeys, 6)
 
       await redisClient?.del(keys.string, keys.hash)
-      await assertKeyCount(redisClient!, allKeys, 4)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, allKeys, 4)
     } finally {
       await redisClient?.del(...allKeys)
     }

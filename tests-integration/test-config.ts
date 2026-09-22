@@ -9,6 +9,7 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createRedisCluster, RedisCluster } from '../src/cluster-server'
+import { realClusterPorts, STANDALONE_AUTH_PASSWORD } from './redis-endpoints'
 import {
   type CompatibilitySpec,
   Resp2Server,
@@ -18,8 +19,12 @@ import {
 
 export type TestBackend = 'mock' | 'real'
 
-/** Password used by the password-protected standalone server (see setupIoredisStandaloneAuth). */
-export const STANDALONE_AUTH_PASSWORD = 'testpass'
+/**
+ * Password used by the password-protected standalone server (see
+ * setupIoredisStandaloneAuth). Defined in `redis-endpoints.ts` and re-exported
+ * here so the harness and `scripts/flush-redis.ts` cannot drift apart.
+ */
+export { STANDALONE_AUTH_PASSWORD }
 
 export type IoredisClusterSetupOptions = {
   masters?: number
@@ -396,28 +401,15 @@ export class TestRunner {
 
   /**
    * Ports of the real cluster's nodes — docker-compose.test.yml's published
-   * range by default, overridable with REDIS_CLUSTER_PORTS (a comma-separated
-   * list) so a developer can point the suite at a private cluster instead of
-   * sharing one. `scripts/flush-redis.ts` honours the same variable.
+   * ports by default, overridable with REDIS_CLUSTER_PORTS so a developer can
+   * point the suite at a private cluster instead of sharing one.
+   *
+   * Parsing lives in `redis-endpoints.ts` so `scripts/flush-redis.ts` resolves
+   * the exact same list: a cleanup that flushes a different set of nodes than
+   * the suite then uses would be silent in precisely the way #395 was.
    */
   getRealClusterPorts(): number[] {
-    const configured = process.env.REDIS_CLUSTER_PORTS
-    if (!configured) {
-      return [30000, 30001, 30002, 30003, 30004, 30005]
-    }
-
-    const ports = configured
-      .split(',')
-      .map(part => Number(part.trim()))
-      .filter(port => Number.isInteger(port) && port > 0)
-
-    if (ports.length === 0) {
-      throw new Error(
-        `REDIS_CLUSTER_PORTS is set but holds no valid ports: "${configured}"`,
-      )
-    }
-
-    return ports
+    return realClusterPorts()
   }
 
   getClusterPorts(): number[] {

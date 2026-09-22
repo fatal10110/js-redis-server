@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  keyInAnotherSlot,
+  randomKey,
+} from '../../utils'
 
 const testRunner = new TestRunner()
 // Unique per run: the real-backend suites share one Redis that is never
@@ -56,7 +61,10 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     const setC = `${tag}:c`
     const missing = `${tag}:missing`
     const stringKey = `${tag}:string`
-    const crossSlotKey = `sintercard-cross:${randomKey()}`
+    const crossSlotKey = keyInAnotherSlot(
+      setA,
+      () => `sintercard-cross:${randomKey()}`,
+    )
     let directClient: Redis | undefined
 
     try {

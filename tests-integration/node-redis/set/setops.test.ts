@@ -6,6 +6,7 @@ import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
   flushNodeRedisCluster,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -60,7 +61,10 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
     const setC = `${tag}:c`
     const missing = `${tag}:missing`
     const stringKey = `${tag}:string`
-    const crossSlotKey = `sintercard-cross:${randomKey()}`
+    const crossSlotKey = keyInAnotherSlot(
+      setA,
+      () => `sintercard-cross:${randomKey()}`,
+    )
     let directClient: RedisClientType | undefined
 
     try {
