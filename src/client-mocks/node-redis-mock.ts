@@ -485,11 +485,10 @@ export class NodeRedisMockClient extends CommandRunner {
     }
     const before = this.session.protocolVersion
     const value = await runOnSession(this.session, ['EXEC'], this.closed)
-    const respVersion = this.session.protocolVersion
     return {
       value,
-      respVersion,
-      replyVersions: replayProtocolSwitches(queued, before, respVersion),
+      respVersion: this.session.protocolVersion,
+      replyVersions: replayProtocolSwitches(queued, before, value),
     }
   }
 
@@ -649,23 +648,32 @@ type TransactionSpan = {
  *
  * Only `HELLO <n>` is modelled — `RESET` is not queued by real Redis, it runs
  * immediately and aborts the transaction (verified: `MULTI; RESET; EXEC` →
- * `ERR EXEC without MULTI`). The replay is then checked against the version
- * actually in force after EXEC; if it failed to predict it — a rejected
- * `HELLO`, or any future command that moves the protocol — every item falls
- * back to that final version.
+ * `ERR EXEC without MULTI`). A queued `HELLO` that *fails* leaves the protocol
+ * where it was, so the replay skips any whose slot in EXEC's array came back
+ * an error; that is what makes it exact rather than a guess, and it is why
+ * there is no "prediction missed, use the final version everywhere" fallback:
+ * such a fallback is wrong for every item before the divergence (it decodes a
+ * reply that ran at RESP2 as RESP3), and with failed HELLOs accounted for
+ * there is nothing left for it to catch but a protocol-moving command this
+ * facade does not know about — where a replay that is right up to the
+ * divergence still beats a uniform value that is wrong before it.
  */
 function replayProtocolSwitches(
   queued: readonly NodeRedisCommandArgument[][],
   before: RespVersion,
-  after: RespVersion,
+  result: RedisValue,
 ): RespVersion[] {
+  const items =
+    result.kind === 'array' || result.kind === 'set' ? result.items : []
   const versions: RespVersion[] = []
   let current = before
-  for (const args of queued) {
-    current = protocolSwitchedBy(args) ?? current
+  queued.forEach((args, index) => {
+    if (items[index]?.kind !== 'error') {
+      current = protocolSwitchedBy(args) ?? current
+    }
     versions.push(current)
-  }
-  return current === after ? versions : queued.map(() => after)
+  })
+  return versions
 }
 
 /** The version a queued `HELLO <2|3>` switches to, or undefined for anything else. */
@@ -852,12 +860,19 @@ export class NodeRedisMockCluster extends CommandRunner {
   protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
     const session = this.sessionForCommand(args)
     await this.syncProtocol(session)
+    const before = session.protocolVersion
     const value = await runOnSession(session, args, this.closed)
-    // A HELLO (or RESET) just switched this node's session — adopt it as the
-    // client's version so every other node is brought along on its next
-    // command. Nothing else can move a session's protocol, so this is a no-op
-    // for ordinary commands.
-    this.clientRespVersion = session.protocolVersion
+    // Adopt the version only when *this* command moved *this* session — a
+    // HELLO or a RESET. Writing it unconditionally would let an ordinary
+    // command racing a HELLO put its own stale version back: commands here run
+    // concurrently, so a command that started before the HELLO landed sees a
+    // session still on the old protocol and would undo the switch for the
+    // whole client. Comparing before/after instead of matching on the command
+    // name keeps RESET (and anything future) working without a second list of
+    // protocol-moving commands to maintain.
+    if (session.protocolVersion !== before) {
+      this.clientRespVersion = session.protocolVersion
+    }
     return value
   }
 

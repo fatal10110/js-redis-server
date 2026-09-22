@@ -1,5 +1,6 @@
 import { test, describe, afterEach } from 'node:test'
 import assert from 'node:assert'
+import { MultiErrorReply } from 'redis'
 import { createInMemoryClient } from '../src'
 import type { InMemoryRedisClient } from '../src'
 import {
@@ -45,6 +46,22 @@ import {
  * socketless clients decode numerically whatever the protocol. That scalar
  * divergence is separate from the pair *shape* under test here.
  */
+/** Run a MULTI whose queue contains failing commands, and read the aggregate. */
+async function execExpectingErrors(
+  multi: ReturnType<NodeRedisMockClient['multi']>,
+): Promise<{ replies: unknown[]; errorIndexes: number[] }> {
+  try {
+    const replies = await multi.exec()
+    assert.fail(`expected a MultiErrorReply, got ${JSON.stringify(replies)}`)
+  } catch (err) {
+    assert.ok(
+      err instanceof MultiErrorReply,
+      `expected a MultiErrorReply, got ${err}`,
+    )
+    return { replies: err.replies, errorIndexes: err.errorIndexes }
+  }
+}
+
 describe('flat-pairs shape follows the negotiated RESP version', () => {
   describe('InMemoryRedisClient', () => {
     let client: InMemoryRedisClient
@@ -271,6 +288,41 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       )
     })
 
+    // A queued HELLO that *fails* leaves the protocol where it was, so the
+    // replay must not apply it. Both orderings matter: a failed switch late in
+    // the queue must not reshape the items before it, and one at the head must
+    // not reshape the items after it.
+    test('a failed HELLO inside MULTI does not move the shape', async () => {
+      const c = await seeded(2)
+      const failed = await execExpectingErrors(
+        c
+          .multi()
+          .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES'])
+          .addCommand(['HELLO', '3'])
+          .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES'])
+          // WRONGPASS — the protocol stays on 3, so the replay's prediction of
+          // 2 for the tail is wrong and must not be applied.
+          .addCommand(['HELLO', '2', 'AUTH', 'u', 'p']),
+      )
+      assert.deepStrictEqual(failed.errorIndexes, [3])
+      assert.deepStrictEqual(failed.replies[0], ['a', 1, 'b', 2])
+      assert.deepStrictEqual(failed.replies[2], [
+        ['a', 1],
+        ['b', 2],
+      ])
+
+      // …and one that fails at the head leaves everything after it on RESP2.
+      const c2 = await seeded(2)
+      const headFailure = await execExpectingErrors(
+        c2
+          .multi()
+          .addCommand(['HELLO', '3', 'AUTH', 'u', 'p'])
+          .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
+      )
+      assert.deepStrictEqual(headFailure.errorIndexes, [0])
+      assert.deepStrictEqual(headFailure.replies[1], ['a', 1, 'b', 2])
+    })
+
     test('HELLO 2 and RESET put the connection back on the flat shape', async () => {
       const c = await seeded(3)
       assert.deepStrictEqual(
@@ -375,6 +427,44 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       assert.deepStrictEqual(await zrange(cluster, 'k0'), tuples)
 
       await cluster.sendCommand(['HELLO', '2'])
+      for (const key of keys) {
+        assert.deepStrictEqual(await zrange(cluster, key), flat)
+      }
+    })
+
+    // The HELLO must be *inside* the concurrent batch: a command that started
+    // before the switch landed sees a session still on the old protocol, and
+    // must not write that back over the version HELLO negotiated. Awaiting the
+    // HELLO first, as the test above does, cannot reach this.
+    test('a HELLO raced against a command on another node is not lost', async () => {
+      for (const helloFirst of [true, false]) {
+        const cluster = await seededCluster()
+        const hello = () => cluster.sendCommand(['HELLO', '3'])
+        // k0 is not on masters[0], so its session has not synced yet.
+        const read = () => zrange(cluster, 'k0')
+
+        await Promise.all(helloFirst ? [hello(), read()] : [read(), hello()])
+
+        for (const key of keys) {
+          assert.deepStrictEqual(
+            await zrange(cluster, key),
+            tuples,
+            `HELLO 3 was lost (hello ${helloFirst ? 'first' : 'second'}, key ${key})`,
+          )
+        }
+      }
+    })
+
+    test('a HELLO 2 raced against a command on another node is not lost', async () => {
+      const cluster = await seededCluster()
+      await cluster.sendCommand(['HELLO', '3'])
+      assert.deepStrictEqual(await zrange(cluster, 'k0'), tuples)
+
+      await Promise.all([
+        cluster.sendCommand(['HELLO', '2']),
+        zrange(cluster, 'k0'),
+      ])
+
       for (const key of keys) {
         assert.deepStrictEqual(await zrange(cluster, key), flat)
       }
