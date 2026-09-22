@@ -819,7 +819,18 @@ export class NodeRedisMockCluster extends CommandRunner {
    * `masters[0]`; the version it negotiates is held here and replayed onto each
    * other node session by {@link syncProtocol} before that session serves a
    * command. Reading *this* rather than the serving session's version is also
-   * what keeps concurrent commands from decoding under each other's protocol.
+   * what keeps two concurrent commands on different nodes from decoding under
+   * each other's protocol.
+   *
+   * What it does not remove — and cannot — is the ambiguity of a `HELLO` that
+   * is itself in flight. Commands here run concurrently, so every command
+   * already running when the switch lands reads this field only when its reply
+   * is decoded: the replies that can come back in the other protocol's shape
+   * are bounded by the set of commands in flight at that moment, not by one.
+   * Real node-redis has the same ambiguity for the same reason — its parser
+   * belongs to the connection, not to the individual reply — so the point of
+   * the conditional write in {@link run} is to stop that window outliving the
+   * switch, not to close it.
    */
   private clientRespVersion: RespVersion = 2
   private closed = false
@@ -860,6 +871,9 @@ export class NodeRedisMockCluster extends CommandRunner {
   protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
     const session = this.sessionForCommand(args)
     await this.syncProtocol(session)
+    // Captured *after* syncProtocol, which moves the session itself: reading
+    // it earlier would make the first command on a newly-synced node look like
+    // a protocol-moving one and re-adopt a version the client already holds.
     const before = session.protocolVersion
     const value = await runOnSession(session, args, this.closed)
     // Adopt the version only when *this* command moved *this* session — a
