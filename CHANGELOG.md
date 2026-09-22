@@ -26,6 +26,33 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING (`/core`)** The three hand-rolled in-memory transports were
+  replaced by [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions),
+  which raises the minimum Node version to **22.6** (`engines.node: ">=22.6"`)
+  ([#360]). Four things left `/core`:
+
+  ```
+  InMemoryConnectionTransport      -> no replacement; it only ever backed this
+                                      repo's own tests. Wrap one end of a
+                                      duplexPair in SocketConnectionTransport.
+  ConnectionTransport.on(...)      -> no replacement; 'close' | 'drain' | 'error'
+                                      had zero subscribers. Use the transport's
+                                      `signal`, or listen on your own stream.
+  ConnectionTransportEvent         -> removed with it.
+  ConnectionTransportListener      -> removed with it.
+  ConnectionTransportUnsubscribe   -> removed with it.
+  VirtualClientSocket (class)      -> now a type only. It is one end of a
+                                      duplexPair decorated with the net.Socket
+                                      surface ioredis touches, so it can no
+                                      longer be constructed directly; get one
+                                      from `createVirtualConnection()`.
+  ```
+
+  `SocketConnectionTransport` now accepts any `Duplex`, not just a `net.Socket`
+  — a widening, so existing callers are unaffected. Behavior is unchanged:
+  `createIoredisMock` keeps its backpressure-free semantics, and tearing down
+  either end (client `destroy()` or server `close()`) still ends the session.
+
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**
   ([#410]). Real Redis stamps `MONITOR` lines from `gettimeofday()`, so the six
@@ -150,6 +177,7 @@ Released before this file existed. See the
 [release tags](https://github.com/fatal10110/js-redis-server/tags) and the pull
 requests they contain.
 
+[#360]: https://github.com/fatal10110/js-redis-server/issues/360
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376

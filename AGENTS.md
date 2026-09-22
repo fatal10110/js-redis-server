@@ -53,7 +53,7 @@ For full diagrams and a request-lifecycle walkthrough, see [docs/ARCHITECTURE.md
 
 Redis-compatible server (standalone + cluster modes) built as a layered pipeline. The **same** `CommandExecutor` pipeline drives standalone mode, cluster mode, `MULTI`/`EXEC` transactions, and Lua `EVAL` alike, so routing, queueing, and command semantics never diverge:
 
-1. **Transport Layer** - Frames RESP bytes on/off the wire (`SocketConnectionTransport` / `InMemoryConnectionTransport`)
+1. **Transport Layer** - Frames RESP bytes on/off the wire (`SocketConnectionTransport` over a `net.Socket`, or over one end of a `stream.duplexPair()` for the socketless path)
 2. **Session Layer** - Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys (`ClientSession`)
 3. **Execution Layer** - Looks up commands, parses args, extracts routing keys, runs composable policies (`CommandExecutor`, `CommandRegistry`, `ExecutionPolicy`)
 4. **Command Layer** - Pure `(args, ctx) → RedisResult` implementations grouped by data type ([src/commands/](src/commands/))

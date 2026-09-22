@@ -79,8 +79,7 @@ command-specific argument knowledge.
 ```mermaid
 graph TD
     subgraph "Transport layer"
-        ST[SocketConnectionTransport]
-        IT["InMemoryConnectionTransport<br/>(tests / embedding)"]
+        ST["SocketConnectionTransport<br/>(net.Socket or duplexPair)"]
         SA[Resp2SessionAdapter]
         DEC[Resp2CommandDecoder]
         ENC["resp-encoder<br/>encodeResp2 / encodeResp3"]
@@ -113,7 +112,7 @@ graph TD
         MF[RedisMonitorFeed]
     end
 
-    ST & IT --> SA
+    ST --> SA
     SA --> DEC
     SA --> ENC
     SA --> CS
@@ -134,7 +133,7 @@ graph TD
 
 | Layer         | Responsibility                                                                                                     | Key types                                                                                                                                                                                                                                                                                                                          |
 | :------------ | :----------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`InMemoryConnectionTransport`](../src/core/transports/in-memory-connection-transport.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
+| **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`createVirtualConnection`](../src/core/transports/virtual-connection.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
 | **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
@@ -393,11 +392,13 @@ contract without special session or queue code.
 ## Protocol & transports (RESP2 / RESP3)
 
 [`ConnectionTransport`](../src/core/transports/connection-transport.ts) is a
-minimal duplex-byte-stream interface (`read`/`write`/`close`/`signal`/`on`)
-with two implementations: [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts)
-for real TCP connections, and [`InMemoryConnectionTransport`](../src/core/transports/in-memory-connection-transport.ts)
-for tests and programmatic embedding (feed bytes in, inspect bytes out — no
-socket required). [`Resp2Server`](../src/core/transports/resp2/server.ts)
+minimal duplex-byte-stream interface (`read`/`write`/`close`/`signal`) with a
+single implementation: [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts),
+which wraps any `Duplex`. That is a real `net.Socket` for TCP connections, and
+one end of a [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions)
+for the socketless path ([`createVirtualConnection`](../src/core/transports/virtual-connection.ts)) —
+so tests and programmatic embedding exercise the same framing and teardown code
+as the wire. [`Resp2Server`](../src/core/transports/resp2/server.ts)
 wires a transport to a fresh `ClientSession` per connection through a
 [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts), which
 owns a [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts)

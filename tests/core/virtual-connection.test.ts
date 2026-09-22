@@ -94,6 +94,23 @@ describe('createVirtualConnection', () => {
     assert.strictEqual(state.getConnectedClients().length, 0)
   })
 
+  test('close() also tears the client socket down', async () => {
+    const { state, executor } = freshPipeline()
+    const { clientSocket, close, done } = createVirtualConnection({
+      state,
+      executor,
+    })
+    await once(clientSocket, 'connect')
+
+    // `duplexPair` does not propagate teardown on its own — the server end
+    // closing must still reach the client, the way a real socket pair does.
+    const clientClosed = once(clientSocket, 'close')
+    close()
+    await done
+    await clientClosed
+    assert.strictEqual(clientSocket.destroyed, true)
+  })
+
   test('destroying the client socket tears down the server session', async () => {
     const { state, executor } = freshPipeline()
     const { clientSocket, done } = createVirtualConnection({ state, executor })

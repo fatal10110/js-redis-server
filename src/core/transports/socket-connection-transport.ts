@@ -1,15 +1,18 @@
-import { Socket } from 'net'
-import {
-  type ConnectionTransport,
-  type ConnectionTransportEvent,
-  type ConnectionTransportListener,
-  type ConnectionTransportUnsubscribe,
-} from './connection-transport'
+import type { Duplex } from 'node:stream'
+import { type ConnectionTransport } from './connection-transport'
 
 export type SocketConnectionTransportOptions = {
   id?: string
 }
 
+/** `net.Socket.destroySoon()` — absent on a plain {@link Duplex}. */
+type MaybeSocket = Duplex & { destroySoon?: () => void }
+
+/**
+ * A {@link ConnectionTransport} over any {@link Duplex} stream: a real
+ * `net.Socket` for the TCP server, or one end of a {@link import('node:stream').duplexPair}
+ * for the in-process virtual wire.
+ */
 export class SocketConnectionTransport implements ConnectionTransport {
   private static nextId = 0
 
@@ -20,7 +23,7 @@ export class SocketConnectionTransport implements ConnectionTransport {
   private closed = false
 
   constructor(
-    private readonly socket: Socket,
+    private readonly socket: Duplex,
     options?: SocketConnectionTransportOptions,
   ) {
     this.id = options?.id ?? `socket-${++SocketConnectionTransport.nextId}`
@@ -33,12 +36,21 @@ export class SocketConnectionTransport implements ConnectionTransport {
   }
 
   async *read(): AsyncIterable<Buffer> {
-    for await (const chunk of this.socket) {
-      if (this.signal.aborted) {
-        return
-      }
+    try {
+      for await (const chunk of this.socket) {
+        if (this.signal.aborted) {
+          return
+        }
 
-      yield Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk)
+        yield Buffer.from(chunk as Buffer)
+      }
+    } catch (err) {
+      // A destroyed stream surfaces on its async iterator as an error
+      // (`ERR_STREAM_PREMATURE_CLOSE`). That is an ordinary disconnect — either
+      // end tearing the wire down — not something the session should answer.
+      if (!this.socket.destroyed && !this.signal.aborted) {
+        throw err
+      }
     }
   }
 
@@ -66,18 +78,14 @@ export class SocketConnectionTransport implements ConnectionTransport {
 
     this.closed = true
     this.abort()
-    this.socket.destroySoon()
-  }
 
-  on(
-    event: ConnectionTransportEvent,
-    listener: ConnectionTransportListener,
-  ): ConnectionTransportUnsubscribe {
-    const wrapped = (error?: Error) => listener(error)
-    this.socket.on(event, wrapped)
-    return () => {
-      this.socket.off(event, wrapped)
+    const socket = this.socket as MaybeSocket
+    if (typeof socket.destroySoon === 'function') {
+      socket.destroySoon()
+      return
     }
+
+    socket.destroy()
   }
 
   private abort(): void {
