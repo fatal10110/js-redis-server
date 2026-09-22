@@ -24,6 +24,27 @@ import { expectReply } from './helpers'
  * This suite runs on the default profile (`redis-8.0`) and against the real
  * 8.0 backend, so it pins the 7.0+ form. The 6.2 side of the gate is asserted
  * by the profile sweep in `tests-integration/compatibility/profile-gates.test.ts`.
+ *
+ * Two known gaps are deliberately NOT asserted here, recorded so the omissions
+ * are visible rather than accidental:
+ *
+ * 1. Byte fidelity of the echoed name. Real Redis echoes the raw bytes the
+ *    client sent; the subcommand reaches `execute()` as a Buffer but
+ *    `RedisCommandError` carries a `string`, so non-UTF-8 input becomes U+FFFD
+ *    and a 128-byte cut landing inside a multi-byte character does too (real
+ *    emits the raw partial byte — 128 echoed bytes against this server's 130).
+ *    Needs the byte-oriented error pipeline tracked as #384 part 2.
+ *
+ * 2. `CONFIG HELP` is unimplemented, so the `Try CONFIG HELP.` suffix points at
+ *    a reply that is itself this error. Real returns an 11-element array whose
+ *    last line is version-specific — `    Prints this help.` on 6.2/7.0 and
+ *    `    Print this help.` from 7.2 on (verified on 6.2.24, 7.0.15, 7.2.16,
+ *    7.4.11 and 8.0.6) — and `CONFIG HELP extra` is a `config|help` arity error
+ *    on 7.0+ but the legacy unknown-subcommand text on 6.2. Implementing it
+ *    therefore needs a third gate plus the profile-aware arity path, which is
+ *    out of scope for #388; no test is added because pinning this server's
+ *    current (wrong) reply would fail against the real backend this suite also
+ *    runs against.
  */
 const testRunner = new TestRunner()
 
@@ -106,6 +127,25 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
         `-ERR unknown subcommand '${'X'.repeat(128)}'. Try CONFIG HELP.\r\n`,
       )
     }
+  })
+
+  // Real Redis sanitizes an error body with `sdsmapchars(s, "\r\n", "  ", 2)`,
+  // a 1:1 character map, so a `\r\n` in the echoed subcommand becomes TWO
+  // spaces. Collapsing the run to one is protocol-safe but changes the byte
+  // count, which is exactly what this suite exists to pin.
+  test('CR and LF in the echoed subcommand are mapped 1:1, not collapsed', async () => {
+    const conn = await connect()
+
+    await expectReply(
+      conn,
+      ['CONFIG', 'a\r\nbc'],
+      "-ERR unknown subcommand 'a  bc'. Try CONFIG HELP.\r\n",
+    )
+    await expectReply(
+      conn,
+      ['CONFIG', 'x\ny'],
+      "-ERR unknown subcommand 'x y'. Try CONFIG HELP.\r\n",
+    )
   })
 
   test('CONFIG with no subcommand is a wrong-arity error for the container', async () => {

@@ -135,9 +135,19 @@ export function parsePositiveExpireToken(
 
 /**
  * Real Redis formats the echoed subcommand with `%.128s`, so a longer name is
- * cut at 128 bytes. Verified exact against 7.0.15 and 8.0.6: at 128 the reply
- * is byte-identical to the mock's, at 129 real echoes 128 characters. Redis 6.2
- * has no truncation at all — a 300-byte name comes back whole.
+ * cut at 128 bytes. Verified exact against 7.0.15 and 8.0.6 for single-byte
+ * names: at 128 the reply is byte-identical to the mock's, at 129 and 300 real
+ * echoes 128 characters. Redis 6.2 has no truncation at all — a 300-byte name
+ * comes back whole.
+ *
+ * Known gap, shared with the non-UTF-8 case below: when the 128-byte cut lands
+ * *inside* a multi-byte character — including a perfectly well-formed one —
+ * real Redis emits the raw partial byte, while `toString()` here yields U+FFFD.
+ * For `'A'.repeat(127) + 'é' + ...` real replies with 128 echoed bytes (172
+ * total) and this replies with 130 (174). Closing it needs the same plumbing as
+ * the binary case: `RedisCommandError` carries a `string` and
+ * `src/core/resp-encoder.ts` formats strings, so there is no path from a Buffer
+ * to raw bytes on the wire. Tracked as #384 part 2 — see the test file header.
  */
 const SUBCOMMAND_ECHO_LIMIT = 128
 

@@ -74,13 +74,16 @@ export function monitorTimestampMicros(): number {
  * rather than `(micros / 1e6).toFixed(6)`, which can round the last digit once
  * the value exceeds a double's ~15 significant digits.
  *
- * `Math.trunc` guards the published `/core` entry point: a fractional input
- * would otherwise produce a string with two decimal points
- * (`1695000000000000.5` -> `"1695000000.0000.5"`). {@link monitorTimestampMicros}
- * never returns one.
+ * The input is coerced to a finite integer because this is a published `/core`
+ * entry point. A fractional value would otherwise produce a string with two
+ * decimal points (`1695000000000000.5` -> `"1695000000.0000.5"`), and `NaN` or
+ * `Infinity` would produce `"NaN.000NaN"` / `"Infinity.000NaN"` — neither is a
+ * timestamp at all. {@link monitorTimestampMicros} never returns any of them.
  */
 export function formatMonitorTimestamp(timestampMicros: number): string {
-  const micros = Math.trunc(timestampMicros)
+  const micros = Number.isFinite(timestampMicros)
+    ? Math.trunc(timestampMicros)
+    : 0
   const seconds = Math.floor(micros / 1_000_000)
   const microseconds = micros - seconds * 1_000_000
 

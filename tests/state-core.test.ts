@@ -317,6 +317,18 @@ describe('new Redis state core', () => {
       '1695000000.000000',
     )
     assert.strictEqual(formatMonitorTimestamp(1.5), '0.000001')
+
+    // Math.trunc leaves NaN/Infinity alone, so they need the finiteness check:
+    // without it these render as "NaN.000NaN" and "Infinity.000NaN".
+    assert.strictEqual(formatMonitorTimestamp(Number.NaN), '0.000000')
+    assert.strictEqual(
+      formatMonitorTimestamp(Number.POSITIVE_INFINITY),
+      '0.000000',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(Number.NEGATIVE_INFINITY),
+      '0.000000',
+    )
   })
 
   test('monitor timestamps have sub-millisecond resolution', () => {
