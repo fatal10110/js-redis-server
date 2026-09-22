@@ -1,4 +1,5 @@
 import type { RedisValue } from './redis-value'
+import type { RespVersion } from './resp-encoder'
 
 /**
  * Native JS value a {@link RedisValue} decodes to — the shape a real client
@@ -15,12 +16,33 @@ export type NativeRedisReply =
   | { [key: string]: NativeRedisReply }
 
 /**
- * The points where two socketless clients over this pipeline legitimately
- * disagree about how to present a reply. Everything else — bulk strings, maps,
- * flat pairs, nulls — decodes identically, so it lives in
+ * Everything {@link decodeRedisValue} needs: the points where two socketless
+ * clients over this pipeline legitimately disagree about how to present a reply
+ * ({@link ClientDecodeOptions}), plus the connection's negotiated RESP version.
+ * Everything else — bulk strings, nulls — decodes identically, so it lives in
  * {@link decodeRedisValue} once.
  */
-export type DecodeRedisValueOptions = {
+export type DecodeRedisValueOptions = ClientDecodeOptions & {
+  /**
+   * RESP version the connection served this reply under. Some replies are
+   * shaped by the protocol rather than by the client: `flat-pairs`
+   * (WITHSCORES / WITHVALUES) is a flat `[k, v, k, v, …]` array on RESP2 and
+   * `[[k, v], …]` tuples on RESP3, so a RESP3 consumer iterating
+   * `for (const [field, value] of reply)` must not be handed a flat array.
+   *
+   * Mirrors `encodeRedisValue`'s `{ version }`, and is read per reply: `HELLO`
+   * switches it mid-connection. (ioredis is RESP2-only, so a real ioredis only
+   * ever sees the RESP2 shapes.)
+   */
+  version: RespVersion
+}
+
+/**
+ * The half of {@link DecodeRedisValueOptions} that belongs to the *client*
+ * rather than to the connection. A client pins these once; `version` comes off
+ * its session at decode time.
+ */
+export type ClientDecodeOptions = {
   /**
    * How an integer reply that arrived as a `bigint` is narrowed.
    *  - `'always'`: node-redis parses a RESP2 `:` with plain JS number
@@ -109,9 +131,11 @@ export function decodeRedisValue(
       return out
     }
     case 'flat-pairs':
-      // Flat on the wire in RESP2; keep the flat array shape here too. Note
-      // that real node-redis negotiates RESP3, where these arrive as
-      // `[field, value]` tuples — tracked in #385, not changed here.
+      // `[[k, v], …]` on RESP3, flat `[k, v, k, v, …]` on RESP2 — the same
+      // split `encodeRedisValue` puts on the wire.
+      if (options.version === 3) {
+        return value.entries.map(([key, val]) => [decode(key), decode(val)])
+      }
       return value.entries.flatMap(([key, val]) => [decode(key), decode(val)])
     case 'null':
     case 'null-array':
