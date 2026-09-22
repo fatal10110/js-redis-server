@@ -690,6 +690,10 @@ function readSortSource(db: RedisDatabase, key: Buffer): Buffer[] {
   if (type === 'zset') {
     // sortCommand() walks the skiplist, so a zset source is read in rank
     // order — the same order ZRANGE reports, not insertion order (#418).
+    // This is also the base order an ALPHA `BY` glob falls back to when every
+    // weight is missing and all elements compare equal. Real Redis iterates
+    // the zset's dict there, an order it deliberately leaves undefined, so
+    // rank order is the reproducible choice rather than a mismatch.
     return getSortedMembers(db.getSortedSet(key)!).map(entry => entry.member)
   }
   throw new WrongTypeRedisError()
@@ -709,7 +713,13 @@ function sortElements(
   db: RedisDatabase,
 ): Buffer[] {
   if (args.by && isConstantSortPattern(args.by)) {
-    return [...elements]
+    // A constant BY does not simply skip the sort: sortCommand()'s dontsort
+    // branch reads the source *backwards* for DESC — a list from its head, a
+    // zset from the skiplist tail — and applies LIMIT to that reversed walk.
+    // A set has no such branch, so there DESC really is a no-op (#426).
+    const source = [...elements]
+    if (args.desc && db.getType(args.key) !== 'set') source.reverse()
+    return source
   }
 
   if (args.alpha) {
@@ -750,8 +760,9 @@ function applySortLimit(
  * means "do not sort", but an unordered SET source whose output has to be
  * reproducible — it is written by STORE, or returned to a script — is
  * force-sorted ALPHA with the `BY` dropped. Lists have a defined order, so
- * only sets are overridden, and zsets are left alone because `readSortSource`
- * reads them in rank order.
+ * only sets are overridden. Real Redis leaves zsets alone for the same reason:
+ * `sortCommand()` walks the skiplist, so a zset source already arrives in rank
+ * order — which `readSortSource` now reproduces (#418).
  */
 function forceDeterministicSetOrder(
   args: SortArgs,
