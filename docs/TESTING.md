@@ -355,15 +355,17 @@ The **single client's** close path follows real node-redis v6:
 
 | | behaviour |
 | --- | --- |
-| `quit()` | resolves `'OK'`; **graceful** — commands already issued still run |
-| `disconnect()` | resolves `undefined`; flushes in-flight commands with `DisconnectsClientError` |
-| `destroy()` | returns `undefined` synchronously; same flush as `disconnect()` |
+| `quit()` | resolves `'OK'`; **graceful** — commands already issued still run; `'end'` fires just before it resolves |
+| `disconnect()` | resolves `undefined`; an alias for `destroy()` (real node-redis' is `Promise.resolve(this.destroy())`) |
+| `destroy()` | returns `undefined` synchronously; flushes every command not yet answered — queued **or executing** — with `DisconnectsClientError`; `'end'` fires before it returns |
 | `'end'` | emitted exactly **once** per close |
 | `'error'` | never emitted by a clean close |
-| any call on a closed client | throws `ClientClosedError` (`'The client is closed'`) — a rejection from `quit()`/`disconnect()`, synchronous from `destroy()` |
+| any call on a closed client | throws `ClientClosedError` (`'The client is closed'`) — a rejection from `quit()`, but **synchronous** from `destroy()` *and* `disconnect()` |
 
-Teardown that may close twice has to tolerate that, exactly as it would against
-the real client:
+That last row matters for teardown code: because a redundant `disconnect()`
+throws before any promise exists, `client.disconnect().catch(...)` does **not**
+catch it — against the real client or the facade. Use `try`/`catch`, exactly as
+you would against the real client:
 
 ```typescript
 import { ClientClosedError } from 'redis'
@@ -375,11 +377,25 @@ try {
 }
 ```
 
+**Graceful, then forced.** While a `quit()` is still draining — say behind a
+`BLPOP 0` that will never be answered — the client is *closing*: new commands and
+another `quit()` get `ClientClosedError`, but `destroy()` or `disconnect()` can
+still force it. As in real node-redis v6, that rejects the pending `quit()` and
+every command still pending with `DisconnectsClientError` — and the forcing
+`destroy()`/`disconnect()` call **itself still throws `ClientClosedError`**
+synchronously, and no `'end'` is emitted. (Real node-redis flushes its queue
+first, then reaches a socket the pending `quit()` already marked closed.) Real
+node-redis also leaks the socket on that path, so the process never exits; the
+facade deliberately does not reproduce that, and tears everything down.
+
 That `instanceof` works because the facade throws the `redis` package's *own*
-error classes whenever it can resolve them (the same mechanism behind
-`WatchError` / `ErrorReply` / `MultiErrorReply`). If `redis` is not installed it
-falls back to local classes that are identical in message and shape but are not
-`instanceof` the real ones — match on `err.message` if you need to support that.
+error classes (the same mechanism behind `WatchError` / `ErrorReply` /
+`MultiErrorReply`). They are resolved lazily, the first time a facade client is
+constructed — importing `js-redis-server` never loads `redis`, so ioredis-only
+users don't pay for it. Only if `redis` genuinely cannot be required (or predates
+one of these classes, as v4 predates `MultiErrorReply`) does the facade fall back
+to local classes that match in message and shape but are not `instanceof` the
+real ones; match on `err.message` if you need to support that.
 
 **Known gap ([#440](https://github.com/fatal10110/js-redis-server/issues/440)):**
 real node-redis re-opens a closed client (`connect()` reconnects,
@@ -391,8 +407,10 @@ not.
 
 The **cluster** client closes on node-redis' own, quite different, cluster
 terms: `quit()` / `disconnect()` / `destroy()` all resolve `undefined`, they
-emit `'disconnect'` (never `'end'`) once per close *call*, and a redundant close
-is a silent no-op rather than a throw. The one deliberate deviation is that a
+emit `'disconnect'` (never `'end'`) once per close *call* — after `quit()` and
+`disconnect()` return but before their promise settles, and in-line from the
+synchronous `destroy()` — and a redundant close is a silent no-op rather than a
+throw. The one deliberate deviation is that a
 command issued on a closed cluster throws `ClientClosedError`, where real
 node-redis v6 crashes with an internal `TypeError` from its own reset slot map.
 

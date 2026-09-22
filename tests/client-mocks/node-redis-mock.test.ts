@@ -35,6 +35,36 @@ async function quitIfOpen(
   }
 }
 
+/**
+ * Settle `promise` to its value or its rejection reason — never throwing — and
+ * fail loudly instead of hanging the whole run if it never settles. Attaches
+ * the handler immediately, so a rejection that lands before the caller awaits
+ * is not reported as unhandled.
+ */
+function settleWithin(promise: Promise<unknown>, ms = 2000): Promise<unknown> {
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`still pending after ${ms}ms — it hung`)),
+      ms,
+    )
+  })
+  return Promise.race([
+    promise.then(
+      value => value,
+      (reason: unknown) => reason,
+    ),
+    deadline,
+  ]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * For tests that park a blocking command: if a regression leaves something
+ * pending forever, the test must FAIL and name itself, not stall the run
+ * (node:test has no default timeout, and neither does `npm test`).
+ */
+const BLOCKING_TEST = { timeout: 10_000 }
+
 describe('createNodeRedisMock (standalone)', () => {
   const openClients: NodeRedisMockClient[] = []
 
@@ -290,9 +320,11 @@ describe('createNodeRedisMock (standalone)', () => {
 
   // Close-path behaviour below is pinned to what real node-redis v6 does when
   // driven against a real redis-server: every close method on an already-closed
-  // client throws `ClientClosedError('The client is closed')` — quit() and
-  // disconnect() as a rejection, destroy() synchronously — 'end' is emitted
-  // exactly once per close, and a clean close emits no 'error'.
+  // client throws `ClientClosedError('The client is closed')` — quit() as a
+  // rejection, destroy() AND disconnect() synchronously (real disconnect() is
+  // `Promise.resolve(this.destroy())`, so destroy()'s throw escapes before any
+  // promise exists) — 'end' is emitted exactly once per close, and a clean
+  // close emits no 'error'.
 
   test("double quit() throws ClientClosedError and 'end' fires once", async () => {
     const client = await makeClient()
@@ -310,14 +342,16 @@ describe('createNodeRedisMock (standalone)', () => {
     // quit() -> disconnect()
     const afterQuit = await makeClient()
     await afterQuit.quit()
-    await assert.rejects(() => afterQuit.disconnect(), ClientClosedError)
+    // Synchronous, not a rejection: `client.disconnect().catch(...)` crashes
+    // against the real client, so it must crash against the mock too.
+    assert.throws(() => afterQuit.disconnect(), ClientClosedError)
     assert.throws(() => afterQuit.destroy(), ClientClosedError)
 
     // disconnect() -> quit(); disconnect() itself resolves undefined
     const afterDisconnect = await makeClient()
     assert.strictEqual(await afterDisconnect.disconnect(), undefined)
     await assert.rejects(() => afterDisconnect.quit(), ClientClosedError)
-    await assert.rejects(() => afterDisconnect.disconnect(), ClientClosedError)
+    assert.throws(() => afterDisconnect.disconnect(), ClientClosedError)
 
     // destroy() -> quit(); destroy() is synchronous and returns undefined
     const afterDestroy = await makeClient()
@@ -421,6 +455,131 @@ describe('createNodeRedisMock (standalone)', () => {
     await client.quit()
     await assert.rejects(() => client.connect(), ClientClosedError)
   })
+
+  test("disconnect() and destroy() emit 'end' before they return", async () => {
+    // Real destroy() runs destroySocket() → emit('end') in-line, and
+    // disconnect() is `Promise.resolve(this.destroy())`.
+    for (const close of [
+      (c: NodeRedisMockClient) => c.disconnect(),
+      (c: NodeRedisMockClient) => c.destroy(),
+    ]) {
+      const client = await makeClient()
+      let ended = false
+      client.on('end', () => (ended = true))
+      const returned = close(client)
+      assert.strictEqual(ended, true, "'end' must already have fired")
+      await returned
+    }
+  })
+
+  // Escalation: a graceful quit() is still draining when a forced close
+  // arrives — the "graceful, then force" teardown pattern. Ground-truthed
+  // against real node-redis v6 with a BLPOP 0 blocking the drain:
+  //  - the forced close flushes ALL pending work — the BLPOP, anything queued
+  //    behind it, and the quit() itself — with DisconnectsClientError;
+  //  - then destroy()/disconnect() still throw ClientClosedError synchronously:
+  //    real destroy() flushes the queue first and only then reaches the socket,
+  //    which the pending quit() already marked closed;
+  //  - 'end' never fires: real node-redis never reaches destroySocket() on this
+  //    path. (It also leaks the socket — the server keeps the connection and
+  //    the process never exits. The facade deliberately does NOT reproduce
+  //    that: it still tears everything down, so nothing hangs.)
+
+  test(
+    'a forced close rejects a quit() stuck behind BLPOP 0',
+    BLOCKING_TEST,
+    async () => {
+      for (const force of [
+        (c: NodeRedisMockClient) => c.destroy(),
+        (c: NodeRedisMockClient) => c.disconnect(),
+      ]) {
+        const client = await makeClient()
+        let ends = 0
+        client.on('end', () => ends++)
+        const blpop = settleWithin(client.sendCommand(['BLPOP', 'never', '0']))
+        // Let the BLPOP reach the server and park, so it is genuinely blocking
+        // the drain rather than merely queued.
+        await new Promise(resolve => setImmediate(resolve))
+        const quit = settleWithin(client.quit())
+
+        assert.throws(() => force(client), ClientClosedError)
+        assert.ok(
+          (await quit) instanceof DisconnectsClientError,
+          'the stuck quit() must reject, not hang',
+        )
+        assert.ok(
+          (await blpop) instanceof DisconnectsClientError,
+          'the blocking command must reject, not hang',
+        )
+        assert.strictEqual(
+          ends,
+          0,
+          "real node-redis emits no 'end' on this path",
+        )
+      }
+    },
+  )
+
+  test(
+    'a hard close rejects an EXECUTING command with DisconnectsClientError',
+    BLOCKING_TEST,
+    async () => {
+      // Not just queued commands: real flushAll() also rejects one already on the
+      // wire, e.g. a parked BLPOP 0. (Previously the facade leaked its internal
+      // abort here as `Error: The operation was aborted`.)
+      for (const force of [
+        (c: NodeRedisMockClient) => c.destroy(),
+        (c: NodeRedisMockClient) => c.disconnect(),
+      ]) {
+        const client = await makeClient()
+        let ends = 0
+        client.on('end', () => ends++)
+        const blpop = settleWithin(client.sendCommand(['BLPOP', 'never', '0']))
+        await new Promise(resolve => setImmediate(resolve))
+
+        await force(client)
+        assert.ok((await blpop) instanceof DisconnectsClientError)
+        assert.strictEqual(ends, 1)
+      }
+    },
+  )
+
+  test(
+    'a forced close during quit() flushes commands still queued',
+    BLOCKING_TEST,
+    async () => {
+      const client = await makeClient()
+      const sets = Array.from({ length: 50 }, (_, i) =>
+        settleWithin(client.set(`escalate:${i}`, String(i))),
+      )
+      const quit = settleWithin(client.quit())
+      assert.throws(() => client.destroy(), ClientClosedError)
+
+      assert.ok((await quit) instanceof DisconnectsClientError)
+      for (const outcome of await Promise.all(sets)) {
+        assert.ok(outcome instanceof DisconnectsClientError)
+      }
+    },
+  )
+
+  test(
+    'while quit() is pending, new work and a second quit() are refused',
+    BLOCKING_TEST,
+    async () => {
+      const client = await makeClient()
+      const blpop = settleWithin(client.sendCommand(['BLPOP', 'never', '0']))
+      await new Promise(resolve => setImmediate(resolve))
+      const quit = settleWithin(client.quit())
+
+      await assert.rejects(() => client.get('k'), ClientClosedError)
+      await assert.rejects(() => client.quit(), ClientClosedError)
+
+      // Unstick it so nothing is left running.
+      assert.throws(() => client.destroy(), ClientClosedError)
+      assert.ok((await quit) instanceof DisconnectsClientError)
+      assert.ok((await blpop) instanceof DisconnectsClientError)
+    },
+  )
 })
 
 describe('createNodeRedisMock (cluster)', () => {
@@ -657,6 +816,38 @@ describe('createNodeRedisMock (cluster)', () => {
       'disconnect',
       'disconnect',
     ])
+  })
+
+  test("'disconnect' follows quit()/disconnect() but is in-line for destroy()", async () => {
+    // Real quit()/disconnect() route through an async #destroy() that emits
+    // only after `await Promise.allSettled(...)`, so the caller never sees the
+    // event synchronously; destroy() is synchronous and emits in-line.
+    for (const close of [
+      (c: NodeRedisMockCluster) => c.quit(),
+      (c: NodeRedisMockCluster) => c.disconnect(),
+    ]) {
+      const node = (await createNodeRedisMock({
+        cluster: { masters: 3 },
+      })) as NodeRedisMockCluster
+      const events: string[] = []
+      node.on('disconnect', () => events.push('disconnect'))
+      const returned = close(node)
+      assert.deepStrictEqual(events, [], 'not emitted before the call returns')
+      await returned
+      assert.deepStrictEqual(
+        events,
+        ['disconnect'],
+        'emitted before it settles',
+      )
+    }
+
+    const node = (await createNodeRedisMock({
+      cluster: { masters: 3 },
+    })) as NodeRedisMockCluster
+    const events: string[] = []
+    node.on('disconnect', () => events.push('disconnect'))
+    node.destroy()
+    assert.deepStrictEqual(events, ['disconnect'])
   })
 
   test('a command on a closed cluster throws ClientClosedError', async () => {
