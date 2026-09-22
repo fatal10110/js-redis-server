@@ -26,6 +26,25 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
+  `timestampMicros` and its unit changes from milliseconds to **microseconds**
+  ([#410]). Real Redis stamps `MONITOR` lines from `gettimeofday()`, so the six
+  fractional digits it prints carry microsecond resolution; the old field was
+  derived from `Date.now()` and left the last three digits permanently `000`.
+
+  ```
+  event.timestampMs        -> event.timestampMicros / 1000
+  new Date(event.timestampMs) -> new Date(event.timestampMicros / 1000)
+  ```
+
+  A consumer that still reads `event.timestampMs` gets `undefined`, and any
+  arithmetic on it `NaN`, so this is a silent break rather than a type error at
+  runtime. Subscribers to `RedisMonitorFeed` are the only affected callers.
+
+  Two helpers are added to `/core` alongside it: `monitorTimestampMicros()`, the
+  clock the server now stamps with, and `formatMonitorTimestamp(micros)`, which
+  renders the `<unix-seconds>.<6 digits>` field. Both live in `src/core/clock.ts`.
+
 - **BREAKING (`/core`)** The six pub/sub methods on the `RedisClientSession`
   interface were collapsed into two. External implementors (test doubles) and
   callers (custom commands) need this mapping ([#376]):
@@ -107,6 +126,15 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
+  profile ([#410]). Redis 7.0 moved container commands into the command table,
+  which replaced `Unknown subcommand or wrong number of arguments for '%s'. Try
+  CONFIG HELP.` with `unknown subcommand '%s'. Try CONFIG HELP.` and added
+  `%.128s` truncation of the echoed name. The mock previously sent the 6.2 form
+  on every profile. Gated as `error.unknown-subcommand-wording`
+  (Redis 7.0 / Valkey 7.2); the other 14 hand-rolled copies of this message are
+  tracked in [#413].
+
 - The node-redis mock cluster client now routes every command by the keys the
   executor actually extracts (`executor.plan(name, args).keys`) instead of a
   hand-rolled heuristic that took the single argument after the command name
@@ -127,5 +155,7 @@ requests they contain.
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376
 [#377]: https://github.com/fatal10110/js-redis-server/pull/377
 [#378]: https://github.com/fatal10110/js-redis-server/pull/378
+[#410]: https://github.com/fatal10110/js-redis-server/pull/410
+[#413]: https://github.com/fatal10110/js-redis-server/issues/413
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
