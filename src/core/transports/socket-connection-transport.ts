@@ -111,26 +111,43 @@ export class SocketConnectionTransport implements ConnectionTransport {
   }
 
   /**
-   * The client ended its side first. Tear the connection down now, as Redis's
-   * freeClient does (and main did over TCP): output the client has not read is
-   * dropped. Waiting on it instead — which close()'s half-close does — would
-   * park the session, and leak the stream, behind a client that stopped
-   * reading, whatever kind of Duplex this is. `abort()` settles the in-flight
-   * writes first, so the adapter's pending drains finish; `end()` still hands
-   * EOF to a client that is reading.
+   * The client ended its side first. Tear the connection down promptly, as
+   * Redis's freeClient does (and main did over TCP): output the client has not
+   * read is dropped. Waiting on it instead — which close()'s half-close does —
+   * would park the session, and leak the stream, behind a client that stopped
+   * reading. `abort()` settles the in-flight writes, so the adapter's pending
+   * drains finish; `end()` still hands EOF to a client that is reading.
+   *
+   * Deferred by one immediate: the adapter's finally runs first and flushes
+   * output that is already queued and can go out (e.g. the confirmations for a
+   * `SUBSCRIBE a b c` sent in the same tick as the EOF — on the in-process
+   * wire those writes complete within the current turn). What the immediate
+   * bounds is writes that cannot complete, to a peer that stopped reading.
+   *
+   * This only runs once the read loop has seen the EOF. A bounded stream whose
+   * loop is blocked writing an ordinary request/response reply (not a
+   * background drain) to a client that stopped reading never gets that far, so
+   * that session stays parked until the stream closes. The shipped paths do
+   * not hit this: the virtual wire cannot back up, and a TCP peer that goes
+   * away errors or closes the socket, which aborts the transport.
    */
   private dropOnPeerEof(): void {
-    if (this.closed) {
-      return
-    }
+    setImmediate(() => {
+      // Guard on the stream, not `closed`: a server-side close() that came
+      // first (e.g. CLIENT KILL) only half-closes, and waits for output a paused
+      // client will never read. The client's EOF must still tear it down.
+      if (this.socket.destroyed) {
+        return
+      }
 
-    this.closed = true
-    this.abort()
+      this.closed = true
+      this.abort()
 
-    if (this.socket.writable) {
-      this.socket.end()
-    }
-    this.socket.destroy()
+      if (this.socket.writable) {
+        this.socket.end()
+      }
+      this.socket.destroy()
+    })
   }
 
   /**

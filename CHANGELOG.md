@@ -86,15 +86,22 @@ so the PR body is not a durable home for a breaking-change note.
   - A client `end()` (as ioredis `disconnect()` sends) makes the server close
     its side too, so the client sees `'finish'`, `'end'`, `'close'`.
 
-  For `SocketConnectionTransport` over any `Duplex`, what matters is which side
-  ended first. If the client ends first (EOF, or it destroys its end), the
-  connection is torn down at once and output it has not read is dropped, like
-  Redis's `freeClient` and like main over TCP. That holds even when the
-  server's writes are backed up behind a paused client. If the server ends
-  first, the connection half-closes as described above.
   - An error passed to `destroy()` on one end is not carried to the other; the
     far end is torn down cleanly, which is what Node 24's own `duplexPair`
     does.
+
+  For `SocketConnectionTransport` over any `Duplex`, what matters is which side
+  ended first. If the client ends first (EOF, or it destroys its end), the
+  connection is torn down promptly, like Redis's `freeClient` and like main
+  over TCP. That happens even if the server had already begun closing
+  (e.g. `CLIENT KILL`). Output that is already queued and can still go out
+  gets one turn to flush, so a `SUBSCRIBE a b c` sent together with the EOF
+  still gets all three confirmations. Output backed up behind a client that
+  has stopped reading is dropped. If the server ends first, the connection
+  half-closes as described above. One limit: the client's EOF is only seen
+  while the read loop is reading. A bounded stream whose loop is blocked
+  writing an ordinary reply to a client that stopped reading stays parked
+  until the stream closes. Neither shipped path hits this.
 
   ioredis and node-redis always read, so none of this changes what they see.
 

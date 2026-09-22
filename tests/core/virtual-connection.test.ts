@@ -429,6 +429,33 @@ describe('createVirtualConnection — client-side half-close', () => {
     assert.strictEqual(state.getConnectedClients().length, 0)
   })
 
+  test('SUBSCRIBE a b c and end() in the same tick: all three confirmations arrive', async () => {
+    const { state, executor } = freshPipeline()
+    const conn = createVirtualConnection({ state, executor })
+    const seen = record(conn.clientSocket)
+    await once(conn.clientSocket, 'connect')
+
+    // The confirmations are already queued when the client's EOF is read. main
+    // (and 4127ed6) deliver all three; tearing down on EOF must not cut the
+    // background drain off after the first.
+    conn.clientSocket.write(commandFrame('SUBSCRIBE', 'a', 'b', 'c'))
+    conn.clientSocket.end()
+
+    await within(conn.done, 'the session to end')
+    await within(seen.closed, 'the client to close')
+
+    assert.strictEqual(
+      seen.bytes(),
+      ['a', 'b', 'c']
+        .map(
+          (channel, i) =>
+            `*3\r\n$9\r\nsubscribe\r\n$1\r\n${channel}\r\n:${i + 1}\r\n`,
+        )
+        .join(''),
+    )
+    assert.strictEqual(state.getConnectedClients().length, 0)
+  })
+
   test('client end() after a pipelined command: the reply still arrives', async () => {
     const { state, executor } = freshPipeline()
     const conn = createVirtualConnection({ state, executor })

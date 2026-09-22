@@ -15,9 +15,25 @@ const PAYLOAD = 'x'.repeat(512 * 1024)
 
 describe('Resp2Server — a client that sends FIN with output backed up', () => {
   let server: Resp2Server
+  let state: RedisServerState
   let port: number
   let publisher: Socket
   const serverSockets = new Set<Socket>()
+
+  /** Poll until `read()` returns `expected`; resolves with the last value. */
+  async function waitFor(
+    read: () => number | Promise<number>,
+    expected: number,
+    timeoutMs = 2000,
+  ): Promise<number> {
+    const deadline = Date.now() + timeoutMs
+    let value = await read()
+    while (value !== expected && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      value = await read()
+    }
+    return value
+  }
 
   const connections = () =>
     new Promise<number>((resolve, reject) =>
@@ -72,8 +88,9 @@ describe('Resp2Server — a client that sends FIN with output backed up', () => 
   }
 
   before(async () => {
+    state = new RedisServerState()
     server = new Resp2Server({
-      server: new RedisServerState(),
+      server: state,
       executor: createRedisCommandExecutor(),
     })
     server.server.on('connection', socket => {
@@ -145,4 +162,46 @@ describe('Resp2Server — a client that sends FIN with output backed up', () => 
       )
     })
   }
+
+  test('killed first by the server, then FIN: the socket still goes', async () => {
+    assert.strictEqual(await waitForConnections(1), 1, 'publisher only')
+    const killer = await open()
+    const client = await open()
+
+    const idReply = readUntil(client, '\r\n')
+    client.write(commandFrame('CLIENT', 'ID'))
+    const id = (await idReply).match(/^:(\d+)\r\n/)?.[1]
+    assert.ok(id, 'no CLIENT ID reply')
+
+    const confirmed = readUntil(client, '+OK\r\n')
+    client.write(commandFrame('MONITOR'))
+    await confirmed
+    client.pause()
+    await publisherRun(
+      Array.from({ length: 16 }, (_, i) =>
+        commandFrame('SET', `kill${i}`, 'x'.repeat(1024 * 1024)),
+      ),
+    )
+
+    // The SERVER ends the connection first. That half-close waits for output
+    // that cannot flush to a client that has stopped reading...
+    const killed = readUntil(killer, ':1\r\n')
+    killer.write(commandFrame('CLIENT', 'KILL', 'ID', id))
+    await killed
+
+    // ...and then the client sends FIN. Its EOF must still tear the socket
+    // down, as on main; the earlier server-side close does not excuse it.
+    client.end()
+    const sessions = await waitFor(() => state.getConnectedClients().length, 2)
+    const sockets = await waitForConnections(2)
+
+    killer.destroy()
+    client.destroy()
+    // Publisher + killer: expected 2/2 (main and 4127ed6 give 2/2).
+    assert.deepStrictEqual(
+      { sessions, sockets },
+      { sessions: 2, sockets: 2 },
+      'the killed client left state behind',
+    )
+  })
 })
