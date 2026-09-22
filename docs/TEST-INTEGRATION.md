@@ -166,7 +166,11 @@ The `docker-compose.test.yml` file defines three services, all on the official `
 - Ports: 30000-30005 (bus ports 40000-4000x stay container-internal).
 - All six `redis-server` processes run in **one** container so they reach each other over 127.0.0.1 and the host port map is 1:1.
 - Mac-compatible networking via `--cluster-announce-ip 127.0.0.1`, so MOVED/ASK redirects resolve from the host.
-- Healthcheck waits for `cluster_state:ok` (every slot assigned) before the cluster is marked healthy.
+- Startup is driven by [`docker/redis-cluster-init.sh`](../docker/redis-cluster-init.sh), mounted read-only into the container. It waits for **all six** nodes to answer `PING` and report `cluster_enabled:1`, then retries `redis-cli --cluster create` (up to 5 times, resetting the nodes between attempts) until every node reports `cluster_state:ok`, all 16384 slots are assigned, and the topology has settled into 3 masters + 3 replicas.
+- Each `redis-server` logs to `/var/log/redis-cluster/<port>.log` inside the container; those logs plus `CLUSTER INFO`/`CLUSTER NODES` are dumped to stdout if formation fails, so `docker compose logs redis-cluster` explains the failure.
+- Healthcheck requires both the init script's ready marker (`/run/redis-cluster-ready`) and a live `cluster_state:ok` on every node, so `docker compose up --wait` cannot return while the cluster is still forming, and a node dying later marks the container unhealthy.
+
+Tunables (env vars on the `redis-cluster` service): `NODE_READY_TIMEOUT`, `CLUSTER_READY_TIMEOUT`, `CREATE_ATTEMPTS`, `CLUSTER_NODE_TIMEOUT`.
 
 ## Benefits
 
