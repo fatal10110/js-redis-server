@@ -349,13 +349,21 @@ await client.sendCommand(['HSET', 'h', 'f1', 'a']) // escape hatch
 await client.quit() // tears down the in-memory state
 ```
 
-The close path matches real node-redis v6: `quit()` resolves `'OK'`,
-`disconnect()` resolves `undefined`, `destroy()` returns synchronously, `'end'`
-is emitted exactly **once**, and a clean close emits no `'error'`. Closing an
-already-closed client — or sending it a command — throws node-redis' own
-`ClientClosedError` (`'The client is closed'`), as a rejection from
-`quit()`/`disconnect()` and synchronously from `destroy()`. Teardown that may
-close twice has to tolerate it, exactly as it would against the real client:
+#### Close path
+
+The **single client's** close path follows real node-redis v6:
+
+| | behaviour |
+| --- | --- |
+| `quit()` | resolves `'OK'`; **graceful** — commands already issued still run |
+| `disconnect()` | resolves `undefined`; flushes in-flight commands with `DisconnectsClientError` |
+| `destroy()` | returns `undefined` synchronously; same flush as `disconnect()` |
+| `'end'` | emitted exactly **once** per close |
+| `'error'` | never emitted by a clean close |
+| any call on a closed client | throws `ClientClosedError` (`'The client is closed'`) — a rejection from `quit()`/`disconnect()`, synchronous from `destroy()` |
+
+Teardown that may close twice has to tolerate that, exactly as it would against
+the real client:
 
 ```typescript
 import { ClientClosedError } from 'redis'
@@ -366,6 +374,27 @@ try {
   if (!(err instanceof ClientClosedError)) throw err
 }
 ```
+
+That `instanceof` works because the facade throws the `redis` package's *own*
+error classes whenever it can resolve them (the same mechanism behind
+`WatchError` / `ErrorReply` / `MultiErrorReply`). If `redis` is not installed it
+falls back to local classes that are identical in message and shape but are not
+`instanceof` the real ones — match on `err.message` if you need to support that.
+
+**Known gap ([#440](https://github.com/fatal10110/js-redis-server/issues/440)):**
+real node-redis re-opens a closed client (`connect()` reconnects,
+commands work again, a second `'end'` follows the next close). This facade
+cannot yet, because the client that owns its `RedisServerState` closes it during
+teardown and that is terminal — so `connect()` on a closed client rejects with
+`ClientClosedError` rather than handing back a client that looks alive but is
+not.
+
+The **cluster** client closes on node-redis' own, quite different, cluster
+terms: `quit()` / `disconnect()` / `destroy()` all resolve `undefined`, they
+emit `'disconnect'` (never `'end'`) once per close *call*, and a redundant close
+is a silent no-op rather than a throw. The one deliberate deviation is that a
+command issued on a closed cluster throws `ClientClosedError`, where real
+node-redis v6 crashes with an internal `TypeError` from its own reset slot map.
 
 Pass `cluster` for a cluster facade; keyed commands route by slot in-process.
 Routing keys come from `CommandExecutor.plan()` — the same extraction
