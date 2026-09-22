@@ -139,6 +139,67 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('SORT with a constant BY reads a zset in rank order', async () => {
+    await withOps(async (c, k) => {
+      // sortCommand()'s dontsort path walks the skiplist, so the reply is in
+      // rank order — insertion order (a, c, b) is deliberately different.
+      await c.zadd(k('z'), '1', 'a', '3', 'c', '2', 'b')
+      await c.mset(k('w_a'), 'A', k('w_b'), 'B', k('w_c'), 'C')
+
+      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), [
+        'a',
+        'b',
+        'c',
+      ])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort'), [
+        'a',
+        'b',
+        'c',
+      ])
+      assert.deepStrictEqual(await c.sort_ro(k('z'), 'BY', 'nosort'), [
+        'a',
+        'b',
+        'c',
+      ])
+      // Any BY pattern without a '*' is constant, so it takes the same path.
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', k('konstant')), [
+        'a',
+        'b',
+        'c',
+      ])
+
+      // LIMIT, GET and STORE all consume that same source ordering.
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'LIMIT', '1', '5'),
+        ['b', 'c'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'GET', k('w_*')),
+        ['A', 'B', 'C'],
+      )
+      assert.strictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'STORE', k('zd')),
+        3,
+      )
+      assert.deepStrictEqual(await c.lrange(k('zd'), '0', '-1'), [
+        'a',
+        'b',
+        'c',
+      ])
+
+      // A zset is already ordered, so it is never force-sorted ALPHA the way
+      // an unordered set is inside a script.
+      assert.deepStrictEqual(
+        await c.eval(
+          "return redis.call('SORT', KEYS[1], 'BY', 'nosort')",
+          1,
+          k('z'),
+        ),
+        ['a', 'b', 'c'],
+      )
+    })
+  })
+
   // -------------------------------------------------------------------- STORE
 
   test('SORT STORE writes the result as a list and returns its length', async () => {

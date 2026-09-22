@@ -33,6 +33,7 @@ import {
   ttlSeconds,
   typeName,
 } from './helpers'
+import { getSortedMembers } from './zsets/helpers'
 
 export const delCommand = defineCommand({
   name: 'del',
@@ -687,7 +688,9 @@ function readSortSource(db: RedisDatabase, key: Buffer): Buffer[] {
   if (type === 'list') return db.getList(key)!.values
   if (type === 'set') return Array.from(db.getSet(key)!.members.values())
   if (type === 'zset') {
-    return Array.from(db.getSortedSet(key)!.members.values(), m => m.member)
+    // sortCommand() walks the skiplist, so a zset source is read in rank
+    // order — the same order ZRANGE reports, not insertion order (#418).
+    return getSortedMembers(db.getSortedSet(key)!).map(entry => entry.member)
   }
   throw new WrongTypeRedisError()
 }
@@ -747,9 +750,8 @@ function applySortLimit(
  * means "do not sort", but an unordered SET source whose output has to be
  * reproducible — it is written by STORE, or returned to a script — is
  * force-sorted ALPHA with the `BY` dropped. Lists have a defined order, so
- * only sets are overridden. (Real Redis leaves zsets alone for the same
- * reason; `readSortSource` reads them in insertion rather than rank order
- * here, which is tracked separately in #418.)
+ * only sets are overridden, and zsets are left alone because `readSortSource`
+ * reads them in rank order.
  */
 function forceDeterministicSetOrder(
   args: SortArgs,
