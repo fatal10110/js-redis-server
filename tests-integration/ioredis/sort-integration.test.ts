@@ -146,11 +146,7 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
       await c.zadd(k('z'), '1', 'a', '3', 'c', '2', 'b')
       await c.mset(k('w_a'), 'A', k('w_b'), 'B', k('w_c'), 'C')
 
-      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), [
-        'a',
-        'b',
-        'c',
-      ])
+      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), ['a', 'b', 'c'])
       assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort'), [
         'a',
         'b',
