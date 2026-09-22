@@ -13,9 +13,11 @@ import {
   InvalidExpireTimeError,
   OffsetOutOfRangeError,
   RedisSyntaxError,
+  StringExceedsMaxSizeError,
   WrongTypeRedisError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
+import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
@@ -26,7 +28,6 @@ import {
   integer,
   ok,
   parseInt64Token,
-  parseIntegerToken,
   parsePositiveExpireToken,
   requireNextOptionValue,
 } from './helpers'
@@ -35,6 +36,32 @@ import {
   commandKeyArgument,
   commandKeySpec,
 } from './introspection'
+
+/**
+ * Largest string this mock will actually materialise, regardless of how high
+ * `proto-max-bulk-len` is set: 512MB, which is Redis' own default for that
+ * parameter.
+ *
+ * `buffer.constants.MAX_LENGTH` is deliberately *not* used. It is the largest
+ * length `Buffer.alloc` will accept as an argument, not the largest it will
+ * serve — `Buffer.alloc` throws `RangeError: Array buffer allocation failed`
+ * at that value and across a wide band below it, and worse, a length like 1e12
+ * is mapped lazily and only kills the process during zero-fill. Either way the
+ * failure escapes the command-error path: a RangeError is not a
+ * `RedisCommandError`, so the adapter answers `-ERR internal server error` and
+ * drops the connection, and the lazy case takes the whole test process with it.
+ *
+ * The ceiling therefore has to be a size the process can genuinely produce, and
+ * a fixed one, so behaviour does not vary with the host's free memory. 512MB is
+ * the smallest value that leaves the default configuration untouched: at the
+ * default `proto-max-bulk-len` the limit below is the binding one and the mock
+ * matches Redis exactly. Above the default the mock refuses with Redis' normal
+ * size error instead of attempting the allocation — a deliberate, loud
+ * divergence, on the principle issue #383 raised: a test double allocating half
+ * a gigabyte is already a problem, and one that vanishes mid-suite is worse
+ * than one that answers an error.
+ */
+export const MAX_MATERIALISABLE_LENGTH = 536870912n
 
 type SetCondition = 'NX' | 'XX'
 
@@ -163,7 +190,18 @@ export const appendCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const existing = ensureStringOrMissing(ctx.db, args.key)
-    const next = existing ? Buffer.concat([existing, args.value]) : args.value
+    if (!existing) {
+      // Redis only size-checks APPEND when the key already holds a value; a
+      // fresh value is already bounded by the protocol's own bulk limit.
+      ctx.db.setString(args.key, args.value, { keepTtl: true })
+      return integer(args.value.length)
+    }
+
+    assertWithinProtoMaxBulkLen(
+      ctx,
+      BigInt(existing.length) + BigInt(args.value.length),
+    )
+    const next = Buffer.concat([existing, args.value])
     ctx.db.setString(args.key, next, { keepTtl: true })
     return integer(next.length)
   },
@@ -388,8 +426,12 @@ export const getrangeCommand = defineCommand({
   name: 'getrange',
   schema: t.object({
     key: t.key(),
-    start: t.integer(),
-    end: t.integer(),
+    // Redis reads both ends as int64 and clamps the resolved indexes into
+    // [0, length - 1], so magnitudes above 2^53 are legal input rather than a
+    // parse error. GETRANGE only ever reads an existing value, so
+    // proto-max-bulk-len never applies.
+    start: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
+    end: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
   }),
   flags: ['readonly'],
   keys: args => [args.key],
@@ -399,18 +441,21 @@ export const getrangeCommand = defineCommand({
       return bulk(Buffer.alloc(0))
     }
 
-    const length = existing.length
-    let startIdx = args.start < 0 ? length + args.start : args.start
-    let endIdx = args.end < 0 ? length + args.end : args.end
+    const length = BigInt(existing.length)
+    let startIdx = args.start < 0n ? length + args.start : args.start
+    let endIdx = args.end < 0n ? length + args.end : args.end
 
-    if (startIdx < 0) startIdx = 0
-    if (endIdx >= length) endIdx = length - 1
+    if (startIdx < 0n) startIdx = 0n
+    // Redis clamps a resolved-negative end up to 0 as well, so `GETRANGE s 0 -6`
+    // on a 5-byte value still returns the first byte rather than an empty bulk.
+    if (endIdx < 0n) endIdx = 0n
+    if (endIdx >= length) endIdx = length - 1n
 
     if (startIdx > endIdx || startIdx >= length) {
       return bulk(Buffer.alloc(0))
     }
 
-    return bulk(existing.slice(startIdx, endIdx + 1))
+    return bulk(existing.slice(Number(startIdx), Number(endIdx) + 1))
   },
 })
 
@@ -431,20 +476,26 @@ export const setrangeCommand = defineCommand({
   execute: (args, ctx) => {
     const existing = ensureStringOrMissing(ctx.db, args.key)
 
+    // Redis short-circuits an empty value before the size check, so a huge
+    // offset with nothing to write is not an error and creates no key.
     if (args.value.length === 0) {
       return integer(existing?.length ?? 0)
     }
 
+    assertWithinProtoMaxBulkLen(ctx, args.offset + BigInt(args.value.length))
+
     const current = existing ?? Buffer.alloc(0)
-    const requiredSize = args.offset + args.value.length
+    const requiredSize = Number(args.offset) + args.value.length
     const target =
-      requiredSize > current.length ? Buffer.alloc(requiredSize) : current
+      requiredSize > current.length
+        ? allocateStringBuffer(requiredSize)
+        : current
 
     if (target !== current) {
       current.copy(target, 0)
     }
 
-    args.value.copy(target, args.offset)
+    args.value.copy(target, Number(args.offset))
     ctx.db.setString(args.key, target, { keepTtl: true })
     return integer(target.length)
   },
@@ -660,20 +711,60 @@ function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
   )
 }
 
-function createSetrangeOffsetSchema(): CommandSchema<number> {
+// SETRANGE reads its offset as an int64: values above 2^53 are legal input that
+// Redis then rejects with the proto-max-bulk-len error, not a parse error.
+function createSetrangeOffsetSchema(): CommandSchema<bigint> {
   return t.custom((input, index, ctx) => {
     const token = input[index]
     if (!token) {
       throwWrongArity(ctx.commandName)
     }
 
-    const offset = parseIntegerToken(token)
-    if (offset < 0) {
+    const offset = parseInt64Token(token)
+    if (offset < 0n) {
       throw new OffsetOutOfRangeError()
     }
 
     return { value: offset, nextIndex: index + 1 }
   })
+}
+
+/**
+ * Redis refuses to grow a string past `proto-max-bulk-len` rather than
+ * allocating it (server.c: checkStringLength).
+ *
+ * The effective ceiling is additionally capped at
+ * {@link MAX_MATERIALISABLE_LENGTH}, because `proto-max-bulk-len` is
+ * configurable far past anything this process can allocate.
+ */
+function assertWithinProtoMaxBulkLen(
+  ctx: RedisExecutionContext,
+  totalLength: bigint,
+): void {
+  const configured = ctx.server.protoMaxBulkLen
+  const limit =
+    configured < MAX_MATERIALISABLE_LENGTH
+      ? configured
+      : MAX_MATERIALISABLE_LENGTH
+  if (totalLength > limit) {
+    throw new StringExceedsMaxSizeError()
+  }
+}
+
+/**
+ * Allocate a string buffer, converting an allocation failure into the ordinary
+ * Redis size error. {@link MAX_MATERIALISABLE_LENGTH} already keeps requests
+ * inside what a healthy process can produce; this is the backstop for a host
+ * that is too short on memory to honour even that, so the failure still reaches
+ * the client as `-ERR` on a live connection instead of a `RangeError` that
+ * escapes the command-error path.
+ */
+function allocateStringBuffer(size: number): Buffer {
+  try {
+    return Buffer.alloc(size)
+  } catch {
+    throw new StringExceedsMaxSizeError()
+  }
 }
 
 function createGetexSchema(): CommandSchema<GetexArgs> {

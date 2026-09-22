@@ -100,11 +100,30 @@ surface.
 > in-memory per-server store seeded with plausible defaults (`maxmemory`,
 > `appendonly`, `save`, listpack thresholds, etc.), enough to satisfy client
 > library initialization. Most parameters are inert: `CONFIG SET` stores the
-> value but does not change server behavior. The exception is
-> `notify-keyspace-events`, which is a real, behavior-driving setting — see
-> [Keyspace notifications](#14-pubsub-commands). Its value is validated and
-> normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as `AKE`;
-> an unknown class character is rejected). Since there is no backing config file,
+> value but does not change server behavior. There are two exceptions, both
+> real, behavior-driving settings:
+>
+> - `notify-keyspace-events` — see
+>   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
+>   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
+>   `AKE`; an unknown class character is rejected).
+> - `proto-max-bulk-len` — read by the commands that grow a string in place,
+>   `APPEND` and `SETRANGE`, which reject rather than allocate past it. Accepts
+>   Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces Redis' own
+>   `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure wording
+>   follows the profile (Redis 7.0 changed it — see
+>   [compatibility profiles](API.md#compatibility-profiles)).
+>   Raising it past **512MB**, Redis' own default, does not raise what the mock
+>   will allocate: beyond that the size error is returned rather than a buffer
+>   the test process may not survive producing. At or below the default the
+>   behavior is Redis'.
+>   **Enforcement is not yet general**: real Redis' primary check is in the
+>   protocol reader, so it also bounds every bulk argument (`SET`, `MSET`,
+>   `LPUSH`, `HSET`, ...) and the `SETBIT`/`BITFIELD` bit-offset ceiling. Neither
+>   is modeled — tracked in
+>   [#415](https://github.com/fatal10110/js-redis-server/issues/415).
+>
+> Since there is no backing config file,
 > `CONFIG REWRITE` reports the same no-config-file error as Redis.
 
 #### DBSIZE
@@ -211,9 +230,17 @@ with `GT` or `LT`.
 
 #### Notes / gaps vs. real Redis
 
-- `SORT` / `SORT_RO` `BY` / `GET` patterns must use the same hash tag as the
-  source key in cluster mode, matching Redis' cluster safety rule. Hash-field
-  dereference patterns such as `object_*->field` are not modeled.
+- `SORT` / `SORT_RO` `BY` / `GET` glob patterns must provably hash to the source
+  key's slot in cluster mode, matching Redis' cluster safety rule. A `BY`
+  pattern without `*` (such as the documented `BY nosort`) is constant, so it
+  skips both the weight lookup and the sort and is always accepted. The exact
+  rule is profile-gated: before `redis-7.4` / `valkey-8.0` every `BY` glob and
+  every `GET` pattern is refused with the shorter `denied in Cluster mode.`
+  wording, and `GET '#'` only becomes exempt from the slot check in Redis
+  7.4.2 / Valkey 8.0.2 — so the `redis-7.4` profile (pinned at 7.4.4) exempts
+  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. Hash-field
+  dereference patterns such as
+  `object_*->field` are not modeled.
 
 #### Not implemented
 
@@ -236,11 +263,11 @@ with `GT` or `LT`.
 - [x] `GETSET key value` - Set a key's value and return its old value
 - [x] `GETDEL key` - Get the value of a key and delete it
 - [x] `GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]` - Get the value and optionally manage its TTL
-- [x] `APPEND key value` - Append a value to a key
+- [x] `APPEND key value` - Append a value to a key (on an existing key, rejects a result larger than `proto-max-bulk-len`, like Redis)
 - [x] `STRLEN key` - Get the length of the value stored at key
 - [x] `GETRANGE key start end` - Get a substring of the value
 - [x] `SUBSTR key start end` - Alias for `GETRANGE` (deprecated)
-- [x] `SETRANGE key offset value` - Overwrite part of a string at the given offset
+- [x] `SETRANGE key offset value` - Overwrite part of a string at the given offset (rejects an `offset + length` beyond `proto-max-bulk-len`, like Redis)
 - [x] `INCR key` / `DECR key` - Increment/decrement the integer value of a key by one
 - [x] `INCRBY key increment` / `DECRBY key decrement` - Increment/decrement by the given integer
 - [x] `INCRBYFLOAT key increment` - Increment the float value of a key

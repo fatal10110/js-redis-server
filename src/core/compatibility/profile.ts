@@ -12,6 +12,8 @@ export type FeatureId =
   | 'command.docs'
   | 'command.getkeysandflags'
   | 'acl.dryrun'
+  | 'config.set.failure-message'
+  | 'config.memory-value.reject-overflow'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'
@@ -25,6 +27,8 @@ export type FeatureId =
   | 'hscan.novalues'
   | 'xread.plus-id'
   | 'cluster.multi-db'
+  | 'sort.cluster-pattern-slot'
+  | 'sort.cluster-get-hash'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

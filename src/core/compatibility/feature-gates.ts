@@ -8,6 +8,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'command.docs': { redis: '7.0.0', valkey: '7.2.0' },
   'command.getkeysandflags': { redis: '7.0.0', valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
+  // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
+  // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`.
+  'config.set.failure-message': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 6.2 saturates a memory value above the parameter's maximum to that
+  // maximum; 7.0+ rejects it with the out-of-range error instead.
+  'config.memory-value.reject-overflow': { redis: '7.0.0', valkey: '7.2.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
@@ -25,4 +32,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'hscan.novalues': { redis: '7.4.0', valkey: '9.0.0' },
   'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
+  // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
+  // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
+  // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.
+  'sort.cluster-pattern-slot': { redis: '7.4.0', valkey: '8.0.0' },
+  // SORT GET '#' (the element itself) is exempt from that slot comparison.
+  // Bisected on single-node clusters: redis 7.4.0/7.4.1 refuse and 7.4.2+
+  // accept; valkey 8.0.0/8.0.1 refuse and 8.0.2+ accept. Before that it is
+  // hashed like any other pattern and therefore denied.
+  'sort.cluster-get-hash': { redis: '7.4.2', valkey: '8.0.2' },
 }

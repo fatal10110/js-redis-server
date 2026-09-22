@@ -958,10 +958,10 @@ export class NodeRedisMockCluster extends CommandRunner {
    * that node's `ClusterPolicy` recomputes the same keys and raises the real
    * error, which `decodeReply` surfaces as the same `ErrorReply`. Refusing here
    * instead would mean a second copy of rules the policy already owns, and
-   * would pre-empt the ones it does not share — `SORT`'s routing keys include
-   * its BY/GET *patterns* (see `sortRoutingKeys` in `src/commands/keys.ts`),
-   * which look cross-slot but must surface `BY option of SORT denied in Cluster
-   * mode …` rather than `CROSSSLOT`.
+   * would pre-empt the ones it does not share — `SORT` routes on its source
+   * key alone (plus `STORE`), while `ClusterPolicy` separately refuses BY/GET
+   * patterns that may resolve to another slot with `BY option of SORT denied
+   * in Cluster mode …` rather than `CROSSSLOT`.
    *
    * KNOWN LIMITATION — pub/sub is not supported through this cluster facade.
    * It exposes no subscribe API, and a raw `sendCommand(['SUBSCRIBE', …])` puts
