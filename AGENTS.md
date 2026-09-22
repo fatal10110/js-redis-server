@@ -117,6 +117,10 @@ The integration test suite supports two backends via `TEST_BACKEND` (see [tests-
 
 Integration tests live in [tests-integration/](tests-integration/) with subdirectories for `ioredis/` and `node-redis/` clients.
 
+**Key isolation is mandatory.** The real backend is a long-lived, shared Redis cluster that is *not* flushed between test files, so every key a test touches must be unique per run — derive it from `randomKey()` ([tests-integration/utils.ts](tests-integration/utils.ts)), either per test (`const tag = \`{feature:${randomKey()}}\``) or via a file-level `const RUN = randomKey()`. Never assert on a fixed literal key name, never assume a key is absent at start, and never assert on total `DBSIZE` (other suites' keys — including ones expiring mid-test — make it drift); count the suite's own keys with `assertKeyCount` / `assertNodeRedisKeyCount` instead. The suite must pass twice in a row with no flush in between (#420).
+
+`npm run clean:redis` flushes every endpoint the real backend uses via [scripts/flush-redis.ts](scripts/flush-redis.ts) (ioredis, no `redis-cli` needed) and **exits non-zero** if any of them is unreachable — a cleanup step that cannot fail is one nobody can trust (#395).
+
 ### Concurrency Model
 
 Each `RedisDatabase` owns a `SerialTurnQueue` ([src/core/turn-queue.ts](src/core/turn-queue.ts)). Every `session.execute()` waits for a turn before reaching the executor, so commands within one database run to completion one at a time — mirroring single-threaded Redis semantics (sessions on different databases run independently). `RedisExecutionContext` carries a `park` handler ([src/core/redis-context.ts](src/core/redis-context.ts)) so a command can release its turn while waiting on something and re-acquire one with priority once it resolves — plumbing for future blocking commands (`BLPOP`, `WAIT`, `XREAD BLOCK`, ...); no shipped command uses it yet.

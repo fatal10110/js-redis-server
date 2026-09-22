@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -20,20 +24,26 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('SDIFF command', async () => {
-    await redisClient?.sadd('{test}setA', 'a', 'b', 'c', 'd')
-    await redisClient?.sadd('{test}setB', 'b', 'd', 'e')
+    await redisClient?.sadd(`{test:${RUN}}setA`, 'a', 'b', 'c', 'd')
+    await redisClient?.sadd(`{test:${RUN}}setB`, 'b', 'd', 'e')
 
-    const diff = await redisClient?.sdiff('{test}setA', '{test}setB')
+    const diff = await redisClient?.sdiff(
+      `{test:${RUN}}setA`,
+      `{test:${RUN}}setB`,
+    )
     assert.strictEqual(diff?.length, 2)
     assert.ok(diff?.includes('a'))
     assert.ok(diff?.includes('c'))
   })
 
   test('SINTER command', async () => {
-    await redisClient?.sadd('{test}setX', 'a', 'b', 'c', 'd')
-    await redisClient?.sadd('{test}setY', 'b', 'c', 'e', 'f')
+    await redisClient?.sadd(`{test:${RUN}}setX`, 'a', 'b', 'c', 'd')
+    await redisClient?.sadd(`{test:${RUN}}setY`, 'b', 'c', 'e', 'f')
 
-    const inter = await redisClient?.sinter('{test}setX', '{test}setY')
+    const inter = await redisClient?.sinter(
+      `{test:${RUN}}setX`,
+      `{test:${RUN}}setY`,
+    )
     assert.strictEqual(inter?.length, 2)
     assert.ok(inter?.includes('b'))
     assert.ok(inter?.includes('c'))
@@ -144,10 +154,13 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('SUNION command', async () => {
-    await redisClient?.sadd('{test}setP', 'a', 'b')
-    await redisClient?.sadd('{test}setQ', 'b', 'c', 'd')
+    await redisClient?.sadd(`{test:${RUN}}setP`, 'a', 'b')
+    await redisClient?.sadd(`{test:${RUN}}setQ`, 'b', 'c', 'd')
 
-    const union = await redisClient?.sunion('{test}setP', '{test}setQ')
+    const union = await redisClient?.sunion(
+      `{test:${RUN}}setP`,
+      `{test:${RUN}}setQ`,
+    )
     assert.strictEqual(union?.length, 4)
     assert.ok(union?.includes('a'))
     assert.ok(union?.includes('b'))
@@ -156,25 +169,29 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('SMOVE command', async () => {
-    await redisClient?.sadd('{test}source', 'a', 'b', 'c')
-    await redisClient?.sadd('{test}dest', 'x', 'y')
+    await redisClient?.sadd(`{test:${RUN}}source`, 'a', 'b', 'c')
+    await redisClient?.sadd(`{test:${RUN}}dest`, 'x', 'y')
 
     // Move existing member
-    const move1 = await redisClient?.smove('{test}source', '{test}dest', 'a')
+    const move1 = await redisClient?.smove(
+      `{test:${RUN}}source`,
+      `{test:${RUN}}dest`,
+      'a',
+    )
     assert.strictEqual(move1, 1)
 
     // Check source doesn't have member
-    const sourceHas = await redisClient?.sismember('{test}source', 'a')
+    const sourceHas = await redisClient?.sismember(`{test:${RUN}}source`, 'a')
     assert.strictEqual(sourceHas, 0)
 
     // Check dest has member
-    const destHas = await redisClient?.sismember('{test}dest', 'a')
+    const destHas = await redisClient?.sismember(`{test:${RUN}}dest`, 'a')
     assert.strictEqual(destHas, 1)
 
     // Move non-existent member
     const move2 = await redisClient?.smove(
-      '{test}source',
-      '{test}dest',
+      `{test:${RUN}}source`,
+      `{test:${RUN}}dest`,
       'nonexistent',
     )
     assert.strictEqual(move2, 0)

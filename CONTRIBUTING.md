@@ -65,6 +65,17 @@ npm run test:integration:real
 npm run test:all
 ```
 
+The real backend is a shared Redis cluster that is **not** flushed between test
+files, so every integration test must namespace the keys it touches with
+`randomKey()` (see `tests-integration/utils.ts`) — no fixed literal key names,
+no assertions that depend on a key being absent at start, and no assertions on
+total `DBSIZE`. The suite has to pass twice in a row without a flush in between.
+
+`npm run test:integration:real` flushes first via `npm run clean:redis`, which
+uses `scripts/flush-redis.ts` (no `redis-cli` required) and exits non-zero if
+any endpoint is unreachable — start the backends with
+`docker compose -f docker-compose.test.yml up -d --wait` beforehand.
+
 ## Adding New Redis Commands
 
 1. Create the command file in the appropriate directory:

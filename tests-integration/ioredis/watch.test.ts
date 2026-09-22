@@ -2,9 +2,13 @@ import { Cluster } from 'ioredis'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { errorWithMessage } from '../utils'
+import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe('WATCH/UNWATCH', () => {
   let redisClient: Cluster | undefined
@@ -22,18 +26,18 @@ describe('WATCH/UNWATCH', () => {
 
     try {
       // Set initial value
-      await redisClient!.set('watchkey', 'initial')
+      await redisClient!.set(`watchkey:${RUN}`, 'initial')
 
       // Watch the key
-      await redisClient!.watch('watchkey')
+      await redisClient!.watch(`watchkey:${RUN}`)
 
       // Modify the key from another client
-      await anotherClient.set('watchkey', 'modified')
+      await anotherClient.set(`watchkey:${RUN}`, 'modified')
 
       // Try to execute transaction
       const multi = redisClient!.multi()
-      multi.set('watchkey', 'transactional')
-      multi.get('watchkey')
+      multi.set(`watchkey:${RUN}`, 'transactional')
+      multi.get(`watchkey:${RUN}`)
 
       const result = await multi.exec()
 
@@ -41,7 +45,7 @@ describe('WATCH/UNWATCH', () => {
       assert.strictEqual(result, null)
 
       // Verify the key has the value set by the other client
-      const finalValue = await redisClient!.get('watchkey')
+      const finalValue = await redisClient!.get(`watchkey:${RUN}`)
       assert.strictEqual(finalValue, 'modified')
     } finally {
       await anotherClient.quit()
@@ -50,15 +54,15 @@ describe('WATCH/UNWATCH', () => {
 
   it('WATCH should allow transaction if watched key is not modified', async () => {
     // Set initial value
-    await redisClient!.set('watchkey2', 'initial')
+    await redisClient!.set(`watchkey2:${RUN}`, 'initial')
 
     // Watch the key
-    await redisClient!.watch('watchkey2')
+    await redisClient!.watch(`watchkey2:${RUN}`)
 
     // Execute transaction without modification
     const multi = redisClient!.multi()
-    multi.set('watchkey2', 'transactional')
-    multi.get('watchkey2')
+    multi.set(`watchkey2:${RUN}`, 'transactional')
+    multi.get(`watchkey2:${RUN}`)
 
     const result = await multi.exec()
 
@@ -110,22 +114,22 @@ describe('WATCH/UNWATCH', () => {
 
     try {
       // Set initial value
-      await redisClient!.set('watchkey6', 'initial')
+      await redisClient!.set(`watchkey6:${RUN}`, 'initial')
 
       // Watch the key
-      await redisClient!.watch('watchkey6')
+      await redisClient!.watch(`watchkey6:${RUN}`)
 
       // Execute transaction
       const multi1 = redisClient!.multi()
-      multi1.set('watchkey6', 'first')
+      multi1.set(`watchkey6:${RUN}`, 'first')
       await multi1.exec()
 
       // Modify the key from another client
-      await anotherClient.set('watchkey6', 'modified')
+      await anotherClient.set(`watchkey6:${RUN}`, 'modified')
 
       // Execute another transaction without WATCH
       const multi2 = redisClient!.multi()
-      multi2.set('watchkey6', 'second')
+      multi2.set(`watchkey6:${RUN}`, 'second')
       const result = await multi2.exec()
 
       // Second transaction should succeed (watches cleared after first EXEC)

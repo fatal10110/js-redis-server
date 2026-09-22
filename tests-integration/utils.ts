@@ -42,13 +42,37 @@ export async function getTotalDbSize(redisClient: Cluster): Promise<number> {
   return sizes.reduce((total, size) => total + size, 0)
 }
 
-export async function assertDbSizeDelta(
+/** How many of `keys` exist right now. */
+export async function countExistingKeys(
   redisClient: Cluster,
-  baseline: number,
-  expectedDelta: number,
+  keys: readonly string[],
+): Promise<number> {
+  const flags = await Promise.all(keys.map(key => redisClient.exists(key)))
+  return flags.filter(Boolean).length
+}
+
+/**
+ * Assert that exactly `expected` of `keys` exist, and that DBSIZE across the
+ * masters counts at least that many.
+ *
+ * This replaces an older `DBSIZE - baseline` delta assertion. Top-level DBSIZE
+ * counts the whole shared keyspace, which on the real backend also holds every
+ * other suite's keys — including ones with TTLs that expire mid-test — so the
+ * delta drifted for reasons unrelated to the commands under test (#420).
+ * Counting the suite's own keys is deterministic and is what the delta was
+ * really checking; DBSIZE is still asserted exactly (== 0 after a flush) by the
+ * flush-async-sync suites.
+ */
+export async function assertKeyCount(
+  redisClient: Cluster,
+  keys: readonly string[],
+  expected: number,
 ): Promise<void> {
-  const size = await getTotalDbSize(redisClient)
-  assert.strictEqual(size - baseline, expectedDelta)
+  assert.strictEqual(await countExistingKeys(redisClient, keys), expected)
+  assert.ok(
+    (await getTotalDbSize(redisClient)) >= expected,
+    'DBSIZE must count at least the keys this suite created',
+  )
 }
 
 export async function connectToSlotOwner(
@@ -299,13 +323,26 @@ export async function getNodeRedisTotalDbSize(
   return sizes.reduce((total, size) => total + size, 0)
 }
 
-export async function assertNodeRedisDbSizeDelta(
+/** node-redis equivalent of {@link countExistingKeys}. */
+export async function countExistingNodeRedisKeys(
   cluster: RedisClusterType,
-  baseline: number,
-  expectedDelta: number,
+  keys: readonly string[],
+): Promise<number> {
+  const flags = await Promise.all(keys.map(key => cluster.exists(key)))
+  return flags.filter(Boolean).length
+}
+
+/** node-redis equivalent of {@link assertKeyCount}. */
+export async function assertNodeRedisKeyCount(
+  cluster: RedisClusterType,
+  keys: readonly string[],
+  expected: number,
 ): Promise<void> {
-  const size = await getNodeRedisTotalDbSize(cluster)
-  assert.strictEqual(size - baseline, expectedDelta)
+  assert.strictEqual(await countExistingNodeRedisKeys(cluster, keys), expected)
+  assert.ok(
+    (await getNodeRedisTotalDbSize(cluster)) >= expected,
+    'DBSIZE must count at least the keys this suite created',
+  )
 }
 
 /**

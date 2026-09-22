@@ -150,15 +150,24 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
         '2',
       ])
 
+      // The invariant is exactness, not paging: a full cursor traversal must
+      // yield every matching key and nothing else, whatever the batches
+      // looked like. `values` stays exact because MATCH filters.
       assert.deepStrictEqual(result.values, expected)
 
-      // Multi-step traversal across COUNT batches. We can't assert an exact
-      // page partition or empty-page positions: top-level SCAN sweeps the
-      // whole node keyspace, so keys from other tests sharing the node (the
-      // suite runs files concurrently) consume COUNT budget and shift which
-      // page each hit lands on. `values` stays exact because MATCH filters.
-      // Lower bound holds on both backends — extra keys only raise iterations.
-      assert.ok(result.iterations > Math.ceil(expected.length / 2))
+      // Cross-check the multi-step cursor traversal against a single-shot
+      // KEYS over the same live keyspace — both must agree.
+      assert.deepStrictEqual(
+        (await directClient.keys(`${tag}:hit:*`)).sort(),
+        expected,
+      )
+
+      // Deliberately no assertion on `result.iterations`. COUNT is only a
+      // hint: real Redis guarantees nothing about how many keys a SCAN batch
+      // returns, and top-level SCAN sweeps the node's whole keyspace, which is
+      // shared with every other suite. The old
+      // `iterations > Math.ceil(expected.length / 2)` bound assumed a known
+      // keyspace size and was a long-running flake source (#267, #395).
     } finally {
       await directClient.del(...keys)
       directClient.disconnect()
