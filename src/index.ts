@@ -103,6 +103,7 @@ export {
   ScriptUnknownCommandError,
   StreamElementTooLargeError,
   StreamIdExhaustedError,
+  StringExceedsMaxSizeError,
   RedisSyntaxError,
   TransactionDiscardedError,
   UnknownClusterSubcommandError,

@@ -259,6 +259,82 @@ describe(
       )
     })
 
+    test('CONFIG SET failure wording and overflow handling match the profile', async () => {
+      // Redis 7.0 rewrote CONFIG SET, changing the failure prefix; 6.2 also
+      // saturates an over-maximum memory value where 7.0+ rejects it.
+      const tooSmall = await send('CONFIG', 'SET', 'proto-max-bulk-len', '100')
+      const notMemory = await send('CONFIG', 'SET', 'proto-max-bulk-len', 'abc')
+      const range =
+        'argument must be between 1048576 and 9223372036854775807 inclusive'
+
+      if (supportsConfigSetFailureWording()) {
+        assert.strictEqual(
+          tooSmall,
+          `-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - ${range}\r\n`,
+        )
+        assert.strictEqual(
+          notMemory,
+          "-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value\r\n",
+        )
+      } else {
+        assert.strictEqual(
+          tooSmall,
+          `-ERR Invalid argument '100' for CONFIG SET 'proto-max-bulk-len' - ${range}\r\n`,
+        )
+        assert.strictEqual(
+          notMemory,
+          "-ERR Invalid argument 'abc' for CONFIG SET 'proto-max-bulk-len' - argument must be a memory value\r\n",
+        )
+      }
+
+      // A bare literal over int64 max: 7.0+ rejects it, 6.2's strtoll parse
+      // saturates and the value is accepted. A unit multiplier is deliberately
+      // absent — with one, 6.2 errors too.
+      const overflow = await send(
+        'CONFIG',
+        'SET',
+        'proto-max-bulk-len',
+        '99999999999999999999',
+      )
+      if (supportsMemoryValueOverflowRejection()) {
+        assert.strictEqual(
+          overflow,
+          `-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - ${range}\r\n`,
+        )
+        return
+      }
+
+      // Below the gate the SET succeeded, so the limit is now server-wide at
+      // int64 max. Restore it even if the readback assertion fails, or every
+      // later test in this file inherits it.
+      try {
+        assert.strictEqual(overflow, '+OK\r\n')
+        const reply = await send('CONFIG', 'GET', 'proto-max-bulk-len')
+        assert.match(reply, /9223372036854775807/)
+
+        // Saturation is limited to the bare literal. Once a unit multiplier
+        // pushes the product over the maximum, real 6.2 errors as well, so the
+        // gate must not swallow these.
+        //
+        // Only the `-ERR Invalid argument ` prefix is asserted, deliberately:
+        // which *detail* follows is a known, documented divergence. Real 6.2
+        // computes the product in 64 bits and reports `argument must be a
+        // memory value` when it wraps negative, where exact arithmetic here
+        // reports the range error — `10000000000g` is such a row, while
+        // `17179869184gb` wraps to zero and matches. See parseMemoryValue's
+        // docblock. Tightening this to the full message would fail.
+        for (const value of ['10000000000g', '17179869184gb']) {
+          assert.match(
+            await send('CONFIG', 'SET', 'proto-max-bulk-len', value),
+            /^-ERR Invalid argument /,
+            `CONFIG SET proto-max-bulk-len ${value} on ${profile}`,
+          )
+        }
+      } finally {
+        await send('CONFIG', 'SET', 'proto-max-bulk-len', '536870912')
+      }
+    })
+
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
       // the wording is version-invariant across profiles.
@@ -524,6 +600,14 @@ function supportsRedis70Commands(): boolean {
 }
 
 function supportsSetNxGet(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsConfigSetFailureWording(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsMemoryValueOverflowRejection(): boolean {
   return profile !== 'redis-6.2'
 }
 
