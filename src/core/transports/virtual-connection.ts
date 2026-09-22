@@ -48,6 +48,17 @@ export type VirtualClientSocket = Duplex & {
 const DEFAULT_REMOTE_ADDRESS = '127.0.0.1'
 const DEFAULT_REMOTE_PORT = 6379
 
+/**
+ * The virtual wire is memory-to-memory: there is no kernel socket buffer, and
+ * an in-process server must never block because the client has not read yet.
+ * A `duplexPair` end parks its write callback until the peer's `_read()` runs,
+ * so the default 16 KiB high-water mark would stall the adapter's write chain
+ * mid-reply against a paused client. Raising it past any reply size restores
+ * the unbounded queueing `createIoredisMock` has always had: `write()` always
+ * returns `true`, so there is no `'drain'` to wait on.
+ */
+const UNBOUNDED_HIGH_WATER_MARK = Number.MAX_SAFE_INTEGER
+
 let nextConnectionId = 0
 
 /**
@@ -67,7 +78,9 @@ export function createVirtualConnection(
   const remoteAddress = opts.remoteAddress ?? DEFAULT_REMOTE_ADDRESS
   const remotePort = opts.remotePort ?? DEFAULT_REMOTE_PORT
 
-  const [clientEnd, serverEnd] = duplexPair()
+  const [clientEnd, serverEnd] = duplexPair({
+    highWaterMark: UNBOUNDED_HIGH_WATER_MARK,
+  })
   const clientSocket = asVirtualClientSocket(
     clientEnd,
     remoteAddress,
@@ -107,11 +120,16 @@ function asVirtualClientSocket(
   const socket = stream as VirtualClientSocket
   const chainable = () => socket
 
+  // Non-writable, to match both the `readonly` on the type above and the
+  // getter-backed originals on `net.Socket`.
+  Object.defineProperties(socket, {
+    remoteAddress: { value: remoteAddress, enumerable: true },
+    remotePort: { value: remotePort, enumerable: true },
+    localAddress: { value: DEFAULT_REMOTE_ADDRESS, enumerable: true },
+    localPort: { value: 0, enumerable: true },
+  })
+
   Object.assign(socket, {
-    remoteAddress,
-    remotePort,
-    localAddress: DEFAULT_REMOTE_ADDRESS,
-    localPort: 0,
     // net.Socket-shaped no-ops the client library calls during setup.
     setNoDelay: chainable,
     setKeepAlive: chainable,
@@ -132,10 +150,35 @@ function asVirtualClientSocket(
   return socket
 }
 
+/** Codes Node raises for ordinary stream teardown rather than a wire failure. */
+const TEARDOWN_ERROR_CODES = new Set([
+  'ABORT_ERR',
+  'ERR_STREAM_DESTROYED',
+  'ERR_STREAM_PREMATURE_CLOSE',
+])
+
 function propagateDestroy(from: Duplex, to: Duplex): void {
+  let failure: Error | undefined
+
+  // 'error' always precedes 'close', so by the time the bridge fires we know
+  // whether this was a clean teardown or a failure. Carrying a genuine failure
+  // across keeps an errored teardown from looking like a graceful close on the
+  // far end — the distinction a real socket pair makes.
+  //
+  // Teardown artifacts must NOT cross, though: ending a `for await` early
+  // destroys the stream with an AbortError, and a bridged destroy surfaces as a
+  // premature close. Forwarding either would turn a clean QUIT into a
+  // connection error for the client.
+  from.on('error', (err: Error) => {
+    const code = (err as NodeJS.ErrnoException).code
+    if (!code || !TEARDOWN_ERROR_CODES.has(code)) {
+      failure = err
+    }
+  })
+
   from.once('close', () => {
     if (!to.destroyed) {
-      to.destroy()
+      to.destroy(failure)
     }
   })
 }

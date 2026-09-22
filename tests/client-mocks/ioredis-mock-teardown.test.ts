@@ -31,9 +31,10 @@ describe('createIoredisMock — teardown', () => {
     await assert.rejects(redis.get('k'))
   })
 
-  test('a reply far larger than the stream high-water mark round-trips', async () => {
-    // The virtual wire is a duplexPair, so a reply bigger than the default
-    // 16 KiB high-water mark must not wedge the server's write loop.
+  test('a 1 MiB value round-trips end to end', async () => {
+    // Note: ioredis keeps a 'data' handler attached, so its stream always
+    // drains and this does NOT exercise a stalled write chain. The
+    // non-draining-peer case lives in tests/core/virtual-connection.test.ts.
     const redis = (await createIoredisMock()) as Redis
     const value = 'x'.repeat(1024 * 1024)
 

@@ -33,6 +33,27 @@ function freshPipeline() {
   return { state, executor }
 }
 
+/**
+ * Poll until the socket has buffered `byteLength` bytes, without ever reading
+ * from it — the point being to leave the peer non-draining.
+ */
+async function waitForBuffered(
+  socket: { readableLength: number },
+  byteLength: number,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (socket.readableLength < byteLength) {
+    if (Date.now() > deadline) {
+      assert.fail(
+        `timed out: buffered ${socket.readableLength} of ${byteLength} bytes — ` +
+          'the server stalled waiting for the client to read',
+      )
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 describe('createVirtualConnection', () => {
   test('emits connect on next tick and round-trips RESP bytes', async () => {
     const { state, executor } = freshPipeline()
@@ -74,6 +95,63 @@ describe('createVirtualConnection', () => {
     assert.strictEqual(typeof clientSocket.remotePort, 'number')
 
     close()
+  })
+
+  test('keeps writing to a client that never reads (backpressure-free)', async () => {
+    const { state, executor } = freshPipeline()
+    const value = Buffer.alloc(1024 * 1024, 0x78)
+    state.getDatabase(0).setString(Buffer.from('big'), value)
+
+    const { clientSocket, close } = createVirtualConnection({ state, executor })
+    await once(clientSocket, 'connect')
+
+    // Nothing is attached to 'data' and nothing calls read(), so the client end
+    // stays paused and never drains. An in-process server must not block on
+    // that: a duplexPair parks its write callback until the peer reads, so at
+    // the default 16 KiB high-water mark the adapter's awaited write chain
+    // stalls mid-reply and PING is never answered.
+    clientSocket.write(
+      Buffer.concat([commandFrame('GET', 'big'), commandFrame('PING')]),
+    )
+
+    const expected = Buffer.concat([
+      Buffer.from(`$${value.length}\r\n`),
+      value,
+      Buffer.from('\r\n'),
+      Buffer.from('+PONG\r\n'),
+    ])
+    await waitForBuffered(clientSocket, expected.length)
+
+    const replies = await readBytes(clientSocket, expected.length)
+    assert.strictEqual(replies.length, expected.length)
+    assert.ok(replies.equals(expected), 'reply bytes differ')
+
+    close()
+  })
+
+  test('answers QUIT, then half-closes: end before close', async () => {
+    const { state, executor } = freshPipeline()
+    const { clientSocket, done } = createVirtualConnection({ state, executor })
+    await once(clientSocket, 'connect')
+
+    const events: string[] = []
+    clientSocket.on('end', () => events.push('end'))
+    clientSocket.on('error', err => events.push(`error:${err.message}`))
+    const closed = once(clientSocket, 'close')
+
+    clientSocket.write(commandFrame('QUIT'))
+    assert.strictEqual((await readBytes(clientSocket, 5)).toString(), '+OK\r\n')
+
+    // A paused reader only observes EOF on its next read, so go flowing — which
+    // is what a real client (ioredis attaches a 'data' handler) does anyway.
+    clientSocket.resume()
+
+    await done
+    await closed
+
+    // Real Redis 7.2 gives the client [connect, end, close] on QUIT. Destroying
+    // the server end without a FIN would drop the 'end'.
+    assert.deepStrictEqual(events, ['end'])
   })
 
   test('close() tears down the server session (no leaked sessions)', async () => {

@@ -33,7 +33,14 @@ jobs:
         run: npx prettier --check "**/*.{js,ts,json}"
 
   unit:
+    name: unit (node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.6 is the engines.node floor (stream.duplexPair landed there), so it
+        # is exercised rather than merely declared.
+        node-version: ['22.6', 24]
 
     steps:
       - name: Checkout repository
@@ -42,7 +49,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
       - name: Install dependencies

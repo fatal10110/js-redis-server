@@ -41,17 +41,31 @@ so the PR body is not a durable home for a breaking-change note.
   ConnectionTransportEvent         -> removed with it.
   ConnectionTransportListener      -> removed with it.
   ConnectionTransportUnsubscribe   -> removed with it.
-  VirtualClientSocket (class)      -> now a type only. It is one end of a
-                                      duplexPair decorated with the net.Socket
-                                      surface ioredis touches, so it can no
-                                      longer be constructed directly; get one
-                                      from `createVirtualConnection()`.
+  VirtualClientSocket (class)      -> type only; the VALUE export is gone. Get
+                                      an instance from createVirtualConnection().
   ```
+
+  That last one is not a type-level break — the runtime binding disappears:
+
+  ```js
+  import { VirtualClientSocket } from 'js-redis-server/core' // SyntaxError at
+  // load time under ESM, which takes the whole importing module down with it.
+  socket instanceof VirtualClientSocket                      // TypeError, not false
+  ```
+
+  Under CJS the same `require(...).VirtualClientSocket` is `undefined`, so
+  `new` and `instanceof` both throw where they previously worked. Replace an
+  `instanceof` check with a duck-type test (or `stream.Duplex`), and construct
+  via `createVirtualConnection()`.
 
   `SocketConnectionTransport` now accepts any `Duplex`, not just a `net.Socket`
   — a widening, so existing callers are unaffected. Behavior is unchanged:
-  `createIoredisMock` keeps its backpressure-free semantics, and tearing down
-  either end (client `destroy()` or server `close()`) still ends the session.
+  `createIoredisMock` keeps its backpressure-free semantics (the virtual wire
+  is created with an effectively unbounded high-water mark, so an in-process
+  server never blocks on a client that has not read yet), `close()` still
+  half-closes before destroying so the client sees `'end'` then `'close'` as it
+  does against real Redis, and tearing down either end (client `destroy()` or
+  server `close()`) still ends the session.
 
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**

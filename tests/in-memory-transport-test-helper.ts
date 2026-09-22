@@ -15,6 +15,7 @@ export class InMemoryTransport implements ConnectionTransport {
   private readonly clientEnd: Duplex
   private readonly transport: SocketConnectionTransport
   private readonly written: Buffer[] = []
+  private readerActive = false
 
   constructor(id?: string) {
     const [clientEnd, serverEnd] = duplexPair()
@@ -33,8 +34,17 @@ export class InMemoryTransport implements ConnectionTransport {
     return this.transport.signal
   }
 
-  read(): AsyncIterable<Buffer> {
-    return this.transport.read()
+  async *read(): AsyncIterable<Buffer> {
+    if (this.readerActive) {
+      throw new Error('ConnectionTransport only supports one reader')
+    }
+    this.readerActive = true
+
+    try {
+      yield* this.transport.read()
+    } finally {
+      this.readerActive = false
+    }
   }
 
   write(chunk: Buffer): Promise<void> {
@@ -47,6 +57,10 @@ export class InMemoryTransport implements ConnectionTransport {
 
   /** Push bytes onto the wire as if the client had sent them. */
   feed(chunk: Buffer): void {
+    if (this.clientEnd.writableEnded || this.signal.aborted) {
+      throw new Error('Cannot feed a closed transport')
+    }
+
     this.clientEnd.write(Buffer.from(chunk))
   }
 
