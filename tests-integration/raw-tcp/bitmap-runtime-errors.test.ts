@@ -204,4 +204,38 @@ describe(`Raw TCP bitmap runtime errors in MULTI (${testRunner.getBackendName()}
       '*1\r\n:0\r\n',
     )
   })
+
+  // Redis checks that enough arguments remain for a subcommand *before* it
+  // reads any of them, so a short op is a syntax error however bad its type
+  // token is. Only once the op is long enough does the type get parsed.
+  // Verified on redis 6.2.24, 7.2.16 and 8.0.6.
+  test('a BITFIELD op missing arguments is a syntax error before its type is read', async () => {
+    const conn = await connect()
+    const key = `bitrt:${randomKey()}`
+
+    for (const ops of [
+      ['GET', 'x9'],
+      ['SET', 'x9', '0'],
+      ['INCRBY', 'x9', '0'],
+      ['GET', 'u8', '0', 'SET', 'x9'],
+      ['OVERFLOW'],
+      ['GET', 'u8'],
+      ['SET', 'u8', '0'],
+    ]) {
+      await expect(conn, ['BITFIELD', key, ...ops], '-ERR syntax error\r\n')
+    }
+    await expect(
+      conn,
+      ['BITFIELD_RO', key, 'GET', 'x9'],
+      '-ERR syntax error\r\n',
+    )
+
+    // Long enough: now the type is parsed, and rejected.
+    await expect(conn, ['BITFIELD', key, 'GET', 'x9', '0'], BITFIELD_TYPE_ERROR)
+    await expect(
+      conn,
+      ['BITFIELD', key, 'SET', 'x9', '0', '1'],
+      BITFIELD_TYPE_ERROR,
+    )
+  })
 })

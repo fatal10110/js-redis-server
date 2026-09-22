@@ -1,6 +1,7 @@
 import { ClientSession } from '../../client-session'
 import { RedisCommandError } from '../../redis-error'
 import { RedisResult } from '../../redis-result'
+import { RedisValue } from '../../redis-value'
 import { encodeRedisResult } from '../../resp-encoder'
 import { isResponseStream } from '../../response-stream'
 import type { ResponseStream } from '../../response-stream'
@@ -180,7 +181,18 @@ export class Resp2SessionAdapter {
     }
 
     if (err instanceof Resp2ParseError) {
-      await this.writeRedisResult(RedisResult.error(err.message, 'ERR'))
+      // Pre-encoded from `messageBytes`, not `message`: some protocol errors
+      // echo a raw client byte that a string would re-encode as UTF-8.
+      await this.writeRedisResult(
+        RedisResult.preEncoded(
+          RedisValue.error(err.message, 'ERR'),
+          Buffer.concat([
+            Buffer.from('-ERR '),
+            err.messageBytes,
+            Buffer.from('\r\n'),
+          ]),
+        ),
+      )
       return
     }
 

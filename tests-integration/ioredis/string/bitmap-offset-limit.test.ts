@@ -106,6 +106,18 @@ describe(`Bitmap offset ceiling vs proto-max-bulk-len (${testRunner.getBackendNa
       await client.call('BITFIELD', key, 'GET', 'u8', '4294967288'),
       [0],
     )
+    // A wide type starting on that same byte is still accepted: the ceiling
+    // tests only the byte the offset *starts* in, with no allowance for the
+    // field's width. A `(bits-1)/8` term would refuse this; Redis does not.
+    assert.deepStrictEqual(
+      await client.call('BITFIELD', key, 'GET', 'i64', '4294967288'),
+      [0],
+    )
+    await assert.rejects(
+      () =>
+        client.call('BITFIELD', key, 'GET', 'i64', String(OVER_DEFAULT_OFFSET)),
+      errorWithMessage(BIT_OFFSET_ERROR),
+    )
     await assert.rejects(
       () =>
         client.call('BITFIELD', key, 'GET', 'u8', String(OVER_DEFAULT_OFFSET)),
@@ -258,48 +270,78 @@ describe(`Bitmap offset ceiling vs proto-max-bulk-len (${testRunner.getBackendNa
   })
 
   /**
-   * The ceiling is the *lower* of `proto-max-bulk-len` and the mock's
-   * materialisation cap, so raising the setting past 512MB does not hand a
-   * single SETBIT or BITFIELD an unbounded allocation inside the test process.
+   * For a *write*, the ceiling is the lower of `proto-max-bulk-len` and the
+   * mock's materialisation cap, so raising the setting past 512MB does not hand
+   * a single SETBIT or BITFIELD SET/INCRBY an unbounded allocation inside the
+   * test process. Reads are not capped, because they never allocate.
    *
-   * This is a deliberate, documented divergence: real Redis genuinely would
-   * allocate the 600MB string here (which is why the test is mock-only). The
-   * mock answers Redis' ordinary bit-offset error instead — the same principle
-   * `APPEND`/`SETRANGE` already apply through MAX_MATERIALISABLE_LENGTH, and
-   * the behaviour docs/COMMANDS.md promises.
+   * Mock-only, and the write half is a deliberate divergence: with the limit at
+   * 600MB real Redis admits these offsets. It is the mock's version of what
+   * MAX_MATERIALISABLE_LENGTH already does for APPEND/SETRANGE.
    *
-   * The allocation-free BITFIELD GET probe comes first on purpose: without the
-   * cap this test must fail *before* reaching a SETBIT that would really
-   * allocate half a gigabyte.
+   * Nothing here allocates, capped or not. Each write probe carries an invalid
+   * value, so the answer is decided purely by which check runs first: with the
+   * cap it is the bit-offset error, without it the offset passes and the value
+   * is rejected — ground-truthed on redis 6.2.24, 7.2.16 and 8.0.6 at
+   * `proto-max-bulk-len 629145600`:
+   *
+   *   SETBIT k 4294967296 2                  -> ERR bit is not an integer ...
+   *   BITFIELD k SET u8 4294967296 notanint  -> ERR value is not an integer ...
+   *   GETBIT k 4294967296                    -> 0
+   *   BITFIELD k GET u8 4294967296           -> [0]
    */
   test(
-    'raising the limit past 512MB does not raise the ceiling with it',
+    'raising the limit past 512MB raises the read ceiling but not the write ceiling',
     mockOnly,
     async () => {
       const key = ns()
       await setLimit(629145600) // 600MB, comfortably past the 512MB cap
 
       try {
-        // Reads nothing and allocates nothing — but the offset is one the
-        // raised setting would admit if the cap were dropped.
         await assert.rejects(
-          () =>
-            client.call(
-              'BITFIELD',
-              key,
-              'GET',
-              'u8',
-              String(OVER_DEFAULT_OFFSET),
-            ),
+          () => client.call('SETBIT', key, String(OVER_DEFAULT_OFFSET), '2'),
           errorWithMessage(BIT_OFFSET_ERROR),
         )
-        await assert.rejects(
-          () => client.call('GETBIT', key, String(OVER_DEFAULT_OFFSET)),
-          errorWithMessage(BIT_OFFSET_ERROR),
+        for (const op of ['SET', 'INCRBY']) {
+          await assert.rejects(
+            () =>
+              client.call(
+                'BITFIELD',
+                key,
+                op,
+                'u8',
+                String(OVER_DEFAULT_OFFSET),
+                'notanint',
+              ),
+            errorWithMessage(BIT_OFFSET_ERROR),
+            `BITFIELD ${op}`,
+          )
+        }
+
+        // Reads follow the raised setting exactly as real Redis does.
+        assert.strictEqual(
+          await client.call('GETBIT', key, String(OVER_DEFAULT_OFFSET)),
+          0,
         )
-        await assert.rejects(
-          () => client.call('SETBIT', key, String(OVER_DEFAULT_OFFSET), '1'),
-          errorWithMessage(BIT_OFFSET_ERROR),
+        assert.deepStrictEqual(
+          await client.call(
+            'BITFIELD',
+            key,
+            'GET',
+            'u8',
+            String(OVER_DEFAULT_OFFSET),
+          ),
+          [0],
+        )
+        assert.deepStrictEqual(
+          await client.call(
+            'BITFIELD_RO',
+            key,
+            'GET',
+            'u8',
+            String(OVER_DEFAULT_OFFSET),
+          ),
+          [0],
         )
         assert.strictEqual(await client.exists(key), 0)
       } finally {

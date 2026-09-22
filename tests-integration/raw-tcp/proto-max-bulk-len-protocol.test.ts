@@ -87,7 +87,7 @@ const CLOSE_TIMEOUT_MS = 15000
  */
 async function expectThenClose(
   conn: RawRedisConnection,
-  expected: string,
+  expected: string | Buffer,
 ): Promise<void> {
   let timer: NodeJS.Timeout | undefined
   const tail = await Promise.race([
@@ -105,6 +105,12 @@ async function expectThenClose(
     }),
   ]).finally(() => clearTimeout(timer))
 
+  if (Buffer.isBuffer(expected)) {
+    // Byte-exact, compared as hex: a UTF-8 decode would turn a raw non-ASCII
+    // byte into U+FFFD and hide exactly the difference being tested.
+    assert.strictEqual(tail.toString('hex'), expected.toString('hex'))
+    return
+  }
   assert.strictEqual(tail.toString(), expected)
 }
 
@@ -198,12 +204,47 @@ describe(`Raw TCP proto-max-bulk-len protocol errors (${testRunner.getBackendNam
     assert.strictEqual((await survivor.readRawFrame()).toString(), ':0\r\n')
   })
 
-  test('an inline command is not subject to the bulk limit', async () => {
+  // What this does *not* claim: that inline commands are exempt from
+  // `proto-max-bulk-len`. That is unobservable on real Redis, whose smallest
+  // settable limit (1MB) is far above the 64KB cap it puts on inline requests
+  // — a cap the mock does not model yet, tracked in #441. This only pins that
+  // an inline command with a sizable argument, well under both, is still
+  // parsed and answered. Verified on redis 6.2.24, 7.2.16 and 8.0.6.
+  test('an inline command with a large argument is still served', async () => {
     const conn = await connect()
+    const value = 'a'.repeat(60000)
 
-    conn.write(Buffer.from('PING\r\n'))
+    conn.write(Buffer.from(`PING ${value}\r\n`))
 
-    assert.strictEqual((await conn.readRawFrame()).toString(), '+PONG\r\n')
+    assert.strictEqual(
+      (await conn.readRawFrame()).toString(),
+      `$${value.length}\r\n${value}\r\n`,
+    )
+  })
+
+  // Not proto-max-bulk-len, but the same decoder error path: Redis echoes the
+  // offending byte *raw*, so a non-ASCII byte must reach the client as one byte
+  // rather than its two-byte UTF-8 form. Verified byte-for-byte on redis
+  // 6.2.24, 7.2.16 and 8.0.6.
+  test("a non-'$' element prefix is echoed as the raw byte", async () => {
+    const head = Buffer.from("-ERR Protocol error: expected '$', got '")
+    const tail = Buffer.from("'\r\n")
+
+    for (const byte of [0xe9, 0x2b /* '+' */]) {
+      const conn = await connect()
+      conn.write(
+        Buffer.concat([
+          Buffer.from('*1\r\n'),
+          Buffer.from([byte]),
+          Buffer.from('x\r\n'),
+        ]),
+      )
+
+      await expectThenClose(
+        conn,
+        Buffer.concat([head, Buffer.from([byte]), tail]),
+      )
+    }
   })
 })
 

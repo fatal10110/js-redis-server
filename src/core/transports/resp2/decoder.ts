@@ -14,9 +14,20 @@ export type Resp2CommandDecoderOptions = {
 }
 
 export class Resp2ParseError extends Error {
-  constructor(message: string) {
+  /**
+   * The error text exactly as it goes on the wire, as raw bytes.
+   *
+   * Usually just `message` encoded, but some Redis protocol errors echo an
+   * arbitrary byte from the client (`expected '$', got '%c'`), and Redis sends
+   * that byte as-is. Carried as a Buffer because a JS string would be
+   * re-encoded as UTF-8 on the way out, turning a lone `0xE9` into `0xC3 0xA9`.
+   */
+  readonly messageBytes: Buffer
+
+  constructor(message: string, messageBytes?: Buffer) {
     super(message)
     this.name = 'Resp2ParseError'
+    this.messageBytes = messageBytes ?? Buffer.from(message)
   }
 }
 
@@ -145,12 +156,7 @@ export class Resp2CommandDecoder {
       }
 
       if (prefix !== 0x24) {
-        // Redis' exact wording, which echoes the offending byte:
-        // `Protocol error: expected '$', got '%c'`. Verified on 6.2.24 and
-        // 7.2.16 — `*2\r\n%3\r\nfoo\r\n` answers `got '%'` and closes.
-        throw new Resp2ParseError(
-          `Protocol error: expected '$', got '${Buffer.from([prefix]).toString('latin1')}'`,
-        )
+        throw unexpectedBulkPrefix(prefix)
       }
 
       const bulkHeader = readLine(this.buffered, cursor + 1)
@@ -328,6 +334,24 @@ function isInlineWhitespace(char: string): boolean {
 
 function isHexDigit(char: string | undefined): boolean {
   return char !== undefined && /^[0-9a-fA-F]$/.test(char)
+}
+
+/**
+ * Redis' `Protocol error: expected '$', got '%c'`, echoing the offending byte.
+ *
+ * The byte is echoed raw — a `0xE9` goes out as the single byte `0xE9`, not as
+ * its two-byte UTF-8 form — except CR and LF, which Redis' error-reply path
+ * rewrites to a space. Verified byte-for-byte on redis 6.2.24, 7.2.16 and
+ * 8.0.6: `*1\r\n\xE9x\r\n` answers `got '\xE9'` and `*2\r\n%3\r\nfoo\r\n`
+ * answers `got '%'`, both followed by a close.
+ */
+function unexpectedBulkPrefix(prefix: number): Resp2ParseError {
+  const shown = prefix === 0x0d || prefix === 0x0a ? 0x20 : prefix
+  const head = "Protocol error: expected '$', got '"
+  return new Resp2ParseError(
+    `${head}${String.fromCharCode(shown)}'`,
+    Buffer.concat([Buffer.from(head), Buffer.from([shown]), Buffer.from("'")]),
+  )
 }
 
 function readLine(

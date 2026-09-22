@@ -91,10 +91,25 @@ describe(`Bitmap offset ceiling vs proto-max-bulk-len (node-redis, ${testRunner.
   test('BITFIELD uses the same ceiling at the default limit', async () => {
     const key = ns()
 
-    // 4294967288 >> 3 == 536870911, the last addressable byte.
-    assert.deepStrictEqual(
-      await client.sendCommand(['BITFIELD', key, 'GET', 'u8', '4294967288']),
-      [0],
+    // 4294967288 >> 3 == 536870911, the last addressable byte. A wide type
+    // starting there is still accepted — the ceiling has no `(bits-1)/8` term.
+    for (const type of ['u8', 'i64']) {
+      assert.deepStrictEqual(
+        await client.sendCommand(['BITFIELD', key, 'GET', type, '4294967288']),
+        [0],
+        type,
+      )
+    }
+    await assert.rejects(
+      () =>
+        client.sendCommand([
+          'BITFIELD',
+          key,
+          'GET',
+          'i64',
+          String(OVER_DEFAULT_OFFSET),
+        ]),
+      errorWithMessage(BIT_OFFSET_ERROR),
     )
     await assert.rejects(
       () =>
@@ -266,17 +281,15 @@ describe(`Bitmap offset ceiling vs proto-max-bulk-len (node-redis, ${testRunner.
   })
 
   /**
-   * The ceiling is the *lower* of `proto-max-bulk-len` and the mock's
-   * materialisation cap, so raising the setting past 512MB does not hand a
-   * single SETBIT or BITFIELD an unbounded allocation inside the test process.
-   *
-   * A deliberate, documented divergence: real Redis genuinely would allocate
-   * the 600MB string here, which is why this is mock-only. The allocation-free
-   * BITFIELD GET probe comes first on purpose, so that without the cap the test
-   * fails before reaching a SETBIT that would really allocate half a gigabyte.
+   * For a *write*, the ceiling is the lower of `proto-max-bulk-len` and the
+   * mock's materialisation cap; reads are not capped, because they never
+   * allocate. Mock-only, and the write half is a deliberate divergence — see
+   * the ioredis twin for the ground truth. Nothing here allocates, capped or
+   * not: each write probe carries an invalid value, so which check runs first
+   * decides the answer.
    */
   test(
-    'raising the limit past 512MB does not raise the ceiling with it',
+    'raising the limit past 512MB raises the read ceiling but not the write ceiling',
     mockOnly,
     async () => {
       const key = ns()
@@ -286,29 +299,50 @@ describe(`Bitmap offset ceiling vs proto-max-bulk-len (node-redis, ${testRunner.
         await assert.rejects(
           () =>
             client.sendCommand([
-              'BITFIELD',
+              'SETBIT',
+              key,
+              String(OVER_DEFAULT_OFFSET),
+              '2',
+            ]),
+          errorWithMessage(BIT_OFFSET_ERROR),
+        )
+        for (const op of ['SET', 'INCRBY']) {
+          await assert.rejects(
+            () =>
+              client.sendCommand([
+                'BITFIELD',
+                key,
+                op,
+                'u8',
+                String(OVER_DEFAULT_OFFSET),
+                'notanint',
+              ]),
+            errorWithMessage(BIT_OFFSET_ERROR),
+            `BITFIELD ${op}`,
+          )
+        }
+
+        assert.strictEqual(
+          await client.sendCommand([
+            'GETBIT',
+            key,
+            String(OVER_DEFAULT_OFFSET),
+          ]),
+          0,
+        )
+        for (const command of ['BITFIELD', 'BITFIELD_RO']) {
+          assert.deepStrictEqual(
+            await client.sendCommand([
+              command,
               key,
               'GET',
               'u8',
               String(OVER_DEFAULT_OFFSET),
             ]),
-          errorWithMessage(BIT_OFFSET_ERROR),
-        )
-        await assert.rejects(
-          () =>
-            client.sendCommand(['GETBIT', key, String(OVER_DEFAULT_OFFSET)]),
-          errorWithMessage(BIT_OFFSET_ERROR),
-        )
-        await assert.rejects(
-          () =>
-            client.sendCommand([
-              'SETBIT',
-              key,
-              String(OVER_DEFAULT_OFFSET),
-              '1',
-            ]),
-          errorWithMessage(BIT_OFFSET_ERROR),
-        )
+            [0],
+            command,
+          )
+        }
         assert.strictEqual(await client.exists(key), 0)
       } finally {
         await setLimit(DEFAULT_PROTO_MAX_BULK_LEN)
