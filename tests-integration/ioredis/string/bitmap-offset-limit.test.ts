@@ -256,4 +256,55 @@ describe(`Bitmap offset ceiling vs proto-max-bulk-len (${testRunner.getBackendNa
       await setLimit(DEFAULT_PROTO_MAX_BULK_LEN)
     }
   })
+
+  /**
+   * The ceiling is the *lower* of `proto-max-bulk-len` and the mock's
+   * materialisation cap, so raising the setting past 512MB does not hand a
+   * single SETBIT or BITFIELD an unbounded allocation inside the test process.
+   *
+   * This is a deliberate, documented divergence: real Redis genuinely would
+   * allocate the 600MB string here (which is why the test is mock-only). The
+   * mock answers Redis' ordinary bit-offset error instead — the same principle
+   * `APPEND`/`SETRANGE` already apply through MAX_MATERIALISABLE_LENGTH, and
+   * the behaviour docs/COMMANDS.md promises.
+   *
+   * The allocation-free BITFIELD GET probe comes first on purpose: without the
+   * cap this test must fail *before* reaching a SETBIT that would really
+   * allocate half a gigabyte.
+   */
+  test(
+    'raising the limit past 512MB does not raise the ceiling with it',
+    mockOnly,
+    async () => {
+      const key = ns()
+      await setLimit(629145600) // 600MB, comfortably past the 512MB cap
+
+      try {
+        // Reads nothing and allocates nothing — but the offset is one the
+        // raised setting would admit if the cap were dropped.
+        await assert.rejects(
+          () =>
+            client.call(
+              'BITFIELD',
+              key,
+              'GET',
+              'u8',
+              String(OVER_DEFAULT_OFFSET),
+            ),
+          errorWithMessage(BIT_OFFSET_ERROR),
+        )
+        await assert.rejects(
+          () => client.call('GETBIT', key, String(OVER_DEFAULT_OFFSET)),
+          errorWithMessage(BIT_OFFSET_ERROR),
+        )
+        await assert.rejects(
+          () => client.call('SETBIT', key, String(OVER_DEFAULT_OFFSET), '1'),
+          errorWithMessage(BIT_OFFSET_ERROR),
+        )
+        assert.strictEqual(await client.exists(key), 0)
+      } finally {
+        await setLimit(DEFAULT_PROTO_MAX_BULK_LEN)
+      }
+    },
+  )
 })

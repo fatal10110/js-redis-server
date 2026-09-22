@@ -6,10 +6,11 @@ export type Resp2CommandFrame = {
 export type Resp2CommandDecoderOptions = {
   /**
    * The live `proto-max-bulk-len`, read afresh for every bulk header so a
-   * `CONFIG SET` takes effect on the very next command. Defaults to Redis'
-   * compiled-in 512MB when the decoder is used without a server behind it.
+   * `CONFIG SET` takes effect on the very next command. Required: there is no
+   * sensible default here, because the only correct value is the one the
+   * server this connection belongs to is currently running with.
    */
-  maxBulkLength?: () => bigint
+  maxBulkLength: () => bigint
 }
 
 export class Resp2ParseError extends Error {
@@ -19,30 +20,40 @@ export class Resp2ParseError extends Error {
   }
 }
 
+/** Redis' `INT_MAX` ceiling on a multibulk element count (networking.c). */
+const MAX_MULTIBULK_COUNT = 2147483647
+
 type ParseOutcome =
   | { kind: 'frame'; frame: Resp2CommandFrame; nextIndex: number }
   | { kind: 'skip'; nextIndex: number }
   | { kind: 'incomplete' }
 
-/**
- * Redis' compiled-in default for `proto-max-bulk-len`: 512MB. Duplicated from
- * `RedisServerState` rather than imported, so the transport layer keeps no
- * dependency on server state — the real value arrives through
- * {@link Resp2CommandDecoderOptions.maxBulkLength}.
- */
-const DEFAULT_PROTO_MAX_BULK_LEN = 536870912n
-
 export class Resp2CommandDecoder {
   private buffered = Buffer.alloc(0)
   private readonly maxBulkLength: () => bigint
+  /**
+   * Set once a protocol error is raised. A RESP stream cannot be resynchronised
+   * after one — Redis' own parser marks the client `CLIENT_CLOSE_AFTER_REPLY`
+   * and never reads another command from it — so the decoder is deliberately
+   * terminal rather than silently resuming mid-frame.
+   */
+  private fatalError: Resp2ParseError | null = null
 
-  constructor(options?: Resp2CommandDecoderOptions) {
-    this.maxBulkLength =
-      options?.maxBulkLength ?? (() => DEFAULT_PROTO_MAX_BULK_LEN)
+  constructor(options: Resp2CommandDecoderOptions) {
+    this.maxBulkLength = options.maxBulkLength
   }
 
-  /** Append freshly-read bytes; call {@link next} to drain complete frames. */
+  /**
+   * Append freshly-read bytes; call {@link next} to drain complete frames.
+   *
+   * Ignored once the decoder has raised a protocol error — see
+   * {@link fatalError}. The connection is being torn down at that point, and
+   * buffering more of a stream we can no longer frame would be pointless.
+   */
   push(chunk: Buffer): void {
+    if (this.fatalError) {
+      return
+    }
     this.buffered = Buffer.concat([this.buffered, chunk])
   }
 
@@ -57,19 +68,34 @@ export class Resp2CommandDecoder {
    *
    * @throws {Resp2ParseError} on a malformed frame. Frames already returned
    * stay valid — real Redis answers the good commands that preceded the bad
-   * one, then reports the protocol error and closes the connection.
+   * one, then reports the protocol error and closes the connection. **This is
+   * terminal**: the decoder keeps the error and every later `next()` re-throws
+   * it, so a caller that does not close the connection cannot accidentally
+   * resume framing from the middle of a frame it never consumed.
    */
   next(): Resp2CommandFrame | null {
-    while (this.buffered.length > 0) {
-      const outcome = this.parseFrame(0)
-      if (outcome.kind === 'incomplete') {
-        return null
-      }
+    if (this.fatalError) {
+      throw this.fatalError
+    }
 
-      this.buffered = this.buffered.subarray(outcome.nextIndex)
-      if (outcome.kind === 'frame') {
-        return outcome.frame
+    try {
+      while (this.buffered.length > 0) {
+        const outcome = this.parseFrame(0)
+        if (outcome.kind === 'incomplete') {
+          return null
+        }
+
+        this.buffered = this.buffered.subarray(outcome.nextIndex)
+        if (outcome.kind === 'frame') {
+          return outcome.frame
+        }
       }
+    } catch (err) {
+      if (err instanceof Resp2ParseError) {
+        this.fatalError = err
+        this.buffered = Buffer.alloc(0)
+      }
+      throw err
     }
 
     return null
@@ -94,8 +120,14 @@ export class Resp2CommandDecoder {
       return { kind: 'incomplete' }
     }
 
+    // Redis bounds the element count as well as each bulk. The upper bound is
+    // version-specific: 7.2.16 rejects above INT_MAX, while 6.2.24 rejects
+    // anything above 1024*1024 (`*1048577` errors on 6.2 and is accepted on
+    // 7.2). Only the INT_MAX bound is applied here, because it is the one every
+    // supported profile agrees on; the tighter pre-7.0 bound needs a
+    // compatibility gate and is tracked in #441.
     const count = parseLength(header.line, 'multibulk')
-    if (count < -1) {
+    if (count < -1 || count > MAX_MULTIBULK_COUNT) {
       throw new Resp2ParseError('Protocol error: invalid multibulk length')
     }
 
@@ -113,7 +145,12 @@ export class Resp2CommandDecoder {
       }
 
       if (prefix !== 0x24) {
-        throw new Resp2ParseError('Protocol error: expected bulk string')
+        // Redis' exact wording, which echoes the offending byte:
+        // `Protocol error: expected '$', got '%c'`. Verified on 6.2.24 and
+        // 7.2.16 — `*2\r\n%3\r\nfoo\r\n` answers `got '%'` and closes.
+        throw new Resp2ParseError(
+          `Protocol error: expected '$', got '${Buffer.from([prefix]).toString('latin1')}'`,
+        )
       }
 
       const bulkHeader = readLine(this.buffered, cursor + 1)
@@ -143,6 +180,13 @@ export class Resp2CommandDecoder {
         this.buffered[valueEnd] !== 0x0d ||
         this.buffered[valueEnd + 1] !== 0x0a
       ) {
+        // Known divergence, pre-dating #415 and deliberately left alone here:
+        // real Redis does not verify the trailing CRLF at all. It reads exactly
+        // `ll` bytes and skips two, so `*1\r\n$3\r\nfooXX` dispatches `foo`
+        // (6.2.24 and 7.2.16 both answer `unknown command`). The wording below
+        // is ours, not Redis'. Tracked in #441 — matching Redis means dropping
+        // the check, which changes framing for malformed input and is unrelated
+        // to proto-max-bulk-len.
         throw new Resp2ParseError('Protocol error: bulk string not terminated')
       }
 

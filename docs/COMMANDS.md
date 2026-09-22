@@ -132,8 +132,11 @@ surface.
 >      limit lowers the ceiling with it.
 >
 >   Raising it past **512MB**, Redis' own default, does not raise what the mock
->   will allocate: beyond that the size error is returned rather than a buffer
->   the test process may not survive producing. At or below the default the
+>   will allocate — for the bit-offset ceiling (3) just as for `APPEND` and
+>   `SETRANGE` (2). Beyond the default the mock answers an error rather than
+>   producing a buffer the test process may not survive: the size error for a
+>   string that would grow too large, and the ordinary bit-offset error for an
+>   offset the raised setting would otherwise admit. At or below the default the
 >   behavior is Redis'.
 >
 > Since there is no backing config file,

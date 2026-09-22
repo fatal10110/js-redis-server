@@ -21,6 +21,21 @@ import { RawRedisConnection } from './raw-connection'
  *   $1048576 with proto-max-bulk-len 1048576  -> accepted (waits for payload)
  *   $1048577 with proto-max-bulk-len 1048576  -> -ERR Protocol error: invalid
  *                                                bulk length, then close
+ *
+ * ## Why the accept side of the boundary is mock-only
+ *
+ * The refusal side runs against both backends: at the 512MB default, a header
+ * of `$536870913` is refused by mock and real alike, and costs nothing because
+ * the payload is never sent.
+ *
+ * The accept side — `$<exactly the limit>` — cannot. Redis pre-sizes its query
+ * buffer from the header (`sdsMakeRoomForExact(querybuf, ll + 2)` for any bulk
+ * at or above PROTO_MBULK_BIG_ARG), so asserting it at the default limit costs
+ * the *server* a 512MB allocation, and proving it at a cheaper limit means
+ * `CONFIG SET proto-max-bulk-len`, which is server-wide state no suite may
+ * touch on a shared real backend. It is therefore pinned on the mock and
+ * ground-truthed by hand, exactly as the sibling `proto-max-bulk-len.test.ts`
+ * suites do for the same reason.
  */
 const testRunner = new TestRunner()
 
@@ -229,6 +244,48 @@ describe(
       )
       assert.strictEqual((await conn.readRawFrame()).toString(), '+OK\r\n')
     }
+
+    /**
+     * The discriminating test for the *pull-based* decoder loop.
+     *
+     * `CONFIG SET proto-max-bulk-len 1048576` and a frame that exceeds the new
+     * limit are sent in a **single TCP write**. Only a decoder that parses one
+     * frame at a time — running each command before framing the next — sees the
+     * lowered limit in time to refuse the second frame. A decoder that drains
+     * the whole chunk up front judges both frames against the *old* 512MB limit
+     * and lets the oversized one straight through, which is exactly what the
+     * shape this PR replaced did.
+     *
+     * Without this test the rewrite is unpinned: restoring the batch-drain loop
+     * while keeping the new length check leaves every other assertion in this
+     * file green, because they all put the bad frame in a write of its own.
+     *
+     * Real Redis behaves the pull-based way — verified on 6.2.24 and 7.2.16,
+     * where the same single write answers `+OK` and then the protocol error.
+     */
+    test('a CONFIG SET earlier in the same TCP write is already in force', async () => {
+      const key = `pmbl:live:${randomKey()}`
+
+      try {
+        const conn = await connect()
+        conn.write(
+          Buffer.concat([
+            commandFrame(
+              'CONFIG',
+              'SET',
+              'proto-max-bulk-len',
+              String(LOWERED),
+            ),
+            frameWithOversizedTail(LOWERED + 1, 'APPEND', key),
+          ]),
+        )
+
+        assert.strictEqual((await conn.readRawFrame()).toString(), '+OK\r\n')
+        await expectThenClose(conn, INVALID_BULK_LENGTH)
+      } finally {
+        await setLimit(DEFAULT_PROTO_MAX_BULK_LEN)
+      }
+    })
 
     // The issue's exact repro: with the limit at 1MB a 2MB APPEND to a *fresh*
     // key is a protocol error on every real version, even though the command

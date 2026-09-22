@@ -22,6 +22,7 @@ import {
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { ensureStringOrMissing, INT64_MAX, INT64_MIN, integer } from './helpers'
+import { MAX_MATERIALISABLE_LENGTH } from './strings'
 
 const EMPTY = Buffer.alloc(0)
 
@@ -47,9 +48,9 @@ function getBit(buf: Buffer, bitIndex: number): number {
  * Redis size error rather than a `RangeError` that escapes the command-error
  * path and drops the connection.
  *
- * Reachable only once `proto-max-bulk-len` is raised above what this process
- * can materialise: real Redis really would allocate the multi-gigabyte string
- * such an offset implies. Mirrors `allocateStringBuffer` in ./strings.ts.
+ * {@link assertBitOffsetWithinLimit} already keeps requests at or below
+ * {@link MAX_MATERIALISABLE_LENGTH}; this is the backstop for a host too short
+ * on memory to honour even that. Mirrors `allocateStringBuffer` in ./strings.ts.
  */
 function allocateBitmapBuffer(size: number): Buffer<ArrayBuffer> {
   try {
@@ -97,12 +98,26 @@ function parseBitOffset(
   return value
 }
 
-/** @see parseBitOffset — the shared `(offset >> 3) >= limit` ceiling. */
+/**
+ * @see parseBitOffset — the shared `(offset >> 3) >= limit` ceiling.
+ *
+ * The effective limit is the *lower* of `proto-max-bulk-len` and
+ * {@link MAX_MATERIALISABLE_LENGTH}, exactly as `assertWithinProtoMaxBulkLen`
+ * in ./strings.ts does it. Without the second term, raising
+ * `proto-max-bulk-len` past 512MB would let a single SETBIT or BITFIELD
+ * allocate unbounded memory inside the test process — `Buffer.alloc` is no
+ * backstop, since `buffer.constants.MAX_LENGTH` is 2^53-1 on Node 22 and so
+ * never throws for any size this ceiling would otherwise admit.
+ */
 function assertBitOffsetWithinLimit(
   offset: number,
   protoMaxBulkLen: bigint,
 ): void {
-  if (BigInt(byteIndexOf(offset)) >= protoMaxBulkLen) {
+  const limit =
+    protoMaxBulkLen < MAX_MATERIALISABLE_LENGTH
+      ? protoMaxBulkLen
+      : MAX_MATERIALISABLE_LENGTH
+  if (BigInt(byteIndexOf(offset)) >= limit) {
     throw new BitOffsetError()
   }
 }
@@ -492,9 +507,12 @@ type BitFieldOp =
  * time, because a field offset is bounded by the live `proto-max-bulk-len`.
  *
  * That also matches Redis, which parses and validates the whole operation list
- * in one pass inside the command (bitops.c, `bitfieldGeneric`) before running
- * any of it: the first bad token in argument order wins, and a rejected op
- * anywhere in the list leaves the key untouched.
+ * inside the command (bitops.c, `bitfieldGeneric`) before running any of it, so
+ * a rejected op anywhere in the list leaves the key untouched. Within that
+ * parse pass the first bad token in argument order wins — type, then offset,
+ * then value, per op, with `OVERFLOW` checked where it appears. The one
+ * exception is BITFIELD_RO's GET-only restriction, which Redis applies in a
+ * *second* pass once everything has parsed; see {@link parseBitFieldOps}.
  */
 type BitFieldArgs = {
   key: Buffer
@@ -603,9 +621,6 @@ function parseBitFieldOps(
     }
 
     if (sub === 'SET' || sub === 'INCRBY') {
-      if (readonly) {
-        throw new BitfieldRoGetOnlyError()
-      }
       const type = parseFieldType(input[cursor + 1])
       const offset = parseFieldOffset(
         input[cursor + 2],
@@ -618,10 +633,17 @@ function parseBitFieldOps(
       continue
     }
 
-    if (readonly) {
-      throw new BitfieldRoGetOnlyError()
-    }
     throw new RedisSyntaxError()
+  }
+
+  // BITFIELD_RO's GET-only restriction is a *second* pass in Redis, run only
+  // once the whole list has parsed — so a malformed op is reported by its own
+  // error first. Verified on 6.2.24 and 7.2.16: `BITFIELD_RO k SET u8 <over> 1`
+  // answers the bit-offset error, `BITFIELD_RO k SET u99 0 1` the type error,
+  // and `BITFIELD_RO k NOPE` a plain syntax error — only a well-formed non-GET
+  // op reaches "BITFIELD_RO only supports the GET subcommand".
+  if (readonly && ops.some(op => op.kind !== 'GET')) {
+    throw new BitfieldRoGetOnlyError()
   }
 
   return ops
