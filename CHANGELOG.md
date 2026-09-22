@@ -55,9 +55,10 @@ so the PR body is not a durable home for a breaking-change note.
 
   There is no replacement for the `plan` half. A caller that wants the
   `CommandPlan` builds it with the still-public `executor.plan(cmd, args)` and
-  passes it to `executor.executePlan(plan, ctx)` — note that `plan()` *throws*
-  on an unknown command or arity error where `executeRaw` returns those as a
-  RESP error reply.
+  passes it to `executor.executePlan(plan, ctx)`. That is not equivalent to
+  `executeRaw`: `plan()` throws on any planning error (unknown command, arity,
+  argument parse) where `executeRaw` returns a RESP error reply, and the pair
+  skips the MULTI-dirty/EXECABORT handling `executeRaw` applies to those errors.
 
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**
@@ -158,6 +159,36 @@ so the PR body is not a durable home for a breaking-change note.
   interface and declaration emit requires it ([#376]).
 
 ### Fixed
+
+- After a `SELECT`, `MOVE` and `COPY … DB` into the database that was selected
+  *before* it no longer publish their keyspace notifications as `select`
+  ([#359]). With `notify-keyspace-events KEA`, keyevent channel shown (the
+  keyspace channel carries the same event names):
+
+  ```
+  SELECT 1; SET k v; MOVE k 0
+    real Redis 7.2: __keyevent@1__:move_from k   __keyevent@0__:move_to k
+    before:         __keyevent@1__:del k         __keyevent@0__:select k
+    now:            __keyevent@1__:del k
+
+  SELECT 1; SET s v; COPY s c DB 0
+    real Redis 7.2: __keyevent@0__:copy_to c
+    before:         __keyevent@0__:select c
+    now:            (nothing)
+  ```
+
+  The executor names write events through a per-database tag, and `SELECT`
+  restored that tag onto the database it switched *to*, leaving the one it
+  switched *from* tagged `select`. Every later command restores the tag it
+  saved, so the stale value was never cleared, and `MOVE` / `COPY … DB` write
+  into a database the executor never tags. Because the tag lives on the
+  database rather than the connection, one client's `SELECT` mislabelled
+  another client's `MOVE`; it also happened through `MULTI`/`EXEC` and `EVAL`.
+
+  This removes the wrong event; it does not add the right ones. `MOVE` and
+  `COPY … DB` still publish nothing on the target database, where real Redis
+  sends `move_to` / `copy_to`. That gap predates this change and is tracked
+  separately.
 
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,

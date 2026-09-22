@@ -38,9 +38,9 @@ export type CommandExecutorOptions = {
  *  1. Resolve a raw command name to a {@link CommandDefinition} (case-insensitive).
  *  2. Parse raw argument buffers into typed args and extract routing keys,
  *     producing a {@link CommandPlan}.
- *  3. Run the configured {@link ExecutionPolicy} chain around the command's own
- *     `execute`, giving policies (transaction, cluster, ...) a chance to
- *     short-circuit, rewrite, or wrap the result.
+ *  3. Run the configured {@link ExecutionPolicy} chain before the command's own
+ *     `execute`, giving policies (auth, cluster, transaction, ...) a chance to
+ *     short-circuit it — queue, redirect, or reject — with their own result.
  *
  * Two execution paths exist on purpose:
  *  - {@link executePlan} / {@link executeRaw} — async, used for real network
@@ -428,13 +428,22 @@ function applyPolicyShortCircuit(
 /**
  * Tag the database with the active command so keyspace notifications can name
  * write events after the originating command, and return the undo. Callers run
- * it in a `finally` — nested (Lua `redis.call`) and parked/interleaved commands
- * depend on the save/restore.
+ * it in a `finally`, so a nested command (Lua `redis.call` inside EVAL) hands
+ * the outer command's tag back when it returns.
  *
  * The database is resolved *once*, here, and the closure restores that same
  * one. `ctx.db` is a live getter, so a command that switches databases
  * mid-flight (SELECT) would otherwise have its tag restored onto the new
- * database while the old one kept the stale tag forever.
+ * database, leaving the old one tagged `select`. Because every later command
+ * restores the tag it saved, that stale value was never cleared, and MOVE /
+ * COPY ... DB — which write into a database the executor never tags — then
+ * published their events there as `select` (#359).
+ *
+ * LIMIT: save/restore is only correct for LIFO nesting. Commands that park and
+ * resume out of order corrupt it: two BLPOPs parked on db1 and resumed in
+ * arrival order leave db1 permanently tagged `blpop` (FLUSHALL does not clear
+ * it), so every later MOVE into db1 publishes `blpop`. This predates #359 and is
+ * tracked as a follow-up.
  */
 function tagNotifyCommand(
   plan: CommandPlan,

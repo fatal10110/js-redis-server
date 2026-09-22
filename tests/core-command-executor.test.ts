@@ -358,6 +358,20 @@ describe('new command executor core', () => {
     assert.strictEqual(server.getDatabase(1).activeNotifyCommand, null)
   })
 
+  test('restores the notify-command tag on the database it tagged (sync path)', () => {
+    // Same invariant through `executePlanSync`, the Lua `redis.call` path —
+    // the two paths share `tagNotifyCommand`, but each has its own `finally`.
+    const { executor, ctx, server } = createSelectMidCommandFixture()
+
+    assert.deepStrictEqual(
+      executor.executePlanSync(executor.plan('select-then-write', []), ctx),
+      RedisResult.ok(),
+    )
+
+    assert.strictEqual(server.getDatabase(0).activeNotifyCommand, null)
+    assert.strictEqual(server.getDatabase(1).activeNotifyCommand, null)
+  })
+
   test('supports open command registration and explicit overrides', () => {
     const registry = new CommandRegistry()
     const first = defineCommand({
