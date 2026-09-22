@@ -455,37 +455,57 @@ describe('createVirtualConnection — client-side half-close', () => {
 })
 
 describe('createVirtualConnection — writing after the server has closed', () => {
-  /** QUIT, then wait until the server end is gone, leaving the client half-open. */
+  const UNREAD = '+PONG\r\n+OK\r\n'
+
+  /**
+   * PING + QUIT without reading, then wait until the server end is gone,
+   * leaving the client half-open with the reply unread.
+   */
   async function halfOpenAfterQuit() {
     const { state, executor } = freshPipeline()
     const conn = createVirtualConnection({ state, executor })
     await once(conn.clientSocket, 'connect')
 
-    conn.clientSocket.write(commandFrame('QUIT'))
+    conn.clientSocket.write(
+      Buffer.concat([commandFrame('PING'), commandFrame('QUIT')]),
+    )
     await within(conn.done, 'the session to end')
     // The server end is destroyed on the immediate after close(); let it land.
     await new Promise(resolve => setTimeout(resolve, 20))
 
     assert.strictEqual(conn.clientSocket.destroyed, false)
+    assert.strictEqual(conn.clientSocket.readableLength, UNREAD.length)
     return { state, conn }
   }
 
-  test('a write fails with EPIPE instead of hanging', async () => {
+  test('the first write is accepted, and the unread reply and EOF still arrive', async () => {
     const { conn } = await halfOpenAfterQuit()
-    const socketErrors: string[] = []
+    const errors: string[] = []
     conn.clientSocket.on('error', err =>
-      socketErrors.push((err as NodeJS.ErrnoException).code ?? err.message),
+      errors.push((err as NodeJS.ErrnoException).code ?? err.message),
     )
 
-    const written = new Promise<NodeJS.ErrnoException | null | undefined>(
-      resolve => conn.clientSocket.write(commandFrame('PING'), resolve),
+    // Real TCP: the kernel accepts the first write to a closed peer, and the
+    // client still reads the reply and EOF (pinned with a net.Socket probe).
+    // Failing the write would destroy the client and discard that reply. The
+    // callback must still settle — a duplexPair end whose peer is gone would
+    // otherwise never call back at all.
+    const written = new Promise<Error | null | undefined>(resolve =>
+      conn.clientSocket.write(commandFrame('PING'), resolve),
     )
+    assert.strictEqual(
+      (await within(written, 'the write callback')) ?? null,
+      null,
+    )
+    assert.strictEqual(conn.clientSocket.destroyed, false)
 
-    // On main this failed at once with ERR_STREAM_DESTROYED; a duplexPair end
-    // whose peer is gone would otherwise never call back at all.
-    const error = await within(written, 'the write callback')
-    assert.strictEqual(error?.code, 'EPIPE')
-    assert.deepStrictEqual(socketErrors, ['EPIPE'])
+    const seen = record(conn.clientSocket)
+    conn.clientSocket.resume()
+    await within(seen.closed, 'the client to close after reading')
+
+    assert.strictEqual(seen.bytes(), UNREAD)
+    assert.deepStrictEqual(seen.events, ['data', 'end', 'finish', 'close'])
+    assert.deepStrictEqual(errors, [])
   })
 
   test('end(cb) calls back, and the unread reply is still delivered', async () => {
@@ -504,7 +524,7 @@ describe('createVirtualConnection — writing after the server has closed', () =
     conn.clientSocket.resume()
     await within(seen.closed, 'the client to close')
 
-    assert.strictEqual(seen.bytes(), '+OK\r\n')
+    assert.strictEqual(seen.bytes(), UNREAD)
     assert.deepStrictEqual(seen.events, ['data', 'end', 'close'])
   })
 })

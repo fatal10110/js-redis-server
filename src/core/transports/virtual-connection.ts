@@ -80,7 +80,8 @@ let nextConnectionId = 0
  * session ends at once, and the client receives any buffered reply bytes, then
  * `'end'`, `'finish'` and `'close'` — whenever it reads them. A client that
  * never reads stays half-open until its owner destroys it, as a real socket
- * would; meanwhile its writes fail with EPIPE and `end()` completes.
+ * would; meanwhile its writes are accepted (and go nowhere) and `end()`
+ * completes.
  */
 export function createVirtualConnection(
   opts: CreateVirtualConnectionOptions,
@@ -219,10 +220,17 @@ type WriteCallback = (error?: Error | null) => void
  * `_final` only when the peer emits 'end'. Once the server end is destroyed
  * neither can happen — and `Duplex.destroy()` does not flush a callback already
  * handed to `_write` — so client code awaiting a write or `end(cb)` would hang
- * for good. Answer them the way a TCP socket whose peer has closed does: a
- * write fails with EPIPE, and `end()` completes.
+ * for good. Answer them the way a TCP socket whose peer has closed does:
+ * `end()` completes, and a write is accepted (the kernel buffers it; the data
+ * goes nowhere) for as long as the client still has the unread reply and EOF
+ * to take in. Failing it instead would destroy the client and discard that
+ * reply, and crash a consumer with no 'error' handler. Only once the client
+ * has read to EOF does a write fail with EPIPE — and by then a client with
+ * allowHalfOpen: false has usually ended its own writable anyway.
  */
 function settleWritesOnPeerClose(stream: Duplex, peer: Duplex): void {
+  const writeToClosedPeer = () => (stream.readableEnded ? epipe() : undefined)
+
   const pending = new Map<WriteCallback, () => Error | undefined>()
 
   const track = (
@@ -243,10 +251,10 @@ function settleWritesOnPeerClose(stream: Duplex, peer: Duplex): void {
 
   stream._write = (chunk, encoding, callback) => {
     if (peer.destroyed) {
-      callback(epipe())
+      callback(writeToClosedPeer())
       return
     }
-    write(chunk, encoding, track(callback, epipe))
+    write(chunk, encoding, track(callback, writeToClosedPeer))
   }
 
   if (final) {

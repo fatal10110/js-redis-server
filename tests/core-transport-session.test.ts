@@ -98,6 +98,22 @@ describe('new transport-neutral session path', () => {
     )
   })
 
+  test('closes the transport even when session.close() throws', async () => {
+    const { session } = createHarness()
+    const transport = new InMemoryTransport()
+    session.close = () => {
+      throw new Error('session.close failed')
+    }
+    const adapter = new Resp2SessionAdapter({ transport, session })
+    const running = adapter.run()
+
+    transport.feed(commandFrame('PING'))
+    transport.endRead()
+
+    await assert.rejects(running, /session\.close failed/)
+    assert.strictEqual(transport.signal.aborted, true)
+  })
+
   test('honors RedisResult close options in the RESP2 session adapter', async () => {
     const { session } = createHarness()
     const transport = new InMemoryTransport()

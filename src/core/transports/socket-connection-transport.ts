@@ -38,13 +38,24 @@ export class SocketConnectionTransport implements ConnectionTransport {
   }
 
   async *read(): AsyncIterable<Buffer> {
-    // `destroyOnReturn: false`: leaving this loop early (the adapter returns
-    // after QUIT) must not destroy the stream. The default iterator destroys it
-    // with an AbortError, and from Node 24 a duplexPair answers an errored
-    // destroy by destroying its peer — the client — which strands the reply it
-    // has not read yet. Closing the connection is the owner's job instead:
-    // Resp2SessionAdapter calls close() once its loop ends, for any reason.
-    const chunks = this.socket.iterator({ destroyOnReturn: false })
+    // A real socket keeps Node's default and is destroyed when this loop exits,
+    // as on main. On peer EOF that is Redis's freeClient — output the peer
+    // never read is dropped — and it must happen here, not in the adapter's
+    // finally: that awaits pending writes first, which never flush to a peer
+    // that has stopped reading, so the socket would stay open for good.
+    //
+    // The in-process wire (a duplexPair, no destroySoon) opts out. The default
+    // destroys with an AbortError, and from Node 24 a duplexPair answers an
+    // errored destroy by destroying its peer — the client — which would strand
+    // a reply it has not read yet (e.g. after QUIT). Its writes cannot back up
+    // (unbounded high-water mark), so the adapter's close() is enough there.
+    //
+    // `readable.iterator()` and its `destroyOnReturn` option are documented as
+    // experimental.
+    const chunks = this.socket.iterator({
+      destroyOnReturn:
+        typeof (this.socket as MaybeSocket).destroySoon === 'function',
+    })
 
     try {
       for await (const chunk of chunks) {

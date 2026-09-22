@@ -74,9 +74,11 @@ so the PR body is not a durable home for a breaking-change note.
     resumes later. Previously a client that was not reading at that moment
     lost its buffered reply and never saw `'end'`. A client that never reads
     stays half-open until its owner destroys it, as a real socket would.
-  - While half-open, a client write fails with `EPIPE` and `end(cb)` calls
-    back. Previously the client socket was destroyed outright, so writes failed
-    with `ERR_STREAM_DESTROYED`.
+  - While half-open, a client write is accepted, as a TCP kernel accepts the
+    first write to a closed peer, and `end(cb)` calls back; the unread reply and
+    EOF are still delivered. Only after the client has read to EOF does a write
+    fail with `EPIPE`. Previously the client socket was destroyed outright, so
+    writes failed with `ERR_STREAM_DESTROYED` (without an `'error'` event).
   - A client `end()` (as ioredis `disconnect()` sends) makes the server close
     its side too, so the client sees `'finish'`, `'end'`, `'close'`.
   - An error passed to `destroy()` on one end is not carried to the other; the
