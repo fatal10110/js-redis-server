@@ -195,6 +195,52 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     }
   })
 
+  // Both templates render the echoed name with a `%s`-family conversion over a
+  // C string, so the echo stops at the first NUL — and that cut runs *before*
+  // `%.128s` counts its 128. Captured from 8.0.6:
+  //
+  //   CONFIG 'AA\0BB'                -> unknown subcommand 'AA'.
+  //   CONFIG 'A'*100 + \0 + 'A'*100  -> echoes 100, not 128
+  //   CONFIG '\0' + 'A'*10           -> echoes nothing
+  //   CONFIG 'A'*200 + \0 + 'A'*200  -> echoes 128 (NUL cut, then %.128s)
+  //
+  // Beyond fidelity this keeps a raw NUL out of a `-ERR ...\r\n` simple-error
+  // frame, a body real Redis has no way to produce.
+  test('the echoed subcommand stops at the first NUL byte', async () => {
+    const conn = await connect()
+    const NUL = Buffer.from([0])
+
+    const cases: [Buffer, string][] = [
+      [Buffer.concat([Buffer.from('AA'), NUL, Buffer.from('BB')]), 'AA'],
+      [
+        Buffer.concat([
+          Buffer.from('A'.repeat(100)),
+          NUL,
+          Buffer.from('A'.repeat(100)),
+        ]),
+        'A'.repeat(100),
+      ],
+      [Buffer.concat([NUL, Buffer.from('A'.repeat(10))]), ''],
+      // The NUL cut first, then `%.128s` on what is left.
+      [
+        Buffer.concat([
+          Buffer.from('A'.repeat(200)),
+          NUL,
+          Buffer.from('A'.repeat(200)),
+        ]),
+        'A'.repeat(128),
+      ],
+    ]
+
+    for (const [subcommand, echoed] of cases) {
+      await expectReply(
+        conn,
+        ['CONFIG', subcommand],
+        unknownSubcommandReply('CONFIG', echoed),
+      )
+    }
+  })
+
   // A different template with the same shape: real Redis'
   // `addReplySubcommandSyntaxError`, which a container raises itself when a
   // *known* subcommand gets arguments it cannot use. It keeps the `or wrong
@@ -214,6 +260,59 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     )
   })
 
+  // A container error raised inside `redis.call`/`redis.pcall` crosses the Lua
+  // boundary three times — out of the command, into the engine, back out as the
+  // script's return value — and each crossing used to decode it to a string.
+  // This one is real-safe: the echoed name is ASCII and the reply is identical
+  // to direct dispatch on real 8.0.6.
+  test('a nested subcommand error survives the Lua boundary', async () => {
+    const conn = await connect()
+
+    await expectReply(
+      conn,
+      ['EVAL', "return redis.pcall('PUBSUB', 'CHANNELS', 'a', 'b')", '0'],
+      "-ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.\r\n",
+    )
+  })
+
+  // The byte-exact half of the same journey, and mock-only for a reason worth
+  // stating: on real 7.0+ an unrecognized *subcommand* never reaches this
+  // template from a script at all. Script command lookup resolves
+  // container+subcommand up front, fails, and answers `ERR Unknown Redis
+  // command called from script` — verified on 8.0.6 for CONFIG, COMMAND, XINFO
+  // and XGROUP. This server dispatches the container first and produces the
+  // real unknown-subcommand reply instead; that divergence is filed separately
+  // (#439) and is not what this test is about.
+  //
+  // What it pins is the property that #413 is for: whatever reply a nested
+  // command produces, its bytes reach the client unchanged. Both Lua paths are
+  // covered — PUBSUB throws from `execute()` (the reply travels as a
+  // RedisValue), XINFO throws from its schema parser before the plan exists
+  // (the reply travels as a RedisCommandError through `redisErrorToLuaReply`).
+  test(
+    'a nested error keeps raw bytes across the Lua boundary',
+    { skip: testRunner.backend === 'real' && 'see the comment above' },
+    async () => {
+      const conn = await connect()
+      const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
+
+      for (const [container, script] of [
+        ['PUBSUB', "return redis.pcall('PUBSUB', ARGV[1])"],
+        ['XINFO', "return redis.pcall('XINFO', ARGV[1], 'k')"],
+      ]) {
+        await expectReply(
+          conn,
+          ['EVAL', script, '0', subcommand],
+          Buffer.concat([
+            Buffer.from("-ERR unknown subcommand '"),
+            subcommand,
+            Buffer.from(`'. Try ${container} HELP.\r\n`),
+          ]),
+        )
+      }
+    },
+  )
+
   // Not an unknown subcommand: a *known* one with the wrong argument count is
   // an arity error naming `<container>|<subcommand>` on 7.0+. Pinned here so
   // the refactor cannot quietly widen the unknown-subcommand path over it.
@@ -222,8 +321,8 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
   // real reply (`... for 'xgroup|create' command`) but this server answers
   // `... for 'xgroup' command`, because their arity check lives in a schema
   // parser that only knows `ctx.commandName` — the dispatched-subcommand naming
-  // problem tracked as #384 part 1. Asserting it here would fail on mock for a
-  // reason this change does not address.
+  // problem tracked as #438 (and #384 part 1). Asserting it here would fail on
+  // mock for a reason this change does not address.
   test('a known subcommand with the wrong arity is still an arity error', async () => {
     const conn = await connect()
 

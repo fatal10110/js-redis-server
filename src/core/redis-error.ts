@@ -22,10 +22,17 @@ export class RedisCommandError extends Error {
 
 /**
  * The reply body to put on the wire for a {@link RedisCommandError} — its raw
- * bytes when it carries any, otherwise its message.
+ * bytes when it carries any, otherwise its message. Every conversion from a
+ * caught error to a reply goes through this (or {@link RedisResult.fromError},
+ * which wraps it); reading `error.message` directly drops the bytes.
  */
 export function errorReplyBody(error: RedisCommandError): string | Buffer {
   return error.messageBytes ?? error.message
+}
+
+/** {@link errorReplyBody} for the callers that need a Buffer either way. */
+export function errorReplyBytes(error: RedisCommandError): Buffer {
+  return error.messageBytes ?? Buffer.from(error.message)
 }
 
 export class WrongNumberOfArgumentsError extends RedisCommandError {

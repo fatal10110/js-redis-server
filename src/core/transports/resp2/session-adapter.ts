@@ -1,5 +1,5 @@
 import { ClientSession } from '../../client-session'
-import { errorReplyBody, RedisCommandError } from '../../redis-error'
+import { RedisCommandError } from '../../redis-error'
 import { RedisResult } from '../../redis-result'
 import { encodeRedisResult } from '../../resp-encoder'
 import { isResponseStream } from '../../response-stream'
@@ -156,9 +156,7 @@ export class Resp2SessionAdapter {
     }
 
     if (err instanceof RedisCommandError) {
-      await this.writeRedisResult(
-        RedisResult.error(errorReplyBody(err), err.code),
-      )
+      await this.writeRedisResult(RedisResult.fromError(err))
       return
     }
 

@@ -360,6 +360,30 @@ describe(
       }
     })
 
+    // The echo stops at the first NUL on every profile — both templates render
+    // it with a `%s`-family conversion over a C string. On 6.2 that is the only
+    // truncation there is, which is why it cannot ride along with the length
+    // cut. Captured from 6.2.24 and 8.0.6 as `CONFIG 'A'*200 + \0 + 'A'*200`:
+    // 6.2 echoes 200, 8.0 echoes 128 (NUL cut first, then `%.128s`).
+    test('the echoed subcommand stops at the first NUL on every profile', async () => {
+      const short = await send('CONFIG', 'AA\0BB')
+      assert.ok(
+        short.includes("'AA'. Try CONFIG HELP."),
+        `expected the echo to stop at the NUL, got ${JSON.stringify(short)}`,
+      )
+
+      const long = await send(
+        'CONFIG',
+        `${'A'.repeat(200)}\0${'A'.repeat(200)}`,
+      )
+      const echoed = /'(A*)'/.exec(long)
+      assert.ok(echoed, `expected an echoed subcommand, got ${long}`)
+      assert.strictEqual(
+        echoed[1].length,
+        supportsUnknownSubcommandWording() ? 128 : 200,
+      )
+    })
+
     // `addReplySubcommandSyntaxError` — a *known* subcommand given arguments it
     // cannot use — flipped case at 7.0 too, but kept the `or wrong number of
     // arguments` clause and gained no truncation. Captured from 6.2.24 and

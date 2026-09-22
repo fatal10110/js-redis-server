@@ -207,11 +207,12 @@ function subcommandError(
   kind: 'unknown' | 'syntax',
 ): RedisCommandError {
   const raw = Buffer.isBuffer(subcommand) ? subcommand : Buffer.from(subcommand)
+  const echoed = asCString(raw)
 
   if (!profile.has('error.unknown-subcommand-wording')) {
     return subcommandErrorFrom(
       'Unknown subcommand or wrong number of arguments for',
-      raw,
+      echoed,
       container,
     )
   }
@@ -219,16 +220,40 @@ function subcommandError(
   if (kind === 'syntax') {
     return subcommandErrorFrom(
       'unknown subcommand or wrong number of arguments for',
-      raw,
+      echoed,
       container,
     )
   }
 
   return subcommandErrorFrom(
     'unknown subcommand',
-    raw.subarray(0, SUBCOMMAND_ECHO_LIMIT),
+    echoed.subarray(0, SUBCOMMAND_ECHO_LIMIT),
     container,
   )
+}
+
+/**
+ * The prefix up to the first NUL. Both templates render the echoed name with a
+ * `%s`-family conversion over a C string, so the echo stops at the first NUL
+ * byte — and that cut happens *before* `%.128s` counts its 128. Captured from
+ * real servers:
+ *
+ * ```
+ * 8.0.6   CONFIG 'AA\0BB'              -> unknown subcommand 'AA'. Try CONFIG HELP.
+ * 8.0.6   CONFIG 'A'*100 + \0 + 'A'*100 -> echoes 100, not 128
+ * 8.0.6   CONFIG '\0' + 'A'*10          -> echoes nothing at all
+ * 8.0.6   CONFIG 'A'*200 + \0 + 'A'*200 -> echoes 128 (NUL cut, then %.128s)
+ * 6.2.24  CONFIG 'A'*200 + \0 + 'A'*200 -> echoes 200 (NUL cut, no length cut)
+ * ```
+ *
+ * So 6.2 truncates at a NUL even though it does not truncate by length, which
+ * is why this runs ahead of the profile branch rather than inside it. It also
+ * keeps a raw NUL out of a `-ERR ...\r\n` simple-error frame, a body real Redis
+ * has no way to produce.
+ */
+function asCString(value: Buffer): Buffer {
+  const nul = value.indexOf(0)
+  return nul === -1 ? value : value.subarray(0, nul)
 }
 
 function subcommandErrorFrom(

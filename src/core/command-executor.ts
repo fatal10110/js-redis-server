@@ -4,7 +4,6 @@ import { parseCommandArgs } from './command-schema'
 import type { ExecutionPolicy } from './execution-policies'
 import {
   ExecCommandAbortError,
-  errorReplyBody,
   RedisCommandError,
   UnknownRedisCommandError,
   WrongNumberOfArgumentsError,
@@ -156,7 +155,7 @@ export class CommandExecutor {
     }
 
     ctx.session.markTransactionDirty()
-    return RedisResult.error(errorReplyBody(err), err.code)
+    return RedisResult.fromError(err)
   }
 
   /**
@@ -239,7 +238,7 @@ export class CommandExecutor {
           ctx.session.markTransactionDirty()
         }
 
-        return RedisResult.error(errorReplyBody(err), err.code)
+        return RedisResult.fromError(err)
       }
 
       throw err
@@ -316,7 +315,7 @@ export class CommandExecutor {
           ctx.session.markTransactionDirty()
         }
 
-        return RedisResult.error(errorReplyBody(err), err.code)
+        return RedisResult.fromError(err)
       }
 
       throw err

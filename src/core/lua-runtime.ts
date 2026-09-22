@@ -9,6 +9,7 @@ import {
 import type { CompatibilityProfile } from './compatibility/profile'
 import type { CommandPlan } from './command-definition'
 import {
+  errorReplyBytes,
   RedisCommandError,
   ScriptCallNoCommandError,
   ScriptNotAllowedCommandError,
@@ -215,7 +216,9 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   if ('err' in value) {
     // The engine supplies an explicit code (or none, for verbatim returned error
     // tables); the host does not infer one.
-    return RedisValue.error(value.err.toString(), value.code?.toString())
+    // `value.err` is already bytes; decoding it here would undo the
+    // byte-exact echo a command like `CONFIG <raw bytes>` produced.
+    return RedisValue.error(value.err, value.code?.toString())
   }
 
   // RESP3 reply shapes the engine produces under redis.setresp(3).
@@ -360,7 +363,7 @@ function normalizeScriptCommandValue(value: RedisValue): RedisValue {
 
 function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {
   return {
-    err: Buffer.from(err.message),
+    err: errorReplyBytes(err),
     code: Buffer.from(err.code),
   }
 }

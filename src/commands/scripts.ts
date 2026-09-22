@@ -489,7 +489,7 @@ async function runLuaScript(
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {
     if (err instanceof RedisCommandError) {
-      return RedisResult.error(err.message, err.code)
+      return RedisResult.fromError(err)
     }
 
     const message = err instanceof Error ? err.message : String(err)
