@@ -118,6 +118,36 @@ so the PR body is not a durable home for a breaking-change note.
   identical. `RespEncodeOptions` itself is **kept** — it is still the options
   parameter of `encodeRedisValue` / `encodeRedisResult`.
 
+### Changed
+
+- **BREAKING** The two socketless clients — `createInMemoryClient()` and
+  `createNodeRedisMock()`'s raw `sendCommand()` — now decode every reply whose
+  shape RESP decides according to the protocol the connection negotiated,
+  instead of always handing back the RESP3 shape ([#414]). Both start on RESP2,
+  so on a connection that never sends `HELLO 3` the visible replies change:
+
+  ```
+  HGETALL / CONFIG GET   { f1: 'v1' }      -> ['f1', 'v1']
+  XREAD                  { s: […] }        -> [['s', […]]]
+  ZSCORE / ZINCRBY       2.5               -> '2.5'
+  ZRANGE … WITHSCORES    ['a', 1]          -> ['a', '1']
+  big number (Lua)       12345678n         -> '12345678'
+  boolean (Lua)          true / false      -> 1 / 0
+  ```
+
+  This is what real node-redis returns on the same path, which the old shapes
+  contradicted at RESP2. Two ways forward for a caller that wants the object and
+  number shapes back: send `HELLO 3` on the connection (a real RESP3 client is
+  what produces them), or, on the node-redis facade, use the curated method —
+  `hGetAll()` still returns an object at both protocols, because node-redis'
+  own `transformReply` builds it from the flat array. `createIoredisMock()`
+  drives the real RESP2-only `ioredis`, and the wire encoder, the server and
+  every command implementation are unchanged.
+
+  Follows [#408], which made the `WITHSCORES` / `WITHVALUES` pair shape
+  protocol-dependent; `version` on `DecodeRedisValueOptions` now carries every
+  such shape rather than one knob per kind.
+
 ### Added
 
 - `PubSubKind` (`'channel' | 'shard' | 'pattern'`) is exported from `/core`,
@@ -155,7 +185,9 @@ requests they contain.
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376
 [#377]: https://github.com/fatal10110/js-redis-server/pull/377
 [#378]: https://github.com/fatal10110/js-redis-server/pull/378
+[#408]: https://github.com/fatal10110/js-redis-server/pull/408
 [#410]: https://github.com/fatal10110/js-redis-server/pull/410
 [#413]: https://github.com/fatal10110/js-redis-server/issues/413
+[#414]: https://github.com/fatal10110/js-redis-server/issues/414
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

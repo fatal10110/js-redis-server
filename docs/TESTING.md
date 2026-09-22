@@ -258,15 +258,22 @@ Three flavours, depending on which client you want to look like:
 The two hand-rolled clients (`createNodeRedisMock`, `createInMemoryClient`)
 start on RESP2 and follow a `HELLO 3` the way a real connection does, so every
 reply whose shape the protocol decides changes with it — RESP2 has no map,
-double or pair type, and these clients hand back what a real client reads off
-the wire at each version:
+double, boolean, big-number or pair type, and these clients hand back what a
+real client reads off the wire at each version:
 
-| reply                                 | RESP2                     | RESP3                     |
-| :------------------------------------ | :------------------------ | :------------------------ |
-| `ZRANGE … WITHSCORES`, `HRANDFIELD … WITHVALUES` | `['a', '1', 'b', '2']` | `[['a', 1], ['b', 2]]` |
-| `HGETALL`, `CONFIG GET`               | `['f1', 'v1']`            | `{ f1: 'v1' }`            |
-| `XREAD`                               | `[['s', […]]]`            | `{ s: […] }`              |
-| `ZSCORE`, `ZINCRBY`                   | `'2.5'`                   | `2.5`                     |
+| reply                      | RESP2                    | RESP3                      |
+| :------------------------- | :----------------------- | :------------------------- |
+| `ZRANGE … WITHSCORES`      | `['a', '1', 'b', '2']`   | `[['a', 1], ['b', 2]]`     |
+| `HRANDFIELD … WITHVALUES`  | `['f1', 'v1']`           | `[['f1', 'v1']]`           |
+| `HGETALL`, `CONFIG GET`    | `['f1', 'v1']`           | `{ f1: 'v1' }`             |
+| `XREAD`                    | `[['s', […]]]`           | `{ s: […] }`               |
+| `ZSCORE`, `ZINCRBY`        | `'2.5'`                  | `2.5`                      |
+
+Only the pair *shape* is shared between the first two rows: a `WITHSCORES`
+score is a double, so it is a string at RESP2 and a number at RESP3, while a
+`WITHVALUES` hash value is a bulk string at both. Lua under `redis.setresp(3)`
+can also return a big number (digit string at RESP2, `bigint` at RESP3) and a
+boolean (`1` / `0` at RESP2, `true` / `false` at RESP3).
 
 (`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
 only ever sees the left column.) The *curated* methods on the node-redis facade

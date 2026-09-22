@@ -249,6 +249,55 @@ describe('decode option divergences between the two clients', () => {
     }
   })
 
+  test('version: big-number is the digit string on RESP2, a bigint on RESP3', () => {
+    // Real node-redis, `EVAL 'return {big_number="12345678901234567890"}' 0`:
+    //   RESP2 → "12345678901234567890"   RESP3 → 12345678901234567890n
+    // Reachable here through Lua's `redis.setresp(3)`, the same as `double`.
+    const huge = 12345678901234567890n
+    for (const client of bothClients) {
+      assert.strictEqual(
+        decodeRedisValue(
+          { kind: 'big-number', value: huge },
+          { ...client, version: 2 },
+        ),
+        '12345678901234567890',
+      )
+      assert.strictEqual(
+        decodeRedisValue(
+          { kind: 'big-number', value: huge },
+          { ...client, version: 3 },
+        ),
+        huge,
+      )
+    }
+  })
+
+  test('version: a boolean is the 1/0 integer on RESP2, a boolean on RESP3', () => {
+    // RESP2 has no boolean; `encodeRedisValue` writes `:1` / `:0`, so that is
+    // the number a client reads back. Only RESP3 has `#t` / `#f`.
+    for (const client of bothClients) {
+      for (const [value, resp2] of [
+        [true, 1],
+        [false, 0],
+      ] as const) {
+        assert.strictEqual(
+          decodeRedisValue(
+            { kind: 'boolean', value },
+            { ...client, version: 2 },
+          ),
+          resp2,
+        )
+        assert.strictEqual(
+          decodeRedisValue(
+            { kind: 'boolean', value },
+            { ...client, version: 3 },
+          ),
+          value,
+        )
+      }
+    }
+  })
+
   test('map keys stay utf8 strings even with returnBuffers', () => {
     const map: RedisValue = {
       kind: 'map',
@@ -293,6 +342,24 @@ describe('decodeRedisKey', () => {
     assert.strictEqual(decodeRedisKey({ kind: 'integer', value: 7 }), '7')
     assert.strictEqual(decodeRedisKey({ kind: 'bulk-string', value: null }), '')
     assert.strictEqual(decodeRedisKey({ kind: 'null' }), '')
+  })
+
+  test('spells a double key the way the wire does, not the way JS does', () => {
+    // Same formatter as the encoder and the value path, so a key and a value
+    // holding the same double never disagree: `inf`, never `Infinity`.
+    assert.strictEqual(decodeRedisKey({ kind: 'double', value: 2.5 }), '2.5')
+    assert.strictEqual(
+      decodeRedisKey({ kind: 'double', value: Infinity }),
+      'inf',
+    )
+    assert.strictEqual(
+      decodeRedisKey({ kind: 'double', value: -Infinity }),
+      '-inf',
+    )
+    assert.strictEqual(
+      decodeRedisKey({ kind: 'double', value: Number.NaN }),
+      'nan',
+    )
   })
 })
 

@@ -1200,10 +1200,18 @@ function decodeReply(
 
 /**
  * Decode a reply a curated method immediately narrows to a scalar (or a flat
- * string array). None of the commands behind those methods replies with a
- * protocol-dependent kind — no `map`, `double` or pair reaches here — so the
- * version passed is unobservable. A curated method for a command that *does*
- * (a `zScore`, say) needs the connection's real version, not this.
+ * string array). None of the commands behind those methods replies with a kind
+ * whose shape the protocol decides — no `map`, `double`, pair, `boolean` or
+ * `big-number` reaches here — so the pinned version is unobservable, and the
+ * `asNumber` / `asString` coercions on top of it stay honest.
+ *
+ * Adding a curated method for a command that *does* reply with one of those:
+ * do not reach for this, and do not reach for `decodeReply` either. Ask what
+ * node-redis' own `transformReply` for that command produces. Usually it
+ * normalises, so the method is protocol-*independent* — real `zScore()` is a
+ * number at RESP2 as well as RESP3, and `hGetAll()` an object at both — which
+ * means decoding the reply's own kind directly, as {@link decodeMapReply}
+ * does, not passing the live version to a decoder that would then follow it.
  */
 function decodeScalarReply(value: RedisValue): NodeRedisReply {
   return decodeRedisValue(value, { ...NODE_REDIS_DECODE_OPTIONS, version: 2 })
@@ -1213,20 +1221,22 @@ function decodeScalarReply(value: RedisValue): NodeRedisReply {
  * Decode a map reply for a curated method that presents it as an object on
  * *both* protocols, the way node-redis' `transformReply` does — see #414.
  * Entries still decode under the connection's own version, so only the
- * container shape is pinned. A non-map reply (nothing currently produces one
- * here) yields `{}` rather than a surprise scalar.
+ * container shape is pinned.
+ *
+ * Anything that is not a map falls through to the ordinary decoder rather than
+ * being coerced here — an `error` above all, which is what a wrong-type key
+ * replies with, and which real node-redis throws from `hGetAll()` too. Swallow
+ * it into an empty object and it becomes indistinguishable from a missing key.
  */
 function decodeMapReply(
   value: RedisValue,
   respVersion: RespVersion,
-): { [key: string]: NodeRedisReply } {
-  if (value.kind !== 'map' && value.kind !== 'map-pairs') {
-    return {}
+): NodeRedisReply {
+  const options = { ...NODE_REDIS_DECODE_OPTIONS, version: respVersion }
+  if (value.kind === 'map' || value.kind === 'map-pairs') {
+    return decodeRedisMapEntries(value.entries, options)
   }
-  return decodeRedisMapEntries(value.entries, {
-    ...NODE_REDIS_DECODE_OPTIONS,
-    version: respVersion,
-  })
+  return decodeRedisValue(value, options)
 }
 
 function asNumber(value: RedisValue): number {

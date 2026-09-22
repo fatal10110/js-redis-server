@@ -25,8 +25,9 @@ export type NativeRedisReply =
 export type DecodeRedisValueOptions = ClientDecodeOptions & {
   /**
    * RESP version the connection served this reply under. RESP2 has no map,
-   * double or pair type, so three reply kinds are shaped by the protocol
-   * rather than by the client, and all three derive from this one bit:
+   * double, boolean, big-number or pair type, so these reply kinds are shaped
+   * by the protocol rather than by the client, and all of them derive from
+   * this one bit:
    *
    *  - `map` — flat `[k, v, k, v, …]` on RESP2, an object on RESP3.
    *  - `map-pairs` — `[[k, v], …]` on RESP2, an object on RESP3.
@@ -35,8 +36,12 @@ export type DecodeRedisValueOptions = ClientDecodeOptions & {
    *    `for (const [field, value] of reply)` must not be handed a flat array.
    *  - `double` — the bulk string Redis formats on RESP2, a JS number on
    *    RESP3.
+   *  - `big-number` — the digits as a bulk string on RESP2, a `bigint` on
+   *    RESP3.
+   *  - `boolean` — the `:1` / `:0` integer on RESP2, a JS boolean on RESP3.
    *
-   * Each matches what `encodeRedisValue` puts on the wire at that version, and
+   * Every other kind decodes the same way at both versions. Each of the above
+   * matches what `encodeRedisValue` puts on the wire at that version, and
    * therefore what a real client reads back off it. Mirrors
    * `encodeRedisValue`'s `{ version }`, and is read per reply: `HELLO` switches
    * it mid-connection. (ioredis is RESP2-only, so a real ioredis only ever sees
@@ -134,9 +139,19 @@ export function decodeRedisValue(
       return options.returnBuffers ? Buffer.from(text) : text
     }
     case 'boolean':
-      return value.value
-    case 'big-number':
-      return value.value
+      // RESP2 has no boolean: the encoder writes the `:1` / `:0` integer, so
+      // that is the number a client reads back. Only RESP3's `#t` / `#f` is a
+      // JS boolean. (Reachable through Lua's `redis.setresp(3)`.)
+      return options.version === 3 ? value.value : value.value ? 1 : 0
+    case 'big-number': {
+      // Same split as `double`: RESP3's `(` is the only big number on the
+      // wire, and RESP2 sends the digits as a bulk string.
+      if (options.version === 3) {
+        return value.value
+      }
+      const digits = value.value.toString()
+      return options.returnBuffers ? Buffer.from(digits) : digits
+    }
     case 'array':
     case 'set':
       return value.items.map(decode)
@@ -201,8 +216,10 @@ export function decodeRedisKey(value: RedisValue): string {
       return value.value === null ? '' : value.value.toString('utf8')
     case 'verbatim':
       return value.value.toString('utf8')
-    case 'integer':
     case 'double':
+      // The Redis spelling, not JavaScript's: `inf`, not `Infinity`.
+      return formatRedisDouble(value.value)
+    case 'integer':
     case 'big-number':
       return String(value.value)
     case 'boolean':

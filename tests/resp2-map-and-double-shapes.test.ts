@@ -143,17 +143,29 @@ describe('map and double shapes follow the negotiated RESP version', () => {
       // the command has run, so this falls out of the same switch.
       const c = await seeded(2)
 
+      // Real node-redis, sendCommand at either protocol:
+      //   HELLO 3 → {server:…, proto:3, …}
+      //   HELLO 2 → ["server",…,"proto",2,…]
       const upgraded = await c.command('HELLO', 3)
       assert.ok(
-        upgraded !== null && !Array.isArray(upgraded),
+        upgraded !== null &&
+          typeof upgraded === 'object' &&
+          !Array.isArray(upgraded) &&
+          !Buffer.isBuffer(upgraded),
         `expected HELLO 3 to answer with a map, got ${JSON.stringify(upgraded)}`,
       )
+      assert.strictEqual((upgraded as { proto: number }).proto, 3)
 
       const downgraded = await c.command('HELLO', 2)
       assert.ok(
         Array.isArray(downgraded),
         `expected HELLO 2 to answer with a flat array, got ${JSON.stringify(downgraded)}`,
       )
+      // The flat array is the map's entries in order, so `proto` is a field
+      // name followed by its value — not a key on an object.
+      const protoAt = downgraded.indexOf('proto')
+      assert.ok(protoAt >= 0 && protoAt % 2 === 0, 'proto is a field name')
+      assert.strictEqual(downgraded[protoAt + 1], 2)
     })
   })
 
@@ -229,6 +241,27 @@ describe('map and double shapes follow the negotiated RESP version', () => {
       const resp3 = await seeded(3)
       assert.deepStrictEqual(await resp3.hGetAll('h'), { f1: 'v1', f2: 'v2' })
       assert.deepStrictEqual(await resp3.hGetAll('missing'), {})
+    })
+
+    test('curated hGetAll() still throws on a wrong-type key', async () => {
+      // The object shape is pinned for a *map* reply only. An error must still
+      // reach the ordinary decoder and throw — real node-redis' `hGetAll()`
+      // rejects with WRONGTYPE at both protocols. Coercing every non-map reply
+      // to `{}` would swallow it, and the `{}` would be indistinguishable from
+      // the missing-key case asserted above.
+      for (const resp of [2, 3] as const) {
+        const c = await seeded(resp)
+        await c.sendCommand(['SET', 'str', 'v'])
+
+        await assert.rejects(
+          () => c.hGetAll('str'),
+          (err: Error) => {
+            assert.match(err.message, /^WRONGTYPE /)
+            return true
+          },
+          `RESP${resp}: hGetAll on a string key must throw, not return {}`,
+        )
+      }
     })
 
     test('RESP2 sendCommand sees a score as a string, RESP3 as a number', async () => {
