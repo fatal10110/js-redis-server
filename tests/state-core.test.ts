@@ -307,26 +307,73 @@ describe('new Redis state core', () => {
       formatMonitorTimestamp(1_695_000_000_999_999),
       '1695000000.999999',
     )
+
+    // `formatMonitorTimestamp` is published API via `/core`, so a caller can
+    // hand it a non-integer even though `monitorTimestampMicros()` never does.
+    // Without the `Math.trunc` guard `padStart` cannot repair a fractional
+    // string and the output grows a second decimal point.
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_000_000.5),
+      '1695000000.000000',
+    )
+    assert.strictEqual(formatMonitorTimestamp(1.5), '0.000001')
   })
 
-  test('monitor timestamps track wall-clock time with sub-millisecond resolution', () => {
+  test('monitor timestamps have sub-millisecond resolution', () => {
     const samples: number[] = []
     for (let i = 0; i < 64; i++) {
       samples.push(monitorTimestampMicros())
     }
 
-    // Near Date.now(), so the epoch anchor is real wall-clock time and not a
-    // raw monotonic counter.
     for (const sample of samples) {
-      assert.ok(Math.abs(sample / 1000 - Date.now()) < 1000)
       assert.ok(Number.isSafeInteger(sample))
     }
 
-    // Non-decreasing, and not quantized to whole milliseconds.
+    // Non-decreasing while the wall clock is stable, and — the whole point of
+    // #388 — not quantized to whole milliseconds. This catches an inversion as
+    // small as one microsecond, where the raw-TCP feed test needs ~3ms.
     for (let i = 1; i < samples.length; i++) {
-      assert.ok(samples[i] >= samples[i - 1])
+      assert.ok(
+        samples[i] >= samples[i - 1],
+        `sample ${i} went backwards: ${samples[i - 1]} then ${samples[i]}`,
+      )
     }
     assert.ok(samples.some(sample => sample % 1000 !== 0))
+  })
+
+  // The clock deliberately follows a large wall-clock step rather than clamping
+  // forward, matching real Redis's `gettimeofday()`. Pinned here so the
+  // trade-off is a decision on record rather than an accident, and so the
+  // "monotonic" claim in the JSDoc stays scoped to a stable wall clock.
+  test('re-anchors on a wall-clock step instead of drifting from it', () => {
+    const realDateNow = Date.now
+
+    try {
+      // Anchor against the real clock first.
+      monitorTimestampMicros()
+
+      const steppedBackMs = realDateNow() - 5_000
+      Date.now = () => steppedBackMs
+      const afterStepBack = monitorTimestampMicros()
+      assert.ok(
+        Math.abs(afterStepBack / 1000 - steppedBackMs) <= 1,
+        `a backwards wall-clock step must re-anchor, got ${afterStepBack} for ${steppedBackMs}`,
+      )
+
+      const steppedForwardMs = realDateNow() + 5_000
+      Date.now = () => steppedForwardMs
+      const afterStepForward = monitorTimestampMicros()
+      assert.ok(
+        Math.abs(afterStepForward / 1000 - steppedForwardMs) <= 1,
+        `a forwards wall-clock step must re-anchor, got ${afterStepForward} for ${steppedForwardMs}`,
+      )
+    } finally {
+      Date.now = realDateNow
+    }
+
+    // Restoring the real clock is itself a >1s step, so the next call re-anchors
+    // and the helper is left usable for any later test.
+    assert.ok(Math.abs(monitorTimestampMicros() / 1000 - Date.now()) <= 1000)
   })
 })
 

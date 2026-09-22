@@ -11,10 +11,8 @@ import {
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
 import { isResponseStream, ResponseStream } from './response-stream'
-import {
-  monitorTimestampMicros,
-  type RedisMonitorCommandEvent,
-} from '../state/monitor-feed'
+import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
+import { monitorTimestampMicros } from './clock'
 import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,

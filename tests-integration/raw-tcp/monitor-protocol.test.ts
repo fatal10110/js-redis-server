@@ -374,12 +374,14 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     for (let i = 0; i < sampleCount; i++) {
       frames.push(commandFrame('ping', `${marker}:${i}`))
     }
+    // Captured before the write, so it is a genuine lower bound on every
+    // timestamp under test rather than a reading taken after they were stamped.
+    const before = Date.now()
     actor.write(Buffer.concat(frames))
     for (let i = 0; i < sampleCount; i++) {
       await actor.readRawFrame()
     }
 
-    const before = Date.now()
     const timestamps = await collectMonitorTimestamps(
       monitor,
       marker,
@@ -400,24 +402,37 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
         .join(', ')}`,
     )
 
-    // Still a plausible wall clock, not a raw monotonic counter.
+    // Still a plausible wall clock, not a raw monotonic counter. Symmetric
+    // 1s slack on both ends, since `before`/`after` genuinely bracket the
+    // window in which every line was stamped.
     for (const value of timestamps) {
-      const millis = Number(value.text) * 1000
+      const millis = value.micros / 1000
       assert.ok(
-        millis >= before - 60_000 && millis <= after + 1_000,
-        `monitor timestamp ${value.text} is not near wall-clock time`,
+        millis >= before - 1_000 && millis <= after + 1_000,
+        `monitor timestamp ${value.text} is not near wall-clock time (window ${before}..${after})`,
       )
     }
 
-    // Monotonic across the feed, like a real capture.
+    // Monotonic across the feed, like a real capture. Compared as integer
+    // microseconds, not as strings: a string compare only trips once the
+    // inversion reaches the millisecond digits.
     for (let i = 1; i < timestamps.length; i++) {
       assert.ok(
-        timestamps[i].text >= timestamps[i - 1].text,
+        timestamps[i].micros >= timestamps[i - 1].micros,
         `monitor timestamps went backwards: ${timestamps[i - 1].text} then ${timestamps[i].text}`,
       )
     }
   })
 })
+
+type MonitorTimestamp = {
+  /** The raw `<seconds>.<6 digits>` field, for assertion messages. */
+  text: string
+  /** Just the six fractional digits. */
+  microseconds: string
+  /** The whole timestamp as integer microseconds, for ordering compares. */
+  micros: number
+}
 
 /**
  * Read monitor feed lines until `count` of them mention `marker`, returning the
@@ -428,8 +443,8 @@ async function collectMonitorTimestamps(
   connection: RawRedisConnection,
   marker: string,
   count: number,
-): Promise<{ text: string; microseconds: string }[]> {
-  const timestamps: { text: string; microseconds: string }[] = []
+): Promise<MonitorTimestamp[]> {
+  const timestamps: MonitorTimestamp[] = []
 
   while (timestamps.length < count) {
     const line = respText(
@@ -439,9 +454,13 @@ async function collectMonitorTimestamps(
       continue
     }
 
-    const match = /^(\d+\.(\d{6})) \[/.exec(line)
+    const match = /^((\d+)\.(\d{6})) \[/.exec(line)
     assert.ok(match, `unexpected monitor line: ${line}`)
-    timestamps.push({ text: match[1], microseconds: match[2] })
+    timestamps.push({
+      text: match[1],
+      microseconds: match[3],
+      micros: Number(match[2]) * 1_000_000 + Number(match[3]),
+    })
   }
 
   return timestamps

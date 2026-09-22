@@ -108,6 +108,7 @@ export { RedisValue } from './core/redis-value'
 export { RedisResult } from './core/redis-result'
 export { encodeRedisResult, encodeRedisValue } from './core/resp-encoder'
 export { isResponseStream } from './core/response-stream'
+export { formatMonitorTimestamp, monitorTimestampMicros } from './core/clock'
 export { SerialTurnQueue } from './core/turn-queue'
 export {
   REDIS_CLUSTER_SLOT_COUNT,
@@ -116,8 +117,6 @@ export {
   RedisServerState,
   RedisMonitorFeed,
   RedisMutationBus,
-  formatMonitorTimestamp,
-  monitorTimestampMicros,
   RedisFunctionRegistry,
   RedisPubSubBroker,
   RedisScriptCache,

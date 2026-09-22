@@ -4,11 +4,8 @@ import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { ResponseStream } from '../core/response-stream'
-import {
-  formatMonitorTimestamp,
-  type RedisMonitorCommandEvent,
-  type Unsubscribe,
-} from '../state'
+import { formatMonitorTimestamp } from '../core/clock'
+import type { RedisMonitorCommandEvent, Unsubscribe } from '../state'
 import { commandDocs } from './introspection'
 
 export const monitorCommand = defineCommand({
