@@ -29,15 +29,35 @@ so the PR body is not a durable home for a breaking-change note.
 - **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
   `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
   subscribed-mode, transaction) ever implemented them — only tests did — and
-  supporting them forced the executor to keep a synchronous mirror of its policy
-  chain plus a thenable-stream re-wrap for every hook result.
+  supporting them forced a result/stream rewriting loop into both executor
+  paths, plus an `assertSyncPolicyResult` guard to reject an async hook on the
+  synchronous (Lua) path.
 
   `beforeExecute` is unchanged and still the place to short-circuit a command
-  (queue / redirect / reject); it may still be async on the network path. A
-  custom policy that rewrote results or wrapped streams has no drop-in
-  replacement — do it inside the command definition, or wrap `CommandExecutor`.
-  Because the hooks were optional, a policy object that still declares them
-  compiles and runs, silently doing nothing.
+  (queue / redirect / reject); it may still be async on the network path, and
+  is still rejected when it returns a promise under `redis.call`. A custom
+  policy that rewrote results or wrapped streams has no drop-in replacement —
+  do it inside the command definition, or wrap `CommandExecutor`. Because the
+  hooks were optional, a policy object that still declares them compiles and
+  runs, silently doing nothing.
+
+- **BREAKING (`/core`)** `CommandExecutor.executeRawWithPlan()` is removed
+  ([#359]). It was a public method on the exported `CommandExecutor` class with
+  exactly one caller — `executeRaw`, which discarded the `plan` half of its
+  return value — so it is folded into `executeRaw`. The `RawExecutionResult`
+  type it returned is gone with it (that type was never re-exported, so only the
+  method is a break).
+
+  ```
+  (await executor.executeRawWithPlan(cmd, args, ctx)).result
+    -> await executor.executeRaw(cmd, args, ctx)
+  ```
+
+  There is no replacement for the `plan` half. A caller that wants the
+  `CommandPlan` builds it with the still-public `executor.plan(cmd, args)` and
+  passes it to `executor.executePlan(plan, ctx)` — note that `plan()` *throws*
+  on an unknown command or arity error where `executeRaw` returns those as a
+  RESP error reply.
 
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**

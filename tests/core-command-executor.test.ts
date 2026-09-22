@@ -48,6 +48,42 @@ function createContext(executor?: CommandExecutor): RedisExecutionContext {
   }
 }
 
+/**
+ * A two-database server whose context exposes `db` as a live getter, plus a
+ * command that switches the selected database part-way through and only then
+ * writes — the shape of a `SELECT` queued inside MULTI (issue #94).
+ */
+function createSelectMidCommandFixture() {
+  const server = new RedisServerState({ databaseCount: 2 })
+  let selectedDatabase = 0
+
+  const registry = new CommandRegistry()
+  registry.register(
+    defineCommand({
+      name: 'select-then-write',
+      schema: t.object({}),
+      flags: ['write'],
+      keys: () => [],
+      execute: (_args, commandCtx) => {
+        selectedDatabase = 1
+        commandCtx.db.setString(Buffer.from('key'), Buffer.from('value'))
+        return RedisResult.ok()
+      },
+    }),
+  )
+
+  const executor = new CommandExecutor({ registry })
+  const ctx: RedisExecutionContext = {
+    ...createContext(executor),
+    get db() {
+      return server.getDatabase(selectedDatabase)
+    },
+    server,
+  }
+
+  return { executor, ctx, server }
+}
+
 describe('new command executor core', () => {
   test('parses typed args, extracts keys, and executes command definitions', async () => {
     const setCommand = defineCommand({
@@ -292,34 +328,7 @@ describe('new command executor core', () => {
     // collect deferred events. That derivation must not snapshot `ctx.db`: a
     // queued `SELECT N` runs mid-EXEC and every later command has to resolve
     // the currently selected database at access time (issue #94).
-    const server = new RedisServerState({ databaseCount: 2 })
-    let selectedDatabase = 0
-
-    const registry = new CommandRegistry()
-    registry.register(
-      defineCommand({
-        name: 'select-then-write',
-        schema: t.object({}),
-        flags: ['write'],
-        keys: () => [],
-        execute: (_args, commandCtx) => {
-          selectedDatabase = 1
-          commandCtx.db.setString(Buffer.from('key'), Buffer.from('value'))
-          return RedisResult.ok()
-        },
-      }),
-    )
-
-    const executor = new CommandExecutor({ registry })
-    const baseContext = createContext(executor)
-    const ctx: RedisExecutionContext = {
-      ...baseContext,
-      get db() {
-        return server.getDatabase(selectedDatabase)
-      },
-      server,
-    }
-
+    const { executor, ctx, server } = createSelectMidCommandFixture()
     server.monitorFeed.subscribe(() => {})
 
     assert.deepStrictEqual(
@@ -334,6 +343,19 @@ describe('new command executor core', () => {
       server.getDatabase(1).getString(Buffer.from('key')),
       Buffer.from('value'),
     )
+  })
+
+  test('restores the notify-command tag on the database it tagged', async () => {
+    // `ctx.db` is a live getter, so a command that switches databases mid-flight
+    // must not have its keyspace-notification tag restored onto the *new*
+    // database — that would leave the original tagged forever and mis-name a
+    // later write event.
+    const { executor, ctx, server } = createSelectMidCommandFixture()
+
+    await executor.executeRaw('select-then-write', [], ctx)
+
+    assert.strictEqual(server.getDatabase(0).activeNotifyCommand, null)
+    assert.strictEqual(server.getDatabase(1).activeNotifyCommand, null)
   })
 
   test('supports open command registration and explicit overrides', () => {

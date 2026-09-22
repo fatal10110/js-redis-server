@@ -179,14 +179,14 @@ export class CommandExecutor {
         }
       }
 
-      const previousNotifyCommand = tagNotifyCommand(plan, ctx)
+      const restoreNotifyCommand = tagNotifyCommand(plan, ctx)
       try {
         const result = plan.definition.execute(plan.args, ctx)
         return isResponseStream(result)
           ? ensureNonThenableStream(result)
           : await result
       } finally {
-        ctx.db.activeNotifyCommand = previousNotifyCommand
+        restoreNotifyCommand()
       }
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
@@ -233,14 +233,14 @@ export class CommandExecutor {
 
       assertSyncCommandDefinition(plan)
 
-      const previousNotifyCommand = tagNotifyCommand(plan, ctx)
+      const restoreNotifyCommand = tagNotifyCommand(plan, ctx)
       try {
         return assertSyncCommandResult(
           plan,
           plan.definition.execute(plan.args, ctx),
         )
       } finally {
-        ctx.db.activeNotifyCommand = previousNotifyCommand
+        restoreNotifyCommand()
       }
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
@@ -318,10 +318,18 @@ function createMonitorDeferredContext(
   // mid-EXEC and every later command must resolve the currently selected
   // database — issue #94), and a spread would freeze it to the database that
   // was selected when this context was built.
+  //
+  // INVARIANT: the returned context must never be spread (`{...ctx}`) or
+  // key-enumerated (`Object.keys`/`assign`/JSON). Every field except `monitor`
+  // lives on the prototype, so enumerating own properties yields `{ monitor }`
+  // and silently loses the rest. Nothing in `src/` does this today; read
+  // through the context instead of copying it.
   return Object.create(ctx, {
     monitor: {
       value: { ...ctx.monitor, deferredEvents: [] },
       enumerable: true,
+      writable: true,
+      configurable: true,
     },
   }) as RedisExecutionContext
 }
@@ -419,17 +427,26 @@ function applyPolicyShortCircuit(
 
 /**
  * Tag the database with the active command so keyspace notifications can name
- * write events after the originating command, and return the previous tag.
- * Callers restore it in a `finally` — nested (Lua `redis.call`) and
- * parked/interleaved commands depend on the save/restore.
+ * write events after the originating command, and return the undo. Callers run
+ * it in a `finally` — nested (Lua `redis.call`) and parked/interleaved commands
+ * depend on the save/restore.
+ *
+ * The database is resolved *once*, here, and the closure restores that same
+ * one. `ctx.db` is a live getter, so a command that switches databases
+ * mid-flight (SELECT) would otherwise have its tag restored onto the new
+ * database while the old one kept the stale tag forever.
  */
 function tagNotifyCommand(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-): string | null {
-  const previous = ctx.db.activeNotifyCommand
-  ctx.db.activeNotifyCommand = plan.definition.name
-  return previous
+): () => void {
+  const db = ctx.db
+  const previous = db.activeNotifyCommand
+  db.activeNotifyCommand = plan.definition.name
+
+  return () => {
+    db.activeNotifyCommand = previous
+  }
 }
 
 /**
@@ -459,6 +476,12 @@ function executionErrorResult(
  * awaiting a thenable stream would unwrap it into its resolved value, breaking
  * streaming. This re-wraps such a stream in a plain, non-thenable object so it
  * survives the surrounding `await` untouched.
+ *
+ * NOTE: no *shipped* command needs this — both stream producers in the tree
+ * (`src/commands/monitor.ts`, `src/commands/pubsub.ts`) return plain object
+ * literals with no `then`. It guards the third-party `defineCommand` surface
+ * only, so grepping `src/` for a caller finds nothing; that is expected, not
+ * evidence it is dead. It goes away with `ResponseStream` itself (#366).
  */
 function ensureNonThenableStream(stream: ResponseStream): ResponseStream {
   if (!('then' in stream)) {

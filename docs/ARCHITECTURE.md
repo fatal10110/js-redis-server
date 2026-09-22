@@ -198,7 +198,7 @@ Two execution paths share this same plan:
 
 ## Execution policies
 
-An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L9) guards every
+An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L7) guards every
 command with a single optional hook:
 
 ```ts
