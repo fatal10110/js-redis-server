@@ -344,21 +344,46 @@ describe('decodeRedisKey', () => {
     assert.strictEqual(decodeRedisKey({ kind: 'null' }), '')
   })
 
-  test('spells a double key the way the wire does, not the way JS does', () => {
-    // Same formatter as the encoder and the value path, so a key and a value
-    // holding the same double never disagree: `inf`, never `Infinity`.
-    assert.strictEqual(decodeRedisKey({ kind: 'double', value: 2.5 }), '2.5')
+  test('a double map key follows real node-redis at each protocol', () => {
+    // The key and the value spellings deliberately differ at RESP3. Real
+    // node-redis against Redis 8.0.6:
+    //   EVAL "redis.setresp(3); return {map={[{double=1/0}]=1}}" 0
+    //     RESP2 → ["inf",1]         RESP3 → {"Infinity":1}
+    //   EVAL "redis.setresp(3); return {map={[{double=2.5}]=1}}" 0
+    //     RESP2 → ["2.5",1]         RESP3 → {"2.5":1}
+    //   …with {double=-1/0} and {double=0/0}:
+    //     RESP2 → ["-inf",1] / ["nan",1]   RESP3 → {"-Infinity":1} / {"NaN":1}
+    // At RESP2 the key is an array item spelled by Redis; at RESP3 node-redis
+    // parses `,inf` to a number and keys the object with `String()`.
+    const mapWith = (key: number): RedisValue => ({
+      kind: 'map',
+      entries: [
+        [
+          { kind: 'double', value: key },
+          { kind: 'integer', value: 1 },
+        ],
+      ],
+    })
+
+    for (const client of [
+      NODE_REDIS_DECODE_OPTIONS,
+      IN_MEMORY_DECODE_OPTIONS,
+    ]) {
+      const at = (key: number, version: 2 | 3) =>
+        decodeRedisValue(mapWith(key), { ...client, version })
+
+      assert.deepStrictEqual(at(Infinity, 2), ['inf', 1])
+      assert.deepStrictEqual(at(Infinity, 3), { Infinity: 1 })
+      assert.deepStrictEqual(at(-Infinity, 3), { '-Infinity': 1 })
+      assert.deepStrictEqual(at(Number.NaN, 3), { NaN: 1 })
+      assert.deepStrictEqual(at(2.5, 2), ['2.5', 1])
+      assert.deepStrictEqual(at(2.5, 3), { '2.5': 1 })
+    }
+
+    // decodeRedisKey on its own is the RESP3 half: JavaScript's spelling.
     assert.strictEqual(
       decodeRedisKey({ kind: 'double', value: Infinity }),
-      'inf',
-    )
-    assert.strictEqual(
-      decodeRedisKey({ kind: 'double', value: -Infinity }),
-      '-inf',
-    )
-    assert.strictEqual(
-      decodeRedisKey({ kind: 'double', value: Number.NaN }),
-      'nan',
+      'Infinity',
     )
   })
 })

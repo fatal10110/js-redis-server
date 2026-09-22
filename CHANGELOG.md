@@ -120,33 +120,32 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
-- **BREAKING** The two socketless clients — `createInMemoryClient()` and
-  `createNodeRedisMock()`'s raw `sendCommand()` — now decode every reply whose
-  shape RESP decides according to the protocol the connection negotiated,
-  instead of always handing back the RESP3 shape ([#414]). Both start on RESP2,
-  so on a connection that never sends `HELLO 3` the visible replies change:
+- **BREAKING** The two socketless clients now decode maps, doubles, big
+  numbers and booleans according to the protocol the connection negotiated
+  ([#414]). They used to decode a map to an object, and those three scalars to
+  their RESP3 JS types, whatever the protocol. Affected: `createInMemoryClient()`'s
+  `command()`, and on `createNodeRedisMock()` the raw paths — `sendCommand()`,
+  `eval()` and `multi().addCommand(…).exec()`. Both clients start on RESP2, so
+  on a connection that never sends `HELLO 3` the visible replies change:
 
   ```
-  HGETALL / CONFIG GET   { f1: 'v1' }      -> ['f1', 'v1']
-  XREAD                  { s: […] }        -> [['s', […]]]
-  ZSCORE / ZINCRBY       2.5               -> '2.5'
-  ZRANGE … WITHSCORES    ['a', 1]          -> ['a', '1']
-  big number (Lua)       12345678n         -> '12345678'
-  boolean (Lua)          true / false      -> 1 / 0
+  HGETALL / CONFIG GET                 { f1: 'v1' }   -> ['f1', 'v1']
+  XREAD                                { s: […] }     -> [['s', […]]]
+  ZSCORE / ZINCRBY                     2.5            -> '2.5'
+  ZRANGE … WITHSCORES                  ['a', 1]       -> ['a', '1']
+  big number (Lua)                     12345678n      -> '12345678'
+  boolean (Lua, under redis.setresp(3)) true / false  -> 1 / 0
   ```
 
-  This is what real node-redis returns on the same path, which the old shapes
-  contradicted at RESP2. Two ways forward for a caller that wants the object and
-  number shapes back: send `HELLO 3` on the connection (a real RESP3 client is
-  what produces them), or, on the node-redis facade, use the curated method —
-  `hGetAll()` still returns an object at both protocols, because node-redis'
-  own `transformReply` builds it from the flat array. `createIoredisMock()`
-  drives the real RESP2-only `ioredis`, and the wire encoder, the server and
-  every command implementation are unchanged.
-
-  Follows [#408], which made the `WITHSCORES` / `WITHVALUES` pair shape
-  protocol-dependent; `version` on `DecodeRedisValueOptions` now carries every
-  such shape rather than one knob per kind.
+  The `WITHSCORES` row was already flat at RESP2 ([#408] made the pair shape
+  protocol-dependent); only its scores change. This is what real node-redis
+  returns on the same paths, which the old shapes contradicted at RESP2. Two
+  ways forward for a caller that wants the object and number shapes back: send
+  `HELLO 3` on the connection (a real RESP3 client is what produces them), or,
+  on the node-redis facade, use the curated method — `hGetAll()` still returns
+  an object at both protocols, because node-redis' own `transformReply` builds
+  it from the flat array. `createIoredisMock()` drives the real RESP2-only
+  `ioredis` and is unaffected by this entry.
 
 ### Added
 
@@ -155,6 +154,25 @@ so the PR body is not a durable home for a breaking-change note.
   interface and declaration emit requires it ([#376]).
 
 ### Fixed
+
+- A double on the wire — a sorted-set score in `ZSCORE`, `ZINCRBY`,
+  `WITHSCORES` and the rest, at RESP2 and RESP3 alike, from the server and every
+  client mock — is now spelled the way Redis 7.2+ spells it ([#414]). The
+  encoder used JavaScript's `toString()`, which disagrees with Redis's
+  `d2string()` in three places:
+
+  ```
+  integer-valued, |x| <= 2^62   4611686018427388000 -> 4611686018427387904 (every digit)
+  integer-valued, past 2^62     5000000000000000000 -> 5e+18
+                                100000000000000000000 -> 1e+20
+  small fractions               0.0000123           -> 1.23e-5
+  ```
+
+  Checked against Redis 8.0.6 and 7.2.1 on 30,010 generated values, weighted
+  towards these edges: 75 still differ, all where Redis's Grisu2-based
+  `fpconv_dtoa` picks a longer or different round-tripping digit string than
+  the shortest one JavaScript produces (`4.8911660955712037e-5` against
+  `4.891166095571204e-5`). The layout rules match on every value.
 
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,

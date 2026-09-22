@@ -167,8 +167,9 @@ abstract class CommandRunner extends EventEmitter {
   protected abstract run(args: NodeRedisCommandArgument[]): Promise<RedisValue>
 
   /**
-   * RESP version this client's replies decode under — what the `flat-pairs`
-   * shape keys off. `HELLO` switches it mid-connection, so it is read per
+   * RESP version this client's replies decode under — what every
+   * protocol-dependent shape keys off (map, map-pairs, flat-pairs, double,
+   * big-number, boolean). `HELLO` switches it mid-connection, so it is read per
    * reply rather than fixed at construction.
    */
   protected abstract get respVersion(): RespVersion
@@ -1154,12 +1155,12 @@ function notify(
 // node-redis leaves most replies untransformed, and the shared RedisValue →
 // native JS decoder already matches what it hands back: bulk-string → utf8
 // string, integer → number, array/set → array, plus the protocol-dependent
-// kinds (map, double, pairs) in whichever shape the negotiated RESP version
-// puts on the wire. So the curated methods are thin coercions over that decoder
-// rather than per-command reply tables — uncommon commands get the same native
-// shapes via sendCommand. The exceptions are the few curated methods node-redis
-// *does* transform, which decode through their own helper: `hGetAll` builds an
-// object on both protocols (#414).
+// kinds (map, map-pairs, flat-pairs, double, big-number, boolean) in whichever
+// shape the negotiated RESP version puts on the wire. So the curated methods
+// are thin coercions over that decoder rather than per-command reply tables —
+// uncommon commands get the same native shapes via sendCommand. The exceptions
+// are the few curated methods node-redis *does* transform, which decode through
+// their own helper: `hGetAll` builds an object on both protocols (#414).
 
 /**
  * How this facade reads a {@link RedisValue}, and therefore where it diverges
@@ -1223,20 +1224,25 @@ function decodeScalarReply(value: RedisValue): NodeRedisReply {
  * Entries still decode under the connection's own version, so only the
  * container shape is pinned.
  *
- * Anything that is not a map falls through to the ordinary decoder rather than
- * being coerced here — an `error` above all, which is what a wrong-type key
- * replies with, and which real node-redis throws from `hGetAll()` too. Swallow
- * it into an empty object and it becomes indistinguishable from a missing key.
+ * Nothing else is coerced into an object. An `error` — what a wrong-type key
+ * replies with — goes through the ordinary decoder and throws, as real
+ * node-redis' `hGetAll()` does at both protocols; swallowed into `{}` it would
+ * be indistinguishable from a missing key. Any other kind (a `+QUEUED` after a
+ * raw `MULTI`, say) fails loudly the way `asNumber` does, rather than resolving
+ * to a string typed as an object.
  */
 function decodeMapReply(
   value: RedisValue,
   respVersion: RespVersion,
-): NodeRedisReply {
+): { [key: string]: NodeRedisReply } {
   const options = { ...NODE_REDIS_DECODE_OPTIONS, version: respVersion }
   if (value.kind === 'map' || value.kind === 'map-pairs') {
     return decodeRedisMapEntries(value.entries, options)
   }
-  return decodeRedisValue(value, options)
+  if (value.kind === 'error') {
+    decodeRedisValue(value, options) // throws the reply's own error
+  }
+  throw new RedisCommandError(`expected a map reply, got ${value.kind}`)
 }
 
 function asNumber(value: RedisValue): number {

@@ -271,15 +271,25 @@ real client reads off the wire at each version:
 
 Only the pair *shape* is shared between the first two rows: a `WITHSCORES`
 score is a double, so it is a string at RESP2 and a number at RESP3, while a
-`WITHVALUES` hash value is a bulk string at both. Lua under `redis.setresp(3)`
-can also return a big number (digit string at RESP2, `bigint` at RESP3) and a
-boolean (`1` / `0` at RESP2, `true` / `false` at RESP3).
+`WITHVALUES` hash value is a bulk string at both.
+
+A Lua script can return two more of these kinds. A `{big_number=…}` table is a
+digit string at RESP2 and a `bigint` at RESP3. A boolean is `1` / `0` at RESP2
+and `true` / `false` at RESP3 — but only from a script that has called
+`redis.setresp(3)`, since without it real Redis converts a Lua `true` to the
+integer `1` and `false` to nil. (The `setresp(3)` requirement is Redis's rule
+for booleans only. Real Redis also converts `{big_number=…}`, `{double=…}` and
+`{map=…}` tables without it; the mock's Lua engine currently returns `[]` for
+those unless the script calls `redis.setresp(3)` first — a gap in the mock, not
+Redis behaviour.)
 
 (`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
 only ever sees the left column.) The *curated* methods on the node-redis facade
 are protocol-independent where node-redis' own `transformReply` is: `hGetAll()`
 returns an object at RESP2 as well, because the real client builds that object
-from the flat array itself. Only the raw `sendCommand` path follows the table.
+from the flat array itself. The facade's raw paths follow the table:
+`sendCommand()`, `eval()` (real node-redis gives `EVAL` no `transformReply`),
+and `multi().addCommand(…).exec()`.
 
 ### `createIoredisMock` — virtual-socket ioredis client
 

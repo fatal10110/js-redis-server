@@ -141,8 +141,12 @@ export function decodeRedisValue(
     case 'boolean':
       // RESP2 has no boolean: the encoder writes the `:1` / `:0` integer, so
       // that is the number a client reads back. Only RESP3's `#t` / `#f` is a
-      // JS boolean. (Reachable through Lua's `redis.setresp(3)`.)
-      return options.version === 3 ? value.value : value.value ? 1 : 0
+      // JS boolean. Real Redis does the same for a Lua script that returns a
+      // boolean after `redis.setresp(3)`.
+      if (options.version === 3) {
+        return value.value
+      }
+      return value.value ? 1 : 0
     case 'big-number': {
       // Same split as `double`: RESP3's `(` is the only big number on the
       // wire, and RESP2 sends the digits as a bulk string.
@@ -216,11 +220,15 @@ export function decodeRedisKey(value: RedisValue): string {
       return value.value === null ? '' : value.value.toString('utf8')
     case 'verbatim':
       return value.value.toString('utf8')
-    case 'double':
-      // The Redis spelling, not JavaScript's: `inf`, not `Infinity`.
-      return formatRedisDouble(value.value)
     case 'integer':
+    case 'double':
     case 'big-number':
+      // JavaScript's spelling, not Redis's, and deliberately so. A numeric key
+      // only arrives here from a RESP3 map, and real node-redis parses a RESP3
+      // `,inf` key to a number before keying the object with `String()` —
+      // `{ Infinity: 1 }`. At RESP2 the same key is an array item, decoded by
+      // the `double` arm to `'inf'`. (A curated method's object also comes
+      // through here, but its keys are hash fields: always bulk strings.)
       return String(value.value)
     case 'boolean':
       return String(value.value)

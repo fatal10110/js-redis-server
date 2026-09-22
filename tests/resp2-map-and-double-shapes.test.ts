@@ -314,5 +314,126 @@ describe('map and double shapes follow the negotiated RESP version', () => {
       assert.deepStrictEqual(replies[2], { f1: 'v1', f2: 'v2' })
       assert.strictEqual(replies[3], 2.5)
     })
+
+    test('curated hGetAll() fails loudly on a reply that is not a map', async () => {
+      // After a raw MULTI the reply is `+QUEUED`. It must not resolve to a
+      // string typed as an object.
+      const c = await seeded(2)
+      await c.sendCommand(['MULTI'])
+      await assert.rejects(() => c.hGetAll('h'), /expected a map reply/)
+      await c.sendCommand(['DISCARD'])
+    })
+  })
+})
+
+/**
+ * The two Lua reply kinds the pair and map tests above cannot reach: a boolean
+ * and a big number, both of which a script can return after
+ * `redis.setresp(3)`. RESP2 has neither type, so the server writes `:1` / `:0`
+ * and the digits as a bulk string.
+ *
+ * Ground truth, `node-redis@6` against real Redis 8.0.6 via `sendCommand`:
+ *
+ *   script                                                RESP: 2                  RESP: 3
+ *   redis.setresp(3); return true                         1                        true
+ *   redis.setresp(3); return false                        0                        false
+ *   redis.setresp(3); return {big_number="1234…7890"}     "12345678901234567890"   12345678901234567890n
+ *
+ * (Real Redis converts `{big_number=…}` without the `setresp(3)` too; the
+ * mock's Lua engine does not yet, which is tracked separately, so every script
+ * here opts in explicitly.)
+ */
+describe('Lua boolean and big-number replies follow the negotiated RESP version', () => {
+  const TRUE = 'redis.setresp(3); return true'
+  const FALSE = 'redis.setresp(3); return false'
+  const BIG = 'redis.setresp(3); return {big_number="12345678901234567890"}'
+
+  describe('InMemoryRedisClient', () => {
+    let client: InMemoryRedisClient
+
+    afterEach(() => {
+      client?.close()
+    })
+
+    test('RESP2 reads them as the integer and the digit string', async () => {
+      client = await createInMemoryClient()
+      assert.strictEqual(await client.command('EVAL', TRUE, 0), 1)
+      assert.strictEqual(await client.command('EVAL', FALSE, 0), 0)
+      assert.strictEqual(
+        await client.command('EVAL', BIG, 0),
+        '12345678901234567890',
+      )
+    })
+
+    test('RESP3 reads them as a boolean and a bigint', async () => {
+      client = await createInMemoryClient()
+      await client.command('HELLO', 3)
+      assert.strictEqual(await client.command('EVAL', TRUE, 0), true)
+      assert.strictEqual(await client.command('EVAL', FALSE, 0), false)
+      assert.strictEqual(
+        await client.command('EVAL', BIG, 0),
+        12345678901234567890n,
+      )
+    })
+  })
+
+  describe('node-redis facade', () => {
+    const openClients: NodeRedisMockClient[] = []
+
+    afterEach(async () => {
+      while (openClients.length > 0) {
+        await openClients.pop()?.quit()
+      }
+    })
+
+    async function connect(resp: 2 | 3): Promise<NodeRedisMockClient> {
+      const client = (await createNodeRedisMock()) as NodeRedisMockClient
+      openClients.push(client)
+      if (resp === 3) {
+        await client.sendCommand(['HELLO', '3'])
+      }
+      return client
+    }
+
+    // Real node-redis' `eval()` has no transformReply, so it follows the
+    // protocol exactly like `sendCommand` — both are asserted.
+    test('RESP2 reads them as the integer and the digit string', async () => {
+      const c = await connect(2)
+      assert.strictEqual(await c.sendCommand(['EVAL', TRUE, '0']), 1)
+      assert.strictEqual(await c.sendCommand(['EVAL', FALSE, '0']), 0)
+      assert.strictEqual(
+        await c.sendCommand(['EVAL', BIG, '0']),
+        '12345678901234567890',
+      )
+      assert.strictEqual(await c.eval(TRUE), 1)
+      assert.strictEqual(await c.eval(BIG), '12345678901234567890')
+    })
+
+    test('RESP3 reads them as a boolean and a bigint', async () => {
+      const c = await connect(3)
+      assert.strictEqual(await c.sendCommand(['EVAL', TRUE, '0']), true)
+      assert.strictEqual(await c.sendCommand(['EVAL', FALSE, '0']), false)
+      assert.strictEqual(
+        await c.sendCommand(['EVAL', BIG, '0']),
+        12345678901234567890n,
+      )
+      assert.strictEqual(await c.eval(TRUE), true)
+      assert.strictEqual(await c.eval(BIG), 12345678901234567890n)
+    })
+
+    test('a MULTI replays them in the shape of each reply’s own protocol', async () => {
+      const c = await connect(2)
+      const replies = await c
+        .multi()
+        .addCommand(['EVAL', TRUE, '0'])
+        .addCommand(['HELLO', '3'])
+        .addCommand(['EVAL', TRUE, '0'])
+        .addCommand(['EVAL', BIG, '0'])
+        .exec()
+
+      assert.strictEqual(replies[0], 1)
+      assert.strictEqual(replies[2], true)
+      assert.strictEqual(replies[3], 12345678901234567890n)
+    })
   })
 })
