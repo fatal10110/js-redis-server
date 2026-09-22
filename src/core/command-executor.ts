@@ -25,11 +25,6 @@ import {
  */
 export type ExecutorResult = RedisResult | ResponseStream
 
-export type RawExecutionResult = {
-  result: ExecutorResult
-  plan?: CommandPlan
-}
-
 export type CommandExecutorOptions = {
   registry: CommandRegistry
   policies?: readonly ExecutionPolicy[]
@@ -113,22 +108,11 @@ export class CommandExecutor {
     rawArgs: readonly Buffer[],
     ctx: RedisExecutionContext,
   ): Promise<ExecutorResult> {
-    return (await this.executeRawWithPlan(rawCommand, rawArgs, ctx)).result
-  }
-
-  async executeRawWithPlan(
-    rawCommand: Buffer | string,
-    rawArgs: readonly Buffer[],
-    ctx: RedisExecutionContext,
-  ): Promise<RawExecutionResult> {
     try {
-      const plan = this.plan(rawCommand, rawArgs)
-      return { plan, result: await this.executePlan(plan, ctx) }
+      return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
-        return {
-          result: this.rawCommandErrorResult(err, rawCommand, ctx),
-        }
+        return this.rawCommandErrorResult(err, rawCommand, ctx)
       }
 
       throw err
@@ -166,10 +150,8 @@ export class CommandExecutor {
    *     short-circuits execution (e.g. the transaction policy queues the command
    *     and returns "+QUEUED"; the cluster policy returns a MOVED/CROSSSLOT
    *     error). A short-circuit error during MULTI also dirties the transaction.
-   *  2. The command's own `execute`.
-   *  3. If a {@link ResponseStream} is produced, run it through every policy's
-   *     `onStream` hook; otherwise await the value and run it through every
-   *     `afterExecute` hook (each may replace the result).
+   *  2. The command's own `execute`, awaited unless it produced a
+   *     {@link ResponseStream}.
    *
    * Execution-time {@link RedisCommandError}s become RESP error replies (and
    * dirty an open transaction when appropriate). Non-Redis errors propagate.
@@ -193,55 +175,21 @@ export class CommandExecutor {
       for (const policy of this.policies) {
         const policyResult = await policy.beforeExecute?.(plan, ctx)
         if (policyResult) {
-          if (isTransactionQueueError(plan, ctx, policyResult)) {
-            ctx.session.markTransactionDirty()
-          }
-
-          return policyResult
+          return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
       }
 
-      // Tag the database with the active command so keyspace notifications can
-      // name write events after the originating command. Saved/restored so
-      // nested (Lua redis.call) and parked/interleaved commands stay correct.
-      const prevNotifyCommand = ctx.db.activeNotifyCommand
-      ctx.db.activeNotifyCommand = plan.definition.name
+      const previousNotifyCommand = tagNotifyCommand(plan, ctx)
       try {
-        const rawResult = plan.definition.execute(plan.args, ctx)
-
-        if (isResponseStream(rawResult)) {
-          let finalStream = ensureNonThenableStream(rawResult)
-          for (const policy of this.policies) {
-            finalStream =
-              (await policy.onStream?.(plan, ctx, finalStream)) ?? finalStream
-            finalStream = ensureNonThenableStream(finalStream)
-          }
-
-          return finalStream
-        }
-
-        const result = await rawResult
-
-        let finalResult = result
-        for (const policy of this.policies) {
-          finalResult =
-            (await policy.afterExecute?.(plan, ctx, finalResult)) ?? finalResult
-        }
-
-        return finalResult
+        const result = plan.definition.execute(plan.args, ctx)
+        return isResponseStream(result)
+          ? ensureNonThenableStream(result)
+          : await result
       } finally {
-        ctx.db.activeNotifyCommand = prevNotifyCommand
+        ctx.db.activeNotifyCommand = previousNotifyCommand
       }
     } catch (err) {
-      if (err instanceof RedisCommandError) {
-        if (shouldDirtyTransaction(plan, ctx)) {
-          ctx.session.markTransactionDirty()
-        }
-
-        return RedisResult.error(err.message, err.code)
-      }
-
-      throw err
+      return executionErrorResult(plan, ctx, err)
     }
   }
 
@@ -253,8 +201,7 @@ export class CommandExecutor {
    * rejected with a {@link RedisCommandError} instead of being awaited. Async
    * command definitions are rejected before invocation so they cannot leave
    * orphaned work running after the script error (see
-   * {@link assertSyncCommandDefinition}, {@link assertSyncCommandResult}, and
-   * {@link assertSyncPolicyResult}).
+   * {@link assertSyncCommandDefinition} and {@link assertSyncCommandResult}).
    *
    * The policy chain and transaction-dirty handling otherwise mirror the async
    * path exactly.
@@ -273,52 +220,30 @@ export class CommandExecutor {
   ): RedisResult {
     try {
       for (const policy of this.policies) {
-        const policyResult = assertSyncPolicyResult(
-          policy.name,
-          'beforeExecute',
-          policy.beforeExecute?.(plan, ctx),
-        )
+        const policyResult = policy.beforeExecute?.(plan, ctx)
+        if (isThenable(policyResult)) {
+          throw new RedisCommandError(
+            `Execution policy '${policy.name}' beforeExecute hook cannot run asynchronously from scripts`,
+          )
+        }
         if (policyResult) {
-          if (isTransactionQueueError(plan, ctx, policyResult)) {
-            ctx.session.markTransactionDirty()
-          }
-
-          return policyResult
+          return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
       }
 
       assertSyncCommandDefinition(plan)
 
-      const prevNotifyCommand = ctx.db.activeNotifyCommand
-      ctx.db.activeNotifyCommand = plan.definition.name
+      const previousNotifyCommand = tagNotifyCommand(plan, ctx)
       try {
-        const rawResult = plan.definition.execute(plan.args, ctx)
-        const result = assertSyncCommandResult(plan, rawResult)
-
-        let finalResult = result
-        for (const policy of this.policies) {
-          finalResult =
-            assertSyncPolicyResult(
-              policy.name,
-              'afterExecute',
-              policy.afterExecute?.(plan, ctx, finalResult),
-            ) ?? finalResult
-        }
-
-        return finalResult
+        return assertSyncCommandResult(
+          plan,
+          plan.definition.execute(plan.args, ctx),
+        )
       } finally {
-        ctx.db.activeNotifyCommand = prevNotifyCommand
+        ctx.db.activeNotifyCommand = previousNotifyCommand
       }
     } catch (err) {
-      if (err instanceof RedisCommandError) {
-        if (shouldDirtyTransaction(plan, ctx)) {
-          ctx.session.markTransactionDirty()
-        }
-
-        return RedisResult.error(err.message, err.code)
-      }
-
-      throw err
+      return executionErrorResult(plan, ctx, err)
     }
   }
 
@@ -388,24 +313,17 @@ function createMonitorDeferredContext(
     return ctx
   }
 
-  return {
-    get db() {
-      return ctx.db
-    },
-    server: ctx.server,
-    session: ctx.session,
-    executor: ctx.executor,
-    ...(ctx.transactionReplay
-      ? { transactionReplay: ctx.transactionReplay }
-      : {}),
-    ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
+  // Override `monitor` on a prototype link rather than copying the context:
+  // `db` is a *live getter* on the session context (a queued `SELECT N` runs
+  // mid-EXEC and every later command must resolve the currently selected
+  // database — issue #94), and a spread would freeze it to the database that
+  // was selected when this context was built.
+  return Object.create(ctx, {
     monitor: {
-      ...ctx.monitor,
-      deferredEvents: [],
+      value: { ...ctx.monitor, deferredEvents: [] },
+      enumerable: true,
     },
-    signal: ctx.signal,
-    park: ctx.park,
-  }
+  }) as RedisExecutionContext
 }
 
 function flushDeferredMonitorEvents(ctx: RedisExecutionContext): void {
@@ -484,11 +402,63 @@ const CLUSTER_PRE_EXECUTION_ERROR_CODES = new Set([
 ])
 
 /**
- * A policy's `onStream` hook may return an object that is both a
- * {@link ResponseStream} and thenable (e.g. an async wrapper). Callers `await`
- * the executor result, and awaiting a thenable stream would unwrap it into its
- * resolved value, breaking streaming. This re-wraps such a stream in a plain,
- * non-thenable object so it survives the surrounding `await` untouched.
+ * A policy that short-circuits with an error while a command is being queued in
+ * MULTI dirties the transaction, so the later EXEC aborts.
+ */
+function applyPolicyShortCircuit(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  result: RedisResult,
+): RedisResult {
+  if (isTransactionQueueError(plan, ctx, result)) {
+    ctx.session.markTransactionDirty()
+  }
+
+  return result
+}
+
+/**
+ * Tag the database with the active command so keyspace notifications can name
+ * write events after the originating command, and return the previous tag.
+ * Callers restore it in a `finally` — nested (Lua `redis.call`) and
+ * parked/interleaved commands depend on the save/restore.
+ */
+function tagNotifyCommand(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+): string | null {
+  const previous = ctx.db.activeNotifyCommand
+  ctx.db.activeNotifyCommand = plan.definition.name
+  return previous
+}
+
+/**
+ * Map an execution-time {@link RedisCommandError} to a RESP error reply,
+ * dirtying an open transaction when appropriate. Anything else is a real bug
+ * and propagates.
+ */
+function executionErrorResult(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  err: unknown,
+): RedisResult {
+  if (!(err instanceof RedisCommandError)) {
+    throw err
+  }
+
+  if (shouldDirtyTransaction(plan, ctx)) {
+    ctx.session.markTransactionDirty()
+  }
+
+  return RedisResult.error(err.message, err.code)
+}
+
+/**
+ * A command may return an object that is both a {@link ResponseStream} and
+ * thenable (e.g. an async wrapper). Callers `await` the executor result, and
+ * awaiting a thenable stream would unwrap it into its resolved value, breaking
+ * streaming. This re-wraps such a stream in a plain, non-thenable object so it
+ * survives the surrounding `await` untouched.
  */
 function ensureNonThenableStream(stream: ResponseStream): ResponseStream {
   if (!('then' in stream)) {
@@ -539,25 +509,6 @@ function assertSyncCommandDefinition(plan: CommandPlan): void {
   throw new RedisCommandError(
     `${plan.definition.name.toUpperCase()} cannot run asynchronously from scripts`,
   )
-}
-
-/**
- * Same idea as {@link assertSyncCommandResult} but for policy hooks: an async
- * hook result cannot be awaited on the Lua path, so it is rejected with a
- * descriptive {@link RedisCommandError} naming the offending policy and hook.
- */
-function assertSyncPolicyResult<TValue>(
-  policyName: string,
-  hookName: string,
-  value: TValue | Promise<TValue>,
-): TValue {
-  if (isThenable(value)) {
-    throw new RedisCommandError(
-      `Execution policy '${policyName}' ${hookName} hook cannot run asynchronously from scripts`,
-    )
-  }
-
-  return value
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {

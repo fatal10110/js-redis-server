@@ -287,6 +287,55 @@ describe('new command executor core', () => {
     }
   })
 
+  test('keeps the live db getter when deriving the monitor context', async () => {
+    // A MONITOR subscriber makes the executor derive a per-command context to
+    // collect deferred events. That derivation must not snapshot `ctx.db`: a
+    // queued `SELECT N` runs mid-EXEC and every later command has to resolve
+    // the currently selected database at access time (issue #94).
+    const server = new RedisServerState({ databaseCount: 2 })
+    let selectedDatabase = 0
+
+    const registry = new CommandRegistry()
+    registry.register(
+      defineCommand({
+        name: 'select-then-write',
+        schema: t.object({}),
+        flags: ['write'],
+        keys: () => [],
+        execute: (_args, commandCtx) => {
+          selectedDatabase = 1
+          commandCtx.db.setString(Buffer.from('key'), Buffer.from('value'))
+          return RedisResult.ok()
+        },
+      }),
+    )
+
+    const executor = new CommandExecutor({ registry })
+    const baseContext = createContext(executor)
+    const ctx: RedisExecutionContext = {
+      ...baseContext,
+      get db() {
+        return server.getDatabase(selectedDatabase)
+      },
+      server,
+    }
+
+    server.monitorFeed.subscribe(() => {})
+
+    assert.deepStrictEqual(
+      await executor.executeRaw('select-then-write', [], ctx),
+      RedisResult.ok(),
+    )
+    assert.strictEqual(
+      server.getDatabase(0).getString(Buffer.from('key')),
+      null,
+    )
+    assert.deepStrictEqual(
+      server.getDatabase(1).getString(Buffer.from('key')),
+      Buffer.from('value'),
+    )
+  })
+
   test('supports open command registration and explicit overrides', () => {
     const registry = new CommandRegistry()
     const first = defineCommand({
@@ -339,7 +388,7 @@ describe('new command executor core', () => {
         schema: t.object({}),
         flags: ['readonly'],
         keys: () => [],
-        execute: () => RedisResult.create(RedisValue.simpleString('PONG')),
+        execute: () => assert.fail('policy should short-circuit'),
       }),
     )
 
@@ -348,10 +397,8 @@ describe('new command executor core', () => {
       policies: [
         {
           name: 'observer',
-          afterExecute: (_plan, _ctx, result) =>
-            result.value.kind === 'simple-string'
-              ? RedisResult.create(RedisValue.simpleString('POLICY-PONG'))
-              : result,
+          beforeExecute: () =>
+            RedisResult.create(RedisValue.simpleString('POLICY-PONG')),
         },
       ],
     })
@@ -362,6 +409,40 @@ describe('new command executor core', () => {
         createContext(executor),
       ),
       RedisResult.create(RedisValue.simpleString('POLICY-PONG')),
+    )
+  })
+
+  test('rejects async policy hooks in sync execution', () => {
+    const registry = new CommandRegistry()
+    registry.register(
+      defineCommand({
+        name: 'ping',
+        schema: t.object({}),
+        flags: ['readonly'],
+        keys: () => [],
+        execute: () => assert.fail('policy should be rejected first'),
+      }),
+    )
+
+    const executor = new CommandExecutor({
+      registry,
+      policies: [
+        {
+          name: 'observer',
+          beforeExecute: async () => undefined,
+        },
+      ],
+    })
+
+    assert.deepStrictEqual(
+      executor.executePlanSync(
+        executor.plan('ping', []),
+        createContext(executor),
+      ),
+      RedisResult.error(
+        "Execution policy 'observer' beforeExecute hook cannot run asynchronously from scripts",
+        'ERR',
+      ),
     )
   })
 
@@ -428,7 +509,7 @@ describe('new command executor core', () => {
     assert.strictEqual(mutatedAfterError, false)
   })
 
-  test('supports response streams and stream policy hooks', async () => {
+  test('returns response streams untouched', async () => {
     const stream: ResponseStream = {
       kind: 'response-stream',
       closed: Promise.resolve(),
@@ -451,18 +532,7 @@ describe('new command executor core', () => {
       }),
     )
 
-    let observed = false
-    const executor = new CommandExecutor({
-      registry,
-      policies: [
-        {
-          name: 'stream-observer',
-          onStream: (_plan, _ctx, currentStream) => {
-            observed = currentStream === stream
-          },
-        },
-      ],
-    })
+    const executor = new CommandExecutor({ registry })
 
     const result = await executor.executeRaw(
       'subscribe',
@@ -471,7 +541,6 @@ describe('new command executor core', () => {
     )
 
     assert.strictEqual(result, stream)
-    assert.strictEqual(observed, true)
   })
 
   test('does not await thenable response streams', async () => {

@@ -26,6 +26,19 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
+  `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
+  subscribed-mode, transaction) ever implemented them — only tests did — and
+  supporting them forced the executor to keep a synchronous mirror of its policy
+  chain plus a thenable-stream re-wrap for every hook result.
+
+  `beforeExecute` is unchanged and still the place to short-circuit a command
+  (queue / redirect / reject); it may still be async on the network path. A
+  custom policy that rewrote results or wrapped streams has no drop-in
+  replacement — do it inside the command definition, or wrap `CommandExecutor`.
+  Because the hooks were optional, a policy object that still declares them
+  compiles and runs, silently doing nothing.
+
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**
   ([#410]). Real Redis stamps `MONITOR` lines from `gettimeofday()`, so the six
@@ -150,6 +163,7 @@ Released before this file existed. See the
 [release tags](https://github.com/fatal10110/js-redis-server/tags) and the pull
 requests they contain.
 
+[#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376
