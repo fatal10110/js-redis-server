@@ -238,7 +238,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.deepStrictEqual(
         await directClient.hpexpire(
           key,
-          '20',
+          '500',
           'FIELDS',
           '3',
           'replace',
@@ -255,7 +255,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         '2.5',
       )
 
-      await delay(50)
+      await delay(600)
 
       assert.strictEqual(await directClient.hget(key, 'replace'), 'new')
       assert.strictEqual(await directClient.hget(key, 'counter'), null)

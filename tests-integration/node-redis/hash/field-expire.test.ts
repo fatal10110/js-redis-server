@@ -194,7 +194,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         float: '1.5',
       })
       assert.deepStrictEqual(
-        await directClient.hpExpire(key, ['replace', 'counter', 'float'], 20),
+        await directClient.hpExpire(key, ['replace', 'counter', 'float'], 500),
         [1, 1, 1],
       )
 
@@ -205,7 +205,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         '2.5',
       )
 
-      await delay(50)
+      await delay(600)
 
       assert.strictEqual(await directClient.hGet(key, 'replace'), 'new')
       assert.strictEqual(await directClient.hGet(key, 'counter'), null)

@@ -43,7 +43,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         await directClient.hpExpire(key, 'volatile', 5000),
         [1],
       )
-      assert.deepStrictEqual(await directClient.hpExpire(key, 'soon', 20), [1])
+      assert.deepStrictEqual(await directClient.hpExpire(key, 'soon', 500), [1])
 
       const seconds = await directClient.hTTL(key, [
         'persistent',
@@ -70,7 +70,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       assert.strictEqual(typeof milliseconds[1], 'number')
       assert.ok(milliseconds[1] > 0 && milliseconds[1] <= 5000)
       assert.strictEqual(typeof milliseconds[2], 'number')
-      assert.ok(milliseconds[2] > 0 && milliseconds[2] <= 20)
+      assert.ok(milliseconds[2] > 0 && milliseconds[2] <= 500)
       assert.strictEqual(milliseconds[3], -2)
 
       assert.deepStrictEqual(
@@ -87,7 +87,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
         [-1, -1],
       )
 
-      await delay(60)
+      await delay(600)
 
       assert.strictEqual(await directClient.hGet(key, 'persistent'), 'value1')
       assert.strictEqual(await directClient.hGet(key, 'volatile'), 'value2')
