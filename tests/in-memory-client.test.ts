@@ -24,9 +24,20 @@ describe('createInMemoryClient', () => {
     assert.strictEqual(typeof incremented, 'number')
   })
 
-  test('decodes a hash reply into an object', async () => {
+  test('decodes a hash reply the way the negotiated protocol shapes it', async () => {
     client = await createInMemoryClient()
     await client.command('HSET', 'h', 'name', 'bob', 'age', '30')
+
+    // RESP2 has no map type — HGETALL is a flat array there, and only becomes
+    // an object after HELLO 3. Same as real node-redis' raw reply path (#414).
+    assert.deepStrictEqual(await client.command('HGETALL', 'h'), [
+      'name',
+      'bob',
+      'age',
+      '30',
+    ])
+
+    await client.command('HELLO', 3)
     assert.deepStrictEqual(await client.command('HGETALL', 'h'), {
       name: 'bob',
       age: '30',

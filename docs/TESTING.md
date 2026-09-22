@@ -256,15 +256,23 @@ Three flavours, depending on which client you want to look like:
 | `createInMemoryClient` | our own bespoke | a thin client that returns native JS replies, no RESP      |
 
 The two hand-rolled clients (`createNodeRedisMock`, `createInMemoryClient`)
-start on RESP2 and follow a `HELLO 3` the way a real connection does, so the
-pair-shaped replies change with the protocol: `WITHSCORES` / `WITHVALUES` come
-back flat (`['a', 1, 'b', 2]`) on RESP2 and as tuples (`[['a', 1], ['b', 2]]`)
-on RESP3, matching node-redis. (`createIoredisMock` drives the real `ioredis@5`,
-which is RESP2-only.) Note the scalars inside those replies are not yet fully
-faithful at RESP2: scores decode to numbers where real node-redis at RESP2
-hands back strings (`['a', '1', 'b', '2']`), and a map reply decodes to an
-object where RESP2 puts a flat array on the wire — both tracked in
-[#414](https://github.com/fatal10110/js-redis-server/issues/414).
+start on RESP2 and follow a `HELLO 3` the way a real connection does, so every
+reply whose shape the protocol decides changes with it — RESP2 has no map,
+double or pair type, and these clients hand back what a real client reads off
+the wire at each version:
+
+| reply                                 | RESP2                     | RESP3                     |
+| :------------------------------------ | :------------------------ | :------------------------ |
+| `ZRANGE … WITHSCORES`, `HRANDFIELD … WITHVALUES` | `['a', '1', 'b', '2']` | `[['a', 1], ['b', 2]]` |
+| `HGETALL`, `CONFIG GET`               | `['f1', 'v1']`            | `{ f1: 'v1' }`            |
+| `XREAD`                               | `[['s', […]]]`            | `{ s: […] }`              |
+| `ZSCORE`, `ZINCRBY`                   | `'2.5'`                   | `2.5`                     |
+
+(`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
+only ever sees the left column.) The *curated* methods on the node-redis facade
+are protocol-independent where node-redis' own `transformReply` is: `hGetAll()`
+returns an object at RESP2 as well, because the real client builds that object
+from the flat array itself. Only the raw `sendCommand` path follows the table.
 
 ### `createIoredisMock` — virtual-socket ioredis client
 
@@ -384,7 +392,9 @@ const client = await createInMemoryClient({
 await client.command('SET', 'k', 'v')
 await client.command('GET', 'k') // 'v'
 await client.command('INCR', 'n') // 1 (number)
-await client.command('HGETALL', 'h') // { field: 'value', ... }
+await client.command('HGETALL', 'h') // ['field', 'value', ...] — RESP2 shape
+await client.command('HELLO', 3)
+await client.command('HGETALL', 'h') // { field: 'value', ... } — RESP3 shape
 
 client.close() // tears down its keyspace
 ```

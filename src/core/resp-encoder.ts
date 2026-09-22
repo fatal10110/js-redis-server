@@ -39,7 +39,7 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return encodeBulkString(Buffer.from(formatNumber(value.value)))
+      return encodeBulkString(Buffer.from(formatRedisDouble(value.value)))
     case 'boolean':
       return Buffer.from(`:${value.value ? 1 : 0}\r\n`)
     case 'big-number':
@@ -87,7 +87,7 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return Buffer.from(`,${formatNumber(value.value)}\r\n`)
+      return Buffer.from(`,${formatRedisDouble(value.value)}\r\n`)
     case 'boolean':
       return Buffer.from(value.value ? '#t\r\n' : '#f\r\n')
     case 'big-number':
@@ -195,7 +195,13 @@ function formatError(value: Extract<RedisValue, { kind: 'error' }>): string {
   return value.code ? `${sanitizeErrorText(value.code)} ${message}` : message
 }
 
-function formatNumber(value: number): string {
+/**
+ * Render a `double` the way Redis spells it — `inf` / `-inf` / `nan`, and `-0`
+ * kept distinct from `0`. RESP2 has no double type, so this is also the text a
+ * client reads back off a RESP2 connection; `decodeRedisValue` shares it so
+ * encode and decode cannot drift.
+ */
+export function formatRedisDouble(value: number): string {
   if (Number.isNaN(value)) {
     return 'nan'
   }

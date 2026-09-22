@@ -4,6 +4,7 @@ import { buildClusterNodes, type ClusterNodePipeline } from '../cluster'
 import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
 import {
+  decodeRedisMapEntries,
   decodeRedisValue,
   redisErrorText,
   type ClientDecodeOptions,
@@ -236,11 +237,13 @@ abstract class CommandRunner extends EventEmitter {
 
   async hGetAll(key: string): Promise<{ [field: string]: string }> {
     const value = await this.run(['HGETALL', key])
-    const reply = decodeReply(value, this.respVersion)
-    // This decoder renders a `map` reply as a plain object at either protocol,
-    // which is what node-redis' own `hGetAll` transformReply produces — not
-    // what RESP2 puts on the wire, where a map is a flat array (see #414).
-    return (reply as { [field: string]: string }) ?? {}
+    // Deliberately *not* `decodeReply`: node-redis' own `hGetAll`
+    // transformReply assembles the object itself, from the RESP2 flat array as
+    // readily as from the RESP3 map, so the curated method is an object on both
+    // protocols where the raw `sendCommand` path follows the protocol (#414).
+    return decodeMapReply(value, this.respVersion) as {
+      [field: string]: string
+    }
   }
 
   // --- lists ---------------------------------------------------------------
@@ -1148,11 +1151,15 @@ function notify(
 
 // --- reply decoding --------------------------------------------------------
 //
-// node-redis leaves most RESP2 replies untransformed, and the shared
-// RedisValue → native JS decoder already matches those defaults: bulk-string →
-// utf8 string, integer → number, map → object, array/set → array. So the
-// curated methods are thin coercions over that decoder rather than per-command
-// reply tables — uncommon commands get the same native shapes via sendCommand.
+// node-redis leaves most replies untransformed, and the shared RedisValue →
+// native JS decoder already matches what it hands back: bulk-string → utf8
+// string, integer → number, array/set → array, plus the protocol-dependent
+// kinds (map, double, pairs) in whichever shape the negotiated RESP version
+// puts on the wire. So the curated methods are thin coercions over that decoder
+// rather than per-command reply tables — uncommon commands get the same native
+// shapes via sendCommand. The exceptions are the few curated methods node-redis
+// *does* transform, which decode through their own helper: `hGetAll` builds an
+// object on both protocols (#414).
 
 /**
  * How this facade reads a {@link RedisValue}, and therefore where it diverges
@@ -1193,11 +1200,33 @@ function decodeReply(
 
 /**
  * Decode a reply a curated method immediately narrows to a scalar (or a flat
- * string array). No protocol-dependent kind can reach these, so the version
- * passed is unobservable.
+ * string array). None of the commands behind those methods replies with a
+ * protocol-dependent kind — no `map`, `double` or pair reaches here — so the
+ * version passed is unobservable. A curated method for a command that *does*
+ * (a `zScore`, say) needs the connection's real version, not this.
  */
 function decodeScalarReply(value: RedisValue): NodeRedisReply {
   return decodeRedisValue(value, { ...NODE_REDIS_DECODE_OPTIONS, version: 2 })
+}
+
+/**
+ * Decode a map reply for a curated method that presents it as an object on
+ * *both* protocols, the way node-redis' `transformReply` does — see #414.
+ * Entries still decode under the connection's own version, so only the
+ * container shape is pinned. A non-map reply (nothing currently produces one
+ * here) yields `{}` rather than a surprise scalar.
+ */
+function decodeMapReply(
+  value: RedisValue,
+  respVersion: RespVersion,
+): { [key: string]: NodeRedisReply } {
+  if (value.kind !== 'map' && value.kind !== 'map-pairs') {
+    return {}
+  }
+  return decodeRedisMapEntries(value.entries, {
+    ...NODE_REDIS_DECODE_OPTIONS,
+    version: respVersion,
+  })
 }
 
 function asNumber(value: RedisValue): number {

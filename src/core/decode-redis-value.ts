@@ -1,5 +1,5 @@
 import type { RedisValue } from './redis-value'
-import type { RespVersion } from './resp-encoder'
+import { formatRedisDouble, type RespVersion } from './resp-encoder'
 
 /**
  * Native JS value a {@link RedisValue} decodes to — the shape a real client
@@ -24,15 +24,29 @@ export type NativeRedisReply =
  */
 export type DecodeRedisValueOptions = ClientDecodeOptions & {
   /**
-   * RESP version the connection served this reply under. Some replies are
-   * shaped by the protocol rather than by the client: `flat-pairs`
-   * (WITHSCORES / WITHVALUES) is a flat `[k, v, k, v, …]` array on RESP2 and
-   * `[[k, v], …]` tuples on RESP3, so a RESP3 consumer iterating
-   * `for (const [field, value] of reply)` must not be handed a flat array.
+   * RESP version the connection served this reply under. RESP2 has no map,
+   * double or pair type, so three reply kinds are shaped by the protocol
+   * rather than by the client, and all three derive from this one bit:
    *
-   * Mirrors `encodeRedisValue`'s `{ version }`, and is read per reply: `HELLO`
-   * switches it mid-connection. (ioredis is RESP2-only, so a real ioredis only
-   * ever sees the RESP2 shapes.)
+   *  - `map` — flat `[k, v, k, v, …]` on RESP2, an object on RESP3.
+   *  - `map-pairs` — `[[k, v], …]` on RESP2, an object on RESP3.
+   *  - `flat-pairs` (WITHSCORES / WITHVALUES) — flat `[k, v, k, v, …]` on
+   *    RESP2, `[[k, v], …]` tuples on RESP3, so a RESP3 consumer iterating
+   *    `for (const [field, value] of reply)` must not be handed a flat array.
+   *  - `double` — the bulk string Redis formats on RESP2, a JS number on
+   *    RESP3.
+   *
+   * Each matches what `encodeRedisValue` puts on the wire at that version, and
+   * therefore what a real client reads back off it. Mirrors
+   * `encodeRedisValue`'s `{ version }`, and is read per reply: `HELLO` switches
+   * it mid-connection. (ioredis is RESP2-only, so a real ioredis only ever sees
+   * the RESP2 shapes.)
+   *
+   * A *curated* client method is a separate matter: node-redis' own `hGetAll` /
+   * `configGet` `transformReply` builds its object from the RESP2 flat array as
+   * readily as from the RESP3 map, so those return an object on both protocols.
+   * Such a method decodes through {@link decodeRedisMapEntries} rather than
+   * letting this switch reach it. See #414.
    */
   version: RespVersion
 }
@@ -109,8 +123,16 @@ export function decodeRedisValue(
         return Number(value.value)
       }
       return value.value
-    case 'double':
-      return value.value
+    case 'double': {
+      // RESP3's `,` is the only double on the wire. RESP2 sends the same
+      // number as a bulk string, so that is what a client reads back — a
+      // ZSCORE is `"2.5"` there, not `2.5`.
+      if (options.version === 3) {
+        return value.value
+      }
+      const text = formatRedisDouble(value.value)
+      return options.returnBuffers ? Buffer.from(text) : text
+    }
     case 'boolean':
       return value.value
     case 'big-number':
@@ -123,13 +145,17 @@ export function decodeRedisValue(
         ? [value.name, ...value.items.map(decode)]
         : value.items.map(decode)
     case 'map':
-    case 'map-pairs': {
-      const out: { [key: string]: NativeRedisReply } = {}
-      for (const [key, val] of value.entries) {
-        out[decodeRedisKey(key)] = decode(val)
+    case 'map-pairs':
+      // Only RESP3's `%` is read back as an object. RESP2 has no map type, so
+      // the encoder flattens a `map` into one array and writes a `map-pairs`
+      // as an array of two-element arrays — and that is what a client sees.
+      if (options.version === 3) {
+        return decodeRedisMapEntries(value.entries, options)
       }
-      return out
-    }
+      if (value.kind === 'map') {
+        return value.entries.flatMap(([key, val]) => [decode(key), decode(val)])
+      }
+      return value.entries.map(([key, val]) => [decode(key), decode(val)])
     case 'flat-pairs':
       // `[[k, v], …]` on RESP3, flat `[k, v, k, v, …]` on RESP2 — the same
       // split `encodeRedisValue` puts on the wire.
@@ -143,6 +169,27 @@ export function decodeRedisValue(
     case 'error':
       throw options.error(redisErrorText(value), value.code)
   }
+}
+
+/**
+ * Build the plain object a `map` / `map-pairs` reply's entries describe.
+ *
+ * {@link decodeRedisValue} uses this for the RESP3 shape, and a **curated**
+ * client method calls it directly to stay protocol-independent: node-redis'
+ * `hGetAll` / `configGet` `transformReply` assembles this object itself, from
+ * the RESP2 flat array as readily as from the RESP3 map, so those methods
+ * return an object on both protocols while the raw `sendCommand` path follows
+ * the protocol. See #414.
+ */
+export function decodeRedisMapEntries(
+  entries: readonly [RedisValue, RedisValue][],
+  options: DecodeRedisValueOptions,
+): { [key: string]: NativeRedisReply } {
+  const out: { [key: string]: NativeRedisReply } = {}
+  for (const [key, value] of entries) {
+    out[decodeRedisKey(key)] = decodeRedisValue(value, options)
+  }
+  return out
 }
 
 /** Map keys are always plain strings, regardless of `returnBuffers`. */
