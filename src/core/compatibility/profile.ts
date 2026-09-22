@@ -12,6 +12,8 @@ export type FeatureId =
   | 'command.docs'
   | 'command.getkeysandflags'
   | 'acl.dryrun'
+  | 'config.set.failure-message'
+  | 'config.memory-value.reject-overflow'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'

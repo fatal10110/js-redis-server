@@ -146,6 +146,29 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
       ['CONFIG', 'x\ny'],
       "-ERR unknown subcommand 'x y'. Try CONFIG HELP.\r\n",
     )
+
+    // A LONE `\r` is the case with protocol consequence: left unmapped it ends
+    // the error line early and the client resynchronizes mid-frame. An
+    // implementation that special-cases the `\r\n` pair and maps `\n` alone
+    // still passes the two assertions above, so this one is what actually pins
+    // the 1:1 map. Captured from real 8.0.6.
+    await expectReply(
+      conn,
+      ['CONFIG', 'a\rb'],
+      "-ERR unknown subcommand 'a b'. Try CONFIG HELP.\r\n",
+    )
+
+    // Repeated runs of either byte stay 1:1 rather than collapsing.
+    await expectReply(
+      conn,
+      ['CONFIG', 'p\r\rq'],
+      "-ERR unknown subcommand 'p  q'. Try CONFIG HELP.\r\n",
+    )
+    await expectReply(
+      conn,
+      ['CONFIG', 'm\n\nn'],
+      "-ERR unknown subcommand 'm  n'. Try CONFIG HELP.\r\n",
+    )
   })
 
   test('CONFIG with no subcommand is a wrong-arity error for the container', async () => {
