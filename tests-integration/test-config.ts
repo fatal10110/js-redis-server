@@ -9,7 +9,12 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createRedisCluster, RedisCluster } from '../src/cluster-server'
-import { realClusterPorts, STANDALONE_AUTH_PASSWORD } from './redis-endpoints'
+import {
+  realClusterPorts,
+  realStandaloneAuthPort,
+  realStandalonePort,
+  STANDALONE_AUTH_PASSWORD,
+} from './redis-endpoints'
 import {
   type CompatibilitySpec,
   Resp2Server,
@@ -321,11 +326,10 @@ export class TestRunner {
   }
 
   private async startRealStandaloneAuth(): Promise<number> {
-    const configuredPort = process.env.REDIS_STANDALONE_AUTH_PORT
-    if (configuredPort) {
-      const port = Number(configuredPort)
-      await waitForRedis(port, STANDALONE_AUTH_PASSWORD)
-      return port
+    const configuredPort = realStandaloneAuthPort()
+    if (configuredPort !== undefined) {
+      await waitForRedis(configuredPort, STANDALONE_AUTH_PASSWORD)
+      return configuredPort
     }
 
     const port = await freePort()
@@ -352,11 +356,10 @@ export class TestRunner {
     // CI (and anyone running docker-compose.test.yml) provides a standalone
     // Redis whose host port is published via REDIS_STANDALONE_PORT — connect to
     // it instead of spawning, since the runner has no redis-server binary.
-    const configuredPort = process.env.REDIS_STANDALONE_PORT
-    if (configuredPort) {
-      const port = Number(configuredPort)
-      await waitForRedis(port)
-      return port
+    const configuredPort = realStandalonePort()
+    if (configuredPort !== undefined) {
+      await waitForRedis(configuredPort)
+      return configuredPort
     }
 
     // Local dev fallback: spawn our own redis-server child on a free port.

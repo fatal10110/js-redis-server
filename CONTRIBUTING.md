@@ -72,24 +72,28 @@ no assertions that depend on a key being absent at start, and no assertions on
 total `DBSIZE`. The suite has to pass twice in a row without a flush in between.
 
 `npm run test:integration:real` flushes first via `npm run clean:redis`, which
-uses `scripts/flush-redis.ts` (no `redis-cli` required) and exits non-zero if
-any endpoint is unreachable — start the backends with
-`docker compose -f docker-compose.test.yml up -d --wait` beforehand.
+uses `scripts/flush-redis.ts` (no `redis-cli` required) and exits non-zero
+unless every endpoint is verifiably empty and the cluster reports
+`cluster_state:ok`. Its error output says what to do about each failure; start
+the backends with `docker compose -f docker-compose.test.yml up -d --wait`
+beforehand.
 
 Both the harness and that script read the same env vars, so you can point them
 at a private cluster when the default one is shared:
 
 ```bash
-# Every port spelled out — ranges like "30000-30005" are rejected, not expanded.
-REDIS_CLUSTER_PORTS=31000,31001,31002,31003,31004,31005 \
-REDIS_STANDALONE_PORT=6499 \
-REDIS_STANDALONE_AUTH_PORT=6500 \
+REDIS_CLUSTER_PORTS=31100 \
+REDIS_STANDALONE_PORT=7811 \
+REDIS_STANDALONE_AUTH_PORT=7812 \
   npm run test:integration:real
 ```
 
-`REDIS_CLUSTER_PORTS` defaults to `30000,30001,30002,30003,30004,30005`. A
-malformed entry is an error rather than being skipped — silently dropping one
-would flush a subset of the cluster and still report success.
+`REDIS_CLUSTER_PORTS` is a comma-separated list of **seed** ports, defaulting
+to `30000,30001,30002,30003,30004,30005`. One reachable node is enough: the
+harness's cluster clients discover the rest from it, and `clean:redis` flushes
+the whole topology it finds, failing if any node in it is unreachable. Ranges
+like `30000-30005` are rejected rather than expanded, and any malformed entry —
+in this or either standalone port — is an error instead of being skipped.
 
 ## Adding New Redis Commands
 

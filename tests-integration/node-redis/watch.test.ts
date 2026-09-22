@@ -71,8 +71,9 @@ describe('WATCH/UNWATCH (node-redis)', () => {
   })
 
   it('WATCH should allow watching multiple keys in the same slot', async () => {
-    const firstKey = 'watch:{multi}:3'
-    const secondKey = 'watch:{multi}:4'
+    // RUN sits inside the hash tag so both keys share one slot, as WATCH needs.
+    const firstKey = `watch:{multi:${RUN}}:3`
+    const secondKey = `watch:{multi:${RUN}}:4`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, firstKey)
 
     try {

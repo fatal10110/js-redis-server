@@ -75,8 +75,9 @@ describe('WATCH/UNWATCH', () => {
 
   it('WATCH should allow watching multiple keys in the same slot', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
-    const firstKey = 'watch:{multi}:3'
-    const secondKey = 'watch:{multi}:4'
+    // RUN sits inside the hash tag so both keys share one slot, as WATCH needs.
+    const firstKey = `watch:{multi:${RUN}}:3`
+    const secondKey = `watch:{multi:${RUN}}:4`
 
     try {
       // Set initial values
