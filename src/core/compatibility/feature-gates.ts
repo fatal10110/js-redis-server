@@ -28,17 +28,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // src/commands/helpers.ts). Verified against redis-server 6.2.24, 7.0.15 and
   // 8.0.6. Valkey forked at 7.2, so every Valkey profile has the newer wording.
   //
-  // This gates the *wording* only. Three things the same 7.0 change brought are
-  // NOT gated, and are divergences on the older profiles rather than gaps in
-  // this entry:
-  //  - Dispatch timing. 7.0 rejects an unknown container subcommand at MULTI
-  //    queue time with -EXECABORT; this server queues it and errors at EXEC
-  //    (#435). XGROUP/XINFO are the mirror: they throw from a schema parser at
-  //    queue time even on `redis-6.2`, where real 6.2 queues them (#436).
-  //  - `addReplySubcommandSyntaxError` reaches only PUBSUB, 1 of 11 containers;
-  //    the rest answer a 7.0-era `wrong number of arguments for '<c>|<sub>'`
-  //    arity error on every profile (#437).
-  //  - Script dispatch. From 7.0 an unknown subcommand called from Lua fails
+  // This gates the *wording* only. The same 7.0 change also moved *when* and
+  // *whether* a container sees its subcommand, and none of that is modelled
+  // yet. The known divergences, and which profiles they are wrong on:
+  //  - MULTI, 7.0+ profiles. 7.0 rejects an unknown container subcommand at
+  //    queue time and EXEC answers -EXECABORT; this server queues it and
+  //    errors at EXEC (#435).
+  //  - XGROUP/XINFO, `redis-6.2`. They resolve the subcommand in a schema
+  //    parser, i.e. at queue time, so they abort a transaction that real 6.2
+  //    queues. The same early resolution means that with a trailing key real
+  //    6.2 checks the key first (`ERR no such key`, `WRONGTYPE`, `...requires
+  //    the key to exist`) and only then the subcommand; this server always
+  //    answers the subcommand error (#436).
+  //  - Arity errors, `redis-6.2`. `addReplySubcommandSyntaxError` reaches only
+  //    PUBSUB, 1 of 11 containers; the rest answer the 7.0-era `wrong number
+  //    of arguments for '<c>|<sub>'` arity error on every profile (#437).
+  //  - Scripts, 7.0+ profiles. An unknown subcommand called from Lua fails
   //    command lookup and answers `ERR Unknown Redis command called from
   //    script`; this server dispatches the container and produces the reply
   //    below instead (#439).

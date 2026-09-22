@@ -423,6 +423,84 @@ describe(
       )
     })
 
+    // Before 7.0 a script's `redis.call`/`redis.pcall` runs the container like
+    // any client would, so an unknown subcommand comes back as the container's
+    // own reply. From 7.0 script command lookup resolves container+subcommand
+    // and fails first (`ERR Unknown Redis command called from script`, #439),
+    // which is why this runs on `redis-6.2` only. Byte for byte against real
+    // 6.2.24. XINFO is called without a key on purpose: with one, 6.2 checks
+    // the key before the subcommand (`ERR no such key` / `WRONGTYPE`, #436).
+    test(
+      'a nested unknown subcommand keeps raw bytes through redis.pcall',
+      {
+        skip: supportsUnknownSubcommandWording() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
+
+        for (const container of ['PUBSUB', 'XGROUP', 'XINFO']) {
+          connection.write(
+            commandFrame(
+              'EVAL',
+              `return redis.pcall('${container}', ARGV[1])`,
+              '0',
+              subcommand,
+            ),
+          )
+          const reply = await connection.readRawFrame()
+          assert.deepStrictEqual(
+            [...reply],
+            [
+              ...Buffer.concat([
+                Buffer.from(
+                  "-ERR Unknown subcommand or wrong number of arguments for '",
+                ),
+                subcommand,
+                Buffer.from(`'. Try ${container} HELP.\r\n`),
+              ]),
+            ],
+            `${container}: got ${JSON.stringify(reply.toString('latin1'))}`,
+          )
+        }
+      },
+    )
+
+    // The same error through a failing `redis.call`, which additionally takes
+    // the script-abort decoration. Real 6.2.24 answers
+    //   -ERR Error running script (call to f_<sha>): @user_script:1: ERR Unknown
+    //    subcommand or wrong number of arguments for '\xff\xfe\xfd'. Try PUBSUB HELP.
+    // This server wraps it in the 7.0 decoration on every profile — a separate
+    // divergence (#442) — so only the body segment real 6.2 also carries is
+    // asserted: it must contain the three raw bytes, not three U+FFFD.
+    test(
+      'a nested unknown subcommand keeps raw bytes through redis.call',
+      {
+        skip: supportsUnknownSubcommandWording() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
+        connection.write(
+          commandFrame(
+            'EVAL',
+            "return redis.call('PUBSUB', ARGV[1])",
+            '0',
+            subcommand,
+          ),
+        )
+        const reply = await connection.readRawFrame()
+
+        const body = Buffer.concat([
+          Buffer.from("Unknown subcommand or wrong number of arguments for '"),
+          subcommand,
+          Buffer.from("'. Try PUBSUB HELP."),
+        ])
+        assert.ok(
+          reply.includes(body),
+          `expected the raw bytes in ${JSON.stringify(reply.toString('latin1'))}`,
+        )
+      },
+    )
+
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
       // the wording is version-invariant across profiles.

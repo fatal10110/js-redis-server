@@ -198,10 +198,12 @@ function encodeResp3VerbatimString(format: string, value: Buffer): Buffer {
  * trip would replace those bytes with U+FFFD.
  */
 function encodeError(value: Extract<RedisValue, { kind: 'error' }>): Buffer {
-  const prefix = value.code ? `-${sanitizeErrorText(value.code)} ` : '-'
+  const body = value.messageBytes ?? Buffer.from(value.message)
   return Buffer.concat([
-    Buffer.from(prefix),
-    sanitizeErrorBytes(value.messageBytes ?? Buffer.from(value.message)),
+    Buffer.from('-'),
+    sanitizeErrorBytes(
+      value.code ? Buffer.concat([Buffer.from(`${value.code} `), body]) : body,
+    ),
     Buffer.from('\r\n'),
   ])
 }
@@ -231,15 +233,10 @@ function formatNumber(value: number): string {
  * `sdsmapchars(s, "\r\n", "  ", 2)`, a 1:1 character map — so a `\r\n` run
  * becomes *two* spaces, not one. Collapsing runs is protocol-safe but changes
  * the byte count of every error reply that carries a newline (#388).
- */
-function sanitizeErrorText(value: string): string {
-  return value.replace(/[\r\n]/g, ' ')
-}
-
-/**
- * Byte-wise counterpart of {@link sanitizeErrorText}. `\r` and `\n` are
- * single-byte, so mapping them here is equivalent to mapping the characters —
- * and it works on bodies that are not valid UTF-8 at all.
+ *
+ * Done on bytes rather than characters: `\r` and `\n` are single-byte, so the
+ * result is the same for UTF-8 text, and it also works on a body that is not
+ * valid UTF-8 at all.
  */
 function sanitizeErrorBytes(value: Buffer): Buffer {
   const CR = 0x0d

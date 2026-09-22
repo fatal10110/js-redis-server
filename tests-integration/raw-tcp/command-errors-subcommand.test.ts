@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { RawRedisConnection } from './raw-connection'
@@ -49,6 +50,10 @@ const CONTAINERS = [
   'XGROUP',
   'XINFO',
 ]
+
+function sha1(script: string): string {
+  return createHash('sha1').update(script).digest('hex')
+}
 
 function unknownSubcommandReply(container: string, echoed: string): string {
   return `-ERR unknown subcommand '${echoed}'. Try ${container} HELP.\r\n`
@@ -260,58 +265,78 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     )
   })
 
-  // A container error raised inside `redis.call`/`redis.pcall` crosses the Lua
-  // boundary three times — out of the command, into the engine, back out as the
-  // script's return value — and each crossing used to decode it to a string.
-  // This one is real-safe: the echoed name is ASCII and the reply is identical
-  // to direct dispatch on real 8.0.6.
-  test('a nested subcommand error survives the Lua boundary', async () => {
+  // Every test in this block runs unskipped against real 8.0.6 and matches it
+  // byte for byte. Inputs were chosen for that: on 7.0+ an *unknown* container
+  // subcommand never reaches its container from a script at all — lookup fails
+  // first and the script gets `ERR Unknown Redis command called from script`
+  // (#439) — so the byte-exact echo cannot be driven through `redis.call` on
+  // this profile. The `redis-6.2` side, where it can, is asserted in the
+  // profile sweep (`tests-integration/compatibility/profile-gates.test.ts`).
+
+  // An error reply the script builds itself comes back through
+  // `luaReplyToRedisValue`, which used to decode it. Identical bytes on real
+  // 6.2.24 and 8.0.6.
+  test('an error table returned by a script keeps raw bytes', async () => {
     const conn = await connect()
+    const bytes = Buffer.from([0xff, 0xfe, 0xfd])
 
     await expectReply(
       conn,
-      ['EVAL', "return redis.pcall('PUBSUB', 'CHANNELS', 'a', 'b')", '0'],
-      "-ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.\r\n",
+      ['EVAL', 'return {err=ARGV[1]}', '0', bytes],
+      Buffer.concat([Buffer.from('-'), bytes, Buffer.from('\r\n')]),
     )
   })
 
-  // The byte-exact half of the same journey, and mock-only for a reason worth
-  // stating: on real 7.0+ an unrecognized *subcommand* never reaches this
-  // template from a script at all. Script command lookup resolves
-  // container+subcommand up front, fails, and answers `ERR Unknown Redis
-  // command called from script` — verified on 8.0.6 for CONFIG, COMMAND, XINFO
-  // and XGROUP. This server dispatches the container first and produces the
-  // real unknown-subcommand reply instead; that divergence is filed separately
-  // (#439) and is not what this test is about.
-  //
-  // What it pins is the property that #413 is for: whatever reply a nested
-  // command produces, its bytes reach the client unchanged. Both Lua paths are
-  // covered — PUBSUB throws from `execute()` (the reply travels as a
-  // RedisValue), XINFO throws from its schema parser before the plan exists
-  // (the reply travels as a RedisCommandError through `redisErrorToLuaReply`).
-  test(
-    'a nested error keeps raw bytes across the Lua boundary',
-    { skip: testRunner.backend === 'real' && 'see the comment above' },
-    async () => {
-      const conn = await connect()
-      const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
+  // A script-aborting error is decorated with ` script: <sha>, on
+  // @user_script:<line>.` in `renderScriptError` — the same code path a failing
+  // `redis.call` takes. The decoration used to be added by decoding the body to
+  // a string and re-encoding it. Captured from 8.0.6.
+  test('a script-aborting error keeps raw bytes through the script decoration', async () => {
+    const conn = await connect()
+    const bytes = Buffer.from([0xff, 0xfe, 0xfd])
+    const script = 'error(ARGV[1])'
 
-      for (const [container, script] of [
-        ['PUBSUB', "return redis.pcall('PUBSUB', ARGV[1])"],
-        ['XINFO', "return redis.pcall('XINFO', ARGV[1], 'k')"],
-      ]) {
-        await expectReply(
-          conn,
-          ['EVAL', script, '0', subcommand],
-          Buffer.concat([
-            Buffer.from("-ERR unknown subcommand '"),
-            subcommand,
-            Buffer.from(`'. Try ${container} HELP.\r\n`),
-          ]),
-        )
-      }
-    },
-  )
+    await expectReply(
+      conn,
+      ['EVAL', script, '0', bytes],
+      Buffer.concat([
+        Buffer.from('-ERR user_script:1: '),
+        bytes,
+        Buffer.from(` script: ${sha1(script)}, on @user_script:1.\r\n`),
+      ]),
+    )
+  })
+
+  // A known subcommand given unusable arguments reaches its container from a
+  // script on every version, so this is the one container error that comes
+  // back through both `redis.pcall` and a failing `redis.call`. The raw-byte
+  // *argument* is there to pin that it is not echoed — real Redis echoes only
+  // the subcommand name, which on this path must be one it recognizes, so no
+  // non-ASCII input can reach the echo. Captured from 8.0.6.
+  test('a nested subcommand syntax error comes back through pcall and call', async () => {
+    const conn = await connect()
+    const bytes = Buffer.from([0xff, 0xfe, 0xfd])
+    const body =
+      "ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP."
+
+    await expectReply(
+      conn,
+      [
+        'EVAL',
+        "return redis.pcall('PUBSUB', 'CHANNELS', ARGV[1], 'b')",
+        '0',
+        bytes,
+      ],
+      `-${body}\r\n`,
+    )
+
+    const script = "return redis.call('PUBSUB', 'CHANNELS', ARGV[1], 'b')"
+    await expectReply(
+      conn,
+      ['EVAL', script, '0', bytes],
+      `-${body} script: ${sha1(script)}, on @user_script:1.\r\n`,
+    )
+  })
 
   // Not an unknown subcommand: a *known* one with the wrong argument count is
   // an arity error naming `<container>|<subcommand>` on 7.0+. Pinned here so

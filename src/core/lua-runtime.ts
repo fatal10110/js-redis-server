@@ -282,21 +282,33 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
   }
 
   const { line, sha, kind, name } = meta
-  let body: string
+  let body: Buffer
   switch (kind) {
     case 'global-read':
-      body = `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`
+      body = Buffer.from(
+        `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`,
+      )
       break
     case 'command-arg-type':
       // Raised by redis.call/pcall without a script-position prefix.
-      body = 'Lua redis lib command arguments must be strings or integers'
+      body = Buffer.from(
+        'Lua redis lib command arguments must be strings or integers',
+      )
       break
     default:
-      body = value.err.toString('utf8')
+      // Kept as bytes: a propagated command error or a Lua runtime error can
+      // carry raw client bytes (`error(ARGV[1])`, a nested unknown-subcommand
+      // echo), and a UTF-8 round trip would turn them into U+FFFD.
+      body = value.err
   }
 
-  const message = `${body} script: ${sha}, on @user_script:${line}.`
-  return { err: Buffer.from(message, 'utf8'), code: value.code }
+  return {
+    err: Buffer.concat([
+      body,
+      Buffer.from(` script: ${sha}, on @user_script:${line}.`),
+    ]),
+    code: value.code,
+  }
 }
 
 function redisValueToLuaReply(value: RedisValue): ReplyValue {
