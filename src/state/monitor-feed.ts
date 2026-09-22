@@ -1,7 +1,17 @@
 import type { Unsubscribe } from './mutation-events'
 
 export type RedisMonitorCommandEvent = {
-  timestampMs: number
+  /**
+   * Microseconds since the Unix epoch, matching the resolution real Redis
+   * prints on every `MONITOR` line (`<unix-seconds>.<6 digits>`, stamped from
+   * `gettimeofday()`). Produced by {@link monitorTimestampMicros} — do not use
+   * `Date.now() * 1000` here, which looks the same but quantizes every line to
+   * a whole millisecond (#388).
+   *
+   * A plain `number` is exact for this: microsecond epoch values stay below
+   * `Number.MAX_SAFE_INTEGER` until the year 2255.
+   */
+  timestampMicros: number
   database: number
   clientId: string
   clientAddress?: string

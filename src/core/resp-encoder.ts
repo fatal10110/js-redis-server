@@ -215,6 +215,12 @@ function formatNumber(value: number): string {
   return value.toString()
 }
 
+/**
+ * Replace the two bytes that would end an error frame early. Real Redis uses
+ * `sdsmapchars(s, "\r\n", "  ", 2)`, a 1:1 character map — so a `\r\n` run
+ * becomes *two* spaces, not one. Collapsing runs is protocol-safe but changes
+ * the byte count of every error reply that carries a newline (#388).
+ */
 function sanitizeErrorText(value: string): string {
-  return value.replace(/[\r\n]+/g, ' ')
+  return value.replace(/[\r\n]/g, ' ')
 }

@@ -9,7 +9,7 @@ import {
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { normalizeKeyspaceNotifyConfig } from '../state'
-import { INT64_MAX, ok } from './helpers'
+import { INT64_MAX, ok, unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 // Behavior-driving parameters whose authoritative value lives on the server
@@ -296,7 +296,9 @@ function configRewrite(args: readonly Buffer[]): RedisResult {
 export const configCommand = defineCommand({
   name: 'config',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
@@ -321,7 +323,7 @@ export const configCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = args.subcommand.toString().toLowerCase()
 
     if (subcommand === 'get') {
       return configGet(args.args, ctx)
@@ -339,9 +341,13 @@ export const configCommand = defineCommand({
       return configRewrite(args.args)
     }
 
-    throw new RedisCommandError(
-      `Unknown CONFIG subcommand or wrong number of arguments for '${args.subcommand}'. Try CONFIG HELP.`,
-    )
+    // Version-specific wording: Redis 7.0 moved container commands into the
+    // command table and changed this template, so the reply is gated on
+    // `error.unknown-subcommand-wording` rather than hard-coded. Captured from
+    // real servers (6.2.24, 7.0.15, 8.0.6) and pinned by
+    // tests-integration/raw-tcp/command-errors-config.test.ts plus the profile
+    // sweep in tests-integration/compatibility/profile-gates.test.ts (#388).
+    throw unknownSubcommandError('CONFIG', args.subcommand, ctx.server.profile)
   },
 })
 

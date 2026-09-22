@@ -4,9 +4,11 @@ import { isIntegerToken } from '../core/command-schema'
 import {
   ExpectedIntegerError,
   InvalidExpireTimeError,
+  RedisCommandError,
   RedisSyntaxError,
   WrongTypeRedisError,
 } from '../core/redis-error'
+import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisDataTypeName, RedisDatabase } from '../state'
 
 export function ok(): RedisResult {
@@ -129,6 +131,68 @@ export function parsePositiveExpireToken(
   }
 
   return value
+}
+
+/**
+ * Real Redis formats the echoed subcommand with `%.128s`, so a longer name is
+ * cut at 128 bytes. Verified exact against 7.0.15 and 8.0.6 for single-byte
+ * names: at 128 the reply is byte-identical to the mock's, at 129 and 300 real
+ * echoes 128 characters. Redis 6.2 has no truncation at all — a 300-byte name
+ * comes back whole.
+ *
+ * Known gap, shared with the non-UTF-8 case below: when the 128-byte cut lands
+ * *inside* a multi-byte character — including a perfectly well-formed one —
+ * real Redis emits the raw partial byte, while `toString()` here yields U+FFFD.
+ * For `'A'.repeat(127) + 'é' + ...` real replies with 128 echoed bytes (172
+ * total) and this replies with 130 (174). Closing it needs the same plumbing as
+ * the binary case: `RedisCommandError` carries a `string` and
+ * `src/core/resp-encoder.ts` formats strings, so there is no path from a Buffer
+ * to raw bytes on the wire. Tracked as #384 part 2 — see the test file header.
+ */
+const SUBCOMMAND_ECHO_LIMIT = 128
+
+/**
+ * The reply real Redis sends when a container command is given a subcommand it
+ * does not recognize.
+ *
+ * Redis 7.0 moved container commands into the command table, which changed both
+ * the template and the echo model. Captured from real servers:
+ *
+ * ```
+ * 6.2.24  CONFIG BOGUS -> Unknown subcommand or wrong number of arguments for 'BOGUS'. Try CONFIG HELP.
+ * 7.0.15  CONFIG BOGUS -> unknown subcommand 'BOGUS'. Try CONFIG HELP.
+ * 8.0.6   CONFIG BOGUS -> unknown subcommand 'BOGUS'. Try CONFIG HELP.
+ * ```
+ *
+ * The subcommand is echoed with the casing the client sent. `container` is the
+ * upper-case parent name as it appears in the `Try ... HELP.` suffix.
+ *
+ * Note this covers the *unknown subcommand* path only. On 6.2 the same template
+ * also served wrong-arity replies for a known subcommand, where 7.0+ says
+ * `wrong number of arguments for 'config|get' command`; that arity path is a
+ * separate divergence and is not handled here (#413).
+ *
+ * There are 15 hand-rolled copies of this message across the command modules
+ * with three wordings live at once; #413 tracks migrating them onto this
+ * helper. Only CONFIG is routed through it so far.
+ */
+export function unknownSubcommandError(
+  container: string,
+  subcommand: Buffer | string,
+  profile: CompatibilityProfile,
+): RedisCommandError {
+  const raw = Buffer.isBuffer(subcommand) ? subcommand : Buffer.from(subcommand)
+
+  if (!profile.has('error.unknown-subcommand-wording')) {
+    return new RedisCommandError(
+      `Unknown subcommand or wrong number of arguments for '${raw.toString()}'. Try ${container} HELP.`,
+    )
+  }
+
+  const echoed = raw.subarray(0, SUBCOMMAND_ECHO_LIMIT).toString()
+  return new RedisCommandError(
+    `unknown subcommand '${echoed}'. Try ${container} HELP.`,
+  )
 }
 
 export function requireNextOptionValue(

@@ -22,6 +22,12 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
     redis: '7.0.0',
     valkey: '7.2.0',
   },
+  // Redis 7.0 moved container commands into the command table, which replaced
+  // `Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.`
+  // with `unknown subcommand '%s'. Try %s HELP.` and added `%.128s` truncation
+  // of the echoed name. Verified against redis-server 6.2.24, 7.0.15 and 8.0.6.
+  // Valkey forked at 7.2, so every Valkey profile has the newer wording.
+  'error.unknown-subcommand-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
