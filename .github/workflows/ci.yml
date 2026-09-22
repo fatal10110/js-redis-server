@@ -122,12 +122,14 @@ jobs:
       - name: Start Redis (cluster + standalone)
         if: matrix.needsRedis
         # --wait-timeout is the OUTER backstop, not the primary budget. The
-        # cluster init script gives up first (~315s worst case) and exits
-        # non-zero after dumping CLUSTER INFO/NODES and every node's log, which
-        # the step below then surfaces. 420s keeps that ordering: set it below
-        # the script's budget and the retries and the diagnostics both become
-        # unreachable, which is how #398 stayed undiagnosed for three sightings.
-        # See the budget block in docker/redis-cluster-init.sh before changing.
+        # cluster init script gives up first (294s worst case, even with a hung
+        # node) and exits non-zero after dumping CLUSTER INFO/NODES and every
+        # node's log, which the step below then surfaces. The healthcheck's
+        # start_period (330s) sits between the two. 420s keeps that ordering:
+        # set it below the script's budget and the retries and the diagnostics
+        # both become unreachable, which is how #398 stayed undiagnosed for
+        # three sightings. See the budget block in
+        # docker/redis-cluster-init.sh before changing.
         run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 420
 
       - name: Run integration tests (${{ matrix.name }})

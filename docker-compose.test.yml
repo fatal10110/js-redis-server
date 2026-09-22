@@ -28,16 +28,18 @@ services:
       # keep cluster_state at ok.
       test: ['CMD', 'sh', '/usr/local/bin/redis-cluster-init.sh', 'check']
       interval: 5s
-      # The probe makes 12 redis-cli calls (2 per node); 15s is head-room for a
-      # loaded machine, not an expected duration.
+      # The `check` probe queries all six nodes in parallel with a 5s cap per
+      # call, so even against a hung node it exits cleanly inside this 15s limit
+      # rather than being killed by Docker.
       timeout: 15s
-      # start_period covers the init script's entire worst-case budget (~315s,
-      # see its header), and probe failures inside it do not count against
-      # retries — so a slow-but-healthy boot can never exhaust the retry count.
-      # retries is therefore sized for STEADY STATE: once formed, 3 consecutive
-      # failures (<= 60s) mark the container unhealthy, which is what surfaces
-      # a node that dies mid-run. Nothing here bounds a hung boot; that is the
-      # init script's own budget, backstopped by the workflow's --wait-timeout.
+      # start_period covers the init script's entire worst-case budget (294s,
+      # itemised in its header), and probe failures inside it do not count
+      # against retries — so a slow-but-healthy boot can never exhaust the retry
+      # count. retries is therefore sized for STEADY STATE: once formed, 3
+      # consecutive failures (<= 30s at 5s interval + 5s probe) mark the
+      # container unhealthy, which is what surfaces a node that dies mid-run.
+      # Nothing here bounds a hung boot; that is the init script's own budget,
+      # backstopped by the workflow's --wait-timeout (420s).
       retries: 3
       start_period: 330s
 
