@@ -394,8 +394,30 @@ export class TestRunner {
     return []
   }
 
+  /**
+   * Ports of the real cluster's nodes — docker-compose.test.yml's published
+   * range by default, overridable with REDIS_CLUSTER_PORTS (a comma-separated
+   * list) so a developer can point the suite at a private cluster instead of
+   * sharing one. `scripts/flush-redis.ts` honours the same variable.
+   */
   getRealClusterPorts(): number[] {
-    return [30000, 30001, 30002, 30003, 30004, 30005]
+    const configured = process.env.REDIS_CLUSTER_PORTS
+    if (!configured) {
+      return [30000, 30001, 30002, 30003, 30004, 30005]
+    }
+
+    const ports = configured
+      .split(',')
+      .map(part => Number(part.trim()))
+      .filter(port => Number.isInteger(port) && port > 0)
+
+    if (ports.length === 0) {
+      throw new Error(
+        `REDIS_CLUSTER_PORTS is set but holds no valid ports: "${configured}"`,
+      )
+    }
+
+    return ports
   }
 
   getClusterPorts(): number[] {

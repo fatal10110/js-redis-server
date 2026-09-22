@@ -74,7 +74,10 @@ total `DBSIZE`. The suite has to pass twice in a row without a flush in between.
 `npm run test:integration:real` flushes first via `npm run clean:redis`, which
 uses `scripts/flush-redis.ts` (no `redis-cli` required) and exits non-zero if
 any endpoint is unreachable — start the backends with
-`docker compose -f docker-compose.test.yml up -d --wait` beforehand.
+`docker compose -f docker-compose.test.yml up -d --wait` beforehand. Both the
+harness and that script read `REDIS_CLUSTER_PORTS` (comma-separated, default
+`30000-30005`), `REDIS_STANDALONE_PORT` and `REDIS_STANDALONE_AUTH_PORT`, so you
+can point them at a private cluster when the default one is shared.
 
 ## Adding New Redis Commands
 
