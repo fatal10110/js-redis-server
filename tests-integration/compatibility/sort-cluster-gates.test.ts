@@ -3,19 +3,16 @@ import assert from 'node:assert'
 import type { Cluster, Redis } from 'ioredis'
 
 import { TestRunner } from '../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
-
-type ProfileName =
-  | 'redis-6.2'
-  | 'redis-7.0'
-  | 'redis-7.2'
-  | 'redis-7.4'
-  | 'redis-8.0'
-  | 'valkey-8.0'
-  | 'valkey-9.0'
+import {
+  activeProfile,
+  connectToSlotOwner,
+  errorWithMessage,
+  randomKey,
+  type ProfileName,
+} from '../utils'
 
 const testRunner = new TestRunner()
-const profile = (process.env.REDIS_COMPAT ?? 'redis-8.0') as ProfileName
+const profile = activeProfile
 
 /**
  * `sort.cluster-pattern-slot` — Redis 7.4 / Valkey 8.0 replaced the blanket

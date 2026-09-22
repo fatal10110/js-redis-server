@@ -2,7 +2,7 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 
 import { TestRunner } from '../test-config'
-import { commandFrame } from '../utils'
+import { activeProfile, commandFrame, type ProfileName } from '../utils'
 import {
   RawRedisConnection,
   respMapGet,
@@ -10,17 +10,8 @@ import {
   type RespWireValue,
 } from '../raw-tcp/raw-connection'
 
-type ProfileName =
-  | 'redis-6.2'
-  | 'redis-7.0'
-  | 'redis-7.2'
-  | 'redis-7.4'
-  | 'redis-8.0'
-  | 'valkey-8.0'
-  | 'valkey-9.0'
-
 const testRunner = new TestRunner()
-const profile = (process.env.REDIS_COMPAT ?? 'redis-8.0') as ProfileName
+const profile = activeProfile
 const expectedVersion: Record<ProfileName, string> = {
   'redis-6.2': '6.2.14',
   'redis-7.0': '7.0.15',

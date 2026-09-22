@@ -277,6 +277,16 @@ describe('cluster policy SORT pattern guard', () => {
     assert.strictEqual(await sortError('{}ids', 'GET', '{}other'), GET_DENIED)
   })
 
+  test("'{}' permanently closes the tag rather than resetting it", async () => {
+    // patternHashSlot() parks the sentinel at -2 so a *later* brace cannot
+    // re-open a tag; the whole pattern is hashed instead. Only this shape
+    // separates -2 from -1 — with -1 the embedded '{tag-b}' would pin the
+    // sort key's own slot and the pattern would be accepted. Real 8.0.6
+    // refuses it too.
+    assert.strictEqual(await sortError(KEY, 'GET', '{}x{tag-b}y'), GET_DENIED)
+    assert.strictEqual(await sortError(KEY, 'GET', '{tag-b}y'), null)
+  })
+
   test('treats an unterminated brace as no tag', async () => {
     assert.strictEqual(await sortError('{ids', 'GET', '{ids'), null)
     assert.strictEqual(await sortError('{ids', 'GET', '{other'), GET_DENIED)
@@ -294,7 +304,7 @@ describe('cluster policy SORT pattern guard', () => {
 
   test('stops at the first NUL when looking for the wildcard', async () => {
     // strchr() would not see this '*', so real Redis treats it as constant.
-    assert.strictEqual(await sortError(KEY, 'BY', 'a b*'), null)
+    assert.strictEqual(await sortError(KEY, 'BY', 'a\u0000b*'), null)
   })
 
   test('reports MOVED before the pattern guard', async () => {

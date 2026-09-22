@@ -102,15 +102,17 @@ export class RedisLuaRuntime {
       )
     }
 
-    const result = ctx.executor.executePlanSync(
-      plan,
-      createLuaMonitorContext(ctx),
-    )
+    const result = ctx.executor.executePlanSync(plan, createLuaCallContext(ctx))
     return redisValueToLuaReply(normalizeScriptCommandValue(result.value))
   }
 }
 
-function createLuaMonitorContext(
+/**
+ * The execution context every `redis.call`/`redis.pcall` runs under: the
+ * caller's context with the script's own monitor sink and the `inScript`
+ * flag, which commands whose reply must be reproducible branch on.
+ */
+function createLuaCallContext(
   ctx: RedisExecutionContext,
 ): RedisExecutionContext {
   return {

@@ -19,6 +19,7 @@ import {
   isConstantSortPattern,
   isSelfSortPattern,
   sortPatternWildcardIndex,
+  type ClusterSortArgs,
 } from '../core/sort-patterns'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
@@ -585,12 +586,10 @@ export const copyCommand = defineCommand({
 // not score). Numeric by default — every element must parse as a double, or
 // the command errors; ALPHA switches to a byte-wise lexicographic sort. STORE
 // writes the sorted result to a destination list and replies with its length.
-export type SortArgs = {
-  key: Buffer
+export interface SortArgs extends ClusterSortArgs {
   desc: boolean
   alpha: boolean
   limit?: { offset: number; count: number }
-  by?: Buffer
   get: Buffer[]
   store?: Buffer
 }
@@ -747,8 +746,10 @@ function applySortLimit(
  * Mirrors `sortCommand()`'s determinism override: a constant `BY` normally
  * means "do not sort", but an unordered SET source whose output has to be
  * reproducible — it is written by STORE, or returned to a script — is
- * force-sorted ALPHA with the `BY` dropped. Lists and zsets already have a
- * defined order, so only sets are overridden.
+ * force-sorted ALPHA with the `BY` dropped. Lists have a defined order, so
+ * only sets are overridden. (Real Redis leaves zsets alone for the same
+ * reason; `readSortSource` reads them in insertion rather than rank order
+ * here, which is tracked separately in #418.)
  */
 function forceDeterministicSetOrder(
   args: SortArgs,

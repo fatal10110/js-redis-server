@@ -319,3 +319,20 @@ export function bufferClient<T extends { withTypeMapping: (m: never) => T }>(
     [RESP_TYPES.BLOB_STRING]: Buffer,
   } as never)
 }
+
+/**
+ * The compatibility profile the current run is exercising. Profile-gated
+ * integration tests are run once per preset by
+ * `npm run test:integration:compatibility:mock`, which sets `REDIS_COMPAT`.
+ */
+export type ProfileName =
+  | 'redis-6.2'
+  | 'redis-7.0'
+  | 'redis-7.2'
+  | 'redis-7.4'
+  | 'redis-8.0'
+  | 'valkey-8.0'
+  | 'valkey-9.0'
+
+export const activeProfile = (process.env.REDIS_COMPAT ??
+  'redis-8.0') as ProfileName

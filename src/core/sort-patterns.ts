@@ -8,6 +8,19 @@
  * patterns the guard classified as globs.
  */
 
+/**
+ * The part of `SORT`'s parsed arguments the cluster guard reasons about.
+ * It lives here rather than in `src/commands/keys.ts` so `src/core` never
+ * names `src/commands` — not even in an erased `import type`, which would
+ * leave the layering only half applied. `SortArgs` extends it, so the two
+ * stay linked and a rename there is a compile error here.
+ */
+export type ClusterSortArgs = {
+  key: Buffer
+  by?: Buffer
+  get: readonly Buffer[]
+}
+
 const ASTERISK = 0x2a
 const NUL = 0x00
 const HASH = 0x23

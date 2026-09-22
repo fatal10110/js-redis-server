@@ -9,8 +9,11 @@ import {
 import type { RedisClientSession } from '../redis-context'
 import type { RedisClusterTopology } from '../../state'
 import type { CompatibilityProfile } from '../compatibility'
-import { isConstantSortPattern, isSelfSortPattern } from '../sort-patterns'
-import type { SortArgs } from '../../commands/keys'
+import {
+  isConstantSortPattern,
+  isSelfSortPattern,
+  type ClusterSortArgs,
+} from '../sort-patterns'
 
 export type ClusterPolicyOptions = {
   localNodeId: string
@@ -146,7 +149,7 @@ function getSortClusterPatternError(
     return null
   }
 
-  const args = plan.args as SortArgs
+  const args = plan.args as ClusterSortArgs
   const comparesPatternSlots = profile.has('sort.cluster-pattern-slot')
 
   if (!comparesPatternSlots) {
