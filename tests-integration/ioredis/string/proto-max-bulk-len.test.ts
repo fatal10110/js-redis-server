@@ -40,6 +40,14 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
     await testRunner.cleanup()
   })
 
+  async function readProtoMaxBulkLen(): Promise<string> {
+    const reply = (await standaloneClient!.config(
+      'GET',
+      'proto-max-bulk-len',
+    )) as string[]
+    return reply[1]
+  }
+
   test('SETRANGE rejects an offset+length beyond proto-max-bulk-len and creates no key', async () => {
     const key = `setrange:${randomKey()}`
 
@@ -139,19 +147,58 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
     )
   })
 
-  test('CONFIG GET reports the default proto-max-bulk-len', async () => {
-    const reply = (await standaloneClient!.config(
-      'GET',
-      'proto-max-bulk-len',
-    )) as string[]
+  // Redis clamps a resolved-negative end up to 0, so an `end` that underflows
+  // past the start of the value still yields the first byte. Widening the
+  // accepted range to int64 makes the far-negative cases reachable instead of a
+  // parse error, so they are pinned here too.
+  test('GETRANGE clamps a resolved-negative end up to 0', async () => {
+    const key = `getrange:${randomKey()}`
+    await redisClient!.set(key, 'hello')
 
-    assert.deepStrictEqual(reply, [
-      'proto-max-bulk-len',
-      String(DEFAULT_PROTO_MAX_BULK_LEN),
-    ])
+    for (const [start, end] of [
+      [0, -5],
+      [0, -6],
+      [0, -100],
+      [-100, -6],
+      [-100, -100],
+    ] as const) {
+      assert.strictEqual(
+        await redisClient!.getrange(key, start, end),
+        'h',
+        `GETRANGE ${start} ${end}`,
+      )
+    }
+
+    assert.strictEqual(
+      await redisClient!.getrange(key, 0, '-9223372036854775808'),
+      'h',
+    )
+    // SUBSTR is the same implementation under a deprecated name.
+    assert.strictEqual(await redisClient!.substr(key, 0, -100), 'h')
+
+    // A start past the clamped end is still empty.
+    assert.strictEqual(await redisClient!.getrange(key, 2, -100), '')
   })
 
+  test(
+    'CONFIG GET reports the default proto-max-bulk-len',
+    mockOnly,
+    async () => {
+      const reply = (await standaloneClient!.config(
+        'GET',
+        'proto-max-bulk-len',
+      )) as string[]
+
+      assert.deepStrictEqual(reply, [
+        'proto-max-bulk-len',
+        String(DEFAULT_PROTO_MAX_BULK_LEN),
+      ])
+    },
+  )
+
   test('CONFIG SET rejects a proto-max-bulk-len below the 1MB minimum', async () => {
+    const before = await readProtoMaxBulkLen()
+
     await assert.rejects(
       () => standaloneClient!.config('SET', 'proto-max-bulk-len', '100'),
       errorWithMessage(
@@ -159,11 +206,10 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
       ),
     )
 
-    const reply = (await standaloneClient!.config(
-      'GET',
-      'proto-max-bulk-len',
-    )) as string[]
-    assert.strictEqual(reply[1], String(DEFAULT_PROTO_MAX_BULK_LEN))
+    // A rejected CONFIG SET must leave the live value alone. Compared against
+    // what it was rather than the default, so a sibling suite sharing this
+    // standalone cannot make it flap.
+    assert.strictEqual(await readProtoMaxBulkLen(), before)
   })
 
   test('CONFIG SET rejects a proto-max-bulk-len that is not a memory value', async () => {
@@ -181,20 +227,48 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
     )
   })
 
+  // Redis' memtoull reads an empty string as 0, so it fails the *range* check
+  // rather than the memory-value check.
+  test('CONFIG SET reports an empty proto-max-bulk-len as out of range', async () => {
+    await assert.rejects(
+      () => standaloneClient!.config('SET', 'proto-max-bulk-len', ''),
+      errorWithMessage(
+        "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be between 1048576 and 9223372036854775807 inclusive",
+      ),
+    )
+  })
+
   test(
-    'CONFIG SET accepts memory-unit suffixes for proto-max-bulk-len',
+    'CONFIG SET accepts every Redis memory-unit suffix',
     mockOnly,
     async () => {
+      // The bare forms are decimal and the `b` forms binary, so a swapped pair
+      // would otherwise go unnoticed. Every case is at or above the 1MB minimum.
+      const cases: [value: string, bytes: string][] = [
+        ['1048576', '1048576'],
+        ['2097152b', '2097152'],
+        ['2000k', '2000000'],
+        ['2000kb', '2048000'],
+        ['3m', '3000000'],
+        ['3mb', '3145728'],
+        ['1g', '1000000000'],
+        ['1gb', '1073741824'],
+        ['1MB', '1048576'],
+      ]
+
       try {
-        assert.strictEqual(
-          await standaloneClient!.config('SET', 'proto-max-bulk-len', '1mb'),
-          'OK',
-        )
-        const reply = (await standaloneClient!.config(
-          'GET',
-          'proto-max-bulk-len',
-        )) as string[]
-        assert.deepStrictEqual(reply, ['proto-max-bulk-len', '1048576'])
+        for (const [value, bytes] of cases) {
+          assert.strictEqual(
+            await standaloneClient!.config('SET', 'proto-max-bulk-len', value),
+            'OK',
+            `CONFIG SET proto-max-bulk-len ${value}`,
+          )
+          assert.strictEqual(
+            await readProtoMaxBulkLen(),
+            bytes,
+            `CONFIG SET proto-max-bulk-len ${value}`,
+          )
+        }
       } finally {
         await standaloneClient!.config(
           'SET',
@@ -239,6 +313,41 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
         assert.strictEqual(await standaloneClient!.strlen(key), limit)
       } finally {
         await standaloneClient!.del(key)
+        await standaloneClient!.config(
+          'SET',
+          'proto-max-bulk-len',
+          String(DEFAULT_PROTO_MAX_BULK_LEN),
+        )
+      }
+    },
+  )
+
+  // `proto-max-bulk-len` can be raised past what a Buffer can hold. The size
+  // check has to refuse first: letting Buffer.alloc throw a RangeError would
+  // escape the command-error path as `-ERR internal server error` and drop the
+  // connection. Mock-only because it needs the limit raised, and pointless
+  // against a real server, which simply allocates.
+  test(
+    'SETRANGE refuses an offset beyond Buffer.alloc rather than killing the connection',
+    mockOnly,
+    async () => {
+      const key = `overflow:${randomKey()}`
+
+      try {
+        await standaloneClient!.config(
+          'SET',
+          'proto-max-bulk-len',
+          '9223372036854775807',
+        )
+
+        await assert.rejects(
+          () => standaloneClient!.setrange(key, '9007199254740992', 'xx'),
+          errorWithMessage(EXCEEDS_MAX_SIZE),
+        )
+        // Still usable: the failure stayed a command error.
+        assert.strictEqual(await standaloneClient!.ping(), 'PONG')
+        assert.strictEqual(await standaloneClient!.exists(key), 0)
+      } finally {
         await standaloneClient!.config(
           'SET',
           'proto-max-bulk-len',

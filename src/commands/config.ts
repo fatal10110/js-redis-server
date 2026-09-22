@@ -1,5 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
+import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   RedisCommandError,
@@ -32,7 +33,25 @@ const MEMORY_UNITS: Readonly<Record<string, bigint>> = {
   gb: 1073741824n,
 }
 
-function configSetFailed(name: string, detail: string): RedisCommandError {
+/**
+ * CONFIG SET's failure wording, which Redis 7.0 changed wholesale when it
+ * rewrote the subcommand to accept several parameter pairs:
+ *
+ *   6.2   ERR Invalid argument '<value>' for CONFIG SET '<name>' - <detail>
+ *   7.0+  ERR CONFIG SET failed (possibly related to argument '<name>') - <detail>
+ */
+function configSetFailed(
+  profile: CompatibilityProfile,
+  name: string,
+  value: string,
+  detail: string,
+): RedisCommandError {
+  if (!profile.has('config.set.failure-message')) {
+    return new RedisCommandError(
+      `Invalid argument '${value}' for CONFIG SET '${name}' - ${detail}`,
+    )
+  }
+
   return new RedisCommandError(
     `CONFIG SET failed (possibly related to argument '${name}') - ${detail}`,
   )
@@ -40,23 +59,37 @@ function configSetFailed(name: string, detail: string): RedisCommandError {
 
 /**
  * Parse a Redis memory value (`1048576`, `1mb`, `512MB`, ...) into bytes and
- * range-check it, reproducing CONFIG SET's two distinct failure messages.
+ * range-check it against a parameter's bounds, reproducing CONFIG SET's two
+ * distinct failure messages.
+ *
+ * Empty input is *not* a parse failure: Redis' `memtoull` reads it as 0, which
+ * then fails the range check instead. Above the maximum, Redis 6.2 saturates to
+ * the maximum where 7.0+ rejects.
  */
-function parseProtoMaxBulkLen(raw: string): bigint {
-  const match = /^(\d+)([a-zA-Z]*)$/.exec(raw)
+function parseMemoryValue(
+  profile: CompatibilityProfile,
+  name: string,
+  raw: string,
+  min: bigint,
+  max: bigint,
+): bigint {
+  const match = /^(\d*)([a-zA-Z]*)$/.exec(raw)
   const unit = match ? MEMORY_UNITS[match[2].toLowerCase() || 'b'] : undefined
   if (!match || unit === undefined) {
-    throw configSetFailed(
-      PROTO_MAX_BULK_LEN_PARAM,
-      'argument must be a memory value',
-    )
+    throw configSetFailed(profile, name, raw, 'argument must be a memory value')
   }
 
-  const value = BigInt(match[1]) * unit
-  if (value < PROTO_MAX_BULK_LEN_MIN || value > PROTO_MAX_BULK_LEN_MAX) {
+  const value = (match[1] === '' ? 0n : BigInt(match[1])) * unit
+  if (value > max && !profile.has('config.memory-value.reject-overflow')) {
+    return max
+  }
+
+  if (value < min || value > max) {
     throw configSetFailed(
-      PROTO_MAX_BULK_LEN_PARAM,
-      `argument must be between ${PROTO_MAX_BULK_LEN_MIN} and ${PROTO_MAX_BULK_LEN_MAX} inclusive`,
+      profile,
+      name,
+      raw,
+      `argument must be between ${min} and ${max} inclusive`,
     )
   }
 
@@ -154,6 +187,15 @@ function configGet(
   return RedisResult.create(RedisValue.map(entries))
 }
 
+/**
+ * A validated CONFIG SET assignment. Parameters whose value is parsed during
+ * validation carry the parsed form through to the apply pass, so nothing is
+ * re-derived (and possibly re-thrown) once updates have started landing.
+ */
+type ConfigUpdate =
+  | { name: string; value: string }
+  | { name: typeof PROTO_MAX_BULK_LEN_PARAM; bytes: bigint }
+
 function configSet(
   args: readonly Buffer[],
   ctx: RedisExecutionContext,
@@ -163,17 +205,26 @@ function configSet(
   }
 
   const store = getConfigStore(ctx)
-  const updates: [string, string][] = []
+  const updates: ConfigUpdate[] = []
   for (let i = 0; i < args.length; i += 2) {
     const name = args[i].toString().toLowerCase()
     const value = args[i + 1].toString()
     if (name === KEYSPACE_NOTIFY_PARAM) {
       // Validate + normalize now so the whole SET aborts before applying any.
-      updates.push([name, normalizeKeyspaceNotifyConfig(value)])
+      updates.push({ name, value: normalizeKeyspaceNotifyConfig(value) })
       continue
     }
     if (name === PROTO_MAX_BULK_LEN_PARAM) {
-      updates.push([name, parseProtoMaxBulkLen(value).toString()])
+      updates.push({
+        name,
+        bytes: parseMemoryValue(
+          ctx.server.profile,
+          name,
+          value,
+          PROTO_MAX_BULK_LEN_MIN,
+          PROTO_MAX_BULK_LEN_MAX,
+        ),
+      })
       continue
     }
     if (!store.has(name)) {
@@ -181,17 +232,19 @@ function configSet(
         `Unknown option or number of arguments for CONFIG SET - '${args[i].toString()}'`,
       )
     }
-    updates.push([name, value])
+    updates.push({ name, value })
   }
 
   // Validate every parameter before applying any — CONFIG SET is atomic.
-  for (const [name, value] of updates) {
-    if (name === KEYSPACE_NOTIFY_PARAM) {
-      ctx.server.notifyKeyspaceEvents = value
+  for (const update of updates) {
+    const { name } = update
+    if ('bytes' in update) {
+      ctx.server.protoMaxBulkLen = update.bytes
       continue
     }
-    if (name === PROTO_MAX_BULK_LEN_PARAM) {
-      ctx.server.protoMaxBulkLen = BigInt(value)
+    const { value } = update
+    if (name === KEYSPACE_NOTIFY_PARAM) {
+      ctx.server.notifyKeyspaceEvents = value
       continue
     }
     store.set(name, value)

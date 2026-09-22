@@ -107,11 +107,17 @@ surface.
 >   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 >   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
 >   `AKE`; an unknown class character is rejected).
-> - `proto-max-bulk-len` — caps how large a single string value may grow;
->   `APPEND` and `SETRANGE` reject rather than allocate past it. Accepts Redis
->   memory values (`1048576`, `1mb`, `512MB`, ...) and enforces Redis' own
->   `[1048576, 9223372036854775807]` bounds, with the same two CONFIG SET
->   failure messages.
+> - `proto-max-bulk-len` — read by the commands that grow a string in place,
+>   `APPEND` and `SETRANGE`, which reject rather than allocate past it. Accepts
+>   Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces Redis' own
+>   `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure wording
+>   follows the profile (Redis 7.0 changed it — see
+>   [compatibility profiles](API.md#compatibility-profiles)).
+>   **Enforcement is not yet general**: real Redis' primary check is in the
+>   protocol reader, so it also bounds every bulk argument (`SET`, `MSET`,
+>   `LPUSH`, `HSET`, ...) and the `SETBIT`/`BITFIELD` bit-offset ceiling. Neither
+>   is modeled — tracked in
+>   [#415](https://github.com/fatal10110/js-redis-server/issues/415).
 >
 > Since there is no backing config file,
 > `CONFIG REWRITE` reports the same no-config-file error as Redis.
@@ -245,7 +251,7 @@ with `GT` or `LT`.
 - [x] `GETSET key value` - Set a key's value and return its old value
 - [x] `GETDEL key` - Get the value of a key and delete it
 - [x] `GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]` - Get the value and optionally manage its TTL
-- [x] `APPEND key value` - Append a value to a key (rejects a result larger than `proto-max-bulk-len`, like Redis)
+- [x] `APPEND key value` - Append a value to a key (on an existing key, rejects a result larger than `proto-max-bulk-len`, like Redis)
 - [x] `STRLEN key` - Get the length of the value stored at key
 - [x] `GETRANGE key start end` - Get a substring of the value
 - [x] `SUBSTR key start end` - Alias for `GETRANGE` (deprecated)

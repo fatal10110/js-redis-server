@@ -259,6 +259,54 @@ describe(
       )
     })
 
+    test('CONFIG SET failure wording and overflow handling match the profile', async () => {
+      // Redis 7.0 rewrote CONFIG SET, changing the failure prefix; 6.2 also
+      // saturates an over-maximum memory value where 7.0+ rejects it.
+      const tooSmall = await send('CONFIG', 'SET', 'proto-max-bulk-len', '100')
+      const notMemory = await send('CONFIG', 'SET', 'proto-max-bulk-len', 'abc')
+      const range =
+        'argument must be between 1048576 and 9223372036854775807 inclusive'
+
+      if (supportsRedis70Commands()) {
+        assert.strictEqual(
+          tooSmall,
+          `-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - ${range}\r\n`,
+        )
+        assert.strictEqual(
+          notMemory,
+          "-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value\r\n",
+        )
+      } else {
+        assert.strictEqual(
+          tooSmall,
+          `-ERR Invalid argument '100' for CONFIG SET 'proto-max-bulk-len' - ${range}\r\n`,
+        )
+        assert.strictEqual(
+          notMemory,
+          "-ERR Invalid argument 'abc' for CONFIG SET 'proto-max-bulk-len' - argument must be a memory value\r\n",
+        )
+      }
+
+      const overflow = await send(
+        'CONFIG',
+        'SET',
+        'proto-max-bulk-len',
+        '99999999999999999999',
+      )
+      if (supportsRedis70Commands()) {
+        assert.strictEqual(
+          overflow,
+          `-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - ${range}\r\n`,
+        )
+      } else {
+        // 6.2 saturates to the maximum instead of failing.
+        assert.strictEqual(overflow, '+OK\r\n')
+        const reply = await send('CONFIG', 'GET', 'proto-max-bulk-len')
+        assert.match(reply, /9223372036854775807/)
+        await send('CONFIG', 'SET', 'proto-max-bulk-len', '536870912')
+      }
+    })
+
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
       // the wording is version-invariant across profiles.

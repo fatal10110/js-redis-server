@@ -41,7 +41,7 @@ export type RedisServerStateOptions = {
 const DEFAULT_ACTIVE_EXPIRY_INTERVAL_MS = 100
 
 /** Redis' compiled-in default for `proto-max-bulk-len`: 512MB. */
-export const DEFAULT_PROTO_MAX_BULK_LEN = 536870912n
+const DEFAULT_PROTO_MAX_BULK_LEN = 536870912n
 
 export class RedisServerState {
   readonly databases: RedisDatabase[]

@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from 'node:buffer'
 import { defineCommand } from '../core/command-definition'
 import {
   parseFiniteFloatToken,
@@ -36,6 +37,9 @@ import {
   commandKeyArgument,
   commandKeySpec,
 } from './introspection'
+
+/** Largest length `Buffer.alloc` will accept on this runtime. */
+const BUFFER_MAX_LENGTH = BigInt(bufferConstants.MAX_LENGTH)
 
 type SetCondition = 'NX' | 'XX'
 
@@ -400,9 +404,10 @@ export const getrangeCommand = defineCommand({
   name: 'getrange',
   schema: t.object({
     key: t.key(),
-    // Redis reads both ends as int64 and clamps them to the value's length, so
-    // magnitudes above 2^53 are legal input rather than a parse error. GETRANGE
-    // only ever reads an existing value, so proto-max-bulk-len never applies.
+    // Redis reads both ends as int64 and clamps the resolved indexes into
+    // [0, length - 1], so magnitudes above 2^53 are legal input rather than a
+    // parse error. GETRANGE only ever reads an existing value, so
+    // proto-max-bulk-len never applies.
     start: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
     end: t.bigInteger({ min: INT64_MIN, max: INT64_MAX }),
   }),
@@ -419,6 +424,9 @@ export const getrangeCommand = defineCommand({
     let endIdx = args.end < 0n ? length + args.end : args.end
 
     if (startIdx < 0n) startIdx = 0n
+    // Redis clamps a resolved-negative end up to 0 as well, so `GETRANGE s 0 -6`
+    // on a 5-byte value still returns the first byte rather than an empty bulk.
+    if (endIdx < 0n) endIdx = 0n
     if (endIdx >= length) endIdx = length - 1n
 
     if (startIdx > endIdx || startIdx >= length) {
@@ -700,12 +708,21 @@ function createSetrangeOffsetSchema(): CommandSchema<bigint> {
 /**
  * Redis refuses to grow a string past `proto-max-bulk-len` rather than
  * allocating it (server.c: checkStringLength).
+ *
+ * The effective ceiling is additionally capped at `buffer.constants.MAX_LENGTH`:
+ * `proto-max-bulk-len` is configurable up to int64 max, and handing `Buffer`
+ * a larger length throws a `RangeError`, which is not a `RedisCommandError` and
+ * would therefore surface as `-ERR internal server error` and close the
+ * connection. Refusing with the normal size error keeps the failure inside the
+ * command-error path.
  */
 function assertWithinProtoMaxBulkLen(
   ctx: RedisExecutionContext,
   totalLength: bigint,
 ): void {
-  if (totalLength > ctx.server.protoMaxBulkLen) {
+  const configured = ctx.server.protoMaxBulkLen
+  const limit = configured < BUFFER_MAX_LENGTH ? configured : BUFFER_MAX_LENGTH
+  if (totalLength > limit) {
     throw new StringExceedsMaxSizeError()
   }
 }
