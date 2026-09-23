@@ -10,6 +10,7 @@ import {
 } from './core/decode-redis-value'
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
+import { RedisResult } from './core/redis-result'
 import { seedStandalone, type SeedEntry } from './seed'
 import { RedisServerState } from './state'
 
@@ -104,8 +105,8 @@ export class InMemoryRedisClient {
    * Push-mode commands (MONITOR / SUBSCRIBE / …) resolve to their *immediate*
    * reply (MONITOR's `OK`, the subscribe confirmation); their server-initiated
    * frames are delivered through {@link pushes}. A multi-target (UN)SUBSCRIBE
-   * resolves to its first confirmation — on the wire the rest follow it in the
-   * same reply, which has no native shape here.
+   * resolves to its first confirmation; the rest arrive through
+   * {@link pushes}, ahead of any message.
    */
   async command(
     name: string,
@@ -120,8 +121,12 @@ export class InMemoryRedisClient {
       args.map(toRedisArgument),
     )
 
-    // The reply has been "delivered": release what a command held back until
-    // then (MONITOR's first feed lines, a RESP3 PUBLISH's own message).
+    // The reply has been "delivered": the rest of a multi-target SUBSCRIBE's
+    // confirmations follow it, then whatever the command held back until now
+    // (MONITOR's first feed lines, a RESP3 PUBLISH's own message).
+    for (const frame of result.options?.trailingFrames ?? []) {
+      this.session.enqueuePush(RedisResult.create(frame))
+    }
     result.options?.afterReply?.()
     return this.decode(result.value)
   }
@@ -144,8 +149,9 @@ export class InMemoryRedisClient {
   }
 
   /**
-   * Server-initiated frames for a connection in *push mode* — pub/sub messages
-   * and MONITOR lines — decoded to native replies. Iterate it after issuing
+   * Server-initiated frames for a connection in *push mode* — pub/sub messages,
+   * the 2nd..Nth confirmations of a multi-target (UN)SUBSCRIBE, and MONITOR
+   * lines — decoded to native replies. Iterate it after issuing
    * SUBSCRIBE/PSUBSCRIBE/MONITOR. Ends when `signal` (or the connection) is
    * closed.
    */

@@ -113,22 +113,36 @@ so the PR body is not a durable home for a breaking-change note.
   ```
   SUBSCRIBE a b c (any (UN)SUBSCRIBE family) -> one RedisResult pre-encoded
                                                 with every confirmation frame;
-                                                `value` is the first frame
+                                                `value` is the first frame,
+                                                `options.trailingFrames` the rest
   MONITOR                                    -> +OK, then feed lines as session
                                                 pushes (ClientSession.startMonitor)
   ExecutorResult                             -> RedisResult
   ```
 
-  A custom command that returned a stream should enqueue its frames as pushes
-  (`ClientSession.enqueuePush`, or `deferPushesUntilAfterReply` to hold them
-  behind its reply) and return an ordinary `RedisResult`. The
-  `RedisClientSession` interface swaps `registerResponseStreamCleanup` /
-  `resetResponseStreams` for `monitoring` / `startMonitor` / `stopMonitor`.
+  A custom command that returned a long-lived stream now returns an ordinary
+  `RedisResult` and produces through `ctx.session`, which gained what that
+  needs:
 
-  `InMemoryRedisClient` follows suit: a multi-target (UN)SUBSCRIBE resolves to
-  its first confirmation, and the remaining confirmations are no longer
-  replayed through `pushes()` — only messages and MONITOR lines are. The client
-  now also runs a reply's `afterReply` step, as the network path does.
+  ```ts
+  execute: (args, ctx) => {
+    const flush = ctx.session.deferPushesUntilAfterReply() // frames after +OK
+    const unsubscribe = source.subscribe(frame => ctx.session.enqueuePush(frame))
+    ctx.session.onReset(unsubscribe) // runs once on RESET or connection close
+    return RedisResult.create(RedisValue.simpleString('OK'), { afterReply: flush })
+  }
+  ```
+
+  On `RedisClientSession`, `registerResponseStreamCleanup` becomes `onReset`
+  and `resetResponseStreams` becomes `resetPushProducers`; `enqueuePush`,
+  `monitoring` and `startMonitor` are new. A front end that reads
+  `RedisResult.value` instead of wire bytes should deliver
+  `options.trailingFrames` as pushes after the reply and run
+  `options.afterReply`, as `InMemoryRedisClient` now does (so its `pushes()`
+  still yields the 2nd..Nth confirmations of `SUBSCRIBE a b c`). Both
+  `InMemoryRedisClient` and the node-redis mock now run `afterReply`, which
+  they previously skipped — e.g. `CLIENT KILL` of the caller's own connection
+  now takes effect there.
 
 - **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
   `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,

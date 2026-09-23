@@ -206,8 +206,10 @@ export class ClientSession implements RedisClientSession {
   private readonly pushWaiters = new Set<() => void>()
   private deferredPushes: RedisResult[] | null = null
   private pushQueueClosed = false
-  /** Set while this connection is in MONITOR mode; releases the feed. */
-  private unsubscribeMonitor?: Unsubscribe
+  /** Teardown for push producers (MONITOR); run on RESET and close. */
+  private readonly resetHooks = new Set<() => void>()
+  /** Set while this connection is in MONITOR mode; leaves it. */
+  private stopMonitor?: () => void
   private unregisterClientSession?: Unsubscribe
 
   constructor(options: ClientSessionOptions) {
@@ -642,29 +644,50 @@ export class ClientSession implements RedisClientSession {
   }
 
   get monitoring(): boolean {
-    return this.unsubscribeMonitor !== undefined
+    return this.stopMonitor !== undefined
   }
 
   /**
    * MONITOR: deliver every other client's command to this connection as a push
-   * frame, rendered by `frame`, until {@link stopMonitor} (RESET) or close.
-   * No-op while already monitoring, so a repeated MONITOR cannot double lines.
+   * frame, rendered by `frame`, until RESET or close. No-op while already
+   * monitoring, so a repeated MONITOR cannot double lines.
    */
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
-    if (this.unsubscribeMonitor) {
+    if (this.stopMonitor) {
       return
     }
 
-    this.unsubscribeMonitor = this.server.monitorFeed.subscribe(event => {
+    const unsubscribe = this.server.monitorFeed.subscribe(event => {
       if (event.clientId !== this.id) {
         this.enqueuePush(frame(event))
       }
     })
+    this.stopMonitor = this.onReset(() => {
+      unsubscribe()
+      this.stopMonitor = undefined
+    })
   }
 
-  stopMonitor(): void {
-    this.unsubscribeMonitor?.()
-    this.unsubscribeMonitor = undefined
+  /**
+   * Register teardown for something that keeps producing pushes for this
+   * connection. It runs once, on RESET or close, unless the returned function
+   * runs it first.
+   */
+  onReset(cleanup: () => void): () => void {
+    const hook = () => {
+      if (this.resetHooks.delete(hook)) {
+        cleanup()
+      }
+    }
+    this.resetHooks.add(hook)
+    return hook
+  }
+
+  /** RESET / close: tear down every producer registered with {@link onReset}. */
+  resetPushProducers(): void {
+    for (const hook of Array.from(this.resetHooks)) {
+      hook()
+    }
   }
 
   enqueuePush(result: RedisResult): void {
@@ -771,7 +794,7 @@ export class ClientSession implements RedisClientSession {
   close(): void {
     this.unregisterClientSession?.()
     this.unregisterClientSession = undefined
-    this.stopMonitor()
+    this.resetPushProducers()
     this.signalSource?.abort()
     this.unwatch()
     this.resetPubSub()

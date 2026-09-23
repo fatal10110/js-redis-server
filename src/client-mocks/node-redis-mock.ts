@@ -1309,6 +1309,10 @@ export class NodeRedisMockCluster extends CommandRunner {
  * (callers decode it to the node-redis-correct shape). Throws when the client is
  * closed. A multi-target (UN)SUBSCRIBE's value is its first confirmation;
  * messages never flow here (pub/sub uses the dedicated push-draining session).
+ *
+ * Runs the reply's `afterReply` step, as the wire does. Nothing reads the push
+ * queue of a non-pub/sub session, so `sendCommand(['MONITOR'])` resolves `OK`
+ * but its feed lines are never surfaced — the facade has no `monitor()`.
  */
 async function runOnSession(
   session: ClientSession,
@@ -1330,6 +1334,7 @@ async function runOnSession(
     rest.map((arg, index) => toBuffer(arg, index + 1)),
   )
 
+  result.options?.afterReply?.()
   return result.value
 }
 

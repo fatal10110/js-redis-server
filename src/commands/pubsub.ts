@@ -355,7 +355,8 @@ function pubsubHelp(ctx: RedisExecutionContext): RedisResult {
  * A (UN)SUBSCRIBE-family reply: one confirmation frame per target, sent back to
  * back as a single reply so nothing pipelined behind the command can land
  * between them (#455). Inside EXEC the same bytes are embedded in the array, as
- * Redis does. `value` carries the first frame for callers that read values.
+ * Redis does. Front ends that read values get the first frame as `value` and
+ * the rest as `trailingFrames`.
  */
 function confirmations(
   ctx: RedisExecutionContext,
@@ -371,6 +372,7 @@ function confirmations(
     Buffer.concat(
       frames.map(frame => encodeRedisValue(frame.value, { version })),
     ),
+    { trailingFrames: frames.slice(1).map(frame => frame.value) },
   )
 }
 

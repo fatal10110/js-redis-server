@@ -855,7 +855,7 @@ export const resetCommand = defineCommand({
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
     noEvictClients.delete(ctx.session)
-    ctx.session.stopMonitor()
+    ctx.session.resetPushProducers()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
     ctx.session.unwatch()

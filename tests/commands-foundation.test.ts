@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
+  ClientSession,
   connectionCommands,
   monitorCommand,
   RedisResult,
@@ -162,6 +163,32 @@ describe('new foundation commands', () => {
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
 
     assert.strictEqual(monitorCommand.name, 'monitor')
+  })
+
+  test('MONITOR holds feed lines back until its +OK is delivered', async () => {
+    const { session, server, executor } = createSession()
+    const actor = new ClientSession({ server, executor })
+    const reply = await session.execute('monitor', [])
+
+    // A command another client runs between MONITOR executing and its +OK
+    // reaching the wire must not become visible ahead of that +OK.
+    await actor.execute('ping', [Buffer.from('early')])
+    const reader = new AbortController()
+    const pushes = session.readPushes(reader.signal)[Symbol.asyncIterator]()
+    const first = pushes.next()
+    assert.strictEqual(await settlesBeforeNextTurn(first), false)
+
+    reply.options?.afterReply?.()
+    const line = await first
+    assert.strictEqual(line.done, false)
+    assert.match(
+      String((line.value as RedisResult).value.value),
+      /"ping" "early"$/,
+    )
+
+    reader.abort()
+    actor.close()
+    session.close()
   })
 
   test('RESET leaves MONITOR mode', async () => {
@@ -380,3 +407,14 @@ describe('new foundation commands', () => {
     )
   })
 })
+
+/** True if `promise` settles before a macrotask turn passes. */
+async function settlesBeforeNextTurn(promise: Promise<unknown>) {
+  let settled = false
+  void promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  )
+  await new Promise(resolve => setImmediate(resolve))
+  return settled
+}
