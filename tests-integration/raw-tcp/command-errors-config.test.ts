@@ -168,10 +168,12 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
     )
   })
 
-  // CONFIG SET failure wording (#416). The 7.0+ form names the parameter by its
-  // canonical lower-case name whatever casing the client sent; the 6.2 form
-  // (no detail suffix for this parameter, name echoed as sent) is asserted by
-  // the profile sweep in profile-gates.test.ts.
+  // CONFIG SET failure wording (#416). These two tests pin the 7.0+ bytes as
+  // regression guards; they already passed before #416, which only changed the
+  // 6.2 side. The 7.0+ form echoes the parameter name lower-cased whatever
+  // casing the client sent. The 6.2 form (no detail suffix for this parameter,
+  // name echoed as sent) is asserted — red before the fix — by the profile
+  // sweep in profile-gates.test.ts.
   test('an invalid notify-keyspace-events class fails with the CONFIG SET template', async () => {
     const conn = await connect()
     const expected =

@@ -40,6 +40,7 @@ export {
   KeyspaceNotifier,
   keyspaceNotifyFlagsToString,
   parseKeyspaceNotifyFlags,
+  type KeyspaceNotifyFlag,
   type KeyspaceNotifyFlags,
 } from './keyspace-notifier'
 export { RedisScriptCache } from './script-cache'

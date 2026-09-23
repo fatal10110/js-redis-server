@@ -14,6 +14,7 @@ export type FeatureId =
   | 'acl.dryrun'
   | 'config.set.failure-message'
   | 'config.memory-value.reject-overflow'
+  | 'notify.keyspace.new-key-class'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'

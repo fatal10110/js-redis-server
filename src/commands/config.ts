@@ -49,13 +49,15 @@ const MEMORY_UNITS = new Map<string, bigint>([
  *   7.0+  ERR CONFIG SET failed (possibly related to argument '<name>') - <detail>
  *
  * `name` is the parameter as the client sent it: 6.2 echoes it verbatim, 7.0+
- * echoes the canonical lower-case name. 6.2 only appends the detail for
- * parameters on its typed config table; hand-parsed ones such as
+ * echoes it lower-cased (an alias is not canonicalized — `Hash-Max-Ziplist-
+ * Entries` comes back as `hash-max-ziplist-entries`). 6.2 only appends the
+ * detail for parameters on its typed config table; hand-parsed ones such as
  * `notify-keyspace-events` fail through a bare `badfmt`, so pass
  * `legacyDetail: false` for those.
  *
- * Every CONFIG SET failure goes through this helper or
- * {@link configSetUnknownParameter} — never a hard-coded message.
+ * Invalid-value failures go through this helper and unknown parameters through
+ * {@link configSetUnknownParameter}. (The odd-argument-count and
+ * duplicate-parameter paths are separate — see #470.)
  */
 function configSetFailed(
   profile: CompatibilityProfile,
@@ -257,9 +259,9 @@ function configGet(
  * re-derived (and possibly re-thrown) once updates have started landing.
  */
 type ConfigUpdate =
-  | { name: string; value: string }
-  | { name: typeof PROTO_MAX_BULK_LEN_PARAM; bytes: bigint }
-  | { name: typeof KEYSPACE_NOTIFY_PARAM; flags: KeyspaceNotifyFlags }
+  | { kind: 'store'; name: string; value: string }
+  | { kind: 'proto-max-bulk-len'; bytes: bigint }
+  | { kind: 'notify-keyspace-events'; flags: KeyspaceNotifyFlags }
 
 function configSet(
   args: readonly Buffer[],
@@ -277,7 +279,9 @@ function configSet(
     const name = rawName.toLowerCase()
     const value = args[i + 1].toString()
     if (name === KEYSPACE_NOTIFY_PARAM) {
-      const flags = parseKeyspaceNotifyFlags(value)
+      const flags = parseKeyspaceNotifyFlags(value, {
+        newKeyClass: profile.has('notify.keyspace.new-key-class'),
+      })
       if (!flags) {
         throw configSetFailed(
           profile,
@@ -287,12 +291,12 @@ function configSet(
           { legacyDetail: false },
         )
       }
-      updates.push({ name, flags })
+      updates.push({ kind: KEYSPACE_NOTIFY_PARAM, flags })
       continue
     }
     if (name === PROTO_MAX_BULK_LEN_PARAM) {
       updates.push({
-        name,
+        kind: PROTO_MAX_BULK_LEN_PARAM,
         bytes: parseMemoryValue(
           profile,
           rawName,
@@ -306,20 +310,22 @@ function configSet(
     if (!store.has(name)) {
       throw configSetUnknownParameter(profile, rawName)
     }
-    updates.push({ name, value })
+    updates.push({ kind: 'store', name, value })
   }
 
   // Validate every parameter before applying any — CONFIG SET is atomic.
   for (const update of updates) {
-    if ('bytes' in update) {
-      ctx.server.protoMaxBulkLen = update.bytes
-      continue
+    switch (update.kind) {
+      case 'proto-max-bulk-len':
+        ctx.server.protoMaxBulkLen = update.bytes
+        break
+      case 'notify-keyspace-events':
+        ctx.server.notifyKeyspaceEvents = update.flags
+        break
+      case 'store':
+        store.set(update.name, update.value)
+        break
     }
-    if ('flags' in update) {
-      ctx.server.notifyKeyspaceEvents = update.flags
-      continue
-    }
-    store.set(update.name, update.value)
   }
   return ok()
 }

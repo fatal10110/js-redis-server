@@ -326,13 +326,47 @@ describe(
       }
     })
 
-    // Every CONFIG SET failure shares the one gated template (#416), not only
-    // proto-max-bulk-len's. Captured from real 6.2.14 / 7.0.15 / 8.0.0 /
-    // valkey 8.0.0 / valkey 9.0.0:
+    // The `n` (new-key) class is Redis 7.0+. Real 6.2.14/6.2.24 reject `KEn`
+    // through the bare `badfmt` wording (but accept `m` and `d`); 7.0.15,
+    // 8.0.x and valkey 8.0/9.0 accept it.
+    test('the n notify-keyspace-events class matches the profile', async () => {
+      try {
+        const reply = await send(
+          'CONFIG',
+          'SET',
+          'notify-keyspace-events',
+          'KEn',
+        )
+        if (supportsNewKeyNotifyClass()) {
+          assert.strictEqual(reply, '+OK\r\n')
+          assert.strictEqual(
+            await send('CONFIG', 'GET', 'notify-keyspace-events'),
+            '*2\r\n$22\r\nnotify-keyspace-events\r\n$3\r\nnKE\r\n',
+          )
+        } else {
+          assert.strictEqual(
+            reply,
+            "-ERR Invalid argument 'KEn' for CONFIG SET 'notify-keyspace-events'\r\n",
+          )
+        }
+
+        // `m` and `d` exist on every profile.
+        assert.strictEqual(
+          await send('CONFIG', 'SET', 'notify-keyspace-events', 'KEmd'),
+          '+OK\r\n',
+        )
+      } finally {
+        await send('CONFIG', 'SET', 'notify-keyspace-events', '')
+      }
+    })
+
+    // Invalid-value and unknown-parameter CONFIG SET failures share the one
+    // gated template (#416), not only proto-max-bulk-len's. Captured from real
+    // 6.2.14 / 7.0.15 / 8.0.0 / valkey 8.0.0 / valkey 9.0.0:
     // - notify-keyspace-events is hand-parsed in 6.2 (`goto badfmt`), so its
     //   6.2 reply carries no ` - <detail>` suffix at all;
-    // - 6.2 echoes the parameter name as the client sent it, 7.0+ echoes the
-    //   canonical lower-case name;
+    // - 6.2 echoes the parameter name as the client sent it, 7.0+ echoes it
+    //   lower-cased;
     // - an unknown parameter has its own 6.2 wording.
     test('every CONFIG SET failure uses the profile wording', async () => {
       const badNotify = await send(
@@ -822,6 +856,10 @@ function supportsConfigSetFailureWording(): boolean {
 }
 
 function supportsMemoryValueOverflowRejection(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsNewKeyNotifyClass(): boolean {
   return profile !== 'redis-6.2'
 }
 

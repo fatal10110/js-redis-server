@@ -2,19 +2,50 @@ import type { RedisDataValue } from './data-types'
 import type { RedisMutationEvent } from './mutation-events'
 import type { RedisPubSubBroker } from './pubsub-broker'
 
+/** An event class a mutation is published under. */
+type NotifyClass = 'g' | '$' | 'l' | 's' | 'h' | 'z' | 'x' | 'e' | 't'
+
 /**
- * Parsed `notify-keyspace-events`: the set of enabled flag characters, with
- * 'A' already expanded. `K`/`E` select the delivery channels
- * (`__keyspace@<db>__:<key>` / `__keyevent@<db>__:<event>`); the rest gate
- * which event classes are published. Empty disables notifications.
+ * One `notify-keyspace-events` flag character: an event class, module (`d`),
+ * key-miss (`m`), new-key (`n`), or a delivery channel (`K`/`E`). `A` is not a
+ * flag — it is shorthand, expanded at parse time.
  */
-export type KeyspaceNotifyFlags = ReadonlySet<string>
+export type KeyspaceNotifyFlag = NotifyClass | 'd' | 'm' | 'n' | 'K' | 'E'
+
+/**
+ * Parsed `notify-keyspace-events`: the set of enabled flags, with 'A' already
+ * expanded. `K`/`E` select the delivery channels (`__keyspace@<db>__:<key>` /
+ * `__keyevent@<db>__:<event>`); the rest gate which event classes are
+ * published. Empty disables notifications.
+ */
+export type KeyspaceNotifyFlags = ReadonlySet<KeyspaceNotifyFlag>
 
 // The classes 'A' (NOTIFY_ALL) expands to, in Redis' render order: everything
 // except key-miss (m) and new-key (n). Module (d) IS included, so `Ad`
 // collapses to `A` while `g$lshzxet` (no d) stays expanded.
-const ALL_CLASSES = 'g$lshzxetd'
-const VALID_FLAGS = new Set(`${ALL_CLASSES}KEmn`)
+const ALL_CLASSES: readonly KeyspaceNotifyFlag[] = [
+  'g',
+  '$',
+  'l',
+  's',
+  'h',
+  'z',
+  'x',
+  'e',
+  't',
+  'd',
+]
+const VALID_FLAGS: ReadonlySet<string> = new Set<KeyspaceNotifyFlag>([
+  ...ALL_CLASSES,
+  'm',
+  'n',
+  'K',
+  'E',
+])
+
+function isNotifyFlag(char: string): char is KeyspaceNotifyFlag {
+  return VALID_FLAGS.has(char)
+}
 
 /** CONFIG SET's failure detail for an unrecognized flag character. */
 export const INVALID_NOTIFY_FLAG_DETAIL =
@@ -24,15 +55,19 @@ export const INVALID_NOTIFY_FLAG_DETAIL =
  * Parse a raw `notify-keyspace-events` value (e.g. `"KEA"`, `"Ex"`). Returns
  * `undefined` on an unrecognized character — the caller owns the error, whose
  * wording is profile-specific.
+ *
+ * `newKeyClass: false` rejects `n`, which Redis only added in 7.0 (6.2 treats
+ * it as an unknown character).
  */
 export function parseKeyspaceNotifyFlags(
   value: string,
+  { newKeyClass = true }: { newKeyClass?: boolean } = {},
 ): KeyspaceNotifyFlags | undefined {
-  const flags = new Set<string>()
+  const flags = new Set<KeyspaceNotifyFlag>()
   for (const char of value) {
     if (char === 'A') {
       for (const cls of ALL_CLASSES) flags.add(cls)
-    } else if (VALID_FLAGS.has(char)) {
+    } else if (isNotifyFlag(char) && (newKeyClass || char !== 'n')) {
       flags.add(char)
     } else {
       return undefined
@@ -42,20 +77,28 @@ export function parseKeyspaceNotifyFlags(
 }
 
 /**
- * Render flags in Redis' canonical form (7.2 `keyspaceEventsFlagsToString`).
- * When every class 'A' covers is set they collapse to 'A' and `n` is dropped;
- * otherwise the classes plus `n` are emitted in order. `K`, `E`, then `m`
- * always follow. Examples: `KEA` → `AKE`, `KEgnd$` → `g$dnKE`, `Adm` → `Am`.
+ * Render flags in Redis' canonical form, mirroring 7.2's
+ * `keyspaceEventsFlagsToString` rule by rule:
+ *
+ * 1. Classes. If every class 'A' covers (`g$lshzxetd`) is set, emit a single
+ *    `A` — and nothing else from this group, so `n` is dropped (`And` → `A`).
+ *    Otherwise emit each set class in `g$lshzxetd` order, then `n`.
+ * 2. Delivery channels: `K`, then `E`.
+ * 3. Key-miss: `m`, always last, whether or not the classes collapsed.
+ *
+ * Examples: `KEA` → `AKE`, `KEgnd$` → `g$dnKE`, `KEn` → `nKE`, `Adm` → `Am`.
  */
 export function keyspaceNotifyFlagsToString(
   flags: KeyspaceNotifyFlags,
 ): string {
-  const all = [...ALL_CLASSES].every(cls => flags.has(cls))
-  const order = all ? 'AKEm' : `${ALL_CLASSES}nKEm`
-  return [...order].filter(flag => flag === 'A' || flags.has(flag)).join('')
+  const has = (flag: KeyspaceNotifyFlag): boolean => flags.has(flag)
+  const classes = ALL_CLASSES.every(has)
+    ? 'A'
+    : [...ALL_CLASSES, 'n' as const].filter(has).join('')
+  const channels = (['K', 'E'] as const).filter(has).join('')
+  const keyMiss = has('m') ? 'm' : ''
+  return classes + channels + keyMiss
 }
-
-type NotifyClass = 'g' | '$' | 'l' | 's' | 'h' | 'z' | 'x' | 'e' | 't'
 
 type ResolvedNotification = {
   database: number

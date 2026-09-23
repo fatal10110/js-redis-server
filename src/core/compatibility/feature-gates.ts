@@ -17,6 +17,9 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Redis 6.2 saturates a memory value above the parameter's maximum to that
   // maximum; 7.0+ rejects it with the out-of-range error instead.
   'config.memory-value.reject-overflow': { redis: '7.0.0', valkey: '7.2.0' },
+  // The `n` (new-key) notify-keyspace-events class is Redis 7.0+; 6.2 rejects
+  // it as an invalid flag character (it does accept `m` and `d`).
+  'notify.keyspace.new-key-class': { redis: '7.0.0', valkey: '7.2.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },

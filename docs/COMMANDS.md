@@ -531,7 +531,8 @@ Key mutations are published to the standard `__keyspace@<db>__:<key>` (event in
 the message) and `__keyevent@<db>__:<event>` (key in the message) channels when
 enabled via `CONFIG SET notify-keyspace-events <flags>`. The flag string uses
 Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
-`t`, `m`, `n`, `d`); it is validated and normalized like real Redis.
+`t`, `m`, `n`, `d`); it is validated and normalized like real Redis. `n` is
+Redis 7.0+, so the `redis-6.2` profile rejects it.
 
 - [x] Lifecycle events derived from the keyspace itself: `del`, `expire`,
       `persist`, and `expired` (fired when a key is lazily evicted on access).

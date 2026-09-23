@@ -28,6 +28,18 @@ describe('keyspace notify flag parsing', () => {
       assert.strictEqual(parseKeyspaceNotifyFlags(value), undefined, value)
     }
   })
+
+  // `n` is Redis 7.0+; 6.2 rejects it but accepts `m` and `d`.
+  test('newKeyClass: false rejects only the n flag', () => {
+    for (const value of ['n', 'KEn', 'And', 'KEnd']) {
+      const flags = parseKeyspaceNotifyFlags(value, { newKeyClass: false })
+      assert.strictEqual(flags, undefined, value)
+    }
+    assert.deepStrictEqual(
+      parseKeyspaceNotifyFlags('KEmd', { newKeyClass: false }),
+      new Set(['K', 'E', 'm', 'd']),
+    )
+  })
 })
 
 describe('keyspace notify flag normalization', () => {
