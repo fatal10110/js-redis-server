@@ -16,16 +16,15 @@ import shim from './node_modules/vite-plugin-node-polyfills/shims/process/dist/i
 const process = shim as NodeJS.Process
 
 if (typeof process.hrtime !== 'function') {
-  // Node's semantics on top of performance.now(): a monotonic [s, ns] tuple
-  // (optionally relative to `prev`), and `.bigint()` in nanoseconds. Browsers
-  // coarsen performance.now() to microseconds or worse, which clock.ts
-  // tolerates — it only needs a monotonic source to offset a Date.now() anchor.
+  // `.bigint()` — the only form ../../src uses — as monotonic nanoseconds on
+  // top of performance.now(), plus the bare no-arg `[s, ns]` tuple so the
+  // function isn't a half-shaped hrtime. (Node's `hrtime(prev)` diff form is
+  // not implemented: nothing calls it.) Browsers coarsen performance.now() to
+  // microseconds or worse, which clock.ts tolerates — it only needs a
+  // monotonic source to offset a Date.now() anchor.
   const nowNanos = () => BigInt(Math.round(performance.now() * 1e6))
-  const hrtime = (prev?: [number, number]): [number, number] => {
-    let ns = nowNanos()
-    if (prev) {
-      ns -= BigInt(prev[0]) * 1_000_000_000n + BigInt(prev[1])
-    }
+  const hrtime = (): [number, number] => {
+    const ns = nowNanos()
     return [Number(ns / 1_000_000_000n), Number(ns % 1_000_000_000n)]
   }
   hrtime.bigint = nowNanos
