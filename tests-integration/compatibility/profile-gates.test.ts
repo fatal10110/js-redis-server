@@ -580,6 +580,35 @@ describe(
           : /not allowed from script/,
       )
 
+      // The lookup is against the real table: a real subcommand this server
+      // does not implement is refused, and one the profile's server does not
+      // have yet is unknown.
+      const cases: Array<[string, boolean]> = [
+        ["'ACL','CAT'", true],
+        ["'CLIENT','PAUSE','0'", true],
+        ["'CLIENT','NO-TOUCH','ON'", profile !== 'redis-7.0'],
+        [
+          "'CLIENT','CAPA','redirect'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'SCRIPT','SHOW','x'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'CLIENT','IMPORT-SOURCE','ON'",
+          profile === 'valkey-9.0' || profile === 'redis-6.2',
+        ],
+      ]
+      for (const [call, refused] of cases) {
+        const reply = await send('EVAL', `return redis.pcall(${call})`, '0')
+        assert.match(
+          reply,
+          refused ? /^-.*not allowed from script/ : /^-.*Unknown .*command/,
+          call,
+        )
+      }
+
       // QUIT has a command-table entry (and so the noscript refusal) only from
       // 7.0; a 6.2 script sees an unknown command.
       const quit = await send('EVAL', "return redis.pcall('QUIT')", '0')

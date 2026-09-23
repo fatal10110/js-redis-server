@@ -15,7 +15,7 @@ import {
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { subcommandSupported } from '../core/compatibility'
+import type { FeatureId } from '../core/compatibility'
 import { unknownSubcommandError } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
@@ -36,6 +36,16 @@ type CommandInfo = {
   keySpecs: readonly CommandKeySpec[]
   subcommands: readonly CommandInfo[]
   docs?: CommandDocumentation
+}
+
+const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
+  'acl|dryrun': 'acl.dryrun',
+  'command|docs': 'command.docs',
+  'command|getkeysandflags': 'command.getkeysandflags',
+  'client|no-evict': 'client.no-evict',
+  'client|setinfo': 'client.setinfo',
+  'pubsub|shardchannels': 'pubsub.sharded',
+  'pubsub|shardnumsub': 'pubsub.sharded',
 }
 
 const commandIntrospection: CommandIntrospection = {
@@ -392,7 +402,8 @@ function subcommandAvailable(
     return true
   }
 
-  return subcommandSupported(introspection.name, ctx.server.profile)
+  const feature = SUBCOMMAND_FEATURES[introspection.name.toLowerCase()]
+  return feature === undefined || ctx.server.profile.has(feature)
 }
 
 function commandInfo(

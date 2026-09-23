@@ -114,6 +114,26 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
     },
   )
 
+  test('real subcommands this server does not implement are still refused', async () => {
+    // A 7.0+ script looks the subcommand up in the real command table, so a
+    // real-but-unimplemented subcommand is refused rather than unknown.
+    const calls = [
+      "'ACL','CAT'",
+      "'ACL','LOG'",
+      "'ACL','USERS'",
+      "'CLIENT','PAUSE','0'",
+      "'CLIENT','TRACKINGINFO'",
+      "'CLIENT','GETREDIR'",
+    ]
+    for (const call of calls) {
+      await assert.rejects(
+        () => redis.eval(`return redis.pcall(${call})`),
+        errorWithMessage(NOT_ALLOWED),
+        call,
+      )
+    }
+  })
+
   test('CONFIG, ACL and SCRIPT stay refused from scripts', async () => {
     const calls = [
       "'CONFIG','GET','maxmemory'",

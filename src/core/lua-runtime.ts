@@ -7,7 +7,7 @@ import {
   type ReplyValue,
 } from 'lua-redis-wasm'
 import type { CompatibilityProfile } from './compatibility/profile'
-import { subcommandSupported } from './compatibility/subcommand-gates'
+import { noscriptSubcommandExists } from './compatibility/subcommand-gates'
 import type { CommandPlan } from './command-definition'
 import {
   errorReplyBytes,
@@ -145,20 +145,19 @@ function noscriptRefusal(
     return new ScriptNotAllowedCommandError()
   }
 
-  const subcommands = definition.introspection?.subcommands
-  if (!subcommands || plan.rawArgs.length === 0) {
+  if (plan.rawArgs.length === 0) {
     return new ScriptNotAllowedCommandError()
   }
 
-  const name = `${definition.name}|${plan.rawArgs[0].toString().toLowerCase()}`
-  const known = subcommands.some(
-    sub => sub.name === name && subcommandSupported(name, profile),
-  )
-  if (!known) {
+  // Look up against the *real* subcommand table, not the implemented subset:
+  // a real subcommand this server lacks (`CLIENT PAUSE`) is still refused.
+  const subcommand = plan.rawArgs[0].toString().toLowerCase()
+  const exists = noscriptSubcommandExists(definition.name, subcommand, profile)
+  if (exists === false) {
     return new ScriptUnknownCommandError()
   }
 
-  return name === `${definition.name}|help`
+  return exists && subcommand === 'help'
     ? null
     : new ScriptNotAllowedCommandError()
 }
