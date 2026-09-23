@@ -1,5 +1,7 @@
 import assert from 'node:assert'
-import { createConnection, type Socket } from 'node:net'
+import { createConnection } from 'node:net'
+import type { Duplex } from 'node:stream'
+import { openSocketlessStream } from '../test-config'
 
 /**
  * Raw TCP harness for the integration suite.
@@ -32,7 +34,7 @@ export class RawRedisConnection {
   private closed = false
   private error: Error | null = null
 
-  private constructor(private readonly socket: Socket) {
+  private constructor(private readonly socket: Duplex) {
     socket.on('data', chunk => {
       this.buffered = Buffer.concat([this.buffered, chunk])
       this.wakeWaiters()
@@ -51,6 +53,13 @@ export class RawRedisConnection {
     host: string,
     port: number,
   ): Promise<RawRedisConnection> {
+    // socketless backend: the "port" is a synthetic cluster node address, reached
+    // over the client mock's own virtual transport rather than TCP.
+    const virtual = await openSocketlessStream(host, port)
+    if (virtual) {
+      return new RawRedisConnection(virtual)
+    }
+
     const socket = createConnection({ host, port })
     socket.setNoDelay(true)
     await new Promise<void>((resolve, reject) => {

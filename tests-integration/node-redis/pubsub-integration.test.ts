@@ -1,17 +1,19 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
-import { createClient, RedisClientType } from 'redis'
+import { RedisClientType } from 'redis'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
 describe(`Pub/Sub integration (node-redis, ${testRunner.getBackendName()})`, () => {
-  let port: number
+  // Every client is a duplicate() of one standalone client: a new connection to
+  // the same server (mock/real), or to the same in-memory keyspace (socketless).
+  let base: RedisClientType
   const clients: RedisClientType[] = []
 
   before(async () => {
-    port = await testRunner.setupRawStandalone()
+    base = await testRunner.setupNodeRedisStandalone()
   })
 
   after(async () => {
@@ -97,9 +99,7 @@ describe(`Pub/Sub integration (node-redis, ${testRunner.getBackendName()})`, () 
   })
 
   async function connect(): Promise<RedisClientType> {
-    const client = createClient({
-      url: `redis://127.0.0.1:${port}`,
-    }) as RedisClientType
+    const client = base.duplicate() as RedisClientType
     client.on('error', () => {})
     await client.connect()
     clients.push(client)

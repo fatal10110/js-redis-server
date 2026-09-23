@@ -7,6 +7,7 @@ import {
   type RedisClusterType,
 } from 'redis'
 import clusterKeySlot from 'cluster-key-slot'
+import { directNodeRedisOptions } from './test-config'
 export {
   assertBufferSetsEqual,
   assertBuffersEqual,
@@ -159,6 +160,7 @@ export async function connectToEndpoint(
     host: endpoint.host,
     port: endpoint.port,
     lazyConnect: true,
+    ...directNodeRedisOptions(),
   })
   await client.connect()
   return client

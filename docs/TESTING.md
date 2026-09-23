@@ -255,6 +255,13 @@ Three flavours, depending on which client you want to look like:
 | `createNodeRedisMock`  | `node-redis`    | a hand-written facade mirroring node-redis' public surface |
 | `createInMemoryClient` | our own bespoke | a thin client that returns native JS replies, no RESP      |
 
+How far each one goes is measured by this repo's integration suites, which
+also run against the socketless clients (`npm run test:integration:socketless`).
+`createIoredisMock` passes the whole ioredis suite. The node-redis facade covers
+a much smaller surface. The methods, signatures and argument forms it does not
+support yet are listed in
+[`tests-integration/socketless/known-gaps.ts`](../tests-integration/socketless/known-gaps.ts).
+
 The two hand-rolled clients (`createNodeRedisMock`, `createInMemoryClient`)
 start on RESP2 and follow a `HELLO 3` the way a real connection does, so every
 reply whose shape the protocol decides changes with it — RESP2 has no map,

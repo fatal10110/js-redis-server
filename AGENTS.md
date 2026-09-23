@@ -115,12 +115,13 @@ Commands are pure `(args, ctx) → RedisResult` — they never touch the transpo
 - In cluster mode, the slot of the _first_ keyed command queued is pinned per-session so every subsequent queued command must hash to the same slot
 - `DISCARD` cancels a transaction; `EXECABORT` is returned if the queue itself is dirty (e.g. an unknown command was queued)
 
-#### 6. Dual Backend System
+#### 6. Integration Test Backends
 
-The integration test suite supports two backends via `TEST_BACKEND` (see [tests-integration/test-config.ts](tests-integration/test-config.ts)):
+The integration test suite supports three backends via `TEST_BACKEND` (see [tests-integration/test-config.ts](tests-integration/test-config.ts)):
 
 - `mock` (default): spins up an in-process mock cluster via `createRedisCluster` — fast, no external dependencies
 - `real`: uses an actual Redis cluster (validates real-world compatibility)
+- `socketless`: runs the `ioredis/` and `node-redis/` suites against the socketless client mocks (`createIoredisMock`, `createNodeRedisMock`) via `npm run test:integration:socketless`. Cases they cannot pass yet are listed in [tests-integration/socketless/known-gaps.ts](tests-integration/socketless/known-gaps.ts), which is strict: delete an entry when a fix makes its test pass (see [docs/TEST-INTEGRATION.md](docs/TEST-INTEGRATION.md#socketless-backend))
 
 Integration tests live in [tests-integration/](tests-integration/) with subdirectories for `ioredis/` and `node-redis/` clients.
 

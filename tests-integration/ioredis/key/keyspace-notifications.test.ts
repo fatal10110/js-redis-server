@@ -7,11 +7,13 @@ import { randomKey } from '../../utils'
 const testRunner = new TestRunner()
 
 describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
-  let port: number
+  // Every client is a duplicate() of one standalone client: a new connection to
+  // the same server (mock/real), or to the same in-memory keyspace (socketless).
+  let base: Redis
   const clients: Redis[] = []
 
   before(async () => {
-    port = await testRunner.setupRawStandalone()
+    base = await testRunner.setupIoredisStandalone()
   })
 
   after(async () => {
@@ -280,7 +282,7 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
   })
 
   async function connect(): Promise<Redis> {
-    const client = new Redis({ host: '127.0.0.1', port, lazyConnect: true })
+    const client = base.duplicate({ lazyConnect: true })
     await client.connect()
     clients.push(client)
     return client

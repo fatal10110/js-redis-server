@@ -35,6 +35,16 @@ npm run test:integration:raw:mock          # raw-tcp wire tests, mock backend
 # ...and the matching :real:ioredis / :real:node-redis / raw:real variants
 ```
 
+### Run the Suites Against the Socketless Client Mocks
+
+```bash
+npm run test:integration:socketless              # ioredis + node-redis suites
+npm run test:integration:socketless:ioredis      # createIoredisMock only
+npm run test:integration:socketless:node-redis   # createNodeRedisMock only
+```
+
+See [Socketless backend](#socketless-backend) below.
+
 ## Prerequisites
 
 For testing against real Redis, you need:
@@ -104,6 +114,18 @@ For the `real` backend, the standalone services are located via:
 - `REDIS_STANDALONE_AUTH_PORT` — host port of `redis-standalone-auth` (6400 in docker-compose)
 
 If unset, the harness spawns a local `redis-server` child as a dev fallback.
+
+### Socketless backend
+
+`TEST_BACKEND=socketless` runs the same `ioredis/**` and `node-redis/**` suites against the packaged socketless client mocks instead of a TCP server (#412), so a reply-shape divergence in those clients fails an integration test rather than surviving to review:
+
+- `setupIoredisCluster()` / `setupIoredisStandalone()` return clients from `createIoredisMock()` — the real ioredis client over a virtual socket. Repeated cluster setups in one file are `duplicate()`s of one root, so they share its keyspace like the mock backend's shared cluster. Direct node connections (`connectToEndpoint()`, `RawRedisConnection.connect()`) resolve the mock's synthetic `host:port`s over the same virtual transport, and `getClusterPorts()` returns those synthetic ports.
+- `setupNodeRedisCluster()` / `setupNodeRedisStandalone()` return `createNodeRedisMock()` facades (`NodeRedisMockCluster` / `NodeRedisMockClient`), cast to node-redis' types — a method the facade lacks fails the test that calls it.
+- Anything that needs a real port — `setupRawStandalone()`, `setupRawCluster()`, the requirepass setups — throws `SocketlessUnsupportedError`. `REDIS_COMPAT` is ignored.
+
+The cases the socketless clients cannot pass yet are listed in [`tests-integration/socketless/known-gaps.ts`](../tests-integration/socketless/known-gaps.ts), not in the test files. The `socketless` scripts preload [`tests-integration/socketless/register.ts`](../tests-integration/socketless/register.ts), which marks each listed test `todo` (it still runs; its failure is reported but not fatal) or skips a listed file whose setup the backend cannot provide. The list is strict: a file fails if one of its entries matches no test, or if a listed `todo` test passes. Fixing a divergence in `src/` therefore means deleting its entry.
+
+`tests-integration/node-redis/socketless-parity.test.ts` complements this from the other side. It runs on the TCP backends (`mock`, `real`) and compares the socketless clients' decoded replies with real node-redis's, for `createNodeRedisMock()` (standalone and `NodeRedisMockCluster`) and `createInMemoryRedis()`, at RESP2 and RESP3. On `real`, real Redis plus real node-redis is the oracle.
 
 ### Test Structure
 
