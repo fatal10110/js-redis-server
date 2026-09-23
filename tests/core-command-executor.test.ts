@@ -9,10 +9,9 @@ import {
   RedisValue,
   createDefaultParkHandler,
   defineCommand,
-  isResponseStream,
   t,
 } from '../src/internal'
-import type { RedisExecutionContext, ResponseStream } from '../src/internal'
+import type { RedisExecutionContext } from '../src/internal'
 
 function createContext(executor?: CommandExecutor): RedisExecutionContext {
   const server = new RedisServerState()
@@ -543,68 +542,6 @@ describe('new command executor core', () => {
     await Promise.resolve()
     assert.strictEqual(started, false)
     assert.strictEqual(mutatedAfterError, false)
-  })
-
-  test('returns response streams untouched', async () => {
-    const stream: ResponseStream = {
-      kind: 'response-stream',
-      closed: Promise.resolve(),
-      frames: async function* () {
-        yield RedisResult.create(RedisValue.push('message', []))
-      },
-      close: () => {},
-    }
-    const registry = new CommandRegistry()
-    registry.register(
-      defineCommand({
-        name: 'subscribe',
-        schema: t.object({
-          channel: t.bulk(),
-        }),
-        flags: ['pubsub'],
-        capabilities: { pushOnly: true },
-        keys: () => [],
-        execute: () => stream,
-      }),
-    )
-
-    const executor = new CommandExecutor({ registry })
-
-    const result = await executor.executeRaw(
-      'subscribe',
-      [Buffer.from('updates')],
-      createContext(),
-    )
-
-    assert.strictEqual(result, stream)
-  })
-
-  test('does not await thenable response streams', async () => {
-    const stream: ResponseStream & { then: () => never } = {
-      kind: 'response-stream',
-      closed: Promise.resolve(),
-      frames: async function* () {
-        yield RedisResult.create(RedisValue.push('message', []))
-      },
-      close: () => {},
-      then: () => assert.fail('ResponseStream should not be awaited'),
-    }
-    const registry = new CommandRegistry()
-    registry.register(
-      defineCommand({
-        name: 'monitor',
-        schema: t.object({}),
-        flags: ['pubsub'],
-        capabilities: { pushOnly: true },
-        keys: () => [],
-        execute: () => stream,
-      }),
-    )
-
-    const executor = new CommandExecutor({ registry })
-    const result = await executor.executeRaw('monitor', [], createContext())
-
-    assert.strictEqual(isResponseStream(result), true)
   })
 
   test('parses bigint values and keeps safe integer parser strict', () => {

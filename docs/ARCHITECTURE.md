@@ -44,7 +44,7 @@ flowchart LR
     F -. "beforeExecute" .-> H
     F -- "execute(args, ctx)" --> I
     I <--> J
-    I -- "RedisResult / ResponseStream" --> F
+    I -- "RedisResult" --> F
     F -- result --> D
     D -- "encode (RESP2 or RESP3)" --> C
     C --> B
@@ -56,8 +56,8 @@ gets decoded into `(command, args)` by the
 [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts), and is handed
 to the connection's [`ClientSession`](../src/core/client-session.ts). The
 session asks the [`CommandExecutor`](../src/core/command-executor.ts) to look
-up and run it; the executor returns a `RedisResult` (or a `ResponseStream` for
-streaming replies), which the session adapter encodes back to wire bytes using
+up and run it; the executor returns a `RedisResult`, which the session adapter
+encodes back to wire bytes using
 the protocol version (`RESP2`/`RESP3`) negotiated for that connection. A
 `RedisResult` can also carry pre-encoded bytes for protocol-sensitive composite
 replies such as `EXEC` crossing an in-transaction `HELLO`. While executing a
@@ -136,12 +136,14 @@ graph TD
 | **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`createVirtualConnection`](../src/core/transports/virtual-connection.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
-| **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
+| **Command**   | Pure `(args, ctx) → RedisResult` implementations grouped by data type                                              | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
 | **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts)                                                                                                                                                                                                                                    |
 
-Commands never touch the transport — they return a `RedisResult` (or a
-`ResponseStream` for push-style replies) and let the executor/session/adapter
-chain handle delivery. That is what lets the _exact same_ command run
+Commands never touch the transport — they return a `RedisResult` and let the
+executor/session/adapter chain handle delivery. Server-initiated frames (pub/sub
+messages, `MONITOR` lines) go through the session's push queue, which the
+adapter writes between replies; a multi-channel `SUBSCRIBE` is one reply
+pre-encoded with every confirmation frame. That is what lets the _exact same_ command run
 standalone, inside a cluster node, inside `MULTI`/`EXEC`, and inside a Lua
 script without rewrites.
 
@@ -170,9 +172,9 @@ sequenceDiagram
         CE->>Cmd: execute(args, ctx)
         Cmd->>DB: read / write keyspace
         DB-->>Cmd: RedisDataValue
-        Cmd-->>CE: RedisResult or ResponseStream
+        Cmd-->>CE: RedisResult
     end
-    CE-->>CS: RedisResult or ResponseStream
+    CE-->>CS: RedisResult
     CS-->>SA: result
     SA->>SA: write pre-encoded result, or encode via session.protocolVersion
     SA-->>Cl: encoded reply
@@ -187,12 +189,12 @@ result is a `CommandPlan` that policies and the executor share.
 Two execution paths share this same plan:
 
 - [`executePlan`](../src/core/command-executor.ts#L65) — the normal async path
-  used for client-issued commands and `MULTI`/`EXEC` playback. Supports
-  streaming results (`ResponseStream`) and async commands.
+  used for client-issued commands and `MULTI`/`EXEC` playback. Supports async
+  commands.
 - [`executePlanSync`](../src/core/command-executor.ts#L116) — a synchronous path
   used exclusively by the Lua runtime for `redis.call`/`redis.pcall`. It runs
   the **same** policies and registry, and rejects any command or policy hook
-  that tries to go async or stream — so a script can never bypass cluster
+  that tries to go async — so a script can never bypass cluster
   routing or transaction rules.
 
 ## Execution policies
@@ -471,7 +473,8 @@ holding a [`ClientSession`](../src/core/client-session.ts) and calling
 `session.execute` directly, bypassing both the TCP loopback and RESP
 encode/decode. Replies are decoded from `RedisValue` into native JS (integers
 narrowed to `number` when safe; `-ERR` surfaced as `RedisCommandError`).
-Streaming commands are rejected. It owns its own `RedisServerState` + executor
+Push-mode commands (`SUBSCRIBE`, `MONITOR`) return their immediate reply;
+later frames come from `client.pushes()`. It owns its own `RedisServerState` + executor
 (built internally from `databaseCount`/`seed`), so `client.close()` tears them
 down. To drive an existing mock's keyspace instead, construct
 `InMemoryRedisClient` directly with that mock's `state` and a
