@@ -730,14 +730,22 @@ const INT64_MAX = 2n ** 63n - 1n
 /**
  * The order `setTypeIterator` hands SORT a set's members in (#443). A set
  * whose members are all canonical 64-bit integers is an intset, which is
- * stored sorted, so it loads in ascending numeric order. Any other set is a
- * listpack while small, which keeps insertion order — the order the mock
- * keeps for every other set (a large hashtable-encoded set has no defined
- * order to match).
+ * stored sorted, so it loads in ascending numeric order. Any other set is
+ * loaded in insertion order, which matches a small listpack set built from a
+ * non-integer first (a large hashtable-encoded set has no defined order).
  *
- * Known difference: real Redis never converts back to an intset, so a set
- * that briefly held a non-integer keeps its listpack order after that member
- * is removed; the mock re-derives the order from the current members.
+ * The real order depends on the set's encoding history, which the mock does
+ * not keep, so it is re-derived from the current members. Two known
+ * differences follow:
+ * - A set created from an integer starts as an intset. When a non-integer
+ *   arrives, Redis converts it to a listpack by walking the intset in sorted
+ *   order, so the integers stay sorted ahead of later members:
+ *   `SADD s 3 1 a` loads `1 3 a` in Redis and `3 1 a` here.
+ * - Redis never converts back to an intset, so a set that briefly held a
+ *   non-integer keeps its listpack order after that member is removed; the
+ *   mock sorts it numerically again.
+ * Tracking the encoding in the state layer would fix both, and `SMEMBERS`
+ * with them.
  */
 function setLoadOrder(members: Buffer[]): Buffer[] {
   const numbered: Array<{ member: Buffer; value: bigint }> = []
@@ -1007,7 +1015,7 @@ export const sortRoCommand = defineCommand({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: sortSchema(),
   flags: ['readonly'],
-  // SORT_RO has no getkeys procedure: its key spec names the source key only.
+  // sortROGetKeys() reports the source key only: SORT_RO has no STORE.
   keys: args => [args.key],
   execute: (args, ctx) => runSort(args, ctx, false),
 })

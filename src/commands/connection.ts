@@ -74,12 +74,8 @@ function setClientName(session: RedisClientSession, name: Buffer): void {
   clientNames.set(session, name)
 }
 
-function isClusterMode(ctx: RedisExecutionContext): boolean {
-  return ctx.server.clusterTopology.nodes.length > 0
-}
-
 function redisMode(ctx: RedisExecutionContext): string {
-  return isClusterMode(ctx) ? 'cluster' : 'standalone'
+  return ctx.server.clusterEnabled ? 'cluster' : 'standalone'
 }
 
 function value(value: string): RedisValue {
@@ -104,7 +100,7 @@ function buildInfo(
     sections.length === 0
       ? ['default']
       : sections.map(section => section.toLowerCase())
-  const clustered = isClusterMode(ctx)
+  const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
     'clients',

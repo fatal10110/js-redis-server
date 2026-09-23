@@ -41,10 +41,10 @@ export function assertSortPatternAllowed(
   pattern: Buffer,
   key: Buffer,
 ): void {
-  const topology = ctx.server.clusterTopology
-  if (topology.nodes.length === 0) {
+  if (!ctx.server.clusterEnabled) {
     return
   }
+  const topology = ctx.server.clusterTopology
 
   const profile = ctx.server.profile
   if (!profile.has('sort.cluster-pattern-slot')) {

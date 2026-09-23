@@ -354,7 +354,10 @@ so the PR body is not a durable home for a breaking-change note.
   and otherwise the *last* glob is the one looked up; and a set whose members
   are all canonical 64-bit integers is read in ascending numeric order, as an
   intset is stored, so `SORT s BY nosort` returns it sorted. The source key is
-  also read once rather than twice.
+  also read once rather than twice. Set order still differs where it depends
+  on the set's encoding history, which the mock does not track: a set created
+  from an integer keeps its integers sorted ahead of later non-integer members
+  in Redis (`SADD s 3 1 a` → `1 3 a`; the mock gives `3 1 a`).
 
 - `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
   protocol reader, for every command ([#431], [#415]). A bulk argument longer

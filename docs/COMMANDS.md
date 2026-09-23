@@ -262,9 +262,13 @@ with `GT` or `LT`.
   `object_*->field` are not modeled.
 - `SORT` loads a set of canonical 64-bit integers in ascending numeric order
   (as an intset is stored) and any other set in insertion order (as a small
-  listpack set is). Real Redis never converts a set back to an intset, so a
-  set that briefly held a non-integer keeps its listpack order there; the mock
-  re-derives the order from the current members. With `BY` plus a `LIMIT` that
+  listpack set built from a non-integer first is). The real order depends on
+  the set's encoding history, which the mock does not keep, so two cases
+  differ: a set created from an integer keeps its integers sorted ahead of
+  later non-integer members in Redis (`SADD s 3 1 a` loads `1 3 a`, the mock
+  `3 1 a`), and a set that briefly held a non-integer keeps its listpack order
+  in Redis after that member is removed, where the mock sorts it numerically
+  again. `SMEMBERS` has the same intset-order gap. With `BY` plus a `LIMIT` that
   does not cover every element, Redis' partial quicksort can reorder elements
   that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
   a small zset to the `skiplist` encoding is not observable until
