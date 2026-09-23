@@ -95,15 +95,15 @@ function writeEntry(db: RedisDatabase, entry: SeedEntry): void {
   }
 }
 
-async function writeToDatabase(
-  db: RedisDatabase,
+async function writeToServer(
+  state: RedisServerState,
   entry: SeedEntry,
 ): Promise<void> {
-  // Respect the per-database serialization turn so seeding never interleaves
-  // with an in-flight command on the same database.
-  const turn = await db.turnQueue.waitTurn()
+  // Respect the server's serialization turn so seeding never interleaves with
+  // an in-flight command.
+  const turn = await state.turnQueue.waitTurn()
   try {
-    writeEntry(db, entry)
+    writeEntry(state.getDatabase(entry.db ?? 0), entry)
   } finally {
     turn.release()
   }
@@ -114,7 +114,7 @@ export async function seedStandalone(
   entries: readonly SeedEntry[],
 ): Promise<void> {
   for (const entry of entries) {
-    await writeToDatabase(state.getDatabase(entry.db ?? 0), entry)
+    await writeToServer(state, entry)
   }
 }
 
@@ -151,6 +151,6 @@ export async function seedCluster(
 
     // Writing into the master's keyspace fires mutation events that the
     // existing replication links propagate to replicas — no extra work here.
-    await writeToDatabase(handle.server.getDatabase(entry.db ?? 0), entry)
+    await writeToServer(handle.server, entry)
   }
 }

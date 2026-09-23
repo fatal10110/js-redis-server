@@ -420,6 +420,17 @@ so the PR body is not a durable home for a breaking-change note.
   constructor argument carrying the error text as raw bytes. This is additive:
   existing callers of `new Resp2ParseError(message)` are unaffected.
 
+- **BREAKING (`/core`)** One `SerialTurnQueue` per server instead of per
+  database ([#369]). `RedisDatabase.turnQueue` is gone; the queue is now
+  `RedisServerState.turnQueue`, and every command on every database, the
+  active-expiry sweep (one turn per tick for all databases) and seeding take
+  their turn from it. Sessions on different databases of the same server now
+  serialize against each other, as they do on single-threaded Redis — the mock
+  previously let them run in parallel. Cluster nodes each keep their own queue.
+  Code that held `state.getDatabase(n).turnQueue` to fence a database should
+  hold `state.turnQueue` instead. Blocking commands still release the turn
+  while parked.
+
 ### Added
 
 - `PubSubKind` (`'channel' | 'shard' | 'pattern'`) is exported from `/core`,
@@ -663,6 +674,7 @@ requests they contain.
 [#443]: https://github.com/fatal10110/js-redis-server/issues/443
 [#365]: https://github.com/fatal10110/js-redis-server/issues/365
 [#366]: https://github.com/fatal10110/js-redis-server/issues/366
+[#369]: https://github.com/fatal10110/js-redis-server/issues/369
 [#455]: https://github.com/fatal10110/js-redis-server/issues/455
 [#371]: https://github.com/fatal10110/js-redis-server/issues/371
 [#416]: https://github.com/fatal10110/js-redis-server/issues/416
