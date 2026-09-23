@@ -398,7 +398,12 @@ wires a transport to a fresh `ClientSession` per connection through a
 [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts), which
 owns a [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts)
 (handles both RESP multibulk arrays and inline commands, including quoted/escaped
-inline arguments) for the request side.
+inline arguments) for the request side. The adapter pulls one frame at a time
+(`push(chunk)` then `next()`) so each command has run before the next is
+parsed — which is what lets the decoder enforce the *live*
+`proto-max-bulk-len` on every bulk header, refusing an oversized argument with
+`Protocol error: invalid bulk length` and closing the connection before any
+command handler sees it, exactly as Redis does.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
