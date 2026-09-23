@@ -1,12 +1,7 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-  ZrangeLimitWithoutByError,
-  ZrangeWithScoresByLexError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { RedisResult } from '../../core/redis-result'
@@ -68,14 +63,14 @@ function parseZrangeOptions(
     const option = input[cursor]!.toString().toUpperCase()
 
     if (option === 'BYSCORE') {
-      if (by === 'lex') throw new RedisSyntaxError()
+      if (by === 'lex') throw errors.syntax()
       by = 'score'
       cursor++
       continue
     }
 
     if (option === 'BYLEX') {
-      if (by === 'score') throw new RedisSyntaxError()
+      if (by === 'score') throw errors.syntax()
       by = 'lex'
       cursor++
       continue
@@ -88,7 +83,7 @@ function parseZrangeOptions(
     }
 
     if (option === 'WITHSCORES') {
-      if (!options.allowWithScores) throw new RedisSyntaxError()
+      if (!options.allowWithScores) throw errors.syntax()
       withScores = true
       cursor++
       continue
@@ -97,7 +92,7 @@ function parseZrangeOptions(
     if (option === 'LIMIT') {
       const offsetTok = input[cursor + 1]
       const countTok = input[cursor + 2]
-      if (!offsetTok || !countTok) throw new RedisSyntaxError()
+      if (!offsetTok || !countTok) throw errors.syntax()
       limit = {
         offset: parseLexLimitInt(offsetTok),
         count: parseLexLimitInt(countTok),
@@ -106,11 +101,11 @@ function parseZrangeOptions(
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
-  if (limit && by === 'index') throw new ZrangeLimitWithoutByError()
-  if (withScores && by === 'lex') throw new ZrangeWithScoresByLexError()
+  if (limit && by === 'index') throw errors.zrangeLimitWithoutBy()
+  if (withScores && by === 'lex') throw errors.zrangeWithScoresByLex()
 
   return { by, rev, limit, withScores }
 }

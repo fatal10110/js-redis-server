@@ -7,14 +7,9 @@ import {
 } from '../core/command-schema'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
-  ExpectedIntegerError,
-  HashValueNotFloatError,
-  HashValueNotIntegerError,
-  IncrDecrOverflowError,
-  InvalidExpireTimeError,
   RedisCommandError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
+  errors,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -141,7 +136,7 @@ function createHrandfieldSchema() {
       let withValues = false
       if (cursor < input.length) {
         if (input[cursor].toString().toUpperCase() !== 'WITHVALUES') {
-          throw new RedisSyntaxError()
+          throw errors.syntax()
         }
 
         withValues = true
@@ -149,7 +144,7 @@ function createHrandfieldSchema() {
       }
 
       if (cursor !== input.length) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return { value: { key, count, withValues }, nextIndex: cursor }
@@ -579,12 +574,12 @@ function parsePositiveFieldCount(token: Buffer): bigint {
 function parseHashExpireTime(token: Buffer): bigint {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   const value = BigInt(raw)
   if (value < LONG_MIN || value > LONG_MAX) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   return value
@@ -745,7 +740,7 @@ function hashExpireTimeToTimestamp(
 
   const isSecondsMode = mode === 'seconds' || mode === 'unix-seconds'
   if (isSecondsMode && value > HASH_FIELD_EXPIRE_MAX_ABS_MS / 1000n) {
-    throw new InvalidExpireTimeError(commandName)
+    throw errors.invalidExpireTime(commandName)
   }
 
   const milliseconds = isSecondsMode ? value * 1000n : value
@@ -753,7 +748,7 @@ function hashExpireTimeToTimestamp(
     mode === 'seconds' || mode === 'milliseconds' ? BigInt(Date.now()) : 0n
 
   if (milliseconds > HASH_FIELD_EXPIRE_MAX_ABS_MS - baseTime) {
-    throw new InvalidExpireTimeError(commandName)
+    throw errors.invalidExpireTime(commandName)
   }
 
   return Number(milliseconds + baseTime)
@@ -1198,16 +1193,16 @@ export const hincrbyCommand = defineCommand({
         // Redis parses the stored value as a 64-bit signed integer; a value
         // outside that range is "hash value is not an integer", not overflow.
         if (!isIntegerToken(raw)) {
-          throw new HashValueNotIntegerError()
+          throw errors.hashValueNotInteger()
         }
         current = BigInt(raw)
         if (current < LONG_MIN || current > LONG_MAX) {
-          throw new HashValueNotIntegerError()
+          throw errors.hashValueNotInteger()
         }
       }
       const next = current + args.increment
       if (next < LONG_MIN || next > LONG_MAX) {
-        throw new IncrDecrOverflowError()
+        throw errors.incrDecrOverflow()
       }
       const valueBuf = Buffer.from(next.toString())
       hash.setField(args.field, valueBuf, { forceDirty: true, keepTtl: true })
@@ -1230,13 +1225,13 @@ export const hincrbyfloatCommand = defineCommand({
         const raw = entry.value.toString()
         const parsed = parseFiniteFloatToken(raw)
         if (parsed === undefined) {
-          throw new HashValueNotFloatError()
+          throw errors.hashValueNotFloat()
         }
         current = parsed
       }
       const next = current + args.increment
       if (isNaN(next) || !isFinite(next)) {
-        throw new HashValueNotFloatError()
+        throw errors.hashValueNotFloat()
       }
       // Format like Redis: strip trailing zeros, use fixed notation for small values
       let formatted = String(next)

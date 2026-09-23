@@ -7,15 +7,9 @@ import {
 } from '../core/command-schema'
 import type { RedisDatabase } from '../state'
 import {
-  ExpectedFloatError,
-  IncrByFloatNanOrInfinityError,
-  IncrDecrOverflowError,
-  InvalidExpireTimeError,
-  OffsetOutOfRangeError,
-  RedisSyntaxError,
-  StringExceedsMaxSizeError,
   WrongTypeRedisError,
   WrongNumberOfArgumentsError,
+  errors,
 } from '../core/redis-error'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
@@ -244,7 +238,7 @@ export const decrbyCommand = defineCommand({
   execute: (args, ctx) => {
     // Negating INT64_MIN overflows int64, so Redis rejects it before the op.
     if (args.amount === INT64_MIN) {
-      throw new IncrDecrOverflowError('decrement would overflow')
+      throw errors.decrOverflow()
     }
     return incrementBy(ctx.db, args.key, -args.amount)
   },
@@ -270,7 +264,7 @@ export const incrbyfloatCommand = defineCommand({
 
     const next = current + increment
     if (!Number.isFinite(next)) {
-      throw new IncrByFloatNanOrInfinityError()
+      throw errors.incrByFloatNanOrInfinity()
     }
 
     const valueBuf = Buffer.from(next.toString())
@@ -292,7 +286,7 @@ function parseIncrByFloatValue(raw: string): number {
 
   const value = parseFiniteFloatToken(raw)
   if (value === undefined) {
-    throw new ExpectedFloatError()
+    throw errors.expectedFloat()
   }
   return value
 }
@@ -350,7 +344,7 @@ export const setexCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.seconds <= 0) {
-      throw new InvalidExpireTimeError('setex')
+      throw errors.invalidExpireTime('setex')
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.seconds * 1000,
@@ -370,7 +364,7 @@ export const psetexCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.milliseconds <= 0) {
-      throw new InvalidExpireTimeError('psetex')
+      throw errors.invalidExpireTime('psetex')
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.milliseconds,
@@ -556,7 +550,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
 
         if (option === 'NX' || option === 'XX') {
           if (args.condition) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           args.condition = option
@@ -566,11 +560,11 @@ function createSetSchema(): CommandSchema<SetArgs> {
 
         if (option === 'GET') {
           if (!ctx.profile.has('set.get')) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           if (args.get) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           args.get = true
@@ -580,7 +574,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
 
         if (option === 'KEEPTTL') {
           if (args.keepTtl || args.expiresAt !== undefined) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           args.keepTtl = true
@@ -598,11 +592,11 @@ function createSetSchema(): CommandSchema<SetArgs> {
             (option === 'EXAT' || option === 'PXAT') &&
             !ctx.profile.has('set.exat-pxat')
           ) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           if (args.expiresAt !== undefined || args.keepTtl) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           const ttl = requireNextOptionValue(input, cursor + 1)
@@ -611,7 +605,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
           continue
         }
 
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       if (
@@ -619,7 +613,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
         args.get &&
         !ctx.profile.has('set.nx-get')
       ) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return { value: args, nextIndex: input.length }
@@ -640,7 +634,7 @@ function parseSetExpiration(option: string, token: Buffer): number {
     case 'PXAT':
       return value
     default:
-      throw new RedisSyntaxError()
+      throw errors.syntax()
   }
 }
 
@@ -665,7 +659,7 @@ function incrementBy(
   const current = existing ? parseInt64Token(existing) : 0n
   const next = current + delta
   if (next > INT64_MAX || next < INT64_MIN) {
-    throw new IncrDecrOverflowError()
+    throw errors.incrDecrOverflow()
   }
   db.setString(key, Buffer.from(next.toString()), { keepTtl: true })
   return integer(next)
@@ -712,7 +706,7 @@ function createSetrangeOffsetSchema(): CommandSchema<bigint> {
 
     const offset = parseInt64Token(token)
     if (offset < 0n) {
-      throw new OffsetOutOfRangeError()
+      throw errors.offsetOutOfRange()
     }
 
     return { value: offset, nextIndex: index + 1 }
@@ -737,7 +731,7 @@ function assertWithinProtoMaxBulkLen(
       ? configured
       : MAX_MATERIALISABLE_LENGTH
   if (totalLength > limit) {
-    throw new StringExceedsMaxSizeError()
+    throw errors.stringExceedsMaxSize()
   }
 }
 
@@ -753,7 +747,7 @@ function allocateStringBuffer(size: number): Buffer {
   try {
     return Buffer.alloc(size)
   } catch {
-    throw new StringExceedsMaxSizeError()
+    throw errors.stringExceedsMaxSize()
   }
 }
 
@@ -774,7 +768,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
 
         if (option === 'PERSIST') {
           if (args.persist || args.expiresAt !== undefined) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
           args.persist = true
           cursor += 1
@@ -788,7 +782,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
           option === 'PXAT'
         ) {
           if (args.expiresAt !== undefined || args.persist) {
-            throw new RedisSyntaxError()
+            throw errors.syntax()
           }
 
           const ttl = requireNextOptionValue(input, cursor + 1)
@@ -797,7 +791,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
           continue
         }
 
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return { value: args, nextIndex: input.length }
@@ -818,6 +812,6 @@ function parseGetexExpiration(option: string, token: Buffer): number {
     case 'PXAT':
       return value
     default:
-      throw new RedisSyntaxError()
+      throw errors.syntax()
   }
 }

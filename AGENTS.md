@@ -153,7 +153,8 @@ Custom errors in [src/core/redis-error.ts](src/core/redis-error.ts), all extendi
 - `RedisMovedError` - cluster redirect (`-MOVED` response)
 - `RedisCrossSlotError` - cross-slot operation in cluster mode (`-CROSSSLOT`)
 - `RedisClusterDownError` - slot unassigned (`-CLUSTERDOWN`)
-- `WrongTypeRedisError`, `WrongNumberOfArgumentsError`, `RedisSyntaxError`, `NoScriptError`, `ExecWithoutMultiError`, ... - command-specific client-visible errors
+- `WrongNumberOfArgumentsError` - arity error, `WrongTypeRedisError` - `-WRONGTYPE` from the state layer, `NoAuthError` - `-NOAUTH` from `AuthPolicy`, `ExecCommandAbortError` - `-EXECABORT` for a malformed `EXEC`
+- The rule for keeping a subclass: code tells it apart with `instanceof` (`WrongNumberOfArgumentsError`, `UnknownRedisCommandError`, `UnknownSubcommandError`), or the pipeline raises it around a command instead of a command raising it (state layer, execution policies, executor). Every error a command raises itself, whatever its code prefix (`WRONGPASS`, `NOSCRIPT`, `BUSYGROUP`, ...), is a plain `RedisCommandError` from a factory on the `errors` object (`throw errors.syntax()`, `throw errors.noScript()`). Add a new message there rather than a new subclass
 - Error responses follow RESP protocol format
 
 ## Code Style & Conventions

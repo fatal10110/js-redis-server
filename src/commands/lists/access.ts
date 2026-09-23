@@ -1,6 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import { IndexOutOfRangeError, NoSuchKeyError } from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import { array, bulk, integer, ok } from '../helpers'
 import { resolveIndex } from './helpers'
@@ -71,10 +71,10 @@ export const lsetCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const list = ctx.db.getList(args.key)
-    if (!list) throw new NoSuchKeyError()
+    if (!list) throw errors.noSuchKey()
 
     const idx = resolveIndex(args.index, list.values.length)
-    if (idx < 0 || idx >= list.values.length) throw new IndexOutOfRangeError()
+    if (idx < 0 || idx >= list.values.length) throw errors.indexOutOfRange()
 
     ctx.db.updateList(args.key, list => {
       list.setAt(idx, args.value)

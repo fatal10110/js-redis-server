@@ -2,8 +2,8 @@ import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   RedisCommandError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
+  errors,
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
@@ -65,7 +65,7 @@ function createXautoclaimSchema() {
           continue
         }
 
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return {

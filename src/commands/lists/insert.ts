@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { integer } from '../helpers'
 
 function insertPosition(): ReturnType<typeof t.custom<'before' | 'after'>> {
@@ -15,7 +12,7 @@ function insertPosition(): ReturnType<typeof t.custom<'before' | 'after'>> {
 
     const position = token.toString().toUpperCase()
     if (position !== 'BEFORE' && position !== 'AFTER') {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     return {

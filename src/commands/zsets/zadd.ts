@@ -1,11 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  WrongNumberOfArgumentsError,
-  ZaddGtLtNxConflictError,
-  ZaddIncrPairError,
-  ZaddNxXxConflictError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { RedisResult } from '../../core/redis-result'
 import { bulk, integer, scoreValue } from '../helpers'
@@ -44,14 +39,14 @@ function createZaddSchema() {
         const option = input[cursor]!.toString().toUpperCase()
 
         if (option === 'NX') {
-          if (options.condition === 'XX') throw new ZaddNxXxConflictError()
+          if (options.condition === 'XX') throw errors.zaddNxXxConflict()
           options.condition = 'NX'
           cursor++
           continue
         }
 
         if (option === 'XX') {
-          if (options.condition === 'NX') throw new ZaddNxXxConflictError()
+          if (options.condition === 'NX') throw errors.zaddNxXxConflict()
           options.condition = 'XX'
           cursor++
           continue
@@ -59,7 +54,7 @@ function createZaddSchema() {
 
         if (option === 'GT') {
           if (options.comparison === 'LT') {
-            throw new ZaddGtLtNxConflictError()
+            throw errors.zaddGtLtNxConflict()
           }
           options.comparison = 'GT'
           cursor++
@@ -68,7 +63,7 @@ function createZaddSchema() {
 
         if (option === 'LT') {
           if (options.comparison === 'GT') {
-            throw new ZaddGtLtNxConflictError()
+            throw errors.zaddGtLtNxConflict()
           }
           options.comparison = 'LT'
           cursor++
@@ -91,12 +86,12 @@ function createZaddSchema() {
       }
 
       if (options.condition === 'NX' && options.comparison) {
-        throw new ZaddGtLtNxConflictError()
+        throw errors.zaddGtLtNxConflict()
       }
 
       const pairs = parseZaddPairs(input, cursor, ctx)
       if (options.incr && pairs.length !== 1) {
-        throw new ZaddIncrPairError()
+        throw errors.zaddIncrPair()
       }
 
       return { value: { key, options, pairs }, nextIndex: input.length }

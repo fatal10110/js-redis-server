@@ -1,7 +1,4 @@
-import {
-  ExpectedFloatError,
-  ResultingScoreNaNError,
-} from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
@@ -25,12 +22,12 @@ export function parseFloatArg(s: string): number {
   if (normalized === '-inf') return -Infinity
 
   const n = Number(s)
-  if (!Number.isFinite(n)) throw new ExpectedFloatError()
+  if (!Number.isFinite(n)) throw errors.expectedFloat()
   return n
 }
 
 export function assertValidResultingScore(score: number) {
   if (Number.isNaN(score)) {
-    throw new ResultingScoreNaNError()
+    throw errors.resultingScoreNaN()
   }
 }

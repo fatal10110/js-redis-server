@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import type { RedisDatabase } from '../../state'
 import { bulk } from '../helpers'
@@ -18,7 +15,7 @@ function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
 
     const direction = token.toString().toUpperCase()
     if (direction !== 'LEFT' && direction !== 'RIGHT') {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     return {

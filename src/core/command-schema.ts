@@ -1,9 +1,7 @@
 import {
-  ExpectedFloatError,
-  ExpectedIntegerError,
   RedisCommandError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
+  errors,
 } from './redis-error'
 import {
   resolveCompatibilityProfile,
@@ -104,7 +102,7 @@ export function parseCommandArgs<TArgs>(
     }
 
     if (err instanceof SchemaMismatchError) {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     throw err
@@ -303,20 +301,20 @@ export const t = {
     return makeSchema((input, index) => {
       const raw = readToken(input, index).toString()
       if (!isIntegerToken(raw)) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       const value = Number(raw)
       if (!Number.isSafeInteger(value)) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       if (options?.min !== undefined && value < options.min) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       if (options?.max !== undefined && value > options.max) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       return { value, nextIndex: index + 1 }
@@ -327,17 +325,17 @@ export const t = {
     return makeSchema((input, index) => {
       const raw = readToken(input, index).toString()
       if (!isIntegerToken(raw)) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       const value = BigInt(raw)
 
       if (options?.min !== undefined && value < options.min) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       if (options?.max !== undefined && value > options.max) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
 
       return { value, nextIndex: index + 1 }
@@ -348,7 +346,7 @@ export const t = {
     return makeSchema((input, index) => {
       const value = parseFiniteFloatToken(readToken(input, index).toString())
       if (value === undefined) {
-        throw new ExpectedFloatError()
+        throw errors.expectedFloat()
       }
 
       return { value, nextIndex: index + 1 }

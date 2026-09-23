@@ -1,11 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import {
-  DiscardWithoutMultiError,
-  ExecWithoutMultiError,
-  TransactionDiscardedError,
-  WatchInsideMultiError,
-} from '../core/redis-error'
+import { errors } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { ok } from './helpers'
@@ -33,7 +28,7 @@ export const execCommand = defineCommand({
   keys: () => [],
   execute: async (_args, ctx) => {
     if (ctx.session.mode !== 'transaction') {
-      throw new ExecWithoutMultiError()
+      throw errors.execWithoutMulti()
     }
 
     // Real Redis prioritises CLIENT_DIRTY_EXEC over CLIENT_DIRTY_CAS: a bad
@@ -41,7 +36,7 @@ export const execCommand = defineCommand({
     // The (nil) CAS-abort reply is only returned when the queue itself is clean.
     if (ctx.session.isTransactionDirty()) {
       ctx.session.discardTransaction()
-      throw new TransactionDiscardedError()
+      throw errors.transactionDiscarded()
     }
 
     if (ctx.session.isWatchDirty()) {
@@ -62,7 +57,7 @@ export const discardCommand = defineCommand({
   keys: () => [],
   execute: (_args, ctx) => {
     if (ctx.session.mode !== 'transaction') {
-      throw new DiscardWithoutMultiError()
+      throw errors.discardWithoutMulti()
     }
 
     ctx.session.discardTransaction()
@@ -79,7 +74,7 @@ export const watchCommand = defineCommand({
   keys: args => args.keys,
   execute: (args, ctx) => {
     if (ctx.session.mode === 'transaction') {
-      throw new WatchInsideMultiError()
+      throw errors.watchInsideMulti()
     }
 
     ctx.session.watch(args.keys)

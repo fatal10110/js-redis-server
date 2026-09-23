@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
@@ -35,7 +32,7 @@ function createXreadSchema() {
         if (raw === undefined)
           throw new WrongNumberOfArgumentsError(ctx.commandName)
         const n = Number(raw)
-        if (!Number.isInteger(n) || n < 0) throw new RedisSyntaxError()
+        if (!Number.isInteger(n) || n < 0) throw errors.syntax()
         count = n
         cursor++
       } else if (token === 'BLOCK') {
@@ -44,7 +41,7 @@ function createXreadSchema() {
         if (raw === undefined)
           throw new WrongNumberOfArgumentsError(ctx.commandName)
         const ms = Number(raw)
-        if (!Number.isInteger(ms) || ms < 0) throw new RedisSyntaxError()
+        if (!Number.isInteger(ms) || ms < 0) throw errors.syntax()
         blockMs = ms
         cursor++
       } else {

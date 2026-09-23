@@ -206,7 +206,7 @@ Side benefit: `COMMAND COUNT/DOCS/INFO` read `registry.getAll()`, so introspecti
   or wrong number of arguments`, while Redis 7.0 says `unknown subcommand`; model
   that with a named compatibility gate, not an inline version comparison.
 - EXPIRE family in `src/commands/keys.ts`: the existing `expireOptionsSchema` custom parser, when it sees `NX|XX|GT|LT` but `!ctx.profile.has('expire.conditions')`, **does not consume** the token and returns `undefined`. The trailing arg then trips `parseCommandArgs`' length check → `WrongNumberOfArgumentsError` — which is exactly what real 6.2 (fixed arity 3) returns. When the feature is on, behavior is unchanged.
-- SET option loop in `src/commands/strings.ts` (`createSetSchema`): when the loop encounters `GET` and `!ctx.profile.has('set.get')`, or `EXAT|PXAT` and `!ctx.profile.has('set.exat-pxat')`, throw `RedisSyntaxError` (SET is variadic arity, so an unknown option is `ERR syntax error` on the real server — matches).
+- SET option loop in `src/commands/strings.ts` (`createSetSchema`): when the loop encounters `GET` and `!ctx.profile.has('set.get')`, or `EXAT|PXAT` and `!ctx.profile.has('set.exat-pxat')`, throw `errors.syntax()` (SET is variadic arity, so an unknown option is `ERR syntax error` on the real server — matches).
 
 Rule of thumb for any future option gate: verify the exact missing-feature behavior against the real old server before choosing the mock error. Do not infer it from parser shape alone; Redis varies by command and option, so record the observed error/result shape with the gate.
 
@@ -290,7 +290,7 @@ Unit (`tests/compatibility/` + co-located):
 - subcommand filtering: `COMMAND DOCS` / `COMMAND GETKEYSANDFLAGS` are absent under
   `redis-6.2`; `CLIENT SETINFO` is absent under `redis-7.0`; matching introspection
   responses do not advertise gated-off subcommands.
-- parse gating: `EXPIRE k 10 NX` under `redis-6.2` → `WrongNumberOfArgumentsError`, under `redis-7.0` → parses to `condition:'NX'`; `SET k v GET` under a `set.get`-off profile → `RedisSyntaxError`, under `redis-6.2` → ok.
+- parse gating: `EXPIRE k 10 NX` under `redis-6.2` → `WrongNumberOfArgumentsError`, under `redis-7.0` → parses to `condition:'NX'`; `SET k v GET` under a `set.get`-off profile → `errors.syntax()`, under `redis-6.2` → ok.
 - policy gating: `createClusterPolicy` `beforeExecute` on a `select` plan → throws under a `redis` profile, passes under `valkey-9` (`cluster.multi-db` on).
 - reporting: `INFO`/`HELLO` strings reflect `version` + `flavor` (incl. `valkey_version` line for valkey).
 
@@ -345,7 +345,7 @@ ownership so parallel workers do not fight each other.
 | Public builder wiring              | `src/mock.ts`, `src/cluster.ts`, `src/cli.ts`, public-interface tests        | All command-gate tracks                   | Resolve once per builder and pass the same profile to state + executor.                                                    |
 | Root command audit                 | command modules under `src/commands/`, registry tests                        | Builder wiring, cluster policy            | May touch `keys.ts`, `strings.ts`, and `connection.ts`; coordinate before running parser/subcommand tracks in those files. |
 | EXPIRE option gate                 | `src/commands/keys.ts`, parse tests                                          | SET gate, COMMAND gate, builder wiring    | Depends on `ParseContext.profile`; keep fixed-arity wrong-args behavior.                                                   |
-| SET option gate                    | `src/commands/strings.ts`, parse tests                                       | EXPIRE gate, COMMAND gate, builder wiring | Depends on `ParseContext.profile`; unsupported variadic option throws `RedisSyntaxError`.                                  |
+| SET option gate                    | `src/commands/strings.ts`, parse tests                                       | EXPIRE gate, COMMAND gate, builder wiring | Depends on `ParseContext.profile`; unsupported variadic option throws `errors.syntax()`.                                   |
 | COMMAND subcommand gate            | `src/commands/command.ts`, `src/commands/introspection.ts`, subcommand tests | EXPIRE/SET gates, builder wiring          | Filter dispatch and introspection for `COMMAND DOCS` / `GETKEYSANDFLAGS`.                                                  |
 | Connection reporting + CLIENT gate | `src/commands/connection.ts`, reporting/subcommand tests                     | EXPIRE/SET/COMMAND gates, builder wiring  | Keep `CLIENT SETINFO`, `INFO`, and `HELLO` together because they share this file.                                          |
 | Cluster multi-DB policy            | `src/core/execution-policies/cluster-policy.ts`, cluster policy tests        | Most command gates                        | Use existing `capabilities.clusterMode === 'singleDb'`; integration smoke waits for cluster builder wiring.                |

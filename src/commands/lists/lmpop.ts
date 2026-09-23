@@ -1,11 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
-import {
-  CountGreaterThanZeroError,
-  NumKeysGreaterThanZeroError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
@@ -40,17 +35,13 @@ function parsePositiveListPopInteger(
 }
 
 function parseListPopNumKeys(token: Buffer): number {
-  return parsePositiveListPopInteger(
-    token,
-    () => new NumKeysGreaterThanZeroError(),
+  return parsePositiveListPopInteger(token, () =>
+    errors.numKeysGreaterThanZero(),
   )
 }
 
 function parseListPopCount(token: Buffer): number {
-  return parsePositiveListPopInteger(
-    token,
-    () => new CountGreaterThanZeroError(),
-  )
+  return parsePositiveListPopInteger(token, errors.countGreaterThanZero)
 }
 
 function parseListMultiPopArgs(
@@ -93,7 +84,7 @@ function parseListMultiPopArgs(
 
   const keysEnd = cursor + numKeys
   if (keysEnd >= input.length) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   const keys = Array.from(input.slice(cursor, keysEnd))
@@ -106,7 +97,7 @@ function parseListMultiPopArgs(
   if (cursor < input.length) {
     const option = input[cursor].toString().toUpperCase()
     if (option !== 'COUNT' || cursor + 2 !== input.length) {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     count = parseListPopCount(input[cursor + 1])

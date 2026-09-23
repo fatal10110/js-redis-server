@@ -1,10 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import {
-  ExpectedIntegerError,
-  RedisCommandError,
-  RedisSyntaxError,
-} from '../core/redis-error'
+import { RedisCommandError, errors } from '../core/redis-error'
 import { redisGlobMatch } from '../core/glob'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -79,7 +75,7 @@ export const hscanCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.noValues && !ctx.server.profile.has('hscan.novalues')) {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     const hash = ctx.db.getHash(args.key)
@@ -237,7 +233,7 @@ function parseScanOptions(
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return options
@@ -285,16 +281,16 @@ function parseCursor(raw: Buffer): bigint {
 function parseCount(raw: Buffer): number {
   const value = raw.toString()
   if (!/^-?\d+$/.test(value)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   const parsed = Number(value)
   if (!Number.isSafeInteger(parsed)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   if (parsed <= 0) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return parsed

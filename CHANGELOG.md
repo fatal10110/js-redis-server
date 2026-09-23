@@ -206,6 +206,54 @@ so the PR body is not a durable home for a breaking-change note.
   argument parse) where `executeRaw` returns a RESP error reply, and the pair
   skips the MULTI-dirty/EXECABORT handling `executeRaw` applies to those errors.
 
+- **BREAKING** and **BREAKING (`/core`)**: 79 single-message error classes
+  are removed from `src/core/redis-error.ts` ([#364]). Each one only fixed a
+  message string on a `RedisCommandError`. A client over TCP, or a socketless
+  mock, only ever sees its own error type carrying that message, so none of
+  these classes was what a consumer actually caught. The message text on the
+  wire is unchanged.
+
+  - **`js-redis-server`** (root) loses the 33 of them it exported:
+
+    ```
+    CountGreaterThanZeroError  DiscardWithoutMultiError  ExecWithoutMultiError
+    ExpectedFloatError         ExpectedIntegerError      HashValueNotFloatError
+    HashValueNotIntegerError   IndexOutOfRangeError      InvalidExpireTimeError
+    LimitCantBeNegativeError   MinMaxNotFloatError       NoPasswordConfiguredError
+    NoScriptError              NoSuchKeyError            NumKeysGreaterThanZeroError
+    OffsetOutOfRangeError      PositiveCountError        RedisSyntaxError
+    ResultingScoreNaNError     ScriptCallNoCommandError  ScriptDebugModeError
+    ScriptFlushOptionError     ScriptUnknownCommandError StreamElementTooLargeError
+    StreamIdExhaustedError     StringExceedsMaxSizeError TransactionDiscardedError
+    WatchInsideMultiError      WrongNumberOfKeysError    WrongPassError
+    ZaddGtLtNxConflictError    ZaddIncrPairError         ZaddNxXxConflictError
+    ```
+
+  - **`js-redis-server/core`** used to re-export the whole module
+    (`export * from './core/redis-error'`), so it loses all 79. That is the 33
+    above plus 46 that only `/core` exported (`BitOffsetError`,
+    `GeoUnsupportedUnitError`, `InvalidStreamIdError`, `SameObjectError`,
+    `DbIndexOutOfRangeError`, `NoProtoError`, `InvalidHllError`, and so on).
+    `/core` now names its error exports explicitly: the classes kept below,
+    plus `errorReplyBody` and `errorReplyBytes`. The new `errors` message
+    factories are internal and are not exported from either entry point.
+
+  Both entry points still export `RedisCommandError` and these subclasses:
+
+  - `WrongNumberOfArgumentsError`, `UnknownRedisCommandError` and
+    `UnknownSubcommandError`: code checks them with `instanceof`. The last
+    is new since 0.3.0 and is now exported from the root as well.
+  - `WrongTypeRedisError`: raised by the state layer.
+  - `RedisMovedError`, `RedisCrossSlotError` and `RedisClusterDownError`:
+    raised by the cluster policy.
+  - `NoAuthError`: raised by the auth policy.
+  - `ExecCommandAbortError`: raised by the executor. It is newly exported
+    from the root.
+
+  To migrate, catch `RedisCommandError` and check its `code` or `message`, for
+  example `err.code === 'NOSCRIPT'` or `err.message === 'syntax error'`. To
+  build a replacement error, use `new RedisCommandError(message, code)`.
+
 - **BREAKING** `UnknownScriptSubcommandError` and `UnknownClusterSubcommandError`
   are removed from the root facade and from `/core` ([#430]). Both hard-coded
   the Redis 7.0+ wording (`unknown subcommand '%s'. Try SCRIPT HELP.`) with no
@@ -487,6 +535,26 @@ so the PR body is not a durable home for a breaking-change note.
   and any extra `EXPIRE` token on 6.2 are `wrong number of arguments`.
   `GEOPOS`/`GEOHASH` accept a key with no members and `QUIT` ignores extra
   arguments, as in Redis.
+
+- The unknown-command error echoes the command name and args the way real
+  Redis does ([#384]). Real Redis formats it with C `printf`
+  (`'%.128s'` for the name, then `'%.*s' ` per arg against a 128-byte budget),
+  so the name and args are now echoed as raw bytes instead of hex-dumping any
+  non-printable one, each is cut at its first NUL, the name is cut at 128
+  bytes, and the args stop when their 128-byte budget is spent (the last one
+  cut to what is left, possibly mid UTF-8 sequence) rather than at 61 chars
+  plus `...` per arg. On the `redis-6.2` profile the reply takes 6.2's form
+  (new gate `error.unknown-command-wording`): backtick quotes, `, ` between
+  args and no cap on the name. The separator counts against the same budget,
+  so 6.2 echoes fewer args.
+
+- On the `redis-6.2` profile, errors the scripting layer raises itself (an
+  unknown or not-allowed command, wrong arity, no command, a non-string
+  argument) use 6.2's wording, for example `Unknown Redis command called from
+  Lua script`, with no `ERR` code. A `redis.call` abort also gets 6.2's inner
+  `@user_script: <line>: ` position, byte for byte against redis-server
+  6.2.24. A `redis.pcall` rejection still lacks that position, because the Lua
+  engine does not pass the calling line to the host.
 
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print
@@ -788,5 +856,7 @@ requests they contain.
 [#444]: https://github.com/fatal10110/js-redis-server/issues/444
 [#446]: https://github.com/fatal10110/js-redis-server/issues/446
 [#486]: https://github.com/fatal10110/js-redis-server/pull/486
+[#364]: https://github.com/fatal10110/js-redis-server/issues/364
+[#384]: https://github.com/fatal10110/js-redis-server/issues/384
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

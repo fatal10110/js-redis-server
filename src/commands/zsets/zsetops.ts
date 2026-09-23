@@ -1,12 +1,9 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
-  AtLeastOneInputKeyError,
-  LimitCantBeNegativeError,
-  RedisSyntaxError,
-  WeightNotFloatError,
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
+  errors,
 } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
@@ -186,7 +183,7 @@ function parseWeight(token: Buffer): number {
 
   const value = Number(raw)
   if (raw.trim() === '' || !Number.isFinite(value)) {
-    throw new WeightNotFloatError()
+    throw errors.weightNotFloat()
   }
   return value
 }
@@ -211,8 +208,8 @@ function parseSetOp(
   cursor++
 
   const numkeys = parseIntegerToken(numkeysToken)
-  if (numkeys <= 0) throw new AtLeastOneInputKeyError(ctx.commandName)
-  if (cursor + numkeys > input.length) throw new RedisSyntaxError()
+  if (numkeys <= 0) throw errors.atLeastOneInputKey(ctx.commandName)
+  if (cursor + numkeys > input.length) throw errors.syntax()
 
   const keys = input.slice(cursor, cursor + numkeys)
   cursor += numkeys
@@ -229,7 +226,7 @@ function parseSetOp(
       weights = []
       for (let i = 0; i < numkeys; i++) {
         const token = input[cursor]
-        if (!token) throw new RedisSyntaxError()
+        if (!token) throw errors.syntax()
         weights.push(parseWeight(token))
         cursor++
       }
@@ -239,12 +236,12 @@ function parseSetOp(
     if (options.weightsAggregate && option === 'AGGREGATE') {
       cursor++
       const token = input[cursor]
-      if (!token) throw new RedisSyntaxError()
+      if (!token) throw errors.syntax()
       const value = token.toString().toUpperCase()
       if (value === 'SUM') aggregate = 'sum'
       else if (value === 'MIN') aggregate = 'min'
       else if (value === 'MAX') aggregate = 'max'
-      else throw new RedisSyntaxError()
+      else throw errors.syntax()
       cursor++
       continue
     }
@@ -256,7 +253,7 @@ function parseSetOp(
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return { destination, keys, weights, aggregate, withScores }
@@ -355,8 +352,8 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
   cursor++
 
   const numkeys = parseIntegerToken(numkeysToken)
-  if (numkeys <= 0) throw new AtLeastOneInputKeyError(ctx.commandName)
-  if (cursor + numkeys > input.length) throw new RedisSyntaxError()
+  if (numkeys <= 0) throw errors.atLeastOneInputKey(ctx.commandName)
+  if (cursor + numkeys > input.length) throw errors.syntax()
 
   const keys = input.slice(cursor, cursor + numkeys)
   cursor += numkeys
@@ -364,18 +361,18 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
   let limit = 0
   if (cursor < input.length) {
     if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
     cursor++
     const limitToken = input[cursor]
-    if (!limitToken) throw new RedisSyntaxError()
+    if (!limitToken) throw errors.syntax()
     const value = Number(limitToken.toString())
     if (!Number.isSafeInteger(value) || value < 0) {
-      throw new LimitCantBeNegativeError()
+      throw errors.limitCantBeNegative()
     }
     limit = value
     cursor++
-    if (cursor !== input.length) throw new RedisSyntaxError()
+    if (cursor !== input.length) throw errors.syntax()
   }
 
   return { value: { keys, limit }, nextIndex: input.length }

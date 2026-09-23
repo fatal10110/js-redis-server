@@ -4,17 +4,9 @@ import {
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
-  DbIndexOutOfRangeError,
-  ExpireGtLtConflictError,
-  ExpireNxXxGtLtConflictError,
-  ExpectedIntegerError,
-  NoSuchKeyError,
-  RedisSyntaxError,
-  SameObjectError,
-  SortScoreNotDoubleError,
-  UnsupportedOptionError,
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
+  errors,
 } from '../core/redis-error'
 import { RedisValue } from '../core/redis-value'
 import type { RedisExecutionContext } from '../core/redis-context'
@@ -244,7 +236,7 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
-        throw new ExpireNxXxGtLtConflictError()
+        throw errors.expireNxXxGtLtConflict()
       }
       options.condition = 'NX'
       cursor += 1
@@ -253,7 +245,7 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
 
     if (option === 'XX') {
       if (options.condition === 'NX') {
-        throw new ExpireNxXxGtLtConflictError()
+        throw errors.expireNxXxGtLtConflict()
       }
       options.condition = 'XX'
       cursor += 1
@@ -262,10 +254,10 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
 
     if (option === 'GT') {
       if (options.condition === 'NX') {
-        throw new ExpireNxXxGtLtConflictError()
+        throw errors.expireNxXxGtLtConflict()
       }
       if (options.comparison === 'LT') {
-        throw new ExpireGtLtConflictError()
+        throw errors.expireGtLtConflict()
       }
       options.comparison = 'GT'
       cursor += 1
@@ -274,17 +266,17 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
 
     if (option === 'LT') {
       if (options.condition === 'NX') {
-        throw new ExpireNxXxGtLtConflictError()
+        throw errors.expireNxXxGtLtConflict()
       }
       if (options.comparison === 'GT') {
-        throw new ExpireGtLtConflictError()
+        throw errors.expireGtLtConflict()
       }
       options.comparison = 'LT'
       cursor += 1
       continue
     }
 
-    throw new UnsupportedOptionError(token)
+    throw errors.unsupportedOption(token)
   }
 
   return { value: options, nextIndex: cursor }
@@ -354,7 +346,7 @@ const flushModeSchema = t.custom<'async' | 'sync' | undefined>(
       }
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   },
 )
 
@@ -417,7 +409,7 @@ export const renameCommand = defineCommand({
   keys: args => [args.key, args.newKey],
   execute: (args, ctx) => {
     const value = ctx.db.get(args.key)
-    if (!value) throw new NoSuchKeyError()
+    if (!value) throw errors.noSuchKey()
 
     // Renaming a key to itself is a true no-op in Redis: it replies +OK
     // without touching the keyspace, so it must not emit a mutation event
@@ -446,7 +438,7 @@ export const renamenxCommand = defineCommand({
   keys: args => [args.key, args.newKey],
   execute: (args, ctx) => {
     const value = ctx.db.get(args.key)
-    if (!value) throw new NoSuchKeyError()
+    if (!value) throw errors.noSuchKey()
 
     if (ctx.db.getType(args.newKey) !== null) return integer(0)
 
@@ -474,11 +466,11 @@ export const moveCommand = defineCommand({
   execute: (args, ctx) => {
     const targetDb = ctx.server.databases[args.database]
     if (!targetDb) {
-      throw new DbIndexOutOfRangeError()
+      throw errors.dbIndexOutOfRange()
     }
 
     if (targetDb.id === ctx.db.id) {
-      throw new SameObjectError()
+      throw errors.sameObject()
     }
 
     const value = ctx.db.get(args.key)
@@ -525,20 +517,20 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
 
     if (token === 'DB') {
       const raw = input[cursor + 1]
-      if (!raw) throw new RedisSyntaxError()
+      if (!raw) throw errors.syntax()
 
       const text = raw.toString()
-      if (!/^-?\d+$/.test(text)) throw new ExpectedIntegerError()
+      if (!/^-?\d+$/.test(text)) throw errors.expectedInteger()
 
       const value = Number(text)
-      if (!Number.isSafeInteger(value)) throw new ExpectedIntegerError()
+      if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
 
       db = value
       cursor += 2
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return { value: { db, replace }, nextIndex: cursor }
@@ -560,13 +552,13 @@ export const copyCommand = defineCommand({
     let targetDb = ctx.db
     if (options.db !== undefined) {
       if (options.db < 0 || options.db >= ctx.server.databases.length) {
-        throw new DbIndexOutOfRangeError()
+        throw errors.dbIndexOutOfRange()
       }
       targetDb = ctx.server.getDatabase(options.db)
     }
 
     if (targetDb.id === ctx.db.id && source.equals(destination)) {
-      throw new SameObjectError()
+      throw errors.sameObject()
     }
 
     const value = ctx.db.get(source)
@@ -699,7 +691,7 @@ function scanSortOptions(
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return scanned
@@ -781,7 +773,7 @@ function sortNumericScore(weight: Buffer | null): number {
   // double aborts the whole command.
   if (!weight) return 0
   const value = Number(weight.toString())
-  if (Number.isNaN(value)) throw new SortScoreNotDoubleError()
+  if (Number.isNaN(value)) throw errors.sortScoreNotDouble()
   return value
 }
 

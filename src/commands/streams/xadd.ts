@@ -1,12 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  InvalidStreamIdError,
-  StreamIdEqualOrSmallerError,
-  StreamIdExhaustedError,
-  StreamIdNotGreaterThanZeroError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { bulk } from '../helpers'
 import {
@@ -27,12 +21,12 @@ function resolveXaddId(spec: string, lastId: StreamId): StreamId {
   const dash = spec.indexOf('-')
   if (dash === -1) {
     const ms = parseUint64(spec)
-    if (ms === null) throw new InvalidStreamIdError()
+    if (ms === null) throw errors.invalidStreamId()
     return { ms, seq: 0n }
   }
 
   const ms = parseUint64(spec.slice(0, dash))
-  if (ms === null) throw new InvalidStreamIdError()
+  if (ms === null) throw errors.invalidStreamId()
 
   const seqPart = spec.slice(dash + 1)
   if (seqPart === '*') {
@@ -40,7 +34,7 @@ function resolveXaddId(spec: string, lastId: StreamId): StreamId {
   }
 
   const seq = parseUint64(seqPart)
-  if (seq === null) throw new InvalidStreamIdError()
+  if (seq === null) throw errors.invalidStreamId()
   return { ms, seq }
 }
 
@@ -50,7 +44,7 @@ function nextAutoId(lastId: StreamId): StreamId {
   if (lastId.seq < MAX_UINT64) return { ms: lastId.ms, seq: lastId.seq + 1n }
   if (lastId.ms < MAX_UINT64) return { ms: lastId.ms + 1n, seq: 0n }
 
-  throw new StreamIdExhaustedError()
+  throw errors.streamIdExhausted()
 }
 
 function nextSeqForMs(ms: bigint, lastId: StreamId): StreamId {
@@ -113,10 +107,10 @@ export const xaddCommand = defineCommand({
       // lastId is 0-0 for a brand-new stream and is retained even after XDEL
       // empties the stream, so this single comparison covers every case.
       if (compareStreamId(next, MIN_ID) <= 0) {
-        throw new StreamIdNotGreaterThanZeroError()
+        throw errors.streamIdNotGreaterThanZero()
       }
       if (compareStreamId(next, stream.lastId) <= 0) {
-        throw new StreamIdEqualOrSmallerError()
+        throw errors.streamIdEqualOrSmaller()
       }
 
       stream.appendEntry(next, args.fields)

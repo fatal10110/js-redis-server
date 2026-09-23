@@ -1,10 +1,7 @@
 import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  RedisCommandError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import type { CompatibilityProfile } from '../../core/compatibility'
 import {
@@ -14,7 +11,7 @@ import {
   subcommandSyntaxError,
   unknownSubcommandError,
 } from '../helpers'
-import { BusyStreamGroupError, requireStreamGroup } from './groups'
+import { requireStreamGroup } from './groups'
 import {
   bufferId,
   cloneStreamId,
@@ -22,14 +19,6 @@ import {
   parseExactId,
   parseNonNegativeInteger,
 } from './ids'
-
-class XgroupCreateMissingKeyError extends RedisCommandError {
-  constructor() {
-    super(
-      'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.',
-    )
-  }
-}
 
 type XgroupArgs =
   | {
@@ -246,7 +235,7 @@ export const xgroupCommand = defineCommand({
       // Real 6.2 looks the key up (getStream: WRONGTYPE) as soon as a group
       // name is present, before it looks at the subcommand.
       if (command.key && command.group && !ctx.db.getStream(command.key)) {
-        throw new XgroupCreateMissingKeyError()
+        throw errors.xgroupCreateMissingKey()
       }
       throw unknownSubcommandError('XGROUP', command.name, ctx.server.profile)
     }
@@ -254,7 +243,7 @@ export const xgroupCommand = defineCommand({
     if (command.subcommand === 'create') {
       const type = db.getType(command.key)
       if (type === null && !command.mkstream) {
-        throw new XgroupCreateMissingKeyError()
+        throw errors.xgroupCreateMissingKey()
       }
 
       const lastDeliveredId =
@@ -265,7 +254,7 @@ export const xgroupCommand = defineCommand({
       db.updateStream(command.key, stream => {
         const groupId = bufferId(command.group)
         if (stream.value.groups.has(groupId)) {
-          throw new BusyStreamGroupError()
+          throw errors.busyStreamGroup()
         }
 
         stream.addGroup(groupId, {

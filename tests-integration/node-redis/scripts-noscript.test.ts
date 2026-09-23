@@ -5,14 +5,49 @@ import type { RedisClientType } from 'redis'
 import { TestRunner } from '../test-config'
 import { activeProfile, errorWithMessage, randomKey } from '../utils'
 
-// node-redis twin of ioredis/scripts-noscript.test.ts (#452). Wording pinned
-// here is the 7.0+ form (the real backend is Redis 8.0); 6.2 words the refusal
-// differently, which the mock does not model yet (#439).
+// node-redis twin of ioredis/scripts-noscript.test.ts (#452). Wording follows
+// REDIS_COMPAT: the 7.0+ form by default (the real backend is Redis 8.0),
+// 6.2's own wording on redis-6.2.
 const testRunner = new TestRunner()
-const NOT_ALLOWED = 'ERR This Redis command is not allowed from script'
+const legacy = activeProfile === 'redis-6.2'
+// Redis 6.2 words script-level rejections its own way, with no error code.
+const NOT_ALLOWED = legacy
+  ? 'This Redis command is not allowed from scripts'
+  : 'ERR This Redis command is not allowed from script'
+const UNKNOWN_COMMAND = legacy
+  ? 'Unknown Redis command called from Lua script'
+  : 'ERR Unknown Redis command called from script'
 // From Redis 7.0 `noscript` is a per-subcommand flag and no container's HELP
 // carries it; 6.2 refuses the whole container.
-const helpAllowedFromScripts = activeProfile !== 'redis-6.2'
+const helpAllowedFromScripts = !legacy
+
+/**
+ * The error a redis.pcall rejection returns. Real 6.2 also prefixes the
+ * calling line (`@user_script: 1: `), which this server cannot produce: the
+ * Lua engine does not pass that line to the host. So on 6.2 the prefix is
+ * optional here; the gap is pinned in compatibility/profile-gates.test.ts.
+ */
+function pcallRejection(message: string): (error: unknown) => boolean {
+  if (!legacy) {
+    return errorWithMessage(message)
+  }
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof Error)
+    assert.ok(
+      error.message === message ||
+        error.message === `@user_script: 1: ${message}`,
+      `unexpected message: ${error.message}`,
+    )
+    return true
+  }
+}
+
+/** The error a redis.call rejection aborts `script` with, per profile. */
+function callRejection(script: string, message: string): string {
+  return legacy
+    ? `ERR Error running script (call to f_${sha1(script)}): @user_script:1: @user_script: 1: ${message}`
+    : `${message} script: ${sha1(script)}, on @user_script:1.`
+}
 
 function sha1(script: string): string {
   return createHash('sha1').update(script).digest('hex')
@@ -42,7 +77,7 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
     for (const call of calls) {
       await assert.rejects(
         () => redis.eval(`return redis.pcall(${call})`),
-        errorWithMessage(NOT_ALLOWED),
+        pcallRejection(NOT_ALLOWED),
         call,
       )
     }
@@ -52,9 +87,7 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
     const script = "return redis.call('CLIENT','GETNAME')"
     await assert.rejects(
       () => redis.eval(script),
-      errorWithMessage(
-        `${NOT_ALLOWED} script: ${sha1(script)}, on @user_script:1.`,
-      ),
+      errorWithMessage(callRejection(script, NOT_ALLOWED)),
     )
   })
 
@@ -64,7 +97,7 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
 
     await assert.rejects(
       () => redis.eval("return redis.pcall('CLIENT','SETNAME','after')"),
-      errorWithMessage(NOT_ALLOWED),
+      pcallRejection(NOT_ALLOWED),
     )
 
     assert.strictEqual(await redis.clientGetName(), name)
@@ -77,11 +110,9 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
     for (const command of ['RESET', 'QUIT']) {
       await assert.rejects(
         () => redis.eval(`return redis.pcall('${command}')`),
-        errorWithMessage(
+        pcallRejection(
           // 6.2 has no QUIT table entry: its scripts fail command lookup.
-          command === 'QUIT' && activeProfile === 'redis-6.2'
-            ? 'ERR Unknown Redis command called from script'
-            : NOT_ALLOWED,
+          command === 'QUIT' && legacy ? UNKNOWN_COMMAND : NOT_ALLOWED,
         ),
         command,
       )
@@ -107,7 +138,7 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
       ]) {
         await assert.rejects(
           () => redis.eval(`return redis.pcall('${container}','NOPE')`),
-          errorWithMessage('ERR Unknown Redis command called from script'),
+          errorWithMessage(UNKNOWN_COMMAND),
           container,
         )
       }
@@ -128,7 +159,7 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
     for (const call of calls) {
       await assert.rejects(
         () => redis.eval(`return redis.pcall(${call})`),
-        errorWithMessage(NOT_ALLOWED),
+        pcallRejection(NOT_ALLOWED),
         call,
       )
     }
@@ -143,7 +174,7 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
     for (const call of calls) {
       await assert.rejects(
         () => redis.eval(`return redis.pcall(${call})`),
-        errorWithMessage(NOT_ALLOWED),
+        pcallRejection(NOT_ALLOWED),
         call,
       )
     }

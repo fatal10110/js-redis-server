@@ -24,6 +24,7 @@ export type FeatureId =
   | 'error.unknown-subcommand-dispatch-timing'
   | 'reply.help-print-wording'
   | 'xgroup.help-entriesread'
+  | 'error.unknown-command-wording'
   | 'info.multi-section'
   | 'shutdown.now-force-abort'
   | 'pubsub.sharded'

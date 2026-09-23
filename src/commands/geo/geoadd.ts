@@ -1,10 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  ExpectedFloatError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { integer } from '../helpers'
 import { assertValidCoordinates, encodeGeoScore } from './helpers'
 
@@ -14,7 +10,7 @@ type GeoAddArgs = { key: Buffer; options: GeoAddOptions; points: GeoPoint[] }
 
 function parseFloatToken(token: Buffer): number {
   const n = Number(token.toString())
-  if (!Number.isFinite(n)) throw new ExpectedFloatError()
+  if (!Number.isFinite(n)) throw errors.expectedFloat()
   return n
 }
 
@@ -52,9 +48,9 @@ function createGeoAddSchema() {
       }
 
       const remaining = input.length - cursor
-      if (options.nx && options.xx) throw new RedisSyntaxError()
+      if (options.nx && options.xx) throw errors.syntax()
       if (remaining === 0 || remaining % 3 !== 0) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       const points: GeoPoint[] = []

@@ -2,12 +2,9 @@ import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
-  NoScriptError,
   RedisCommandError,
-  ScriptDebugModeError,
-  ScriptFlushOptionError,
-  WrongNumberOfKeysError,
   WrongNumberOfArgumentsError,
+  errors,
 } from '../core/redis-error'
 import { luaReplyToRedisValue, renderScriptError } from '../core/lua-runtime'
 import type { RedisExecutionContext } from '../core/redis-context'
@@ -155,7 +152,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
   execute: async (args, ctx) => {
     const script = ctx.server.scriptCache.get(args.sha)
     if (!script) {
-      throw new NoScriptError()
+      throw errors.noScript()
     }
 
     const { keys, argv } = splitEvalArgs(args)
@@ -195,7 +192,7 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   execute: async (args, ctx) => {
     const script = ctx.server.scriptCache.get(args.sha)
     if (!script) {
-      throw new NoScriptError()
+      throw errors.noScript()
     }
 
     const { keys, argv } = splitEvalArgs(args)
@@ -346,12 +343,12 @@ function scriptFlush(
   ctx: RedisExecutionContext,
 ): RedisResult {
   if (args.rest.length > 1) {
-    throw new ScriptFlushOptionError()
+    throw errors.scriptFlushOption()
   }
 
   const mode = args.rest[0]?.toString().toUpperCase()
   if (mode !== undefined && mode !== 'ASYNC' && mode !== 'SYNC') {
-    throw new ScriptFlushOptionError()
+    throw errors.scriptFlushOption()
   }
 
   ctx.server.scriptCache.flush()
@@ -370,7 +367,7 @@ function scriptDebug(
   expectRestLength(args, 'script|debug', 1)
   const mode = args.rest[0].toString().toUpperCase()
   if (mode !== 'YES' && mode !== 'SYNC' && mode !== 'NO') {
-    throw new ScriptDebugModeError()
+    throw errors.scriptDebugMode()
   }
 
   if (ctx.transactionReplay) {
@@ -431,7 +428,7 @@ function splitEvalArgs(args: EvalArgs | EvalShaArgs): {
 
 function validateNumberOfKeys(args: Pick<EvalArgs, 'numKeys' | 'rest'>): void {
   if (args.numKeys > args.rest.length) {
-    throw new WrongNumberOfKeysError()
+    throw errors.wrongNumberOfKeys()
   }
 }
 
@@ -586,12 +583,12 @@ function functionFlush(
   ctx: RedisExecutionContext,
 ): RedisResult {
   if (args.rest.length > 1) {
-    throw functionFlushOptionError()
+    throw errors.functionFlushOption()
   }
 
   const mode = args.rest[0]?.toString().toUpperCase()
   if (mode !== undefined && mode !== 'ASYNC' && mode !== 'SYNC') {
-    throw functionFlushOptionError()
+    throw errors.functionFlushOption()
   }
 
   ctx.server.functionRegistry.clear()
@@ -685,7 +682,7 @@ function parseFunctionListOptions(args: readonly Buffer[]): {
       continue
     }
 
-    throw new RedisCommandError('syntax error')
+    throw errors.syntax()
   }
 
   return { libraryName, withCode }
@@ -725,10 +722,6 @@ function functionReply(fn: RedisFunctionDefinition): RedisValue {
       fn.flags.map(flag => RedisValue.bulkString(Buffer.from(flag))),
     ),
   ])
-}
-
-function functionFlushOptionError(): RedisCommandError {
-  return new RedisCommandError('FUNCTION FLUSH only support SYNC|ASYNC option')
 }
 
 function errorMessage(err: unknown): string {

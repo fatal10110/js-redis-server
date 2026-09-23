@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import { InvalidHllError } from '../core/redis-error'
+import { errors } from '../core/redis-error'
 import { ensureStringOrMissing, integer, simpleString } from './helpers'
 import type { RedisDatabase } from '../state'
 
@@ -78,7 +78,7 @@ function getHllOrThrow(db: RedisDatabase, key: Buffer): Buffer | null {
     return null
   }
   if (existing.length !== HLL_REGISTERS) {
-    throw new InvalidHllError()
+    throw errors.invalidHll()
   }
   return existing
 }

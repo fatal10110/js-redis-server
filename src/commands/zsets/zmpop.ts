@@ -2,14 +2,7 @@ import { defineCommand } from '../../core/command-definition'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
-import {
-  CountGreaterThanZeroError,
-  NumKeysGreaterThanZeroError,
-  RedisSyntaxError,
-  TimeoutNegativeError,
-  TimeoutNotFloatError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { scoreValue } from '../helpers'
@@ -45,31 +38,27 @@ function parsePositiveZsetPopInteger(
 }
 
 function parseZsetPopNumKeys(token: Buffer): number {
-  return parsePositiveZsetPopInteger(
-    token,
-    () => new NumKeysGreaterThanZeroError(),
+  return parsePositiveZsetPopInteger(token, () =>
+    errors.numKeysGreaterThanZero(),
   )
 }
 
 function parseZsetPopCount(token: Buffer): number {
-  return parsePositiveZsetPopInteger(
-    token,
-    () => new CountGreaterThanZeroError(),
-  )
+  return parsePositiveZsetPopInteger(token, errors.countGreaterThanZero)
 }
 
 function parseZsetPopSide(token: Buffer | undefined): ZsetMultiPopSide {
-  if (!token) throw new RedisSyntaxError()
+  if (!token) throw errors.syntax()
   const side = token.toString().toUpperCase()
   if (side === 'MIN') return 'min'
   if (side === 'MAX') return 'max'
-  throw new RedisSyntaxError()
+  throw errors.syntax()
 }
 
 function parseZsetPopTimeout(token: Buffer): number {
   const value = Number(token.toString())
-  if (isNaN(value)) throw new TimeoutNotFloatError()
-  if (value < 0) throw new TimeoutNegativeError()
+  if (isNaN(value)) throw errors.timeoutNotFloat()
+  if (value < 0) throw errors.timeoutNegative()
   return value
 }
 
@@ -113,7 +102,7 @@ function parseZsetMultiPopArgs(
 
   const keysEnd = cursor + numKeys
   if (keysEnd >= input.length) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   const keys = Array.from(input.slice(cursor, keysEnd))
@@ -126,7 +115,7 @@ function parseZsetMultiPopArgs(
   if (cursor < input.length) {
     const option = input[cursor].toString().toUpperCase()
     if (option !== 'COUNT' || cursor + 2 !== input.length) {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     count = parseZsetPopCount(input[cursor + 1])

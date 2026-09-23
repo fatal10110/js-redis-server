@@ -225,5 +225,20 @@ export {
   type RedisClusterNodeHandle,
 } from './cluster-server'
 
-// Client-visible error classes (also re-exported from the package root).
-export * from './core/redis-error'
+// Client-visible error classes (also re-exported from the package root) and
+// the reply-body helpers. The `errors` message factories stay internal: a
+// custom command builds its own reply with `new RedisCommandError(message)`.
+export {
+  errorReplyBody,
+  errorReplyBytes,
+  ExecCommandAbortError,
+  NoAuthError,
+  RedisClusterDownError,
+  RedisCommandError,
+  RedisCrossSlotError,
+  RedisMovedError,
+  UnknownRedisCommandError,
+  UnknownSubcommandError,
+  WrongNumberOfArgumentsError,
+  WrongTypeRedisError,
+} from './core/redis-error'

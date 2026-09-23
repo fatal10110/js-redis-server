@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  ExpectedIntegerError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisStreamData } from '../../state/data-types'
 import { array } from '../helpers'
@@ -62,7 +59,7 @@ function createCountSchema() {
       }
       const value = Number(raw.toString())
       if (!Number.isInteger(value)) {
-        throw new ExpectedIntegerError()
+        throw errors.expectedInteger()
       }
       return { value, nextIndex: index + 2 }
     },

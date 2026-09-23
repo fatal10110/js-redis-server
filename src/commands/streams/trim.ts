@@ -3,13 +3,7 @@ import {
   t,
   type ParseContext,
 } from '../../core/command-schema'
-import {
-  ExpectedIntegerError,
-  RedisSyntaxError,
-  StreamLimitNegativeError,
-  StreamLimitRequiresApproxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisStreamData, StreamId } from '../../state/data-types'
 import { compareStreamId, parseExactId, parseUint64 } from './ids'
 import { updateMaxDeletedId } from './groups'
@@ -31,12 +25,12 @@ export type TrimSpec =
 
 function parseTrimLimit(raw: string): bigint {
   if (/^-\d+$/.test(raw)) {
-    throw new StreamLimitNegativeError()
+    throw errors.streamLimitNegative()
   }
 
   const value = parseUint64(raw)
   if (value === null) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   return value
@@ -67,7 +61,7 @@ export function createTrimSpecSchema() {
       let trim: TrimSpec
       if (keyword === 'MAXLEN') {
         const count = parseUint64(rawValue)
-        if (count === null) throw new RedisSyntaxError()
+        if (count === null) throw errors.syntax()
         trim = { strategy: 'maxlen', count, approximate, limit: null }
       } else {
         const minId = parseExactId(rawValue)
@@ -80,12 +74,12 @@ export function createTrimSpecSchema() {
         }
 
         if (!approximate) {
-          throw new StreamLimitRequiresApproxError()
+          throw errors.streamLimitRequiresApprox()
         }
 
         const rawLimit = input[cursor + 1]?.toString()
         if (rawLimit === undefined) {
-          throw new RedisSyntaxError()
+          throw errors.syntax()
         }
 
         trim.limit = parseTrimLimit(rawLimit)

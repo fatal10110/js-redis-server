@@ -81,7 +81,7 @@ export class CommandExecutor {
     const definition = this.registry.get(rawCommand.toString())
 
     if (!definition) {
-      throw new UnknownRedisCommandError(rawCommand, rawArgs)
+      throw new UnknownRedisCommandError(rawCommand, rawArgs, this.profile)
     }
 
     this.lookupSubcommand(definition, rawArgs)

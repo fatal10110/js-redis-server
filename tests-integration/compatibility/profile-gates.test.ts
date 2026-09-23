@@ -546,6 +546,30 @@ describe(
       )
     })
 
+    // The unknown-command reply flipped at 7.0 as well (#384): 6.2 quotes with
+    // backticks, separates args with `, ` and echoes the whole name; 7.0+
+    // quotes with single quotes, separates with a space and cuts the name at
+    // 128 bytes. Captured from real redis-server 6.2.24, 7.0 and 8.0.6, and
+    // Valkey 7.2 / 8.0. The full byte-level coverage (NUL cuts, the 128-byte
+    // args budget) is tests-integration/raw-tcp/unknown-command.test.ts.
+    test('unknown-command wording matches the profile', async () => {
+      const legacy = profile === 'redis-6.2'
+      assert.strictEqual(
+        await send('NOSUCHCMD', 'a', 'b'),
+        legacy
+          ? '-ERR unknown command `NOSUCHCMD`, with args beginning with: `a`, `b`, \r\n'
+          : "-ERR unknown command 'NOSUCHCMD', with args beginning with: 'a' 'b' \r\n",
+      )
+
+      const name = 'X'.repeat(200)
+      assert.strictEqual(
+        await send(name),
+        legacy
+          ? `-ERR unknown command \`${name}\`, with args beginning with: \r\n`
+          : `-ERR unknown command '${name.slice(0, 128)}', with args beginning with: \r\n`,
+      )
+    })
+
     // `addReplySubcommandSyntaxError` — a *known* subcommand given arguments it
     // cannot use — flipped case at 7.0 too, but kept the `or wrong number of
     // arguments` clause and gained no truncation. Captured from 6.2.24 and
@@ -793,57 +817,83 @@ describe(
       },
     )
 
-    // KNOWN GAP (#439): errors the scripting layer raises itself, before any
-    // command runs, are rendered by real 6.2 through `luaPushError`, with an
-    // inner `@user_script: <line>: ` position (the calling Lua line, which the
-    // engine does not expose to the host) and 6.2's own wording:
-    //   @user_script:1: @user_script: 1: Unknown Redis command called from Lua script
-    //   @user_script:1: @user_script: 1: This Redis command is not allowed from scripts
-    //   @user_script:1: @user_script: 1: Please specify at least one argument for redis.call()
-    //   @user_script:1: @user_script: 1: Lua redis() command arguments must be strings or integers
-    //   @user_script:1: @user_script: 1: Wrong number of args calling Redis command From Lua script
-    // This pins what this server answers today: the 6.2 wrapper around the
-    // 7.0+ body, with no `ERR ` code folded in (they are not command replies).
-    // Tighten to the real frames above once the wording and inner position are
-    // modelled.
+    // Errors the scripting layer raises itself, before any command runs, are
+    // rendered by real 6.2 through `luaPushError`: 6.2's own wording, no error
+    // code, and an inner `@user_script: <line>: ` position. A redis.call
+    // rejection aborts the script, so the frame repeats the position inside
+    // the abort decoration. Byte for byte against real redis-server 6.2.24.
+    const legacyScriptRejections: Array<[string, string]> = [
+      [
+        "return redis.call('nosuchcmd', 'a')",
+        'Unknown Redis command called from Lua script',
+      ],
+      [
+        // 6.2 has no QUIT table entry: command lookup fails.
+        "return redis.call('QUIT')",
+        'Unknown Redis command called from Lua script',
+      ],
+      [
+        "return redis.call('SUBSCRIBE', 'c')",
+        'This Redis command is not allowed from scripts',
+      ],
+      [
+        // A noscript container refuses every subcommand on 6.2 (#474).
+        "return redis.call('CLIENT', 'NOPE')",
+        'This Redis command is not allowed from scripts',
+      ],
+      [
+        // 6.2 names redis.call() here even when redis.pcall() was called.
+        'return redis.call()',
+        'Please specify at least one argument for redis.call()',
+      ],
+      [
+        "return redis.call('SET', {}, 'v')",
+        'Lua redis() command arguments must be strings or integers',
+      ],
+      [
+        "return redis.call('GET')",
+        'Wrong number of args calling Redis command From Lua script',
+      ],
+    ]
+
     test(
-      'script-level redis.call rejections on 6.2 (known gap: wording and inner position)',
+      'script-level redis.call rejections on 6.2 use its wording and inner position',
       {
         skip:
           supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
       },
       async () => {
-        const cases: Array<[string, string]> = [
-          [
-            "return redis.call('nosuchcmd')",
-            'Unknown Redis command called from script',
-          ],
-          [
-            "return redis.call('SUBSCRIBE', 'c')",
-            'This Redis command is not allowed from script',
-          ],
-          [
-            // A noscript container refuses every subcommand on 6.2 (#474).
-            "return redis.call('CLIENT', 'NOPE')",
-            'This Redis command is not allowed from script',
-          ],
-          [
-            'redis.call()',
-            'Please specify at least one argument for this redis lib call',
-          ],
-          [
-            "return redis.call('SET', {}, 'v')",
-            'Lua redis lib command arguments must be strings or integers',
-          ],
-          [
-            "return redis.call('GET')",
-            "wrong number of arguments for 'get' command",
-          ],
-        ]
-        for (const [script, body] of cases) {
+        for (const [call, body] of legacyScriptRejections) {
+          const script = `local x = 1\n${call}`
           assert.strictEqual(
             await send('EVAL', script, '0'),
-            `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ${body}\r\n`,
+            `-ERR Error running script (call to f_${sha1(script)}): @user_script:2: @user_script: 2: ${body}\r\n`,
+            script,
+          )
+        }
+      },
+    )
+
+    // KNOWN GAP: real 6.2 hands redis.pcall the same text with the inner
+    // position, `-@user_script: 2: <wording>`. The position is the line of the
+    // pcall, and the engine (lua-redis-wasm) does not pass the calling line to
+    // the host's redis.pcall callback, so this server answers the wording
+    // without it. The argument-type rejection is raised by the engine itself,
+    // even under pcall, so it aborts the script instead (on every profile).
+    // Tighten to the real frames once the engine exposes the line.
+    test(
+      'script-level redis.pcall rejections on 6.2 (known gap: inner position)',
+      {
+        skip:
+          supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        for (const [call, body] of legacyScriptRejections) {
+          if (call.includes('{}')) continue
+          const script = `local x = 1\n${call.replace('redis.call', 'redis.pcall')}`
+          assert.strictEqual(
+            await send('EVAL', script, '0'),
+            `-${body}\r\n`,
             script,
           )
         }

@@ -1,10 +1,7 @@
 import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  NoSuchKeyError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type {
@@ -163,13 +160,13 @@ export const xinfoCommand = defineCommand({
       // Real 6.2 looks the key up (getStream: WRONGTYPE) before it looks at
       // the subcommand.
       if (command.key && !ctx.db.getStream(command.key)) {
-        throw new NoSuchKeyError()
+        throw errors.noSuchKey()
       }
       throw unknownSubcommandError('XINFO', command.name, ctx.server.profile)
     }
 
     const stream = ctx.db.getStream(command.key)
-    if (!stream) throw new NoSuchKeyError()
+    if (!stream) throw errors.noSuchKey()
 
     if (command.subcommand === 'stream') {
       // XINFO replies are field/value maps: a flat array on RESP2, a `%` map on

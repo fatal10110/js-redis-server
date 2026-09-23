@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
@@ -91,7 +88,7 @@ export const blpopCommand = defineCommand({
       if (input.length - index < 2)
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       const timeout = Number(input[input.length - 1].toString())
-      if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
+      if (isNaN(timeout) || timeout < 0) throw errors.syntax()
       const keys = Array.from(input.slice(index, input.length - 1))
       return { value: { keys, timeout }, nextIndex: input.length }
     },
@@ -113,7 +110,7 @@ export const brpopCommand = defineCommand({
       if (input.length - index < 2)
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       const timeout = Number(input[input.length - 1].toString())
-      if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
+      if (isNaN(timeout) || timeout < 0) throw errors.syntax()
       const keys = Array.from(input.slice(index, input.length - 1))
       return { value: { keys, timeout }, nextIndex: input.length }
     },

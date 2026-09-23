@@ -3,13 +3,9 @@ import { t } from '../core/command-schema'
 import { integer, bulk, array } from './helpers'
 import { RedisValue } from '../core/redis-value'
 import {
-  LimitCantBeNegativeError,
-  NumKeysGreaterThanZeroError,
-  PositiveCountError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
-  WrongNumberOfKeysError,
   WrongTypeRedisError,
+  errors,
 } from '../core/redis-error'
 import type { RedisDatabase } from '../state'
 
@@ -75,7 +71,7 @@ function storeSetResult(
 function parseSintercardCount(token: Buffer): number {
   const count = Number(token.toString())
   if (!Number.isSafeInteger(count) || count <= 0) {
-    throw new NumKeysGreaterThanZeroError()
+    throw errors.numKeysGreaterThanZero()
   }
 
   return count
@@ -84,7 +80,7 @@ function parseSintercardCount(token: Buffer): number {
 function parseSintercardLimit(token: Buffer): number {
   const limit = Number(token.toString())
   if (!Number.isSafeInteger(limit) || limit < 0) {
-    throw new LimitCantBeNegativeError()
+    throw errors.limitCantBeNegative()
   }
 
   return limit
@@ -100,7 +96,7 @@ const sintercardSchema = t.custom<{
 
   const keyCount = parseSintercardCount(input[0])
   if (keyCount > input.length - 1) {
-    throw new WrongNumberOfKeysError()
+    throw errors.wrongNumberOfKeys()
   }
 
   const keys = input.slice(1, 1 + keyCount)
@@ -113,19 +109,19 @@ const sintercardSchema = t.custom<{
 
   const option = input[cursor].toString().toUpperCase()
   if (option !== 'LIMIT') {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   cursor++
   if (cursor >= input.length) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   limit = parseSintercardLimit(input[cursor])
   cursor++
 
   if (cursor !== input.length) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return { value: { keys, limit }, nextIndex: cursor }
@@ -257,7 +253,7 @@ export const spopCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.count !== undefined && args.count < 0) {
-      throw new PositiveCountError()
+      throw errors.positiveCount()
     }
 
     const type = ctx.db.getType(args.key)
