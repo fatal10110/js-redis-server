@@ -4,6 +4,20 @@ import { RedisDatabase } from '../src/state/database'
 import { type RedisMutationEvent } from '../src/state/mutation-events'
 import { WrongTypeRedisError } from '../src/core/redis-error'
 
+// Real Redis emits the type-specific event (hdel, lpop, zrem, ...) and then
+// `del` when a removal empties a collection. The removal is notification-only;
+// the `delete` is the one modified-key (WATCH) signal.
+function assertRemovalThenDelete(
+  events: RedisMutationEvent[],
+  key: Buffer,
+  valueType: 'hash' | 'list' | 'zset',
+): void {
+  assert.deepStrictEqual(events, [
+    { type: 'notify', database: 0, key, valueType },
+    { type: 'delete', database: 0, key },
+  ])
+}
+
 function setup() {
   const db = new RedisDatabase(0)
   const events: RedisMutationEvent[] = []
@@ -63,7 +77,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     assert.strictEqual(events.length, 0)
   })
 
-  test('emptying an existing collection deletes the key and emits a single delete event', () => {
+  test('emptying an existing collection deletes the key, announcing the removal before the delete (#379)', () => {
     const { db, events } = setup()
     const key = Buffer.from('h')
 
@@ -79,11 +93,10 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
 
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(db.getType(key), null)
-    assert.strictEqual(events.length, 1)
-    assert.strictEqual(events[0]!.type, 'delete')
+    assertRemovalThenDelete(events, key, 'hash')
   })
 
-  test('emptying an existing list deletes the key and emits a single delete event', () => {
+  test('emptying an existing list deletes the key, announcing the removal before the delete (#379)', () => {
     const { db, events } = setup()
     const key = Buffer.from('l')
 
@@ -100,11 +113,10 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
 
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(db.getType(key), null)
-    assert.strictEqual(events.length, 1)
-    assert.strictEqual(events[0]!.type, 'delete')
+    assertRemovalThenDelete(events, key, 'list')
   })
 
-  test('emptying an existing zset deletes the key and emits a single delete event', () => {
+  test('emptying an existing zset deletes the key, announcing the removal before the delete (#379)', () => {
     const { db, events } = setup()
     const key = Buffer.from('z')
 
@@ -121,8 +133,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
 
     assert.strictEqual(db.get(key), null)
     assert.strictEqual(db.getType(key), null)
-    assert.strictEqual(events.length, 1)
-    assert.strictEqual(events[0]!.type, 'delete')
+    assertRemovalThenDelete(events, key, 'zset')
   })
 
   test('a populating mutation emits a write event and keeps the key', () => {
@@ -159,6 +170,55 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     assert.strictEqual(db.getStream(key)!.entries.length, 0)
     assert.strictEqual(events.length, 1)
     assert.strictEqual(events[0]!.type, 'write')
+  })
+
+  test('markCommitted on an existing key notifies without signalling key listeners (#379)', () => {
+    // Real Redis announces consumer-group changes (notifyKeyspaceEvent) but
+    // leaves a WATCH on the stream intact (no signalModifiedKey). Per-key
+    // listeners — WATCH, blocked clients — must not see the notification.
+    const { db, events } = setup()
+    const key = Buffer.from('stream')
+    db.updateStream(key, stream => {
+      stream.appendEntry({ ms: 1, seq: 1 }, [
+        Buffer.from('f'),
+        Buffer.from('v'),
+      ])
+    })
+    const keyEvents: RedisMutationEvent[] = []
+    db.subscribeKey(key, event => keyEvents.push(event))
+    events.length = 0
+
+    db.updateStream(key, stream => {
+      stream.addGroup('g', {
+        name: Buffer.from('g'),
+        lastDeliveredId: { ms: 0, seq: 0 },
+        entriesRead: 0,
+        consumers: new Map(),
+        pending: new Map(),
+      })
+    })
+
+    assert.deepStrictEqual(events, [
+      { type: 'notify', database: 0, key, valueType: 'stream' },
+    ])
+    assert.deepStrictEqual(keyEvents, [])
+    assert.strictEqual(db.getStream(key)!.groups.size, 1)
+  })
+
+  test('emptying a collection signals key listeners with the delete only (#379)', () => {
+    const { db } = setup()
+    const key = Buffer.from('h')
+    db.updateHash(key, hash => {
+      hash.setField(Buffer.from('f'), Buffer.from('v'))
+    })
+    const keyEvents: RedisMutationEvent[] = []
+    db.subscribeKey(key, event => keyEvents.push(event))
+
+    db.updateHash(key, hash => {
+      hash.deleteField(Buffer.from('f'))
+    })
+
+    assert.deepStrictEqual(keyEvents, [{ type: 'delete', database: 0, key }])
   })
 
   test('updating a key held at another type throws the client-visible WRONGTYPE error', () => {

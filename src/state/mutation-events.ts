@@ -1,6 +1,19 @@
 import { cloneRedisDataValue, type RedisDataValue } from './data-types'
 
-export type RedisMutationEvent =
+/**
+ * A keyspace mutation. Every kind except `notify` is a *modified-key* signal
+ * (real Redis' `signalModifiedKey`): it dirties a WATCH, can wake a blocked
+ * client, and is replicated. `notify` is the keyspace-notification signal on
+ * its own (`notifyKeyspaceEvent` without `signalModifiedKey`) — see
+ * {@link RedisMutationBus.emit} for how the two are routed.
+ *
+ * `command` is the name of the command the event was emitted on behalf of
+ * (see `RedisDatabase.withOrigin`); keyspace notifications name write events
+ * after it. Absent for a mutation made through the database itself rather
+ * than a command's handle — active expiry, replication, and (for now) MOVE /
+ * COPY ... DB writes into another database.
+ */
+export type RedisMutationEvent = (
   | {
       type: 'write'
       database: number
@@ -33,6 +46,17 @@ export type RedisMutationEvent =
       type: 'flush'
       database: number
     }
+  | {
+      // An existing key changed in a way real Redis announces but does not
+      // treat as modifying it: stream consumer-group / last-id metadata, and
+      // the removal (hdel, lpop, ...) that empties a collection, which the
+      // `delete` right after it signals instead.
+      type: 'notify'
+      database: number
+      key: Buffer
+      valueType: RedisDataValue['type']
+    }
+) & { command?: string }
 
 export type RedisMutationListener = (event: RedisMutationEvent) => void
 
@@ -66,9 +90,18 @@ export class RedisMutationBus {
     }
   }
 
+  /**
+   * Fan `event` out. Global listeners (keyspace notifications, replication)
+   * see every event. Per-key listeners — WATCH and blocked clients — see only
+   * modified-key signals, never `notify`.
+   */
   emit(event: RedisMutationEvent): void {
     for (const listener of Array.from(this.globalListeners)) {
       listener(cloneMutationEvent(event))
+    }
+
+    if (event.type === 'notify') {
+      return
     }
 
     if (event.type === 'flush') {
@@ -107,6 +140,7 @@ function cloneMutationEvent(event: RedisMutationEvent): RedisMutationEvent {
     case 'expire':
     case 'persist':
     case 'evict':
+    case 'notify':
       return {
         ...event,
         key: Buffer.from(event.key),

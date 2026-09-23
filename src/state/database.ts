@@ -21,6 +21,7 @@ import {
 } from './keyspace'
 import {
   RedisMutationBus,
+  type RedisMutationEvent,
   RedisMutationListener,
   Unsubscribe,
 } from './mutation-events'
@@ -36,16 +37,35 @@ import {
 export class RedisDatabase {
   readonly mutations = new RedisMutationBus()
   /**
-   * Name of the command currently executing against this database, set by the
-   * CommandExecutor around `definition.execute`. Keyspace notifications read it
-   * to name write events after the originating command (e.g. LPUSH → `lpush`),
-   * which the mutation bus itself does not carry. `null` outside command
-   * execution.
+   * The command this handle mutates on behalf of, stamped on every event it
+   * emits as {@link RedisMutationEvent.command}. `undefined` on the database
+   * itself; set only on a {@link withOrigin} view.
    */
-  activeNotifyCommand: string | null = null
+  readonly origin: string | undefined = undefined
   private readonly entries = new Map<string, KeyspaceEntry>()
 
   constructor(public readonly id: number) {}
+
+  /**
+   * A handle onto this same database whose mutation events carry `command`
+   * as their origin, so keyspace notifications can name them after it. The
+   * executor hands every command such a view as `ctx.db`.
+   *
+   * The name travels with the handle, not with the database: a command that
+   * parks (BLPOP) and resumes — in any order relative to others — still
+   * writes under its own name, and never lends it to another command writing
+   * into the same database meanwhile (#444).
+   *
+   * The view is a prototype link, not a copy: all state (`entries`,
+   * `mutations`) is read through to this database, and only
+   * `origin` is its own. RedisDatabase methods therefore must never assign a
+   * field on `this` — the write would land on the view.
+   */
+  withOrigin(command: string): RedisDatabase {
+    return Object.create(this, {
+      origin: { value: command, enumerable: true },
+    }) as RedisDatabase
+  }
 
   get(key: Buffer): RedisDataValue | null {
     const entry = this.getLiveEntry(key)
@@ -97,7 +117,7 @@ export class RedisDatabase {
     }
 
     this.entries.delete(id)
-    this.mutations.emit({
+    this.emit({
       type: 'delete',
       database: this.id,
       key: existing.key,
@@ -112,7 +132,7 @@ export class RedisDatabase {
     }
 
     entry.expiresAt = expiresAt
-    this.mutations.emit({
+    this.emit({
       type: 'expire',
       database: this.id,
       key: entry.key,
@@ -128,7 +148,7 @@ export class RedisDatabase {
     }
 
     delete entry.expiresAt
-    this.mutations.emit({
+    this.emit({
       type: 'persist',
       database: this.id,
       key: entry.key,
@@ -177,24 +197,16 @@ export class RedisDatabase {
    *
    * The mutator gets the value plus a tracker, and must mark what it did:
    * `markChanged` for a WATCH-dirtying write, `markCommitted` to persist an
-   * in-place change to an **already-existing** key without dirtying. Creating
-   * the key dirties either way — see `if (dirty || !existing)` below. An
-   * unmarked mutation emits no event.
+   * in-place change to an **already-existing** key that is announced (a
+   * `notify` event) without dirtying. Creating the key dirties either way — see
+   * `if (dirty || !existing)` below. An unmarked mutation emits no event.
    *
-   * Two sharp edges, both pre-existing:
-   *
-   * - Only a **brand-new** key is rolled back on a throw. For an existing key
-   *   the mutator writes straight through the stored object (`getLiveEntry`
-   *   returns the entry, not a copy), so a mutator that throws or forgets to
-   *   mark leaves its partial edit in the keyspace with no event emitted — e.g.
-   *   a ghost empty hash that `getType` still reports as `hash`, a state real
-   *   Redis cannot represent.
-   * - Where `markCommitted` does suppress — an in-place change to an existing
-   *   key — it suppresses the mutation event *outright*, and that same bus also
-   *   drives keyspace notifications. So the WATCH semantics below are faithful
-   *   to real Redis, but the notification that real Redis would still fire is
-   *   lost with it — real Redis keeps `signalModifiedKey` and
-   *   `notifyKeyspaceEvent` independent. See #379.
+   * Sharp edge (pre-existing): only a **brand-new** key is rolled back on a
+   * throw. For an existing key the mutator writes straight through the stored
+   * object (`getLiveEntry` returns the entry, not a copy), so a mutator that
+   * throws or forgets to mark leaves its partial edit in the keyspace with no
+   * event emitted — e.g. a ghost empty hash that `getType` still reports as
+   * `hash`, a state real Redis cannot represent.
    */
   private update<TValue extends RedisDataValue, TResult>(
     key: Buffer,
@@ -235,10 +247,13 @@ export class RedisDatabase {
 
     // Centralized "delete the key when its collection is empty" rule, so each
     // command no longer has to remember to clean up emptied hashes/lists/etc.
+    // Like real Redis, the removal itself (hdel, lpop, ...) is announced first,
+    // then `del`; the `delete` alone is the modified-key signal.
     if (isEmptyCollection(entry.value)) {
       if (existing) {
         this.entries.delete(id)
-        this.mutations.emit({
+        this.emitNotify(entry)
+        this.emit({
           type: 'delete',
           database: this.id,
           key: entry.key,
@@ -251,9 +266,12 @@ export class RedisDatabase {
     // A markChanged write always dirties WATCH. A markCommitted-only change
     // dirties only when it creates the key (`!existing`): real Redis treats
     // bringing a watched key into existence as a write, but leaves a WATCH
-    // intact for in-place metadata changes to an already-existing key.
+    // intact for in-place metadata changes to an already-existing key — while
+    // still announcing them, hence `notify`.
     if (dirty || !existing) {
       this.emitWrite(entry)
+    } else {
+      this.emitNotify(entry)
     }
     return result
   }
@@ -347,7 +365,7 @@ export class RedisDatabase {
 
   flush(): void {
     this.entries.clear()
-    this.mutations.emit({
+    this.emit({
       type: 'flush',
       database: this.id,
     })
@@ -412,7 +430,7 @@ export class RedisDatabase {
     }
 
     this.entries.delete(keyId(entry.key))
-    this.mutations.emit({
+    this.emit({
       type: 'evict',
       database: this.id,
       key: entry.key,
@@ -421,12 +439,27 @@ export class RedisDatabase {
   }
 
   private emitWrite(entry: KeyspaceEntry): void {
-    this.mutations.emit({
+    this.emit({
       type: 'write',
       database: this.id,
       key: entry.key,
       value: entry.value,
       expiresAt: entry.expiresAt,
+    })
+  }
+
+  private emit(event: RedisMutationEvent): void {
+    this.mutations.emit(
+      this.origin === undefined ? event : { ...event, command: this.origin },
+    )
+  }
+
+  private emitNotify(entry: KeyspaceEntry): void {
+    this.emit({
+      type: 'notify',
+      database: this.id,
+      key: entry.key,
+      valueType: entry.value.type,
     })
   }
 }

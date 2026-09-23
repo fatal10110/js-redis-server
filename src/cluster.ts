@@ -311,5 +311,8 @@ function applyReplicationEvent(
     case 'flush':
       replica.flush()
       return
+    case 'notify':
+      // Notification-only: carries no value to replicate.
+      return
   }
 }
