@@ -7,6 +7,7 @@ import {
   type ReplyValue,
 } from 'lua-redis-wasm'
 import type { CompatibilityProfile } from './compatibility/profile'
+import { noscriptSubcommandExists } from './compatibility/subcommand-gates'
 import type { CommandPlan } from './command-definition'
 import {
   errorReplyBytes,
@@ -18,10 +19,14 @@ import {
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
 import { RedisValue } from './redis-value'
+import type { RespVersion } from './resp-encoder'
 
 type LuaHostState = {
   ctx: RedisExecutionContext | null
   readOnly: boolean
+  // The protocol the running script selected with `redis.setresp()`. It picks
+  // the shape `redis.call` replies take in Lua — not the client's protocol.
+  resp: RespVersion
 }
 
 export type LuaReplyValue = ReplyValue
@@ -30,6 +35,7 @@ export class RedisLuaRuntime {
   private readonly hostState: LuaHostState = {
     ctx: null,
     readOnly: false,
+    resp: 2,
   }
   private readonly engine: LuaEngine
 
@@ -38,6 +44,9 @@ export class RedisLuaRuntime {
       redisCall: args => this.runRedisCommand(args),
       redisPcall: args => this.runRedisCommand(args),
       log: () => {},
+      onSetResp: version => {
+        this.hostState.resp = version
+      },
     })
   }
 
@@ -54,12 +63,14 @@ export class RedisLuaRuntime {
 
     this.hostState.ctx = ctx
     this.hostState.readOnly = options?.readOnly ?? false
+    this.hostState.resp = 2
 
     try {
       return this.engine.evalWithArgs(script, [...keys], [...args])
     } finally {
       this.hostState.ctx = null
       this.hostState.readOnly = false
+      this.hostState.resp = 2
     }
   }
 
@@ -91,8 +102,9 @@ export class RedisLuaRuntime {
       throw err
     }
 
-    if (plan.definition.flags.includes('noscript')) {
-      return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
+    const refusal = noscriptRefusal(plan, ctx.server.profile)
+    if (refusal) {
+      return redisErrorToLuaReply(refusal)
     }
 
     if (this.hostState.readOnly && plan.definition.flags.includes('write')) {
@@ -104,8 +116,63 @@ export class RedisLuaRuntime {
     }
 
     const result = ctx.executor.executePlanSync(plan, createLuaCallContext(ctx))
-    return redisValueToLuaReply(normalizeScriptCommandValue(result.value))
+    return redisValueToLuaReply(
+      normalizeScriptCommandValue(result.value),
+      this.hostState.resp,
+    )
   }
+}
+
+/**
+ * The error a script's `redis.call`/`redis.pcall` gets for a `noscript`
+ * command, or `null` when the command may run.
+ *
+ * On Redis 6.2 `noscript` is a property of the whole command, so a flagged
+ * container (CLIENT, CONFIG, ACL, SCRIPT) refuses every subcommand, unknown
+ * ones included. From 7.0 a script resolves `container|subcommand` through
+ * the command table and the flag lives on each subcommand: an unknown
+ * subcommand fails that lookup, and no container's HELP carries the flag, so
+ * `<container> HELP` runs. The lookup is modelled only for `noscript`
+ * containers here; the general case for other containers is #439.
+ *
+ * Valkey words the lookup failure `Unknown command called from script`, which
+ * {@link ScriptUnknownCommandError} does not model yet.
+ */
+function noscriptRefusal(
+  plan: CommandPlan,
+  profile: CompatibilityProfile,
+): RedisCommandError | null {
+  const { definition } = plan
+  if (!definition.flags.includes('noscript')) {
+    return null
+  }
+
+  if (!profile.has('script.per-subcommand-noscript')) {
+    // 6.2 has no QUIT table entry, so its lookup fails before any flag check.
+    if (
+      definition.name === 'quit' &&
+      !profile.has('command.quit-table-entry')
+    ) {
+      return new ScriptUnknownCommandError()
+    }
+    return new ScriptNotAllowedCommandError()
+  }
+
+  if (plan.rawArgs.length === 0) {
+    return new ScriptNotAllowedCommandError()
+  }
+
+  // Look up against the *real* subcommand table, not the implemented subset:
+  // a real subcommand this server lacks (`CLIENT PAUSE`) is still refused.
+  const subcommand = plan.rawArgs[0].toString().toLowerCase()
+  const exists = noscriptSubcommandExists(definition.name, subcommand, profile)
+  if (exists === false) {
+    return new ScriptUnknownCommandError()
+  }
+
+  return exists && subcommand === 'help'
+    ? null
+    : new ScriptNotAllowedCommandError()
 }
 
 /**
@@ -311,7 +378,28 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
   }
 }
 
-function redisValueToLuaReply(value: RedisValue): ReplyValue {
+/**
+ * Convert a `redis.call`/`redis.pcall` reply into the value the script sees.
+ * Like real Redis, the shape follows the protocol the script selected with
+ * `redis.setresp()`: at RESP2 every reply is flattened to what a RESP2 client
+ * would read, while at RESP3 maps and doubles reach Lua as their typed tables
+ * (`{map=…}`, `{double=…}`) — the shapes `encodeResp3` writes to the wire,
+ * except null (see {@link resp3TypedLuaReply}).
+ *
+ * Exported for unit tests only.
+ */
+export function redisValueToLuaReply(
+  value: RedisValue,
+  resp: RespVersion,
+): ReplyValue {
+  const toLua = (item: RedisValue) => redisValueToLuaReply(item, resp)
+  if (resp === 3) {
+    const typed = resp3TypedLuaReply(value, toLua)
+    if (typed !== undefined) {
+      return typed
+    }
+  }
+
   switch (value.kind) {
     case 'simple-string':
       return { ok: Buffer.from(value.value) }
@@ -328,27 +416,27 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
     case 'verbatim':
       return value.value
     case 'array':
-      return value.items.map(redisValueToLuaReply)
+      return value.items.map(toLua)
     case 'set':
-      return value.items.map(redisValueToLuaReply)
+      return value.items.map(toLua)
     case 'map':
       return value.entries.flatMap(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        toLua(key),
+        toLua(entryValue),
       ])
     case 'map-pairs':
       return value.entries.map(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        toLua(key),
+        toLua(entryValue),
       ])
     case 'flat-pairs':
-      // EVAL uses RESP2 semantics — WITHSCORES is a flat array to scripts.
+      // At RESP2 a WITHSCORES reply is a flat array to scripts.
       return value.entries.flatMap(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        toLua(key),
+        toLua(entryValue),
       ])
     case 'push':
-      return [Buffer.from(value.name), ...value.items.map(redisValueToLuaReply)]
+      return [Buffer.from(value.name), ...value.items.map(toLua)]
     case 'null':
     case 'null-array':
       return null
@@ -357,6 +445,55 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
         err: value.messageBytes ?? Buffer.from(value.message),
         code: value.code ? Buffer.from(value.code) : undefined,
       }
+  }
+}
+
+/**
+ * The RESP3 reply kinds whose Lua shape differs from RESP2, mirroring
+ * `encodeResp3`; `undefined` for every kind both protocols convert alike. (A
+ * RESP3 null still reaches Lua as `false`, not `nil`: the engine decodes every
+ * null that way.)
+ *
+ * Through `redis.call` only `double`, `map`, `map-pairs` and `flat-pairs` are
+ * reachable today. No command emits `set`, `boolean`, `big-number` or
+ * `verbatim` yet (real Redis sends SMEMBERS as a set and INFO as a verbatim
+ * string), so those branches just mirror `encodeResp3` for when one does.
+ */
+function resp3TypedLuaReply(
+  value: RedisValue,
+  toLua: (item: RedisValue) => ReplyValue,
+): ReplyValue | undefined {
+  switch (value.kind) {
+    case 'double':
+      return { double: value.value }
+    case 'boolean':
+      return value.value
+    case 'big-number':
+      return { big_number: Buffer.from(value.value.toString()) }
+    case 'verbatim':
+      return {
+        verbatim_string: {
+          format: Buffer.from(value.format),
+          string: value.value,
+        },
+      }
+    case 'set':
+      return { set: value.items.map(toLua) }
+    case 'map':
+    case 'map-pairs':
+      return {
+        map: value.entries.map(([key, entryValue]) => [
+          toLua(key),
+          toLua(entryValue),
+        ]),
+      }
+    case 'flat-pairs':
+      return value.entries.map(([key, entryValue]) => [
+        toLua(key),
+        toLua(entryValue),
+      ])
+    default:
+      return undefined
   }
 }
 

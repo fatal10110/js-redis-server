@@ -356,6 +356,93 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  for (const protocol of [2, 3] as const) {
+    // Every confirmation of a multi-target SUBSCRIBE is part of that command's
+    // reply, so a command pipelined behind it in the same write must answer
+    // after the last one, never between them (#455).
+    test(`RESP${protocol}: multi-target subscribe confirmations precede a pipelined reply (#455)`, async () => {
+      const conn = await connect()
+      const prefix = `raw-order:${randomKey()}`
+      const channels = [1, 2, 3].map(i => `${prefix}:channel:${i}`)
+      const patterns = [1, 2].map(i => `${prefix}:pattern:${i}:*`)
+      const shards = [1, 2].map(i => `${prefix}:shard:${i}`)
+      await hello(conn, protocol)
+
+      conn.write(
+        Buffer.concat([
+          commandFrame('SUBSCRIBE', ...channels),
+          commandFrame('PING', 'after-subscribe'),
+          commandFrame('PSUBSCRIBE', ...patterns),
+          commandFrame('PING', 'after-psubscribe'),
+          commandFrame('SSUBSCRIBE', ...shards),
+          commandFrame('PING', 'after-ssubscribe'),
+        ]),
+      )
+
+      const expected = [
+        ...channels.map((channel, i) =>
+          confirmationBytes(protocol, 'subscribe', channel, i + 1),
+        ),
+        subscribedPingBytes(protocol, 'after-subscribe'),
+        ...patterns.map((pattern, i) =>
+          confirmationBytes(
+            protocol,
+            'psubscribe',
+            pattern,
+            channels.length + i + 1,
+          ),
+        ),
+        subscribedPingBytes(protocol, 'after-psubscribe'),
+        ...shards.map((shard, i) =>
+          confirmationBytes(protocol, 'ssubscribe', shard, i + 1),
+        ),
+        subscribedPingBytes(protocol, 'after-ssubscribe'),
+      ]
+      const actual: string[] = []
+      for (let i = 0; i < expected.length; i++) {
+        actual.push((await conn.readRawFrame()).toString())
+      }
+      assert.deepStrictEqual(actual, expected)
+    })
+
+    // Real Redis runs a queued SUBSCRIBE a b and appends both confirmations
+    // inside EXEC's array, whose header still counts queued commands — so the
+    // extra frame pushes the next item out of the array. Pinned byte for byte.
+    test(`RESP${protocol}: EXEC embeds every confirmation of a queued multi-channel SUBSCRIBE`, async () => {
+      const conn = await connect()
+      const prefix = `raw-exec-subscribe:${randomKey()}`
+      const [first, second] = [`${prefix}:1`, `${prefix}:2`]
+      await hello(conn, protocol)
+
+      conn.write(
+        Buffer.concat([
+          commandFrame('MULTI'),
+          commandFrame('SUBSCRIBE', first, second),
+          commandFrame('PING', 'queued'),
+          commandFrame('EXEC'),
+          commandFrame('PING', 'after-exec'),
+        ]),
+      )
+
+      // +OK, +QUEUED, +QUEUED, EXEC's `*2` (which parses as the two
+      // confirmations), the queued PING, and the trailing PING.
+      const actual: string[] = []
+      for (let i = 0; i < 6; i++) {
+        actual.push((await conn.readRawFrame()).toString())
+      }
+      assert.strictEqual(
+        actual.join(''),
+        [
+          '+OK\r\n+QUEUED\r\n+QUEUED\r\n*2\r\n',
+          confirmationBytes(protocol, 'subscribe', first, 1),
+          confirmationBytes(protocol, 'subscribe', second, 2),
+          subscribedPingBytes(protocol, 'queued'),
+          subscribedPingBytes(protocol, 'after-exec'),
+        ].join(''),
+      )
+    })
+  }
+
   test('rejects Pub/Sub arity errors with Redis errors', async () => {
     const conn = await connect()
 
@@ -451,6 +538,35 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     )
   })
 })
+
+async function hello(conn: RawRedisConnection, protocol: 2 | 3) {
+  if (protocol === 3) {
+    conn.write(commandFrame('HELLO', '3'))
+    await conn.readFrame()
+  }
+}
+
+function bulkBytes(value: string): string {
+  return `$${Buffer.byteLength(value)}\r\n${value}\r\n`
+}
+
+/** A subscribe-family confirmation: an array on RESP2, a push on RESP3. */
+function confirmationBytes(
+  protocol: 2 | 3,
+  name: string,
+  target: string,
+  count: number,
+): string {
+  const header = protocol === 3 ? '>3\r\n' : '*3\r\n'
+  return `${header}${bulkBytes(name)}${bulkBytes(target)}:${count}\r\n`
+}
+
+/** `PING <message>` on a subscribed connection. */
+function subscribedPingBytes(protocol: 2 | 3, message: string): string {
+  return protocol === 3
+    ? bulkBytes(message)
+    : `*2\r\n${bulkBytes('pong')}${bulkBytes(message)}`
+}
 
 function normalizeFrame(value: RespWireValue): RespWireValue {
   if (Buffer.isBuffer(value)) {

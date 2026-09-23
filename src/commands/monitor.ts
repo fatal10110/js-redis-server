@@ -1,11 +1,10 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import type { RedisExecutionContext } from '../core/redis-context'
+import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import type { ResponseStream } from '../core/response-stream'
 import { formatMonitorTimestamp } from '../core/clock'
-import type { RedisMonitorCommandEvent, Unsubscribe } from '../state'
+import type { RedisMonitorCommandEvent } from '../state'
 import { commandDocs } from './introspection'
 
 export const monitorCommand = defineCommand({
@@ -31,84 +30,35 @@ export const monitorCommand = defineCommand({
     ),
   },
   keys: () => [],
-  execute: (_args, ctx) => createMonitorStream(ctx),
-})
-
-export const monitorCommands = [monitorCommand]
-
-function createMonitorStream(ctx: RedisExecutionContext): ResponseStream {
-  const frames: RedisResult[] = [RedisResult.ok()]
-  const waiters = new Set<() => void>()
-  let closed = false
-  let unsubscribe: Unsubscribe | undefined
-  let unregisterResponseStreamCleanup: Unsubscribe | undefined
-  let resolveClosed!: () => void
-  const closedPromise = new Promise<void>(resolve => {
-    resolveClosed = resolve
-  })
-
-  const wakeWaiters = () => {
-    for (const waiter of Array.from(waiters)) {
-      waiter()
-    }
-  }
-
-  const close = () => {
-    if (closed) {
-      return
+  execute: (_args, ctx) => {
+    // Redis runs EXEC as a DENY BLOCKING client, which MONITOR refuses.
+    if (ctx.transactionReplay) {
+      throw new RedisCommandError(
+        "MONITOR isn't allowed for DENY BLOCKING client",
+      )
     }
 
-    closed = true
-    unregisterResponseStreamCleanup?.()
-    unregisterResponseStreamCleanup = undefined
-    unsubscribe?.()
-    unsubscribe = undefined
-    wakeWaiters()
-    resolveClosed()
-  }
-
-  unsubscribe = ctx.server.monitorFeed.subscribe(event => {
-    if (event.clientId === ctx.session.id) {
-      return
+    // Redis ignores MONITOR on a connection that is already monitoring: no
+    // reply at all.
+    if (ctx.session.monitoring) {
+      return RedisResult.create(RedisValue.null(), { omitReply: true })
     }
 
-    frames.push(
+    // Feed lines are session pushes. Hold them until +OK is on the wire so a
+    // command another client runs meanwhile cannot overtake it.
+    const flushPushes = ctx.session.deferPushesUntilAfterReply()
+    ctx.session.startMonitor(event =>
       RedisResult.create(
         RedisValue.simpleString(formatMonitorCommandEvent(event)),
       ),
     )
-    wakeWaiters()
-  })
-  unregisterResponseStreamCleanup =
-    ctx.session.registerResponseStreamCleanup(close)
+    return RedisResult.create(RedisValue.simpleString('OK'), {
+      afterReply: flushPushes,
+    })
+  },
+})
 
-  return {
-    kind: 'response-stream',
-    closed: closedPromise,
-    frames: async function* (signal: AbortSignal) {
-      const onAbort = () => close()
-      signal.addEventListener('abort', onAbort, { once: true })
-      ctx.signal.addEventListener('abort', onAbort, { once: true })
-
-      try {
-        while (!closed && !signal.aborted && !ctx.signal.aborted) {
-          const frame = frames.shift()
-          if (frame) {
-            yield frame
-            continue
-          }
-
-          await waitForFrame(signal, ctx.signal, waiters)
-        }
-      } finally {
-        signal.removeEventListener('abort', onAbort)
-        ctx.signal.removeEventListener('abort', onAbort)
-        close()
-      }
-    },
-    close,
-  }
-}
+export const monitorCommands = [monitorCommand]
 
 function formatMonitorCommandEvent(event: RedisMonitorCommandEvent): string {
   const timestamp = formatMonitorTimestamp(event.timestampMicros)
@@ -163,32 +113,6 @@ function formatMonitorArgument(value: Buffer): string {
   }
 
   return `${result}"`
-}
-
-function waitForFrame(
-  signal: AbortSignal,
-  sessionSignal: AbortSignal,
-  waiters: Set<() => void>,
-): Promise<void> {
-  if (signal.aborted || sessionSignal.aborted) {
-    return Promise.resolve()
-  }
-
-  return new Promise(resolve => {
-    const cleanup = () => {
-      waiters.delete(waiter)
-      signal.removeEventListener('abort', waiter)
-      sessionSignal.removeEventListener('abort', waiter)
-    }
-    const waiter = () => {
-      cleanup()
-      resolve()
-    }
-
-    waiters.add(waiter)
-    signal.addEventListener('abort', waiter, { once: true })
-    sessionSignal.addEventListener('abort', waiter, { once: true })
-  })
 }
 
 const BACKSPACE = '\b'.charCodeAt(0)

@@ -25,7 +25,7 @@ import {
   simpleString,
   unknownSubcommandError,
 } from './helpers'
-import { commandSubcommandInfo } from './introspection'
+import { commandDocs, commandSubcommandInfo } from './introspection'
 
 const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
@@ -74,12 +74,8 @@ function setClientName(session: RedisClientSession, name: Buffer): void {
   clientNames.set(session, name)
 }
 
-function isClusterMode(ctx: RedisExecutionContext): boolean {
-  return ctx.server.clusterTopology.nodes.length > 0
-}
-
 function redisMode(ctx: RedisExecutionContext): string {
-  return isClusterMode(ctx) ? 'cluster' : 'standalone'
+  return ctx.server.clusterEnabled ? 'cluster' : 'standalone'
 }
 
 function value(value: string): RedisValue {
@@ -104,7 +100,7 @@ function buildInfo(
     sections.length === 0
       ? ['default']
       : sections.map(section => section.toLowerCase())
-  const clustered = isClusterMode(ctx)
+  const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
     'clients',
@@ -525,10 +521,36 @@ export const pingCommand = defineCommand({
   },
 })
 
+// Not flagged `subscribed`: RESP2 subscribed mode rejects ECHO in real Redis
+// (only RESP3 allows it there), and the subscribed-mode policy keys off that flag.
+export const echoCommand = defineCommand({
+  name: 'echo',
+  schema: t.object({
+    message: t.bulk(),
+  }),
+  flags: ['readonly', 'fast'],
+  introspection: {
+    arity: 2,
+    flags: ['loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+    keySpecs: [],
+    docs: commandDocs('Returns the given string.', 'connection', [
+      { name: 'message', type: 'string' },
+    ]),
+  },
+  keys: () => [],
+  execute: args => bulk(args.message),
+})
+
 export const quitCommand = defineCommand({
   name: 'quit',
   schema: t.object({}),
-  flags: ['readonly', 'fast', 'subscribed'],
+  // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
+  // entry at all, so its script sees an unknown command instead).
+  flags: ['readonly', 'fast', 'subscribed', 'noscript'],
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
@@ -575,7 +597,9 @@ export const clientCommand = defineCommand({
     subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
-  flags: ['readonly', 'admin'],
+  // noscript: real Redis refuses CLIENT from scripts on every version — every
+  // subcommand but HELP on 7.0+ (see lua-runtime's isRefusedFromScript).
+  flags: ['readonly', 'admin', 'noscript'],
   introspection: {
     arity: -2,
     flags: [],
@@ -848,14 +872,15 @@ export const resetCommand = defineCommand({
   // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
   // discardTransaction() instead of being queued until EXEC (matches real
   // Redis, which excludes RESET from queueMultiCommand).
-  flags: ['admin', 'subscribed', 'transaction'],
+  // noscript: real Redis refuses RESET from a script on every version.
+  flags: ['admin', 'subscribed', 'transaction', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
     noEvictClients.delete(ctx.session)
-    ctx.session.resetResponseStreams()
+    ctx.session.resetPushProducers()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
     ctx.session.unwatch()
@@ -1115,6 +1140,7 @@ function parseShutdownOptions(
 
 export const connectionCommands = [
   pingCommand,
+  echoCommand,
   quitCommand,
   selectCommand,
   infoCommand,

@@ -13,7 +13,9 @@ export type FeatureId =
   | 'command.getkeysandflags'
   | 'acl.dryrun'
   | 'config.set.failure-message'
+  | 'config.set.multi-pair'
   | 'config.memory-value.reject-overflow'
+  | 'protocol.multibulk-count-int-max'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'
@@ -29,6 +31,8 @@ export type FeatureId =
   | 'cluster.multi-db'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
+  | 'script.per-subcommand-noscript'
+  | 'command.quit-table-entry'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

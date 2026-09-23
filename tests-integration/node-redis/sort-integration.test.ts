@@ -1,6 +1,6 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
-import { RedisClientType, RedisClusterType } from 'redis'
+import { MultiErrorReply, RedisClientType, RedisClusterType } from 'redis'
 import { TestRunner } from '../test-config'
 import {
   connectToNodeRedisSlotOwner,
@@ -549,6 +549,261 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
           'ERR GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
         ),
       )
+    })
+  })
+
+  test('SORT finds STORE the way sortGetKeys() does', async () => {
+    await withOps(async (c, k) => {
+      // A STORE in value position is skipped along with GET's pattern...
+      assert.deepStrictEqual(
+        await c.commandGetKeys(['SORT', k('l'), 'GET', 'STORE']),
+        [k('l')],
+      )
+      // ...LIMIT's two arguments are skipped, and the last STORE wins.
+      assert.deepStrictEqual(
+        await c.commandGetKeys([
+          'SORT',
+          k('l'),
+          'LIMIT',
+          '0',
+          '1',
+          'STORE',
+          k('d'),
+        ]),
+        [k('l'), k('d')],
+      )
+      assert.deepStrictEqual(
+        await c.commandGetKeys([
+          'SORT',
+          k('l'),
+          'STORE',
+          k('a'),
+          'STORE',
+          k('b'),
+        ]),
+        [k('l'), k('b')],
+      )
+      // SORT_RO reports its source key only.
+      assert.deepStrictEqual(
+        await c.commandGetKeys(['SORT_RO', k('l'), 'STORE', k('d')]),
+        [k('l')],
+      )
+    })
+  })
+
+  // A glob with a '*' before any hash tag can match keys in every slot, so it
+  // is refused whatever slot the sort key lives in (#417).
+  const BY_DENIED =
+    'ERR BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+  const GET_DENIED =
+    'ERR GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+
+  test('SORT reports the first denied BY/GET option in argument order', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['3', '1', '2'])
+      // node-redis always emits BY before GET, so the GET-first order needs a
+      // raw command.
+      await assert.rejects(
+        () => c.sendCommand(['SORT', k('l'), 'GET', 'n_*', 'BY', 'w_*']),
+        errorWithMessage(GET_DENIED),
+      )
+      await assert.rejects(
+        () => c.sort(k('l'), { BY: 'w_*', GET: 'n_*' }),
+        errorWithMessage(BY_DENIED),
+      )
+      await assert.rejects(
+        () => c.sendCommand(['SORT', k('l'), 'BY', 'nosort', 'BY', 'w_*']),
+        errorWithMessage(BY_DENIED),
+      )
+    })
+  })
+
+  test('SORT reaches a denied pattern before a later option fails to parse', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['3', '1', '2'])
+      await assert.rejects(
+        () => c.sendCommand(['SORT', k('l'), 'BY', 'w_*', 'BADARG']),
+        errorWithMessage(BY_DENIED),
+      )
+      await assert.rejects(
+        () => c.sendCommand(['SORT', k('l'), 'BY', 'w_*', 'LIMIT', 'x', '1']),
+        errorWithMessage(BY_DENIED),
+      )
+      // ...but an error that precedes the pattern still wins.
+      await assert.rejects(
+        () => c.sendCommand(['SORT', k('l'), 'BADARG', 'BY', 'w_*']),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => c.sendCommand(['SORT', k('l'), 'LIMIT', 'x', '1', 'BY', 'w_*']),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+    })
+  })
+
+  test('SORT errors inside MULTI are queued and surface in EXEC', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['3', '1', '2'])
+      let error: MultiErrorReply | undefined
+      try {
+        await c
+          .multi()
+          .sort(k('l'), { BY: 'w_*' })
+          .sort(k('l'), { GET: 'n_*' })
+          .addCommand(['SORT', k('l'), 'BADARG'])
+          .addCommand(['SORT', k('l'), 'LIMIT', '0'])
+          .sort(k('l'))
+          .exec()
+      } catch (err) {
+        assert.ok(err instanceof MultiErrorReply)
+        error = err
+      }
+
+      assert.ok(error)
+      assert.deepStrictEqual(error.errorIndexes, [0, 1, 2, 3])
+      assert.deepStrictEqual(
+        error.replies
+          .slice(0, 4)
+          .map(reply => (reply instanceof Error ? reply.message : reply)),
+        [BY_DENIED, GET_DENIED, 'ERR syntax error', 'ERR syntax error'],
+      )
+      assert.deepStrictEqual(error.replies[4], ['1', '2', '3'])
+    })
+  })
+
+  test('SORT treats option names in value position as values', async () => {
+    // GET's pattern is the literal `BY` and BY's pattern the literal `GET`:
+    // both are constant, so every element projects to nil. Tagging the key
+    // `{BY}` puts it in the slot of the `BY` pattern, which is what lets the
+    // constant GET pass the cluster slot comparison.
+    const key = `{BY}:sort:${randomKey()}`
+    const directClient = await connectToNodeRedisSlotOwner(redisClient, key)
+    try {
+      await directClient.rPush(key, ['3', '1', '2'])
+      assert.deepStrictEqual(
+        await directClient.sort(key, { BY: 'GET', GET: 'BY' }),
+        [null, null, null],
+      )
+    } finally {
+      await directClient.del(key)
+      directClient.destroy()
+    }
+  })
+
+  // ------------------------------------------------------ tie order (#443)
+
+  test('SORT ALPHA DESC keeps tied elements in load order', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['c', 'a', 'b', 'e', 'd'])
+      // Every weight is missing, so every element ties: sortCompare() negates
+      // the comparison for DESC, and a tie negated is still a tie.
+      assert.deepStrictEqual(
+        await c.sort(k('l'), {
+          BY: k('missing_*'),
+          ALPHA: true,
+          DIRECTION: 'DESC',
+        }),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+
+      await c.mSet([k('w_a'), '1', k('w_b'), '1', k('w_c'), '2'])
+      assert.deepStrictEqual(
+        await c.sort(k('l'), { BY: k('w_*'), ALPHA: true, DIRECTION: 'DESC' }),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+    })
+  })
+
+  test('SORT ALPHA BY orders a missing weight before an empty one', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['c', 'a', 'b', 'e', 'd'])
+      await c.mSet([k('w_a'), '1', k('w_b'), '1', k('w_c'), '2', k('w_e'), ''])
+      assert.deepStrictEqual(
+        await c.sort(k('l'), { BY: k('w_*'), ALPHA: true }),
+        ['d', 'e', 'a', 'b', 'c'],
+      )
+    })
+  })
+
+  test('SORT with several BY options: a constant one disables sorting, the last glob weighs', async () => {
+    await withOps(async (c, k) => {
+      await c.rPush(k('l'), ['c', 'a', 'b', 'e', 'd'])
+      await c.mSet([k('w_a'), '1', k('w_b'), '1', k('w_c'), '2'])
+
+      // The typed options take a single BY, so repeated ones go raw.
+      assert.deepStrictEqual(
+        await c.sendCommand(['SORT', k('l'), 'BY', 'nosort', 'BY', k('w_*')]),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+      assert.deepStrictEqual(
+        await c.sendCommand(['SORT', k('l'), 'BY', k('w_*'), 'BY', 'nosort']),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+      assert.deepStrictEqual(
+        await c.sendCommand([
+          'SORT',
+          k('l'),
+          'BY',
+          'nosort',
+          'BY',
+          k('w_*'),
+          'DESC',
+        ]),
+        ['d', 'e', 'b', 'a', 'c'],
+      )
+      // Only the last glob is looked up: every `missing_*` weight is absent.
+      assert.deepStrictEqual(
+        await c.sendCommand([
+          'SORT',
+          k('l'),
+          'BY',
+          k('w_*'),
+          'BY',
+          k('missing_*'),
+          'ALPHA',
+        ]),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+    })
+  })
+
+  test('SORT reads an integer-only set in ascending numeric order', async () => {
+    await withOps(async (c, k) => {
+      // An intset is stored sorted, so that is the order SORT loads it in.
+      await c.sAdd(k('si'), ['10', '-5', '2', '7'])
+      const ascending = ['-5', '2', '7', '10']
+      assert.deepStrictEqual(await c.sort(k('si'), { BY: 'nosort' }), ascending)
+      assert.deepStrictEqual(
+        await c.sort(k('si'), { BY: 'nosort', DIRECTION: 'DESC' }),
+        ascending,
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('si'), {
+          BY: k('missing_*'),
+          ALPHA: true,
+          DIRECTION: 'DESC',
+        }),
+        ascending,
+      )
+
+      // A member that is not a canonical 64-bit integer keeps the set out of
+      // the intset encoding, and a small listpack set keeps insertion order.
+      await c.sAdd(k('sm'), ['10', 'x', '2'])
+      assert.deepStrictEqual(await c.sort(k('sm'), { BY: 'nosort' }), [
+        '10',
+        'x',
+        '2',
+      ])
+      await c.sAdd(k('s0'), ['010', '2'])
+      assert.deepStrictEqual(await c.sort(k('s0'), { BY: 'nosort' }), [
+        '010',
+        '2',
+      ])
+      await c.sAdd(k('s1'), ['9223372036854775808', '2'])
+      assert.deepStrictEqual(await c.sort(k('s1'), { BY: 'nosort' }), [
+        '9223372036854775808',
+        '2',
+      ])
     })
   })
 
