@@ -415,12 +415,18 @@ facade deliberately does not reproduce that, and tears everything down.
 
 That `instanceof` works because the facade throws the `redis` package's *own*
 error classes (the same mechanism behind `WatchError` / `ErrorReply` /
-`MultiErrorReply`). They are resolved lazily, the first time a facade client is
-constructed — importing `js-redis-server` never loads `redis`, so ioredis-only
-users don't pay for it. Only if `redis` genuinely cannot be required (or predates
-one of these classes, as v4 predates `MultiErrorReply`) does the facade fall back
-to local classes that match in message and shape but are not `instanceof` the
-real ones; match on `err.message` if you need to support that.
+`SimpleError` / `MultiErrorReply`). Server errors are `SimpleError` — a subclass
+of `ErrorReply` — exactly as real node-redis v5+ decodes them, so both
+`instanceof ErrorReply` and `instanceof SimpleError` hold; on a `redis` without
+`SimpleError` (v4) they are plain `ErrorReply`, again as that version throws.
+The classes are resolved lazily, the first time a facade client is constructed —
+importing `js-redis-server` never loads `redis`, so ioredis-only users don't pay
+for it. They are resolved one at a time: a class the installed `redis` does not
+export (`MultiErrorReply` before redis 4.6.12) falls back to a local stand-in on
+its own, without affecting the classes that do exist. A stand-in matches the real
+class in message and shape but is not `instanceof` it (the `MultiErrorReply`
+stand-in still extends the installed `ErrorReply`); match on `err.message` if you
+need to support that, or if `redis` cannot be required at all.
 
 **Known gap ([#440](https://github.com/fatal10110/js-redis-server/issues/440)):**
 real node-redis re-opens a closed client (`connect()` reconnects,

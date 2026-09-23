@@ -5,6 +5,7 @@ import {
   DisconnectsClientError,
   ErrorReply,
   MultiErrorReply,
+  SimpleError,
   WatchError,
 } from 'redis'
 import {
@@ -206,9 +207,30 @@ describe('createNodeRedisMock (standalone)', () => {
         assert.deepStrictEqual(err.errorIndexes, [1])
         assert.strictEqual(err.replies[0], 'OK')
         assert.ok(err.replies[1] instanceof ErrorReply)
+        // Real node-redis v6 decodes each queued `-ERR` as a SimpleError.
+        assert.ok(err.replies[1] instanceof SimpleError)
         return true
       },
     )
+  })
+
+  test('server errors are SimpleError, as real node-redis v6 throws', async () => {
+    const client = await makeClient()
+    await client.set('s', 'notAnInteger')
+    // Real node-redis v6 decodes every `-ERR` reply into a SimpleError (a
+    // subclass of ErrorReply), at RESP2 and RESP3 alike — so both the
+    // documented `instanceof ErrorReply` idiom and the concrete class hold.
+    for (const invoke of [
+      () => client.incr('s'),
+      () => client.sendCommand(['NOSUCHCOMMAND']),
+    ]) {
+      await assert.rejects(invoke, (err: unknown) => {
+        assert.ok(err instanceof ErrorReply)
+        assert.ok(err instanceof SimpleError)
+        assert.strictEqual(err.constructor, SimpleError)
+        return true
+      })
+    }
   })
 
   test('pub/sub delivers messages to the subscribe callback', async () => {

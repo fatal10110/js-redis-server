@@ -1,6 +1,6 @@
 import { test, describe, before } from 'node:test'
 import assert from 'node:assert'
-import { ErrorReply } from 'redis'
+import { ErrorReply, SimpleError } from 'redis'
 import {
   createNodeRedisMock,
   NODE_REDIS_DECODE_OPTIONS,
@@ -112,6 +112,8 @@ describe('decode option divergences between the two clients', () => {
       (err: unknown) => {
         // `instanceof ErrorReply` is node-redis' documented idiom.
         assert.ok(err instanceof ErrorReply)
+        // ...and, as in real node-redis v6, concretely a SimpleError.
+        assert.ok(err instanceof SimpleError)
         assert.ok(!(err instanceof RedisCommandError))
         assert.strictEqual(err.message, text)
         return true
