@@ -257,7 +257,11 @@ While a session is in `'transaction'` mode,
 intercepts every non-control command in `beforeExecute`, queues its
 already-parsed `CommandPlan` on the session, and replies `+QUEUED` — so parsing
 and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at
-queue time, not at `EXEC` time. `EXEC` drains the queue and replays each plan
+queue time, not at `EXEC` time. Only what Redis refuses at queue time dirties
+the transaction there (an unknown command or subcommand, or a count the command
+table's arity rejects); a command whose own argument check fails is queued as
+a plan that raises that error when `EXEC` runs it
+(`CommandExecutor.executeRaw`). `EXEC` drains the queue and replays each plan
 through [`ClientSession.executeTransaction`](../src/core/client-session.ts#L156),
 which reuses the normal `executePlan` path per command. When a queued `HELLO`
 changes the session RESP version, `executeTransaction` captures each element's

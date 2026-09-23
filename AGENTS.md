@@ -113,7 +113,7 @@ Commands are pure `(args, ctx) → RedisResult` — they never touch the transpo
 - `TransactionPolicy` intercepts queued commands in `beforeExecute` and replies `+QUEUED` — parsing and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at **queue time**, not at `EXEC` time
 - `WATCH` subscribes to per-key mutation events on the database; any write/delete/evict on a watched key marks the session dirty, checked via `isWatchDirty()` before `EXEC` runs the queue
 - In cluster mode, the slot of the _first_ keyed command queued is pinned per-session so every subsequent queued command must hash to the same slot
-- `DISCARD` cancels a transaction; `EXECABORT` is returned if the queue itself is dirty (e.g. an unknown command was queued)
+- `DISCARD` cancels a transaction; `EXECABORT` is returned if the queue itself is dirty. Only what Redis's `processCommand` refuses dirties it: an unknown command or subcommand, or an argument count the command table rejects (`CommandExecutor.executeRaw`). Any other error the parser raises is the command's own argument check, so the command is queued and the error fills its slot in EXEC's reply
 
 #### 6. Integration Test Backends
 
@@ -154,7 +154,7 @@ Custom errors in [src/core/redis-error.ts](src/core/redis-error.ts), all extendi
 - `RedisCrossSlotError` - cross-slot operation in cluster mode (`-CROSSSLOT`)
 - `RedisClusterDownError` - slot unassigned (`-CLUSTERDOWN`)
 - `WrongNumberOfArgumentsError` - arity error, `WrongTypeRedisError` - `-WRONGTYPE` from the state layer, `NoAuthError` - `-NOAUTH` from `AuthPolicy`, `ExecCommandAbortError` - `-EXECABORT` for a malformed `EXEC`
-- The rule for keeping a subclass: code tells it apart with `instanceof` (`WrongNumberOfArgumentsError`, `UnknownRedisCommandError`, `UnknownSubcommandError`), or it is one of the errors the pipeline raises outside any single command (cluster routing, the malformed-`EXEC` abort, `AuthPolicy`'s `NOAUTH`, the state layer's `WRONGTYPE`). A command may reuse `NoAuthError` / `WrongTypeRedisError` for the same condition (HELLO before auth, its own type check); every other error a command raises, whatever its code prefix (`WRONGPASS`, `NOSCRIPT`, `BUSYGROUP`, ...), is a plain `RedisCommandError` from a factory on the `errors` object (`throw errors.syntax()`, `throw errors.noScript()`). Add a new message there rather than a new subclass
+- The rule for keeping a subclass: code tells it apart with `instanceof` (`WrongNumberOfArgumentsError`, `UnknownRedisCommandError`, `UnknownSubcommandError`), or it is one of the errors the pipeline raises outside any single command (cluster routing, the malformed-`EXEC` abort, `AuthPolicy`'s `NOAUTH`, the state layer's `WRONGTYPE`). A command may reuse `NoAuthError` / `WrongTypeRedisError` for the same condition (HELLO before auth, its own type check); every other error a command raises, whatever its code prefix (`WRONGPASS`, `NOSCRIPT`, `BUSYGROUP`, ...), is a plain `RedisCommandError`. A fixed message raised from more than one place, or one whose wording depends on the compatibility profile, is a factory on the `errors` object (`throw errors.syntax()`, `throw errors.noScript()`); a message raised from exactly one place may stay inline. Add a new message there rather than a new subclass
 - Error responses follow RESP protocol format
 
 ## Code Style & Conventions

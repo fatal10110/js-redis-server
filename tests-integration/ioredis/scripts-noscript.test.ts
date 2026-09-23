@@ -16,12 +16,18 @@ import {
 const testRunner = new TestRunner()
 const legacy = activeProfile === 'redis-6.2'
 // Redis 6.2 words script-level rejections its own way, with no error code.
+// Valkey 8.0 drops the product name from the lookup failure and Valkey 9.0
+// names itself in the refusal.
 const NOT_ALLOWED = legacy
   ? 'This Redis command is not allowed from scripts'
-  : 'ERR This Redis command is not allowed from script'
+  : activeProfile === 'valkey-9.0'
+    ? 'ERR This Valkey command is not allowed from script'
+    : 'ERR This Redis command is not allowed from script'
 const UNKNOWN_COMMAND = legacy
   ? 'Unknown Redis command called from Lua script'
-  : 'ERR Unknown Redis command called from script'
+  : activeProfile.startsWith('valkey-')
+    ? 'ERR Unknown command called from script'
+    : 'ERR Unknown Redis command called from script'
 // From Redis 7.0 `noscript` is a per-subcommand flag and no container's HELP
 // carries it; 6.2 refuses the whole container.
 const helpAllowedFromScripts = !legacy
@@ -97,9 +103,7 @@ describe(`noscript commands from Lua (ioredis, ${testRunner.getBackendName()})`,
   test(
     'an unknown noscript-container subcommand fails command lookup on 7.0+',
     {
-      skip:
-        (!helpAllowedFromScripts || activeProfile.startsWith('valkey')) &&
-        'redis-6.2 refuses the container; Valkey wording is not modelled',
+      skip: !helpAllowedFromScripts && 'redis-6.2 refuses the container',
     },
     async () => {
       for (const container of [

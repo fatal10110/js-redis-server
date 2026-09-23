@@ -920,6 +920,12 @@ describe(
             ? 'ERR wrong number of arguments for MSET'
             : "ERR wrong number of arguments for 'mset' command",
         ],
+        [
+          "redis.call('xadd', 'x', '*', 'f', 'v', 'x')",
+          legacy
+            ? 'ERR wrong number of arguments for XADD'
+            : "ERR wrong number of arguments for 'xadd' command",
+        ],
       ]
       for (const [call, error] of cases) {
         const pcall = `return ${call.replace('redis.call', 'redis.pcall')}`
@@ -941,7 +947,77 @@ describe(
           ? '-ERR wrong number of arguments for MSET\r\n'
           : "-ERR wrong number of arguments for 'msetnx' command\r\n",
       )
+      assert.strictEqual(
+        await send('XADD', 'x', 'MAXLEN', '5', '*', 'f', 'v', 'x'),
+        legacy
+          ? '-ERR wrong number of arguments for XADD\r\n'
+          : "-ERR wrong number of arguments for 'xadd' command\r\n",
+      )
     })
+
+    // From 7.0 the scripting layer's own errors carry no position and keep
+    // `ERR`; Valkey 8.0 drops the product name from them, and Valkey 9.0
+    // names itself in the noscript refusal. A count the command table rejects
+    // (GET with no key, `config|get` with no pattern on 7.0+, where lookup
+    // resolves the subcommand) is the scripting layer's arity error. Byte for
+    // byte against real redis-server 7.0.15 / 8.0.6 and Valkey 8.0.11 / 9.0.6
+    // (#492). 6.2's forms are pinned above.
+    test(
+      'script-level rejections use the profile wording from 7.0',
+      {
+        skip:
+          !supportsSuffixScriptErrorDecoration() && '7.0+ only, 6.2 is above',
+      },
+      async () => {
+        const valkey = profile.startsWith('valkey-')
+        const WRONG_ARITY = valkey
+          ? 'ERR Wrong number of args calling command from script'
+          : 'ERR Wrong number of args calling Redis command from script'
+        const NO_COMMAND = valkey
+          ? 'ERR Please specify at least one argument for this call'
+          : 'ERR Please specify at least one argument for this redis lib call'
+        const ARGUMENT_TYPE = valkey
+          ? 'ERR Command arguments must be strings or integers'
+          : 'ERR Lua redis lib command arguments must be strings or integers'
+        const NOT_ALLOWED =
+          profile === 'valkey-9.0'
+            ? 'ERR This Valkey command is not allowed from script'
+            : 'ERR This Redis command is not allowed from script'
+
+        const cases: Array<[string, string]> = [
+          ["redis.pcall('get')", WRONG_ARITY],
+          ["redis.pcall('get', 'k', 'x')", WRONG_ARITY],
+          ["redis.pcall('config', 'get')", WRONG_ARITY],
+          ["redis.pcall('client', 'setname')", WRONG_ARITY],
+          ["redis.pcall('xadd', 'x', '*', 'f')", WRONG_ARITY],
+          ['redis.pcall()', NO_COMMAND],
+          ["redis.pcall('subscribe', 'c')", NOT_ALLOWED],
+        ]
+        for (const [call, error] of cases) {
+          assert.strictEqual(
+            await send('EVAL', `return ${call}`, '0'),
+            `-${error}\r\n`,
+            call,
+          )
+
+          const script = `return ${call.replace('redis.pcall', 'redis.call')}`
+          assert.strictEqual(
+            await send('EVAL', script, '0'),
+            `-${error} script: ${sha1(script)}, on @user_script:1.\r\n`,
+            script,
+          )
+        }
+
+        // The argument-type check is the engine's own, and it raises even under
+        // redis.pcall (fatal10110/lua-redis-wasm#28, #503), so only the aborting
+        // redis.call form is pinned.
+        const script = "return redis.call('set', 'k', {})"
+        assert.strictEqual(
+          await send('EVAL', script, '0'),
+          `-${ARGUMENT_TYPE} script: ${sha1(script)}, on @user_script:1.\r\n`,
+        )
+      },
+    )
 
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so

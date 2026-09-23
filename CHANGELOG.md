@@ -561,8 +561,27 @@ so the PR body is not a durable home for a breaking-change note.
   before the noscript / read-only checks, as in Redis. A count the table
   accepts but the command refuses (`HSET h f v x`, an odd `MSET`) returns the
   command's own error, `ERR` code included, on every profile ([#492]). On
-  `redis-6.2` that error for `MSET` / `MSETNX` reads `wrong number of
-  arguments for MSET` (new gate `error.mset-odd-pairs-wording`).
+  `redis-6.2` that error reads `wrong number of arguments for MSET` for
+  `MSET` / `MSETNX` and `wrong number of arguments for XADD` for `XADD` (new
+  gate `error.odd-pairs-arity-wording`).
+
+- A script call whose argument count the command table rejects answers the
+  scripting layer's arity error on Redis 7.0+ and Valkey too: `Wrong number of
+  args calling Redis command from script`, without `Redis` on Valkey 8.0+
+  ([#492]). It used to pass the command's own `wrong number of arguments for
+  '<cmd>' command` through. Valkey 8.0+ also words the other script-level
+  errors its own way (`Please specify at least one argument for this call`,
+  `Command arguments must be strings or integers`), and Valkey 9.0 refuses a
+  `noscript` command with `This Valkey command is not allowed from script`
+  (new gate `script.not-allowed-valkey-wording`).
+
+- MULTI queues a command whose own argument checks fail (`MSET a b c`,
+  `HSET h f v x`, `SET k v BOGUS`, `INCRBY k x`, ...) and reports the error in
+  that command's slot of EXEC's reply, as Redis does; the rest of the
+  transaction runs. Only an unknown command or subcommand, or an argument
+  count the command table rejects (from 7.0, a subcommand's own entry such as
+  `config|get`), is still refused at queue time and aborts EXEC with
+  `-EXECABORT`. Previously every parse error aborted the transaction.
 
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print

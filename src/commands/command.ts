@@ -304,13 +304,13 @@ function planCommandKeys(
   const targetName = asciiLowerCase(args.args[0].toString())
   const definition = ctx.executor.getCommandDefinition(targetName)
   if (!definition) {
-    throw new RedisCommandError('Invalid command specified')
+    throw errors.invalidCommandSpecified()
   }
 
   // Real Redis checks that the command has keys before it checks arity. For
   // a 7.0+ container that is per subcommand, and no container's HELP has any.
   if (isContainerHelp(targetName, args.args[1], ctx.server.profile)) {
-    throw new RedisCommandError('The command has no key arguments')
+    throw errors.commandHasNoKeyArguments()
   }
 
   let keys: readonly Buffer[]
@@ -320,7 +320,7 @@ function planCommandKeys(
     // From 7.0 the subcommand is part of command lookup, so an unknown one is
     // an unknown command here too (6.2 never throws this at plan time).
     if (err instanceof UnknownSubcommandError) {
-      throw new RedisCommandError('Invalid command specified')
+      throw errors.invalidCommandSpecified()
     }
 
     if (err instanceof WrongNumberOfArgumentsError) {
@@ -337,7 +337,7 @@ function planCommandKeys(
   }
 
   if (keys.length === 0) {
-    throw new RedisCommandError('The command has no key arguments')
+    throw errors.commandHasNoKeyArguments()
   }
 
   return { definition, keys }

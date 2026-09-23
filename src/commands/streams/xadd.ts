@@ -71,6 +71,14 @@ function createStreamFieldsSchema() {
         const field = input[cursor]
         const value = input[cursor + 1]
         if (value === undefined) {
+          // Past XADD's table arity (-5), the odd tail is XADD's own check,
+          // which 6.2 words `wrong number of arguments for XADD`.
+          if (
+            input.length + 1 >= 5 &&
+            !ctx.profile.has('error.odd-pairs-arity-wording')
+          ) {
+            throw errors.legacyOddPairs('XADD')
+          }
           throw new WrongNumberOfArgumentsError(ctx.commandName)
         }
         fields.push(field, value)

@@ -17,7 +17,6 @@ import {
   RedisCommandError,
   UnknownRedisCommandError,
   UnknownSubcommandError,
-  WrongNumberOfArgumentsError,
   errors,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
@@ -173,7 +172,7 @@ export class RedisLuaRuntime {
     if (args.length === 0) {
       return scriptRejection(
         'no-command',
-        errors.scriptCallNoCommand(),
+        errors.scriptCallNoCommand(profile),
         profile,
       )
     }
@@ -225,9 +224,7 @@ export class RedisLuaRuntime {
     if (failsTableArity(lookup.arity, args.length)) {
       return scriptRejection(
         'wrong-arity',
-        commandError instanceof WrongNumberOfArgumentsError
-          ? commandError
-          : new WrongNumberOfArgumentsError(lookup.name),
+        errors.scriptWrongArity(profile),
         profile,
       )
     }
@@ -238,7 +235,7 @@ export class RedisLuaRuntime {
         refusal,
         refusal === 'unknown-command'
           ? errors.scriptUnknownCommand(profile)
-          : errors.scriptNotAllowedCommand(),
+          : errors.scriptNotAllowedCommand(profile),
         profile,
       )
     }
@@ -505,9 +502,7 @@ export function renderScriptError(
       break
     case 'command-arg-type':
       // Raised by redis.call/pcall without a script-position prefix.
-      body = Buffer.from(
-        'Lua redis lib command arguments must be strings or integers',
-      )
+      body = Buffer.from(errors.scriptArgumentType(options.profile).message)
       break
     default:
       // Kept as bytes: a propagated command error or a Lua runtime error can

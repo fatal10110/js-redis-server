@@ -490,7 +490,10 @@ reject it.
 
 Parsing and key extraction (and therefore early `CROSSSLOT`/`MOVED` errors in
 cluster mode) happen at queue time, not at `EXEC` time. `EXECABORT` is
-returned if the queue is dirty (e.g. an unknown command was queued).
+returned if the queue is dirty: an unknown command or subcommand, or an
+argument count the command table rejects, was sent. Any other argument error
+(`MSET a b c`, `SET k v BOGUS`) is the command's own check, so the command is
+queued and its error fills its slot in `EXEC`'s reply, as in Redis.
 
 All five transaction-control commands are flagged `noscript` (rejected from
 Lua with the standard script error), matching real Redis — a script cannot

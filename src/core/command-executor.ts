@@ -1,12 +1,14 @@
 import { asciiLowerCase, asciiUpperCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
-import { parseCommandArgs } from './command-schema'
+import { failsTableArity, lookupTableArity } from './command-arity'
+import { parseCommandArgs, schemaKeyRange } from './command-schema'
 import type { ExecutionPolicy } from './execution-policies'
 import {
   ExecCommandAbortError,
   RedisCommandError,
   UnknownRedisCommandError,
+  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
@@ -133,9 +135,13 @@ export class CommandExecutor {
    * network client.
    *
    * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Such a failure also marks
-   * any open MULTI transaction dirty so a later EXEC is aborted, matching Redis:
-   * a command that cannot even be parsed must not silently vanish from the queue.
+   * caught here and converted into a RESP error reply. Inside MULTI, real Redis
+   * refuses a command at queue time only when `processCommand` does: an
+   * unknown command or subcommand, or a count the command table's arity
+   * rejects. Those mark the transaction dirty, so a later EXEC aborts. Any
+   * other planning error comes from the command's own argument checks, which
+   * Redis runs at EXEC time, so the command is queued and its error fills its
+   * slot in EXEC's reply (see {@link deferredErrorPlan}).
    * Execution-time errors are handled inside {@link executePlan}.
    */
   async executeRaw(
@@ -144,13 +150,100 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
-      return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
+      let plan: CommandPlan
+      try {
+        plan = this.plan(rawCommand, rawArgs)
+      } catch (err) {
+        const deferred =
+          err instanceof RedisCommandError
+            ? this.deferredErrorPlan(err, rawCommand, rawArgs, ctx)
+            : null
+        if (!deferred) {
+          throw err
+        }
+        plan = deferred
+      }
+
+      const arityError = this.queueTimeArityError(plan, rawArgs, ctx)
+      if (arityError) {
+        return this.rawCommandErrorResult(arityError, rawCommand, ctx)
+      }
+
+      return await this.executePlan(plan, ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
         return this.rawCommandErrorResult(err, rawCommand, ctx)
       }
 
       throw err
+    }
+  }
+
+  /**
+   * Inside MULTI, the command-table arity check a parsed command must still
+   * pass before it is queued: a lenient schema (a container that checks its
+   * subcommand's arguments when it runs) parses a count that lookup rejects.
+   * From 7.0 that is the `container|subcommand` entry's arity.
+   */
+  private queueTimeArityError(
+    plan: CommandPlan,
+    rawArgs: readonly Buffer[],
+    ctx: RedisExecutionContext,
+  ): WrongNumberOfArgumentsError | null {
+    if (ctx.session.mode !== 'transaction') {
+      return null
+    }
+
+    const lookup = lookupTableArity(plan.definition, rawArgs, this.profile)
+    return failsTableArity(lookup.arity, rawArgs.length + 1)
+      ? new WrongNumberOfArgumentsError(lookup.name)
+      : null
+  }
+
+  /**
+   * A plan that queues a command whose own argument checks failed, and raises
+   * that error when EXEC runs it — or `null` when the error must be answered
+   * now: outside MULTI, for a lookup failure, for a count the command table
+   * rejects, and for the commands MULTI runs immediately (EXEC, DISCARD, ...).
+   * Its routing keys come from the command's legacy key range over the raw
+   * arguments, the way Redis finds a queued command's keys without running its
+   * parser, so cluster routing still sees them at queue time.
+   */
+  private deferredErrorPlan(
+    err: RedisCommandError,
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+    ctx: RedisExecutionContext,
+  ): CommandPlan | null {
+    if (
+      ctx.session.mode !== 'transaction' ||
+      err instanceof UnknownRedisCommandError ||
+      err instanceof UnknownSubcommandError
+    ) {
+      return null
+    }
+
+    const definition = this.registry.get(rawCommand.toString())
+    if (!definition || definition.flags.includes('transaction')) {
+      return null
+    }
+
+    const lookup = lookupTableArity(definition, rawArgs, this.profile)
+    if (failsTableArity(lookup.arity, rawArgs.length + 1)) {
+      return null
+    }
+
+    return {
+      definition: {
+        ...definition,
+        execute: () => {
+          throw err
+        },
+      },
+      args: undefined,
+      keys: legacyRangeKeys(definition, rawArgs),
+      rawCommand: Buffer.from(rawCommand),
+      rawArgs: rawArgs.map(arg => Buffer.from(arg)),
     }
   }
 
@@ -298,6 +391,29 @@ export class CommandExecutor {
       rawArgs: rawArgs.map(arg => Buffer.from(arg)),
     }
   }
+}
+
+/**
+ * The keys a command's legacy first/last/step range picks out of `rawArgs`,
+ * counted from the command name at index 0 (so `MSET a b c` gives `a`, `c`).
+ * Used only for a command whose parser failed, which has no parsed keys.
+ */
+function legacyRangeKeys(
+  definition: CommandDefinition<unknown>,
+  rawArgs: readonly Buffer[],
+): Buffer[] {
+  const { firstKey, lastKey, keyStep } = schemaKeyRange(definition.schema)
+  if (firstKey <= 0 || keyStep <= 0) {
+    return []
+  }
+
+  const argc = rawArgs.length + 1
+  const last = lastKey < 0 ? argc + lastKey : lastKey
+  const keys: Buffer[] = []
+  for (let i = firstKey; i <= last && i < argc; i += keyStep) {
+    keys.push(Buffer.from(rawArgs[i - 1]))
+  }
+  return keys
 }
 
 function publishMonitorEvent(

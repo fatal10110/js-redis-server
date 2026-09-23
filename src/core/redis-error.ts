@@ -45,8 +45,10 @@ export function errorReplyBytes(error: RedisCommandError): Buffer {
 // EXEC, AuthPolicy's NOAUTH, and the state layer's WRONGTYPE. Commands reuse
 // the last two for the same condition (HELLO's NOAUTH, a command's own type
 // check), and that is the only way a command throws a subclass: every other
-// error a command raises is a plain RedisCommandError from `errors` below,
-// whatever its code prefix.
+// error a command raises is a plain RedisCommandError, whatever its code
+// prefix. A fixed message raised from more than one place, or one whose
+// wording depends on the profile, is a factory on `errors` below; a message
+// raised from exactly one place may stay inline there.
 
 export class WrongNumberOfArgumentsError extends RedisCommandError {
   constructor(commandName: string) {
@@ -187,9 +189,12 @@ function cString(value: Buffer, precision: number): Buffer {
  */
 export const errors = Object.freeze({
   syntax: () => new RedisCommandError('syntax error'),
-  /** Redis 6.2's MSET / MSETNX odd-count error (`error.mset-odd-pairs-wording`). */
-  legacyMsetOddPairs: () =>
-    new RedisCommandError('wrong number of arguments for MSET'),
+  /**
+   * Redis 6.2's own odd-count error for a command whose tail is pairs (MSET /
+   * MSETNX say `MSET`, XADD says `XADD`); see `error.odd-pairs-arity-wording`.
+   */
+  legacyOddPairs: (command: 'MSET' | 'XADD') =>
+    new RedisCommandError(`wrong number of arguments for ${command}`),
 
   // Auth / handshake
   /** `AUTH <password>` (single-arg) when the server has no `requirepass` set. */
@@ -355,11 +360,37 @@ export const errors = Object.freeze({
         ? 'Unknown command called from script'
         : 'Unknown Redis command called from script',
     ),
-  scriptNotAllowedCommand: () =>
-    new RedisCommandError('This Redis command is not allowed from script'),
-  scriptCallNoCommand: () =>
+  /** A `noscript` command from a script. Valkey 9.0+ names itself. */
+  scriptNotAllowedCommand: (profile?: CompatibilityProfile) =>
     new RedisCommandError(
-      'Please specify at least one argument for this redis lib call',
+      profile?.has('script.not-allowed-valkey-wording')
+        ? 'This Valkey command is not allowed from script'
+        : 'This Redis command is not allowed from script',
+    ),
+  /** `redis.call()` with no command. Valkey 8.0+ says `this call`. */
+  scriptCallNoCommand: (profile?: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile?.has('script.unknown-command-valkey-wording')
+        ? 'Please specify at least one argument for this call'
+        : 'Please specify at least one argument for this redis lib call',
+    ),
+  /**
+   * A script's call that fails the command-table arity check (7.0+; 6.2 has
+   * its own wording, see `scriptRejection` in lua-runtime.ts). Valkey 8.0+
+   * drops the product name.
+   */
+  scriptWrongArity: (profile?: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile?.has('script.unknown-command-valkey-wording')
+        ? 'Wrong number of args calling command from script'
+        : 'Wrong number of args calling Redis command from script',
+    ),
+  /** A redis.call argument that is not a string or number. Valkey 8.0+ wording. */
+  scriptArgumentType: (profile?: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile?.has('script.unknown-command-valkey-wording')
+        ? 'Command arguments must be strings or integers'
+        : 'Lua redis lib command arguments must be strings or integers',
     ),
   noScript: () =>
     new RedisCommandError('No matching script. Please use EVAL.', 'NOSCRIPT'),
@@ -380,6 +411,35 @@ export const errors = Object.freeze({
   countGreaterThanZero: () =>
     new RedisCommandError('count should be greater than 0'),
   limitCantBeNegative: () => new RedisCommandError(`LIMIT can't be negative`),
+
+  // COMMAND GETKEYS / GETKEYSANDFLAGS
+  invalidCommandSpecified: () =>
+    new RedisCommandError('Invalid command specified'),
+  commandHasNoKeyArguments: () =>
+    new RedisCommandError('The command has no key arguments'),
+
+  // SCAN family
+  invalidCursor: () => new RedisCommandError('invalid cursor'),
+
+  // Hash-field commands (HGETEX / HSETEX / HGETDEL / field expiry)
+  invalidNumberOfFields: () =>
+    new RedisCommandError('invalid number of fields'),
+  numFieldsNotPositive: () =>
+    new RedisCommandError('Number of fields must be a positive integer'),
+  numFieldsParamNotPositive: () =>
+    new RedisCommandError('Parameter `numFields` should be greater than 0'),
+  fieldsArgumentMissing: () =>
+    new RedisCommandError(
+      'Mandatory argument FIELDS is missing or not at the right position',
+    ),
+  numFieldsMismatch: () =>
+    new RedisCommandError(
+      'The `numfields` parameter must match the number of arguments',
+    ),
+  hashFieldExpireOptionConflict: () =>
+    new RedisCommandError(
+      'Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified',
+    ),
 
   // Sorted-set ranges
   invalidLexRange: () =>
