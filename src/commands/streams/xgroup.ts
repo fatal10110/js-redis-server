@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
@@ -56,7 +57,7 @@ function createXgroupSchema() {
       if (!rawSubcommand) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      const subcommand = rawSubcommand.toString().toUpperCase()
+      const subcommand = asciiUpperCase(rawSubcommand.toString())
 
       if (subcommand === 'CREATE' || subcommand === 'SETID') {
         const key = input[index + 1]

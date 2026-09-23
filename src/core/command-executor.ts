@@ -1,3 +1,4 @@
+import { asciiLowerCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
 import { parseCommandArgs } from './command-schema'
@@ -74,12 +75,8 @@ export class CommandExecutor {
   /**
    * Resolve a raw command + args into a {@link CommandPlan} without executing it.
    * The name is handed to the registry unfolded; `registry.get` does the
-   * case-insensitive match.
-   *
-   * Note that the decode + `String.toLowerCase()` this ends up doing is a
-   * *Unicode* fold, while real Redis folds ASCII only — so e.g. U+212A KELVIN
-   * SIGN + "eys" dispatches KEYS here and is rejected by Redis. Pre-existing
-   * (the old `normalizeCommandName` folded the same way); tracked in #382.
+   * case-insensitive match, folding ASCII only as real Redis does — so e.g.
+   * U+212A KELVIN SIGN + "eys" is an unknown command, not KEYS (#382).
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    */
@@ -131,7 +128,7 @@ export class CommandExecutor {
     if (
       err instanceof WrongNumberOfArgumentsError &&
       ctx.session.mode === 'transaction' &&
-      rawCommand.toString().toLowerCase() === 'exec'
+      asciiLowerCase(rawCommand.toString()) === 'exec'
     ) {
       ctx.session.discardTransaction()
       const abortError = new ExecCommandAbortError(err.message)

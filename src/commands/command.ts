@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import {
   defineCommand,
   type CommandDefinition,
@@ -95,7 +96,7 @@ export const commandCommand = defineCommand({
       return commandInfo(allRootCommandInfos(ctx))
     }
 
-    switch (args.subcommand.toString().toLowerCase()) {
+    switch (asciiLowerCase(args.subcommand.toString())) {
       case 'count':
         return commandCount(args, ctx)
       case 'list':
@@ -288,7 +289,7 @@ function planCommandKeys(
     throw new WrongNumberOfArgumentsError(commandName)
   }
 
-  const targetName = args.args[0].toString().toLowerCase()
+  const targetName = asciiLowerCase(args.args[0].toString())
   const definition = ctx.executor.getCommandDefinition(targetName)
   if (!definition) {
     throw new RedisCommandError('Invalid command specified')
@@ -330,7 +331,7 @@ function findCommandInfo(
   ctx: RedisExecutionContext,
   name: string,
 ): CommandInfo | null {
-  const target = name.toLowerCase()
+  const target = asciiLowerCase(name)
   for (const info of allCommandInfos(ctx)) {
     if (info.name === target) {
       return info
@@ -592,7 +593,7 @@ function expectArgCount(
 }
 
 function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
+  return asciiLowerCase(value.toString()) === expected
 }
 
 function bulkString(value: string): RedisValue {
