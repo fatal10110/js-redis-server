@@ -265,34 +265,30 @@ describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendN
     await expectReply(conn, ['EXEC'], EXECABORT)
   }
 
-  test(
-    'SELECT is queued and answers at EXEC',
-    {
-      skip:
-        activeProfile === 'valkey-9.0' &&
-        'valkey 9.0 clusters have several databases',
-    },
-    async () => {
-      const { conn, local } = await setup()
+  // A Valkey 9 cluster accepts SELECT, and a single-database one (the
+  // default, like this one) answers its own range error.
+  test('SELECT is queued and answers at EXEC', async () => {
+    const { conn, local } = await setup()
 
-      await queueOne(
-        conn,
-        ['SELECT', 'x'],
-        QUEUED,
-        '*1\r\n-ERR value is not an integer or out of range\r\n',
-      )
+    await queueOne(
+      conn,
+      ['SELECT', 'x'],
+      QUEUED,
+      '*1\r\n-ERR value is not an integer or out of range\r\n',
+    )
 
-      await expectReply(conn, ['MULTI'], '+OK\r\n')
-      await expectReply(conn, ['SELECT', '1'], QUEUED)
-      await expectReply(conn, ['SET', local, 'v'], QUEUED)
-      await expectReply(
-        conn,
-        ['EXEC'],
-        '*2\r\n-ERR SELECT is not allowed in cluster mode\r\n+OK\r\n',
-      )
-      await expectReply(conn, ['DEL', local], ':1\r\n')
-    },
-  )
+    await expectReply(conn, ['MULTI'], '+OK\r\n')
+    await expectReply(conn, ['SELECT', '1'], QUEUED)
+    await expectReply(conn, ['SET', local, 'v'], QUEUED)
+    await expectReply(
+      conn,
+      ['EXEC'],
+      activeProfile === 'valkey-9.0'
+        ? '*2\r\n-ERR DB index is out of range\r\n+OK\r\n'
+        : '*2\r\n-ERR SELECT is not allowed in cluster mode\r\n+OK\r\n',
+    )
+    await expectReply(conn, ['DEL', local], ':1\r\n')
+  })
 
   test('a numkeys past the end of the command leaves it keyless', async () => {
     const { conn, local, remote } = await setup()
@@ -341,18 +337,92 @@ describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendN
     await queueOne(conn, ['MSET', local, 'v', otherSlot], crossSlot, EXECABORT)
 
     // Local keys: queued, and the command's own error fills its EXEC slot.
-    await expectReply(conn, ['MULTI'], '+OK\r\n')
-    await expectReply(
+    await queueOne(
       conn,
       ['XREAD', 'COUNT', 'x', 'STREAMS', local, '0'],
       QUEUED,
+      '*1\r\n-ERR value is not an integer or out of range\r\n',
     )
-    await expectReplyPrefix(conn, ['EXEC'], '*1\r\n-ERR ')
     await queueOne(
       conn,
       ['ZUNIONSTORE', local, '1', local, 'BOGUS'],
       QUEUED,
       '*1\r\n-ERR syntax error\r\n',
+    )
+  })
+
+  // Redis routes by getKeysFromCommand: XREAD's getkeys proc gives no keys
+  // for an odd tail or an unknown option before STREAMS, even when a key spec
+  // would have found one, so these are queued on any node.
+  test('XREAD / XREADGROUP parse failures the proc cannot key are queued', async () => {
+    const { conn, remote } = await setup()
+    const unbalanced = '*1\r\n-ERR Unbalanced '
+
+    for (const command of [
+      ['XREAD', 'STREAMS', remote, 'b', '0'],
+      ['XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', remote, 'b', '0'],
+    ]) {
+      await expectReply(conn, ['MULTI'], '+OK\r\n')
+      await expectReply(conn, command, QUEUED)
+      await expectReplyPrefix(conn, ['EXEC'], unbalanced)
+    }
+    await queueOne(
+      conn,
+      ['XREAD', 'BOGUS', 'STREAMS', remote, '0'],
+      QUEUED,
+      '*1\r\n-ERR syntax error\r\n',
+    )
+    await queueOne(
+      conn,
+      ['XREADGROUP', 'GROUP', 'g', 'c', 'BOGUS', 'STREAMS', remote, '0'],
+      QUEUED,
+      '*1\r\n-ERR syntax error\r\n',
+    )
+  })
+
+  // The getkeys procs read numkeys with atoi, so `2abc` is 2 and `1x` is 1.
+  test('numkeys procs read the count like atoi', async () => {
+    const { conn, local, otherSlot, remote } = await setup()
+
+    await queueOne(
+      conn,
+      ['ZUNIONSTORE', local, '2abc', local, otherSlot],
+      "-CROSSSLOT Keys in request don't hash to the same slot\r\n",
+      EXECABORT,
+    )
+    await movedThenAbort(conn, ['EVAL', 'return 1', '1x', remote])
+  })
+
+  // A container subcommand is routed by its own entry's key range (from 7.0
+  // `xinfo|stream`, on 6.2 the container's 2,2,1), so its key is found.
+  test('a queued XINFO subcommand is routed by its key', async () => {
+    const { conn, remote } = await setup()
+
+    await movedThenAbort(conn, ['XINFO', 'STREAM', remote, 'x'])
+  })
+
+  // MOVE checks the cluster when it runs, so inside MULTI it is queued and
+  // answers at EXEC. A Valkey 9 cluster has databases: MOVE runs there, and a
+  // single-database cluster answers its own range error.
+  test('MOVE is queued and answers at EXEC', async () => {
+    const { conn, local } = await setup()
+    const valkey9 = activeProfile === 'valkey-9.0'
+
+    await queueOne(
+      conn,
+      ['MOVE', local, '1'],
+      QUEUED,
+      valkey9
+        ? '*1\r\n-ERR DB index is out of range\r\n'
+        : '*1\r\n-ERR MOVE is not allowed in cluster mode\r\n',
+    )
+    await queueOne(
+      conn,
+      ['MOVE', local, 'x'],
+      QUEUED,
+      valkey9
+        ? '*1\r\n-ERR value is not an integer or out of range\r\n'
+        : '*1\r\n-ERR MOVE is not allowed in cluster mode\r\n',
     )
   })
 })

@@ -1029,6 +1029,120 @@ describe(
       },
     )
 
+    // COMMAND INFO for the stream containers, as real servers report it (#518):
+    // 6.2 has one entry per container, with flags, categories and the 2,2,1
+    // range of the key after the subcommand, and no subcommand entries; from
+    // 7.0 the container is bare and its subcommands carry the details.
+    // Checked against redis-server 6.2.24, 7.0.15, 7.2, 8.0.6 and valkey 8.0 /
+    // 9.0.
+    test('COMMAND INFO / DOCS / COUNT for the stream containers', async () => {
+      const legacy = profile === 'redis-6.2'
+      const info = async (name: string) => {
+        connection.write(commandFrame('COMMAND', 'INFO', name))
+        const reply = normalizeFrame(await connection.readFrame())
+        assert.ok(Array.isArray(reply) && Array.isArray(reply[0]), name)
+        return reply[0] as RespWireValue[]
+      }
+
+      const xinfo = await info('xinfo')
+      const xgroup = await info('xgroup')
+      if (legacy) {
+        assert.deepStrictEqual(xinfo.slice(1, 7), [
+          -2,
+          ['readonly', 'random'],
+          2,
+          2,
+          1,
+          ['@read', '@stream', '@slow'],
+        ])
+        assert.deepStrictEqual(xgroup.slice(1, 7), [
+          -2,
+          ['write', 'denyoom'],
+          2,
+          2,
+          1,
+          ['@write', '@stream', '@slow'],
+        ])
+        assert.deepStrictEqual(xinfo[9] ?? [], [])
+        connection.write(commandFrame('COMMAND', 'INFO', 'xinfo|stream'))
+        assert.deepStrictEqual(normalizeFrame(await connection.readFrame()), [
+          null,
+        ])
+        return
+      }
+
+      assert.deepStrictEqual(xinfo.slice(1, 7), [-2, [], 0, 0, 0, ['@slow']])
+      const subcommands = (xinfo[9] as RespWireValue[][]).map(entry => [
+        entry[0],
+        entry[1],
+        entry[3],
+        entry[4],
+        entry[5],
+        entry[7],
+      ])
+      assert.deepStrictEqual(
+        subcommands.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+        [
+          ['xinfo|consumers', 4, 2, 2, 1, ['nondeterministic_output']],
+          ['xinfo|groups', 3, 2, 2, 1, []],
+          ['xinfo|help', 2, 0, 0, 0, []],
+          ['xinfo|stream', -3, 2, 2, 1, []],
+        ],
+      )
+      assert.deepStrictEqual(xgroup.slice(1, 7), [-2, [], 0, 0, 0, ['@slow']])
+
+      // COUNT counts command-table entries, not their subcommands.
+      connection.write(commandFrame('COMMAND', 'COUNT'))
+      const count = normalizeFrame(await connection.readFrame())
+      connection.write(commandFrame('COMMAND', 'LIST'))
+      const names = normalizeFrame(await connection.readFrame())
+      assert.ok(Array.isArray(names))
+      assert.strictEqual(
+        count,
+        names.filter(name => !String(name).includes('|')).length,
+      )
+
+      const wording72 = profile !== 'redis-7.0'
+      connection.write(commandFrame('COMMAND', 'DOCS', 'xinfo'))
+      const docs = normalizeFrame(await connection.readFrame())
+      assert.ok(Array.isArray(docs) && Array.isArray(docs[1]))
+      const fields = flatToRecord(docs[1] as RespWireValue[])
+      assert.deepStrictEqual(
+        [fields.summary, fields.since, fields.group, fields.complexity],
+        [
+          wording72
+            ? 'A container for stream introspection commands.'
+            : 'A container for stream introspection commands',
+          '5.0.0',
+          'stream',
+          'Depends on subcommand.',
+        ],
+      )
+    })
+
+    // Valkey 8.0 marks GEORADIUS's STORE / STOREDIST key specs variable_flags
+    // (valkey 8.0.11 / 9.0.6; Redis and Valkey 7.2 do not). Only the key
+    // specs' flags are compared.
+    test(
+      'GEORADIUS STORE key spec flags follow the flavor',
+      {
+        skip: profile === 'redis-6.2' && 'key specs are 7.0+',
+      },
+      async () => {
+        connection.write(commandFrame('COMMAND', 'INFO', 'georadius'))
+        const reply = normalizeFrame(await connection.readFrame())
+        assert.ok(Array.isArray(reply) && Array.isArray(reply[0]))
+        const specs = (reply[0] as RespWireValue[])[8] as RespWireValue[][]
+        const destination = supportsValkeyGeoVariableFlags()
+          ? ['OW', 'update', 'variable_flags']
+          : ['OW', 'update']
+        assert.deepStrictEqual(
+          specs.map(spec => flatToRecord(spec).flags),
+          [['RO', 'access'], destination, destination],
+        )
+      },
+    )
+
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
       // the wording is version-invariant across profiles.
@@ -1409,6 +1523,10 @@ function supportsCommandDocs(): boolean {
 
 function supportsUnknownSubcommandWording(): boolean {
   return profile !== 'redis-6.2'
+}
+
+function supportsValkeyGeoVariableFlags(): boolean {
+  return profile === 'valkey-8.0' || profile === 'valkey-9.0'
 }
 
 function supportsSuffixScriptErrorDecoration(): boolean {

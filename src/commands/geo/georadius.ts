@@ -1,5 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
-import { commandKeySpec, commandKeywordKeySpec } from '../introspection'
+import { georadiusGetKeys } from '../../core/key-specs'
+import { georadiusIntrospection } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
@@ -96,21 +97,10 @@ function executeGeoRadius(args: GeoRadiusArgs, ctx: RedisExecutionContext) {
 
 export const georadiusCommand = defineCommand({
   name: 'georadius',
+  rawKeys: georadiusGetKeys,
   schema: createGeoRadiusSchema(true),
   flags: ['write', 'denyoom'],
-  introspection: {
-    keySpecs: [
-      commandKeySpec(1, 0, 1, ['RO', 'access']),
-      commandKeywordKeySpec('STORE', 6, { lastKey: 0, keyStep: 1 }, [
-        'OW',
-        'update',
-      ]),
-      commandKeywordKeySpec('STOREDIST', 6, { lastKey: 0, keyStep: 1 }, [
-        'OW',
-        'update',
-      ]),
-    ],
-  },
+  introspection: georadiusIntrospection(6),
   keys: args =>
     (args.store ?? args.storeDist)
       ? [args.key, (args.store ?? args.storeDist)!]

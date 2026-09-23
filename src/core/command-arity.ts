@@ -5,7 +5,10 @@ import type {
 } from './command-definition'
 import { schemaArity, type CommandSchema } from './command-schema'
 import type { CompatibilityProfile } from './compatibility'
-import { containerSubcommandArity } from './compatibility/subcommand-gates'
+import {
+  containerSubcommandArity,
+  containerSubcommandExists,
+} from './compatibility/subcommand-gates'
 
 /**
  * A command's command-table arity, as `COMMAND INFO` reports it: the token
@@ -31,19 +34,74 @@ export function commandTableArity(
 }
 
 /**
- * The command-table entry a call is looked up as, and its arity. From 7.0
- * (the `error.unknown-subcommand-dispatch-timing` gate) lookup resolves a
- * container's `container|subcommand` entry against the *real* command table
- * (`containerSubcommandArity`), so the subcommand's own arity applies even to
- * a subcommand this server does not implement; 6.2 has only the container's.
- * `rawArgs` excludes the command name.
+ * The `container|subcommand` command-table entry a call resolves to, or
+ * `null` when lookup has only the container's entry: on 6.2, which has no
+ * subcommand entries, for a command that is not a container, or for a
+ * subcommand without an entry. From 7.0 (the
+ * `error.unknown-subcommand-dispatch-timing` gate) the arity comes from the
+ * *real* command table (`containerSubcommandArity`), so it applies even to a
+ * subcommand this server does not implement; a container the real table does
+ * not know (a custom one from `extraCommands`) falls back to the subcommand
+ * entries its definition declares. `introspection` is the declared entry,
+ * when there is one. `rawArgs` excludes the command name.
+ */
+export function lookupSubcommandEntry(
+  definition: CommandDefinition<unknown>,
+  rawArgs: readonly Buffer[],
+  profile: CompatibilityProfile,
+): {
+  name: string
+  arity: number
+  introspection?: CommandIntrospection
+} | null {
+  if (
+    rawArgs.length === 0 ||
+    !profile.has('error.unknown-subcommand-dispatch-timing')
+  ) {
+    return null
+  }
+
+  const name = `${definition.name}|${asciiLowerCase(rawArgs[0].toString('latin1'))}`
+  const introspection = definition.introspection?.subcommands?.find(
+    entry => entry.name === name,
+  )
+  const real = containerSubcommandArity(definition.name, rawArgs[0], profile)
+  if (real !== undefined) {
+    return { name, arity: real, introspection }
+  }
+
+  // Only a container the real table does not model falls back to its own
+  // declarations; a real container's missing entry is an unknown subcommand,
+  // which lookup has already refused.
+  if (
+    !introspection ||
+    containerSubcommandExists(definition.name, rawArgs[0], profile) !==
+      undefined
+  ) {
+    return null
+  }
+  return {
+    name,
+    arity: commandTableArity(introspection, profile),
+    introspection,
+  }
+}
+
+/**
+ * The command-table entry a call is looked up as, and its arity: the
+ * subcommand's entry when lookup resolves one ({@link lookupSubcommandEntry}),
+ * otherwise the command's own.
  */
 export function lookupTableArity(
   definition: CommandDefinition<unknown>,
   rawArgs: readonly Buffer[],
   profile: CompatibilityProfile,
 ): { name: string; arity: number } {
-  const own = {
+  const subcommand = lookupSubcommandEntry(definition, rawArgs, profile)
+  if (subcommand) {
+    return { name: subcommand.name, arity: subcommand.arity }
+  }
+  return {
     name: definition.name,
     arity: commandTableArity(
       definition.introspection,
@@ -51,20 +109,6 @@ export function lookupTableArity(
       definition.schema,
     ),
   }
-  if (
-    rawArgs.length === 0 ||
-    !profile.has('error.unknown-subcommand-dispatch-timing')
-  ) {
-    return own
-  }
-
-  const arity = containerSubcommandArity(definition.name, rawArgs[0], profile)
-  return arity === undefined
-    ? own
-    : {
-        name: `${definition.name}|${asciiLowerCase(rawArgs[0].toString('latin1'))}`,
-        arity,
-      }
 }
 
 /**

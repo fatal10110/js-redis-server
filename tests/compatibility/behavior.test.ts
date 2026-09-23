@@ -138,13 +138,9 @@ describe('compatibility behavior gates', () => {
       'command',
       buf('info', 'command'),
     )) as RedisResult
-    assert.deepStrictEqual(commandSubcommandNames(redis62Info), [
-      'command|getkeys',
-      'command|info',
-      'command|count',
-      'command|list',
-      'command|help',
-    ])
+    // Redis 6.2's command table has no subcommand entries at all (6.2.24:
+    // COMMAND INFO command is a 7-field reply with no subcommand list).
+    assert.deepStrictEqual(commandSubcommandNames(redis62Info), [])
 
     const redis70 = createSession('redis-7.0')
     const redis70Info = (await redis70.execute(

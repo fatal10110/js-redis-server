@@ -581,10 +581,18 @@ so the PR body is not a durable home for a breaking-change note.
   that command's slot of EXEC's reply, as Redis does; the rest of the
   transaction runs. Only an unknown command or subcommand, or an argument
   count the command table rejects, is still refused at queue time and aborts
-  EXEC with `-EXECABORT`. From 7.0 that count is checked against the
-  subcommand's own entry for every container (`config|get`, `xinfo|stream`,
-  `xgroup|create`, and real subcommands this server does not implement, such
-  as `client|pause`). Previously every parse error aborted the transaction.
+  EXEC with `-EXECABORT`. Previously every parse error aborted the
+  transaction.
+
+  The command-table arity is checked at lookup for every caller (a client,
+  MULTI, a script), as Redis's `processCommand` does, against the entry lookup
+  resolves to: from 7.0 the subcommand's own entry for every container
+  (`CLIENT REPLY` is `wrong number of arguments for 'client|reply' command`,
+  `FUNCTION DUMP x` is `... for 'function|dump' command`; also real
+  subcommands this server does not implement, such as `client|pause`),
+  otherwise the command's own (`XREAD COUNT` is `wrong number of arguments for
+  'xread' command` before XREAD's option parser runs). 6.2 has no subcommand
+  entries and is unchanged.
   What clients see changes accordingly:
 
   ```
@@ -597,30 +605,59 @@ so the PR body is not a durable home for a breaking-change note.
                 OK and the error
   ```
 
-  In a cluster such a command is routed by the keys its key specs find in the
-  raw arguments, as Redis does without running the command's parser: a
-  numkeys past the end of the command (`ZUNIONSTORE a 5 b`) leaves it
-  keyless, while `ZUNIONSTORE b 1 s BOGUS` is a `CROSSSLOT` and
-  `XREAD COUNT x STREAMS a 0` a `MOVED` at queue time. `SELECT 1` inside a
+  In a cluster such a command is routed by the keys Redis's
+  `getKeysFromCommand` finds in the raw arguments, without running the
+  command's parser: the command's getkeys procedure where Redis has one
+  (numkeys commands read the count like `atoi`, so `ZUNIONSTORE d 2abc a b` is
+  a `CROSSSLOT` and `EVAL s 1x a` a `MOVED`; `XREAD`/`XREADGROUP` find no keys
+  for an odd tail or an unknown option, so `XREAD STREAMS a b 0` and
+  `XREAD BOGUS STREAMS a 0` are queued on any node and answer their
+  `Unbalanced ...` / `syntax error` at EXEC; `GEORADIUS*` add the `STORE`
+  destination), otherwise the legacy first/last/step key range of the entry
+  lookup resolved (from 7.0 `xinfo|stream`, so `XINFO STREAM a x` is a
+  `MOVED`; on 6.2 the container's own 2,2,1). A numkeys past the end of the
+  command (`ZUNIONSTORE a 5 b`) leaves it keyless. `SELECT 1` inside a
   cluster MULTI is queued too, and its `SELECT is not allowed in cluster
   mode` fills its EXEC slot; `SELECT x` answers `value is not an integer or
-  out of range` there instead of dropping the connection.
+  out of range` there instead of dropping the connection. `MOVE` is queued
+  the same way and answers `MOVE is not allowed in cluster mode` at EXEC; a
+  Valkey 9 cluster has databases, so there `MOVE k 1` runs and answers `DB
+  index is out of range` on a single-database node.
+
+  `XREAD` / `XREADGROUP` parse their options as Redis does: `syntax error`
+  for an unknown option, `value is not an integer or out of range` for a bad
+  `COUNT`, the `timeout` errors for a bad `BLOCK`, the `NOACK` error from
+  `XREAD`, and the `Unbalanced ...` wording of the emulated version (new gate
+  `stream.xread-unbalanced-wording`).
 
   `COMMAND INFO` now reports Redis's key specs for the movable-key commands
   (numkeys: `ZUNIONSTORE`/`ZINTERSTORE`/`ZDIFFSTORE`, `ZUNION`/`ZINTER`/
   `ZDIFF`/`ZINTERCARD`, `SINTERCARD`, `LMPOP`/`BLMPOP`/`ZMPOP`/`BZMPOP`,
   `EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO`/`FCALL`/`FCALL_RO`; keyword:
   `XREAD`/`XREADGROUP` `STREAMS`, `GEORADIUS`/`GEORADIUSBYMEMBER`
-  `STORE`/`STOREDIST`) and the `XINFO` / `XGROUP` subcommand entries.
+  `STORE`/`STOREDIST`, whose destination specs carry `variable_flags` on
+  Valkey 8.0+, new gate `geo.store-keyspec-variable-flags`). From 7.0 the
+  `XINFO` / `XGROUP` containers are bare entries whose subcommand entries
+  (`xinfo|consumers` with its `nondeterministic_output` tip) carry the
+  details; on 6.2 they keep their single entry (`XINFO`: `readonly`,
+  `random`, keys 2,2,1, `@read @stream @slow`; `XGROUP`: `write`, `denyoom`)
+  and no container lists subcommand entries. `COMMAND COUNT` counts
+  command-table entries, not subcommands. `COMMAND DOCS` summaries for the
+  stream containers follow the version's wording (7.2+ ends them with a
+  period, new gate `docs.summary-7.2-wording`). `COMMAND GETKEYSANDFLAGS`
+  reports each key with the flags of the key spec that found it
+  (`ZUNIONSTORE d 2 a b`: `d` `OW update`, `a`/`b` `RO access`) instead of
+  one set for every key.
 
-- **`/core`** (additive) `CommandPlan` gained an optional `deferredError`: a
-  command queued inside MULTI whose own argument parsing failed carries the
-  error its EXEC slot answers, raised after the policy chain. Its `args` is
-  `undefined` whatever `TArgs` says, so a custom `ExecutionPolicy` that reads
-  `plan.args` must skip a plan with `deferredError` set; `keys` come from the
-  command's key specs over `rawArgs`. `CommandKeySpec` gained optional
-  `beginSearchKeyword` and `findKeysKeynum` for Redis's keyword begin-search
-  and keynum find-keys forms.
+- **`/core`** `CommandPlan` is now a union: a normal plan has `args`, and a
+  command queued inside MULTI whose own argument parsing failed has
+  `args: undefined` and a `deferredError`, the error its EXEC slot answers,
+  raised after the policy chain. A custom `ExecutionPolicy` that reads
+  `plan.args` must check `plan.deferredError` first (TypeScript now requires
+  it); that plan's `keys` are the ones Redis would route by. A
+  `CommandDefinition` can declare `rawKeys(argv)`, the keys its getkeys
+  procedure finds in the raw arguments, for commands whose keys the legacy
+  key range cannot express.
 
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print

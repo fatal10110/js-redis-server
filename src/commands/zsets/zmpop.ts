@@ -1,4 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
+import { numkeysGetKeys } from '../../core/key-specs'
 import { commandKeynumKeySpec } from '../introspection'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
@@ -191,6 +192,7 @@ async function blockingZsetMultiPop(
 
 export const zmpopCommand = defineCommand({
   name: 'zmpop',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<ZsetMultiPopArgs>({ min: 3 }, (input, index, ctx) => ({
     value: parseZsetMultiPopArgs(input, index, ctx, { blocking: false }),
@@ -208,6 +210,7 @@ export const zmpopCommand = defineCommand({
 
 export const bzmpopCommand = defineCommand({
   name: 'bzmpop',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<BlockingZsetMultiPopArgs>(
     { min: 4 },

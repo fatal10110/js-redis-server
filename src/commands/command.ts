@@ -6,9 +6,15 @@ import {
   type CommandDocumentationArgument,
   type CommandIntrospection,
   type CommandKeySpec,
+  introspectionFor,
 } from '../core/command-definition'
 import { commandTableArity } from '../core/command-arity'
-import { schemaKeyRange, t, type CommandSchema } from '../core/command-schema'
+import { t, type CommandSchema } from '../core/command-schema'
+import {
+  keysFromKeySpecs,
+  legacyKeyRange,
+  type LegacyKeyRange,
+} from '../core/key-specs'
 import {
   RedisCommandError,
   UnknownSubcommandError,
@@ -152,7 +158,8 @@ function commandCount(
   ctx: RedisExecutionContext,
 ): RedisResult {
   expectArgCount('command|count', args.args, 0)
-  return RedisResult.create(RedisValue.integer(allCommandInfos(ctx).length))
+  // Redis counts command-table entries, not their subcommands.
+  return RedisResult.create(RedisValue.integer(allRootCommandInfos(ctx).length))
 }
 
 function commandList(
@@ -236,10 +243,35 @@ function commandGetKeysAndFlags(
     ctx,
     'command|getkeysandflags',
   )
-  const flags = keyAccessFlags(definition)
+  // Like Redis, the key specs decide the flags, per key, from the spec that
+  // produced each; a command without usable specs falls back to one set.
+  const specs = introspectionFor(
+    definition.introspection,
+    ctx.server.profile,
+  )?.keySpecs
+  const fromSpecs =
+    specs && specs.length > 0
+      ? keysFromKeySpecs(specs, [
+          Buffer.from(definition.name),
+          ...args.args.slice(1),
+        ])
+      : null
+  const withFlags =
+    fromSpecs && fromSpecs.length > 0
+      ? fromSpecs
+      : keys.map(key => ({ key, flags: keyAccessFlags(definition) }))
   return RedisResult.create(
     RedisValue.array(
-      keys.map(key => RedisValue.array([bulk(key), RedisValue.array(flags)])),
+      withFlags.map(({ key, flags }) =>
+        RedisValue.array([
+          bulk(key),
+          // `variable_flags` sends Redis to the command's getkeys proc, which
+          // reports the flags it resolves, never the marker itself.
+          RedisValue.array(
+            flags.filter(flag => flag !== 'variable_flags').map(simpleString),
+          ),
+        ]),
+      ),
     ),
   )
 }
@@ -401,10 +433,11 @@ function createCommandInfo(
 function createCommandInfoFromIntrospection(
   name: string,
   fallbackFlags: readonly string[],
-  introspection: CommandIntrospection | undefined,
+  declared: CommandIntrospection | undefined,
   ctx: RedisExecutionContext,
   schema?: CommandSchema<unknown>,
 ): CommandInfo {
+  const introspection = introspectionFor(declared, ctx.server.profile)
   const keySpecs = introspection?.keySpecs ?? []
   const flags = introspection?.flags ?? fallbackFlags
 
@@ -412,11 +445,17 @@ function createCommandInfoFromIntrospection(
     name,
     arity: commandArity(introspection, ctx, schema),
     flags,
-    ...commandKeyRange(keySpecs, schema),
+    ...legacyKeyRange(introspection, schema),
     categories: introspection?.categories ?? inferCategories(flags),
     tips: introspection?.tips ?? [],
     keySpecs,
-    subcommands: (introspection?.subcommands ?? [])
+    // Redis 6.2's command table has no subcommand entries at all.
+    subcommands: (ctx.server.profile.has(
+      'error.unknown-subcommand-dispatch-timing',
+    )
+      ? (introspection?.subcommands ?? [])
+      : []
+    )
       .filter(subcommand => subcommandAvailable(subcommand, ctx))
       .map(subcommand => {
         if (!subcommand.name) {
@@ -443,73 +482,14 @@ function commandArity(
   return commandTableArity(introspection, ctx.server.profile, schema)
 }
 
-type KeyRange = Pick<CommandInfo, 'firstKey' | 'lastKey' | 'keyStep'>
-
 /**
- * The legacy first/last/step triple. Declared key specs win, folded the way
- * Redis's `populateCommandLegacyRangeSpec` does; otherwise the schema's key
- * positions stand in for them.
+ * The legacy first/last/step triple of `keySpecs` alone (see
+ * `legacyKeyRange`), kept for callers that fold a spec list directly.
  */
-function commandKeyRange(
-  keySpecs: readonly CommandKeySpec[],
-  schema?: CommandSchema<unknown>,
-): KeyRange {
-  if (keySpecs.length > 0) {
-    return keySpecsKeyRange(keySpecs)
-  }
-
-  return schema
-    ? schemaKeyRange(schema)
-    : { firstKey: 0, lastKey: 0, keyStep: 0 }
-}
-
 export function keySpecsKeyRange(
-  allSpecs: readonly CommandKeySpec[],
-): KeyRange {
-  // Like Redis's populateCommandLegacyRangeSpec, only index + range specs feed
-  // the legacy triple; a keyword or keynum spec makes the keys movable.
-  const specs = allSpecs.filter(
-    spec => !spec.beginSearchKeyword && !spec.findKeysKeynum,
-  )
-  if (specs.length === 0) {
-    return { firstKey: 0, lastKey: 0, keyStep: 0 }
-  }
-
-  if (specs.length === 1) {
-    const [spec] = specs
-    return {
-      firstKey: spec.beginSearchIndex,
-      lastKey: absoluteLastKey(spec),
-      keyStep: spec.keyStep,
-    }
-  }
-
-  // Several specs merge only while each is a plain (step 1) range picking up
-  // right where the previous one ended.
-  let firstKey = 0
-  let lastKey = 0
-  for (const spec of specs) {
-    if (spec.keyStep !== 1) {
-      continue
-    }
-
-    if (firstKey !== 0 && lastKey !== spec.beginSearchIndex - 1) {
-      continue
-    }
-
-    firstKey = firstKey || spec.beginSearchIndex
-    lastKey = absoluteLastKey(spec)
-  }
-
-  return firstKey === 0
-    ? { firstKey: 0, lastKey: 0, keyStep: 0 }
-    : { firstKey, lastKey, keyStep: 1 }
-}
-
-// A non-negative spec `lastKey` is relative to the spec's first key; a
-// negative one counts back from the end of the command and is kept as is.
-function absoluteLastKey(spec: CommandKeySpec): number {
-  return spec.lastKey < 0 ? spec.lastKey : spec.beginSearchIndex + spec.lastKey
+  keySpecs: readonly CommandKeySpec[],
+): LegacyKeyRange {
+  return legacyKeyRange({ keySpecs })
 }
 
 function subcommandAvailable(
@@ -680,11 +660,13 @@ function formatDocsArgument(arg: CommandDocumentationArgument): RedisValue {
   return RedisValue.map(entries)
 }
 
-function keyAccessFlags(definition: CommandDefinition<unknown>): RedisValue[] {
-  const flags =
+function keyAccessFlags(
+  definition: CommandDefinition<unknown>,
+): readonly string[] {
+  return (
     definition.introspection?.keySpecs?.[0]?.flags ??
     fallbackKeyAccessFlags(definition.flags)
-  return flags.map(bulkString)
+  )
 }
 
 function fallbackKeyAccessFlags(flags: readonly string[]): readonly string[] {

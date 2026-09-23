@@ -25,9 +25,12 @@ export type CommandCapabilities = {
   movableKeys?: boolean
   scriptKeys?: boolean
   /**
-   * How the command behaves under cluster mode. `'forbidden'` is always
-   * rejected; `'singleDb'` is rejected only when it targets a non-zero
-   * database. Consumed by `ClusterPolicy` instead of matching command names.
+   * How the command behaves under cluster mode. `'forbidden'` is rejected
+   * outright, and `'singleDb'` only when it targets a non-zero database,
+   * unless the profile models Valkey 9's cluster databases
+   * (`cluster.multi-db`). Either is checked when the command runs, so inside
+   * MULTI it is queued and answers at EXEC. Consumed by `ClusterPolicy`
+   * instead of matching command names.
    */
   clusterMode?: 'forbidden' | 'singleDb'
   /**
@@ -97,6 +100,23 @@ export type CommandIntrospection = {
   keySpecs?: readonly CommandKeySpec[]
   subcommands?: readonly CommandIntrospection[]
   docs?: CommandDocumentation
+  /**
+   * The fields that differ on some profiles, merged over the rest when it
+   * returns them (see `introspectionFor`): XINFO's 6.2 entry, say, or the
+   * `variable_flags` Valkey puts on GEORADIUS's STORE key specs.
+   */
+  forProfile?: (
+    profile: CompatibilityProfile,
+  ) => Omit<CommandIntrospection, 'forProfile' | 'name'> | undefined
+}
+
+/** `introspection` as `profile` reports it: `forProfile` merged over it. */
+export function introspectionFor(
+  introspection: CommandIntrospection | undefined,
+  profile: CompatibilityProfile,
+): CommandIntrospection | undefined {
+  const override = introspection?.forProfile?.(profile)
+  return override ? { ...introspection, ...override } : introspection
 }
 
 export type CommandExecutionResult = RedisResult | Promise<RedisResult>
@@ -110,24 +130,37 @@ export interface CommandDefinition<TArgs = unknown> {
   readonly monitor?: CommandMonitorMetadata
   readonly introspection?: CommandIntrospection
   keys(args: TArgs): readonly Buffer[]
+  /**
+   * Redis's getkeys proc: the keys in a raw `argv` (command name at index 0)
+   * without parsing it. Only consulted to route a command queued inside MULTI
+   * whose own parser failed; without one, the legacy first/last/step range
+   * `COMMAND INFO` reports is used, as Redis does.
+   */
+  rawKeys?(argv: readonly Buffer[]): readonly Buffer[]
   execute(args: TArgs, ctx: RedisExecutionContext): CommandExecutionResult
 }
 
-export type CommandPlan<TArgs = unknown> = {
+type CommandPlanBase<TArgs> = {
   definition: CommandDefinition<TArgs>
-  args: TArgs
   keys: readonly Buffer[]
   rawCommand: Buffer
   rawArgs: readonly Buffer[]
-  /**
-   * Set on a command queued inside MULTI whose own argument parsing failed:
-   * the error its EXEC slot answers, raised after the policy chain instead of
-   * running the command. `args` is then `undefined` (whatever `TArgs` says),
-   * so a policy that reads `args` must skip such a plan; `keys` come from
-   * the command's key specs over `rawArgs`.
-   */
-  deferredError?: RedisCommandError
 }
+
+/**
+ * A resolved command, ready to run: its definition, parsed `args` and routing
+ * `keys`. A command queued inside MULTI whose own argument parsing failed is
+ * the second form: no `args`, and `deferredError` set to the error its EXEC
+ * slot answers, raised after the policy chain; its `keys` come from the
+ * command's getkeys proc or legacy key range over `rawArgs`. A policy that
+ * reads `args` narrows on `deferredError` first.
+ */
+export type CommandPlan<TArgs = unknown> =
+  | (CommandPlanBase<TArgs> & { args: TArgs; deferredError?: undefined })
+  | (CommandPlanBase<TArgs> & {
+      args?: undefined
+      deferredError: RedisCommandError
+    })
 
 /**
  * Builds a command definition, pinning `TArgs` from the schema so `keys` and

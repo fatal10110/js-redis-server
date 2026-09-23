@@ -139,6 +139,9 @@ Current profile gates:
 | Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HEXPIRETIME`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPEXPIRETIME`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
 | `HSCAN ... NOVALUES` | `redis-7.4+` | `valkey-9.0+` |
 | `XREAD ... +` latest-entry stream ID | `redis-7.4+` | unsupported |
+| `XREAD` / `XREADGROUP` `Unbalanced '<cmd>' list of streams` wording per command (6.2 / 7.0: `Unbalanced XREAD list of streams` for both) | `redis-7.2+` | `valkey-8.0+` |
+| `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
+| `variable_flags` on the `GEORADIUS` / `GEORADIUSBYMEMBER` `STORE` / `STOREDIST` key specs | never | `valkey-8.0+` |
 | `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |

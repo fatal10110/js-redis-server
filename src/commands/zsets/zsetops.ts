@@ -1,4 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
+import { numkeysGetKeys } from '../../core/key-specs'
 import { commandKeySpec, commandKeynumKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
@@ -272,6 +273,7 @@ function setOpSchema(options: ParserOptions) {
 
 export const zunionstoreCommand = defineCommand({
   name: 'zunionstore',
+  rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: true }),
   flags: ['write', 'denyoom'],
   introspection: {
@@ -290,6 +292,7 @@ export const zunionstoreCommand = defineCommand({
 
 export const zinterstoreCommand = defineCommand({
   name: 'zinterstore',
+  rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: true }),
   flags: ['write', 'denyoom'],
   introspection: {
@@ -308,6 +311,7 @@ export const zinterstoreCommand = defineCommand({
 
 export const zdiffstoreCommand = defineCommand({
   name: 'zdiffstore',
+  rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: false }),
   flags: ['write', 'denyoom'],
   introspection: {
@@ -326,6 +330,7 @@ export const zdiffstoreCommand = defineCommand({
 
 export const zunionCommand = defineCommand({
   name: 'zunion',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   schema: setOpSchema({ hasDest: false, weightsAggregate: true }),
   flags: ['readonly'],
   introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
@@ -339,6 +344,7 @@ export const zunionCommand = defineCommand({
 
 export const zinterCommand = defineCommand({
   name: 'zinter',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   schema: setOpSchema({ hasDest: false, weightsAggregate: true }),
   flags: ['readonly'],
   introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
@@ -352,6 +358,7 @@ export const zinterCommand = defineCommand({
 
 export const zdiffCommand = defineCommand({
   name: 'zdiff',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   schema: setOpSchema({ hasDest: false, weightsAggregate: false }),
   flags: ['readonly'],
   introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
@@ -402,6 +409,7 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
 
 export const zintercardCommand = defineCommand({
   name: 'zintercard',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.withLayout(zintercardSchema, { min: 2 }),
   flags: ['readonly'],

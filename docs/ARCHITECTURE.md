@@ -261,9 +261,10 @@ queue time, not at `EXEC` time. Only what Redis refuses at queue time dirties
 the transaction there (an unknown command or subcommand, or a count the command
 table's arity rejects); a command whose own argument check fails is queued as
 a plan carrying the error as `deferredError`, which `executePlan` raises after
-the policy chain when `EXEC` runs it; its cluster routing keys come from the
-command's key specs over the raw arguments, as Redis routes a queued command
-without running its parser (`CommandExecutor.planForQueue`,
+the policy chain when `EXEC` runs it; its cluster routing keys are the ones Redis's
+`getKeysFromCommand` finds in the raw arguments without running the parser —
+the command's getkeys procedure (`CommandDefinition.rawKeys`), else the legacy
+first/last/step key range (`CommandExecutor.planForQueue`,
 [`key-specs.ts`](../src/core/key-specs.ts)). `EXEC` drains the queue and replays each plan
 through [`ClientSession.executeTransaction`](../src/core/client-session.ts#L156),
 which reuses the normal `executePlan` path per command. When a queued `HELLO`

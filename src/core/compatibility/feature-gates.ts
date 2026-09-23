@@ -81,6 +81,21 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 6.2 echoes fewer args (30 one-to-two-digit args: a0..a19 on 6.2, a0..a22
   // on 7.0+). Verified against redis-server 6.2.24, 7.0, 7.2, 8.0.6 and
   // Valkey 7.2 / 8.0, which answer the 7.0 form (#384).
+  // COMMAND DOCS summaries were rewritten for Redis 7.2 / Valkey 7.2 (`Get
+  // information about a stream` became `Returns information about a
+  // stream.`). Only the XINFO / XGROUP entries read it so far. Verified
+  // against redis-server 7.0.15, 7.2, 8.0.6 and Valkey 8.0 / 9.0.
+  'docs.summary-7.2-wording': { redis: '7.2.0', valkey: '7.2.0' },
+  // Valkey 8.0 marks GEORADIUS / GEORADIUSBYMEMBER's STORE and STOREDIST key
+  // specs `variable_flags`; Redis (through 8.0.6) and Valkey 7.2 do not.
+  // Verified against valkey-server 7.2, 8.0.11 and 9.0.6.
+  'geo.store-keyspec-variable-flags': { valkey: '8.0.0' },
+  // XREAD / XREADGROUP's odd STREAMS tail: 6.2 and 7.0 say `Unbalanced XREAD
+  // list of streams ... an ID or '$'` for both; 7.2 names the command and
+  // gives XREADGROUP its `'>'` (and 7.4's XREAD its `'+'`, `xread.plus-id`).
+  // Verified against redis-server 6.2.24, 7.0.15, 7.2, 8.0.6 and valkey 8.0 /
+  // 9.0.
+  'stream.xread-unbalanced-wording': { redis: '7.2.0', valkey: '7.2.0' },
   'error.unknown-command-wording': { redis: '7.0.0', valkey: '7.2.0' },
   // An odd field/value tail the command table accepts but the command itself
   // refuses: 6.2 answers `wrong number of arguments for MSET` (MSET and

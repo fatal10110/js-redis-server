@@ -3,7 +3,10 @@ import {
   defineCommand,
   type CommandIntrospection,
 } from '../../core/command-definition'
-import { commandSubcommandInfo, streamSubcommandInfo } from '../introspection'
+import {
+  streamContainerIntrospection,
+  streamSubcommandInfo,
+} from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
@@ -151,17 +154,47 @@ function createXinfoSchema() {
 
 // The real subcommand entries (#518): lookup checks a call against their
 // arity, and COMMAND INFO lists them.
-const xinfoIntrospection: CommandIntrospection = {
-  flags: [],
+const xinfoIntrospection: CommandIntrospection = streamContainerIntrospection({
+  summaries: {
+    before72: 'A container for stream introspection commands',
+    from72: 'A container for stream introspection commands.',
+  },
+  legacy: { flags: ['readonly', 'random'], keyFlags: ['RO', 'access'] },
   subcommands: [
-    commandSubcommandInfo('xinfo|help', 2, {
-      categories: ['@stream', '@slow'],
+    streamSubcommandInfo('xinfo|help', 2, {
+      flags: ['loading', 'stale'],
+      summaries: {
+        before72: 'Show helpful text about the different subcommands',
+        from72: 'Returns helpful text about the different subcommands.',
+      },
     }),
-    streamSubcommandInfo('xinfo|stream', -3, ['readonly'], ['RO', 'access']),
-    streamSubcommandInfo('xinfo|groups', 3, ['readonly'], ['RO', 'access']),
-    streamSubcommandInfo('xinfo|consumers', 4, ['readonly'], ['RO', 'access']),
+    streamSubcommandInfo('xinfo|stream', -3, {
+      flags: ['readonly'],
+      keyFlags: ['RO', 'access'],
+      summaries: {
+        before72: 'Get information about a stream',
+        from72: 'Returns information about a stream.',
+      },
+    }),
+    streamSubcommandInfo('xinfo|groups', 3, {
+      flags: ['readonly'],
+      keyFlags: ['RO', 'access'],
+      summaries: {
+        before72: 'List the consumer groups of a stream',
+        from72: 'Returns a list of the consumer groups of a stream.',
+      },
+    }),
+    streamSubcommandInfo('xinfo|consumers', 4, {
+      flags: ['readonly'],
+      keyFlags: ['RO', 'access'],
+      tips: ['nondeterministic_output'],
+      summaries: {
+        before72: 'List the consumers in a consumer group',
+        from72: 'Returns a list of the consumers in a consumer group.',
+      },
+    }),
   ],
-}
+})
 
 export const xinfoCommand = defineCommand({
   name: 'xinfo',

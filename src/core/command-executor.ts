@@ -88,8 +88,13 @@ export class CommandExecutor {
   }
 
   /**
-   * Command lookup: the definition, and from 7.0 the container subcommand
-   * (see {@link lookupSubcommand}).
+   * Command lookup, as Redis's `processCommand` does it for every caller (a
+   * client, MULTI, a script, COMMAND GETKEYS): the definition, from 7.0 the
+   * container subcommand (see {@link lookupSubcommand}), then the
+   * command-table arity of the entry lookup resolved to — the
+   * `container|subcommand` entry when there is one (`CLIENT REPLY` is `wrong
+   * number of arguments for 'client|reply' command` before CLIENT sees it),
+   * otherwise the command's own (`XREAD COUNT` never reaches XREAD's parser).
    */
   private lookup(
     rawCommand: Buffer | string,
@@ -102,6 +107,10 @@ export class CommandExecutor {
     }
 
     this.lookupSubcommand(definition, rawArgs)
+    const table = lookupTableArity(definition, rawArgs, this.profile)
+    if (failsTableArity(table.arity, rawArgs.length + 1)) {
+      throw new WrongNumberOfArgumentsError(table.name)
+    }
     return definition
   }
 
@@ -196,10 +205,6 @@ export class CommandExecutor {
     rawArgs: readonly Buffer[],
   ): CommandPlan {
     const definition = this.lookup(rawCommand, rawArgs)
-    const table = lookupTableArity(definition, rawArgs, this.profile)
-    if (failsTableArity(table.arity, rawArgs.length + 1)) {
-      throw new WrongNumberOfArgumentsError(table.name)
-    }
 
     try {
       return this.createPlan(definition, rawCommand, rawArgs)
@@ -214,7 +219,7 @@ export class CommandExecutor {
       return {
         definition,
         args: undefined,
-        keys: rawCommandKeys(definition, rawCommand, rawArgs),
+        keys: rawCommandKeys(definition, rawCommand, rawArgs, this.profile),
         rawCommand: Buffer.from(rawCommand),
         rawArgs: rawArgs.map(arg => Buffer.from(arg)),
         deferredError: err,
