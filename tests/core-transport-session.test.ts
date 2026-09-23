@@ -4,7 +4,6 @@ import {
   ClientSession,
   CommandExecutor,
   createRedisCommandRegistry,
-  InMemoryConnectionTransport,
   RedisResult,
   RedisServerState,
   RedisValue,
@@ -15,6 +14,7 @@ import {
 import type { ResponseStream } from '../src/internal'
 import { createRedisSessionHarness as createHarness } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
+import { InMemoryTransport } from './in-memory-transport-test-helper'
 
 describe('new transport-neutral session path', () => {
   test('runs commands through ClientSession with selected database state', async () => {
@@ -39,7 +39,7 @@ describe('new transport-neutral session path', () => {
 
   test('executes RESP2 frames over an in-memory ConnectionTransport', async () => {
     const { session } = createHarness()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -61,7 +61,7 @@ describe('new transport-neutral session path', () => {
 
   test('buffers partial RESP2 frames until a complete command arrives', async () => {
     const { session } = createHarness()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
     const frame = commandFrame('PING')
@@ -79,7 +79,7 @@ describe('new transport-neutral session path', () => {
 
   test('ignores empty RESP2 commands and parses quoted inline arguments', async () => {
     const { session } = createHarness()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -98,9 +98,25 @@ describe('new transport-neutral session path', () => {
     )
   })
 
+  test('closes the transport even when session.close() throws', async () => {
+    const { session } = createHarness()
+    const transport = new InMemoryTransport()
+    session.close = () => {
+      throw new Error('session.close failed')
+    }
+    const adapter = new Resp2SessionAdapter({ transport, session })
+    const running = adapter.run()
+
+    transport.feed(commandFrame('PING'))
+    transport.endRead()
+
+    await assert.rejects(running, /session\.close failed/)
+    assert.strictEqual(transport.signal.aborted, true)
+  })
+
   test('honors RedisResult close options in the RESP2 session adapter', async () => {
     const { session } = createHarness()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -115,7 +131,7 @@ describe('new transport-neutral session path', () => {
 
   test('can close without writing a reply', async () => {
     const { session } = createHarness()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -130,7 +146,7 @@ describe('new transport-neutral session path', () => {
 
   test('flushes responses for valid pipelined frames before a protocol error', async () => {
     const { session } = createHarness()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -157,7 +173,7 @@ describe('new transport-neutral session path', () => {
 
   test('drains ResponseStream frames through the same adapter', async () => {
     const { session } = createHarness({ extraCommands: [streamCommand] })
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 

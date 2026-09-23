@@ -2,7 +2,6 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   ClientSession,
-  InMemoryConnectionTransport,
   RedisResult,
   RedisServerState,
   RedisValue,
@@ -14,6 +13,7 @@ import {
 } from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
+import { InMemoryTransport } from './in-memory-transport-test-helper'
 
 describe('new transaction commands', () => {
   test('queues commands in MULTI and executes them through EXEC', async () => {
@@ -356,7 +356,7 @@ describe('new transaction commands', () => {
 
   test('runs transaction commands through the RESP2 adapter', async () => {
     const { session } = createSession()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 

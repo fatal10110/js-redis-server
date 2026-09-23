@@ -26,6 +26,85 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING (`/core`)** The three hand-rolled in-memory transports were
+  replaced by [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions),
+  which raises the minimum Node version to **22.6** (`engines.node: ">=22.6"`)
+  ([#360]). Four things left `/core`:
+
+  ```
+  InMemoryConnectionTransport      -> no replacement; it only ever backed this
+                                      repo's own tests. Wrap one end of a
+                                      duplexPair in SocketConnectionTransport.
+  ConnectionTransport.on(...)      -> no replacement; 'close' | 'drain' | 'error'
+                                      had zero subscribers. Use the transport's
+                                      `signal`, or listen on your own stream.
+  ConnectionTransportEvent         -> removed with it.
+  ConnectionTransportListener      -> removed with it.
+  ConnectionTransportUnsubscribe   -> removed with it.
+  VirtualClientSocket (class)      -> type only; the VALUE export is gone. Get
+                                      an instance from createVirtualConnection().
+  ```
+
+  That last one is not a type-level break — the runtime binding disappears:
+
+  ```js
+  import { VirtualClientSocket } from 'js-redis-server/core' // SyntaxError at
+  // load time under ESM, which takes the whole importing module down with it.
+  socket instanceof VirtualClientSocket                      // TypeError, not false
+  ```
+
+  Under CJS the same `require(...).VirtualClientSocket` is `undefined`, so
+  `new` and `instanceof` both throw where they previously worked. Replace an
+  `instanceof` check with a duck-type test (or `stream.Duplex`), and construct
+  via `createVirtualConnection()`.
+
+  `SocketConnectionTransport` now accepts any `Duplex`, not just a `net.Socket`
+  — a widening, so existing callers are unaffected. Behavior is unchanged:
+  `createIoredisMock` keeps its backpressure-free semantics (the virtual wire
+  is created with an effectively unbounded high-water mark, so an in-process
+  server never blocks on a client that has not read yet), and tearing down
+  either end (client `destroy()` or server `close()`) still ends the session.
+
+  Virtual-connection teardown now follows TCP, the same on Node 22 and 24:
+
+  - A server-side close (`close()`, `QUIT`, a protocol error) half-closes. The
+    session ends immediately, and the client socket receives any unread reply
+    bytes, then `'end'`, `'finish'` and `'close'` — as against real Redis —
+    whenever it reads them, including a client that was paused at the time and
+    resumes later. Previously a client that was not reading at that moment
+    lost its buffered reply and never saw `'end'`. A client that never reads
+    stays half-open until its owner destroys it, as a real socket would.
+  - While half-open, a client write is accepted, as a TCP kernel accepts a
+    write to a closed peer, and `end(cb)` calls back; the unread reply and EOF
+    are still delivered. That includes a write made synchronously in the
+    client's `'end'` handler. Any later write fails its callback with
+    `ERR_STREAM_WRITE_AFTER_END`, because the client (`allowHalfOpen: false`)
+    has ended its own writable by then; a `net.Socket` reports `EPIPE` there.
+    Neither emits `'error'`. Previously the client socket was destroyed
+    outright, so writes failed with `ERR_STREAM_DESTROYED`, also without an
+    `'error'` event.
+  - A client `end()` (as ioredis `disconnect()` sends) makes the server close
+    its side too, so the client sees `'finish'`, `'end'`, `'close'`.
+
+  - An error passed to `destroy()` on one end is not carried to the other; the
+    far end is torn down cleanly, which is what Node 24's own `duplexPair`
+    does.
+
+  For `SocketConnectionTransport` over any `Duplex`, what matters is which side
+  ended first. If the client ends first (EOF, or it destroys its end), the
+  connection is torn down promptly, like Redis's `freeClient` and like main
+  over TCP. That happens even if the server had already begun closing
+  (e.g. `CLIENT KILL`). Output that is already queued and can still go out
+  gets one turn to flush, so a `SUBSCRIBE a b c` sent together with the EOF
+  still gets all three confirmations. Output backed up behind a client that
+  has stopped reading is dropped. If the server ends first, the connection
+  half-closes as described above. One limit: the client's EOF is only seen
+  while the read loop is reading. A bounded stream whose loop is blocked
+  writing an ordinary reply to a client that stopped reading stays parked
+  until the stream closes. Neither shipped path hits this.
+
+  ioredis and node-redis always read, so none of this changes what they see.
+
 - **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
   `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
   subscribed-mode, transaction) ever implemented them — only tests did — and
@@ -289,6 +368,8 @@ so the PR body is not a durable home for a breaking-change note.
 Released before this file existed. See the
 [release tags](https://github.com/fatal10110/js-redis-server/tags) and the pull
 requests they contain.
+
+[#360]: https://github.com/fatal10110/js-redis-server/issues/360
 
 [#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374

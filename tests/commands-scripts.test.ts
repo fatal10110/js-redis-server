@@ -3,7 +3,6 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   ClientSession,
-  InMemoryConnectionTransport,
   RedisClusterTopology,
   RedisResult,
   RedisServerState,
@@ -14,6 +13,7 @@ import {
 } from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
+import { InMemoryTransport } from './in-memory-transport-test-helper'
 
 describe('new script commands', () => {
   test('loads scripts into the server-wide script cache', async () => {
@@ -643,7 +643,7 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
 
   test('runs SCRIPT commands through the RESP2 adapter', async () => {
     const { session } = createSession()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
     const script = 'return 1'
