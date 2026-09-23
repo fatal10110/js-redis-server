@@ -15,6 +15,7 @@ import {
   type NodeRedisMockClient,
   type NodeRedisMockCluster,
 } from '../../src/index'
+import { FACADE_DEFAULT_PROTOCOL } from '../socketless/known-gaps'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 
@@ -107,17 +108,80 @@ function shapeCases(k: () => (suffix: string) => string): Case[] {
       setup: [],
       probe: ['GET', key('missing')],
     })),
+    build('ZPOPMIN without count', key => ({
+      setup: [zadd(key('z'))],
+      probe: ['ZPOPMIN', key('z')],
+    })),
+    build('ZMSCORE with a missing member', key => ({
+      setup: [zadd(key('z'))],
+      probe: ['ZMSCORE', key('z'), 'b', 'nope', 'a'],
+    })),
+    build('inf scores', key => ({
+      setup: [['ZADD', key('z'), '+inf', 'hi', '-inf', 'lo', '0', 'mid']],
+      probe: ['ZRANGE', key('z'), '0', '-1', 'WITHSCORES'],
+    })),
+    build('ZSCORE of an inf score', key => ({
+      setup: [['ZADD', key('z'), '-inf', 'lo']],
+      probe: ['ZSCORE', key('z'), 'lo'],
+    })),
+    build('ZRANK WITHSCORE', key => ({
+      setup: [zadd(key('z'))],
+      probe: ['ZRANK', key('z'), 'b', 'WITHSCORE'],
+    })),
+    build('WRONGTYPE error', key => ({
+      setup: [['SET', key('str'), 'v']],
+      probe: ['HGETALL', key('str')],
+    })),
   ]
 }
 
-/** Decoded reply, or the thrown error's message. */
-async function outcome(run: () => Promise<unknown>): Promise<unknown> {
+/** Commands of the cases above that write, so a cluster client routes them to a master. */
+const WRITES = new Set([
+  'ZADD',
+  'HSET',
+  'XADD',
+  'SADD',
+  'SET',
+  'ZINCRBY',
+  'ZPOPMIN',
+])
+
+type Outcome = { reply: unknown } | { error: string; errorClass: string }
+
+/** Decoded reply, or the thrown error's message and class. */
+async function outcome(run: () => Promise<unknown>): Promise<Outcome> {
   try {
     return { reply: await run() }
   } catch (err) {
     const error = err as Error
-    return { error: error.message }
+    return { error: error.message, errorClass: error.constructor.name }
   }
+}
+
+/**
+ * `createInMemoryRedis()` is not node-redis-shaped for errors: it throws its
+ * own documented `RedisCommandError` (node-redis throws `SimpleError`). So an
+ * error must carry node-redis' message in that class; a reply must be equal.
+ */
+function assertInMemoryParity(mem: Outcome, ref: Outcome): void {
+  if ('error' in ref) {
+    assert.deepStrictEqual(mem, {
+      error: ref.error,
+      errorClass: 'RedisCommandError',
+    })
+    return
+  }
+  assert.deepStrictEqual(mem, ref)
+}
+
+function withTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out: ${what}`)), 2000)
+    }),
+  ]).finally(() => clearTimeout(timer))
 }
 
 describe(
@@ -199,6 +263,43 @@ describe(
       ]
     }
 
+    test(
+      'default protocol: createNodeRedisMock() answers like a default node-redis client',
+      { todo: FACADE_DEFAULT_PROTOCOL },
+      async () => {
+        // No RESP option and no HELLO on either side: what a user gets out of
+        // the box. node-redis 6 negotiates RESP3; the facade stays on RESP2.
+        const ref = createClient({
+          url: `redis://127.0.0.1:${port}`,
+        }) as RedisClientType
+        ref.on('error', () => {})
+        await ref.connect()
+        references.push(ref)
+        const mock = (await createNodeRedisMock()) as NodeRedisMockClient
+        facades.push(mock)
+
+        const tag = `{parity-default:${randomKey()}}`
+        for (const args of [
+          ['ZADD', `${tag}:z`, '1', 'a', '2.5', 'b'],
+          ['HSET', `${tag}:h`, 'f', 'v'],
+        ]) {
+          await ref.sendCommand(args)
+          await mock.sendCommand(args)
+        }
+        for (const probe of [
+          ['ZSCORE', `${tag}:z`, 'b'],
+          ['HGETALL', `${tag}:h`],
+          ['ZRANGE', `${tag}:z`, '0', '-1', 'WITHSCORES'],
+        ]) {
+          assert.deepStrictEqual(
+            await outcome(() => mock.sendCommand(probe)),
+            await outcome(() => ref.sendCommand(probe)),
+            probe[0],
+          )
+        }
+      },
+    )
+
     for (const RESP of PROTOCOLS) {
       describe(`RESP${RESP}`, () => {
         const namespace = () => {
@@ -232,7 +333,7 @@ describe(
               await ref.sendCommand(args)
               await mem.command(args[0], ...args.slice(1))
             }
-            assert.deepStrictEqual(
+            assertInMemoryParity(
               await outcome(() => mem.command(probe[0], ...probe.slice(1))),
               await outcome(() => ref.sendCommand(probe)),
             )
@@ -269,17 +370,6 @@ describe(
           )
         })
 
-        test('WRONGTYPE surfaces the same error', async () => {
-          const [ref, mock] = [await reference(RESP), await facade(RESP)]
-          const key = `{parity-err:${RESP}:${randomKey()}}`
-          await ref.sendCommand(['SET', key, 'v'])
-          await mock.sendCommand(['SET', key, 'v'])
-          assert.deepStrictEqual(
-            await outcome(() => mock.sendCommand(['HGETALL', key])),
-            await outcome(() => ref.sendCommand(['HGETALL', key])),
-          )
-        })
-
         test('pub/sub delivers the same (message, channel) pushes', async () => {
           const [ref, mock] = [await reference(RESP), await facade(RESP)]
           const channel = `parity-pubsub:${RESP}:${randomKey()}`
@@ -294,6 +384,11 @@ describe(
           })
           const mockSub = await mock.duplicate()
           facades.push(mockSub)
+          // duplicate() does not carry the protocol over (a real node-redis
+          // duplicate re-handshakes with its RESP option), so say it again.
+          if (RESP === 3) {
+            await mockSub.sendCommand(['HELLO', '3'])
+          }
           await mockSub.subscribe(channel, (message, ch) => {
             received.mock.push([message, ch])
           })
@@ -332,7 +427,10 @@ describe(
           )
           assert.strictEqual(await ref.publish(channel, 'hi'), 1)
           const pushes = subscriber.pushes()[Symbol.asyncIterator]()
-          const { value: push } = await pushes.next()
+          const { value: push } = await withTimeout(
+            pushes.next(),
+            'in-memory pub/sub push',
+          )
           await waitFor(() => refReceived.length === 1)
           const [[message, ch]] = refReceived
           // The in-memory client keeps the push's type tag (see its
@@ -351,7 +449,10 @@ describe(
   () => {
     const clients: { destroy(): void }[] = []
     let ports: number[]
-    /** One hash tag per master's slot range, so every node serves a case. */
+    /**
+     * One hash tag per slot range of both clusters' actual slot maps (the
+     * reference's and the facade's), so every master of each serves a case.
+     */
     let tags: string[]
 
     before(async () => {
@@ -360,7 +461,14 @@ describe(
       }
       await testRunner.setupNodeRedisCluster()
       ports = testRunner.getClusterPorts()
-      tags = tagsAcrossMasters(3)
+      const ref = await reference(2)
+      const mock = await facade(2)
+      tags = tagsCoveringRanges([
+        ...slotRanges(
+          await ref.sendCommand(undefined, true, ['CLUSTER', 'SLOTS']),
+        ),
+        ...slotRanges(await mock.sendCommand(['CLUSTER', 'SLOTS'])),
+      ])
     })
 
     after(async () => {
@@ -413,7 +521,9 @@ describe(
               }
               assert.deepStrictEqual(
                 await outcome(() => mock.sendCommand(probe)),
-                await outcome(() => ref.sendCommand(key, true, probe)),
+                await outcome(() =>
+                  ref.sendCommand(key, !WRITES.has(probe[0]), probe),
+                ),
                 `${name} on slot ${clusterKeySlot(key)}`,
               )
             }
@@ -446,14 +556,20 @@ describe(
   },
 )
 
-/** Hash tags whose slots fall in each of `masters` equal slot ranges. */
-function tagsAcrossMasters(masters: number): string[] {
-  const width = Math.ceil(16384 / masters)
+/** `[start, end]` of every range in a CLUSTER SLOTS reply. */
+function slotRanges(reply: unknown): [number, number][] {
+  assert.ok(Array.isArray(reply), 'CLUSTER SLOTS reply')
+  return reply.map(range => [Number(range[0]), Number(range[1])])
+}
+
+/** One hash tag whose slot falls inside each of `ranges`. */
+function tagsCoveringRanges(ranges: [number, number][]): string[] {
   const tags: string[] = []
-  for (let range = 0; range < masters; range++) {
+  for (const [start, end] of ranges) {
     for (let i = 0; ; i++) {
-      const tag = `parity-${range}-${i}`
-      if (Math.floor(clusterKeySlot(tag) / width) === range) {
+      const tag = `parity-${start}-${i}`
+      const slot = clusterKeySlot(tag)
+      if (slot >= start && slot <= end) {
         tags.push(tag)
         break
       }

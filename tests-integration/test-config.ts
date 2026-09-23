@@ -48,6 +48,16 @@ import {
 export type TestBackend = 'mock' | 'real' | 'socketless'
 
 /**
+ * socketless: the protocol the node-redis facades are switched to before a
+ * suite sees them. node-redis 5+ (`redis@6` here) defaults to RESP3 and opens
+ * every connection with `HELLO 3`, so that is what the node-redis suites run
+ * at on mock/real. `createNodeRedisMock()` itself starts at RESP2 — a known
+ * divergence of its default (see known-gaps.ts `FACADE_DEFAULT_PROTOCOL`),
+ * which the harness mirrors away here so the suites compare like with like.
+ */
+const NODE_REDIS_DEFAULT_HANDSHAKE = ['HELLO', '3']
+
+/**
  * Thrown by a `TestRunner` setup method the `socketless` backend cannot serve
  * — anything that needs a TCP port or a server option the socketless factories
  * do not take.
@@ -59,37 +69,70 @@ export class SocketlessUnsupportedError extends Error {
   }
 }
 
+type SocketlessCluster = {
+  connector: NonNullable<RedisOptions['Connector']>
+  ports: number[]
+}
+
 /**
- * socketless: the in-memory `Connector` of the most recently set-up
- * `createIoredisMock({ cluster })` client. `connectToEndpoint()` (utils.ts)
- * hands it to the direct per-node `Redis` clients tests open onto a cluster
- * node's synthetic `host:port` — the same transport the mock cluster client
- * uses for its own node connections — since there is no socket to dial.
+ * socketless: the open `createIoredisMock({ cluster })` roots, by cluster
+ * shape. A direct node connection (`connectToEndpoint()`,
+ * `RawRedisConnection.connect()`) onto a node's synthetic `host:port` is opened
+ * through that root's in-memory `Connector` — the transport the mock cluster
+ * client uses for its own node connections — since there is no socket to dial.
  */
-let socketlessIoredisConnector: RedisOptions['Connector'] | undefined
-let socketlessClusterPorts: number[] = []
+const socketlessClusters = new Map<string, SocketlessCluster>()
+
+/**
+ * The one socketless cluster a direct node connection can mean, `undefined`
+ * on the TCP backends. Every root advertises the same synthetic ports
+ * (`createIoredisMock` has no base-port option), so with two open an address
+ * is ambiguous — that, and a connection before any cluster exists, throw
+ * rather than fall back to dialling TCP.
+ */
+function socketlessClusterForDirectConnection(
+  what: string,
+): SocketlessCluster | undefined {
+  if (process.env.TEST_BACKEND !== 'socketless') {
+    return undefined
+  }
+  const [only, ...others] = socketlessClusters.values()
+  if (!only) {
+    throw new SocketlessUnsupportedError(
+      `${what} before a socketless cluster is set up — there is no TCP port to dial`,
+    )
+  }
+  if (others.length > 0) {
+    throw new SocketlessUnsupportedError(
+      `${what} while ${socketlessClusters.size} socketless clusters are open — their synthetic node ports overlap`,
+    )
+  }
+  return only
+}
 
 /**
  * socketless: open a raw byte stream to a synthetic cluster node through the
  * mock's virtual transport, for `RawRedisConnection`. `undefined` on the TCP
- * backends (dial the port) or before a socketless cluster is set up.
+ * backends (dial the port).
  */
 export async function openSocketlessStream(
   host: string,
   port: number,
 ): Promise<Duplex | undefined> {
-  if (!socketlessIoredisConnector) {
+  const cluster = socketlessClusterForDirectConnection('a raw node connection')
+  if (!cluster) {
     return undefined
   }
-  const connector = new socketlessIoredisConnector({ host, port })
+  const connector = new cluster.connector({ host, port })
   return (await connector.connect(() => {})) as unknown as Duplex
 }
 
 /** Extra `Redis` options for a direct node connection (see above). */
 export function directNodeRedisOptions(): Partial<RedisOptions> {
-  return socketlessIoredisConnector
+  const cluster = socketlessClusterForDirectConnection('a direct node client')
+  return cluster
     ? {
-        Connector: socketlessIoredisConnector,
+        Connector: cluster.connector,
         retryStrategy: () => null,
         maxRetriesPerRequest: 1,
       }
@@ -300,6 +343,7 @@ export class TestRunner {
     if (this.backend === 'socketless') {
       const client = (await createNodeRedisMock()) as NodeRedisMockClient
       this.socketlessNodeRedisStandalone.push(client)
+      await client.sendCommand(NODE_REDIS_DEFAULT_HANDSHAKE)
       return client as unknown as RedisClientType
     }
 
@@ -540,7 +584,7 @@ export class TestRunner {
    */
   getClusterPorts(): number[] {
     if (this.backend === 'socketless') {
-      return socketlessClusterPorts
+      return socketlessClusterForDirectConnection('getClusterPorts()')!.ports
     }
     return this.backend === 'mock'
       ? this.getMockClusterPorts()
@@ -598,10 +642,13 @@ export class TestRunner {
       ),
     )
     this.socketlessIoredisRoots.clear()
-    socketlessIoredisConnector = undefined
-    socketlessClusterPorts = []
+    socketlessClusters.clear()
     for (const cluster of this.socketlessNodeRedisClusters.values()) {
-      cluster.destroy()
+      try {
+        cluster.destroy()
+      } catch {
+        // already closed by the test
+      }
     }
     this.socketlessNodeRedisClusters.clear()
     for (const client of this.socketlessNodeRedisStandalone) {
@@ -642,12 +689,14 @@ export class TestRunner {
         },
       })) as Cluster
       this.socketlessIoredisRoots.set(key, root)
+      socketlessClusters.set(key, {
+        connector: root.options.redisOptions!.Connector!,
+        ports: root
+          .nodes('all')
+          .map(node => Number(node.options.port))
+          .sort((a, b) => a - b),
+      })
     }
-    socketlessIoredisConnector = root.options.redisOptions?.Connector
-    socketlessClusterPorts = root
-      .nodes('all')
-      .map(node => Number(node.options.port))
-      .sort((a, b) => a - b)
 
     const cluster = root.duplicate([], { keyPrefix: prefix, lazyConnect: true })
     await cluster.connect()
@@ -679,6 +728,7 @@ export class TestRunner {
       },
     })) as NodeRedisMockCluster
     this.socketlessNodeRedisClusters.set(key, cluster)
+    await cluster.sendCommand(NODE_REDIS_DEFAULT_HANDSHAKE)
     return cluster
   }
 }

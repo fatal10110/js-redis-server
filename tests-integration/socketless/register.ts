@@ -7,107 +7,194 @@
  * the socketless client mocks. The cases those mocks cannot pass yet are
  * listed centrally in {@link SOCKETLESS_KNOWN_GAPS} instead of being marked in
  * each test file: this preload wraps `node:test`'s `test`/`it`/`describe`/
- * `suite` so a listed test gets `{ todo }` (still runs; failure reported, not
- * fatal) or `{ skip }` (not run), with the listed reason.
+ * `suite` (and their `.skip`/`.todo`/`.only` variants) so a listed test gets
+ * `{ todo }` (still runs; failure reported, not fatal) and a listed file whose
+ * setup the backend cannot provide gets `{ skip }`, with the listed reason.
+ * The default export (`import test from 'node:test'`) is not patched; no suite
+ * uses it.
  *
- * The list is kept honest: when a test file finishes, a root `after` hook
- * fails the file if one of its entries (or listed titles) matched no test —
- * renamed or typo'd — or if a `todo` case passes now: a listed title on its
- * own, a whole-file or RegExp entry once every test it matched passes. So a fix
- * in `src/` has to delete its entry, the way an xfail-strict marker would.
+ * The list is strict. When a test file finishes, a root `after` hook fails the
+ * file if any listed title:
+ *  - matched no test, or matched tests in more than one suite (ambiguous — list
+ *    it by its full `Suite > Sub > title` path instead);
+ *  - passes now (fixed: delete it from the list);
+ *  - failed with an error its entry's `error` pattern does not match (a
+ *    different failure than the one recorded — a regression hiding behind the
+ *    todo);
+ *  - never ran its body (a hook failed first: the cause is not the recorded
+ *    one, so the file needs a `skip` entry).
+ * Every `todo` entry names its titles; only `skip` entries may cover a whole
+ * file, so a test added to a listed file still has to pass or be listed.
+ *
+ * `SOCKETLESS_AUDIT_SKIPS=1` runs `skip` entries' files anyway (as todo) and
+ * fails the file if any of their tests pass, so a skip can be narrowed.
+ *
+ * Before any of that, every test file's process checks the whole list: each
+ * entry's `file` must exist (a renamed or deleted file cannot leave a dead
+ * entry) and each `todo` entry must name its titles and `error`. A bad list
+ * fails every file. (The `--test` orchestrator itself does not run `--import`
+ * preloads, so the check cannot live there.)
  */
 import { createRequire, syncBuiltinESMExports } from 'node:module'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { SOCKETLESS_KNOWN_GAPS, type KnownGap } from './known-gaps'
 
 type TestFn = (...args: unknown[]) => unknown
+type Variant = 'skip' | 'todo' | 'only'
+type Wrapped = TestFn & Partial<Record<Variant, TestFn>>
 /** The mutable CommonJS face of `node:test` this preload patches. */
 type NodeTestModule = {
-  test: TestFn
-  it: TestFn
-  describe: TestFn
-  suite: TestFn
+  test: Wrapped
+  it: Wrapped
+  describe: Wrapped
+  suite: Wrapped
   after: (fn: () => void) => void
 }
 
+if (process.env.TEST_BACKEND !== 'socketless') {
+  throw new Error(
+    'tests-integration/socketless/register.ts is only for TEST_BACKEND=socketless',
+  )
+}
+
+const INTEGRATION_DIR = path.resolve(__dirname, '..')
 const INTEGRATION_ROOT = `${path.sep}tests-integration${path.sep}`
+const AUDIT_SKIPS = process.env.SOCKETLESS_AUDIT_SKIPS === '1'
 
-// Only a test-file child process has anything to wrap. `node --test` runs each
-// file in a child it marks with NODE_TEST_CONTEXT, handing it that one file on
-// the command line; the orchestrating parent (which also inherits `--import`)
-// is left alone.
-const isTestFileProcess = (process.env.NODE_TEST_CONTEXT ?? '').startsWith(
-  'child',
-)
-const testFile = isTestFileProcess
-  ? process.argv
-      .slice(1)
-      .find(arg => arg.includes(INTEGRATION_ROOT) && arg.endsWith('.test.ts'))
-  : undefined
-const fileKey = testFile
-  ?.slice(testFile.lastIndexOf(INTEGRATION_ROOT) + INTEGRATION_ROOT.length)
-  .split(path.sep)
-  .join('/')
+validateList()
 
-const entries: readonly KnownGap[] = fileKey
-  ? SOCKETLESS_KNOWN_GAPS.filter(gap => gap.file === fileKey)
-  : []
+// `node --test` runs each file in a child it marks with NODE_TEST_CONTEXT,
+// handing it that one file on the command line.
+if ((process.env.NODE_TEST_CONTEXT ?? '').startsWith('child')) {
+  const testFile = process.argv
+    .slice(1)
+    .find(arg => arg.includes(INTEGRATION_ROOT) && arg.endsWith('.test.ts'))
+  const fileKey = testFile
+    ?.slice(testFile.lastIndexOf(INTEGRATION_ROOT) + INTEGRATION_ROOT.length)
+    .split(path.sep)
+    .join('/')
+  const entries = fileKey
+    ? SOCKETLESS_KNOWN_GAPS.filter(gap => gap.file === fileKey)
+    : []
+  if (entries.length > 0) {
+    install(entries)
+  }
+}
 
-if (entries.length > 0) {
-  install(entries)
+/** Every entry names a real file, and every todo entry is precise. */
+function validateList(): void {
+  const problems: string[] = []
+  for (const gap of SOCKETLESS_KNOWN_GAPS) {
+    if (!existsSync(path.join(INTEGRATION_DIR, gap.file))) {
+      problems.push(`${gap.file}: no such test file`)
+    }
+    if (gap.mode !== 'skip' && (!gap.test || !gap.error)) {
+      problems.push(
+        `${gap.file}: a todo entry must list its titles and an \`error\` pattern (only skip entries may cover a whole file)`,
+      )
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `invalid tests-integration/socketless/known-gaps.ts:\n  ${problems.join('\n  ')}`,
+    )
+  }
+}
+
+/** What one listed title (or a whole-file skip entry) saw while the file ran. */
+type Seen = {
+  /** Full `Suite > … > title` path of every test it matched. */
+  paths: string[]
+  passed: string[]
+  ran: Set<string>
+  unexpected: string[]
 }
 
 function install(gaps: readonly KnownGap[]): void {
   const require = createRequire(path.join(process.cwd(), 'noop.js'))
   const nodeTest = require('node:test') as NodeTestModule
 
-  /** Per entry: the titles it matched, and which of those passed. */
-  const tally = new Map<KnownGap, Tally>()
-  for (const gap of gaps) {
-    tally.set(gap, { matched: [], passed: new Set() })
+  const seen = new Map<string, Seen>()
+  const seenFor = (gap: KnownGap, title: string): Seen => {
+    const key = `${gaps.indexOf(gap)}\0${title}`
+    let entry = seen.get(key)
+    if (!entry) {
+      entry = { paths: [], passed: [], ran: new Set(), unexpected: [] }
+      seen.set(key, entry)
+    }
+    return entry
   }
 
   const wholeFile = gaps.find(gap => gap.test === undefined)
+  const suitePath: string[] = []
 
-  const lookup = (name: string): KnownGap | undefined =>
-    gaps.find(gap => matchesTitle(gap.test, name)) ?? wholeFile
+  const lookup = (
+    name: string,
+    fullPath: string,
+  ): { gap: KnownGap; title: string } | undefined => {
+    for (const gap of gaps) {
+      const title = gap.test?.find(t => t === fullPath || t === name)
+      if (title !== undefined) {
+        return { gap, title }
+      }
+    }
+    return wholeFile ? { gap: wholeFile, title: '' } : undefined
+  }
 
-  const wrapTest = (original: TestFn): TestFn =>
-    copyProps(original, function (this: unknown, ...args: unknown[]) {
+  const wrapTest = (original: Wrapped): Wrapped =>
+    withVariants(original, function (this: unknown, ...args: unknown[]) {
       const [name, options, fn] = normalize(args)
-      const gap = name === undefined ? wholeFile : lookup(name)
-      if (!gap) {
+      if (name === undefined) {
         return original.apply(this, args)
       }
-      const counts = tally.get(gap)!
-      const title = name ?? '<anonymous>'
-      counts.matched.push(title)
-      const mode = gap.mode ?? 'todo'
-      const reason = `socketless: ${gap.reason}`
-      return original.call(
+      const fullPath = [...suitePath, name].join(' > ')
+      const match = lookup(name, fullPath)
+      if (!match) {
+        return original.apply(this, args)
+      }
+      const record = seenFor(match.gap, match.title)
+      record.paths.push(fullPath)
+      const skipping = match.gap.mode === 'skip' && !AUDIT_SKIPS
+      const reason = `socketless: ${match.gap.reason}`
+      return original.apply(
         this,
-        name,
-        { ...options, [mode]: reason },
-        fn && mode === 'todo'
-          ? recordPass(fn, () => counts.passed.add(title))
-          : fn,
+        rebuild(
+          name,
+          { ...options, [skipping ? 'skip' : 'todo']: reason },
+          fn && !skipping ? observe(fn, fullPath, record, match.gap.error) : fn,
+        ),
       )
     })
 
-  // Only whole-file `skip` entries act on suites: a suite whose `before` hook
-  // cannot even set up (it needs a TCP port) must not run at all.
-  const wrapSuite = (original: TestFn): TestFn =>
-    copyProps(original, function (this: unknown, ...args: unknown[]) {
-      if (wholeFile?.mode !== 'skip') {
-        return original.apply(this, args)
-      }
+  const wrapSuite = (original: Wrapped): Wrapped =>
+    withVariants(original, function (this: unknown, ...args: unknown[]) {
       const [name, options, fn] = normalize(args)
-      tally.get(wholeFile)!.matched.push(name ?? '<anonymous suite>')
-      return original.call(
+      const skipping = wholeFile?.mode === 'skip' && !AUDIT_SKIPS
+      if (wholeFile && suitePath.length === 0) {
+        seenFor(wholeFile, '').paths.push(name ?? '<anonymous suite>')
+      }
+      const body =
+        fn &&
+        function (this: unknown, ...inner: unknown[]) {
+          // node:test runs a suite's body synchronously while registering it,
+          // so this stack names the enclosing suites of every test() inside.
+          suitePath.push(name ?? '<anonymous suite>')
+          try {
+            return fn.apply(this, inner)
+          } finally {
+            suitePath.pop()
+          }
+        }
+      return original.apply(
         this,
-        name,
-        { ...options, skip: `socketless: ${wholeFile.reason}` },
-        fn,
+        rebuild(
+          name,
+          skipping
+            ? { ...options, skip: `socketless: ${wholeFile.reason}` }
+            : options,
+          body,
+        ),
       )
     })
 
@@ -119,8 +206,10 @@ function install(gaps: readonly KnownGap[]): void {
 
   nodeTest.after(() => {
     const stale: string[] = []
-    for (const [gap, { matched, passed }] of tally) {
-      stale.push(...staleness(gap, matched, passed))
+    for (const gap of gaps) {
+      stale.push(
+        ...staleness(gap, title => seen.get(`${gaps.indexOf(gap)}\0${title}`)),
+      )
     }
     if (stale.length > 0) {
       throw new Error(
@@ -130,58 +219,102 @@ function install(gaps: readonly KnownGap[]): void {
   })
 }
 
-type Tally = { matched: string[]; passed: Set<string> }
-
-/**
- * Why an entry no longer describes the file: it (or one of its listed titles)
- * matched no test, or its todo'd tests pass now. A listed title is checked on
- * its own, so fixing one case of a list flags exactly that title.
- */
+/** Why an entry no longer describes the file (see the header). */
 function staleness(
   gap: KnownGap,
-  matched: readonly string[],
-  passed: ReadonlySet<string>,
+  get: (title: string) => Seen | undefined,
 ): string[] {
-  const where = `${gap.file}${gap.test instanceof RegExp ? ` > ${String(gap.test)}` : ''}`
-  if (Array.isArray(gap.test)) {
-    const problems: string[] = []
-    for (const title of gap.test as readonly string[]) {
-      if (!matched.includes(title)) {
+  if (gap.test === undefined) {
+    const record = get('')
+    if (!record || record.paths.length === 0) {
+      return [`${gap.file}: matched no suite or test (renamed or removed?)`]
+    }
+    return record.passed.map(
+      p => `${gap.file} > '${p}': passes now — narrow the skip entry`,
+    )
+  }
+
+  const problems: string[] = []
+  for (const title of gap.test) {
+    const where = `${gap.file} > '${title}'`
+    const record = get(title)
+    if (!record || record.paths.length === 0) {
+      problems.push(`${where}: matched no test (renamed or removed?)`)
+      continue
+    }
+    if (new Set(record.paths).size > 1) {
+      problems.push(
+        `${where}: ambiguous — matched ${[...new Set(record.paths)].join(' | ')}; list the full suite path`,
+      )
+    }
+    if (gap.mode === 'skip') {
+      continue
+    }
+    for (const p of record.passed) {
+      problems.push(
+        `${gap.file} > '${p}': passes now — remove it from the list`,
+      )
+    }
+    problems.push(...record.unexpected.map(u => `${gap.file} > ${u}`))
+    for (const p of record.paths) {
+      if (!record.ran.has(p)) {
         problems.push(
-          `${where} > '${title}': matched no test (renamed or removed?)`,
-        )
-      } else if ((gap.mode ?? 'todo') === 'todo' && passed.has(title)) {
-        problems.push(
-          `${where} > '${title}': passes now — remove it from the list`,
+          `${gap.file} > '${p}': its body never ran (a hook failed first) — that is not the recorded cause; use a skip entry`,
         )
       }
     }
-    return problems
   }
-  const label =
-    typeof gap.test === 'string' ? `${where} > '${gap.test}'` : where
-  if (matched.length === 0) {
-    return [`${label}: matched no test (renamed or removed?)`]
-  }
-  if ((gap.mode ?? 'todo') === 'todo' && matched.every(t => passed.has(t))) {
-    return [
-      `${label}: all ${matched.length} matched test(s) pass now — delete the entry`,
-    ]
-  }
-  return []
+  return problems
 }
 
-function matchesTitle(selector: KnownGap['test'], name: string): boolean {
-  if (selector === undefined) {
-    return false
+/**
+ * Wrap a todo'd test body to record whether it ran, passed, or failed with the
+ * error its entry expects. Callback-style `(t, done)` bodies keep their arity.
+ */
+function observe(
+  fn: TestFn,
+  fullPath: string,
+  record: Seen,
+  expected: RegExp | undefined,
+): TestFn {
+  const failed = (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    if (expected && !expected.test(message)) {
+      record.unexpected.push(
+        `'${fullPath}': failed with an unexpected error: ${message.split('\n')[0]}`,
+      )
+    }
   }
-  if (typeof selector === 'string') {
-    return selector === name
+  if (fn.length >= 2) {
+    // Two declared parameters: node:test tells a callback body by its arity.
+    return function (this: unknown, t: unknown, done: unknown) {
+      const callback = done as (err?: unknown) => void
+      record.ran.add(fullPath)
+      try {
+        fn.call(this, t, (err?: unknown) => {
+          if (err) {
+            failed(err)
+          } else {
+            record.passed.push(fullPath)
+          }
+          callback(err)
+        })
+      } catch (err) {
+        failed(err)
+        throw err
+      }
+    }
   }
-  if (selector instanceof RegExp) {
-    return selector.test(name)
+  return async function (this: unknown, t: unknown) {
+    record.ran.add(fullPath)
+    try {
+      await fn.call(this, t)
+    } catch (err) {
+      failed(err)
+      throw err
+    }
+    record.passed.push(fullPath)
   }
-  return selector.includes(name)
 }
 
 /** `test([name][, options][, fn])` → `[name, options, fn]`. */
@@ -199,22 +332,34 @@ function normalize(
   return [name, options, fn]
 }
 
-/**
- * Count a pass for a todo'd test body. A `(t, done)` callback-style body is
- * passed through untouched (its arity is how node:test detects it), so it can
- * never make its entry look stale.
- */
-function recordPass(fn: TestFn, onPass: () => void): TestFn {
-  if (fn.length >= 2) {
-    return fn
+function rebuild(
+  name: string | undefined,
+  options: Record<string, unknown>,
+  fn: TestFn | undefined,
+): unknown[] {
+  const args: unknown[] = name === undefined ? [] : [name]
+  args.push(options)
+  if (fn) {
+    args.push(fn)
   }
-  return async function (this: unknown, t: unknown) {
-    await fn.call(this, t)
-    onPass()
-  }
+  return args
 }
 
-/** Keep `test.skip`, `test.only`, `describe.todo`, … on the wrapper. */
-function copyProps(original: TestFn, wrapper: TestFn): TestFn {
-  return Object.assign(wrapper, original)
+/**
+ * Give the wrapper its own `.skip` / `.todo` / `.only`, routed through the
+ * wrapper (so a listed `test.skip(...)` is still matched), and keep any other
+ * property of the original.
+ */
+function withVariants(original: Wrapped, wrapper: TestFn): Wrapped {
+  const wrapped = Object.assign(wrapper, original) as Wrapped
+  for (const variant of ['skip', 'todo', 'only'] as const) {
+    wrapped[variant] = function (this: unknown, ...args: unknown[]) {
+      const [name, options, fn] = normalize(args)
+      return wrapper.apply(
+        this,
+        rebuild(name, { ...options, [variant]: true }, fn),
+      )
+    }
+  }
+  return wrapped
 }
