@@ -406,8 +406,15 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       'TTL of PX 1500 must round to 1 (Math.ceil regression gives 2)',
     )
 
-    const pttl = await redisClient.pTTL(reproKey)
-    assert.ok(pttl > 1000 && pttl <= 1500, `PTTL should be raw ms, got ${pttl}`)
+    // Raw-ms check gets its own key with a non-round TTL: a seconds-rounded
+    // PTTL would answer 4000 or 5000, both outside the band, so this stays
+    // strict while leaving ~1s of slack. Off reproKey it would be under 500ms.
+    const rawKey = `${tag}:raw`
+    await redisClient.set(rawKey, 'v', {
+      expiration: { type: 'PX', value: 4999 },
+    })
+    const pttl = await redisClient.pTTL(rawKey)
+    assert.ok(pttl > 4000 && pttl <= 4999, `PTTL should be raw ms, got ${pttl}`)
 
     const downKey = `${tag}:down`
     await redisClient.set(downKey, 'v', {
@@ -415,15 +422,19 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
     })
     assert.strictEqual(await redisClient.ttl(downKey), 1)
 
+    // x999, not x900: TTL 2 needs PTTL >= 1500 and PTTL < 2000 is what keeps a
+    // Math.floor regression answering 1, so the useful window is [1500, 2000).
+    // Starting at its top leaves the whole ~500ms for a slow round-trip; 1900
+    // leaves 400ms and a 401ms stall under load reads TTL 1 (#411).
     const upKey = `${tag}:up`
     await redisClient.set(upKey, 'v', {
-      expiration: { type: 'PX', value: 1900 },
+      expiration: { type: 'PX', value: 1999 },
     })
     assert.strictEqual(await redisClient.ttl(upKey), 2)
 
     const up2Key = `${tag}:up2`
     await redisClient.set(up2Key, 'v', {
-      expiration: { type: 'PX', value: 2900 },
+      expiration: { type: 'PX', value: 2999 },
     })
     assert.strictEqual(await redisClient.ttl(up2Key), 3)
 
@@ -434,7 +445,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
     const listKey = `${tag}:list`
     await redisClient.rPush(listKey, 'a')
-    await redisClient.pExpire(listKey, 1900)
+    await redisClient.pExpire(listKey, 1999)
     assert.strictEqual(await redisClient.ttl(listKey), 2)
 
     await assert.rejects(

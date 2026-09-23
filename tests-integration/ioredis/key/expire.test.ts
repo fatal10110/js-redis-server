@@ -389,22 +389,33 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       'TTL of PX 1500 must round to 1 (Math.ceil regression gives 2)',
     )
 
-    // PTTL reports raw milliseconds, never rounded.
-    const pttl = await redisClient!.pttl(reproKey)
-    assert.ok(pttl > 1000 && pttl <= 1500, `PTTL should be raw ms, got ${pttl}`)
+    // PTTL reports raw milliseconds, never rounded. This gets its own key with
+    // a non-round TTL: a seconds-rounded PTTL would answer 4000 or 5000 and
+    // both fall outside the band, so the assertion stays strict while leaving
+    // ~1s of slack. Reading it off reproKey instead would leave under 500ms,
+    // because `pttl > 1000` on a 1500ms key is only 500ms from the boundary.
+    const rawKey = `${tag}:raw`
+    await redisClient!.set(rawKey, 'v', 'PX', 4999)
+    const pttl = await redisClient!.pttl(rawKey)
+    assert.ok(pttl > 4000 && pttl <= 4999, `PTTL should be raw ms, got ${pttl}`)
 
     // Fractional part < 0.5 rounds down — catches a Math.ceil regression.
     const downKey = `${tag}:down`
     await redisClient!.set(downKey, 'v', 'PX', 1200)
     assert.strictEqual(await redisClient!.ttl(downKey), 1)
 
-    // Fractional part >= 0.5 rounds up — catches a Math.floor "fix".
+    // Fractional part >= 0.5 rounds up — catches a Math.floor "fix". Each value
+    // sits at the top of the window where that check means anything: TTL 2
+    // needs PTTL >= 1500, and PTTL < 2000 is what keeps Math.floor answering 1,
+    // so the window is [1500, 2000). Starting at 1999 leaves the whole ~500ms
+    // of it for a slow round-trip. Don't "tidy" these back to round numbers —
+    // 1900 leaves 400ms and a 401ms stall under load reads TTL 1 (#411).
     const upKey = `${tag}:up`
-    await redisClient!.set(upKey, 'v', 'PX', 1900)
+    await redisClient!.set(upKey, 'v', 'PX', 1999)
     assert.strictEqual(await redisClient!.ttl(upKey), 2)
 
     const up2Key = `${tag}:up2`
-    await redisClient!.set(up2Key, 'v', 'PX', 2900)
+    await redisClient!.set(up2Key, 'v', 'PX', 2999)
     assert.strictEqual(await redisClient!.ttl(up2Key), 3)
 
     // Sentinels: missing key → -2, persistent key → -1.
@@ -416,7 +427,7 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     // TTL is type-agnostic: works on non-string keys without WRONGTYPE.
     const listKey = `${tag}:list`
     await redisClient!.rpush(listKey, 'a')
-    await redisClient!.pexpire(listKey, 1900)
+    await redisClient!.pexpire(listKey, 1999)
     assert.strictEqual(await redisClient!.ttl(listKey), 2)
 
     // Wrong arity → error. (The zero-argument case can't be issued through a
