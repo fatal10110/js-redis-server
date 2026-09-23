@@ -22,11 +22,11 @@ import type { TrackedHashData } from '../state/tracked-values'
 import {
   array,
   bulk,
+  hashFieldTtlSeconds,
   integer,
   ok,
   parseIntegerToken,
   ttlMilliseconds,
-  hashFieldTtlSeconds,
 } from './helpers'
 
 type FieldValuePair = { field: Buffer; value: Buffer }
@@ -476,6 +476,10 @@ function hashFieldTtls(
   }
 
   return ctx.db.updateHash(args.key, hash => {
+    // One clock snapshot, taken before getField's own expiry check: a field
+    // still live at that later check has expiresAt > now, so its TTL can
+    // never round down to 0 between the two clock reads.
+    const now = Date.now()
     return array(
       args.fields.map(field => {
         const entry = hash.getField(field)
@@ -489,8 +493,8 @@ function hashFieldTtls(
 
         const ttl =
           mode === 'seconds'
-            ? hashFieldTtlSeconds(entry.expiresAt)
-            : ttlMilliseconds(entry.expiresAt)
+            ? hashFieldTtlSeconds(entry.expiresAt, now)
+            : ttlMilliseconds(entry.expiresAt, now)
         return RedisValue.integer(ttl)
       }),
     )

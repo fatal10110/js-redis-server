@@ -138,22 +138,24 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       directClient = await connectToSlotOwner(redisClient, hashKey)
       await directClient.hset(hashKey, 'a', '1', 'b', '1')
       assert.deepStrictEqual(
-        await directClient.hpexpire(hashKey, '1200', 'FIELDS', '1', 'a'),
+        await directClient.hpexpire(hashKey, '1450', 'FIELDS', '1', 'a'),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.hpexpire(hashKey, '2400', 'FIELDS', '1', 'b'),
+        await directClient.hpexpire(hashKey, '2450', 'FIELDS', '1', 'b'),
         [1],
       )
-      await directClient.set(stringKey, 'v', 'PX', 1200)
+      await directClient.set(stringKey, 'v', 'PX', 1450)
 
-      // Hash-field TTL uses ceiling: 1200ms -> 2, 2400ms -> 3 (#432). Holds
-      // as long as under 200ms elapse between the expire and the read.
+      // Hash-field TTL uses ceiling: 1450ms -> 2, 2450ms -> 3 (#432), where
+      // round-to-nearest would give 1 and 2. Holds as long as under 450ms
+      // elapse between the expire and the read.
       assert.deepStrictEqual(
         await directClient.httl(hashKey, 'FIELDS', '2', 'a', 'b'),
         [2, 3],
       )
-      // Key-level TTL keeps round-to-nearest: 1200ms -> 1.
+      // Key-level TTL keeps round-to-nearest: 1450ms -> 1 (ceiling would be
+      // 2). Holds as long as under 950ms elapse.
       assert.strictEqual(await directClient.ttl(stringKey), 1)
     } finally {
       await directClient?.del(hashKey, stringKey)

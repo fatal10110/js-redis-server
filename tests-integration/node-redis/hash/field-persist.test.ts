@@ -115,24 +115,26 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       directClient = await connectToNodeRedisSlotOwner(redisClient, hashKey)
       await directClient.hSet(hashKey, { a: '1', b: '1' })
       assert.deepStrictEqual(
-        await directClient.hpExpire(hashKey, 'a', 1200),
+        await directClient.hpExpire(hashKey, 'a', 1450),
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.hpExpire(hashKey, 'b', 2400),
+        await directClient.hpExpire(hashKey, 'b', 2450),
         [1],
       )
       await directClient.set(stringKey, 'v', {
-        expiration: { type: 'PX', value: 1200 },
+        expiration: { type: 'PX', value: 1450 },
       })
 
-      // Hash-field TTL uses ceiling: 1200ms -> 2, 2400ms -> 3 (#432). Holds
-      // as long as under 200ms elapse between the expire and the read.
+      // Hash-field TTL uses ceiling: 1450ms -> 2, 2450ms -> 3 (#432), where
+      // round-to-nearest would give 1 and 2. Holds as long as under 450ms
+      // elapse between the expire and the read.
       assert.deepStrictEqual(
         await directClient.hTTL(hashKey, ['a', 'b']),
         [2, 3],
       )
-      // Key-level TTL keeps round-to-nearest: 1200ms -> 1.
+      // Key-level TTL keeps round-to-nearest: 1450ms -> 1 (ceiling would be
+      // 2). Holds as long as under 950ms elapse.
       assert.strictEqual(await directClient.ttl(stringKey), 1)
     } finally {
       await directClient?.del([hashKey, stringKey])
