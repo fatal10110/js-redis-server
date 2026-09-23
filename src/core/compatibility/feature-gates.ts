@@ -10,7 +10,9 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
   // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
-  // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`.
+  // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`,
+  // and the unknown-parameter wording from `Unsupported CONFIG parameter: <name>`
+  // to `Unknown option or number of arguments for CONFIG SET - '<name>'`.
   'config.set.failure-message': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 6.2 saturates a memory value above the parameter's maximum to that
   // maximum; 7.0+ rejects it with the out-of-range error instead.

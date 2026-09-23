@@ -8,7 +8,12 @@ import {
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { normalizeKeyspaceNotifyConfig } from '../state'
+import {
+  INVALID_NOTIFY_FLAG_DETAIL,
+  keyspaceNotifyFlagsToString,
+  parseKeyspaceNotifyFlags,
+  type KeyspaceNotifyFlags,
+} from '../state'
 import { INT64_MAX, ok, unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
@@ -40,23 +45,54 @@ const MEMORY_UNITS = new Map<string, bigint>([
  * CONFIG SET's failure wording, which Redis 7.0 changed wholesale when it
  * rewrote the subcommand to accept several parameter pairs:
  *
- *   6.2   ERR Invalid argument '<value>' for CONFIG SET '<name>' - <detail>
+ *   6.2   ERR Invalid argument '<value>' for CONFIG SET '<name>'[ - <detail>]
  *   7.0+  ERR CONFIG SET failed (possibly related to argument '<name>') - <detail>
+ *
+ * `name` is the parameter as the client sent it: 6.2 echoes it verbatim, 7.0+
+ * echoes the canonical lower-case name. 6.2 only appends the detail for
+ * parameters on its typed config table; hand-parsed ones such as
+ * `notify-keyspace-events` fail through a bare `badfmt`, so pass
+ * `legacyDetail: false` for those.
+ *
+ * Every CONFIG SET failure goes through this helper or
+ * {@link configSetUnknownParameter} — never a hard-coded message.
  */
 function configSetFailed(
   profile: CompatibilityProfile,
   name: string,
   value: string,
   detail: string,
+  { legacyDetail = true }: { legacyDetail?: boolean } = {},
 ): RedisCommandError {
   if (!profile.has('config.set.failure-message')) {
+    const suffix = legacyDetail ? ` - ${detail}` : ''
     return new RedisCommandError(
-      `Invalid argument '${value}' for CONFIG SET '${name}' - ${detail}`,
+      `Invalid argument '${value}' for CONFIG SET '${name}'${suffix}`,
     )
   }
 
   return new RedisCommandError(
-    `CONFIG SET failed (possibly related to argument '${name}') - ${detail}`,
+    `CONFIG SET failed (possibly related to argument '${name.toLowerCase()}') - ${detail}`,
+  )
+}
+
+/**
+ * CONFIG SET's unknown-parameter wording, changed by the same 7.0 rewrite.
+ * Both echo the name as the client sent it:
+ *
+ *   6.2   ERR Unsupported CONFIG parameter: <name>
+ *   7.0+  ERR Unknown option or number of arguments for CONFIG SET - '<name>'
+ */
+function configSetUnknownParameter(
+  profile: CompatibilityProfile,
+  name: string,
+): RedisCommandError {
+  if (!profile.has('config.set.failure-message')) {
+    return new RedisCommandError(`Unsupported CONFIG parameter: ${name}`)
+  }
+
+  return new RedisCommandError(
+    `Unknown option or number of arguments for CONFIG SET - '${name}'`,
   )
 }
 
@@ -191,7 +227,10 @@ function configGet(
   const store = getConfigStore(ctx)
   // Overlay server-backed params so CONFIG GET reflects their live values.
   const effective = new Map(store)
-  effective.set(KEYSPACE_NOTIFY_PARAM, ctx.server.notifyKeyspaceEvents)
+  effective.set(
+    KEYSPACE_NOTIFY_PARAM,
+    keyspaceNotifyFlagsToString(ctx.server.notifyKeyspaceEvents),
+  )
   effective.set(PROTO_MAX_BULK_LEN_PARAM, ctx.server.protoMaxBulkLen.toString())
 
   const patterns = args.map(arg => arg.toString())
@@ -220,6 +259,7 @@ function configGet(
 type ConfigUpdate =
   | { name: string; value: string }
   | { name: typeof PROTO_MAX_BULK_LEN_PARAM; bytes: bigint }
+  | { name: typeof KEYSPACE_NOTIFY_PARAM; flags: KeyspaceNotifyFlags }
 
 function configSet(
   args: readonly Buffer[],
@@ -229,22 +269,33 @@ function configSet(
     throw new WrongNumberOfArgumentsError('config|set')
   }
 
+  const { profile } = ctx.server
   const store = getConfigStore(ctx)
   const updates: ConfigUpdate[] = []
   for (let i = 0; i < args.length; i += 2) {
-    const name = args[i].toString().toLowerCase()
+    const rawName = args[i].toString()
+    const name = rawName.toLowerCase()
     const value = args[i + 1].toString()
     if (name === KEYSPACE_NOTIFY_PARAM) {
-      // Validate + normalize now so the whole SET aborts before applying any.
-      updates.push({ name, value: normalizeKeyspaceNotifyConfig(value) })
+      const flags = parseKeyspaceNotifyFlags(value)
+      if (!flags) {
+        throw configSetFailed(
+          profile,
+          rawName,
+          value,
+          INVALID_NOTIFY_FLAG_DETAIL,
+          { legacyDetail: false },
+        )
+      }
+      updates.push({ name, flags })
       continue
     }
     if (name === PROTO_MAX_BULK_LEN_PARAM) {
       updates.push({
         name,
         bytes: parseMemoryValue(
-          ctx.server.profile,
-          name,
+          profile,
+          rawName,
           value,
           PROTO_MAX_BULK_LEN_MIN,
           PROTO_MAX_BULK_LEN_MAX,
@@ -253,26 +304,22 @@ function configSet(
       continue
     }
     if (!store.has(name)) {
-      throw new RedisCommandError(
-        `Unknown option or number of arguments for CONFIG SET - '${args[i].toString()}'`,
-      )
+      throw configSetUnknownParameter(profile, rawName)
     }
     updates.push({ name, value })
   }
 
   // Validate every parameter before applying any — CONFIG SET is atomic.
   for (const update of updates) {
-    const { name } = update
     if ('bytes' in update) {
       ctx.server.protoMaxBulkLen = update.bytes
       continue
     }
-    const { value } = update
-    if (name === KEYSPACE_NOTIFY_PARAM) {
-      ctx.server.notifyKeyspaceEvents = value
+    if ('flags' in update) {
+      ctx.server.notifyKeyspaceEvents = update.flags
       continue
     }
-    store.set(name, value)
+    store.set(update.name, update.value)
   }
   return ok()
 }

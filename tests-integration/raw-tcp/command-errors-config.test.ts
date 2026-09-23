@@ -168,6 +168,37 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  // CONFIG SET failure wording (#416). The 7.0+ form names the parameter by its
+  // canonical lower-case name whatever casing the client sent; the 6.2 form
+  // (no detail suffix for this parameter, name echoed as sent) is asserted by
+  // the profile sweep in profile-gates.test.ts.
+  test('an invalid notify-keyspace-events class fails with the CONFIG SET template', async () => {
+    const conn = await connect()
+    const expected =
+      "-ERR CONFIG SET failed (possibly related to argument 'notify-keyspace-events') - Invalid event class character. Use 'Ag$lshzxeKEtmdn'.\r\n"
+
+    await expectReply(
+      conn,
+      ['CONFIG', 'SET', 'notify-keyspace-events', 'Xz'],
+      expected,
+    )
+    await expectReply(
+      conn,
+      ['CONFIG', 'SET', 'Notify-Keyspace-Events', 'KE A'],
+      expected,
+    )
+  })
+
+  test('an unknown CONFIG SET parameter is echoed as sent', async () => {
+    const conn = await connect()
+
+    await expectReply(
+      conn,
+      ['CONFIG', 'SET', 'Bogus-Param', '1'],
+      "-ERR Unknown option or number of arguments for CONFIG SET - 'Bogus-Param'\r\n",
+    )
+  })
+
   test('CONFIG with no subcommand is a wrong-arity error for the container', async () => {
     const conn = await connect()
 

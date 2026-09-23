@@ -106,7 +106,8 @@ surface.
 > - `notify-keyspace-events` — see
 >   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 >   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
->   `AKE`; an unknown class character is rejected).
+>   `AKE`; an unknown class character is rejected with the profile's CONFIG
+>   SET failure wording).
 > - `proto-max-bulk-len` — enforced in the three places Redis enforces it.
 >   Accepts Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces
 >   Redis' own `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure

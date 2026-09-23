@@ -326,6 +326,54 @@ describe(
       }
     })
 
+    // Every CONFIG SET failure shares the one gated template (#416), not only
+    // proto-max-bulk-len's. Captured from real 6.2.14 / 7.0.15 / 8.0.0 /
+    // valkey 8.0.0 / valkey 9.0.0:
+    // - notify-keyspace-events is hand-parsed in 6.2 (`goto badfmt`), so its
+    //   6.2 reply carries no ` - <detail>` suffix at all;
+    // - 6.2 echoes the parameter name as the client sent it, 7.0+ echoes the
+    //   canonical lower-case name;
+    // - an unknown parameter has its own 6.2 wording.
+    test('every CONFIG SET failure uses the profile wording', async () => {
+      const badNotify = await send(
+        'CONFIG',
+        'SET',
+        'Notify-Keyspace-Events',
+        'Xz',
+      )
+      const badMemory = await send('CONFIG', 'SET', 'Proto-Max-Bulk-Len', 'abc')
+      const unknown = await send('CONFIG', 'SET', 'Bogus-Param', '1')
+
+      if (supportsConfigSetFailureWording()) {
+        assert.strictEqual(
+          badNotify,
+          "-ERR CONFIG SET failed (possibly related to argument 'notify-keyspace-events') - Invalid event class character. Use 'Ag$lshzxeKEtmdn'.\r\n",
+        )
+        assert.strictEqual(
+          badMemory,
+          "-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value\r\n",
+        )
+        assert.strictEqual(
+          unknown,
+          "-ERR Unknown option or number of arguments for CONFIG SET - 'Bogus-Param'\r\n",
+        )
+        return
+      }
+
+      assert.strictEqual(
+        badNotify,
+        "-ERR Invalid argument 'Xz' for CONFIG SET 'Notify-Keyspace-Events'\r\n",
+      )
+      assert.strictEqual(
+        badMemory,
+        "-ERR Invalid argument 'abc' for CONFIG SET 'Proto-Max-Bulk-Len' - argument must be a memory value\r\n",
+      )
+      assert.strictEqual(
+        unknown,
+        '-ERR Unsupported CONFIG parameter: Bogus-Param\r\n',
+      )
+    })
+
     // Redis 7.0 moved container commands into the command table, replacing the
     // 6.2 unknown-subcommand template and adding `%.128s` truncation of the
     // echoed name. Captured from real redis-server 6.2.24, 7.0.15 and 8.0.6.
