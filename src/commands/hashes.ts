@@ -36,10 +36,7 @@ type HashFieldsArgs = {
 }
 type HashExpireOption = 'NX' | 'XX' | 'GT' | 'LT'
 type HashExpireMode =
-  | 'seconds'
-  | 'milliseconds'
-  | 'unix-seconds'
-  | 'unix-milliseconds'
+  'seconds' | 'milliseconds' | 'unix-seconds' | 'unix-milliseconds'
 
 const HASH_FIELD_EXPIRATION_SINCE = { redis: '7.4.0', valkey: '9.0.0' } as const
 const HGETEX_SINCE = { redis: '8.0.0', valkey: '9.0.0' } as const
@@ -59,9 +56,7 @@ type HgetexExpiration =
   | { kind: 'persist' }
   | { kind: 'set'; mode: HashExpireMode; time: bigint }
 type HgetexPlan =
-  | { kind: 'keep' }
-  | { kind: 'persist' }
-  | { kind: 'expireAt'; at: number }
+  { kind: 'keep' } | { kind: 'persist' } | { kind: 'expireAt'; at: number }
 type HgetexArgs = {
   key: Buffer
   expiration: HgetexExpiration
@@ -73,9 +68,7 @@ type HsetexExpiration =
   | { kind: 'keepttl' }
   | { kind: 'set'; mode: HashExpireMode; time: bigint }
 type HsetexPlan =
-  | { kind: 'clear' }
-  | { kind: 'keepttl' }
-  | { kind: 'expireAt'; at: number }
+  { kind: 'clear' } | { kind: 'keepttl' } | { kind: 'expireAt'; at: number }
 type HsetexArgs = {
   key: Buffer
   condition: HsetexCondition | undefined
