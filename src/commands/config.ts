@@ -1,15 +1,27 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   RedisCommandError,
+  RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import { normalizeKeyspaceNotifyConfig } from '../state'
-import { INT64_MAX, ok, unknownSubcommandError } from './helpers'
+import {
+  INVALID_NOTIFY_FLAG_DETAIL,
+  keyspaceNotifyFlagsToString,
+  parseKeyspaceNotifyFlags,
+  type KeyspaceNotifyFlags,
+} from '../state'
+import {
+  INT64_MAX,
+  ok,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 // Behavior-driving parameters whose authoritative value lives on the server
@@ -40,23 +52,57 @@ const MEMORY_UNITS = new Map<string, bigint>([
  * CONFIG SET's failure wording, which Redis 7.0 changed wholesale when it
  * rewrote the subcommand to accept several parameter pairs:
  *
- *   6.2   ERR Invalid argument '<value>' for CONFIG SET '<name>' - <detail>
+ *   6.2   ERR Invalid argument '<value>' for CONFIG SET '<name>'[ - <detail>]
  *   7.0+  ERR CONFIG SET failed (possibly related to argument '<name>') - <detail>
+ *
+ * `name` is the parameter as the client sent it: 6.2 echoes it verbatim, 7.0+
+ * echoes it lower-cased (an alias is not canonicalized — `Hash-Max-Ziplist-
+ * Entries` comes back as `hash-max-ziplist-entries`). 6.2 only appends the
+ * detail for parameters on its typed config table; hand-parsed ones such as
+ * `notify-keyspace-events` fail through a bare `badfmt`, so pass
+ * `legacyDetail: false` for those.
+ *
+ * Invalid-value failures go through this helper and unknown parameters through
+ * {@link configSetUnknownParameter}. Repeated names use
+ * {@link configSetDuplicateParameter}, which echoes the name as sent rather
+ * than lower-cased, and shape/arity errors come from {@link checkConfigSetNames}.
  */
 function configSetFailed(
   profile: CompatibilityProfile,
   name: string,
   value: string,
   detail: string,
+  { legacyDetail = true }: { legacyDetail?: boolean } = {},
 ): RedisCommandError {
   if (!profile.has('config.set.failure-message')) {
+    const suffix = legacyDetail ? ` - ${detail}` : ''
     return new RedisCommandError(
-      `Invalid argument '${value}' for CONFIG SET '${name}' - ${detail}`,
+      `Invalid argument '${value}' for CONFIG SET '${name}'${suffix}`,
     )
   }
 
   return new RedisCommandError(
-    `CONFIG SET failed (possibly related to argument '${name}') - ${detail}`,
+    `CONFIG SET failed (possibly related to argument '${name.toLowerCase()}') - ${detail}`,
+  )
+}
+
+/**
+ * CONFIG SET's unknown-parameter wording, changed by the same 7.0 rewrite.
+ * Both echo the name as the client sent it:
+ *
+ *   6.2   ERR Unsupported CONFIG parameter: <name>
+ *   7.0+  ERR Unknown option or number of arguments for CONFIG SET - '<name>'
+ */
+function configSetUnknownParameter(
+  profile: CompatibilityProfile,
+  name: string,
+): RedisCommandError {
+  if (!profile.has('config.set.failure-message')) {
+    return new RedisCommandError(`Unsupported CONFIG parameter: ${name}`)
+  }
+
+  return new RedisCommandError(
+    `Unknown option or number of arguments for CONFIG SET - '${name}'`,
   )
 }
 
@@ -191,7 +237,10 @@ function configGet(
   const store = getConfigStore(ctx)
   // Overlay server-backed params so CONFIG GET reflects their live values.
   const effective = new Map(store)
-  effective.set(KEYSPACE_NOTIFY_PARAM, ctx.server.notifyKeyspaceEvents)
+  effective.set(
+    KEYSPACE_NOTIFY_PARAM,
+    keyspaceNotifyFlagsToString(ctx.server.notifyKeyspaceEvents),
+  )
   effective.set(PROTO_MAX_BULK_LEN_PARAM, ctx.server.protoMaxBulkLen.toString())
 
   const patterns = args.map(arg => arg.toString())
@@ -218,33 +267,106 @@ function configGet(
  * re-derived (and possibly re-thrown) once updates have started landing.
  */
 type ConfigUpdate =
-  | { name: string; value: string }
-  | { name: typeof PROTO_MAX_BULK_LEN_PARAM; bytes: bigint }
+  | { kind: 'store'; name: string; value: string }
+  | { kind: 'proto-max-bulk-len'; bytes: bigint }
+  | { kind: 'notify-keyspace-events'; flags: KeyspaceNotifyFlags }
+
+/**
+ * CONFIG SET's repeated-parameter failure. The `CONFIG SET failed` wrapper of
+ * {@link configSetFailed}, but only ever reachable on 7.0+ profiles (6.2 never
+ * accepts a second pair), and it echoes the repeat exactly as the client sent
+ * it — real Redis reports `argv` here, not the lower-cased name its value
+ * failures report. Captured from 7.0.15, 8.0.6 and Valkey 7.2.14:
+ *
+ *   CONFIG SET timeout 0 TIMEOUT 0
+ *     -> ERR CONFIG SET failed (possibly related to argument 'TIMEOUT') - duplicate parameter
+ */
+function configSetDuplicateParameter(name: string): RedisCommandError {
+  return new RedisCommandError(
+    `CONFIG SET failed (possibly related to argument '${name}') - duplicate parameter`,
+  )
+}
+
+/**
+ * CONFIG SET's shape and name checks, run before any value is looked at.
+ *
+ * Redis 6.2 dispatches SET only for exactly one pair; every other shape falls
+ * through to the legacy subcommand syntax error. 7.0+ (`config.set.multi-pair`)
+ * takes any number of pairs, and — like its `configSetCommand` — resolves every
+ * name in one pass before validating a value: the first unknown or repeated
+ * name in argument order is the error, so a bad value never masks either.
+ */
+function checkConfigSetNames(
+  subcommand: Buffer,
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+  store: ReadonlyMap<string, string>,
+): void {
+  const { profile } = ctx.server
+  if (!profile.has('config.set.multi-pair')) {
+    if (args.length !== 2) {
+      throw subcommandSyntaxError('CONFIG', subcommand, profile)
+    }
+  } else if (args.length < 2) {
+    throw new WrongNumberOfArgumentsError('config|set')
+  } else if (args.length % 2 !== 0) {
+    throw new RedisSyntaxError()
+  }
+
+  const seen = new Set<string>()
+  for (let i = 0; i < args.length; i += 2) {
+    const raw = args[i].toString()
+    const name = raw.toLowerCase()
+    if (
+      name !== KEYSPACE_NOTIFY_PARAM &&
+      name !== PROTO_MAX_BULK_LEN_PARAM &&
+      !store.has(name)
+    ) {
+      throw configSetUnknownParameter(profile, raw)
+    }
+    if (seen.has(name)) {
+      throw configSetDuplicateParameter(raw)
+    }
+    seen.add(name)
+  }
+}
 
 function configSet(
+  subcommand: Buffer,
   args: readonly Buffer[],
   ctx: RedisExecutionContext,
 ): RedisResult {
-  if (args.length === 0 || args.length % 2 !== 0) {
-    throw new WrongNumberOfArgumentsError('config|set')
-  }
-
+  const { profile } = ctx.server
   const store = getConfigStore(ctx)
+  checkConfigSetNames(subcommand, args, ctx, store)
+
   const updates: ConfigUpdate[] = []
   for (let i = 0; i < args.length; i += 2) {
-    const name = args[i].toString().toLowerCase()
+    const rawName = args[i].toString()
+    const name = rawName.toLowerCase()
     const value = args[i + 1].toString()
     if (name === KEYSPACE_NOTIFY_PARAM) {
-      // Validate + normalize now so the whole SET aborts before applying any.
-      updates.push({ name, value: normalizeKeyspaceNotifyConfig(value) })
+      const flags = parseKeyspaceNotifyFlags(value, {
+        newKeyClass: profile.has('notify.keyspace.new-key-class'),
+      })
+      if (!flags) {
+        throw configSetFailed(
+          profile,
+          rawName,
+          value,
+          INVALID_NOTIFY_FLAG_DETAIL,
+          { legacyDetail: false },
+        )
+      }
+      updates.push({ kind: KEYSPACE_NOTIFY_PARAM, flags })
       continue
     }
     if (name === PROTO_MAX_BULK_LEN_PARAM) {
       updates.push({
-        name,
+        kind: PROTO_MAX_BULK_LEN_PARAM,
         bytes: parseMemoryValue(
-          ctx.server.profile,
-          name,
+          profile,
+          rawName,
           value,
           PROTO_MAX_BULK_LEN_MIN,
           PROTO_MAX_BULK_LEN_MAX,
@@ -252,27 +374,23 @@ function configSet(
       })
       continue
     }
-    if (!store.has(name)) {
-      throw new RedisCommandError(
-        `Unknown option or number of arguments for CONFIG SET - '${args[i].toString()}'`,
-      )
-    }
-    updates.push({ name, value })
+    // Names were resolved by checkConfigSetNames, so anything left is stored.
+    updates.push({ kind: 'store', name, value })
   }
 
   // Validate every parameter before applying any — CONFIG SET is atomic.
   for (const update of updates) {
-    const { name } = update
-    if ('bytes' in update) {
-      ctx.server.protoMaxBulkLen = update.bytes
-      continue
+    switch (update.kind) {
+      case 'proto-max-bulk-len':
+        ctx.server.protoMaxBulkLen = update.bytes
+        break
+      case 'notify-keyspace-events':
+        ctx.server.notifyKeyspaceEvents = update.flags
+        break
+      case 'store':
+        store.set(update.name, update.value)
+        break
     }
-    const { value } = update
-    if (name === KEYSPACE_NOTIFY_PARAM) {
-      ctx.server.notifyKeyspaceEvents = value
-      continue
-    }
-    store.set(name, value)
   }
   return ok()
 }
@@ -306,13 +424,8 @@ export const configCommand = defineCommand({
     skip: true,
   },
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('config|get', -3),
       commandSubcommandInfo('config|set', -4),
@@ -323,14 +436,14 @@ export const configCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
       return configGet(args.args, ctx)
     }
 
     if (subcommand === 'set') {
-      return configSet(args.args, ctx)
+      return configSet(args.subcommand, args.args, ctx)
     }
 
     if (subcommand === 'resetstat') {

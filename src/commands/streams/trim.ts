@@ -44,6 +44,7 @@ function parseTrimLimit(raw: string): bigint {
 
 export function createTrimSpecSchema() {
   return t.custom<TrimSpec>(
+    { min: 2 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       if (index >= input.length) throw new SchemaMismatchError()
 

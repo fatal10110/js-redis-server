@@ -1,3 +1,4 @@
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import {
   defineCommand,
   type CommandDefinition,
@@ -6,20 +7,28 @@ import {
   type CommandIntrospection,
   type CommandKeySpec,
 } from '../core/command-definition'
-import { t } from '../core/command-schema'
+import {
+  schemaArity,
+  schemaKeyRange,
+  t,
+  type CommandSchema,
+} from '../core/command-schema'
 import {
   RedisCommandError,
   RedisSyntaxError,
+  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import type { FeatureId } from '../core/compatibility'
+import type { CompatibilityProfile, FeatureId } from '../core/compatibility'
+import { containerSubcommandExists } from '../core/compatibility/subcommand-gates'
+import { unknownSubcommandError } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
 type CommandArgs = {
-  subcommand?: string
+  subcommand?: Buffer
   args: Buffer[]
 }
 
@@ -47,21 +56,30 @@ const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
   'pubsub|shardnumsub': 'pubsub.sharded',
 }
 
+// Tokens GETKEYS / GETKEYSANDFLAGS need after the subcommand. Only 7.0 wants
+// the target command plus at least one argument (its new per-subcommand arity
+// was -4); 6.2 checks just for a target and 7.2+ relaxed the arity to -3.
+function minGetKeysArgs(profile: CompatibilityProfile): number {
+  const redis70 =
+    profile.has('command.getkeysandflags') &&
+    !profile.has('command.getkeys-single-arg')
+  return redis70 ? 2 : 1
+}
+
+function getKeysArity(profile: CompatibilityProfile): number {
+  return -(minGetKeysArgs(profile) + 2)
+}
+
 const commandIntrospection: CommandIntrospection = {
-  arity: -1,
   flags: ['loading', 'stale'],
-  firstKey: 0,
-  lastKey: 0,
-  keyStep: 0,
   categories: ['@slow', '@connection'],
   tips: ['nondeterministic_output_order'],
-  keySpecs: [],
   subcommands: [
     commandSubcommandInfo('command|docs', -2, {
       tips: ['nondeterministic_output_order'],
     }),
-    commandSubcommandInfo('command|getkeys', -4),
-    commandSubcommandInfo('command|getkeysandflags', -4),
+    commandSubcommandInfo('command|getkeys', getKeysArity),
+    commandSubcommandInfo('command|getkeysandflags', getKeysArity),
     commandSubcommandInfo('command|info', -2, {
       tips: ['nondeterministic_output_order'],
     }),
@@ -80,7 +98,9 @@ const commandIntrospection: CommandIntrospection = {
 export const commandCommand = defineCommand({
   name: 'command',
   schema: t.object({
-    subcommand: t.optional(t.string()),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.optional(t.bulk()),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly'],
@@ -92,7 +112,7 @@ export const commandCommand = defineCommand({
       return commandInfo(allRootCommandInfos(ctx))
     }
 
-    switch (args.subcommand.toLowerCase()) {
+    switch (asciiLowerCase(args.subcommand.toString())) {
       case 'count':
         return commandCount(args, ctx)
       case 'list':
@@ -101,31 +121,35 @@ export const commandCommand = defineCommand({
         return commandInfoSubcommand(args, ctx)
       case 'docs':
         if (!ctx.server.profile.has('command.docs')) {
-          throw commandSubcommandError(args.subcommand)
+          throw unknownSubcommandError(
+            'COMMAND',
+            args.subcommand,
+            ctx.server.profile,
+          )
         }
         return commandDocsSubcommand(args, ctx)
       case 'getkeys':
         return commandGetKeys(args, ctx)
       case 'getkeysandflags':
         if (!ctx.server.profile.has('command.getkeysandflags')) {
-          throw commandSubcommandError(args.subcommand)
+          throw unknownSubcommandError(
+            'COMMAND',
+            args.subcommand,
+            ctx.server.profile,
+          )
         }
         return commandGetKeysAndFlags(args, ctx)
       case 'help':
         return commandHelp(args, ctx)
       default:
-        throw new RedisCommandError(
-          `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
+        throw unknownSubcommandError(
+          'COMMAND',
+          args.subcommand,
+          ctx.server.profile,
         )
     }
   },
 })
-
-function commandSubcommandError(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try COMMAND HELP.`,
-  )
-}
 
 function commandCount(
   args: CommandArgs,
@@ -277,20 +301,38 @@ function planCommandKeys(
   definition: CommandDefinition<unknown>
   keys: readonly Buffer[]
 } {
-  if (args.args.length < 1) {
+  if (args.args.length < minGetKeysArgs(ctx.server.profile)) {
     throw new WrongNumberOfArgumentsError(commandName)
   }
 
-  const targetName = args.args[0].toString().toLowerCase()
+  const targetName = asciiLowerCase(args.args[0].toString())
   const definition = ctx.executor.getCommandDefinition(targetName)
   if (!definition) {
     throw new RedisCommandError('Invalid command specified')
+  }
+
+  // Real Redis checks that the command has keys before it checks arity. For
+  // a 7.0+ container that is per subcommand, and no container's HELP has any.
+  if (isContainerHelp(targetName, args.args[1], ctx.server.profile)) {
+    throw new RedisCommandError('The command has no key arguments')
   }
 
   let keys: readonly Buffer[]
   try {
     keys = ctx.executor.plan(targetName, args.args.slice(1)).keys
   } catch (err) {
+    // From 7.0 the subcommand is part of command lookup, so an unknown one is
+    // an unknown command here too (6.2 never throws this at plan time).
+    if (err instanceof UnknownSubcommandError) {
+      throw new RedisCommandError('Invalid command specified')
+    }
+
+    if (err instanceof WrongNumberOfArgumentsError) {
+      throw new RedisCommandError(
+        'Invalid number of arguments specified for command',
+      )
+    }
+
     if (err instanceof RedisCommandError) {
       throw new WrongNumberOfArgumentsError(commandName)
     }
@@ -303,6 +345,19 @@ function planCommandKeys(
   }
 
   return { definition, keys }
+}
+
+function isContainerHelp(
+  container: string,
+  subcommand: Buffer | undefined,
+  profile: CompatibilityProfile,
+): boolean {
+  return (
+    subcommand !== undefined &&
+    profile.has('error.unknown-subcommand-dispatch-timing') &&
+    asciiLowerCase(subcommand.toString()) === 'help' &&
+    containerSubcommandExists(container, subcommand, profile) === true
+  )
 }
 
 function allRootCommandInfos(ctx: RedisExecutionContext): CommandInfo[] {
@@ -323,7 +378,7 @@ function findCommandInfo(
   ctx: RedisExecutionContext,
   name: string,
 ): CommandInfo | null {
-  const target = name.toLowerCase()
+  const target = asciiLowerCase(name)
   for (const info of allCommandInfos(ctx)) {
     if (info.name === target) {
       return info
@@ -343,28 +398,25 @@ function createCommandInfo(
     definition.flags,
     definition.introspection,
     ctx,
+    definition.schema,
   )
 }
 
 function createCommandInfoFromIntrospection(
   name: string,
   fallbackFlags: readonly string[],
-  introspection?: CommandIntrospection,
-  ctx?: RedisExecutionContext,
+  introspection: CommandIntrospection | undefined,
+  ctx: RedisExecutionContext,
+  schema?: CommandSchema<unknown>,
 ): CommandInfo {
   const keySpecs = introspection?.keySpecs ?? []
-  const firstKey = introspection?.firstKey ?? firstKeyFromSpecs(keySpecs)
-  const lastKey = introspection?.lastKey ?? lastKeyFromSpecs(firstKey, keySpecs)
-  const keyStep = introspection?.keyStep ?? keyStepFromSpecs(keySpecs)
   const flags = introspection?.flags ?? fallbackFlags
 
   return {
     name,
-    arity: introspection?.arity ?? -1,
+    arity: commandArity(introspection, ctx, schema),
     flags,
-    firstKey,
-    lastKey,
-    keyStep,
+    ...commandKeyRange(keySpecs, schema),
     categories: introspection?.categories ?? inferCategories(flags),
     tips: introspection?.tips ?? [],
     keySpecs,
@@ -387,11 +439,86 @@ function createCommandInfoFromIntrospection(
   }
 }
 
+function commandArity(
+  introspection: CommandIntrospection | undefined,
+  ctx: RedisExecutionContext,
+  schema?: CommandSchema<unknown>,
+): number {
+  const arity = introspection?.arity
+  if (typeof arity === 'function') {
+    return arity(ctx.server.profile)
+  }
+
+  if (arity !== undefined) {
+    return arity
+  }
+
+  return schema ? schemaArity(schema) : -1
+}
+
+type KeyRange = Pick<CommandInfo, 'firstKey' | 'lastKey' | 'keyStep'>
+
+/**
+ * The legacy first/last/step triple. Declared key specs win, folded the way
+ * Redis's `populateCommandLegacyRangeSpec` does; otherwise the schema's key
+ * positions stand in for them.
+ */
+function commandKeyRange(
+  keySpecs: readonly CommandKeySpec[],
+  schema?: CommandSchema<unknown>,
+): KeyRange {
+  if (keySpecs.length > 0) {
+    return keySpecsKeyRange(keySpecs)
+  }
+
+  return schema
+    ? schemaKeyRange(schema)
+    : { firstKey: 0, lastKey: 0, keyStep: 0 }
+}
+
+export function keySpecsKeyRange(specs: readonly CommandKeySpec[]): KeyRange {
+  if (specs.length === 1) {
+    const [spec] = specs
+    return {
+      firstKey: spec.beginSearchIndex,
+      lastKey: absoluteLastKey(spec),
+      keyStep: spec.keyStep,
+    }
+  }
+
+  // Several specs merge only while each is a plain (step 1) range picking up
+  // right where the previous one ended.
+  let firstKey = 0
+  let lastKey = 0
+  for (const spec of specs) {
+    if (spec.keyStep !== 1) {
+      continue
+    }
+
+    if (firstKey !== 0 && lastKey !== spec.beginSearchIndex - 1) {
+      continue
+    }
+
+    firstKey = firstKey || spec.beginSearchIndex
+    lastKey = absoluteLastKey(spec)
+  }
+
+  return firstKey === 0
+    ? { firstKey: 0, lastKey: 0, keyStep: 0 }
+    : { firstKey, lastKey, keyStep: 1 }
+}
+
+// A non-negative spec `lastKey` is relative to the spec's first key; a
+// negative one counts back from the end of the command and is kept as is.
+function absoluteLastKey(spec: CommandKeySpec): number {
+  return spec.lastKey < 0 ? spec.lastKey : spec.beginSearchIndex + spec.lastKey
+}
+
 function subcommandAvailable(
   introspection: CommandIntrospection,
-  ctx?: RedisExecutionContext,
+  ctx: RedisExecutionContext,
 ): boolean {
-  if (!ctx || !introspection.name) {
+  if (!introspection.name) {
     return true
   }
 
@@ -554,26 +681,6 @@ function inferCategories(flags: readonly string[]): readonly string[] {
   return ['@slow']
 }
 
-function firstKeyFromSpecs(specs: readonly CommandKeySpec[]): number {
-  return specs[0]?.beginSearchIndex ?? 0
-}
-
-function lastKeyFromSpecs(
-  firstKey: number,
-  specs: readonly CommandKeySpec[],
-): number {
-  if (specs.length === 0) {
-    return 0
-  }
-
-  const lastKey = specs[0].lastKey
-  return lastKey === 0 ? firstKey : lastKey
-}
-
-function keyStepFromSpecs(specs: readonly CommandKeySpec[]): number {
-  return specs[0]?.keyStep ?? 0
-}
-
 function expectArgCount(
   commandName: string,
   args: readonly Buffer[],
@@ -582,10 +689,6 @@ function expectArgCount(
   if (args.length !== count) {
     throw new WrongNumberOfArgumentsError(commandName)
   }
-}
-
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
 }
 
 function bulkString(value: string): RedisValue {

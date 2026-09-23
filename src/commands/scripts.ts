@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
@@ -5,7 +6,6 @@ import {
   RedisCommandError,
   ScriptDebugModeError,
   ScriptFlushOptionError,
-  UnknownScriptSubcommandError,
   WrongNumberOfKeysError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
@@ -18,11 +18,11 @@ import {
   type RedisFunctionDefinition,
   type RedisFunctionLibrary,
 } from '../state'
-import { array, bulk, ok } from './helpers'
+import { array, bulk, ok, unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 type ScriptArgs = {
-  subcommand: string
+  subcommand: Buffer
   rest: Buffer[]
 }
 
@@ -39,7 +39,7 @@ type EvalShaArgs = {
 }
 
 type FunctionArgs = {
-  subcommand: string
+  subcommand: Buffer
   rest: Buffer[]
 }
 
@@ -61,18 +61,15 @@ const READONLY_DYNAMIC_SCRIPT_FLAGS = ['readonly', ...DYNAMIC_SCRIPT_FLAGS]
 export const scriptCommand = defineCommand({
   name: 'script',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    arity: -2,
     flags: ['admin', 'noscript'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('script|debug', 3, {
         categories: ['@slow', '@scripting'],
@@ -96,7 +93,7 @@ export const scriptCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    switch (args.subcommand.toLowerCase()) {
+    switch (asciiLowerCase(args.subcommand.toString())) {
       case 'load':
         return scriptLoad(args, ctx)
       case 'exists':
@@ -110,7 +107,11 @@ export const scriptCommand = defineCommand({
       case 'help':
         return scriptHelp(args)
       default:
-        throw new UnknownScriptSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'SCRIPT',
+          args.subcommand,
+          ctx.server.profile,
+        )
     }
   },
 })
@@ -124,13 +125,8 @@ export const evalCommand = defineCommand<EvalArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
-    arity: -3,
     flags: DYNAMIC_SCRIPT_FLAGS,
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
   },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
@@ -151,13 +147,8 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
-    arity: -3,
     flags: DYNAMIC_SCRIPT_FLAGS,
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
   },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
@@ -178,13 +169,8 @@ export const evalRoCommand = defineCommand<EvalArgs>({
   schema: evalCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
-    arity: -3,
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
   },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
@@ -201,13 +187,8 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   schema: evalshaCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
-    arity: -3,
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
   },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
@@ -226,16 +207,14 @@ export const functionCommand = defineCommand<FunctionArgs>({
   name: 'function',
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
     subcommands: [
       commandSubcommandInfo('function|load', -3, {
@@ -269,7 +248,7 @@ export const functionCommand = defineCommand<FunctionArgs>({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    switch (args.subcommand.toLowerCase()) {
+    switch (asciiLowerCase(args.subcommand.toString())) {
       case 'load':
         return functionLoad(args, ctx)
       case 'delete':
@@ -289,8 +268,10 @@ export const functionCommand = defineCommand<FunctionArgs>({
       case 'help':
         return functionHelp(args)
       default:
-        throw new RedisCommandError(
-          `unknown subcommand '${args.subcommand}'. Try FUNCTION HELP.`,
+        throw unknownSubcommandError(
+          'FUNCTION',
+          args.subcommand,
+          ctx.server.profile,
         )
     }
   },
@@ -306,13 +287,8 @@ export const fcallCommand = defineCommand<FcallArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
-    arity: -3,
     flags: DYNAMIC_SCRIPT_FLAGS,
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
   },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: fcallKeys,
@@ -325,13 +301,8 @@ export const fcallRoCommand = defineCommand<FcallArgs>({
   schema: fcallCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
-    arity: -3,
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@scripting'],
-    keySpecs: [],
   },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: fcallKeys,
@@ -474,13 +445,21 @@ async function runLuaScript(
   const runtime = await ctx.server.getLuaRuntime()
 
   try {
-    const reply = renderScriptError(
-      runtime.eval(script, keys, argv, ctx, { readOnly }),
+    const { reply: result, raisedByRedisCall } = runtime.evalScript(
+      script,
+      keys,
+      argv,
+      ctx,
+      { readOnly },
     )
+    const reply = renderScriptError(result, {
+      profile: ctx.server.profile,
+      raisedByRedisCall,
+    })
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {
     if (err instanceof RedisCommandError) {
-      return RedisResult.error(err.message, err.code)
+      return RedisResult.fromError(err)
     }
 
     const message = err instanceof Error ? err.message : String(err)

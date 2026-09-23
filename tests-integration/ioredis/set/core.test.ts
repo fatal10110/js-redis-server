@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -21,16 +25,16 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('SADD and SCARD commands', async () => {
     // SADD single member
-    const add1 = await redisClient?.sadd('set1', 'member1')
+    const add1 = await redisClient?.sadd(`set1:${RUN}`, 'member1')
     assert.strictEqual(add1, 1)
 
     // SADD duplicate member
-    const add2 = await redisClient?.sadd('set1', 'member1')
+    const add2 = await redisClient?.sadd(`set1:${RUN}`, 'member1')
     assert.strictEqual(add2, 0)
 
     // SADD multiple members
     const add3 = await redisClient?.sadd(
-      'set1',
+      `set1:${RUN}`,
       'member2',
       'member3',
       'member4',
@@ -38,14 +42,14 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(add3, 3)
 
     // Check cardinality
-    const card = await redisClient?.scard('set1')
+    const card = await redisClient?.scard(`set1:${RUN}`)
     assert.strictEqual(card, 4)
   })
 
   test('SMEMBERS command', async () => {
-    await redisClient?.sadd('set2', 'a', 'b', 'c')
+    await redisClient?.sadd(`set2:${RUN}`, 'a', 'b', 'c')
 
-    const members = await redisClient?.smembers('set2')
+    const members = await redisClient?.smembers(`set2:${RUN}`)
     assert.strictEqual(members?.length, 3)
     assert.ok(members?.includes('a'))
     assert.ok(members?.includes('b'))
@@ -53,12 +57,12 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('SISMEMBER command', async () => {
-    await redisClient?.sadd('set3', 'member1', 'member2')
+    await redisClient?.sadd(`set3:${RUN}`, 'member1', 'member2')
 
-    const is1 = await redisClient?.sismember('set3', 'member1')
+    const is1 = await redisClient?.sismember(`set3:${RUN}`, 'member1')
     assert.strictEqual(is1, 1)
 
-    const is2 = await redisClient?.sismember('set3', 'nonexistent')
+    const is2 = await redisClient?.sismember(`set3:${RUN}`, 'nonexistent')
     assert.strictEqual(is2, 0)
   })
 
@@ -117,40 +121,40 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('SREM command', async () => {
-    await redisClient?.sadd('set4', 'a', 'b', 'c', 'd')
+    await redisClient?.sadd(`set4:${RUN}`, 'a', 'b', 'c', 'd')
 
     // Remove single member
-    const rem1 = await redisClient?.srem('set4', 'a')
+    const rem1 = await redisClient?.srem(`set4:${RUN}`, 'a')
     assert.strictEqual(rem1, 1)
 
     // Remove multiple members
-    const rem2 = await redisClient?.srem('set4', 'b', 'c')
+    const rem2 = await redisClient?.srem(`set4:${RUN}`, 'b', 'c')
     assert.strictEqual(rem2, 2)
 
     // Remove non-existent member
-    const rem3 = await redisClient?.srem('set4', 'nonexistent')
+    const rem3 = await redisClient?.srem(`set4:${RUN}`, 'nonexistent')
     assert.strictEqual(rem3, 0)
 
     // Check remaining members
-    const remaining = await redisClient?.smembers('set4')
+    const remaining = await redisClient?.smembers(`set4:${RUN}`)
     assert.deepStrictEqual(remaining, ['d'])
   })
 
   test('SPOP command', async () => {
-    await redisClient?.sadd('set5', 'a', 'b', 'c')
+    await redisClient?.sadd(`set5:${RUN}`, 'a', 'b', 'c')
 
     // Pop random member
-    const popped = await redisClient?.spop('set5')
+    const popped = await redisClient?.spop(`set5:${RUN}`)
     assert.ok(['a', 'b', 'c'].includes(popped!))
 
     // Check set size decreased
-    const card = await redisClient?.scard('set5')
+    const card = await redisClient?.scard(`set5:${RUN}`)
     assert.strictEqual(card, 2)
 
     // Pop from empty set
-    await redisClient?.spop('set5')
-    await redisClient?.spop('set5')
-    const empty = await redisClient?.spop('set5')
+    await redisClient?.spop(`set5:${RUN}`)
+    await redisClient?.spop(`set5:${RUN}`)
+    const empty = await redisClient?.spop(`set5:${RUN}`)
     assert.strictEqual(empty, null)
   })
 
@@ -199,18 +203,18 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('SRANDMEMBER command', async () => {
-    await redisClient?.sadd('set6', 'a', 'b', 'c')
+    await redisClient?.sadd(`set6:${RUN}`, 'a', 'b', 'c')
 
     // Get random member without removing
-    const random = await redisClient?.srandmember('set6')
+    const random = await redisClient?.srandmember(`set6:${RUN}`)
     assert.ok(['a', 'b', 'c'].includes(random!))
 
     // Check set size unchanged
-    const card = await redisClient?.scard('set6')
+    const card = await redisClient?.scard(`set6:${RUN}`)
     assert.strictEqual(card, 3)
 
     // Get multiple random members
-    const randoms = await redisClient?.srandmember('set6', 2)
+    const randoms = await redisClient?.srandmember(`set6:${RUN}`, 2)
     assert.strictEqual(randoms?.length, 2)
   })
 })

@@ -6,7 +6,7 @@ import { geohashString } from './helpers'
 
 export const geohashCommand = defineCommand({
   name: 'geohash',
-  schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), members: t.variadic(t.bulk()) }),
   flags: ['readonly'],
   keys: args => [args.key],
   execute: (args, ctx) => {

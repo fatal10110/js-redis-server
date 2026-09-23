@@ -17,7 +17,8 @@ type ZrandmemberArgs = {
 }
 
 function createZrandmemberSchema() {
-  return t.custom<ZrandmemberArgs>((input, index, ctx) => {
+  const layout = { min: 1, keys: [0] }
+  return t.custom<ZrandmemberArgs>(layout, (input, index, ctx) => {
     const key = input[index]
     if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
 

@@ -353,6 +353,81 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  test('MONITOR queued in MULTI fails inside EXEC like Redis', async () => {
+    const conn = await connect()
+
+    conn.write(
+      Buffer.concat([
+        commandFrame('MULTI'),
+        commandFrame('MONITOR'),
+        commandFrame('EXEC'),
+        commandFrame('PING'),
+      ]),
+    )
+
+    const actual: string[] = []
+    for (let i = 0; i < 4; i++) {
+      actual.push((await conn.readRawFrame()).toString())
+    }
+    assert.strictEqual(
+      actual.join(''),
+      "+OK\r\n+QUEUED\r\n*1\r\n-ERR MONITOR isn't allowed for DENY BLOCKING client\r\n+PONG\r\n",
+    )
+  })
+
+  test('a second MONITOR is ignored: no reply, no duplicate lines', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const marker = `monitor-twice:${randomKey()}`
+
+    monitor.write(
+      Buffer.concat([
+        commandFrame('MONITOR'),
+        commandFrame('MONITOR'),
+        commandFrame('PING', marker),
+      ]),
+    )
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+    // Real Redis sends nothing for the second MONITOR, so the next reply on the
+    // connection is the PING's.
+    assert.strictEqual(
+      (await readMonitorReply(monitor)).toString(),
+      `$${Buffer.byteLength(marker)}\r\n${marker}\r\n`,
+    )
+
+    actor.write(commandFrame('PING', `${marker}:1`))
+    await actor.readRawFrame()
+    actor.write(commandFrame('PING', `${marker}:2`))
+    await actor.readRawFrame()
+
+    const lines = await collectMonitorLines(monitor, `${marker}:`, 2)
+    assert.deepStrictEqual(
+      lines.map(line => line.slice(line.indexOf('"PING"'))),
+      [`"PING" "${marker}:1"`, `"PING" "${marker}:2"`],
+    )
+  })
+
+  test('MONITOR replies +OK before any monitor line', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const marker = `monitor-first:${randomKey()}`
+    const burst = Buffer.concat(
+      Array.from({ length: 50 }, (_, i) =>
+        commandFrame('PING', `${marker}:${i}`),
+      ),
+    )
+
+    // Another connection is busy while MONITOR registers: whatever it runs,
+    // the monitoring connection must see MONITOR's own +OK first.
+    actor.write(burst)
+    monitor.write(commandFrame('MONITOR'))
+    actor.write(burst)
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+    for (let i = 0; i < 100; i++) {
+      await actor.readRawFrame()
+    }
+  })
+
   // Real Redis stamps each monitor line from `gettimeofday()`, so the six
   // fractional digits carry genuine microsecond resolution. A `Date.now()`
   // source looks right (it still prints six digits) but quantizes every line
@@ -464,6 +539,24 @@ async function collectMonitorTimestamps(
   }
 
   return timestamps
+}
+
+/** Read monitor feed lines until `count` of them mention `marker`. */
+async function collectMonitorLines(
+  connection: RawRedisConnection,
+  marker: string,
+  count: number,
+): Promise<string[]> {
+  const lines: string[] = []
+  while (lines.length < count) {
+    const line = respText(
+      await withTimeout(connection.readFrame(), 5000, 'monitor feed line'),
+    )
+    if (line.includes(marker)) {
+      lines.push(line)
+    }
+  }
+  return lines
 }
 
 /**

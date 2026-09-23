@@ -8,6 +8,9 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Backstop for a hung `npm test` / `test:package` run on Node 24, where
+    # --test-timeout cannot end a process that stays alive (#454).
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -21,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: 'npm'

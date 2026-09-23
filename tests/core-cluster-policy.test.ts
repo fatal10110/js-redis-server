@@ -126,7 +126,10 @@ describe('new cluster execution policy', () => {
     )
     assert.deepStrictEqual(
       await session.execute('cluster', [Buffer.from('nope')]),
-      RedisResult.error("unknown subcommand 'nope'. Try CLUSTER HELP.", 'ERR'),
+      RedisResult.error(
+        Buffer.from("unknown subcommand 'nope'. Try CLUSTER HELP."),
+        'ERR',
+      ),
     )
 
     for (const subcommand of ['slots', 'shards', 'nodes', 'info', 'myid']) {
@@ -214,11 +217,12 @@ describe('new cluster execution policy', () => {
 })
 
 /**
- * Table tests for the `patternHashSlot()` port behind the SORT cluster guard.
- * Every branch of the ported algorithm is reachable from the wire, so these
- * drive the policy rather than the private function.
+ * Table tests for the `patternHashSlot()` port behind the SORT cluster guard
+ * (`src/core/sort-cluster-guard.ts`). Every branch of the ported algorithm is
+ * reachable from the wire, so these drive a cluster session rather than the
+ * private function.
  */
-describe('cluster policy SORT pattern guard', () => {
+describe('SORT cluster pattern guard', () => {
   const BY_DENIED =
     'BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
   const GET_DENIED =

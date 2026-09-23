@@ -5,18 +5,20 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -24,31 +26,34 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('EXPIRE and EXPIREAT commands', async () => {
-    await redisClient.set('{test}expire_key', 'value')
+    await redisClient.set(`{test:${RUN}}expire_key`, 'value')
 
-    const expireResult = await redisClient.expire('{test}expire_key', 10)
+    const expireResult = await redisClient.expire(`{test:${RUN}}expire_key`, 10)
     assert.strictEqual(expireResult, 1)
 
-    const ttlResult = await redisClient.ttl('{test}expire_key')
+    const ttlResult = await redisClient.ttl(`{test:${RUN}}expire_key`)
     assert.ok(ttlResult <= 10 && ttlResult > 0)
 
-    const expireNonExistent = await redisClient.expire('{test}nonexistent', 10)
+    const expireNonExistent = await redisClient.expire(
+      `{test:${RUN}}nonexistent`,
+      10,
+    )
     assert.strictEqual(expireNonExistent, 0)
 
-    await redisClient.set('{test}expireat_key', 'value')
+    await redisClient.set(`{test:${RUN}}expireat_key`, 'value')
 
     const futureTimestamp = Math.floor(Date.now() / 1000) + 10
     const expireatResult = await redisClient.expireAt(
-      '{test}expireat_key',
+      `{test:${RUN}}expireat_key`,
       futureTimestamp,
     )
     assert.strictEqual(expireatResult, 1)
 
-    const ttlResult2 = await redisClient.ttl('{test}expireat_key')
+    const ttlResult2 = await redisClient.ttl(`{test:${RUN}}expireat_key`)
     assert.ok(ttlResult2 <= 10 && ttlResult2 > 0)
 
     const expireatNonExistent = await redisClient.expireAt(
-      '{test}nonexistent',
+      `{test:${RUN}}nonexistent`,
       futureTimestamp,
     )
     assert.strictEqual(expireatNonExistent, 0)
@@ -292,25 +297,25 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('TTL integration with EXPIRE and EXPIREAT', async () => {
-    await redisClient.set('{test}ttl1', 'value1')
-    await redisClient.set('{test}ttl2', 'value2')
-    await redisClient.set('{test}ttl3', 'value3')
+    await redisClient.set(`{test:${RUN}}ttl1`, 'value1')
+    await redisClient.set(`{test:${RUN}}ttl2`, 'value2')
+    await redisClient.set(`{test:${RUN}}ttl3`, 'value3')
 
-    await redisClient.expire('{test}ttl1', 20)
+    await redisClient.expire(`{test:${RUN}}ttl1`, 20)
 
     const futureTimestamp = Math.floor(Date.now() / 1000) + 30
-    await redisClient.expireAt('{test}ttl2', futureTimestamp)
+    await redisClient.expireAt(`{test:${RUN}}ttl2`, futureTimestamp)
 
-    const ttl1 = await redisClient.ttl('{test}ttl1')
+    const ttl1 = await redisClient.ttl(`{test:${RUN}}ttl1`)
     assert.ok(ttl1 <= 20 && ttl1 > 0)
 
-    const ttl2 = await redisClient.ttl('{test}ttl2')
+    const ttl2 = await redisClient.ttl(`{test:${RUN}}ttl2`)
     assert.ok(ttl2 <= 30 && ttl2 > 0)
 
-    const ttl3 = await redisClient.ttl('{test}ttl3')
+    const ttl3 = await redisClient.ttl(`{test:${RUN}}ttl3`)
     assert.strictEqual(ttl3, -1)
 
-    const ttlNonExistent = await redisClient.ttl('{test}nonexistent')
+    const ttlNonExistent = await redisClient.ttl(`{test:${RUN}}nonexistent`)
     assert.strictEqual(ttlNonExistent, -2)
   })
 
@@ -399,8 +404,15 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       'TTL of PX 1500 must round to 1 (Math.ceil regression gives 2)',
     )
 
-    const pttl = await redisClient.pTTL(reproKey)
-    assert.ok(pttl > 1000 && pttl <= 1500, `PTTL should be raw ms, got ${pttl}`)
+    // Raw-ms check gets its own key with a non-round TTL: a seconds-rounded
+    // PTTL would answer 4000 or 5000, both outside the band, so this stays
+    // strict while leaving ~1s of slack. Off reproKey it would be under 500ms.
+    const rawKey = `${tag}:raw`
+    await redisClient.set(rawKey, 'v', {
+      expiration: { type: 'PX', value: 4999 },
+    })
+    const pttl = await redisClient.pTTL(rawKey)
+    assert.ok(pttl > 4000 && pttl <= 4999, `PTTL should be raw ms, got ${pttl}`)
 
     const downKey = `${tag}:down`
     await redisClient.set(downKey, 'v', {
@@ -408,15 +420,19 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
     })
     assert.strictEqual(await redisClient.ttl(downKey), 1)
 
+    // x999, not x900: TTL 2 needs PTTL >= 1500 and PTTL < 2000 is what keeps a
+    // Math.floor regression answering 1, so the useful window is [1500, 2000).
+    // Starting at its top leaves the whole ~500ms for a slow round-trip; 1900
+    // leaves 400ms and a 401ms stall under load reads TTL 1 (#411).
     const upKey = `${tag}:up`
     await redisClient.set(upKey, 'v', {
-      expiration: { type: 'PX', value: 1900 },
+      expiration: { type: 'PX', value: 1999 },
     })
     assert.strictEqual(await redisClient.ttl(upKey), 2)
 
     const up2Key = `${tag}:up2`
     await redisClient.set(up2Key, 'v', {
-      expiration: { type: 'PX', value: 2900 },
+      expiration: { type: 'PX', value: 2999 },
     })
     assert.strictEqual(await redisClient.ttl(up2Key), 3)
 
@@ -427,7 +443,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
     const listKey = `${tag}:list`
     await redisClient.rPush(listKey, 'a')
-    await redisClient.pExpire(listKey, 1900)
+    await redisClient.pExpire(listKey, 1999)
     assert.strictEqual(await redisClient.ttl(listKey), 2)
 
     await assert.rejects(

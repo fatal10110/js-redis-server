@@ -1,9 +1,8 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   NoSuchKeyError,
-  RedisCommandError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
@@ -13,7 +12,12 @@ import type {
   RedisStreamConsumerGroup,
   RedisStreamData,
 } from '../../state/data-types'
-import { array } from '../helpers'
+import {
+  array,
+  helpReply,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from '../helpers'
 import {
   consumerPendingCount,
   pendingEntriesSorted,
@@ -33,41 +37,54 @@ type XinfoArgs =
   | { subcommand: 'stream'; key: Buffer; full: boolean; count: number | null }
   | { subcommand: 'groups'; key: Buffer }
   | { subcommand: 'consumers'; key: Buffer; group: Buffer }
+  | { subcommand: 'help'; key: Buffer | undefined }
+  | { subcommand: 'unknown'; name: Buffer; key: Buffer | undefined }
+
+const XINFO_HELP = [
+  'XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+  'CONSUMERS <key> <groupname>',
+  '    Show consumers of <groupname>.',
+  'GROUPS <key>',
+  '    Show the stream consumer groups.',
+  'STREAM <key> [FULL [COUNT <count>]',
+  '    Show information about the stream.',
+]
+
+function isToken(arg: Buffer, token: string): boolean {
+  return arg.toString().toUpperCase() === token
+}
 
 function createXinfoSchema() {
   return t.custom<XinfoArgs>(
+    { min: 1 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
-      const subcommand = input[index]?.toString().toUpperCase()
-      if (!subcommand) throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const rawSubcommand = input[index]
+      if (!rawSubcommand) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      const subcommand = asciiUpperCase(rawSubcommand.toString())
+      // A parser only knows the container (`ctx.commandName`), so arity errors
+      // for a dispatched subcommand spell out `xinfo|<sub>` themselves, as real
+      // Redis 7.0+ does (#438). An option list the subcommand cannot use is
+      // real Redis' `addReplySubcommandSyntaxError`, not an arity error.
 
       if (subcommand === 'STREAM') {
         const key = input[index + 1]
-        if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
-        let cursor = index + 2
-        let full = false
-        let count: number | null = null
+        if (!key) throw new WrongNumberOfArgumentsError('xinfo|stream')
 
-        if (cursor < input.length) {
-          if (input[cursor].toString().toUpperCase() !== 'FULL') {
-            throw new RedisSyntaxError()
-          }
-          full = true
-          cursor++
+        // `[FULL [COUNT <count>]]`: nothing, `FULL`, or `FULL COUNT <count>`.
+        const options = input.slice(index + 2)
+        const valid =
+          options.length === 0 ||
+          (isToken(options[0], 'FULL') &&
+            (options.length === 1 ||
+              (options.length === 3 && isToken(options[1], 'COUNT'))))
+        if (!valid) {
+          throw subcommandSyntaxError('XINFO', rawSubcommand, ctx.profile)
         }
-
-        if (cursor < input.length) {
-          if (input[cursor].toString().toUpperCase() !== 'COUNT') {
-            throw new RedisSyntaxError()
-          }
-          const rawCount = input[cursor + 1]
-          if (!rawCount) throw new WrongNumberOfArgumentsError(ctx.commandName)
-          count = parseNonNegativeInteger(rawCount)
-          cursor += 2
-        }
-
-        if (cursor !== input.length) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
-        }
+        const full = options.length > 0
+        const count =
+          options.length === 3 ? parseNonNegativeInteger(options[2]) : null
 
         return {
           value: { subcommand: 'stream', key, full, count },
@@ -78,7 +95,7 @@ function createXinfoSchema() {
       if (subcommand === 'GROUPS') {
         const key = input[index + 1]
         if (!key || input.length !== index + 2) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError('xinfo|groups')
         }
         return {
           value: { subcommand: 'groups', key },
@@ -90,7 +107,7 @@ function createXinfoSchema() {
         const key = input[index + 1]
         const group = input[index + 2]
         if (!key || !group || input.length !== index + 3) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError('xinfo|consumers')
         }
         return {
           value: { subcommand: 'consumers', key, group },
@@ -98,9 +115,35 @@ function createXinfoSchema() {
         }
       }
 
-      throw new RedisCommandError(
-        `unknown subcommand '${subcommand}'. Try XINFO HELP.`,
-      )
+      // 7.0+ resolves `xinfo|help` in the command table: no key, arity 2.
+      // 6.2 answers HELP before it counts arguments or looks a key up, but
+      // its key spec still names the third argument, so it keeps routing on
+      // it (and COMMAND GETKEYS reports it).
+      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
+      if (subcommand === 'HELP') {
+        if (lookup && input.length !== index + 1) {
+          throw new WrongNumberOfArgumentsError('xinfo|help')
+        }
+        return {
+          value: {
+            subcommand: 'help',
+            key: lookup ? undefined : input[index + 1],
+          },
+          nextIndex: input.length,
+        }
+      }
+
+      // Not rejected here: on 7.0+ profiles command lookup has already turned
+      // an unknown name away (`CommandExecutor.plan()`), so only 6.2 gets
+      // here — and it rejects the name when XINFO runs, after the key (#436).
+      return {
+        value: {
+          subcommand: 'unknown',
+          name: rawSubcommand,
+          key: lookup ? undefined : input[index + 1],
+        },
+        nextIndex: input.length,
+      }
     },
   )
 }
@@ -109,9 +152,22 @@ export const xinfoCommand = defineCommand({
   name: 'xinfo',
   schema: t.object({ args: createXinfoSchema() }),
   flags: ['readonly'],
-  keys: args => [args.args.key],
+  keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args
+    if (command.subcommand === 'help') {
+      return helpReply(XINFO_HELP, ctx.server.profile)
+    }
+
+    if (command.subcommand === 'unknown') {
+      // Real 6.2 looks the key up (getStream: WRONGTYPE) before it looks at
+      // the subcommand.
+      if (command.key && !ctx.db.getStream(command.key)) {
+        throw new NoSuchKeyError()
+      }
+      throw unknownSubcommandError('XINFO', command.name, ctx.server.profile)
+    }
+
     const stream = ctx.db.getStream(command.key)
     if (!stream) throw new NoSuchKeyError()
 
@@ -267,8 +323,9 @@ function consumerInfoReply(
   now: number,
 ): RedisValue {
   const idle = Math.max(0, now - consumer.seenAt)
+  // -1 until the consumer is first delivered or claims an entry (real 7.2+).
   const inactive =
-    consumer.activeAt === null ? idle : Math.max(0, now - consumer.activeAt)
+    consumer.activeAt === null ? -1 : Math.max(0, now - consumer.activeAt)
   return kvMap([
     bulkString('name'),
     bulkString(consumer.name),

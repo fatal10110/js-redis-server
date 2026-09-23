@@ -10,7 +10,7 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { parseMoveDirection, parseTimeout } from './helpers'
+import { listPopEvent, parseMoveDirection, parseTimeout } from './helpers'
 
 type ListMultiPopArgs = {
   keys: Buffer[]
@@ -129,17 +129,16 @@ export function tryListMultiPop(
     const list = db.getList(key)
     if (!list || list.values.length === 0) continue
 
-    const result = db.updateList(key, list => {
-      const values = list.popMany(side, count)
-      return { values, empty: list.length === 0 }
-    })
-    if (result.empty) db.delete(key)
+    // Published as the underlying lpop/rpop, as real Redis does (#446).
+    const values = db
+      .withOrigin(listPopEvent(side))
+      .updateList(key, list => list.popMany(side, count))
 
     return RedisResult.create(
       RedisValue.array([
         RedisValue.bulkString(key),
         RedisValue.array(
-          result.values.map((value: Buffer) => RedisValue.bulkString(value)),
+          values.map((value: Buffer) => RedisValue.bulkString(value)),
         ),
       ]),
     )
@@ -202,7 +201,7 @@ async function blockingListMultiPop(
 export const lmpopCommand = defineCommand({
   name: 'lmpop',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: t.custom<ListMultiPopArgs>((input, index, ctx) => ({
+  schema: t.custom<ListMultiPopArgs>({ min: 3 }, (input, index, ctx) => ({
     value: parseListMultiPopArgs(input, index, ctx, { blocking: false }),
     nextIndex: input.length,
   })),
@@ -216,10 +215,13 @@ export const lmpopCommand = defineCommand({
 export const blmpopCommand = defineCommand({
   name: 'blmpop',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: t.custom<BlockingListMultiPopArgs>((input, index, ctx) => ({
-    value: parseListMultiPopArgs(input, index, ctx, { blocking: true }),
-    nextIndex: input.length,
-  })),
+  schema: t.custom<BlockingListMultiPopArgs>(
+    { min: 4 },
+    (input, index, ctx) => ({
+      value: parseListMultiPopArgs(input, index, ctx, { blocking: true }),
+      nextIndex: input.length,
+    }),
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {

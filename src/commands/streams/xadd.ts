@@ -69,6 +69,7 @@ type FieldList = Buffer[]
 // [field1, value1, ...] array, requiring at least one complete pair.
 function createStreamFieldsSchema() {
   return t.custom<FieldList>(
+    { min: 2 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const fields: FieldList = []
       let cursor = index

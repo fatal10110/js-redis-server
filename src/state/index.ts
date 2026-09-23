@@ -36,10 +36,11 @@ export type { ExpirationState, KeyspaceEntry, SetOptions } from './keyspace'
 
 export { RedisDatabase } from './database'
 export {
+  INVALID_NOTIFY_FLAG_DETAIL,
   KeyspaceNotifier,
   keyspaceNotifyFlagsToString,
-  normalizeKeyspaceNotifyConfig,
   parseKeyspaceNotifyFlags,
+  type KeyspaceNotifyFlag,
   type KeyspaceNotifyFlags,
 } from './keyspace-notifier'
 export { RedisScriptCache } from './script-cache'

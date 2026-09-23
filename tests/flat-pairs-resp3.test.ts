@@ -36,15 +36,12 @@ import {
  * (`HELLO` still reports `proto 2` against Redis 8.0.6) — so it always sees the
  * flat shape and needs no protocol switch.
  *
- * Two shapes named in #385 are *not* `flat-pairs` and are unchanged, confirmed
- * against the same real server: XRANGE / XREAD entry fields stay a flat array
- * in both RESP2 and RESP3 (`[["1-1",["fa","va","fb","vb"]]]`), and CONFIG GET
- * is a map reply.
- *
- * Note the RESP2 scores below are numbers where real node-redis at RESP2 hands
- * back strings: a sorted-set score is a `double` RedisValue, which these
- * socketless clients decode numerically whatever the protocol. That scalar
- * divergence is separate from the pair *shape* under test here.
+ * Two shapes named in #385 are *not* `flat-pairs` and are unchanged here,
+ * confirmed against the same real server: XRANGE / XREAD entry fields stay a
+ * flat array in both RESP2 and RESP3 (`[["1-1",["fa","va","fb","vb"]]]`), and
+ * CONFIG GET is a `map` reply — whose own protocol split, along with the
+ * `double` scalar's, is covered by `resp2-map-and-double-shapes.test.ts` (#414).
+ * That is why the RESP2 scores below are strings and the RESP3 ones numbers.
  */
 /** Run a MULTI whose queue contains failing commands, and read the aggregate. */
 async function execExpectingErrors(
@@ -88,17 +85,17 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
 
       assert.deepStrictEqual(
         await c.command('ZRANGE', 'z', 0, -1, 'WITHSCORES'),
-        ['a', 1, 'b', 2],
+        ['a', '1', 'b', '2'],
       )
       assert.deepStrictEqual(
         await c.command('ZRANDMEMBER', 'zone', -2, 'WITHSCORES'),
-        ['a', 1, 'a', 1],
+        ['a', '1', 'a', '1'],
       )
       assert.deepStrictEqual(await c.command('ZUNION', 1, 'z', 'WITHSCORES'), [
         'a',
-        1,
+        '1',
         'b',
-        2,
+        '2',
       ])
       assert.deepStrictEqual(
         await c.command('HRANDFIELD', 'hone', -2, 'WITHVALUES'),
@@ -106,9 +103,9 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       )
       assert.deepStrictEqual(await c.command('ZPOPMIN', 'z', 2), [
         'a',
-        1,
+        '1',
         'b',
-        2,
+        '2',
       ])
     })
 
@@ -185,15 +182,15 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
 
       assert.deepStrictEqual(
         await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
-        ['a', 1, 'b', 2],
+        ['a', '1', 'b', '2'],
       )
       assert.deepStrictEqual(
         await c.sendCommand(['ZRANDMEMBER', 'zone', '-2', 'WITHSCORES']),
-        ['a', 1, 'a', 1],
+        ['a', '1', 'a', '1'],
       )
       assert.deepStrictEqual(
         await c.sendCommand(['ZUNION', '1', 'z', 'WITHSCORES']),
-        ['a', 1, 'b', 2],
+        ['a', '1', 'b', '2'],
       )
       assert.deepStrictEqual(
         await c.sendCommand(['HRANDFIELD', 'hone', '-2', 'WITHVALUES']),
@@ -201,9 +198,9 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       )
       assert.deepStrictEqual(await c.sendCommand(['ZPOPMIN', 'z', '2']), [
         'a',
-        1,
+        '1',
         'b',
-        2,
+        '2',
       ])
     })
 
@@ -273,7 +270,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
         .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES'])
         .exec()
 
-      assert.deepStrictEqual(replies[0], ['a', 1, 'b', 2])
+      assert.deepStrictEqual(replies[0], ['a', '1', 'b', '2'])
       assert.deepStrictEqual(replies[2], [
         ['a', 1],
         ['b', 2],
@@ -305,7 +302,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
           .addCommand(['HELLO', '2', 'AUTH', 'u', 'p']),
       )
       assert.deepStrictEqual(failed.errorIndexes, [3])
-      assert.deepStrictEqual(failed.replies[0], ['a', 1, 'b', 2])
+      assert.deepStrictEqual(failed.replies[0], ['a', '1', 'b', '2'])
       assert.deepStrictEqual(failed.replies[2], [
         ['a', 1],
         ['b', 2],
@@ -320,7 +317,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
           .addCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
       )
       assert.deepStrictEqual(headFailure.errorIndexes, [0])
-      assert.deepStrictEqual(headFailure.replies[1], ['a', 1, 'b', 2])
+      assert.deepStrictEqual(headFailure.replies[1], ['a', '1', 'b', '2'])
     })
 
     test('HELLO 2 and RESET put the connection back on the flat shape', async () => {
@@ -336,14 +333,14 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       await c.sendCommand(['HELLO', '2'])
       assert.deepStrictEqual(
         await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
-        ['a', 1, 'b', 2],
+        ['a', '1', 'b', '2'],
       )
 
       await c.sendCommand(['HELLO', '3'])
       await c.sendCommand(['RESET'])
       assert.deepStrictEqual(
         await c.sendCommand(['ZRANGE', 'z', '0', '-1', 'WITHSCORES']),
-        ['a', 1, 'b', 2],
+        ['a', '1', 'b', '2'],
       )
     })
   })
@@ -381,7 +378,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       ['a', 1],
       ['b', 2],
     ]
-    const flat = ['a', 1, 'b', 2]
+    const flat = ['a', '1', 'b', '2']
 
     test('HELLO 3 reaches every node, not just the one it routed to', async () => {
       const cluster = await seededCluster()

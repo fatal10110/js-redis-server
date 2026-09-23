@@ -1,18 +1,21 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import {
-  RedisCommandError,
-  WrongNumberOfArgumentsError,
-} from '../core/redis-error'
+import { WrongNumberOfArgumentsError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { RedisExecutionContext } from '../core/redis-context'
-import type { ResponseStream } from '../core/response-stream'
-import { array, integer } from './helpers'
+import { encodeRedisValue } from '../core/resp-encoder'
+import {
+  array,
+  integer,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 type PubSubArgs = {
-  subcommand: string
+  subcommand: Buffer
   args: Buffer[]
 }
 
@@ -23,16 +26,12 @@ export const subscribeCommand = defineCommand({
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
   introspection: {
-    arity: -2,
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@pubsub', '@slow'],
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubSubscribe('channel', args.channels)),
+    confirmations(ctx, ctx.session.pubsubSubscribe('channel', args.channels)),
 })
 
 export const unsubscribeCommand = defineCommand({
@@ -42,16 +41,12 @@ export const unsubscribeCommand = defineCommand({
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
   introspection: {
-    arity: -1,
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@pubsub', '@slow'],
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubUnsubscribe('channel', args.channels)),
+    confirmations(ctx, ctx.session.pubsubUnsubscribe('channel', args.channels)),
 })
 
 export const ssubscribeCommand = defineCommand({
@@ -62,16 +57,12 @@ export const ssubscribeCommand = defineCommand({
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
   introspection: {
-    arity: -2,
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    firstKey: 1,
-    lastKey: -1,
-    keyStep: 1,
     categories: ['@pubsub', '@slow'],
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubSubscribe('shard', args.channels)),
+    confirmations(ctx, ctx.session.pubsubSubscribe('shard', args.channels)),
 })
 
 export const sunsubscribeCommand = defineCommand({
@@ -82,16 +73,12 @@ export const sunsubscribeCommand = defineCommand({
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
   introspection: {
-    arity: -1,
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    firstKey: 1,
-    lastKey: -1,
-    keyStep: 1,
     categories: ['@pubsub', '@slow'],
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubUnsubscribe('shard', args.channels)),
+    confirmations(ctx, ctx.session.pubsubUnsubscribe('shard', args.channels)),
 })
 
 export const psubscribeCommand = defineCommand({
@@ -101,16 +88,12 @@ export const psubscribeCommand = defineCommand({
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
   introspection: {
-    arity: -2,
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@pubsub', '@slow'],
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubSubscribe('pattern', args.patterns)),
+    confirmations(ctx, ctx.session.pubsubSubscribe('pattern', args.patterns)),
 })
 
 export const punsubscribeCommand = defineCommand({
@@ -120,16 +103,12 @@ export const punsubscribeCommand = defineCommand({
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
   introspection: {
-    arity: -1,
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@pubsub', '@slow'],
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubUnsubscribe('pattern', args.patterns)),
+    confirmations(ctx, ctx.session.pubsubUnsubscribe('pattern', args.patterns)),
 })
 
 export const publishCommand = defineCommand({
@@ -140,11 +119,7 @@ export const publishCommand = defineCommand({
   }),
   flags: ['pubsub', 'fast'],
   introspection: {
-    arity: 3,
     flags: ['pubsub', 'loading', 'stale', 'fast'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@pubsub', '@fast'],
   },
   keys: () => [],
@@ -179,11 +154,7 @@ export const spublishCommand = defineCommand({
   }),
   flags: ['pubsub', 'fast'],
   introspection: {
-    arity: 3,
     flags: ['pubsub', 'loading', 'stale', 'fast'],
-    firstKey: 1,
-    lastKey: 1,
-    keyStep: 1,
     categories: ['@pubsub', '@fast'],
   },
   keys: args => [args.channel],
@@ -194,16 +165,14 @@ export const spublishCommand = defineCommand({
 export const pubsubCommand = defineCommand({
   name: 'pubsub',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly', 'pubsub', 'fast'],
   introspection: {
-    arity: -2,
     flags: ['pubsub', 'loading', 'stale', 'fast'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@pubsub', '@slow'],
     subcommands: [
       commandSubcommandInfo('pubsub|channels', -2, {
@@ -228,7 +197,7 @@ export const pubsubCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'channels') {
       return pubsubChannels(args, ctx)
@@ -245,9 +214,13 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardchannels') {
       if (!ctx.server.profile.has('pubsub.sharded')) {
-        throw pubsubUnavailableSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'PUBSUB',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
-      expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
+      expectPubSubSubcommandMaxArgCount(args, 1, ctx)
       const channels = ctx.server.pubsubBroker.shardChannelsMatching(
         args.args[0],
       )
@@ -256,7 +229,11 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardnumsub') {
       if (!ctx.server.profile.has('pubsub.sharded')) {
-        throw pubsubUnavailableSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'PUBSUB',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
       return RedisResult.create(
         RedisValue.array(
@@ -275,9 +252,7 @@ export const pubsubCommand = defineCommand({
       return pubsubHelp(ctx)
     }
 
-    throw new RedisCommandError(
-      `unknown subcommand '${args.subcommand}'. Try PUBSUB HELP.`,
-    )
+    throw unknownSubcommandError('PUBSUB', args.subcommand, ctx.server.profile)
   },
 })
 
@@ -294,7 +269,7 @@ export const pubsubCommands = [
 ]
 
 function pubsubChannels(args: PubSubArgs, ctx: RedisExecutionContext) {
-  expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
+  expectPubSubSubcommandMaxArgCount(args, 1, ctx)
   const channels = ctx.server.pubsubBroker.channelsMatching(args.args[0])
   return RedisResult.create(
     RedisValue.array(channels.map(channel => RedisValue.bulkString(channel))),
@@ -341,21 +316,34 @@ function pubsubHelp(ctx: RedisExecutionContext): RedisResult {
   )
 }
 
-function framesResult(frames: RedisResult[]): RedisResult | ResponseStream {
+/**
+ * A (UN)SUBSCRIBE-family reply: one confirmation frame per target, sent back to
+ * back as a single reply so nothing pipelined behind the command can land
+ * between them (#455). Inside EXEC the same bytes are embedded in the array, as
+ * Redis does. Front ends that read values get the first frame as `value` and
+ * the rest as `trailingFrames`.
+ */
+function confirmations(
+  ctx: RedisExecutionContext,
+  frames: RedisResult[],
+): RedisResult {
   if (frames.length === 1) {
     return frames[0]
   }
 
-  return {
-    kind: 'response-stream',
-    closed: Promise.resolve(),
-    frames: async function* () {
-      for (const frame of frames) {
-        yield frame
-      }
-    },
-    close: () => {},
-  }
+  const version = ctx.session.protocolVersion
+  return RedisResult.preEncoded(
+    frames[0].value,
+    Buffer.concat(
+      frames.map(frame =>
+        encodeRedisValue(frame.value, {
+          version,
+          profile: ctx.server.profile,
+        }),
+      ),
+    ),
+    { trailingFrames: frames.slice(1).map(frame => frame.value) },
+  )
 }
 
 function expectArgCount(
@@ -368,26 +356,17 @@ function expectArgCount(
   }
 }
 
+/**
+ * PUBSUB's variadic subcommands police their own argument count, so an excess
+ * argument is real Redis' `addReplySubcommandSyntaxError` rather than the
+ * dispatch-level unknown-subcommand reply or an arity error.
+ */
 function expectPubSubSubcommandMaxArgCount(
-  subcommand: string,
-  args: readonly Buffer[],
+  args: PubSubArgs,
   count: number,
+  ctx: RedisExecutionContext,
 ): void {
-  if (args.length > count) {
-    throw pubsubSubcommandError(subcommand)
+  if (args.args.length > count) {
+    throw subcommandSyntaxError('PUBSUB', args.subcommand, ctx.server.profile)
   }
-}
-
-function pubsubSubcommandError(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `unknown subcommand or wrong number of arguments for '${subcommand}'. Try PUBSUB HELP.`,
-  )
-}
-
-function pubsubUnavailableSubcommandError(
-  subcommand: string,
-): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try PUBSUB HELP.`,
-  )
 }

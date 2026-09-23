@@ -32,6 +32,8 @@ export type {
 export type {
   ExpirationState,
   KeyspaceEntry,
+  KeyspaceNotifyFlag,
+  KeyspaceNotifyFlags,
   RedisClusterNode,
   RedisClusterNodeRole,
   RedisDataTypeName,
@@ -55,7 +57,6 @@ export type {
 
 export type { RedisResultOptions } from './core/redis-result'
 export type { RespEncodeOptions, RespVersion } from './core/resp-encoder'
-export type { ResponseStream } from './core/response-stream'
 export type { RedisTurnHandle } from './core/turn-queue'
 export type {
   CompatibilityProfile,
@@ -65,12 +66,7 @@ export type {
   VersionGate,
 } from './core/compatibility'
 export type { ClientSessionOptions } from './core/client-session'
-export type {
-  ConnectionTransport,
-  ConnectionTransportEvent,
-  ConnectionTransportListener,
-  ConnectionTransportUnsubscribe,
-} from './core/transports/connection-transport'
+export type { ConnectionTransport } from './core/transports/connection-transport'
 export type { SocketConnectionTransportOptions } from './core/transports/socket-connection-transport'
 export type {
   Resp2CommandFrame,
@@ -78,7 +74,7 @@ export type {
 } from './core/transports/resp2'
 
 export { ClientSession } from './core/client-session'
-export { CommandExecutor, type ExecutorResult } from './core/command-executor'
+export { CommandExecutor } from './core/command-executor'
 export { CommandRegistry } from './core/command-registry'
 export { defineCommand } from './core/command-definition'
 export { t, parseCommandArgs } from './core/command-schema'
@@ -107,7 +103,6 @@ export {
 export { RedisValue } from './core/redis-value'
 export { RedisResult } from './core/redis-result'
 export { encodeRedisResult, encodeRedisValue } from './core/resp-encoder'
-export { isResponseStream } from './core/response-stream'
 export { formatMonitorTimestamp, monitorTimestampMicros } from './core/clock'
 export { SerialTurnQueue } from './core/turn-queue'
 export {
@@ -194,7 +189,6 @@ export {
   Resp2ParseError,
   Resp2SessionAdapter,
 } from './core/transports/resp2'
-export { InMemoryConnectionTransport } from './core/transports/in-memory-connection-transport'
 export { SocketConnectionTransport } from './core/transports/socket-connection-transport'
 // Socketless connection layer — drive a session over any transport without a
 // TCP server (`attachSession`), a net.Socket-shaped in-memory wire
@@ -207,8 +201,8 @@ export {
 } from './core/transports/attach-session'
 export {
   createVirtualConnection,
-  VirtualClientSocket,
   type CreateVirtualConnectionOptions,
+  type VirtualClientSocket,
   type VirtualConnection,
 } from './core/transports/virtual-connection'
 export {
@@ -228,7 +222,6 @@ export { computeSlotRange, type RedisClusterOptions } from './cluster'
 export {
   RedisCluster,
   createRedisCluster,
-  buildRedisCluster,
   type RedisClusterNodeHandle,
 } from './cluster-server'
 

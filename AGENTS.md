@@ -20,11 +20,18 @@ npm run test:integration:real
 npm run test:all
 
 # Run a single test file
-node --enable-source-maps --import tsx --no-warnings --test ./tests/path/to/test.test.ts
+node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test ./tests/path/to/test.test.ts
 
 # Run integration tests sequentially (needed for real Redis backend)
-TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test ./tests-integration/**/*.test.ts
+TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test ./tests-integration/**/*.test.ts
 ```
+
+Every `test*` npm script passes `--test-timeout` (60s; 30s for the real backend) to bound hung tests (#454). What that guarantees depends on the Node version:
+
+- **Node 22:** the timeout bounds each test *file*. The file's child process is killed, so the run always moves on, but only the file is named. If you want a hang to name the test, give that test its own `{ timeout }`. That timer runs in-process, so it names an async hang but not a blocked main thread.
+- **Node 24:** the timeout is enforced inside the test file's own process. A timed-out test is named, but the run can still stall in two cases: the test leaks a ref'd handle (socket, timer), or the main thread itself is blocked (a sync loop, or a V8 deadlock like nodejs/node#54918). In both cases the process never exits, and the CI job's `timeout-minutes` is the only backstop.
+
+Don't add `--test-force-exit`: on Node 22 under macOS it drops whole files from the report.
 
 ### Building & Running
 
@@ -53,7 +60,7 @@ For full diagrams and a request-lifecycle walkthrough, see [docs/ARCHITECTURE.md
 
 Redis-compatible server (standalone + cluster modes) built as a layered pipeline. The **same** `CommandExecutor` pipeline drives standalone mode, cluster mode, `MULTI`/`EXEC` transactions, and Lua `EVAL` alike, so routing, queueing, and command semantics never diverge:
 
-1. **Transport Layer** - Frames RESP bytes on/off the wire (`SocketConnectionTransport` / `InMemoryConnectionTransport`)
+1. **Transport Layer** - Frames RESP bytes on/off the wire (`SocketConnectionTransport` over a `net.Socket`, or over one end of a `stream.duplexPair()` for the socketless path)
 2. **Session Layer** - Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys (`ClientSession`)
 3. **Execution Layer** - Looks up commands, parses args, extracts routing keys, runs composable policies (`CommandExecutor`, `CommandRegistry`, `ExecutionPolicy`)
 4. **Command Layer** - Pure `(args, ctx) → RedisResult` implementations grouped by data type ([src/commands/](src/commands/))
@@ -66,14 +73,14 @@ Redis-compatible server (standalone + cluster modes) built as a layered pipeline
 - `RedisServerState` owns one or more `RedisDatabase` instances plus server-wide state: cluster topology, Lua script cache, pub/sub broker
 - Each `RedisDatabase` owns its keyspace directly: a `Map<keyId, KeyspaceEntry>` of byte-safe `Buffer` keys → typed `RedisDataValue`s with an optional `expiresAt`. [src/state/keyspace.ts](src/state/keyspace.ts) holds only the data-model types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`, `KeyspaceMutationTracker`)
 - Expiration is lazy — `getLiveEntry` evicts expired keys on read and emits an `evict` mutation event so `WATCH` sees expiry like a real delete
-- Every mutation flows through `RedisMutationBus` ([src/state/mutation-events.ts](src/state/mutation-events.ts)), which clones values before fan-out. It drives both `WATCH` and — via `KeyspaceNotifier`, wired in `RedisServerState` and a no-op until `notify-keyspace-events` is set — keyspace notifications. One bus for both signals, where real Redis keeps `signalModifiedKey` and `notifyKeyspaceEvent` independent (#379)
+- Every mutation flows through `RedisMutationBus` ([src/state/mutation-events.ts](src/state/mutation-events.ts)), which gives each subscriber its own copy of the event (a write's value is cloned lazily, on the subscriber's first read). Global listeners (`KeyspaceNotifier`, wired in `RedisServerState` and a no-op until `notify-keyspace-events` is set) see every event; per-key listeners (`WATCH`, blocked clients) see only modified-key events, never a `notify`-only one — matching real Redis, which keeps `signalModifiedKey` and `notifyKeyspaceEvent` independent (#379)
 - `FLUSHALL`/`FLUSHDB` clear keyspace data but **not** the script cache — only `SCRIPT FLUSH` does
 
 #### 2. CommandExecutor & ExecutionPolicy ([src/core/command-executor.ts](src/core/command-executor.ts), [src/core/execution-policies/](src/core/execution-policies/))
 
 - `CommandExecutor.plan()` resolves a `CommandDefinition` from the `CommandRegistry`, parses raw `Buffer` args through the command's `schema`, and extracts routing keys via `definition.keys(args)` — producing a shared `CommandPlan`
-- `executePlan` is the normal async path (supports `ResponseStream` + `afterExecute`/`onStream` rewriting); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async or stream
-- An `ExecutionPolicy` wraps every command with optional `beforeExecute` (can short-circuit: queue/redirect/reject), `afterExecute` (rewrite the result), and `onStream` (wrap a streaming result) hooks
+- `executePlan` is the normal async path (supports async commands); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async
+- An `ExecutionPolicy` guards every command with a single optional `beforeExecute` hook, which can short-circuit execution (queue/redirect/reject)
 - `TransactionPolicy` ([src/core/execution-policies/transaction-policy.ts](src/core/execution-policies/transaction-policy.ts)) is always appended last; `ClusterPolicy` ([src/core/execution-policies/cluster-policy.ts](src/core/execution-policies/cluster-policy.ts)) is prepended only for cluster nodes — order matters because cluster routing must validate (and possibly redirect/reject) **before** a command is queued into a transaction
 - There is no separate "cluster commander" type — cluster mode is the same `Resp2Server` + `CommandExecutor`, configured with one extra `CLUSTER` command and a `ClusterPolicy` bound to that node's id ([src/cluster.ts](src/cluster.ts))
 
@@ -90,7 +97,7 @@ interface CommandDefinition<TArgs> {
   execute(
     args: TArgs,
     ctx: RedisExecutionContext,
-  ): RedisResult | Promise<RedisResult> | ResponseStream
+  ): RedisResult | Promise<RedisResult>
 }
 ```
 
@@ -108,26 +115,33 @@ Commands are pure `(args, ctx) → RedisResult` — they never touch the transpo
 - In cluster mode, the slot of the _first_ keyed command queued is pinned per-session so every subsequent queued command must hash to the same slot
 - `DISCARD` cancels a transaction; `EXECABORT` is returned if the queue itself is dirty (e.g. an unknown command was queued)
 
-#### 6. Dual Backend System
+#### 6. Integration Test Backends
 
-The integration test suite supports two backends via `TEST_BACKEND` (see [tests-integration/test-config.ts](tests-integration/test-config.ts)):
+The integration test suite supports three backends via `TEST_BACKEND` (see [tests-integration/test-config.ts](tests-integration/test-config.ts)):
 
 - `mock` (default): spins up an in-process mock cluster via `createRedisCluster` — fast, no external dependencies
 - `real`: uses an actual Redis cluster (validates real-world compatibility)
+- `socketless`: runs the `ioredis/` and `node-redis/` suites against the socketless client mocks (`createIoredisMock`, `createNodeRedisMock`) via `npm run test:integration:socketless`. Cases they cannot pass yet are listed in [tests-integration/socketless/known-gaps.ts](tests-integration/socketless/known-gaps.ts), which is strict: delete an entry when a fix makes its test pass (see [docs/TEST-INTEGRATION.md](docs/TEST-INTEGRATION.md#socketless-backend))
 
 Integration tests live in [tests-integration/](tests-integration/) with subdirectories for `ioredis/` and `node-redis/` clients.
 
+**Key isolation is mandatory.** The real backend is a long-lived, shared Redis cluster that is *not* flushed between test files, so every key a test touches must be unique per run — derive it from `randomKey()` ([tests-integration/utils.ts](tests-integration/utils.ts)), either per test (`const tag = \`{feature:${randomKey()}}\``) or via a file-level `const RUN = randomKey()`. Never assert on a fixed literal key name, never assume a key is absent at start, and never assert on total `DBSIZE` (other suites' keys — including ones expiring mid-test — make it drift); count the suite's own keys with `assertKeyCount` / `assertNodeRedisKeyCount` instead. The suite must pass twice in a row with no flush in between (#420).
+
+**Cross-slot probes pin both slots.** A test asserting `CROSSSLOT` needs two keys that genuinely hash apart. Two independently random hash tags collide about 1 run in 16384, so build the second key with `keyInAnotherSlot(first, () => ...)` (or keep fixed literals, as `ioredis/string/core.test.ts` does) rather than drawing both at random.
+
+`npm run clean:redis` flushes every endpoint the real backend uses via [scripts/flush-redis.ts](scripts/flush-redis.ts) (ioredis, no `redis-cli` needed) and **exits non-zero** unless every one of them is *demonstrably* empty afterwards (#395). It never infers success from a command not erroring. `REDIS_CLUSTER_PORTS` are *seeds* — the harness's cluster clients discover every node from any one of them — so the flush reads `CLUSTER NODES` and covers the whole topology it finds, treating a listed-but-unreachable node as a failure rather than skipping it; flushing only the listed ports would leave unlisted masters full while exiting 0. Masters are re-checked with `DBSIZE`, replicas — which refuse `FLUSHALL` with `-READONLY` while potentially holding a stale keyspace — must belong to a master this run flushed and must themselves reach `DBSIZE 0`, and every cluster node must report `cluster_state:ok`, since `FLUSHALL`/`DBSIZE` are keyless and answer normally on a cluster whose next keyed command would return `-CLUSTERDOWN`. Endpoints come from [tests-integration/redis-endpoints.ts](tests-integration/redis-endpoints.ts), shared with the harness so the two cannot disagree about which nodes exist.
+
 ### Concurrency Model
 
-Each `RedisDatabase` owns a `SerialTurnQueue` ([src/core/turn-queue.ts](src/core/turn-queue.ts)). Every `session.execute()` waits for a turn before reaching the executor, so commands within one database run to completion one at a time — mirroring single-threaded Redis semantics (sessions on different databases run independently). `RedisExecutionContext` carries a `park` handler ([src/core/redis-context.ts](src/core/redis-context.ts)) so a command can release its turn while waiting on something and re-acquire one with priority once it resolves — plumbing for future blocking commands (`BLPOP`, `WAIT`, `XREAD BLOCK`, ...); no shipped command uses it yet.
+Each `RedisServerState` owns one `SerialTurnQueue` ([src/core/turn-queue.ts](src/core/turn-queue.ts)) shared by all its databases. Every `session.execute()` waits for a turn before reaching the executor, so commands run to completion one at a time across every database — mirroring single-threaded Redis semantics (each cluster node has its own state, hence its own queue). `RedisExecutionContext` carries a `park` handler ([src/core/redis-context.ts](src/core/redis-context.ts)) so a command can release the single server-wide turn while waiting on something and re-acquire one with priority once it resolves. The blocking commands (`BLPOP`, `BRPOP`, `BLMOVE`, `BLMPOP`, `BZMPOP`, `XREAD BLOCK`, ...) park this way, so a waiter on any database never stalls sessions on the others.
 
 ### Type System
 
-Core protocol/result types live in [src/core/redis-value.ts](src/core/redis-value.ts), [src/core/redis-result.ts](src/core/redis-result.ts), and [src/core/response-stream.ts](src/core/response-stream.ts):
+Core protocol/result types live in [src/core/redis-value.ts](src/core/redis-value.ts) and [src/core/redis-result.ts](src/core/redis-result.ts):
 
 - `RedisValue` - protocol-agnostic reply union (`simple-string`, `bulk-string`, `integer`, `array`, `map`, `error`, ...), encoded to RESP2/RESP3 wire bytes by [src/core/resp-encoder.ts](src/core/resp-encoder.ts)
 - `RedisResult` - command outcome wrapper returned by `execute()`
-- `ResponseStream` - streaming/push-style replies
+- Server-initiated frames (pub/sub messages, `MONITOR` lines) are not a result type: commands enqueue them on the session push queue (`ClientSession.enqueuePush`), which the transport adapter writes between replies
 - `CommandDefinition` / `CommandPlan` / `CommandSchema` - command shape, parsed invocation, and arg-parsing ([src/core/command-definition.ts](src/core/command-definition.ts), [src/core/command-schema.ts](src/core/command-schema.ts))
 - `RedisExecutionContext` - per-call context (`db`, `server`, `session`, `executor`, `signal`, `park`) ([src/core/redis-context.ts](src/core/redis-context.ts))
 
@@ -243,6 +257,7 @@ A client integration test exists to prove the **client behaves identically again
 ## Adding New Commands
 
 1. Implement a `CommandDefinition` — `name`, `schema` (via `t` from [src/core/command-schema.ts](src/core/command-schema.ts)), `flags`, `keys(args)`, and `execute(args, ctx)` — using `defineCommand` ([src/core/command-definition.ts](src/core/command-definition.ts)) in the matching [src/commands/<type>.ts](src/commands/) file
+   - `COMMAND`/`COMMAND INFO` arity and legacy key positions are derived from `schema`, not hand-written: use `t.key()` only for actual key arguments (never for members/fields/values — use `t.bulk()` there), and give a hand-written `t.custom()` parser a `layout` (or attach one with `t.withLayout()`) so its arity/key reporting is accurate
 2. Register it in [src/commands/index.ts](src/commands/index.ts) (and re-export it if other modules need direct access)
 3. Add unit tests in [tests/](tests/); add integration coverage under [tests-integration/](tests-integration/) if it has client-visible wire behavior worth checking against a real client
 4. Set `flags` correctly — `'readonly'` marks it safe for replicas, `'noscript'` excludes it from Lua, `'transaction'` controls MULTI/EXEC eligibility

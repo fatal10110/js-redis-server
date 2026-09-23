@@ -2,9 +2,12 @@ import { RedisValue } from '../core/redis-value'
 import { RedisResult } from '../core/redis-result'
 import { isIntegerToken } from '../core/command-schema'
 import {
+  formatRedisDouble,
+  type DoubleFormatProfile,
+} from '../core/double-format'
+import {
   ExpectedIntegerError,
   InvalidExpireTimeError,
-  RedisCommandError,
   RedisSyntaxError,
   WrongTypeRedisError,
 } from '../core/redis-error'
@@ -23,10 +26,16 @@ export function integer(value: number | bigint): RedisResult {
   return RedisResult.create(RedisValue.integer(value))
 }
 
-export function scoreBuffer(score: number): Buffer {
-  if (score === Infinity) return Buffer.from('inf')
-  if (score === -Infinity) return Buffer.from('-inf')
-  return Buffer.from(score.toString())
+// A score as text, for replies that carry it as a plain bulk string (ZSCAN).
+// Same profile-aware spelling as a `double` reply (#451); `-0` is normalized
+// to `0` like scoreValue.
+export function scoreBuffer(
+  score: number,
+  profile: DoubleFormatProfile,
+): Buffer {
+  return Buffer.from(
+    formatRedisDouble(Object.is(score, -0) ? 0 : score, profile),
+  )
 }
 
 // A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching
@@ -57,6 +66,24 @@ export function array(items: RedisValue[]): RedisResult {
   return RedisResult.create(RedisValue.array(items))
 }
 
+/**
+ * A container's HELP reply, as real Redis' `addReplyHelp` builds it: the
+ * container's own lines followed by the `HELP` entry every container appends,
+ * all as status lines (`+...`). The entry reads `Prints this help.` through
+ * 7.0 and `Print this help.` from Redis 7.2 / Valkey 7.2.
+ */
+export function helpReply(
+  lines: readonly string[],
+  profile: CompatibilityProfile,
+): RedisResult {
+  const footer = profile.has('reply.help-print-wording')
+    ? '    Print this help.'
+    : '    Prints this help.'
+  return array(
+    [...lines, 'HELP', footer].map(line => RedisValue.simpleString(line)),
+  )
+}
+
 export function ensureStringOrMissing(
   db: RedisDatabase,
   key: Buffer,
@@ -77,14 +104,23 @@ export function typeName(type: RedisDataTypeName | null): string {
   return type ?? 'none'
 }
 
-export function ttlSeconds(expiresAt: number): number {
-  // Redis rounds remaining time to the nearest second ((ms+500)/1000),
-  // not ceil/floor — matches EXPIRETIME and real TTL behavior.
-  return Math.max(0, Math.round((expiresAt - Date.now()) / 1000))
+// Key-level TTL (TTL): Redis rounds remaining time to the nearest second
+// ((ms+500)/1000), not ceil/floor — matches EXPIRETIME and real TTL behavior.
+export function keyTtlSeconds(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, Math.round((expiresAt - now) / 1000))
 }
 
-export function ttlMilliseconds(expiresAt: number): number {
-  return Math.max(0, expiresAt - Date.now())
+// Hash-field TTL (HTTL): Redis rounds remaining time *up* to the next second
+// ((ms+999)/1000), so any sub-second remainder reports 1, not 0 (#432).
+export function hashFieldTtlSeconds(
+  expiresAt: number,
+  now = Date.now(),
+): number {
+  return Math.max(0, Math.ceil((expiresAt - now) / 1000))
+}
+
+export function ttlMilliseconds(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, expiresAt - now)
 }
 
 export function parseIntegerToken(token: Buffer): number {
@@ -133,67 +169,10 @@ export function parsePositiveExpireToken(
   return value
 }
 
-/**
- * Real Redis formats the echoed subcommand with `%.128s`, so a longer name is
- * cut at 128 bytes. Verified exact against 7.0.15 and 8.0.6 for single-byte
- * names: at 128 the reply is byte-identical to the mock's, at 129 and 300 real
- * echoes 128 characters. Redis 6.2 has no truncation at all — a 300-byte name
- * comes back whole.
- *
- * Known gap, shared with the non-UTF-8 case below: when the 128-byte cut lands
- * *inside* a multi-byte character — including a perfectly well-formed one —
- * real Redis emits the raw partial byte, while `toString()` here yields U+FFFD.
- * For `'A'.repeat(127) + 'é' + ...` real replies with 128 echoed bytes (172
- * total) and this replies with 130 (174). Closing it needs the same plumbing as
- * the binary case: `RedisCommandError` carries a `string` and
- * `src/core/resp-encoder.ts` formats strings, so there is no path from a Buffer
- * to raw bytes on the wire. Tracked as #384 part 2 — see the test file header.
- */
-const SUBCOMMAND_ECHO_LIMIT = 128
-
-/**
- * The reply real Redis sends when a container command is given a subcommand it
- * does not recognize.
- *
- * Redis 7.0 moved container commands into the command table, which changed both
- * the template and the echo model. Captured from real servers:
- *
- * ```
- * 6.2.24  CONFIG BOGUS -> Unknown subcommand or wrong number of arguments for 'BOGUS'. Try CONFIG HELP.
- * 7.0.15  CONFIG BOGUS -> unknown subcommand 'BOGUS'. Try CONFIG HELP.
- * 8.0.6   CONFIG BOGUS -> unknown subcommand 'BOGUS'. Try CONFIG HELP.
- * ```
- *
- * The subcommand is echoed with the casing the client sent. `container` is the
- * upper-case parent name as it appears in the `Try ... HELP.` suffix.
- *
- * Note this covers the *unknown subcommand* path only. On 6.2 the same template
- * also served wrong-arity replies for a known subcommand, where 7.0+ says
- * `wrong number of arguments for 'config|get' command`; that arity path is a
- * separate divergence and is not handled here (#413).
- *
- * There are 15 hand-rolled copies of this message across the command modules
- * with three wordings live at once; #413 tracks migrating them onto this
- * helper. Only CONFIG is routed through it so far.
- */
-export function unknownSubcommandError(
-  container: string,
-  subcommand: Buffer | string,
-  profile: CompatibilityProfile,
-): RedisCommandError {
-  const raw = Buffer.isBuffer(subcommand) ? subcommand : Buffer.from(subcommand)
-
-  if (!profile.has('error.unknown-subcommand-wording')) {
-    return new RedisCommandError(
-      `Unknown subcommand or wrong number of arguments for '${raw.toString()}'. Try ${container} HELP.`,
-    )
-  }
-
-  const echoed = raw.subarray(0, SUBCOMMAND_ECHO_LIMIT).toString()
-  return new RedisCommandError(
-    `unknown subcommand '${echoed}'. Try ${container} HELP.`,
-  )
-}
+export {
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from '../core/subcommand-errors'
 
 export function requireNextOptionValue(
   args: readonly Buffer[],

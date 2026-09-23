@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
 import { STANDALONE_AUTH_PASSWORD, TestRunner } from '../test-config'
-import { commandFrame } from '../utils'
+import { commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -15,6 +15,10 @@ import { expectReply } from './helpers'
  * where it used `.call(...)`.
  */
 const testRunner = new TestRunner()
+
+// Unique per run so the nil-reply assertion below never depends on a fixed
+// key being absent from a shared, unflushed real server (#420).
+const MISSING_KEY = `missing:${randomKey()}`
 
 const NOAUTH = '-NOAUTH Authentication required.\r\n'
 const WRONGPASS =
@@ -94,7 +98,7 @@ describe(`Raw TCP AUTH enforcement with requirepass (${testRunner.getBackendName
   // before the AUTH unlock, since AUTH success persists for the connection.
   test('drives the NOAUTH / WRONGPASS / unlock sequence', async () => {
     // Gated before authentication.
-    await expectReply(conn, ['GET', 'k'], NOAUTH)
+    await expectReply(conn, ['GET', MISSING_KEY], NOAUTH)
     await expectReply(conn, ['PING'], NOAUTH)
 
     // Wrong password.
@@ -123,6 +127,6 @@ describe(`Raw TCP AUTH enforcement with requirepass (${testRunner.getBackendName
     )
 
     // Previously gated command now succeeds.
-    await expectReply(conn, ['GET', 'k'], '$-1\r\n')
+    await expectReply(conn, ['GET', MISSING_KEY], '$-1\r\n')
   })
 })

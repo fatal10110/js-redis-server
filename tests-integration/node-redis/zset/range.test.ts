@@ -2,16 +2,19 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
+import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -19,46 +22,49 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('ZRANGE command', async () => {
-    await redisClient.zAdd('zset3', [
+    await redisClient.zAdd(`zset3:${RUN}`, [
       { score: 1, value: 'one' },
       { score: 2, value: 'two' },
       { score: 3, value: 'three' },
       { score: 4, value: 'four' },
     ])
 
-    assert.deepStrictEqual(await redisClient.zRange('zset3', 0, 2), [
+    assert.deepStrictEqual(await redisClient.zRange(`zset3:${RUN}`, 0, 2), [
       'one',
       'two',
       'three',
     ])
 
-    assert.deepStrictEqual(await redisClient.zRangeWithScores('zset3', 0, -1), [
-      { value: 'one', score: 1 },
-      { value: 'two', score: 2 },
-      { value: 'three', score: 3 },
-      { value: 'four', score: 4 },
-    ])
+    assert.deepStrictEqual(
+      await redisClient.zRangeWithScores(`zset3:${RUN}`, 0, -1),
+      [
+        { value: 'one', score: 1 },
+        { value: 'two', score: 2 },
+        { value: 'three', score: 3 },
+        { value: 'four', score: 4 },
+      ],
+    )
 
-    assert.deepStrictEqual(await redisClient.zRange('zset3', -2, -1), [
+    assert.deepStrictEqual(await redisClient.zRange(`zset3:${RUN}`, -2, -1), [
       'three',
       'four',
     ])
   })
 
   test('ZREVRANGE command', async () => {
-    await redisClient.zAdd('zset4', [
+    await redisClient.zAdd(`zset4:${RUN}`, [
       { score: 1, value: 'one' },
       { score: 2, value: 'two' },
       { score: 3, value: 'three' },
     ])
 
     assert.deepStrictEqual(
-      await redisClient.zRange('zset4', 0, -1, { REV: true }),
+      await redisClient.zRange(`zset4:${RUN}`, 0, -1, { REV: true }),
       ['three', 'two', 'one'],
     )
 
     assert.deepStrictEqual(
-      await redisClient.zRangeWithScores('zset4', 0, 1, { REV: true }),
+      await redisClient.zRangeWithScores(`zset4:${RUN}`, 0, 1, { REV: true }),
       [
         { value: 'three', score: 3 },
         { value: 'two', score: 2 },
@@ -67,18 +73,21 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('ZRANK and ZREVRANK commands', async () => {
-    await redisClient.zAdd('zset5', [
+    await redisClient.zAdd(`zset5:${RUN}`, [
       { score: 1, value: 'one' },
       { score: 2, value: 'two' },
       { score: 3, value: 'three' },
     ])
 
-    assert.strictEqual(await redisClient.zRank('zset5', 'one'), 0)
-    assert.strictEqual(await redisClient.zRank('zset5', 'three'), 2)
-    assert.strictEqual(await redisClient.zRank('zset5', 'nonexistent'), null)
+    assert.strictEqual(await redisClient.zRank(`zset5:${RUN}`, 'one'), 0)
+    assert.strictEqual(await redisClient.zRank(`zset5:${RUN}`, 'three'), 2)
+    assert.strictEqual(
+      await redisClient.zRank(`zset5:${RUN}`, 'nonexistent'),
+      null,
+    )
 
-    assert.strictEqual(await redisClient.zRevRank('zset5', 'three'), 0)
-    assert.strictEqual(await redisClient.zRevRank('zset5', 'one'), 2)
+    assert.strictEqual(await redisClient.zRevRank(`zset5:${RUN}`, 'three'), 0)
+    assert.strictEqual(await redisClient.zRevRank(`zset5:${RUN}`, 'one'), 2)
   })
 
   test('ZRANK and ZREVRANK WITHSCORE option', async () => {

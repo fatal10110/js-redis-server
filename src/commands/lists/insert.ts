@@ -29,9 +29,9 @@ export const linsertCommand = defineCommand({
   name: 'linsert',
   schema: t.object({
     key: t.key(),
-    position: insertPosition(),
-    pivot: t.key(),
-    element: t.key(),
+    position: t.withLayout(insertPosition(), { min: 1, max: 1 }),
+    pivot: t.bulk(),
+    element: t.bulk(),
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],

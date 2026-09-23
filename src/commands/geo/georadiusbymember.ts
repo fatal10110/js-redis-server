@@ -23,6 +23,7 @@ type GeoRadiusByMemberArgs = GeoRadiusFlags & {
 
 function createGeoRadiusByMemberSchema(allowStore: boolean) {
   return t.custom<GeoRadiusByMemberArgs>(
+    { min: 4, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       const member = input[index + 1]
@@ -82,6 +83,7 @@ function executeGeoRadiusByMember(
       withHash: args.withHash,
     },
     args.by.unit,
+    ctx.server.profile,
   )
 }
 

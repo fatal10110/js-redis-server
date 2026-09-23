@@ -13,6 +13,7 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 ## 1. Connection Commands
 
 - [x] `PING [message]` - Return PONG, or echo `message`
+- [x] `ECHO message` - Return `message` verbatim (binary-safe). Like real Redis, rejected in RESP2 subscribed mode and allowed in RESP3 subscribed mode
 - [x] `QUIT` - Close the connection
 - [x] `SELECT index` - Change the selected database
 - [x] `RESET` - Reset connection state (auth, MULTI/WATCH, RESP version, db, cluster read-only flag, client name) to defaults
@@ -42,9 +43,25 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
+
 - [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 - [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
 - [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
+
+`CLIENT` is flagged `noscript`. From Lua, every subcommand is rejected with
+`This Redis command is not allowed from script`, with two exceptions on Redis
+7.0+ / Valkey profiles, where scripts resolve `container|subcommand` through
+the command table:
+
+- `CLIENT HELP` runs. Real Redis leaves every container's HELP runnable from
+  scripts; the same applies to `ACL`, `SCRIPT`, `CONFIG` and `FUNCTION`.
+- An unknown subcommand, or one the profile does not have yet (for example
+  `CLIENT SETINFO` on `redis-7.0`), fails lookup with
+  `Unknown Redis command called from script`.
+
+`RESET` is `noscript` on every profile. `QUIT` is `noscript` on 7.0+; on
+`redis-6.2` it has no command-table entry, so a script gets the
+unknown-command error.
 
 ## 2. Server Commands
 
@@ -60,8 +77,10 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 
 - [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
 
-`MONITOR` is implemented as a long-lived `ResponseStream` backed by a
-server-level command event feed. Monitor lines include an epoch timestamp, the
+`MONITOR` replies `OK` and then delivers lines as session push frames, fed by
+a server-level command event feed. A repeated `MONITOR` gets no reply, and
+`MONITOR` inside `MULTI` fails with `MONITOR isn't allowed for DENY BLOCKING
+client`, as in Redis. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
 arguments. Unknown commands and arity/syntax failures are not emitted; commands
 that parse successfully but return execution errors are emitted, matching Redis.
@@ -91,7 +110,7 @@ surface.
 #### CONFIG
 
 - [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (glob-matched against a fixed set of plausible defaults; RESP3 map / RESP2 flat array)
-- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown parameter names with the real Redis error, matching CONFIG SET's "all-or-nothing" validation)
+- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2)
 - [x] `CONFIG HELP`
 - [x] `CONFIG RESETSTAT` - Reset the stats returned by INFO (no-op in the mock)
 - [x] `CONFIG REWRITE` - Rewrite the configuration file (returns Redis' no-config-file error)
@@ -106,22 +125,39 @@ surface.
 > - `notify-keyspace-events` — see
 >   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 >   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
->   `AKE`; an unknown class character is rejected).
-> - `proto-max-bulk-len` — read by the commands that grow a string in place,
->   `APPEND` and `SETRANGE`, which reject rather than allocate past it. Accepts
->   Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces Redis' own
->   `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure wording
->   follows the profile (Redis 7.0 changed it — see
+>   `AKE`; an unknown class character is rejected with the profile's CONFIG
+>   SET failure wording).
+> - `proto-max-bulk-len` — enforced in the three places Redis enforces it.
+>   Accepts Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces
+>   Redis' own `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure
+>   wording follows the profile (Redis 7.0 changed it — see
 >   [compatibility profiles](API.md#compatibility-profiles)).
+>
+>   1. **The protocol reader**, which is Redis' primary check and the one that
+>      covers every command: a bulk argument longer than the limit is refused
+>      while the frame is still being parsed, before the payload is read and
+>      before any handler runs. The reply is
+>      `-ERR Protocol error: invalid bulk length` and the server then closes the
+>      connection, so `SET`, `GETSET`, `MSET`, `LPUSH`, `HSET`, an `APPEND` to a
+>      missing key — anything — is bounded by it. A bulk exactly the size of the
+>      limit is still accepted.
+>   2. **`APPEND` and `SETRANGE`**, which reject rather than allocate a *result*
+>      past the limit (`APPEND` to a missing key is not size-checked at this
+>      layer, matching Redis — the protocol reader already bounded its value).
+>   3. **The `SETBIT` / `GETBIT` / `BITFIELD` bit-offset ceiling**, derived from
+>      the live limit exactly as Redis derives it: an offset whose byte is at or
+>      past `proto-max-bulk-len` (`(offset >> 3) >= proto-max-bulk-len`) is
+>      rejected with `ERR bit offset is not an integer or out of range`. At the
+>      512MB default that is the familiar "offset below 2^32"; lowering the
+>      limit lowers the ceiling with it.
+>
 >   Raising it past **512MB**, Redis' own default, does not raise what the mock
->   will allocate: beyond that the size error is returned rather than a buffer
->   the test process may not survive producing. At or below the default the
+>   will allocate — for the bit-offset ceiling (3) just as for `APPEND` and
+>   `SETRANGE` (2). Beyond the default the mock answers an error rather than
+>   producing a buffer the test process may not survive: the size error for a
+>   string that would grow too large, and the ordinary bit-offset error for an
+>   offset the raised setting would otherwise admit. At or below the default the
 >   behavior is Redis'.
->   **Enforcement is not yet general**: real Redis' primary check is in the
->   protocol reader, so it also bounds every bulk argument (`SET`, `MSET`,
->   `LPUSH`, `HSET`, ...) and the `SETBIT`/`BITFIELD` bit-offset ceiling. Neither
->   is modeled — tracked in
->   [#415](https://github.com/fatal10110/js-redis-server/issues/415).
 >
 > Since there is no backing config file,
 > `CONFIG REWRITE` reports the same no-config-file error as Redis.
@@ -238,9 +274,25 @@ with `GT` or `LT`.
   every `GET` pattern is refused with the shorter `denied in Cluster mode.`
   wording, and `GET '#'` only becomes exempt from the slot check in Redis
   7.4.2 / Valkey 8.0.2 — so the `redis-7.4` profile (pinned at 7.4.4) exempts
-  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. Hash-field
-  dereference patterns such as
+  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. As in Redis, the
+  guard runs inside SORT's own left-to-right option scan when the command
+  executes: the first offending option is the one reported, a later syntax
+  error is never reached, and inside `MULTI` the command queues and the error
+  surfaces in `EXEC`. Hash-field dereference patterns such as
   `object_*->field` are not modeled.
+- `SORT` loads a set of canonical 64-bit integers in ascending numeric order
+  (as an intset is stored) and any other set in insertion order (as a small
+  listpack set built from a non-integer first is). The real order depends on
+  the set's encoding history, which the mock does not keep, so two cases
+  differ: a set created from an integer keeps its integers sorted ahead of
+  later non-integer members in Redis (`SADD s 3 1 a` loads `1 3 a`, the mock
+  `3 1 a`), and a set that briefly held a non-integer keeps its listpack order
+  in Redis after that member is removed, where the mock sorts it numerically
+  again. `SMEMBERS` has the same intset-order gap. With `BY` plus a `LIMIT` that
+  does not cover every element, Redis' partial quicksort can reorder elements
+  that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
+  a small zset to the `skiplist` encoding is not observable until
+  `OBJECT ENCODING` exists (#117).
 
 #### Not implemented
 
@@ -398,7 +450,7 @@ with `GT` or `LT`.
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
 - [x] `XTRIM key MAXLEN|MINID [~] threshold [LIMIT count]` - Trim a stream to a size or minimum ID
 - [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id|+ [id|+ ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs); Redis 7.4+ profiles accept `+` to return the latest entry from each stream
-- [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER ...` - Manage stream consumer groups and consumers
+- [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER|HELP ...` - Manage stream consumer groups and consumers
 - [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery
 - [x] `XACK key group ID [ID ...]` - Acknowledge pending stream entries
 - [x] `XPENDING key group [[IDLE min-idle-time] start end count [consumer]]` - Inspect pending stream entries
@@ -407,6 +459,7 @@ with `GT` or `LT`.
 - [x] `XINFO STREAM key [FULL [COUNT count]]` - Inspect stream metadata, entries, groups, and PEL details
 - [x] `XINFO GROUPS key` - List stream consumer groups
 - [x] `XINFO CONSUMERS key group` - List consumers in a group
+- [x] `XINFO HELP` - Show XINFO subcommand help
 - [x] `XSETID key last-id [ENTRIESADDED entries-added] [MAXDELETEDID max-deleted-id]` - Set the last-generated stream ID and optionally stream metadata counters
 
 #### Notes / gaps vs. real Redis
@@ -514,7 +567,8 @@ Key mutations are published to the standard `__keyspace@<db>__:<key>` (event in
 the message) and `__keyevent@<db>__:<event>` (key in the message) channels when
 enabled via `CONFIG SET notify-keyspace-events <flags>`. The flag string uses
 Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
-`t`, `m`, `n`, `d`); it is validated and normalized like real Redis.
+`t`, `m`, `n`, `d`); it is validated and normalized like real Redis. `n` is
+Redis 7.0+, so the `redis-6.2` profile rejects it.
 
 - [x] Lifecycle events derived from the keyspace itself: `del`, `expire`,
       `persist`, and `expired` (fired when a key is lazily evicted on access).
@@ -526,11 +580,30 @@ Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
       `zincr` (from `ZINCRBY`), `zrem`, `xadd`, etc.
 - [x] `RENAME`/`RENAMENX` emit `rename_from` + `rename_to`; `COPY` emits
       `copy_to`.
+- [x] Removing the last element emits the removal event, then `del`
+      (`hdel`, `lpop`, `srem`, `zrem`, `spop`, ...).
+- [x] Blocking, multi-key and move-style pops are named after the operation:
+      `BLPOP`/`BRPOP`/`LMPOP`/`BLMPOP` → `lpop`/`rpop`,
+      `BZPOPMIN`/`BZPOPMAX`/`ZMPOP`/`BZMPOP` → `zpopmin`/`zpopmax`,
+      `LMOVE`/`BLMOVE`/`RPOPLPUSH` → `lpush`/`rpush` on the destination then
+      `lpop`/`rpop` on the source, `SMOVE` → `srem` + `sadd`.
+- [x] Stream consumer groups: `xgroup-create`, `xgroup-createconsumer`,
+      `xgroup-setid`, `xgroup-delconsumer`, `xgroup-destroy`, `xsetid` — without
+      dirtying a `WATCH` on the stream. `XREADGROUP`/`XCLAIM`/`XAUTOCLAIM` emit
+      `xgroup-createconsumer` when they create a consumer.
+- [x] Hash-field commands: `HGETDEL` → `hdel`; `HEXPIRE`/`HPEXPIRE`/
+      `HEXPIREAT`/`HPEXPIREAT`/`HGETEX EX|PX|...` → `hexpire` (`hdel` for a
+      time already past); `HGETEX PERSIST` → `hpersist`; `HSETEX` → `hset` then
+      `hexpire`/`hdel`. `SORT ... STORE` → `sortstore`.
 
 > Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
-> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; cross-DB
-> `COPY` does not name the destination event. Notifications are process-local to
-> the `RedisServerState`, so they are not delivered across mock cluster nodes.
+> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; `MOVE` and
+> cross-DB `COPY` do not name the destination event. Expired hash fields are
+> dropped by the active sweep (`hexpired`, then `del`), like real Redis with
+> active expiry on; between sweeps any hash command drops them too, where real
+> Redis with active expiry *off* only expires a field on a field lookup.
+> Notifications are process-local to the `RedisServerState`, so they are not
+> delivered across mock cluster nodes.
 
 ## 15. Persistence Commands
 
@@ -573,6 +646,11 @@ key.
 - [x] `BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment] [OVERFLOW WRAP | SAT | FAIL]` - Operate on arbitrary-width integer fields
 - [x] `BITFIELD_RO key [GET type offset ...]` - Read-only variant of `BITFIELD`
 
+> `SETBIT`, `GETBIT` and `BITFIELD` cap a bit offset at the live
+> `proto-max-bulk-len` rather than at a fixed 2^32 — see
+> [Server Commands](#2-server-commands). The two agree at Redis' 512MB
+> default; lowering the limit lowers the ceiling.
+
 ## 18. HyperLogLog Commands
 
 HyperLogLogs are stored in the String type. Cardinality is approximate, same
@@ -591,9 +669,9 @@ rather than Redis's sparse/dense HLL format — not byte-compatible, no
 Geo commands are stored in the Sorted Set type (members scored by geohash).
 
 - [x] `GEOADD key [NX | XX] [CH] longitude latitude member [longitude latitude member ...]` - Add geospatial members
-- [x] `GEOPOS key member [member ...]` - Return longitude/latitude of members
+- [x] `GEOPOS key [member [member ...]]` - Return longitude/latitude of members
 - [x] `GEODIST key member1 member2 [m | km | ft | mi]` - Distance between two members
-- [x] `GEOHASH key member [member ...]` - Return Geohash strings for members
+- [x] `GEOHASH key [member [member ...]]` - Return Geohash strings for members
 - [x] `GEOSEARCH key <FROMMEMBER member | FROMLONLAT longitude latitude> <BYRADIUS radius unit | BYBOX width height unit> [ASC | DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]` - Search within a radius or box
 - [x] `GEOSEARCHSTORE destination source <FROMMEMBER ... | FROMLONLAT ...> <BYRADIUS ... | BYBOX ...> [STOREDIST]` - Store a `GEOSEARCH` result
 - [x] `GEORADIUS` / `GEORADIUSBYMEMBER` (and `_RO` variants) - Deprecated radius queries

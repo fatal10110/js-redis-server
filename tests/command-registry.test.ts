@@ -35,9 +35,26 @@ describe('CommandRegistry', () => {
     assert.strictEqual(registry.get('nope'), undefined)
   })
 
+  test('folds ASCII only, never a non-ASCII look-alike (#382)', () => {
+    const registry = new CommandRegistry()
+    const keys = makeCommand('keys')
+    const set = makeCommand('set')
+    registry.registerAll([keys, set])
+
+    assert.strictEqual(registry.get('KeYs'), keys)
+    // U+212A KELVIN SIGN lowercases to 'k' under Unicode folding.
+    assert.strictEqual(registry.get('\u212Aeys'), undefined)
+    assert.strictEqual(registry.get('\u212AEYS'), undefined)
+    // U+017F LATIN SMALL LETTER LONG S uppercases to 'S' but lowercases to
+    // itself, so this never resolved even before #382 — a regression guard
+    // against the lookup ever growing an upper-casing fold.
+    assert.strictEqual(registry.get('\u017Fet'), undefined)
+  })
+
   test('defineCommand lowercases the declared name', () => {
     assert.strictEqual(makeCommand('GeT').name, 'get')
     assert.strictEqual(makeCommand('get').name, 'get')
+    assert.strictEqual(makeCommand('\u212AEYS').name, '\u212Aeys')
   })
 
   test('register stores the definition by reference, never a copy', () => {

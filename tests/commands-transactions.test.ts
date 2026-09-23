@@ -2,11 +2,9 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   ClientSession,
-  InMemoryConnectionTransport,
   RedisResult,
   RedisServerState,
   RedisValue,
-  type ResponseStream,
   Resp2SessionAdapter,
   createRedisCommandExecutor,
   defineCommand,
@@ -14,6 +12,7 @@ import {
 } from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
+import { InMemoryTransport } from './in-memory-transport-test-helper'
 
 describe('new transaction commands', () => {
   test('queues commands in MULTI and executes them through EXEC', async () => {
@@ -126,7 +125,12 @@ describe('new transaction commands', () => {
       flags: ['pubsub'],
       capabilities: { pushOnly: true },
       keys: () => [],
-      execute: () => createSingleFrameStream(),
+      execute: () =>
+        RedisResult.create(
+          RedisValue.push('message', [
+            RedisValue.bulkString(Buffer.from('updates')),
+          ]),
+        ),
     })
     const server = new RedisServerState()
     const executor = createRedisCommandExecutor({
@@ -242,33 +246,46 @@ describe('new transaction commands', () => {
     )
   })
 
-  test('EXEC acquires the target DB turn after a queued SELECT switches DBs', async () => {
-    const { session, server } = createSession({ databaseCount: 2 })
+  test('EXEC holds the server turn across a queued SELECT', async testContext => {
+    const { session, server, executor } = createSession({ databaseCount: 2 })
+    const other = new ClientSession({ server, executor, database: 1 })
+    testContext.after(() => other.close())
     const key = Buffer.from('key')
-
-    // Externally hold DB 1's serialization turn so the transaction's post-SELECT
-    // SET cannot run until we release it — proving EXEC hands the turn off to
-    // DB 1's queue rather than writing unserialized.
-    const blocker = await server.getDatabase(1).turnQueue.waitTurn()
 
     await session.execute('multi', [])
     await session.execute('select', [Buffer.from('1')])
     await session.execute('set', [key, Buffer.from('value')])
 
+    // Hold the server's single turn: neither the EXEC nor a command from a
+    // session already on DB 1 may run until it is released. One turn covers
+    // every database, so there is no mid-EXEC handoff for a SELECT (#369).
+    const blocker = await server.turnQueue.waitTurn()
+
+    const order: string[] = []
     let execSettled = false
     const execPromise = session.execute('exec', []).then(result => {
       execSettled = true
+      order.push('exec')
+      return result
+    })
+    const otherPromise = other.execute('get', [key]).then(result => {
+      order.push('other')
       return result
     })
 
-    // Let the EXEC run up to the handoff; it must be parked waiting for DB 1.
     await new Promise(resolve => setTimeout(resolve, 20))
-    assert.strictEqual(execSettled, false, 'EXEC should block on DB 1 turn')
+    assert.strictEqual(execSettled, false, 'EXEC should wait for the turn')
     assert.strictEqual(server.getDatabase(1).getString(key), null)
 
-    // Releasing DB 1's turn lets EXEC acquire it and finish the SET.
     blocker.release()
     const result = await execPromise
+    // FIFO on the one turn: the whole EXEC, including its post-SELECT SET into
+    // DB 1, ran before the DB 1 session's GET, which therefore sees the value.
+    assert.deepStrictEqual(
+      await otherPromise,
+      RedisResult.create(RedisValue.bulkString(Buffer.from('value'))),
+    )
+    assert.deepStrictEqual(order, ['exec', 'other'])
 
     assert.strictEqual(execSettled, true)
     assert.deepStrictEqual(
@@ -356,7 +373,7 @@ describe('new transaction commands', () => {
 
   test('runs transaction commands through the RESP2 adapter', async () => {
     const { session } = createSession()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -381,19 +398,4 @@ describe('new transaction commands', () => {
 
 function queued(): RedisResult {
   return RedisResult.create(RedisValue.simpleString('QUEUED'))
-}
-
-function createSingleFrameStream(): ResponseStream {
-  return {
-    kind: 'response-stream',
-    closed: Promise.resolve(),
-    frames: async function* () {
-      yield RedisResult.create(
-        RedisValue.push('message', [
-          RedisValue.bulkString(Buffer.from('updates')),
-        ]),
-      )
-    },
-    close: () => {},
-  }
 }

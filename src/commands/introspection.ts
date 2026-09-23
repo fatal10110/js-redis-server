@@ -51,7 +51,7 @@ export function commandKeyArgument(
 
 export function commandSubcommandInfo(
   name: string,
-  arity: number,
+  arity: CommandIntrospection['arity'],
   options?: {
     flags?: readonly string[]
     categories?: readonly string[]
@@ -62,12 +62,8 @@ export function commandSubcommandInfo(
     name,
     arity,
     flags: options?.flags ?? ['loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: options?.categories ?? ['@slow', '@connection'],
     tips: options?.tips ?? [],
-    keySpecs: [],
     docs: {
       summary: name,
       group: commandGroupFromName(name),
