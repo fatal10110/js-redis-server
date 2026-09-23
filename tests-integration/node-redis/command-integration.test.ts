@@ -69,7 +69,8 @@ describe(`COMMAND integration (node-redis, ${testRunner.getBackendName()})`, () 
       CommandInfoReply,
     ]
 
-    assert.deepStrictEqual(info.slice(0, 7), [
+    // Whole reply, incl. tips / key specs / subcommands (indices 7-9).
+    assert.deepStrictEqual(info, [
       'echo',
       2,
       ['loading', 'stale', 'fast'],
@@ -77,7 +78,33 @@ describe(`COMMAND integration (node-redis, ${testRunner.getBackendName()})`, () 
       0,
       0,
       ['@fast', '@connection'],
+      [],
+      [],
+      [],
     ])
+  })
+
+  test('COMMAND DOCS ECHO reports summary, since, group, complexity and arguments', async () => {
+    const docs = (await command(['COMMAND', 'DOCS', 'ECHO'])) as Record<
+      string,
+      Record<string, unknown>
+    >
+    assert.deepStrictEqual(Object.keys(docs), ['echo'])
+
+    const { arguments: args, ...fields } = docs.echo
+    assert.deepStrictEqual(fields, {
+      summary: 'Returns the given string.',
+      since: '1.0.0',
+      group: 'connection',
+      complexity: 'O(1)',
+    })
+
+    const echoArgs = args as Array<Record<string, unknown>>
+    assert.strictEqual(echoArgs.length, 1)
+    // `display_text` is not asserted: real 7.2+ sends it, but no command in
+    // this repo emits it yet (tracked as a follow-up).
+    assert.strictEqual(echoArgs[0].name, 'message')
+    assert.strictEqual(echoArgs[0].type, 'string')
   })
 
   test('COMMAND LIST returns names and supports Redis FILTERBY variants', async () => {
