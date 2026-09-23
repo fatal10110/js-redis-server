@@ -155,25 +155,6 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
-- A double on the wire — a sorted-set score in `ZSCORE`, `ZINCRBY`,
-  `WITHSCORES` and the rest, at RESP2 and RESP3 alike, from the server and every
-  client mock — is now spelled the way Redis 7.2+ spells it ([#414]). The
-  encoder used JavaScript's `toString()`, which disagrees with Redis's
-  `d2string()` in three places:
-
-  ```
-  integer-valued, |x| <= 2^62   4611686018427388000 -> 4611686018427387904 (every digit)
-  integer-valued, past 2^62     5000000000000000000 -> 5e+18
-                                100000000000000000000 -> 1e+20
-  small fractions               0.0000123           -> 1.23e-5
-  ```
-
-  Checked against Redis 8.0.6 and 7.2.1 on 30,010 generated values, weighted
-  towards these edges: 75 still differ, all where Redis's Grisu2-based
-  `fpconv_dtoa` picks a longer or different round-tripping digit string than
-  the shortest one JavaScript produces (`4.8911660955712037e-5` against
-  `4.891166095571204e-5`). The layout rules match on every value.
-
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,
   which replaced `Unknown subcommand or wrong number of arguments for '%s'. Try
