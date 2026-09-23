@@ -1,6 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import { GeoUnsupportedUnitError } from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 import { bulk } from '../helpers'
 import {
   decodeGeoScore,
@@ -21,7 +21,7 @@ export const geodistCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const unit = args.unit ?? 'm'
-    if (!isSupportedGeoUnit(unit)) throw new GeoUnsupportedUnitError()
+    if (!isSupportedGeoUnit(unit)) throw errors.geoUnsupportedUnit()
 
     const zset = ctx.db.getSortedSet(args.key)
     const entry1 = zset?.members.get(args.member1.toString('hex'))

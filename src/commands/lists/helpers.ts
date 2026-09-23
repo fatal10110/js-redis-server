@@ -1,9 +1,4 @@
-import {
-  PositiveCountError,
-  RedisSyntaxError,
-  TimeoutNegativeError,
-  TimeoutNotFloatError,
-} from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
@@ -67,7 +62,7 @@ export function popList(
 ): RedisResult {
   const count = args.count
   if (count !== undefined && count < 0) {
-    throw new PositiveCountError()
+    throw errors.positiveCount()
   }
 
   const list = ctx.db.getList(args.key)
@@ -104,16 +99,16 @@ export function popList(
 export function parseMoveDirection(
   token: Buffer | undefined,
 ): 'left' | 'right' {
-  if (!token) throw new RedisSyntaxError()
+  if (!token) throw errors.syntax()
   const direction = token.toString().toUpperCase()
   if (direction === 'LEFT') return 'left'
   if (direction === 'RIGHT') return 'right'
-  throw new RedisSyntaxError()
+  throw errors.syntax()
 }
 
 export function parseTimeout(token: Buffer): number {
   const value = Number(token.toString())
-  if (isNaN(value)) throw new TimeoutNotFloatError()
-  if (value < 0) throw new TimeoutNegativeError()
+  if (isNaN(value)) throw errors.timeoutNotFloat()
+  if (value < 0) throw errors.timeoutNegative()
   return value
 }

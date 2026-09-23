@@ -5,12 +5,7 @@ import {
   formatRedisDouble,
   type DoubleFormatProfile,
 } from '../core/double-format'
-import {
-  ExpectedIntegerError,
-  InvalidExpireTimeError,
-  RedisSyntaxError,
-  WrongTypeRedisError,
-} from '../core/redis-error'
+import { WrongTypeRedisError, errors } from '../core/redis-error'
 import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisDataTypeName, RedisDatabase } from '../state'
 
@@ -126,12 +121,12 @@ export function ttlMilliseconds(expiresAt: number, now = Date.now()): number {
 export function parseIntegerToken(token: Buffer): number {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   const value = Number(raw)
   if (!Number.isSafeInteger(value)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   return value
@@ -146,12 +141,12 @@ export const INT64_MIN = -9223372036854775808n
 export function parseInt64Token(token: Buffer): bigint {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   const value = BigInt(raw)
   if (value < INT64_MIN || value > INT64_MAX) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   return value
@@ -163,7 +158,7 @@ export function parsePositiveExpireToken(
 ): number {
   const value = parseIntegerToken(token)
   if (value <= 0) {
-    throw new InvalidExpireTimeError(commandName)
+    throw errors.invalidExpireTime(commandName)
   }
 
   return value
@@ -180,7 +175,7 @@ export function requireNextOptionValue(
 ): Buffer {
   const value = args[index]
   if (!value) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return value

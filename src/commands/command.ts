@@ -7,17 +7,13 @@ import {
   type CommandIntrospection,
   type CommandKeySpec,
 } from '../core/command-definition'
-import {
-  schemaArity,
-  schemaKeyRange,
-  t,
-  type CommandSchema,
-} from '../core/command-schema'
+import { commandTableArity } from '../core/command-arity'
+import { schemaKeyRange, t, type CommandSchema } from '../core/command-schema'
 import {
   RedisCommandError,
-  RedisSyntaxError,
   UnknownSubcommandError,
   WrongNumberOfArgumentsError,
+  errors,
 } from '../core/redis-error'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
@@ -172,7 +168,7 @@ function commandList(
       (!equalsAscii(args.args[1], 'pattern') &&
         !equalsAscii(args.args[1], 'module'))
     ) {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     if (equalsAscii(args.args[1], 'module')) {
@@ -444,16 +440,7 @@ function commandArity(
   ctx: RedisExecutionContext,
   schema?: CommandSchema<unknown>,
 ): number {
-  const arity = introspection?.arity
-  if (typeof arity === 'function') {
-    return arity(ctx.server.profile)
-  }
-
-  if (arity !== undefined) {
-    return arity
-  }
-
-  return schema ? schemaArity(schema) : -1
+  return commandTableArity(introspection, ctx.server.profile, schema)
 }
 
 type KeyRange = Pick<CommandInfo, 'firstKey' | 'lastKey' | 'keyStep'>

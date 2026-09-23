@@ -1,9 +1,5 @@
 import { isIntegerToken } from '../../core/command-schema'
-import {
-  ExpectedIntegerError,
-  InvalidStreamIdError,
-  RedisCommandError,
-} from '../../core/redis-error'
+import { RedisCommandError, errors } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { MIN_ID } from '../../state/stream-ids'
 
@@ -36,13 +32,13 @@ export function parseExactId(token: string): StreamId {
   const dash = token.indexOf('-')
   if (dash === -1) {
     const ms = parseUint64(token)
-    if (ms === null) throw new InvalidStreamIdError()
+    if (ms === null) throw errors.invalidStreamId()
     return { ms, seq: 0n }
   }
 
   const ms = parseUint64(token.slice(0, dash))
   const seq = parseUint64(token.slice(dash + 1))
-  if (ms === null || seq === null) throw new InvalidStreamIdError()
+  if (ms === null || seq === null) throw errors.invalidStreamId()
   return { ms, seq }
 }
 
@@ -64,13 +60,13 @@ export function parseRangeId(token: string, isStart: boolean): RangeBound {
   const dash = body.indexOf('-')
   if (dash === -1) {
     const ms = parseUint64(body)
-    if (ms === null) throw new InvalidStreamIdError()
+    if (ms === null) throw errors.invalidStreamId()
     return { id: { ms, seq: isStart ? 0n : MAX_UINT64 }, exclusive }
   }
 
   const ms = parseUint64(body.slice(0, dash))
   const seq = parseUint64(body.slice(dash + 1))
-  if (ms === null || seq === null) throw new InvalidStreamIdError()
+  if (ms === null || seq === null) throw errors.invalidStreamId()
   return { id: { ms, seq }, exclusive }
 }
 
@@ -113,12 +109,12 @@ export function incrementStreamId(id: StreamId): StreamId | null {
 export function parseNonNegativeInteger(token: Buffer): number {
   const raw = token.toString()
   if (!/^\d+$/.test(raw)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   const value = Number(raw)
   if (!Number.isSafeInteger(value)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
 
   return value

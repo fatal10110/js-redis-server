@@ -9,17 +9,16 @@ import {
 import type { CompatibilityProfile } from './compatibility/profile'
 import { containerSubcommandExists } from './compatibility/subcommand-gates'
 import { asciiLowerCase } from './ascii-case'
-import type { CommandPlan } from './command-definition'
+import type { CommandDefinition, CommandPlan } from './command-definition'
+import { failsTableArity, lookupTableArity } from './command-arity'
 import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
 import {
   errorReplyBytes,
   RedisCommandError,
-  ScriptCallNoCommandError,
-  ScriptNotAllowedCommandError,
-  ScriptUnknownCommandError,
   UnknownRedisCommandError,
   UnknownSubcommandError,
   WrongNumberOfArgumentsError,
+  errors,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
 import { RedisValue } from './redis-value'
@@ -49,6 +48,9 @@ export class RedisLuaRuntime {
   // abort decoration depends on (see renderScriptError). Cleared when the eval
   // ends.
   private lastRedisCallError: { err: Buffer; code?: Buffer } | null = null
+  // The last script-level rejection a `redis.call` got during the running
+  // eval (see scriptRejection). Cleared when the eval ends.
+  private lastScriptRejection: Buffer | null = null
 
   constructor(module: LuaWasmModule) {
     this.engine = module.create({
@@ -72,10 +74,11 @@ export class RedisLuaRuntime {
   }
 
   /**
-   * Runs a script like `eval`, and also reports whether the reply is a script
-   * abort raised by a command's error through `redis.call` (as opposed to a Lua
-   * runtime error, an engine error, or a script-level rejection such as an
-   * unknown or not-allowed command).
+   * Runs a script like `eval`, and also reports what raised the reply when it
+   * is a script abort: a command's error through `redis.call`
+   * (`raisedByRedisCall`), or a script-level rejection such as an unknown or
+   * not-allowed command (`raisedByScriptRejection`). Neither is set for a Lua
+   * runtime error or an engine error.
    */
   evalScript(
     script: Buffer,
@@ -83,7 +86,11 @@ export class RedisLuaRuntime {
     args: readonly Buffer[],
     ctx: RedisExecutionContext,
     options?: { readOnly?: boolean },
-  ): { reply: ReplyValue; raisedByRedisCall: boolean } {
+  ): {
+    reply: ReplyValue
+    raisedByRedisCall: boolean
+    raisedByScriptRejection: boolean
+  } {
     if (this.hostState.ctx) {
       throw new RedisCommandError('Lua runtime is already executing a script')
     }
@@ -92,15 +99,21 @@ export class RedisLuaRuntime {
     this.hostState.readOnly = options?.readOnly ?? false
     this.hostState.resp = 2
     this.lastRedisCallError = null
+    this.lastScriptRejection = null
 
     try {
       const reply = this.engine.evalWithArgs(script, [...keys], [...args])
-      return { reply, raisedByRedisCall: this.isRedisCallAbort(reply) }
+      return {
+        reply,
+        raisedByRedisCall: this.isRedisCallAbort(reply),
+        raisedByScriptRejection: this.isScriptRejectionAbort(reply),
+      }
     } finally {
       this.hostState.ctx = null
       this.hostState.readOnly = false
       this.hostState.resp = 2
       this.lastRedisCallError = null
+      this.lastScriptRejection = null
     }
   }
 
@@ -116,10 +129,32 @@ export class RedisLuaRuntime {
   }
 
   private recordRedisCallError(reply: ReplyValue): ReplyValue {
-    if (isErrorReply(reply) && !scriptRejections.has(reply)) {
+    if (!isErrorReply(reply)) {
+      return reply
+    }
+    if (scriptRejections.has(reply)) {
+      this.lastScriptRejection = reply.err
+    } else {
       this.lastRedisCallError = { err: reply.err, code: reply.code }
     }
     return reply
+  }
+
+  /**
+   * Whether the reply is a script abort raised by a `redis.call` rejection,
+   * which {@link renderScriptError} gives 6.2's inner position. Matched on the
+   * message alone, since the engine may add a default code to an abort that
+   * had none.
+   */
+  private isScriptRejectionAbort(reply: ReplyValue): boolean {
+    const rejection = this.lastScriptRejection
+    return (
+      rejection !== null &&
+      isErrorReply(reply) &&
+      reply.meta !== undefined &&
+      !reply.meta.kind &&
+      reply.err.equals(rejection)
+    )
   }
 
   // Host callback for redis.call()/redis.pcall(). Both modes share the same
@@ -131,11 +166,25 @@ export class RedisLuaRuntime {
       throw new Error('ERR Lua runtime is not initialized')
     }
 
+    // Every profile-dependent choice for a script reads the server's profile,
+    // the one the runtime was created with and renderScriptError decorates
+    // with. The executor resolves its own from the same spec in every builder.
+    const profile = ctx.server.profile
     if (args.length === 0) {
-      return scriptRejection(new ScriptCallNoCommandError())
+      return scriptRejection(
+        'no-command',
+        errors.scriptCallNoCommand(),
+        profile,
+      )
     }
 
-    let plan: CommandPlan
+    // Real Redis checks a script's call in this order: command lookup, the
+    // command-table arity, then noscript / read-only, and only then does the
+    // command run and check its own arguments. `plan()` folds the first two
+    // and the last into one parse, so an error it throws past lookup is held
+    // back until the noscript / read-only checks have had their say.
+    let plan: CommandPlan | null = null
+    let commandError: RedisCommandError | null = null
     try {
       plan = ctx.executor.plan(args[0], args.slice(1))
     } catch (err) {
@@ -148,45 +197,79 @@ export class RedisLuaRuntime {
         err instanceof UnknownSubcommandError
       ) {
         return scriptRejection(
-          new ScriptUnknownCommandError(ctx.server.profile),
+          'unknown-command',
+          errors.scriptUnknownCommand(profile),
+          profile,
         )
       }
 
-      if (err instanceof WrongNumberOfArgumentsError) {
-        return scriptRejection(err)
+      if (!(err instanceof RedisCommandError)) {
+        throw err
       }
-
-      if (err instanceof RedisCommandError) {
-        return redisErrorToLuaReply(err)
-      }
-
-      throw err
+      commandError = err
     }
 
-    const refusal = noscriptRefusal(plan, ctx.server.profile)
-    if (refusal) {
-      return scriptRejection(refusal)
+    const definition =
+      plan?.definition ?? ctx.executor.getCommandDefinition(args[0].toString())
+    if (!definition) {
+      // plan() got past lookup, so it threw: keep its error.
+      return redisErrorToLuaReply(commandError as RedisCommandError)
     }
 
-    if (this.hostState.readOnly && plan.definition.flags.includes('write')) {
+    // Only a count the command table itself rejects is the scripting layer's
+    // arity error, and it comes before noscript / read-only. A count the table
+    // accepts but the command refuses (HSET's field/value pairs, an odd MSET)
+    // is the command's own error, `ERR` code and all, as when a client sends
+    // it.
+    const lookup = lookupTableArity(definition, args.slice(1), profile)
+    if (failsTableArity(lookup.arity, args.length)) {
       return scriptRejection(
+        'wrong-arity',
+        commandError instanceof WrongNumberOfArgumentsError
+          ? commandError
+          : new WrongNumberOfArgumentsError(lookup.name),
+        profile,
+      )
+    }
+
+    const refusal = noscriptRefusal(definition, args.slice(1), profile)
+    if (refusal) {
+      return scriptRejection(
+        refusal,
+        refusal === 'unknown-command'
+          ? errors.scriptUnknownCommand(profile)
+          : errors.scriptNotAllowedCommand(),
+        profile,
+      )
+    }
+
+    // Read-only scripts (EVAL_RO) are 7.0+, so this has no 6.2 wording.
+    if (this.hostState.readOnly && definition.flags.includes('write')) {
+      return scriptRejection(
+        'read-only-write',
         new RedisCommandError(
           'Write commands are not allowed from read-only scripts.',
         ),
+        profile,
       )
+    }
+
+    if (!plan) {
+      // plan() threw, so commandError is set.
+      return redisErrorToLuaReply(commandError as RedisCommandError)
     }
 
     const result = ctx.executor.executePlanSync(plan, createLuaCallContext(ctx))
     return redisValueToLuaReply(
       normalizeScriptCommandValue(result.value),
       this.hostState.resp,
-      ctx.server.profile,
+      profile,
     )
   }
 }
 
 /**
- * The error a script's `redis.call`/`redis.pcall` gets for a `noscript`
+ * The rejection a script's `redis.call`/`redis.pcall` gets for a `noscript`
  * command, or `null` when the command may run.
  *
  * On Redis 6.2 `noscript` is a property of the whole command, so a flagged
@@ -199,10 +282,10 @@ export class RedisLuaRuntime {
  * carries the flag, so `<container> HELP` runs.
  */
 function noscriptRefusal(
-  plan: CommandPlan,
+  definition: CommandDefinition<unknown>,
+  rawArgs: readonly Buffer[],
   profile: CompatibilityProfile,
-): RedisCommandError | null {
-  const { definition } = plan
+): 'unknown-command' | 'not-allowed' | null {
   if (!definition.flags.includes('noscript')) {
     return null
   }
@@ -213,21 +296,21 @@ function noscriptRefusal(
       definition.name === 'quit' &&
       !profile.has('command.quit-table-entry')
     ) {
-      return new ScriptUnknownCommandError(profile)
+      return 'unknown-command'
     }
-    return new ScriptNotAllowedCommandError()
+    return 'not-allowed'
   }
 
-  if (plan.rawArgs.length === 0) {
-    return new ScriptNotAllowedCommandError()
+  if (rawArgs.length === 0) {
+    return 'not-allowed'
   }
 
   // Only a container has a HELP subcommand: `SUBSCRIBE help` is a channel.
-  const subcommand = plan.rawArgs[0]
+  const subcommand = rawArgs[0]
   const isContainerHelp =
     asciiLowerCase(subcommand.toString()) === 'help' &&
     containerSubcommandExists(definition.name, subcommand, profile) === true
-  return isContainerHelp ? null : new ScriptNotAllowedCommandError()
+  return isContainerHelp ? null : 'not-allowed'
 }
 
 /**
@@ -397,6 +480,11 @@ export function renderScriptError(
     profile: CompatibilityProfile
     /** The abort is a command's error raised through redis.call (RedisLuaRuntime.evalScript). */
     raisedByRedisCall: boolean
+    /**
+     * The abort is a script-level rejection of a redis.call (unknown command,
+     * not allowed, wrong arity, no command; RedisLuaRuntime.evalScript).
+     */
+    raisedByScriptRejection?: boolean
   },
 ): ReplyValue {
   if (!isErrorReply(value)) {
@@ -429,12 +517,25 @@ export function renderScriptError(
   }
 
   if (!options.profile.has('script.abort-error-suffix')) {
+    // 6.2 raises script-level rejections through `luaPushError`, which adds
+    // its own `@user_script: <line>: ` inside the abort decoration.
+    const rejection =
+      options.raisedByScriptRejection === true || kind === 'command-arg-type'
     return {
       err: Buffer.concat([
         Buffer.from(
           `Error running script (call to f_${sha}): @user_script:${line}: `,
         ),
-        legacyScriptErrorBody(body, value.code, options.raisedByRedisCall),
+        rejection
+          ? Buffer.concat([
+              Buffer.from(`@user_script: ${line}: `),
+              kind === 'command-arg-type'
+                ? Buffer.from(
+                    'Lua redis() command arguments must be strings or integers',
+                  )
+                : body,
+            ])
+          : legacyScriptErrorBody(body, value.code, options.raisedByRedisCall),
       ]),
       code: Buffer.from('ERR'),
     }
@@ -456,8 +557,7 @@ export function renderScriptError(
  * is; the engine reports those under a default `ERR` code, so only a code it
  * split off the message itself (`error('WRONGTYPE x', 0)`) is restored.
  * Script-level rejections (unknown / not-allowed command, wrong arity, ...)
- * are not command replies and take no code either; real 6.2 also gives them an
- * inner `@user_script: <line>: ` position and older wording, not modelled here.
+ * are not command replies; {@link renderScriptError} renders those itself.
  */
 function legacyScriptErrorBody(
   body: Buffer,
@@ -620,14 +720,52 @@ function normalizeScriptCommandValue(value: RedisValue): RedisValue {
 
 // Errors the scripting layer itself raises before a command runs (no command
 // given, unknown command, wrong arity, not allowed from scripts, write from a
-// read-only script). Real Redis 6.2 renders these through `luaPushError` — an
-// inner `@user_script: <line>: ` position, no error code, 6.2 wording — not as a
-// command's `<CODE> <message>` reply, so they are kept out of
+// read-only script). Real Redis 6.2 renders these through `luaPushError`: an
+// inner `@user_script: <line>: ` position, no error code, and 6.2's own
+// wording, not a command's `<CODE> <message>` reply. So they are kept out of
 // RedisLuaRuntime.lastRedisCallError and never have a code folded in.
 const scriptRejections = new WeakSet<object>()
 
-function scriptRejection(err: RedisCommandError): ReplyValue {
-  const reply = redisErrorToLuaReply(err)
+type ScriptRejectionKind =
+  | 'no-command'
+  | 'unknown-command'
+  | 'not-allowed'
+  | 'wrong-arity'
+  | 'read-only-write'
+
+/**
+ * Redis 6.2's wording for each rejection, verified byte for byte against
+ * redis-server 6.2.24 (`redis.pcall` gets the same text; the no-command one
+ * names `redis.call()` either way). Read-only scripts are 7.0+, so that
+ * rejection has no 6.2 form.
+ */
+const LEGACY_SCRIPT_REJECTIONS: Record<
+  Exclude<ScriptRejectionKind, 'read-only-write'>,
+  string
+> = {
+  'no-command': 'Please specify at least one argument for redis.call()',
+  'unknown-command': 'Unknown Redis command called from Lua script',
+  'not-allowed': 'This Redis command is not allowed from scripts',
+  'wrong-arity': 'Wrong number of args calling Redis command From Lua script',
+}
+
+/**
+ * A rejection reply, in the profile's wording. On 6.2 it has no code. It also
+ * lacks the inner `@user_script: <line>: ` position, because the engine does
+ * not tell the host which line made the call. A `redis.call` rejection
+ * aborts the script, and the abort carries the line, so
+ * {@link renderScriptError} adds the position there. A `redis.pcall`
+ * rejection is returned to the script without it (a known gap).
+ */
+function scriptRejection(
+  kind: ScriptRejectionKind,
+  current: RedisCommandError,
+  profile: CompatibilityProfile,
+): ReplyValue {
+  const reply =
+    kind !== 'read-only-write' && !profile.has('script.abort-error-suffix')
+      ? { err: Buffer.from(LEGACY_SCRIPT_REJECTIONS[kind]) }
+      : redisErrorToLuaReply(current)
   scriptRejections.add(reply as object)
   return reply
 }

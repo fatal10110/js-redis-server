@@ -11,7 +11,7 @@ import {
   type RedisExecutionContext,
   type RedisMonitorContext,
 } from './redis-context'
-import { RedisCommandError } from './redis-error'
+import { RedisCommandError, errors } from './redis-error'
 import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
 import { encodeRedisValue, type RespVersion } from './resp-encoder'
@@ -297,7 +297,7 @@ export class ClientSession implements RedisClientSession {
       database < 0 ||
       database >= this.server.databases.length
     ) {
-      throw new RedisCommandError('DB index is out of range')
+      throw errors.dbIndexOutOfRange()
     }
 
     this.selectedDatabaseId = database

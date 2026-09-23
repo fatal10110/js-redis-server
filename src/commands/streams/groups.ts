@@ -1,4 +1,4 @@
-import { RedisCommandError } from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 import type { RedisDatabase } from '../../state/database'
 import type {
   RedisStreamConsumerGroup,
@@ -14,23 +14,6 @@ export {
   pendingEntriesSorted,
   ensureConsumer,
 } from '../../state/stream-groups'
-
-export class BusyStreamGroupError extends RedisCommandError {
-  constructor() {
-    super('Consumer Group name already exists', 'BUSYGROUP')
-  }
-}
-
-export class NoSuchStreamGroupError extends RedisCommandError {
-  constructor(key: Buffer, group: Buffer, commandName?: string) {
-    const suffix =
-      commandName === 'XREADGROUP' ? ' in XREADGROUP with GROUP option' : ''
-    super(
-      `No such key '${key.toString()}' or consumer group '${group.toString()}'${suffix}`,
-      'NOGROUP',
-    )
-  }
-}
 
 export function updateMaxDeletedId(
   stream: RedisStreamData,
@@ -56,7 +39,7 @@ export function requireStreamGroup(
 ): RedisStreamConsumerGroup {
   const group = stream ? streamGroup(stream, groupName) : null
   if (!group) {
-    throw new NoSuchStreamGroupError(key, groupName, commandName)
+    throw errors.noSuchStreamGroup(key, groupName, commandName)
   }
   return group
 }

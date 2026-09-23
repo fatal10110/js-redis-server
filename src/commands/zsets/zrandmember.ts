@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisSortedSetMember } from '../../state/data-types'
@@ -31,14 +28,14 @@ function createZrandmemberSchema() {
       cursor++
       if (cursor < input.length) {
         if (input[cursor]!.toString().toUpperCase() !== 'WITHSCORES') {
-          throw new RedisSyntaxError()
+          throw errors.syntax()
         }
         withScores = true
         cursor++
       }
     }
 
-    if (cursor < input.length) throw new RedisSyntaxError()
+    if (cursor < input.length) throw errors.syntax()
     return { value: { key, count, withScores }, nextIndex: input.length }
   })
 }

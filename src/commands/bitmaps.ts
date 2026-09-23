@@ -6,19 +6,7 @@ import {
   type CommandSchema,
   type ParseContext,
 } from '../core/command-schema'
-import {
-  BitOffsetError,
-  BitOpNotSingleKeyError,
-  BitPosBitError,
-  BitValueError,
-  BitfieldOverflowTypeError,
-  BitfieldRoGetOnlyError,
-  BitfieldTypeError,
-  ExpectedIntegerError,
-  RedisSyntaxError,
-  StringExceedsMaxSizeError,
-  WrongNumberOfArgumentsError,
-} from '../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { ensureStringOrMissing, INT64_MAX, INT64_MIN, integer } from './helpers'
@@ -56,7 +44,7 @@ function allocateBitmapBuffer(size: number): Buffer<ArrayBuffer> {
   try {
     return Buffer.alloc(size)
   } catch {
-    throw new StringExceedsMaxSizeError()
+    throw errors.stringExceedsMaxSize()
   }
 }
 
@@ -85,15 +73,15 @@ function parseBitOffset(
   access: OffsetAccess,
 ): number {
   if (!token) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
   const value = Number(raw)
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
   assertBitOffsetWithinLimit(value, protoMaxBulkLen, access)
   return value
@@ -132,18 +120,18 @@ function assertBitOffsetWithinLimit(
       ? MAX_MATERIALISABLE_LENGTH
       : protoMaxBulkLen
   if (BigInt(byteIndexOf(offset)) >= limit) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
 }
 
 function parseRangeIndex(token: Buffer): number {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
   const value = Number(raw)
   if (!Number.isSafeInteger(value)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
   return value
 }
@@ -191,7 +179,7 @@ type SetBitArgs = { key: Buffer; offset: Buffer; value: Buffer }
 function parseBitValue(token: Buffer): number {
   const raw = token.toString()
   if (raw !== '0' && raw !== '1') {
-    throw new BitValueError()
+    throw errors.bitValue()
   }
   return Number(raw)
 }
@@ -300,7 +288,7 @@ export const bitcountCommand = defineCommand({
         return { value: { key }, nextIndex: input.length }
       }
       if (extra !== 2 && extra !== 3) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
       const start = parseRangeIndex(input[index + 1]!)
       const end = parseRangeIndex(input[index + 2]!)
@@ -358,11 +346,11 @@ export const bitposCommand = defineCommand({
       }
       const bitRaw = bitToken.toString()
       if (bitRaw !== '0' && bitRaw !== '1') {
-        throw new BitPosBitError()
+        throw errors.bitPosBit()
       }
       const extra = input.length - index - 2
       if (extra > 3) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
       const args: BitPosArgs = {
         key,
@@ -435,12 +423,12 @@ function parseRangeUnit(
     return false
   }
   if (!ctx.profile.has('bit.byte-bit-range')) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
   const unit = token!.toString().toUpperCase()
   if (unit === 'BYTE') return false
   if (unit === 'BIT') return true
-  throw new RedisSyntaxError()
+  throw errors.syntax()
 }
 
 // --- BITOP -----------------------------------------------------------------
@@ -461,10 +449,10 @@ export const bitopCommand = defineCommand({
       }
       const op = opToken.toString().toUpperCase()
       if (op !== 'AND' && op !== 'OR' && op !== 'XOR' && op !== 'NOT') {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
       if (op === 'NOT' && sourceKeys.length !== 1) {
-        throw new BitOpNotSingleKeyError()
+        throw errors.bitOpNotSingleKey()
       }
       return {
         value: { op, destKey, sourceKeys },
@@ -551,17 +539,17 @@ type BitFieldArgs = {
 
 function parseFieldType(token: Buffer | undefined): FieldType {
   if (!token) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
   const match = /^([iu])(\d+)$/.exec(token.toString())
   if (!match) {
-    throw new BitfieldTypeError()
+    throw errors.bitfieldType()
   }
   const signed = match[1] === 'i'
   const bits = Number(match[2])
   const maxBits = signed ? 64 : 63
   if (bits < 1 || bits > maxBits) {
-    throw new BitfieldTypeError()
+    throw errors.bitfieldType()
   }
   return { signed, bits }
 }
@@ -573,7 +561,7 @@ function parseFieldOffset(
   access: OffsetAccess,
 ): number {
   if (!token) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
   let raw = token.toString()
   const useWidth = raw.startsWith('#')
@@ -581,17 +569,17 @@ function parseFieldOffset(
     raw = raw.slice(1)
   }
   if (!isIntegerToken(raw)) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
   const n = Number(raw)
   if (!Number.isSafeInteger(n) || n < 0) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
   // Redis multiplies a `#<index>` offset by the type width and only then
   // applies the proto-max-bulk-len ceiling.
   const offset = useWidth ? n * bits : n
   if (!Number.isSafeInteger(offset)) {
-    throw new BitOffsetError()
+    throw errors.bitOffset()
   }
   assertBitOffsetWithinLimit(offset, protoMaxBulkLen, access)
   return offset
@@ -599,15 +587,15 @@ function parseFieldOffset(
 
 function parseFieldValue(token: Buffer | undefined): bigint {
   if (!token) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
   const value = BigInt(raw)
   if (value < INT64_MIN || value > INT64_MAX) {
-    throw new ExpectedIntegerError()
+    throw errors.expectedInteger()
   }
   return value
 }
@@ -633,7 +621,7 @@ function parseBitFieldOps(
     if (sub === 'OVERFLOW' && remaining >= 1) {
       const mode = input[cursor + 1]!.toString().toUpperCase()
       if (mode !== 'WRAP' && mode !== 'SAT' && mode !== 'FAIL') {
-        throw new BitfieldOverflowTypeError()
+        throw errors.bitfieldOverflowType()
       }
       overflow = mode
       cursor += 2
@@ -667,7 +655,7 @@ function parseBitFieldOps(
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   // BITFIELD_RO's GET-only restriction is a *second* pass in Redis, run only
@@ -677,7 +665,7 @@ function parseBitFieldOps(
   // and `BITFIELD_RO k NOPE` a plain syntax error — only a well-formed non-GET
   // op reaches "BITFIELD_RO only supports the GET subcommand".
   if (readonly && ops.some(op => op.kind !== 'GET')) {
-    throw new BitfieldRoGetOnlyError()
+    throw errors.bitfieldRoGetOnly()
   }
 
   return ops

@@ -5,8 +5,8 @@ import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   RedisCommandError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
+  errors,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -310,7 +310,7 @@ function checkConfigSetNames(
   } else if (args.length < 2) {
     throw new WrongNumberOfArgumentsError('config|set')
   } else if (args.length % 2 !== 0) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   const seen = new Set<string>()

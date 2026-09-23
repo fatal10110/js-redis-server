@@ -1,4 +1,4 @@
-import { MinMaxNotFloatError } from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 
 export type ScoreBound = { value: number; exclusive: boolean }
 
@@ -6,14 +6,14 @@ export function parseScoreBoundArg(s: string): ScoreBound {
   const exclusive = s.startsWith('(')
   const raw = exclusive ? s.slice(1) : s
 
-  if (raw.length === 0) throw new MinMaxNotFloatError()
+  if (raw.length === 0) throw errors.minMaxNotFloat()
 
   const normalized = raw.toLowerCase()
   if (normalized === '+inf') return { value: Infinity, exclusive }
   if (normalized === '-inf') return { value: -Infinity, exclusive }
 
   const n = Number(raw)
-  if (!Number.isFinite(n)) throw new MinMaxNotFloatError()
+  if (!Number.isFinite(n)) throw errors.minMaxNotFloat()
   return { value: n, exclusive }
 }
 

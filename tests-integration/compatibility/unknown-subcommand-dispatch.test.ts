@@ -266,16 +266,20 @@ describe(`unknown container subcommand dispatch timing (${testRunner.getBackendN
       : 'ERR Unknown Redis command called from script'
 
     /**
-     * What this server answers a script calling a command that does not exist.
-     * 6.2 renders its scripting-layer rejections as `@user_script: 1: ... from
-     * Lua script`, which is not modelled yet, so that profile is compared
-     * against this reply rather than a literal.
+     * What a script calling a command that does not exist gets back from
+     * redis.pcall. Real 6.2 answers `-@user_script: 1: Unknown Redis command
+     * called from Lua script`; this server has the 6.2 wording and no code,
+     * but not the `@user_script: 1: ` position, which the Lua engine does not
+     * pass to the host (fatal10110/lua-redis-wasm#28, #503).
      */
     async function unknownCommandFromScript(): Promise<string> {
       const reply = await send('EVAL', "return redis.pcall('NOPE')", '0')
-      if (resolvedAtLookup) {
-        assert.strictEqual(reply, `-${UNKNOWN_FROM_SCRIPT}\r\n`)
-      }
+      assert.strictEqual(
+        reply,
+        resolvedAtLookup
+          ? `-${UNKNOWN_FROM_SCRIPT}\r\n`
+          : '-Unknown Redis command called from Lua script\r\n',
+      )
       return reply
     }
 

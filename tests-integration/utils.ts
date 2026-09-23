@@ -1,4 +1,5 @@
 import assert from 'node:assert'
+import { createHash } from 'node:crypto'
 import { Redis, type Cluster } from 'ioredis'
 import {
   createClient,
@@ -8,6 +9,7 @@ import {
 } from 'redis'
 import clusterKeySlot from 'cluster-key-slot'
 import { directNodeRedisOptions } from './test-config'
+import { errorWithMessage } from '../tests/shared-test-helpers'
 export {
   assertBufferSetsEqual,
   assertBuffersEqual,
@@ -428,3 +430,39 @@ export type ProfileName =
 
 export const activeProfile = (process.env.REDIS_COMPAT ??
   'redis-8.0') as ProfileName
+
+/**
+ * The error a script's redis.pcall rejection (unknown / not-allowed command,
+ * wrong arity, ...) returns, as an `assert.rejects` matcher. Real 6.2 also
+ * prefixes the calling line (`@user_script: 1: `), which this server cannot
+ * produce: the Lua engine does not pass that line to the host
+ * (fatal10110/lua-redis-wasm#28, #503). So on redis-6.2 the prefix is
+ * optional; the gap is pinned in compatibility/profile-gates.test.ts.
+ */
+export function scriptPcallRejection(
+  message: string,
+): (error: unknown) => boolean {
+  if (activeProfile !== 'redis-6.2') {
+    return errorWithMessage(message)
+  }
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof Error)
+    assert.ok(
+      error.message === message ||
+        error.message === `@user_script: 1: ${message}`,
+      `unexpected message: ${error.message}`,
+    )
+    return true
+  }
+}
+
+/**
+ * The error a script's redis.call rejection aborts `script` (a one-line
+ * EVAL) with, in the active profile's decoration.
+ */
+export function scriptCallRejection(script: string, message: string): string {
+  const sha = createHash('sha1').update(script).digest('hex')
+  return activeProfile === 'redis-6.2'
+    ? `ERR Error running script (call to f_${sha}): @user_script:1: @user_script: 1: ${message}`
+    : `${message} script: ${sha}, on @user_script:1.`
+}

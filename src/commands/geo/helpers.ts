@@ -1,4 +1,4 @@
-import { InvalidLongitudeLatitudeError } from '../../core/redis-error'
+import { errors } from '../../core/redis-error'
 
 const STEP = 26n
 const CELLS = Number(1n << STEP)
@@ -40,7 +40,7 @@ export function assertValidCoordinates(lon: number, lat: number): void {
     lat < GEO_LAT_MIN ||
     lat > GEO_LAT_MAX
   ) {
-    throw new InvalidLongitudeLatitudeError(lon, lat)
+    throw errors.invalidLongitudeLatitude(lon, lat)
   }
 }
 

@@ -1,12 +1,7 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
-import {
-  PositiveCountError,
-  TimeoutNegativeError,
-  TimeoutNotFloatError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
@@ -17,12 +12,12 @@ type ZsetPopSide = 'min' | 'max'
 
 function parsePopCountArg(s: string): number {
   if (!/^-?\d+$/.test(s)) {
-    throw new PositiveCountError()
+    throw errors.positiveCount()
   }
 
   const count = Number(s)
   if (!Number.isSafeInteger(count) || count < 0) {
-    throw new PositiveCountError()
+    throw errors.positiveCount()
   }
 
   return count
@@ -114,8 +109,8 @@ function parseBlockingZsetPopArgs(
   }
 
   const timeout = Number(input[input.length - 1].toString())
-  if (isNaN(timeout)) throw new TimeoutNotFloatError()
-  if (timeout < 0) throw new TimeoutNegativeError()
+  if (isNaN(timeout)) throw errors.timeoutNotFloat()
+  if (timeout < 0) throw errors.timeoutNegative()
 
   const keys = Array.from(input.slice(index, input.length - 1))
   return { keys, timeout }

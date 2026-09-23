@@ -1,12 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  LposCountNegativeError,
-  LposMaxlenNegativeError,
-  LposRankZeroError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import { array, bulk, integer, parseIntegerToken } from '../helpers'
 
@@ -36,20 +30,20 @@ export const lposCommand = defineCommand({
       const option = input[cursor].toString().toUpperCase()
       const valueToken = input[cursor + 1]
       if (!valueToken) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       if (option === 'RANK') {
         rank = parseIntegerToken(valueToken)
-        if (rank === 0) throw new LposRankZeroError()
+        if (rank === 0) throw errors.lposRankZero()
       } else if (option === 'COUNT') {
         count = parseIntegerToken(valueToken)
-        if (count < 0) throw new LposCountNegativeError()
+        if (count < 0) throw errors.lposCountNegative()
       } else if (option === 'MAXLEN') {
         maxlen = parseIntegerToken(valueToken)
-        if (maxlen < 0) throw new LposMaxlenNegativeError()
+        if (maxlen < 0) throw errors.lposMaxlenNegative()
       } else {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       cursor += 2

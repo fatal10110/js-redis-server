@@ -1,22 +1,9 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  NoSuchKeyError,
-  RedisCommandError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { ok } from '../helpers'
 import { compareStreamId, parseExactId, parseNonNegativeInteger } from './ids'
-
-class XsetidSmallerThanTopError extends RedisCommandError {
-  constructor() {
-    super(
-      'The ID specified in XSETID is smaller than the target stream top item',
-    )
-  }
-}
 
 type XsetidArgs = {
   key: Buffer
@@ -47,7 +34,7 @@ function createXsetidSchema() {
         const option = input[cursor].toString().toUpperCase()
         if (option === 'ENTRIESADDED') {
           const rawEntriesAdded = input[cursor + 1]
-          if (!rawEntriesAdded) throw new RedisSyntaxError()
+          if (!rawEntriesAdded) throw errors.syntax()
           entriesAdded = parseNonNegativeInteger(rawEntriesAdded)
           cursor += 2
           continue
@@ -55,13 +42,13 @@ function createXsetidSchema() {
 
         if (option === 'MAXDELETEDID') {
           const rawMaxDeletedId = input[cursor + 1]
-          if (!rawMaxDeletedId) throw new RedisSyntaxError()
+          if (!rawMaxDeletedId) throw errors.syntax()
           maxDeletedId = parseExactId(rawMaxDeletedId.toString())
           cursor += 2
           continue
         }
 
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return {
@@ -88,9 +75,9 @@ export const xsetidCommand = defineCommand({
   execute: (args, ctx) => {
     const command = args.args
     const stream = ctx.db.getStream(command.key)
-    if (!stream) throw new NoSuchKeyError()
+    if (!stream) throw errors.noSuchKey()
     if (compareStreamId(command.id, stream.lastId) < 0) {
-      throw new XsetidSmallerThanTopError()
+      throw errors.xsetidSmallerThanTop()
     }
 
     ctx.db.updateStream(command.key, writable => {

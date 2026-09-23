@@ -1,9 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import {
   buildSearchReply,
   collectMatches,
@@ -72,7 +69,7 @@ function createGeoSearchSchema() {
           cursor++
           continue
         }
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return {

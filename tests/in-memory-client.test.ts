@@ -95,11 +95,12 @@ describe('createInMemoryClient', () => {
 
   test('compatibility option gates commands by version', async () => {
     // LMPOP arrived in Redis 7.0, so it is unknown under a 6.2 profile but
-    // available on the default (redis-8.0).
+    // available on the default (redis-8.0). 6.2 quotes the name with
+    // backticks (#384).
     client = await createInMemoryClient({ compatibility: 'redis-6.2' })
     await assert.rejects(
       client.command('LMPOP', '1', 'k', 'LEFT'),
-      /unknown command 'LMPOP'/,
+      /unknown command `LMPOP`/,
     )
     client.close()
 

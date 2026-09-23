@@ -4,21 +4,7 @@ import {
 } from '../../core/double-format'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
-import {
-  ExpectedFloatError,
-  GeoAnyRequiresCountError,
-  GeoBoxNegativeError,
-  GeoCountNotPositiveError,
-  GeoHeightNotNumericError,
-  GeoMissingMemberError,
-  GeoRadiusNegativeError,
-  GeoRadiusNotNumericError,
-  GeoRadiusStoreWithOptionsError,
-  GeoUnsupportedUnitError,
-  GeoWidthNotNumericError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
@@ -61,14 +47,14 @@ export type GeoMatch = {
 
 export function parseGeoFloatToken(token: Buffer): number {
   const n = Number(token.toString())
-  if (!Number.isFinite(n)) throw new ExpectedFloatError()
+  if (!Number.isFinite(n)) throw errors.expectedFloat()
   return n
 }
 
 function parseGeoUnit(token: Buffer | undefined): string {
-  if (!token) throw new RedisSyntaxError()
+  if (!token) throw errors.syntax()
   const unit = token.toString()
-  if (!isSupportedGeoUnit(unit)) throw new GeoUnsupportedUnitError()
+  if (!isSupportedGeoUnit(unit)) throw errors.geoUnsupportedUnit()
   return unit
 }
 
@@ -76,10 +62,10 @@ export function parseByRadius(
   radiusTok: Buffer | undefined,
   unitTok: Buffer | undefined,
 ): GeoBy {
-  if (!radiusTok) throw new RedisSyntaxError()
+  if (!radiusTok) throw errors.syntax()
   const radius = Number(radiusTok.toString())
-  if (!Number.isFinite(radius)) throw new GeoRadiusNotNumericError()
-  if (radius < 0) throw new GeoRadiusNegativeError()
+  if (!Number.isFinite(radius)) throw errors.geoRadiusNotNumeric()
+  if (radius < 0) throw errors.geoRadiusNegative()
   const unit = parseGeoUnit(unitTok)
   return { kind: 'radius', radiusMeters: unitToMeters(radius, unit), unit }
 }
@@ -89,13 +75,13 @@ export function parseByBox(
   heightTok: Buffer | undefined,
   unitTok: Buffer | undefined,
 ): GeoBy {
-  if (!widthTok) throw new RedisSyntaxError()
+  if (!widthTok) throw errors.syntax()
   const width = Number(widthTok.toString())
-  if (!Number.isFinite(width)) throw new GeoWidthNotNumericError()
-  if (!heightTok) throw new RedisSyntaxError()
+  if (!Number.isFinite(width)) throw errors.geoWidthNotNumeric()
+  if (!heightTok) throw errors.syntax()
   const height = Number(heightTok.toString())
-  if (!Number.isFinite(height)) throw new GeoHeightNotNumericError()
-  if (width < 0 || height < 0) throw new GeoBoxNegativeError()
+  if (!Number.isFinite(height)) throw errors.geoHeightNotNumeric()
+  if (width < 0 || height < 0) throw errors.geoBoxNegative()
   const unit = parseGeoUnit(unitTok)
   return {
     kind: 'box',
@@ -132,7 +118,7 @@ export function parseGeoFrom(
     assertValidCoordinates(lon, lat)
     return [{ type: 'lonlat', lon, lat }, cursor + 3]
   }
-  throw new RedisSyntaxError()
+  throw errors.syntax()
 }
 
 // BYRADIUS radius unit | BYBOX width height unit, shared the same way.
@@ -150,7 +136,7 @@ export function parseGeoBy(
       cursor + 4,
     ]
   }
-  throw new RedisSyntaxError()
+  throw errors.syntax()
 }
 
 // Parses a single ASC | DESC | COUNT n [ANY] token starting at cursor into
@@ -172,9 +158,9 @@ export function tryParseOrderOrCount(
   }
   if (token === 'COUNT') {
     const countTok = input[cursor + 1]
-    if (!countTok) throw new RedisSyntaxError()
+    if (!countTok) throw errors.syntax()
     const count = parseIntegerToken(countTok)
-    if (count <= 0) throw new GeoCountNotPositiveError()
+    if (count <= 0) throw errors.geoCountNotPositive()
     let next = cursor + 2
     let any = false
     if (input[next]?.toString().toUpperCase() === 'ANY') {
@@ -184,7 +170,7 @@ export function tryParseOrderOrCount(
     acc.count = { count, any }
     return next
   }
-  if (token === 'ANY') throw new GeoAnyRequiresCountError()
+  if (token === 'ANY') throw errors.geoAnyRequiresCount()
   return null
 }
 
@@ -236,23 +222,23 @@ export function parseGeoRadiusFlags(
     }
     if (allowStore && token === 'STORE') {
       const dest = input[cursor + 1]
-      if (!dest) throw new RedisSyntaxError()
+      if (!dest) throw errors.syntax()
       store = dest
       cursor += 2
       continue
     }
     if (allowStore && token === 'STOREDIST') {
       const dest = input[cursor + 1]
-      if (!dest) throw new RedisSyntaxError()
+      if (!dest) throw errors.syntax()
       storeDist = dest
       cursor += 2
       continue
     }
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   if ((store || storeDist) && (withCoord || withDist || withHash)) {
-    throw new GeoRadiusStoreWithOptionsError()
+    throw errors.geoRadiusStoreWithOptions()
   }
 
   return [
@@ -287,7 +273,7 @@ export function resolveCenterFromMember(
   member: Buffer,
 ): GeoCenter {
   const entry = zset?.members.get(member.toString('hex'))
-  if (!entry) throw new GeoMissingMemberError()
+  if (!entry) throw errors.geoMissingMember()
   return decodeGeoScore(entry.score)
 }
 

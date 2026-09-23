@@ -75,6 +75,19 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // line) from Redis 7.0; 6.2's text has neither. Verified against 6.2.24 and
   // 7.0.15.
   'xgroup.help-entriesread': { redis: '7.0.0', valkey: '7.2.0' },
+  // The unknown-command reply: Redis 6.2 quotes with backticks, separates args
+  // with `, ` and echoes the whole name (`%s`); 7.0 switched to single quotes,
+  // a space separator and `%.128s`. The args budget is 128 bytes either way, so
+  // 6.2 echoes fewer args (30 one-to-two-digit args: a0..a19 on 6.2, a0..a22
+  // on 7.0+). Verified against redis-server 6.2.24, 7.0, 7.2, 8.0.6 and
+  // Valkey 7.2 / 8.0, which answer the 7.0 form (#384).
+  'error.unknown-command-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // MSET / MSETNX with an odd count of 3+ tokens (the command table accepts
+  // it, the command itself refuses it): 6.2 answers `wrong number of
+  // arguments for MSET` for both, 7.0 moved to the standard arity wording
+  // (`... for 'mset' command`, `... for 'msetnx' command`). Verified against
+  // redis-server 6.2.24 and 7.0 (#492).
+  'error.mset-odd-pairs-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
@@ -124,6 +137,14 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // keeping a failing redis.call's own error code (`-WRONGTYPE ...`) instead of
   // folding it into an `-ERR` body. Verified against redis-server 6.2.24,
   // 7.0.15 and 8.0; Valkey 7.2 and 8.0 answer the 7.0 form.
+  //
+  // The same rewrite replaced 6.2's `luaPushError` rejections, which have no
+  // error code, an inner `@user_script: <line>: ` position and their own
+  // wording (`Unknown Redis command called from Lua script`, `This Redis
+  // command is not allowed from scripts`, `Wrong number of args calling Redis
+  // command From Lua script`, `Please specify at least one argument for
+  // redis.call()`), so this gate also picks that wording (see
+  // `scriptRejection` in src/core/lua-runtime.ts).
   'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
   // Valkey 8.0 dropped the product name from the script lookup failure:
   // `Unknown command called from script` where Redis (and Valkey 7.2) say

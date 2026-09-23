@@ -30,10 +30,9 @@ import { expectReply, expectReplyPrefix } from './helpers'
  * EVAL "redis.pcall('h<U+212A>eys')" -> -ERR Unknown Redis command called from script
  * ```
  *
- * The *unknown command* replies are asserted by prefix only: real Redis echoes
- * the name's raw bytes, while the mock hex-escapes non-printable names
- * (`'0xe284aa...'`). That rendering is a separate fidelity gap, out of scope
- * here.
+ * The *unknown command* replies are asserted by prefix only; their exact bytes
+ * (the name echoed raw, NUL and length cuts) are pinned in
+ * `unknown-command.test.ts`.
  */
 const testRunner = new TestRunner()
 

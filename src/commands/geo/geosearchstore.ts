@@ -1,10 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import {
-  GeoSearchStoreWithOptionsError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { integer } from '../helpers'
 import {
   buildStoreMembers,
@@ -69,9 +65,9 @@ function createGeoSearchStoreSchema() {
           token === 'WITHDIST' ||
           token === 'WITHHASH'
         ) {
-          throw new GeoSearchStoreWithOptionsError()
+          throw errors.geoSearchStoreWithOptions()
         }
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       return {

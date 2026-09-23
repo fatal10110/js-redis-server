@@ -1,10 +1,5 @@
 import { t } from '../../core/command-schema'
-import {
-  ExpectedIntegerError,
-  InvalidLexRangeError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
@@ -32,7 +27,7 @@ export function parseLexBoundArg(token: Buffer): LexBound {
     return { kind: 'value', value: token.subarray(1), exclusive: true }
   }
 
-  throw new InvalidLexRangeError()
+  throw errors.invalidLexRange()
 }
 
 export function lexMemberWithinBounds(
@@ -76,9 +71,9 @@ export type LexRangeArgs = {
 
 export function parseLexLimitInt(token: Buffer): number {
   const raw = token.toString()
-  if (!/^-?\d+$/.test(raw)) throw new ExpectedIntegerError()
+  if (!/^-?\d+$/.test(raw)) throw errors.expectedInteger()
   const value = Number(raw)
-  if (!Number.isSafeInteger(value)) throw new ExpectedIntegerError()
+  if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
   return value
 }
 
@@ -97,17 +92,17 @@ export function createLexRangeSchema() {
     let limit: LexLimit | undefined
     if (cursor < input.length) {
       if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
       const offsetTok = input[cursor + 1]
       const countTok = input[cursor + 2]
-      if (!offsetTok || !countTok) throw new RedisSyntaxError()
+      if (!offsetTok || !countTok) throw errors.syntax()
       limit = {
         offset: parseLexLimitInt(offsetTok),
         count: parseLexLimitInt(countTok),
       }
       cursor += 3
-      if (cursor < input.length) throw new RedisSyntaxError()
+      if (cursor < input.length) throw errors.syntax()
     }
 
     return { value: { key, first, second, limit }, nextIndex: cursor }

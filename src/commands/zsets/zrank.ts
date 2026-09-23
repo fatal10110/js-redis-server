@@ -3,10 +3,7 @@ import {
   type CommandIntrospection,
 } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import { array, integer, scoreValue } from '../helpers'
@@ -34,7 +31,7 @@ const zrankSchema = t.custom<ZRankArgs>(zrankLayout, (input, index, ctx) => {
 
   const option = input[index + 2]
   if (option && option.toString().toUpperCase() !== 'WITHSCORE') {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return {

@@ -1,10 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import {
-  ExpectedIntegerError,
-  RedisSyntaxError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
 import type { RedisSortedSetMember } from '../../state/data-types'
@@ -27,9 +23,9 @@ type ScoreRangeArgs = {
 
 function parseScoreLimitInt(token: Buffer): number {
   const raw = token.toString()
-  if (!/^-?\d+$/.test(raw)) throw new ExpectedIntegerError()
+  if (!/^-?\d+$/.test(raw)) throw errors.expectedInteger()
   const value = Number(raw)
-  if (!Number.isSafeInteger(value)) throw new ExpectedIntegerError()
+  if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
   return value
 }
 
@@ -59,7 +55,7 @@ function createScoreRangeSchema() {
       if (option === 'LIMIT') {
         const offsetTok = input[cursor + 1]
         const countTok = input[cursor + 2]
-        if (!offsetTok || !countTok) throw new RedisSyntaxError()
+        if (!offsetTok || !countTok) throw errors.syntax()
         limit = {
           offset: parseScoreLimitInt(offsetTok),
           count: parseScoreLimitInt(countTok),
@@ -68,7 +64,7 @@ function createScoreRangeSchema() {
         continue
       }
 
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     return {

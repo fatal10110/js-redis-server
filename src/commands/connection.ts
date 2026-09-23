@@ -6,15 +6,11 @@ import type {
   RedisExecutionContext,
 } from '../core/redis-context'
 import {
-  HelloProtocolNotIntegerError,
   NoAuthError,
-  NoPasswordConfiguredError,
-  NoProtoError,
   RedisCommandError,
-  RedisSyntaxError,
   UnknownSubcommandError,
   WrongNumberOfArgumentsError,
-  WrongPassError,
+  errors,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -318,7 +314,7 @@ function parseClientKillOptions(
     if (option === 'id') {
       const value = args[++i]
       if (!value) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
       options.id = parseIntegerToken(value)
       continue
@@ -326,12 +322,12 @@ function parseClientKillOptions(
 
     if (option === 'maxage') {
       if (!ctx.server.profile.has('client.kill.maxage')) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       const value = args[++i]
       if (!value) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       options.maxAgeSeconds = parseIntegerToken(value)
@@ -351,10 +347,10 @@ function parseClientKillOptions(
         options.skipMe = false
         continue
       }
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return options
@@ -413,14 +409,14 @@ function authenticateUser(
 
   if (!requirepass) {
     if (username !== DEFAULT_ACL_USER) {
-      throw new WrongPassError()
+      throw errors.wrongPass()
     }
     ctx.session.setAuthenticated(true)
     return
   }
 
   if (username !== DEFAULT_ACL_USER || password.toString() !== requirepass) {
-    throw new WrongPassError()
+    throw errors.wrongPass()
   }
 
   ctx.session.setAuthenticated(true)
@@ -443,7 +439,7 @@ function parseHelloOptions(
 
     if (option === 'auth') {
       if (i + 2 >= args.length) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       authenticateUser(ctx, args[i + 1].toString(), args[i + 2])
@@ -453,7 +449,7 @@ function parseHelloOptions(
 
     if (option === 'setname') {
       if (i + 1 >= args.length) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
 
       pendingName = args[i + 1]
@@ -461,7 +457,7 @@ function parseHelloOptions(
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return { pendingName }
@@ -576,7 +572,7 @@ export const infoCommand = defineCommand({
       args.sections.length > 1 &&
       !ctx.server.profile.has('info.multi-section')
     ) {
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     return bulk(Buffer.from(buildInfo(ctx, args.sections)))
@@ -663,7 +659,7 @@ export const clientCommand = defineCommand({
         return ok()
       }
 
-      throw new RedisSyntaxError()
+      throw errors.syntax()
     }
 
     if (subcommand === 'kill') {
@@ -745,16 +741,16 @@ export const clientCommand = defineCommand({
 function parseHelloVersion(token: Buffer): 2 | 3 {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new HelloProtocolNotIntegerError()
+    throw errors.helloProtocolNotInteger()
   }
 
   const parsed = Number(raw)
   if (!Number.isSafeInteger(parsed)) {
-    throw new HelloProtocolNotIntegerError()
+    throw errors.helloProtocolNotInteger()
   }
 
   if (parsed !== 2 && parsed !== 3) {
-    throw new NoProtoError()
+    throw errors.noProto()
   }
 
   return parsed
@@ -843,7 +839,7 @@ export const authCommand = defineCommand({
     // Redis answers with a dedicated hint instead of authenticating.
     if (args.args.length === 1) {
       if (!ctx.server.requirepass) {
-        throw new NoPasswordConfiguredError()
+        throw errors.noPasswordConfigured()
       }
       authenticateUser(ctx, DEFAULT_ACL_USER, args.args[0])
       return ok()
@@ -1108,17 +1104,17 @@ function parseShutdownOptions(
 
     if (option === 'now' || option === 'force' || option === 'abort') {
       if (!ctx.server.profile.has('shutdown.now-force-abort')) {
-        throw new RedisSyntaxError()
+        throw errors.syntax()
       }
       abort ||= option === 'abort'
       continue
     }
 
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   if (abort && args.length > 1) {
-    throw new RedisSyntaxError()
+    throw errors.syntax()
   }
 
   return { abort }
