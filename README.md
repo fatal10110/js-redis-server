@@ -26,7 +26,7 @@ or make a real TCP connection.
 
 ## Install
 
-Requires **Node.js 22+**. Examples below use ESM: save JavaScript snippets as
+Requires **Node.js 22.6+**. Examples below use ESM: save JavaScript snippets as
 `.mjs` files and run them with `node`.
 
 ```bash

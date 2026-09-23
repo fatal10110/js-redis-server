@@ -65,12 +65,7 @@ export type {
   VersionGate,
 } from './core/compatibility'
 export type { ClientSessionOptions } from './core/client-session'
-export type {
-  ConnectionTransport,
-  ConnectionTransportEvent,
-  ConnectionTransportListener,
-  ConnectionTransportUnsubscribe,
-} from './core/transports/connection-transport'
+export type { ConnectionTransport } from './core/transports/connection-transport'
 export type { SocketConnectionTransportOptions } from './core/transports/socket-connection-transport'
 export type {
   Resp2CommandFrame,
@@ -194,7 +189,6 @@ export {
   Resp2ParseError,
   Resp2SessionAdapter,
 } from './core/transports/resp2'
-export { InMemoryConnectionTransport } from './core/transports/in-memory-connection-transport'
 export { SocketConnectionTransport } from './core/transports/socket-connection-transport'
 // Socketless connection layer — drive a session over any transport without a
 // TCP server (`attachSession`), a net.Socket-shaped in-memory wire
@@ -207,8 +201,8 @@ export {
 } from './core/transports/attach-session'
 export {
   createVirtualConnection,
-  VirtualClientSocket,
   type CreateVirtualConnectionOptions,
+  type VirtualClientSocket,
   type VirtualConnection,
 } from './core/transports/virtual-connection'
 export {

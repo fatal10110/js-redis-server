@@ -80,12 +80,22 @@ export class Resp2SessionAdapter {
         this.transport.close('resp2 adapter error')
       }
     } finally {
-      this.session.close()
-      await pushWriter
-      // Streams are torn down by session.close() (resetResponseStreams aborts
-      // them); wait for their drain tasks to settle so nothing writes after we
-      // return.
-      await Promise.allSettled(this.activeStreams)
+      try {
+        this.session.close()
+        await pushWriter
+        // Streams are torn down by session.close() (resetResponseStreams aborts
+        // them); wait for their drain tasks to settle so nothing writes after
+        // we return.
+        await Promise.allSettled(this.activeStreams)
+      } finally {
+        // The read loop is over, so close our side as Redis does. If the
+        // client ended first, the transport has already torn down (before the
+        // drains above, so they cannot wait on a client that stopped reading)
+        // and this is a no-op. Otherwise the server ended first and this is
+        // the half-close. Last, so pending drains still get to write; in a
+        // finally, so a throw from session.close() cannot skip it.
+        this.transport.close('session ended')
+      }
     }
   }
 
