@@ -44,8 +44,11 @@ export class Resp2ParseError extends Error {
  * `processMultibulkBuffer`): `INT_MAX` since 7.0, `1024*1024` before it. Gated
  * by `protocol.multibulk-count-int-max`.
  */
-const MAX_MULTIBULK_COUNT = 2147483647
-const PRE_7_0_MAX_MULTIBULK_COUNT = 1024 * 1024
+const MAX_MULTIBULK_COUNT = 2147483647n
+const PRE_7_0_MAX_MULTIBULK_COUNT = 1024n * 1024n
+
+const INT64_MIN = -(2n ** 63n)
+const INT64_MAX = 2n ** 63n - 1n
 
 /**
  * Redis' `PROTO_INLINE_MAX_SIZE`: how many bytes of an inline request may sit
@@ -61,7 +64,7 @@ type ParseOutcome =
 export class Resp2CommandDecoder {
   private buffered = Buffer.alloc(0)
   private readonly maxBulkLength: () => bigint
-  private readonly maxMultibulkCount: number
+  private readonly maxMultibulkCount: bigint
   /**
    * Set once a protocol error is raised. A RESP stream cannot be resynchronised
    * after one — Redis' own parser marks the client `CLIENT_CLOSE_AFTER_REPLY`
@@ -163,14 +166,15 @@ export class Resp2CommandDecoder {
       throw new Resp2ParseError('Protocol error: invalid multibulk length')
     }
 
-    if (count <= 0) {
+    if (count <= 0n) {
       return { kind: 'skip', nextIndex: header.nextIndex }
     }
 
     const items: Buffer[] = []
     let cursor = header.nextIndex
 
-    for (let i = 0; i < count; i++) {
+    const elementCount = Number(count)
+    for (let i = 0; i < elementCount; i++) {
       const prefix = this.buffered[cursor]
       if (prefix === undefined) {
         return { kind: 'incomplete' }
@@ -192,18 +196,23 @@ export class Resp2CommandDecoder {
       // `processMultibulkBuffer`). `>` and not `>=` — a bulk exactly the size
       // of the limit is accepted. Verified on redis 6.2.24, 7.2.16 and 8.0.6.
       const length = parseLength(bulkHeader.line, 'bulk')
-      if (length < 0 || BigInt(length) > this.maxBulkLength()) {
+      if (length < 0n || length > this.maxBulkLength()) {
         throw new Resp2ParseError('Protocol error: invalid bulk length')
       }
 
       // Redis reads exactly `length` bytes and then skips two *without looking
       // at them*: a wrong terminator is not a protocol error, so
       // `*1\r\n$3\r\nfooXX` dispatches `foo`. Verified on redis 6.2.24,
-      // 7.0.15, 7.2.4 and 8.0, and valkey 8.0.0 / 9.0.0. (Later valkey patch
-      // releases — 7.2.14, 8.0.11 — refuse it with `invalid CRLF in request`;
-      // not modelled, since no preset profile is one of them.)
+      // 7.0.15, 7.2.4 and 8.0, and valkey 8.0.0 / 9.0.0.
+      //
+      // Known Valkey divergence, not modelled: Valkey patch releases on every
+      // current line (7.2.14, 8.0.11, 9.0.6) do check the terminator and refuse
+      // with `Protocol error: invalid CRLF in request`, then close. Only the
+      // `x.0.0` releases skip it, and a `VersionGate` has one minimum per flavor,
+      // so it cannot express a check backported across branches. The Valkey
+      // presets are 8.0.0 and 9.0.0, which match this path.
       const valueStart = bulkHeader.nextIndex
-      const valueEnd = valueStart + length
+      const valueEnd = valueStart + Number(length)
       const lineEnd = valueEnd + 2
       if (this.buffered.length < lineEnd) {
         return { kind: 'incomplete' }
@@ -227,9 +236,15 @@ export class Resp2CommandDecoder {
     const newline = this.buffered.indexOf(0x0a, index)
     if (newline === -1) {
       // Redis' 64KB inline cap bounds an *unterminated* buffer, not a line's
-      // length: it is checked only when no newline has arrived at all, so a
-      // line longer than 64KB whose newline turns up in the same read is still
-      // served. Verified on redis 6.2.24, 7.0.15, 8.0 and valkey 7.2.14.
+      // length: it is checked only when the buffer holds no newline at all.
+      // Deterministic cases verified on redis 6.2.24, 7.0.15, 8.0 and valkey
+      // 7.2.14: 64KB + 1 unterminated bytes are refused, exactly 64KB waits, and
+      // 64KB followed later by `a\r\n` is served. A >64KB line sent in one
+      // write depends on how the server's reads split it: 6.2 and 8.0 read 16KB
+      // at a time and refuse a 100KB line, while 7.0 and valkey 7.2 serve it.
+      // Here the outcome likewise depends on Node's read chunks (typically
+      // 64KB): a 100KB line in one write is served, because its newline arrives
+      // in the second chunk, before the buffer ever holds >64KB without one.
       if (this.buffered.length - index > INLINE_MAX_SIZE) {
         throw new Resp2ParseError('Protocol error: too big inline request')
       }
@@ -395,14 +410,20 @@ function readLine(
   }
 }
 
-function parseLength(value: Buffer, kind: string): number {
-  const raw = value.toString()
-  if (!/^-?\d+$/.test(raw)) {
+/**
+ * Parse a multibulk count or bulk length the way Redis' `string2ll` does: a
+ * canonical signed decimal within int64 range. No leading zeros, no `+`, and
+ * no `-0`, so `*01`, `*-05`, `*-0`, `$04` and `$+4` are all protocol errors.
+ * Verified on redis 6.2.24 and 8.0 and valkey 7.2.14.
+ */
+function parseLength(value: Buffer, kind: string): bigint {
+  const raw = value.toString('latin1')
+  if (!/^(0|-?[1-9]\d*)$/.test(raw)) {
     throw new Resp2ParseError(`Protocol error: invalid ${kind} length`)
   }
 
-  const parsed = Number(raw)
-  if (!Number.isSafeInteger(parsed)) {
+  const parsed = BigInt(raw)
+  if (parsed < INT64_MIN || parsed > INT64_MAX) {
     throw new Resp2ParseError(`Protocol error: invalid ${kind} length`)
   }
 

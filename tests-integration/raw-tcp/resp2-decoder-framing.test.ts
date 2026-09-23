@@ -1,7 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { commandFrame } from '../utils'
+import { activeProfile, commandFrame } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 
 /**
@@ -9,10 +9,19 @@ import { RawRedisConnection } from './raw-connection'
  * element-count bound, the bytes after a bulk payload, and the 64KB cap on an
  * inline request. None of these can be put on the wire by a real client.
  *
- * Ground-truthed on redis 6.2.24, 7.0.15, 7.2.4, 8.0.x and valkey 7.2.14 /
- * 8.0.0 / 9.0.0. Every assertion here holds on all of them except where noted;
- * the one version-specific rule (6.2's tighter multibulk bound) is covered per
- * profile in `tests-integration/compatibility/multibulk-count-gate.test.ts`.
+ * Ground-truthed on redis 6.2.24, 7.0.15, 8.0 and valkey 7.2.14 / 8.0.0 /
+ * 9.0.0. The inline-cap and length-format assertions hold on all of them. The
+ * exceptions:
+ *  - "bytes after a bulk payload" holds on every Redis version and on the
+ *    Valkey `x.0.0` releases, which the Valkey presets model. Valkey patch
+ *    releases (7.2.14, 8.0.11, 9.0.6) refuse a bad terminator with `Protocol
+ *    error: invalid CRLF in request` instead.
+ *  - The unknown-command reply is matched on its prefix only, because 6.2
+ *    quotes the name with backticks (`foo`) where 7.0+ uses single quotes.
+ *  - The multibulk count bound is version-specific: 6.2 refuses more than
+ *    1024*1024 elements. The 7.0+ side is asserted here, skipped on the
+ *    `redis-6.2` profile, and both sides are covered per profile in
+ *    `tests-integration/compatibility/multibulk-count-gate.test.ts`.
  */
 const testRunner = new TestRunner()
 
@@ -81,9 +90,10 @@ describe(`Raw TCP RESP2 decoder framing (${testRunner.getBackendName()})`, () =>
 
       conn.write('*1\r\n$3\r\nfooXX')
 
-      assert.strictEqual(
+      // 6.2 quotes the name with backticks, 7.0+ with single quotes.
+      assert.match(
         (await conn.readRawFrame()).toString(),
-        "-ERR unknown command 'foo', with args beginning with: \r\n",
+        /^-ERR unknown command [`']foo[`'], with args beginning with: \r\n$/,
       )
 
       // ...and the connection stays usable.
@@ -138,15 +148,64 @@ describe(`Raw TCP RESP2 decoder framing (${testRunner.getBackendName()})`, () =>
     // Accepting a count is otherwise invisible — the server just waits for the
     // elements. A non-'$' element prefix makes it observable: past the count
     // check the parser reaches the element and names the bad byte.
-    test('a count above 1024*1024 is accepted on 7.0+', async () => {
+    test(
+      'a count above 1024*1024 is accepted on 7.0+',
+      {
+        skip:
+          activeProfile === 'redis-6.2' &&
+          '6.2 caps the count at 1024*1024; see multibulk-count-gate.test.ts',
+      },
+      async () => {
+        const conn = await connect()
+
+        conn.write('*1048577\r\n+x\r\n')
+
+        await expectThenClose(
+          conn,
+          "-ERR Protocol error: expected '$', got '+'\r\n",
+        )
+      },
+    )
+  })
+
+  // Redis parses both lengths with `string2ll`: a canonical signed decimal
+  // only. A leading zero, a `+` sign or `-0` is a protocol error, even where
+  // the value would otherwise be skipped (a count <= 0) or valid.
+  describe('length format', () => {
+    for (const count of ['-05', '-0', '01', '00', '+1']) {
+      test(`multibulk count ${count} is refused`, async () => {
+        const conn = await connect()
+
+        conn.write(`*${count}\r\n${commandFrame('PING').toString()}`)
+
+        await expectThenClose(
+          conn,
+          '-ERR Protocol error: invalid multibulk length\r\n',
+        )
+      })
+    }
+
+    for (const length of ['01', '-0', '04', '+4']) {
+      test(`bulk length ${length} is refused`, async () => {
+        const conn = await connect()
+
+        conn.write(`*1\r\n$${length}\r\nPING\r\n`)
+
+        await expectThenClose(
+          conn,
+          '-ERR Protocol error: invalid bulk length\r\n',
+        )
+      })
+    }
+
+    // Any canonical value in int64 range parses, so a count below INT_MIN is
+    // skipped like any other count <= 0.
+    test('a count far below zero is still skipped', async () => {
       const conn = await connect()
 
-      conn.write('*1048577\r\n+x\r\n')
+      conn.write(`*-2147483649\r\n${commandFrame('PING').toString()}`)
 
-      await expectThenClose(
-        conn,
-        "-ERR Protocol error: expected '$', got '+'\r\n",
-      )
+      assert.strictEqual((await conn.readRawFrame()).toString(), '+PONG\r\n')
     })
   })
 

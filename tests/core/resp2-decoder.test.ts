@@ -68,6 +68,37 @@ describe('Resp2CommandDecoder multibulk count bound', () => {
   })
 })
 
+describe('Resp2CommandDecoder length format (string2ll)', () => {
+  for (const count of ['-05', '-0', '01', '00', '+1', ' 1', '1 ', '']) {
+    test(`multibulk count ${JSON.stringify(count)} is refused`, () => {
+      const d = decoder()
+      d.push(Buffer.from(`*${count}\r\n*1\r\n$4\r\nPING\r\n`))
+      assertProtocolError(d, INVALID_MULTIBULK)
+    })
+  }
+
+  for (const length of ['01', '-0', '04', '+4', '-1']) {
+    test(`bulk length ${JSON.stringify(length)} is refused`, () => {
+      const d = decoder()
+      d.push(Buffer.from(`*1\r\n$${length}\r\nPING\r\n`))
+      assertProtocolError(d, 'Protocol error: invalid bulk length')
+    })
+  }
+
+  test('a count outside int64 is refused; one inside it is skipped', () => {
+    const outside = decoder()
+    outside.push(Buffer.from('*-9223372036854775809\r\n'))
+    assertProtocolError(outside, INVALID_MULTIBULK)
+
+    const inside = decoder()
+    inside.push(Buffer.from('*-9223372036854775808\r\n*1\r\n$4\r\nPING\r\n'))
+    assert.deepStrictEqual(inside.next(), {
+      command: Buffer.from('PING'),
+      args: [],
+    })
+  })
+})
+
 describe('Resp2CommandDecoder bulk terminator', () => {
   test('the two bytes after a payload are skipped unchecked', () => {
     const d = decoder()
