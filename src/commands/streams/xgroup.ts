@@ -234,6 +234,9 @@ export const xgroupCommand = defineCommand({
   keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args
+    // Real Redis publishes each subcommand under its own name
+    // (xgroup-create, xgroup-setid, ...), never the parent `xgroup` (#381).
+    const db = ctx.db.withOrigin(`xgroup-${command.subcommand}`)
 
     if (command.subcommand === 'help') {
       return helpReply(xgroupHelpLines(ctx.server.profile), ctx.server.profile)
@@ -249,17 +252,17 @@ export const xgroupCommand = defineCommand({
     }
 
     if (command.subcommand === 'create') {
-      const type = ctx.db.getType(command.key)
+      const type = db.getType(command.key)
       if (type === null && !command.mkstream) {
         throw new XgroupCreateMissingKeyError()
       }
 
       const lastDeliveredId =
         command.id === '$'
-          ? (ctx.db.getStream(command.key)?.lastId ?? MIN_ID)
+          ? (db.getStream(command.key)?.lastId ?? MIN_ID)
           : command.id
 
-      ctx.db.updateStream(command.key, stream => {
+      db.updateStream(command.key, stream => {
         const groupId = bufferId(command.group)
         if (stream.value.groups.has(groupId)) {
           throw new BusyStreamGroupError()
@@ -277,12 +280,8 @@ export const xgroupCommand = defineCommand({
     }
 
     if (command.subcommand === 'setid') {
-      requireStreamGroup(
-        ctx.db.getStream(command.key),
-        command.key,
-        command.group,
-      )
-      ctx.db.updateStream(command.key, stream => {
+      requireStreamGroup(db.getStream(command.key), command.key, command.group)
+      db.updateStream(command.key, stream => {
         const group = requireStreamGroup(
           stream.value,
           command.key,
@@ -295,22 +294,18 @@ export const xgroupCommand = defineCommand({
     }
 
     if (command.subcommand === 'destroy') {
-      const stream = ctx.db.getStream(command.key)
+      const stream = db.getStream(command.key)
       if (!stream) return integer(0)
 
-      const removed = ctx.db.updateStream(command.key, writable => {
+      const removed = db.updateStream(command.key, writable => {
         return writable.deleteGroup(bufferId(command.group))
       })
       return integer(removed ? 1 : 0)
     }
 
     if (command.subcommand === 'createconsumer') {
-      requireStreamGroup(
-        ctx.db.getStream(command.key),
-        command.key,
-        command.group,
-      )
-      const created = ctx.db.updateStream(command.key, stream => {
+      requireStreamGroup(db.getStream(command.key), command.key, command.group)
+      const created = db.updateStream(command.key, stream => {
         const group = requireStreamGroup(
           stream.value,
           command.key,
@@ -326,12 +321,8 @@ export const xgroupCommand = defineCommand({
       return integer(created ? 1 : 0)
     }
 
-    requireStreamGroup(
-      ctx.db.getStream(command.key),
-      command.key,
-      command.group,
-    )
-    const deleted = ctx.db.updateStream(command.key, stream => {
+    requireStreamGroup(db.getStream(command.key), command.key, command.group)
+    const deleted = db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream.value, command.key, command.group)
       const consumerId = bufferId(command.consumer)
       return stream.deleteConsumer(group, consumerId)

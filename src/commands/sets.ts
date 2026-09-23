@@ -449,18 +449,22 @@ export const smoveCommand = defineCommand({
     const destType = ctx.db.getType(args.destination)
     if (destType !== null && destType !== 'set') throw new WrongTypeRedisError()
 
-    let moved = false
-    ctx.db.updateSet(args.source, set => {
-      moved = set.deleteMember(args.member)
-    })
-
-    if (!moved) return integer(0)
-
-    if ((ctx.db.getSet(args.source)?.members.size ?? 0) === 0) {
-      ctx.db.delete(args.source)
+    // Same key: real Redis only reports membership, touching nothing.
+    if (args.source.equals(args.destination)) {
+      return integer(
+        ctx.db.getSet(args.source)?.members.has(args.member.toString('hex'))
+          ? 1
+          : 0,
+      )
     }
 
-    ctx.db.updateSet(args.destination, set => {
+    // Published as the underlying srem / sadd, as real Redis does (#446).
+    const moved = ctx.db
+      .withOrigin('srem')
+      .updateSet(args.source, set => set.deleteMember(args.member))
+    if (!moved) return integer(0)
+
+    ctx.db.withOrigin('sadd').updateSet(args.destination, set => {
       set.addMember(args.member)
     })
 

@@ -11,7 +11,7 @@ import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { array, scorePairs, scoreValue } from '../helpers'
-import { deleteSortedSetIfEmpty, getSortedMembers } from './helpers'
+import { getSortedMembers } from './helpers'
 
 type ZsetPopSide = 'min' | 'max'
 
@@ -59,7 +59,6 @@ export const zpopminCommand = defineCommand({
         z.deleteMember(entry.member)
       }
     })
-    deleteSortedSetIfEmpty(ctx.db, args.key)
     return zpopReply(toRemove, args.count !== undefined)
   },
 })
@@ -81,7 +80,6 @@ export const zpopmaxCommand = defineCommand({
         z.deleteMember(entry.member)
       }
     })
-    deleteSortedSetIfEmpty(ctx.db, args.key)
     return zpopReply(toRemove, args.count !== undefined)
   },
 })
@@ -139,10 +137,13 @@ function tryBlockingZsetPop(
     const sorted = getSortedMembers(zset)
     const entry = side === 'min' ? sorted[0] : sorted[sorted.length - 1]
 
-    db.updateSortedSet(key, z => {
-      z.deleteMember(entry.member)
-    })
-    deleteSortedSetIfEmpty(db, key)
+    // Published as the underlying zpopmin/zpopmax, as real Redis does (#446).
+    db.withOrigin(side === 'min' ? 'zpopmin' : 'zpopmax').updateSortedSet(
+      key,
+      z => {
+        z.deleteMember(entry.member)
+      },
+    )
 
     return RedisResult.create(
       RedisValue.array([

@@ -155,27 +155,23 @@ const CLASS_FOR_TYPE: Readonly<Record<RedisDataValue['type'], NotifyClass>> = {
  *
  * Lifecycle events (`del`, `expire`, `persist`, `expired`) are derived purely
  * from the mutation type, so they are always correct. Write event names
- * (`set`, `lpush`, `hset`, ...) depend on the originating command, which the
- * mutation bus does not carry — so the executor records the active command name
- * on the database and it is passed in here. Commands that map one logical
- * operation onto several mutations with special names (RENAME → rename_from /
- * rename_to) are handled via the override tables above.
+ * (`set`, `lpush`, `hset`, ...) — for both `write` and notification-only
+ * `notify` mutations — come from the originating command the mutation carries
+ * (`event.command`). Commands that map one logical operation onto several
+ * mutations with special names (RENAME → rename_from / rename_to) are handled
+ * via the override tables above.
  */
 export class KeyspaceNotifier {
   constructor(private readonly broker: RedisPubSubBroker) {}
 
-  handle(
-    event: RedisMutationEvent,
-    activeCommand: string | null,
-    flags: KeyspaceNotifyFlags,
-  ): void {
+  handle(event: RedisMutationEvent, flags: KeyspaceNotifyFlags): void {
     const keyspace = flags.has('K')
     const keyevent = flags.has('E')
     if (!keyspace && !keyevent) {
       return
     }
 
-    const notification = this.resolve(event, activeCommand)
+    const notification = this.resolve(event)
     if (!notification || !flags.has(notification.eventClass)) {
       return
     }
@@ -195,19 +191,18 @@ export class KeyspaceNotifier {
     }
   }
 
-  private resolve(
-    event: RedisMutationEvent,
-    activeCommand: string | null,
-  ): ResolvedNotification | null {
+  private resolve(event: RedisMutationEvent): ResolvedNotification | null {
+    const command = event.command
     switch (event.type) {
-      case 'write': {
-        if (!activeCommand) {
+      case 'write':
+      case 'notify': {
+        if (!command) {
           return null
         }
-        const name = WRITE_EVENT_OVERRIDES[activeCommand] ?? activeCommand
-        const eventClass = GENERIC_WRITE_COMMANDS.has(activeCommand)
+        const name = WRITE_EVENT_OVERRIDES[command] ?? command
+        const eventClass = GENERIC_WRITE_COMMANDS.has(command)
           ? 'g'
-          : CLASS_FOR_TYPE[event.value.type]
+          : CLASS_FOR_TYPE[event.valueType]
         return {
           database: event.database,
           key: event.key,
@@ -216,8 +211,7 @@ export class KeyspaceNotifier {
         }
       }
       case 'delete': {
-        const name =
-          (activeCommand && DELETE_EVENT_OVERRIDES[activeCommand]) ?? 'del'
+        const name = (command && DELETE_EVENT_OVERRIDES[command]) ?? 'del'
         return {
           database: event.database,
           key: event.key,

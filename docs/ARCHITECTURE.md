@@ -311,10 +311,10 @@ flowchart LR
 
     RD0 --> ME["Map&lt;keyId, KeyspaceEntry&gt;<br/>{ key, value, expiresAt? }"]
     ME --> DT["RedisDataValue<br/>string · hash · list · set · zset · stream"]
-    RD0 -- "emit on write/delete/expire/<br/>persist/evict/flush" --> MB[RedisMutationBus]
+    RD0 -- "emit on write/delete/expire/<br/>persist/evict/flush/notify" --> MB[RedisMutationBus]
 
-    MB -- "global listeners" --> KN["KeyspaceNotifier<br/>→ PubSubBroker (keyspace/keyevent)"]
-    MB -- "per-key listeners" --> WL["ClientSession WATCH<br/>→ marks session dirty"]
+    MB -- "global listeners (all events)" --> KN["KeyspaceNotifier<br/>→ PubSubBroker (keyspace/keyevent)"]
+    MB -- "per-key listeners (never notify)" --> WL["ClientSession WATCH<br/>→ marks session dirty"]
 ```
 
 [`RedisServerState`](../src/state/server-state.ts#L13) owns one or more
@@ -336,10 +336,14 @@ types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`,
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
 `set`, `zset`, `stream`). Hash values store byte-safe field entries and can
 attach an `expiresAt` timestamp to individual fields for the hash-field TTL
-commands; tracked hash helpers lazily delete expired fields on hash reads and
-writes, and the keyspace removes the hash key when the last live field
-disappears. Stream values store ordered entries plus consumer groups, per-group
-pending-entry lists, and consumer idle metadata. Key expiration is handled by
+commands. Expired fields are dropped as a mutation of their own, published as
+`hexpired` (then `del` if the hash empties) — never under the name of the
+command that touched the key: by the active sweep, which scans a hash only
+once the lower bound `RedisDatabase` keeps on its earliest field deadline is
+due (so an ordinary hash write costs O(1)), and lazily by `updateHash` for a
+field that expired since the last tick. The keyspace
+removes the hash key when the last live field disappears. Stream values store ordered entries plus consumer groups, per-group
+pending-entry lists, and consumer idle metadata. Key (and hash-field) expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass that sweeps every database under one turn of
 the server's `SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
@@ -347,15 +351,32 @@ the master's replicated deletion. `getLiveEntry` still calls
 [`evictIfExpired`](../src/state/database.ts) on reads that encounter an
 expired key before the next sweep. Either path deletes the entry and emits an
 `evict` mutation event so `WATCH` observes expiry exactly like a real delete.
-Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
-flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L68),
-which clones values before fan-out so subscribers can never mutate shared state.
-The [`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this
+Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`/`notify`)
+flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L102),
+which gives each subscriber its own copy of the event — a `write`'s value is
+cloned on the subscriber's first read of it (most never read it; each write
+also carries `valueType`), so subscribers can never mutate shared state and an
+unread value costs nothing.
+`notify` is the odd one out: it is the keyspace-notification signal on its own
+(real Redis' `notifyKeyspaceEvent` without `signalModifiedKey`), so the bus
+delivers it only to global listeners, never to the per-key listeners `WATCH`
+and blocked clients use (#379). The
+[`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this
 bus and republishes mutations as Redis keyspace/keyevent notifications through
 the `RedisPubSubBroker` when `notify-keyspace-events` is enabled. Lifecycle
 events (`del`/`expire`/`persist`/`expired`) come straight from the mutation
-type; write event names (`set`/`lpush`/…) come from the active command, which
-the `CommandExecutor` records on the `RedisDatabase` around `execute`.
+type; write event names (`set`/`lpush`/…) come from `event.command`, stamped
+by the `CommandExecutor`, which hands each command a `ctx.db` view
+(`RedisDatabase.withOrigin`) that tags every event it emits with that
+command's name (#444) — a prototype-linked view rather than a mutable flag on
+the database, so a parked command (`BLPOP`) can't leak its name onto another
+command's writes when it resumes. A command whose event real Redis names after
+the underlying operation rather than the command mutates through its own
+`withOrigin` view at the call site: blocking / multi-key / move-style pops use
+`lpop`/`rpop`/`zpopmin`/`zpopmax` (and `lpush`/`rpush`, `srem`/`sadd` on the
+other key of a move), XGROUP subcommands `xgroup-<subcommand>`, the 8.x
+hash-field commands `hdel`/`hexpire`/`hpersist`, and `SORT ... STORE`
+`sortstore`.
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and
@@ -369,10 +390,14 @@ consumer-group, pending-entry, and last-id mutations (`XREADGROUP`, `XCLAIM`,
 `XAUTOCLAIM`, `XGROUP SETID`, `XSETID`, `XACK`, `XGROUP
 CREATE`/`DESTROY`/`CREATECONSUMER`/`DELCONSUMER`) deliberately leave a `WATCH` on
 the stream key intact — matching real Redis, where only entry-set changes
-(`XADD`/`XDEL`/…) touch it. The one exception is `XGROUP CREATE ... MKSTREAM`
-when it creates the key: those helpers commit through `markCommitted()`, which
-persists the value but only dirties `WATCH` when the key is brand-new (coming
-into existence is itself a write).
+(`XADD`/`XDEL`/…) touch it. All of those except `XACK`/`XREADGROUP`/`XCLAIM`/`XAUTOCLAIM`
+commit through `markCommitted()`, which persists the value, dirties `WATCH`
+only when the key is brand-new (coming into existence is itself a write), and
+otherwise emits a `notify` so the change is still announced as a keyspace
+notification — matching real Redis, which fires `notifyKeyspaceEvent` for
+these without calling `signalModifiedKey`. When `XREADGROUP`/`XCLAIM`/
+`XAUTOCLAIM` name a consumer that does not exist yet, they first create it the
+same way, as its own `xgroup-createconsumer` notification.
 
 ## Concurrency model
 

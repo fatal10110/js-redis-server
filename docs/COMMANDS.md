@@ -580,11 +580,30 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
       `zincr` (from `ZINCRBY`), `zrem`, `xadd`, etc.
 - [x] `RENAME`/`RENAMENX` emit `rename_from` + `rename_to`; `COPY` emits
       `copy_to`.
+- [x] Removing the last element emits the removal event, then `del`
+      (`hdel`, `lpop`, `srem`, `zrem`, `spop`, ...).
+- [x] Blocking, multi-key and move-style pops are named after the operation:
+      `BLPOP`/`BRPOP`/`LMPOP`/`BLMPOP` → `lpop`/`rpop`,
+      `BZPOPMIN`/`BZPOPMAX`/`ZMPOP`/`BZMPOP` → `zpopmin`/`zpopmax`,
+      `LMOVE`/`BLMOVE`/`RPOPLPUSH` → `lpush`/`rpush` on the destination then
+      `lpop`/`rpop` on the source, `SMOVE` → `srem` + `sadd`.
+- [x] Stream consumer groups: `xgroup-create`, `xgroup-createconsumer`,
+      `xgroup-setid`, `xgroup-delconsumer`, `xgroup-destroy`, `xsetid` — without
+      dirtying a `WATCH` on the stream. `XREADGROUP`/`XCLAIM`/`XAUTOCLAIM` emit
+      `xgroup-createconsumer` when they create a consumer.
+- [x] Hash-field commands: `HGETDEL` → `hdel`; `HEXPIRE`/`HPEXPIRE`/
+      `HEXPIREAT`/`HPEXPIREAT`/`HGETEX EX|PX|...` → `hexpire` (`hdel` for a
+      time already past); `HGETEX PERSIST` → `hpersist`; `HSETEX` → `hset` then
+      `hexpire`/`hdel`. `SORT ... STORE` → `sortstore`.
 
 > Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
-> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; cross-DB
-> `COPY` does not name the destination event. Notifications are process-local to
-> the `RedisServerState`, so they are not delivered across mock cluster nodes.
+> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; `MOVE` and
+> cross-DB `COPY` do not name the destination event. Expired hash fields are
+> dropped by the active sweep (`hexpired`, then `del`), like real Redis with
+> active expiry on; between sweeps any hash command drops them too, where real
+> Redis with active expiry *off* only expires a field on a field lookup.
+> Notifications are process-local to the `RedisServerState`, so they are not
+> delivered across mock cluster nodes.
 
 ## 15. Persistence Commands
 
