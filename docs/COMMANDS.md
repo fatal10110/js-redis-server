@@ -125,7 +125,8 @@ surface.
 > - `notify-keyspace-events` — see
 >   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 >   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
->   `AKE`; an unknown class character is rejected).
+>   `AKE`; an unknown class character is rejected with the profile's CONFIG
+>   SET failure wording).
 > - `proto-max-bulk-len` — enforced in the three places Redis enforces it.
 >   Accepts Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces
 >   Redis' own `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure
@@ -273,9 +274,25 @@ with `GT` or `LT`.
   every `GET` pattern is refused with the shorter `denied in Cluster mode.`
   wording, and `GET '#'` only becomes exempt from the slot check in Redis
   7.4.2 / Valkey 8.0.2 — so the `redis-7.4` profile (pinned at 7.4.4) exempts
-  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. Hash-field
-  dereference patterns such as
+  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. As in Redis, the
+  guard runs inside SORT's own left-to-right option scan when the command
+  executes: the first offending option is the one reported, a later syntax
+  error is never reached, and inside `MULTI` the command queues and the error
+  surfaces in `EXEC`. Hash-field dereference patterns such as
   `object_*->field` are not modeled.
+- `SORT` loads a set of canonical 64-bit integers in ascending numeric order
+  (as an intset is stored) and any other set in insertion order (as a small
+  listpack set built from a non-integer first is). The real order depends on
+  the set's encoding history, which the mock does not keep, so two cases
+  differ: a set created from an integer keeps its integers sorted ahead of
+  later non-integer members in Redis (`SADD s 3 1 a` loads `1 3 a`, the mock
+  `3 1 a`), and a set that briefly held a non-integer keeps its listpack order
+  in Redis after that member is removed, where the mock sorts it numerically
+  again. `SMEMBERS` has the same intset-order gap. With `BY` plus a `LIMIT` that
+  does not cover every element, Redis' partial quicksort can reorder elements
+  that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
+  a small zset to the `skiplist` encoding is not observable until
+  `OBJECT ENCODING` exists (#117).
 
 #### Not implemented
 
@@ -549,7 +566,8 @@ Key mutations are published to the standard `__keyspace@<db>__:<key>` (event in
 the message) and `__keyevent@<db>__:<event>` (key in the message) channels when
 enabled via `CONFIG SET notify-keyspace-events <flags>`. The flag string uses
 Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
-`t`, `m`, `n`, `d`); it is validated and normalized like real Redis.
+`t`, `m`, `n`, `d`); it is validated and normalized like real Redis. `n` is
+Redis 7.0+, so the `redis-6.2` profile rejects it.
 
 - [x] Lifecycle events derived from the keyspace itself: `del`, `expire`,
       `persist`, and `expired` (fired when a key is lazily evicted on access).

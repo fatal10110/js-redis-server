@@ -15,6 +15,8 @@ export type FeatureId =
   | 'config.set.failure-message'
   | 'config.set.multi-pair'
   | 'config.memory-value.reject-overflow'
+  | 'notify.keyspace.new-key-class'
+  | 'protocol.multibulk-count-int-max'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'
@@ -34,6 +36,7 @@ export type FeatureId =
   | 'geo.coord-d2string'
   | 'script.per-subcommand-noscript'
   | 'command.quit-table-entry'
+  | 'script.abort-error-suffix'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

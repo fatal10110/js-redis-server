@@ -10,7 +10,9 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
   // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
-  // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`.
+  // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`,
+  // and the unknown-parameter wording from `Unsupported CONFIG parameter: <name>`
+  // to `Unknown option or number of arguments for CONFIG SET - '<name>'`.
   'config.set.failure-message': { redis: '7.0.0', valkey: '7.2.0' },
   // The same 7.0 rewrite let CONFIG SET take several parameter/value pairs.
   // 6.2 dispatches SET only for exactly one pair and answers every other shape
@@ -22,6 +24,14 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Redis 6.2 saturates a memory value above the parameter's maximum to that
   // maximum; 7.0+ rejects it with the out-of-range error instead.
   'config.memory-value.reject-overflow': { redis: '7.0.0', valkey: '7.2.0' },
+  // The `n` (new-key) notify-keyspace-events class is Redis 7.0+; 6.2 rejects
+  // it as an invalid flag character (it does accept `m` and `d`).
+  'notify.keyspace.new-key-class': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 relaxed the RESP multibulk element-count bound in
+  // `processMultibulkBuffer` from `ll > 1024*1024` to `ll > INT_MAX`: `*1048577`
+  // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
+  // 7.0.15 / 8.0. Valkey forked after the change (7.2.14 accepts it).
+  'protocol.multibulk-count-int-max': { redis: '7.0.0', valkey: '7.2.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
@@ -98,4 +108,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // connection loop, so a 6.2 script calling QUIT fails command lookup
   // (unknown command) instead of hitting its 7.0+ `noscript` refusal.
   'command.quit-table-entry': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 moved the script-abort decoration from a prefix,
+  // `Error running script (call to f_<sha>): @user_script:<line>: <error>`, to
+  // a suffix, `<error> script: <sha>, on @user_script:<line>.`, and started
+  // keeping a failing redis.call's own error code (`-WRONGTYPE ...`) instead of
+  // folding it into an `-ERR` body. Verified against redis-server 6.2.24,
+  // 7.0.15 and 8.0; Valkey 7.2 and 8.0 answer the 7.0 form.
+  'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
 }

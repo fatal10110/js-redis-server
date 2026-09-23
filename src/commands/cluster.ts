@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import {
   defineCommand,
   type CommandDefinition,
@@ -62,7 +63,7 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
     keys: () => [],
     execute: (args, ctx) => {
       const topology = ctx.server.clusterTopology
-      const subcommand = args.subcommand.toString().toLowerCase()
+      const subcommand = asciiLowerCase(args.subcommand.toString())
 
       switch (subcommand) {
         case 'slots':

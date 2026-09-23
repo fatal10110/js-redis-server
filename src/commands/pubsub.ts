@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { WrongNumberOfArgumentsError } from '../core/redis-error'
@@ -232,7 +233,7 @@ export const pubsubCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'channels') {
       return pubsubChannels(args, ctx)

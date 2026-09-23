@@ -5,7 +5,6 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
   waitUntilGone,
 } from '../../utils'
@@ -17,7 +16,6 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -54,6 +52,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await waitUntilGone(
         () => directClient!.hGet(key, 'soon'),
         "hash field 'soon' (5ms TTL)",
+        { timeoutMs: 1000 },
       )
 
       assert.strictEqual(await directClient.hGet(key, 'soon'), null)
@@ -95,6 +94,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
       await waitUntilGone(
         () => directClient!.hGet(key, 'gone'),
         "hash field 'gone' (5ms TTL)",
+        { timeoutMs: 1000 },
       )
 
       const { entries: scanEntries } = await directClient.hScan(key, '0')

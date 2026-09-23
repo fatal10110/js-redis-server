@@ -1,8 +1,14 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
+import { createHash } from 'node:crypto'
 
 import { TestRunner } from '../test-config'
-import { activeProfile, commandFrame, type ProfileName } from '../utils'
+import {
+  activeProfile,
+  commandFrame,
+  randomKey,
+  type ProfileName,
+} from '../utils'
 import {
   RawRedisConnection,
   respMapGet,
@@ -326,6 +332,88 @@ describe(
       }
     })
 
+    // The `n` (new-key) class is Redis 7.0+. Real 6.2.14/6.2.24 reject `KEn`
+    // through the bare `badfmt` wording (but accept `m` and `d`); 7.0.15,
+    // 8.0.x and valkey 8.0/9.0 accept it.
+    test('the n notify-keyspace-events class matches the profile', async () => {
+      try {
+        const reply = await send(
+          'CONFIG',
+          'SET',
+          'notify-keyspace-events',
+          'KEn',
+        )
+        if (supportsNewKeyNotifyClass()) {
+          assert.strictEqual(reply, '+OK\r\n')
+          assert.strictEqual(
+            await send('CONFIG', 'GET', 'notify-keyspace-events'),
+            '*2\r\n$22\r\nnotify-keyspace-events\r\n$3\r\nnKE\r\n',
+          )
+        } else {
+          assert.strictEqual(
+            reply,
+            "-ERR Invalid argument 'KEn' for CONFIG SET 'notify-keyspace-events'\r\n",
+          )
+        }
+
+        // `m` and `d` exist on every profile.
+        assert.strictEqual(
+          await send('CONFIG', 'SET', 'notify-keyspace-events', 'KEmd'),
+          '+OK\r\n',
+        )
+      } finally {
+        await send('CONFIG', 'SET', 'notify-keyspace-events', '')
+      }
+    })
+
+    // Invalid-value and unknown-parameter CONFIG SET failures share the one
+    // gated template (#416), not only proto-max-bulk-len's. Captured from real
+    // 6.2.14 / 7.0.15 / 8.0.0 / valkey 8.0.0 / valkey 9.0.0:
+    // - notify-keyspace-events is hand-parsed in 6.2 (`goto badfmt`), so its
+    //   6.2 reply carries no ` - <detail>` suffix at all;
+    // - 6.2 echoes the parameter name as the client sent it, 7.0+ echoes it
+    //   lower-cased;
+    // - an unknown parameter has its own 6.2 wording.
+    test('every CONFIG SET failure uses the profile wording', async () => {
+      const badNotify = await send(
+        'CONFIG',
+        'SET',
+        'Notify-Keyspace-Events',
+        'Xz',
+      )
+      const badMemory = await send('CONFIG', 'SET', 'Proto-Max-Bulk-Len', 'abc')
+      const unknown = await send('CONFIG', 'SET', 'Bogus-Param', '1')
+
+      if (supportsConfigSetFailureWording()) {
+        assert.strictEqual(
+          badNotify,
+          "-ERR CONFIG SET failed (possibly related to argument 'notify-keyspace-events') - Invalid event class character. Use 'Ag$lshzxeKEtmdn'.\r\n",
+        )
+        assert.strictEqual(
+          badMemory,
+          "-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value\r\n",
+        )
+        assert.strictEqual(
+          unknown,
+          "-ERR Unknown option or number of arguments for CONFIG SET - 'Bogus-Param'\r\n",
+        )
+        return
+      }
+
+      assert.strictEqual(
+        badNotify,
+        "-ERR Invalid argument 'Xz' for CONFIG SET 'Notify-Keyspace-Events'\r\n",
+      )
+      assert.strictEqual(
+        badMemory,
+        "-ERR Invalid argument 'abc' for CONFIG SET 'Proto-Max-Bulk-Len' - argument must be a memory value\r\n",
+      )
+      assert.strictEqual(
+        unknown,
+        '-ERR Unsupported CONFIG parameter: Bogus-Param\r\n',
+      )
+    })
+
     // `config.set.multi-pair` (#419). Redis 7.0 rewrote CONFIG SET to accept
     // several pairs, splitting its arity errors and adding duplicate
     // detection. Real 6.2 dispatches SET only for exactly one pair
@@ -540,38 +628,225 @@ describe(
     )
 
     // The same error through a failing `redis.call`, which additionally takes
-    // the script-abort decoration. Real 6.2.24 answers
-    //   -ERR Error running script (call to f_<sha>): @user_script:1: ERR Unknown
-    //    subcommand or wrong number of arguments for '\xff\xfe\xfd'. Try PUBSUB HELP.
-    // This server wraps it in the 7.0 decoration on every profile — a separate
-    // divergence (#442) — so only the body segment real 6.2 also carries is
-    // asserted: it must contain the three raw bytes, not three U+FFFD.
+    // the pre-7.0 script-abort decoration (#442): a prefix naming the script's
+    // `f_<sha>` function, with the command's error code folded into the body.
+    // Byte for byte against real 6.2.24.
     test(
       'a nested unknown subcommand keeps raw bytes through redis.call',
       {
         skip: supportsUnknownSubcommandWording() && 'redis-6.2 only, see above',
       },
       async () => {
+        const script = "return redis.call('PUBSUB', ARGV[1])"
         const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
-        connection.write(
-          commandFrame(
-            'EVAL',
-            "return redis.call('PUBSUB', ARGV[1])",
-            '0',
-            subcommand,
-          ),
-        )
+        connection.write(commandFrame('EVAL', script, '0', subcommand))
         const reply = await connection.readRawFrame()
 
-        const body = Buffer.concat([
-          Buffer.from("Unknown subcommand or wrong number of arguments for '"),
-          subcommand,
-          Buffer.from("'. Try PUBSUB HELP."),
-        ])
-        assert.ok(
-          reply.includes(body),
-          `expected the raw bytes in ${JSON.stringify(reply.toString('latin1'))}`,
+        // latin1 maps each byte to one code unit, so this is a byte-exact
+        // comparison with a readable diff.
+        assert.strictEqual(
+          reply.toString('latin1'),
+          Buffer.concat([
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ERR Unknown subcommand or wrong number of arguments for '`,
+            ),
+            subcommand,
+            Buffer.from("'. Try PUBSUB HELP.\r\n"),
+          ]).toString('latin1'),
         )
+      },
+    )
+
+    // Redis 7.0 (Valkey 7.2) moved the script-abort decoration from a prefix,
+    // `Error running script (call to f_<sha>): @user_script:<line>: <error>`,
+    // to a suffix, `<error> script: <sha>, on @user_script:<line>.`. Under the
+    // prefix form the whole reply is `-ERR`, a failing command's own code
+    // (`WRONGTYPE`) becomes part of the body, and a Lua runtime error shows the
+    // position twice. Every frame below is byte for byte against real 6.2.24,
+    // 7.0.15, 8.0 and Valkey 7.2 / 8.0.
+    test('script abort errors take the profile decoration', async () => {
+      const key = `compat:${profile}:script-abort:${randomKey()}`
+      const cases: Array<{
+        args: Array<string | Buffer>
+        legacy: (sha: string) => Buffer
+        current: (sha: string) => Buffer
+      }> = [
+        {
+          // Lua runtime error carrying raw client bytes.
+          args: ['error(ARGV[1])', '0', Buffer.from([0x78, 0xff])],
+          legacy: sha =>
+            Buffer.concat([
+              Buffer.from(
+                `-ERR Error running script (call to f_${sha}): @user_script:1: user_script:1: x`,
+              ),
+              Buffer.from([0xff, 0x0d, 0x0a]),
+            ]),
+          current: sha =>
+            Buffer.concat([
+              Buffer.from('-ERR user_script:1: x'),
+              Buffer.from([0xff]),
+              Buffer.from(` script: ${sha}, on @user_script:1.\r\n`),
+            ]),
+        },
+        {
+          // A failing redis.call keeps its own error code on 7.0+ only.
+          args: [
+            "redis.call('SET', KEYS[1], 'v')\nreturn redis.call('LPUSH', KEYS[1], 'v')",
+            '1',
+            key,
+          ],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-WRONGTYPE Operation against a key holding the wrong kind of value script: ${sha}, on @user_script:2.\r\n`,
+            ),
+        },
+        {
+          // A redis.call error caught by pcall and re-raised with `error(e)`
+          // (level 1) is a runtime error: Lua prefixes its own position, and
+          // the code stays inside the message. See the level-0 case below.
+          args: [
+            "local ok, e = pcall(redis.call, 'LPUSH', KEYS[1], 'v')\nerror(e)",
+            '1',
+            key,
+          ],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:2: user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-ERR user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value script: ${sha}, on @user_script:2.\r\n`,
+            ),
+        },
+        {
+          args: ["local function f()\n  error('deep')\nend\nf()", '0'],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:2: user_script:2: deep\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-ERR user_script:2: deep script: ${sha}, on @user_script:2.\r\n`,
+            ),
+        },
+        {
+          args: ['return a', '0'],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:1: user_script:1: Script attempted to access nonexistent global variable 'a'\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-ERR user_script:1: Script attempted to access nonexistent global variable 'a' script: ${sha}, on @user_script:1.\r\n`,
+            ),
+        },
+      ]
+
+      try {
+        for (const { args, legacy, current } of cases) {
+          const script = String(args[0])
+          connection.write(commandFrame('EVAL', ...args))
+          const reply = await connection.readRawFrame()
+          const expected = supportsSuffixScriptErrorDecoration()
+            ? current(sha1(script))
+            : legacy(sha1(script))
+          assert.strictEqual(
+            reply.toString('latin1'),
+            expected.toString('latin1'),
+            script,
+          )
+        }
+      } finally {
+        await send('DEL', key)
+      }
+    })
+
+    // `error(e, 0)` re-raises a pcall-caught redis.call error with no position
+    // added, so on 6.2 the frame is the same as the uncaught call's. Byte for
+    // byte against real 6.2.24. Pinned on 6.2 only: 7.0+ real Redis answers
+    // `-ERR WRONGTYPE ...`, but the engine splits the leading code off a Lua
+    // error string, so this server answers `-WRONGTYPE ...` there — a separate
+    // engine-side divergence (the same one as `error('WRONGTYPE x', 0)`).
+    test(
+      'a pcall-caught redis.call error re-raised at level 0 keeps the 6.2 frame',
+      {
+        skip:
+          supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        const key = `compat:${profile}:script-abort-l0:${randomKey()}`
+        const script =
+          "local ok, e = pcall(redis.call, 'LPUSH', KEYS[1], 'v')\nerror(e, 0)"
+        try {
+          await send('SET', key, 'v')
+          assert.strictEqual(
+            await send('EVAL', script, '1', key),
+            `-ERR Error running script (call to f_${sha1(script)}): @user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value\r\n`,
+          )
+        } finally {
+          await send('DEL', key)
+        }
+      },
+    )
+
+    // KNOWN GAP (#439): errors the scripting layer raises itself, before any
+    // command runs, are rendered by real 6.2 through `luaPushError`, with an
+    // inner `@user_script: <line>: ` position (the calling Lua line, which the
+    // engine does not expose to the host) and 6.2's own wording:
+    //   @user_script:1: @user_script: 1: Unknown Redis command called from Lua script
+    //   @user_script:1: @user_script: 1: This Redis command is not allowed from scripts
+    //   @user_script:1: @user_script: 1: Please specify at least one argument for redis.call()
+    //   @user_script:1: @user_script: 1: Lua redis() command arguments must be strings or integers
+    //   @user_script:1: @user_script: 1: Wrong number of args calling Redis command From Lua script
+    // This pins what this server answers today: the 6.2 wrapper around the
+    // 7.0+ body, with no `ERR ` code folded in (they are not command replies).
+    // Tighten to the real frames above once the wording and inner position are
+    // modelled.
+    test(
+      'script-level redis.call rejections on 6.2 (known gap: wording and inner position)',
+      {
+        skip:
+          supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        const cases: Array<[string, string]> = [
+          [
+            "return redis.call('nosuchcmd')",
+            'Unknown Redis command called from script',
+          ],
+          [
+            "return redis.call('SUBSCRIBE', 'c')",
+            'This Redis command is not allowed from script',
+          ],
+          [
+            // A noscript container refuses every subcommand on 6.2 (#474).
+            "return redis.call('CLIENT', 'NOPE')",
+            'This Redis command is not allowed from script',
+          ],
+          [
+            'redis.call()',
+            'Please specify at least one argument for this redis lib call',
+          ],
+          [
+            "return redis.call('SET', {}, 'v')",
+            'Lua redis lib command arguments must be strings or integers',
+          ],
+          [
+            "return redis.call('GET')",
+            "wrong number of arguments for 'get' command",
+          ],
+        ]
+        for (const [script, body] of cases) {
+          assert.strictEqual(
+            await send('EVAL', script, '0'),
+            `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ${body}\r\n`,
+            script,
+          )
+        }
       },
     )
 
@@ -945,12 +1220,24 @@ function supportsMemoryValueOverflowRejection(): boolean {
   return profile !== 'redis-6.2'
 }
 
+function supportsNewKeyNotifyClass(): boolean {
+  return profile !== 'redis-6.2'
+}
+
 function supportsCommandDocs(): boolean {
   return profile !== 'redis-6.2'
 }
 
 function supportsUnknownSubcommandWording(): boolean {
   return profile !== 'redis-6.2'
+}
+
+function supportsSuffixScriptErrorDecoration(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function sha1(script: string): string {
+  return createHash('sha1').update(script).digest('hex')
 }
 
 function supportsClientSetinfo(): boolean {

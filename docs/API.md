@@ -154,9 +154,12 @@ Current profile gates:
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
+| RESP multibulk element count bounded at `INT_MAX` (6.2 refuses more than `1024*1024` with `Protocol error: invalid multibulk length`) | `redis-7.0+` | `valkey-8.0+` |
 | Unknown-subcommand error wording for every container command (`unknown subcommand '<name>'. Try <CMD> HELP.` with the echoed name cut at 128 bytes, vs. 6.2's untruncated `Unknown subcommand or wrong number of arguments for '<name>'.`) | `redis-7.0+` | `valkey-8.0+` |
-| `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`) | `redis-7.0+` | `valkey-8.0+` |
+| `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`, which echoes the name as sent and has no detail suffix for `notify-keyspace-events`), and unknown-parameter wording (`Unknown option or number of arguments for CONFIG SET - '<name>'` vs. 6.2's `Unsupported CONFIG parameter: <name>`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` with several parameter/value pairs, its `config\|set` arity / `syntax error` split, and `duplicate parameter` detection (6.2 accepts exactly one pair and answers any other shape with `Unknown subcommand or wrong number of arguments for 'SET'.`) | `redis-7.0+` | `valkey-8.0+` |
+| `n` (new-key) class in `notify-keyspace-events` (6.2 rejects it as an invalid flag character) | `redis-7.0+` | `valkey-8.0+` |
+| Script-abort error decoration (`<error> script: <sha>, on @user_script:<line>.`, keeping a failing `redis.call`'s own error code, vs. 6.2's `-ERR Error running script (call to f_<sha>): @user_script:<line>: <error>`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
 | `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |

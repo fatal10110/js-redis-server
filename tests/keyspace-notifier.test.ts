@@ -2,45 +2,42 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   keyspaceNotifyFlagsToString,
-  normalizeKeyspaceNotifyConfig,
   parseKeyspaceNotifyFlags,
 } from '../src/state/keyspace-notifier'
 
 describe('keyspace notify flag parsing', () => {
   test('parses individual class characters', () => {
     const flags = parseKeyspaceNotifyFlags('KEg$x')
-    assert.strictEqual(flags.keyspace, true)
-    assert.strictEqual(flags.keyevent, true)
-    assert.strictEqual(flags.generic, true)
-    assert.strictEqual(flags.string, true)
-    assert.strictEqual(flags.expired, true)
-    assert.strictEqual(flags.list, false)
+    assert.deepStrictEqual(flags, new Set(['K', 'E', 'g', '$', 'x']))
   })
 
   test("'A' expands to every class except m and n (module IS included)", () => {
-    const flags = parseKeyspaceNotifyFlags('A')
-    for (const key of [
-      'generic',
-      'string',
-      'list',
-      'set',
-      'hash',
-      'zset',
-      'expired',
-      'evicted',
-      'stream',
-      'module',
-    ] as const) {
-      assert.strictEqual(flags[key], true, `${key} should be set by A`)
-    }
-    assert.strictEqual(flags.keyMiss, false)
-    assert.strictEqual(flags.newKey, false)
+    assert.deepStrictEqual(
+      parseKeyspaceNotifyFlags('A'),
+      new Set(['g', '$', 'l', 's', 'h', 'z', 'x', 'e', 't', 'd']),
+    )
   })
 
-  test('rejects an unknown class character with the Redis error', () => {
-    assert.throws(
-      () => parseKeyspaceNotifyFlags('Z'),
-      /Invalid event class character. Use 'Ag\$lshzxeKEtmdn'\./,
+  test('the empty string parses to no flags', () => {
+    assert.deepStrictEqual(parseKeyspaceNotifyFlags(''), new Set())
+  })
+
+  // The caller owns the (profile-specific) CONFIG SET error.
+  test('an unknown class character is rejected', () => {
+    for (const value of ['Z', 'Xz', 'KEy', 'K E', 'KEA!']) {
+      assert.strictEqual(parseKeyspaceNotifyFlags(value), undefined, value)
+    }
+  })
+
+  // `n` is Redis 7.0+; 6.2 rejects it but accepts `m` and `d`.
+  test('newKeyClass: false rejects only the n flag', () => {
+    for (const value of ['n', 'KEn', 'And', 'KEnd']) {
+      const flags = parseKeyspaceNotifyFlags(value, { newKeyClass: false })
+      assert.strictEqual(flags, undefined, value)
+    }
+    assert.deepStrictEqual(
+      parseKeyspaceNotifyFlags('KEmd', { newKeyClass: false }),
+      new Set(['K', 'E', 'm', 'd']),
     )
   })
 })
@@ -72,12 +69,9 @@ describe('keyspace notify flag normalization', () => {
 
   for (const [input, expected] of cases) {
     test(`'${input}' normalizes to '${expected}'`, () => {
-      assert.strictEqual(normalizeKeyspaceNotifyConfig(input), expected)
+      const flags = parseKeyspaceNotifyFlags(input)
+      assert.ok(flags)
+      assert.strictEqual(keyspaceNotifyFlagsToString(flags), expected)
     })
   }
-
-  test('round-trips a parsed value back to canonical form', () => {
-    const flags = parseKeyspaceNotifyFlags('Ex')
-    assert.strictEqual(keyspaceNotifyFlagsToString(flags), 'xE')
-  })
 })

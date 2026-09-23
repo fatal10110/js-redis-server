@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
@@ -97,7 +98,7 @@ export const scriptCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    switch (args.subcommand.toString().toLowerCase()) {
+    switch (asciiLowerCase(args.subcommand.toString())) {
       case 'load':
         return scriptLoad(args, ctx)
       case 'exists':
@@ -276,7 +277,7 @@ export const functionCommand = defineCommand<FunctionArgs>({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    switch (args.subcommand.toString().toLowerCase()) {
+    switch (asciiLowerCase(args.subcommand.toString())) {
       case 'load':
         return functionLoad(args, ctx)
       case 'delete':
@@ -483,9 +484,17 @@ async function runLuaScript(
   const runtime = await ctx.server.getLuaRuntime()
 
   try {
-    const reply = renderScriptError(
-      runtime.eval(script, keys, argv, ctx, { readOnly }),
+    const { reply: result, raisedByRedisCall } = runtime.evalScript(
+      script,
+      keys,
+      argv,
+      ctx,
+      { readOnly },
     )
+    const reply = renderScriptError(result, {
+      profile: ctx.server.profile,
+      raisedByRedisCall,
+    })
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {
     if (err instanceof RedisCommandError) {

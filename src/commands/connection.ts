@@ -1,3 +1,4 @@
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t } from '../core/command-schema'
 import type {
@@ -74,12 +75,8 @@ function setClientName(session: RedisClientSession, name: Buffer): void {
   clientNames.set(session, name)
 }
 
-function isClusterMode(ctx: RedisExecutionContext): boolean {
-  return ctx.server.clusterTopology.nodes.length > 0
-}
-
 function redisMode(ctx: RedisExecutionContext): string {
-  return isClusterMode(ctx) ? 'cluster' : 'standalone'
+  return ctx.server.clusterEnabled ? 'cluster' : 'standalone'
 }
 
 function value(value: string): RedisValue {
@@ -104,7 +101,7 @@ function buildInfo(
     sections.length === 0
       ? ['default']
       : sections.map(section => section.toLowerCase())
-  const clustered = isClusterMode(ctx)
+  const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
     'clients',
@@ -497,10 +494,6 @@ function redactedMonitorArg(): Buffer {
   return Buffer.from('(redacted)')
 }
 
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
-}
-
 export const pingCommand = defineCommand({
   name: 'ping',
   schema: t.object({
@@ -626,7 +619,7 @@ export const clientCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'setname') {
       expectArgCount('client|setname', args.args, 1)
@@ -951,7 +944,7 @@ export const aclCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'whoami') {
       expectArgCount('acl|whoami', args.args, 0)
@@ -1035,7 +1028,7 @@ export const slowlogCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
       if (args.args.length > 1) {

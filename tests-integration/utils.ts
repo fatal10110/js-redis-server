@@ -42,11 +42,15 @@ export function randomKey(): string {
  * TTL and sleep and it is still alive when the assertions need it gone.
  * Polling removes the guess — it waits exactly as long as the expiry takes.
  *
- * It is not a weaker assertion than `sleep(); assert.strictEqual(x, null)`: the
- * value must still be gone, just within a generous deadline instead of at one
- * arbitrary instant. A value that never expires still fails, and the message
- * reports how long it survived, so a future regression says so directly
- * instead of looking like one more flake.
+ * The value must still be gone, and a value that never expires still fails with
+ * a message reporting how long it survived. But the deadline bounds how long
+ * an expiry may take, so it is only as strict as the deadline is tight relative
+ * to the TTL: against a 5ms TTL the 5000ms default would also accept a TTL
+ * 1000x too long (e.g. milliseconds treated as seconds). Choose `timeoutMs` per
+ * call site relative to the TTL under test: comfortably above the TTL plus
+ * scheduling slack, but well below the next order of magnitude, so a unit
+ * mix-up still fails. The default suits TTLs in the hundreds of milliseconds;
+ * pass a tighter deadline for shorter ones.
  */
 export async function waitUntilGone(
   read: () => Promise<unknown>,
@@ -115,8 +119,10 @@ export async function countExistingKeys(
  * `pattern` restores the one thing the delta caught that key-existence alone
  * does not: a command that creates an EXTRA, unexpected key. Because every key
  * here shares one hash tag, `KEYS <pattern>` on that tag's slot owner is both
- * exact and unaffected by anything else on the node. DBSIZE is still asserted
- * exactly (== 0 after a flush) by the flush-async-sync suites.
+ * exact and unaffected by anything else on the node. Integration suites no
+ * longer assert an exact DBSIZE count on the shared keyspace: the
+ * flush-async-sync suites only check it reads 0 right after a flush, and exact
+ * counting is covered by the unit tests (tests/commands-foundation.test.ts).
  */
 export async function assertKeyCount(
   redisClient: Cluster,
@@ -355,23 +361,6 @@ export async function findNodeRedisSlotOwnerEndpoint(
     }
   }
   throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)
-}
-
-/**
- * Flush every master in a node-redis cluster. node-redis has no keyPrefix
- * (unlike ioredis, which the ioredis suites use to namespace keys), so the
- * node-redis twins call this in `before()` to start from a clean keyspace and
- * avoid collisions with the ioredis suite on the shared real cluster.
- */
-export async function flushNodeRedisCluster(
-  cluster: RedisClusterType,
-): Promise<void> {
-  await Promise.all(
-    cluster.masters.map(async node => {
-      const client = await cluster.nodeClient(node)
-      await client.flushAll()
-    }),
-  )
 }
 
 /** node-redis equivalent of {@link countExistingKeys}. */
