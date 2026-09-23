@@ -423,7 +423,9 @@ code.
 Resumed turns run before **all** queued commands, and FIFO among themselves.
 `blockOnKeys` subscribes to its keys once for the whole command, so a waiter
 woken to find nothing ready re-parks at its original place. Only a write that
-leaves a key holding the waiter's type wakes it. The wake is reported
+leaves a key holding the waiter's type wakes it. `XREADGROUP` is the
+exception: it wakes on any write, so a stream overwritten with another type
+unblocks it with WRONGTYPE, as in real Redis. The wake is reported
 synchronously (`ParkRequest.onWake`), so the resume takes its place in line
 while the writer still holds the turn. Together, several clients blocked on
 one key are served in the order they blocked, as in real Redis.
