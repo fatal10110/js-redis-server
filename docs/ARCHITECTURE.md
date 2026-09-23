@@ -185,7 +185,12 @@ sequenceDiagram
 `CommandDefinition` from the registry, parses raw `Buffer` args through the
 command's [schema](../src/core/command-schema.ts) (single source of truth for
 arity/syntax), and extracts routing keys via `definition.keys(args)` — the
-result is a `CommandPlan` that policies and the executor share.
+result is a `CommandPlan` that policies and the executor share. On Redis
+7.0+/Valkey profiles, `plan()` also resolves a container command's first
+argument against the real subcommand tables right after the registry lookup,
+before parsing (see
+[`subcommand-gates.ts`](../src/core/compatibility/subcommand-gates.ts)),
+throwing `UnknownSubcommandError` for a name the profile doesn't have.
 
 Two execution paths share this same plan:
 
