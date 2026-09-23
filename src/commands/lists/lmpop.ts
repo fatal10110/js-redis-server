@@ -10,7 +10,7 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { parseMoveDirection, parseTimeout } from './helpers'
+import { listPopEvent, parseMoveDirection, parseTimeout } from './helpers'
 
 type ListMultiPopArgs = {
   keys: Buffer[]
@@ -129,17 +129,16 @@ export function tryListMultiPop(
     const list = db.getList(key)
     if (!list || list.values.length === 0) continue
 
-    const result = db.updateList(key, list => {
-      const values = list.popMany(side, count)
-      return { values, empty: list.length === 0 }
-    })
-    if (result.empty) db.delete(key)
+    // Published as the underlying lpop/rpop, as real Redis does (#446).
+    const values = db
+      .withOrigin(listPopEvent(side))
+      .updateList(key, list => list.popMany(side, count))
 
     return RedisResult.create(
       RedisValue.array([
         RedisValue.bulkString(key),
         RedisValue.array(
-          result.values.map((value: Buffer) => RedisValue.bulkString(value)),
+          values.map((value: Buffer) => RedisValue.bulkString(value)),
         ),
       ]),
     )
