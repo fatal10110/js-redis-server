@@ -12,6 +12,7 @@ import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { array, scorePairs, scoreValue } from '../helpers'
 import { getSortedMembers } from './helpers'
+import { blockOnKeys, blockingTimeoutMs } from '../blocking'
 
 type ZsetPopSide = 'min' | 'max'
 
@@ -163,48 +164,13 @@ async function blockingZsetPop(
   side: ZsetPopSide,
   ctx: RedisExecutionContext,
 ): Promise<RedisResult> {
-  const timeoutMs =
-    timeoutSecs === 0 ? undefined : Math.ceil(timeoutSecs * 1000)
-  const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined
-
-  while (true) {
-    const remaining =
-      deadline !== undefined ? Math.max(0, deadline - Date.now()) : undefined
-    if (remaining === 0) return RedisResult.create(RedisValue.nullArray())
-
-    let wake!: (v: true) => void
-    const waitFor = new Promise<true>(resolve => {
-      wake = () => resolve(true)
-    })
-
-    const unsubs = keys.map(key =>
-      ctx.db.subscribeKey(key, event => {
-        if (event.type === 'write') wake(true)
-      }),
-    )
-
-    let woken: boolean | null
-    try {
-      woken = await ctx.park({
-        waitFor,
-        timeoutMs: remaining,
-        signal: ctx.signal,
-      })
-    } finally {
-      for (const unsub of unsubs) {
-        try {
-          unsub()
-        } catch {
-          // ignore errors from individual unsubscribers so all are attempted
-        }
-      }
-    }
-
-    if (woken === null) return RedisResult.create(RedisValue.nullArray())
-
-    const result = tryBlockingZsetPop(keys, side, ctx.db)
-    if (result) return result
-  }
+  const result = await blockOnKeys(ctx, {
+    keys,
+    type: 'zset',
+    timeoutMs: blockingTimeoutMs(timeoutSecs),
+    attempt: () => tryBlockingZsetPop(keys, side, ctx.db),
+  })
+  return result ?? RedisResult.create(RedisValue.nullArray())
 }
 
 function defineBlockingZsetPop(name: string, side: ZsetPopSide) {

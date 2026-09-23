@@ -6,6 +6,7 @@ import { RedisResult } from '../../core/redis-result'
 import { bulk } from '../helpers'
 import { parseMoveDirection, parseTimeout } from './helpers'
 import { tryListMove } from './move'
+import { blockOnKeys, blockingTimeoutMs } from '../blocking'
 
 type BlmoveArgs = {
   source: Buffer
@@ -23,50 +24,14 @@ async function blockingListMove(
   timeoutSecs: number,
   ctx: RedisExecutionContext,
 ): Promise<RedisResult> {
-  const timeoutMs =
-    timeoutSecs === 0 ? undefined : Math.ceil(timeoutSecs * 1000)
-  const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined
-
-  while (true) {
-    const remaining =
-      deadline !== undefined ? Math.max(0, deadline - Date.now()) : undefined
-    if (remaining === 0) return bulk(null)
-
-    let wake!: (v: true) => void
-    const waitFor = new Promise<true>(resolve => {
-      wake = () => resolve(true)
-    })
-
-    const unsub = ctx.db.subscribeKey(source, event => {
-      if (event.type === 'write') wake(true)
-    })
-
-    let woken: boolean | null
-    try {
-      woken = await ctx.park({
-        waitFor,
-        timeoutMs: remaining,
-        signal: ctx.signal,
-      })
-    } finally {
-      try {
-        unsub()
-      } catch {
-        // ignore
-      }
-    }
-
-    if (woken === null) return bulk(null)
-
-    const result = tryListMove(
-      source,
-      destination,
-      fromDirection,
-      toDirection,
-      ctx.db,
-    )
-    if (result) return result
-  }
+  const result = await blockOnKeys(ctx, {
+    keys: [source],
+    type: 'list',
+    timeoutMs: blockingTimeoutMs(timeoutSecs),
+    attempt: () =>
+      tryListMove(source, destination, fromDirection, toDirection, ctx.db),
+  })
+  return result ?? bulk(null)
 }
 
 const BLMOVE_LAYOUT = { min: 5, max: 5, keys: [0, 1] }

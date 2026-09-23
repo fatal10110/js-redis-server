@@ -413,12 +413,20 @@ The turn handle also exposes `suspend(waitFor)`, and `RedisExecutionContext`
 carries a `park` handler
 ([`createDefaultParkHandler`](../src/core/redis-context.ts#L47)): a command can
 release its turn while waiting on something, then re-acquire one with priority
-once it resolves — without deadlocking the queue. Resumed turns run ahead of
-newly queued commands but FIFO among themselves, so several clients blocked on
-one key are served in the order they blocked, as in real Redis. This is the plumbing the
+once it resolves — without deadlocking the queue. This is the plumbing the
 [refactor](../src/core/redis-context.ts) was designed around for blocking
-commands. `BLPOP`, `BRPOP`, `BLMOVE`, `BLMPOP`, and `XREAD BLOCK` use this
-contract without special session or queue code.
+commands. `BLPOP`, `BRPOP`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`/`BZPOPMAX`, `BZMPOP`,
+`XREAD BLOCK` and `XREADGROUP BLOCK` all park through one helper,
+[`blockOnKeys`](../src/commands/blocking.ts), without special session or queue
+code.
+
+Resumed turns run before **all** queued commands, and FIFO among themselves.
+`blockOnKeys` subscribes to its keys once for the whole command, so a waiter
+woken to find nothing ready re-parks at its original place. Only a write that
+leaves a key holding the waiter's type wakes it. The wake is reported
+synchronously (`ParkRequest.onWake`), so the resume takes its place in line
+while the writer still holds the turn. Together, several clients blocked on
+one key are served in the order they blocked, as in real Redis.
 
 ## Protocol & transports (RESP2 / RESP3)
 

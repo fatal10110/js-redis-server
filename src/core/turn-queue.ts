@@ -1,6 +1,15 @@
 export interface RedisTurnHandle {
   release(): void
-  suspend(waitFor: Promise<unknown>): Promise<RedisTurnHandle>
+  /**
+   * Release the turn until `waitFor` settles, then re-acquire one ahead of
+   * every queued command. `bindResume` hands the caller a `resume` it may call
+   * synchronously the moment it knows the wait is over, to take that place in
+   * line before `waitFor`'s promise chain has run.
+   */
+  suspend(
+    waitFor: Promise<unknown>,
+    bindResume?: (resume: () => void) => void,
+  ): Promise<RedisTurnHandle>
 }
 
 type TurnResolver = () => void
@@ -8,12 +17,11 @@ type TurnResolver = () => void
 export class SerialTurnQueue {
   private readonly queue: TurnResolver[] = []
   /**
-   * Turns re-requested by suspended (parked) commands whose wait settled. They
-   * run ahead of `queue` so a woken blocking command re-checks its key before
-   * any command that arrived after it — but among themselves they stay FIFO:
-   * waiters woken by the same write resume in the order they were woken
-   * (= the order they blocked), matching real Redis' fair service of blocked
-   * clients. A single `unshift` onto `queue` would reverse that order.
+   * Turns re-requested by suspended (parked) commands whose wait is over. They
+   * run before every command in `queue`, but FIFO among themselves: waiters
+   * woken by one write resume in the order they were woken, which is the order
+   * they blocked. Real Redis serves blocked clients in that order too. An
+   * `unshift` onto `queue` would reverse it.
    */
   private readonly resumed: TurnResolver[] = []
   private locked = false
@@ -37,6 +45,7 @@ export class SerialTurnQueue {
 
         const suspend = async (
           waitFor: Promise<unknown>,
+          bindResume?: (resume: () => void) => void,
         ): Promise<RedisTurnHandle> => {
           if (!active) {
             throw new Error('Turn already released')
@@ -45,8 +54,27 @@ export class SerialTurnQueue {
           active = false
           this.locked = false
           this.scheduleNext()
-          await waitFor
-          return this.waitTurnInternal(true)
+
+          let settled = false
+          let resumed: Promise<RedisTurnHandle> | undefined
+          const resume = () => {
+            if (settled) return
+            resumed ??= this.waitTurnInternal(true)
+          }
+          bindResume?.(resume)
+
+          try {
+            await waitFor
+          } catch (err) {
+            settled = true
+            // A resume queued before the wait failed would wedge the queue if
+            // left unclaimed; take that turn and hand it straight back.
+            if (resumed) (await resumed).release()
+            throw err
+          }
+          resume()
+          settled = true
+          return resumed!
         }
 
         resolve({ release, suspend })

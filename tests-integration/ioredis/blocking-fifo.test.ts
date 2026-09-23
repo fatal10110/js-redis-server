@@ -1,6 +1,6 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
-import { Cluster } from 'ioredis'
+import { Cluster, type ChainableCommander } from 'ioredis'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 
@@ -156,5 +156,158 @@ describe(`Blocking waiters are served FIFO (${testRunner.getBackendName()})`, ()
       [key, 'v1'],
       [key, 'v2'],
     ])
+  })
+
+  // A wake that finds nothing ready must re-park the waiter where it was, not
+  // behind the waiters that blocked after it.
+  const keepPlaceCases: Array<{
+    name: string
+    // Block on `a` (or `a` + `b` when the command takes several keys).
+    blockTwo: (c: Cluster, a: string, b: string) => Promise<unknown>
+    blockOne: (c: Cluster, a: string) => Promise<unknown>
+    create: (m: ChainableCommander, key: string) => ChainableCommander
+    feed: (c: Cluster, key: string) => Promise<unknown>
+    expected: (key: string) => unknown
+  }> = [
+    {
+      name: 'BLPOP',
+      blockTwo: (c, a, b) => c.blpop(a, b, 1),
+      blockOne: (c, a) => c.blpop(a, 1),
+      create: (m, key) => m.rpush(key, 'x'),
+      feed: (c, key) => c.rpush(key, 'v'),
+      expected: key => [key, 'v'],
+    },
+    {
+      name: 'BLMPOP',
+      blockTwo: (c, a, b) => c.blmpop(1, 2, a, b, 'LEFT'),
+      blockOne: (c, a) => c.blmpop(1, 1, a, 'LEFT'),
+      create: (m, key) => m.rpush(key, 'x'),
+      feed: (c, key) => c.rpush(key, 'v'),
+      expected: key => [key, ['v']],
+    },
+    {
+      name: 'BZPOPMIN',
+      blockTwo: (c, a, b) => c.bzpopmin(a, b, 1),
+      blockOne: (c, a) => c.bzpopmin(a, 1),
+      create: (m, key) => m.zadd(key, 0, 'x'),
+      feed: (c, key) => c.zadd(key, 1, 'm'),
+      expected: key => [key, 'm', '1'],
+    },
+    {
+      name: 'BZMPOP',
+      blockTwo: (c, a, b) => c.bzmpop(1, 2, a, b, 'MIN'),
+      blockOne: (c, a) => c.bzmpop(1, 1, a, 'MIN'),
+      create: (m, key) => m.zadd(key, 0, 'x'),
+      feed: (c, key) => c.zadd(key, 1, 'm'),
+      expected: key => [key, [['m', '1']]],
+    },
+  ]
+
+  for (const c of keepPlaceCases) {
+    test(`${c.name}: a waiter woken to find nothing keeps its place in line`, async () => {
+      const base = randomKey()
+      const k1 = `{${base}}:k1`
+      const k2 = `{${base}}:k2`
+
+      // B blocks first (on k1 and k2), C second (on k1 only).
+      const b = c.blockTwo(waiters[0], k1, k2)
+      await waitForPark()
+      const cReply = c.blockOne(waiters[1], k1)
+      await waitForPark()
+
+      // Wakes B for k2, which is gone again by the time B looks.
+      await c.create(feeder.multi(), k2).del(k2).exec()
+      await waitForPark()
+
+      await c.feed(feeder, k1)
+      assert.deepStrictEqual(await b, c.expected(k1), 'B blocked first')
+      assert.strictEqual(await cReply, null, 'C times out')
+    })
+  }
+
+  // A write that leaves the key holding another type does not serve the
+  // waiter: it stays blocked (no WRONGTYPE) until a value of its type arrives.
+  const wrongTypeCases: Array<{
+    name: string
+    block: (c: Cluster, key: string) => Promise<unknown>
+    wrongType: (c: Cluster, key: string) => Promise<unknown>
+    feed: (c: Cluster, key: string) => Promise<unknown>
+    expected: (key: string) => unknown
+  }> = [
+    {
+      name: 'BLPOP',
+      block: (c, key) => c.blpop(key, 2),
+      wrongType: (c, key) => c.set(key, 'foo'),
+      feed: (c, key) => c.rpush(key, 'v'),
+      expected: key => [key, 'v'],
+    },
+    {
+      name: 'BLMOVE',
+      block: (c, key) => c.blmove(key, `${key}:dst`, 'LEFT', 'RIGHT', 2),
+      wrongType: (c, key) => c.set(key, 'foo'),
+      feed: (c, key) => c.rpush(key, 'v'),
+      expected: () => 'v',
+    },
+    {
+      name: 'BLMPOP',
+      block: (c, key) => c.blmpop(2, 1, key, 'LEFT'),
+      wrongType: (c, key) => c.set(key, 'foo'),
+      feed: (c, key) => c.rpush(key, 'v'),
+      expected: key => [key, ['v']],
+    },
+    {
+      name: 'BZPOPMIN',
+      block: (c, key) => c.bzpopmin(key, 2),
+      wrongType: (c, key) => c.rpush(key, 'a'),
+      feed: (c, key) => c.zadd(key, 1, 'm'),
+      expected: key => [key, 'm', '1'],
+    },
+    {
+      name: 'BZMPOP',
+      block: (c, key) => c.bzmpop(2, 1, key, 'MIN'),
+      wrongType: (c, key) => c.rpush(key, 'a'),
+      feed: (c, key) => c.zadd(key, 1, 'm'),
+      expected: key => [key, [['m', '1']]],
+    },
+    {
+      name: 'XREAD BLOCK',
+      block: (c, key) => c.xread('BLOCK', 2000, 'STREAMS', key, '$'),
+      wrongType: (c, key) => c.rpush(key, 'a'),
+      feed: (c, key) => c.xadd(key, '1-0', 'f', 'v'),
+      expected: key => [[key, [['1-0', ['f', 'v']]]]],
+    },
+  ]
+
+  for (const c of wrongTypeCases) {
+    test(`${c.name}: a write of another type does not wake the waiter`, async () => {
+      const key = `{${randomKey()}}`
+      let settled = false
+      const reply = c.block(waiters[0], key).finally(() => {
+        settled = true
+      })
+      await waitForPark()
+
+      await c.wrongType(feeder, key)
+      await waitForPark()
+      assert.strictEqual(settled, false, 'still blocked, no WRONGTYPE reply')
+
+      await feeder.del(key)
+      await c.feed(feeder, key)
+      assert.deepStrictEqual(await reply, c.expected(key))
+    })
+  }
+
+  test('BLPOP k1 k2: a type change on k2 keeps the client blocked for k1', async () => {
+    const base = randomKey()
+    const k1 = `{${base}}:k1`
+    const k2 = `{${base}}:k2`
+
+    const reply = waiters[0].blpop(k1, k2, 2)
+    await waitForPark()
+    await feeder.set(k2, 'foo')
+    await waitForPark()
+    await feeder.rpush(k1, 'v')
+
+    assert.deepStrictEqual(await reply, [k1, 'v'])
   })
 })

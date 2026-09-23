@@ -9,6 +9,7 @@ import { bulk } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
 import { parseExactId, parseNonNegativeInteger } from './ids'
 import { bulkString, deletedEntryToReply, entryToReply } from './replies'
+import { blockOnKeys } from '../blocking'
 
 type XreadGroupStream = { key: Buffer; id: StreamId | '>' }
 
@@ -146,55 +147,14 @@ async function blockingXreadGroup(
   blockMs: number,
   ctx: RedisExecutionContext,
 ): Promise<RedisResult> {
-  const timeoutMs = blockMs === 0 ? undefined : blockMs
-  const deadline = timeoutMs !== undefined ? Date.now() + timeoutMs : undefined
-  const keys = streams.map(s => s.key)
-
-  while (true) {
-    const remaining =
-      deadline !== undefined ? Math.max(0, deadline - Date.now()) : undefined
-    if (remaining === 0) return bulk(null)
-
-    let wake!: (v: true) => void
-    const waitFor = new Promise<true>(resolve => {
-      wake = () => resolve(true)
-    })
-
-    const unsubs = keys.map(key =>
-      ctx.db.subscribeKey(key, event => {
-        if (event.type === 'write') wake(true)
-      }),
-    )
-
-    let woken: boolean | null
-    try {
-      woken = await ctx.park({
-        waitFor,
-        timeoutMs: remaining,
-        signal: ctx.signal,
-      })
-    } finally {
-      for (const unsub of unsubs) {
-        try {
-          unsub()
-        } catch {
-          // ignore errors from individual unsubscribers so all are attempted
-        }
-      }
-    }
-
-    if (woken === null) return bulk(null)
-
-    const result = readGroupEntries(
-      groupName,
-      consumerName,
-      streams,
-      count,
-      noack,
-      ctx,
-    )
-    if (result) return result
-  }
+  const result = await blockOnKeys(ctx, {
+    keys: streams.map(s => s.key),
+    type: 'stream',
+    timeoutMs: blockMs === 0 ? undefined : blockMs,
+    attempt: () =>
+      readGroupEntries(groupName, consumerName, streams, count, noack, ctx),
+  })
+  return result ?? bulk(null)
 }
 
 export const xreadgroupCommand = defineCommand({
