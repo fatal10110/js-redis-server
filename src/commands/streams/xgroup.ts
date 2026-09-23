@@ -65,17 +65,14 @@ function createXgroupSchema() {
       // for a dispatched subcommand spell out `xgroup|<sub>` themselves, as
       // real Redis 7.0+ does (#438). An option list the subcommand cannot use
       // is real Redis' `addReplySubcommandSyntaxError`, not an arity error.
-      const syntaxError = () =>
-        subcommandSyntaxError('XGROUP', rawSubcommand, ctx.profile)
 
       if (subcommand === 'CREATE' || subcommand === 'SETID') {
+        const name = subcommand === 'CREATE' ? 'create' : 'setid'
         const key = input[index + 1]
         const group = input[index + 2]
         const rawId = input[index + 3]?.toString()
         if (!key || !group || rawId === undefined) {
-          throw new WrongNumberOfArgumentsError(
-            subcommand === 'CREATE' ? 'xgroup|create' : 'xgroup|setid',
-          )
+          throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
         }
 
         let cursor = index + 4
@@ -91,18 +88,22 @@ function createXgroupSchema() {
 
           if (option === 'ENTRIESREAD') {
             const rawEntriesRead = input[cursor + 1]
-            if (!rawEntriesRead) throw syntaxError()
+            if (!rawEntriesRead) break
             entriesRead = parseNonNegativeInteger(rawEntriesRead)
             cursor += 2
             continue
           }
 
-          throw syntaxError()
+          break
+        }
+
+        if (cursor !== input.length) {
+          throw subcommandSyntaxError('XGROUP', rawSubcommand, ctx.profile)
         }
 
         return {
           value: {
-            subcommand: subcommand === 'CREATE' ? 'create' : 'setid',
+            subcommand: name,
             key,
             group,
             id: rawId === '$' ? '$' : parseExactId(rawId),
@@ -126,22 +127,17 @@ function createXgroupSchema() {
       }
 
       if (subcommand === 'CREATECONSUMER' || subcommand === 'DELCONSUMER') {
+        const name =
+          subcommand === 'CREATECONSUMER' ? 'createconsumer' : 'delconsumer'
         const key = input[index + 1]
         const group = input[index + 2]
         const consumer = input[index + 3]
         if (!key || !group || !consumer || input.length !== index + 4) {
-          throw new WrongNumberOfArgumentsError(
-            subcommand === 'CREATECONSUMER'
-              ? 'xgroup|createconsumer'
-              : 'xgroup|delconsumer',
-          )
+          throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
         }
         return {
           value: {
-            subcommand:
-              subcommand === 'CREATECONSUMER'
-                ? 'createconsumer'
-                : 'delconsumer',
+            subcommand: name,
             key,
             group,
             consumer,

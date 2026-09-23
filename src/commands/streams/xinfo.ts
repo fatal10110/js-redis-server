@@ -36,6 +36,10 @@ type XinfoArgs =
   | { subcommand: 'groups'; key: Buffer }
   | { subcommand: 'consumers'; key: Buffer; group: Buffer }
 
+function isToken(arg: Buffer, token: string): boolean {
+  return arg.toString().toUpperCase() === token
+}
+
 function createXinfoSchema() {
   return t.custom<XinfoArgs>(
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
@@ -48,37 +52,24 @@ function createXinfoSchema() {
       // for a dispatched subcommand spell out `xinfo|<sub>` themselves, as real
       // Redis 7.0+ does (#438). An option list the subcommand cannot use is
       // real Redis' `addReplySubcommandSyntaxError`, not an arity error.
-      const syntaxError = () =>
-        subcommandSyntaxError('XINFO', rawSubcommand, ctx.profile)
 
       if (subcommand === 'STREAM') {
         const key = input[index + 1]
         if (!key) throw new WrongNumberOfArgumentsError('xinfo|stream')
-        let cursor = index + 2
-        let full = false
-        let count: number | null = null
 
-        if (cursor < input.length) {
-          if (input[cursor].toString().toUpperCase() !== 'FULL') {
-            throw syntaxError()
-          }
-          full = true
-          cursor++
+        // `[FULL [COUNT <count>]]`: nothing, `FULL`, or `FULL COUNT <count>`.
+        const options = input.slice(index + 2)
+        const valid =
+          options.length === 0 ||
+          (isToken(options[0], 'FULL') &&
+            (options.length === 1 ||
+              (options.length === 3 && isToken(options[1], 'COUNT'))))
+        if (!valid) {
+          throw subcommandSyntaxError('XINFO', rawSubcommand, ctx.profile)
         }
-
-        if (cursor < input.length) {
-          if (input[cursor].toString().toUpperCase() !== 'COUNT') {
-            throw syntaxError()
-          }
-          const rawCount = input[cursor + 1]
-          if (!rawCount) throw syntaxError()
-          count = parseNonNegativeInteger(rawCount)
-          cursor += 2
-        }
-
-        if (cursor !== input.length) {
-          throw syntaxError()
-        }
+        const full = options.length > 0
+        const count =
+          options.length === 3 ? parseNonNegativeInteger(options[2]) : null
 
         return {
           value: { subcommand: 'stream', key, full, count },

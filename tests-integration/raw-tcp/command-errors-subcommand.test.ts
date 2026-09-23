@@ -386,13 +386,24 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
   })
 
   // Past the arity table, an XINFO STREAM / XGROUP CREATE|SETID option list
-  // the container cannot use — a dangling `COUNT`/`ENTRIESREAD`, a stray token,
-  // trailing junk — is `addReplySubcommandSyntaxError`, not an arity error.
-  // Real Redis looks the key up first, so this runs against a live stream and
-  // group. Captured from 8.0.6.
+  // the subcommand cannot use (a dangling `COUNT`/`ENTRIESREAD`, a stray token,
+  // trailing junk) is `addReplySubcommandSyntaxError`, not an arity error. The
+  // subcommand is echoed exactly as the client sent it. Captured from 8.0.6.
+  //
+  // The two subcommands order their checks differently in real Redis:
+  //  - XGROUP parses its options before it looks the key up, so
+  //    `XGROUP CREATE <missing> g $ BOGUS` is the same syntax error. That case
+  //    is in the table below.
+  //  - XINFO STREAM looks the key up first, so `XINFO STREAM <missing> x` is
+  //    `ERR no such key`. This server checks the option list in the schema
+  //    parser before any key lookup, so it answers the syntax error instead.
+  //    That is a known divergence and is not asserted here. The XINFO rows
+  //    therefore run against a live stream, where both orders give the same
+  //    reply.
   test('an unusable XINFO/XGROUP option list is a subcommand syntax error', async () => {
     const conn = await connect()
     const key = `subcmd-syntax:${randomKey()}`
+    const missing = `subcmd-syntax-missing:${randomKey()}`
     await expectReply(
       conn,
       ['XGROUP', 'CREATE', key, 'g', '$', 'MKSTREAM'],
@@ -401,12 +412,15 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
 
     const cases: [string[], string, string][] = [
       [['XINFO', 'STREAM', key, 'x'], 'XINFO', 'STREAM'],
+      [['XINFO', 'sTrEaM', key, 'x'], 'XINFO', 'sTrEaM'],
+      [['XINFO', 'STREAM', key, 'COUNT', '1'], 'XINFO', 'STREAM'],
       [['XINFO', 'STREAM', key, 'FULL', 'x'], 'XINFO', 'STREAM'],
       [['XINFO', 'STREAM', key, 'FULL', 'COUNT'], 'XINFO', 'STREAM'],
-      [['XINFO', 'STREAM', key, 'FULL', 'BOGUS', '1'], 'XINFO', 'STREAM'],
       [['XINFO', 'STREAM', key, 'FULL', 'COUNT', '1', 'x'], 'XINFO', 'STREAM'],
       [['XGROUP', 'CREATE', key, 'g2', '$', 'ENTRIESREAD'], 'XGROUP', 'CREATE'],
       [['XGROUP', 'CREATE', key, 'g2', '$', 'BOGUS'], 'XGROUP', 'CREATE'],
+      [['XGROUP', 'cReAtE', key, 'g2', '$', 'BOGUS'], 'XGROUP', 'cReAtE'],
+      [['XGROUP', 'CREATE', missing, 'g', '$', 'BOGUS'], 'XGROUP', 'CREATE'],
       [['XGROUP', 'SETID', key, 'g', '$', 'ENTRIESREAD'], 'XGROUP', 'SETID'],
       [['XGROUP', 'SETID', key, 'g', '$', 'MKSTREAM'], 'XGROUP', 'SETID'],
     ]
