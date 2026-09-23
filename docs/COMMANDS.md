@@ -94,7 +94,7 @@ surface.
 #### CONFIG
 
 - [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (glob-matched against a fixed set of plausible defaults; RESP3 map / RESP2 flat array)
-- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown parameter names with the real Redis error, matching CONFIG SET's "all-or-nothing" validation)
+- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2)
 - [x] `CONFIG HELP`
 - [x] `CONFIG RESETSTAT` - Reset the stats returned by INFO (no-op in the mock)
 - [x] `CONFIG REWRITE` - Rewrite the configuration file (returns Redis' no-config-file error)

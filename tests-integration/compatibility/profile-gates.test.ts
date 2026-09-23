@@ -408,6 +408,80 @@ describe(
       )
     })
 
+    // `config.set.multi-pair` (#419). Redis 7.0 rewrote CONFIG SET to accept
+    // several pairs, splitting its arity errors and adding duplicate
+    // detection. Real 6.2 dispatches SET only for exactly one pair
+    // (`c->argc == 4`) and answers every other shape — including a repeated
+    // parameter — with the legacy subcommand syntax error, echoing the
+    // subcommand as sent. Captured from real redis-server 6.2.24; the 7.0+
+    // replies are pinned against real 7.0.15 / 8.0.6 / Valkey 7.2.14 by
+    // tests-integration/raw-tcp/command-errors-config.test.ts.
+    test('CONFIG SET multi-pair form and duplicate detection match the profile', async () => {
+      assert.strictEqual(await send('CONFIG', 'SET', 'timeout', '0'), '+OK\r\n')
+
+      const multi = await send(
+        'CONFIG',
+        'SET',
+        'timeout',
+        '0',
+        'maxmemory',
+        '0',
+      )
+      const lowerCase = await send(
+        'config',
+        'set',
+        'timeout',
+        '0',
+        'maxmemory',
+        '0',
+      )
+      const mixedCase = await send(
+        'config',
+        'SeT',
+        'timeout',
+        '0',
+        'maxmemory',
+        '0',
+      )
+      const none = await send('CONFIG', 'SET')
+      const nameOnly = await send('CONFIG', 'SET', 'timeout')
+      const dangling = await send('CONFIG', 'SET', 'timeout', '0', 'maxmemory')
+      const repeated = await send(
+        'CONFIG',
+        'SET',
+        'timeout',
+        '0',
+        'timeout',
+        '0',
+      )
+
+      if (supportsConfigSetMultiPair()) {
+        assert.strictEqual(multi, '+OK\r\n')
+        assert.strictEqual(lowerCase, '+OK\r\n')
+        assert.strictEqual(mixedCase, '+OK\r\n')
+        const arity =
+          "-ERR wrong number of arguments for 'config|set' command\r\n"
+        assert.strictEqual(none, arity)
+        assert.strictEqual(nameOnly, arity)
+        assert.strictEqual(dangling, '-ERR syntax error\r\n')
+        assert.strictEqual(
+          repeated,
+          "-ERR CONFIG SET failed (possibly related to argument 'timeout') - duplicate parameter\r\n",
+        )
+        return
+      }
+
+      const legacy = (subcommand: string): string =>
+        `-ERR Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CONFIG HELP.\r\n`
+      assert.strictEqual(multi, legacy('SET'))
+      assert.strictEqual(lowerCase, legacy('set'))
+      assert.strictEqual(mixedCase, legacy('SeT'))
+      assert.strictEqual(none, legacy('SET'))
+      assert.strictEqual(nameOnly, legacy('SET'))
+      assert.strictEqual(dangling, legacy('SET'))
+      assert.strictEqual(repeated, legacy('SET'))
+    })
+
     // Redis 7.0 moved container commands into the command table, replacing the
     // 6.2 unknown-subcommand template and adding `%.128s` truncation of the
     // echoed name. Captured from real redis-server 6.2.24, 7.0.15 and 8.0.6.
@@ -852,6 +926,10 @@ function supportsSetNxGet(): boolean {
 }
 
 function supportsConfigSetFailureWording(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsConfigSetMultiPair(): boolean {
   return profile !== 'redis-6.2'
 }
 
