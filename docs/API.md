@@ -161,6 +161,8 @@ Current profile gates:
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
 | `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |
 | `SORT`/`SORT_RO` cluster `GET '#'` exempt from that slot comparison | `redis-7.4+` (7.4.2) | `valkey-9.0+` (8.0.2) |
+| Lua scripts resolve a `noscript` container's (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) subcommand before refusing it: `<container> HELP` runs, and an unknown subcommand answers `Unknown Redis command called from script`. 6.2 refuses every subcommand. (The mock has no `CONFIG HELP` yet, so that one call still errors.) | `redis-7.0+` | `valkey-8.0+` |
+| `QUIT` from a Lua script is refused as `noscript` (6.2 has no `QUIT` table entry: unknown command) | `redis-7.0+` | `valkey-8.0+` |
 
 ## Package Entry Points
 

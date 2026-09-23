@@ -30,6 +30,8 @@ export type FeatureId =
   | 'cluster.multi-db'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
+  | 'script.per-subcommand-noscript'
+  | 'command.quit-table-entry'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

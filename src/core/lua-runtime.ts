@@ -7,6 +7,7 @@ import {
   type ReplyValue,
 } from 'lua-redis-wasm'
 import type { CompatibilityProfile } from './compatibility/profile'
+import { noscriptSubcommandExists } from './compatibility/subcommand-gates'
 import type { CommandPlan } from './command-definition'
 import {
   errorReplyBytes,
@@ -101,8 +102,9 @@ export class RedisLuaRuntime {
       throw err
     }
 
-    if (plan.definition.flags.includes('noscript')) {
-      return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
+    const refusal = noscriptRefusal(plan, ctx.server.profile)
+    if (refusal) {
+      return redisErrorToLuaReply(refusal)
     }
 
     if (this.hostState.readOnly && plan.definition.flags.includes('write')) {
@@ -119,6 +121,58 @@ export class RedisLuaRuntime {
       this.hostState.resp,
     )
   }
+}
+
+/**
+ * The error a script's `redis.call`/`redis.pcall` gets for a `noscript`
+ * command, or `null` when the command may run.
+ *
+ * On Redis 6.2 `noscript` is a property of the whole command, so a flagged
+ * container (CLIENT, CONFIG, ACL, SCRIPT) refuses every subcommand, unknown
+ * ones included. From 7.0 a script resolves `container|subcommand` through
+ * the command table and the flag lives on each subcommand: an unknown
+ * subcommand fails that lookup, and no container's HELP carries the flag, so
+ * `<container> HELP` runs. The lookup is modelled only for `noscript`
+ * containers here; the general case for other containers is #439.
+ *
+ * Valkey words the lookup failure `Unknown command called from script`, which
+ * {@link ScriptUnknownCommandError} does not model yet.
+ */
+function noscriptRefusal(
+  plan: CommandPlan,
+  profile: CompatibilityProfile,
+): RedisCommandError | null {
+  const { definition } = plan
+  if (!definition.flags.includes('noscript')) {
+    return null
+  }
+
+  if (!profile.has('script.per-subcommand-noscript')) {
+    // 6.2 has no QUIT table entry, so its lookup fails before any flag check.
+    if (
+      definition.name === 'quit' &&
+      !profile.has('command.quit-table-entry')
+    ) {
+      return new ScriptUnknownCommandError()
+    }
+    return new ScriptNotAllowedCommandError()
+  }
+
+  if (plan.rawArgs.length === 0) {
+    return new ScriptNotAllowedCommandError()
+  }
+
+  // Look up against the *real* subcommand table, not the implemented subset:
+  // a real subcommand this server lacks (`CLIENT PAUSE`) is still refused.
+  const subcommand = plan.rawArgs[0].toString().toLowerCase()
+  const exists = noscriptSubcommandExists(definition.name, subcommand, profile)
+  if (exists === false) {
+    return new ScriptUnknownCommandError()
+  }
+
+  return exists && subcommand === 'help'
+    ? null
+    : new ScriptNotAllowedCommandError()
 }
 
 /**

@@ -604,6 +604,96 @@ describe(
       }
     })
 
+    test('a noscript container HELP from a script matches the profile (#452)', async () => {
+      // 6.2 flags the whole container noscript; 7.0+ flags each subcommand
+      // and leaves HELP runnable from scripts.
+      for (const container of ['CLIENT', 'ACL', 'SCRIPT']) {
+        const reply = await send(
+          'EVAL',
+          `return redis.pcall('${container}','HELP')`,
+          '0',
+        )
+        if (profile === 'redis-6.2') {
+          assert.match(reply, /^-.*not allowed from script/, container)
+        } else {
+          assert.ok(reply.startsWith('*'), `${container}: ${reply}`)
+        }
+      }
+
+      // Every other subcommand stays refused on every profile.
+      const refused = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','GETNAME')",
+        '0',
+      )
+      assert.match(refused, /^-.*not allowed from script/)
+
+      // 7.0+ resolves `container|subcommand` first, so an unknown (or
+      // not-yet-introduced) subcommand fails lookup; 6.2 refuses the container.
+      const unknownOnNewer =
+        profile === 'redis-6.2'
+          ? /not allowed from script/
+          : /Unknown .*command/
+      const nope = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','NOPE')",
+        '0',
+      )
+      assert.match(nope, /^-/)
+      assert.match(nope, unknownOnNewer)
+
+      const setinfo = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','SETINFO','lib-name','x')",
+        '0',
+      )
+      assert.match(
+        setinfo,
+        profile === 'redis-7.0'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
+
+      // The lookup is against the real table: a real subcommand this server
+      // does not implement is refused, and one the profile's server does not
+      // have yet is unknown.
+      const cases: Array<[string, boolean]> = [
+        ["'ACL','CAT'", true],
+        ["'CLIENT','PAUSE','0'", true],
+        ["'CLIENT','NO-TOUCH','ON'", profile !== 'redis-7.0'],
+        [
+          "'CLIENT','CAPA','redirect'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'SCRIPT','SHOW','x'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'CLIENT','IMPORT-SOURCE','ON'",
+          profile === 'valkey-9.0' || profile === 'redis-6.2',
+        ],
+      ]
+      for (const [call, refused] of cases) {
+        const reply = await send('EVAL', `return redis.pcall(${call})`, '0')
+        assert.match(
+          reply,
+          refused ? /^-.*not allowed from script/ : /^-.*Unknown .*command/,
+          call,
+        )
+      }
+
+      // QUIT has a command-table entry (and so the noscript refusal) only from
+      // 7.0; a 6.2 script sees an unknown command.
+      const quit = await send('EVAL', "return redis.pcall('QUIT')", '0')
+      assert.match(
+        quit,
+        profile === 'redis-6.2'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
+    })
+
     test('RESP3 subscribed PUBLISH self-reply order matches the profile', async () => {
       const channel = `compat:${profile}:self-publish`
 
