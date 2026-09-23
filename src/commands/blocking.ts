@@ -9,9 +9,12 @@ export type BlockOnKeysOptions<TResult> = {
    * on a key a `BLPOP` waits on) keeps the client blocked instead of waking it
    * into a WRONGTYPE reply.
    *
-   * Omit it to wake on any write. `XREADGROUP` does: real Redis unblocks it
-   * when its stream is overwritten with another type, and the re-run replies
-   * WRONGTYPE.
+   * Omit it to wake on every change to the keys: any modified-key event
+   * (write, delete, expiry, flush, ...) and any `signalKeyReady` on them.
+   * `XREADGROUP` does, because real Redis unblocks it when its stream is
+   * overwritten with another type (the re-run replies WRONGTYPE), deleted, or
+   * loses its group (the re-run replies NOGROUP). A wake that changed nothing
+   * relevant just re-parks.
    */
   type?: RedisDataValue['type']
   /** `undefined` blocks forever. */
@@ -49,11 +52,17 @@ export async function blockOnKeys<TResult>(
   let wake: (() => void) | undefined
 
   const db = ctx.db
-  const unsubs = keys.map(key =>
-    db.subscribeKey(key, event => {
-      if (event.type !== 'write') return
-      if (type === undefined || event.value.type === type) wake?.()
-    }),
+  const unsubs = keys.flatMap(key =>
+    type === undefined
+      ? [
+          db.subscribeKey(key, () => wake?.()),
+          db.subscribeKeyReady(key, () => wake?.()),
+        ]
+      : [
+          db.subscribeKey(key, event => {
+            if (event.type === 'write' && event.value.type === type) wake?.()
+          }),
+        ],
   )
 
   try {

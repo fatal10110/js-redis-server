@@ -79,17 +79,28 @@ const cases: FifoCase[] = [
 
 describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendName()})`, () => {
   let feeder: RedisClusterType
-  const waiters: RedisClusterType[] = []
+  let waiterPool: RedisClusterType[] | undefined
 
   before(async () => {
-    // One connection per waiter: a blocked command ties up its connection.
     feeder = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    for (let i = 0; i < WAITERS; i++) {
-      waiters.push(
-        (await testRunner.setupNodeRedisCluster()) as RedisClusterType,
-      )
-    }
   })
+
+  // One connection per waiter: a blocked command ties up its connection.
+  // Opened by the first test rather than in before(): the socketless backend
+  // has no second node-redis cluster client, and a failing hook would hide
+  // every test behind it (see tests-integration/socketless/known-gaps.ts).
+  async function openWaiters(): Promise<RedisClusterType[]> {
+    if (!waiterPool) {
+      const opened: RedisClusterType[] = []
+      for (let i = 0; i < WAITERS; i++) {
+        opened.push(
+          (await testRunner.setupNodeRedisCluster()) as RedisClusterType,
+        )
+      }
+      waiterPool = opened
+    }
+    return waiterPool
+  }
 
   after(async () => {
     await testRunner.cleanup()
@@ -97,6 +108,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
 
   for (const c of cases) {
     test(`${c.name}: ${WAITERS} waiters on one key are served in the order they blocked`, async () => {
+      const waiters = await openWaiters()
       const key = `{${randomKey()}}`
       await c.setup?.(feeder, key)
 
@@ -119,6 +131,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
   }
 
   test('XREAD BLOCK: every waiter on one key is served the new entry', async () => {
+    const waiters = await openWaiters()
     const key = `{${randomKey()}}`
     const replies: Promise<unknown>[] = []
     for (let i = 0; i < WAITERS; i++) {
@@ -140,6 +153,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
   })
 
   test('BLPOP: a single multi-value push serves the waiters in the order they blocked', async () => {
+    const waiters = await openWaiters()
     const key = `{${randomKey()}}`
     const replies: Promise<unknown>[] = []
     for (let i = 0; i < WAITERS; i++) {
@@ -205,6 +219,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
 
   for (const c of keepPlaceCases) {
     test(`${c.name}: a waiter woken to find nothing keeps its place in line`, async () => {
+      const waiters = await openWaiters()
       const base = randomKey()
       const k1 = `{${base}}:k1`
       const k2 = `{${base}}:k2`
@@ -282,6 +297,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
 
   for (const c of wrongTypeCases) {
     test(`${c.name}: a write of another type does not wake the waiter`, async () => {
+      const waiters = await openWaiters()
       const key = `{${randomKey()}}`
       let settled = false
       const reply = c.block(waiters[0], key).finally(() => {
@@ -300,6 +316,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
   }
 
   test('BLPOP k1 k2: a type change on k2 keeps the client blocked for k1', async () => {
+    const waiters = await openWaiters()
     const base = randomKey()
     const k1 = `{${base}}:k1`
     const k2 = `{${base}}:k2`
@@ -323,6 +340,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
     ],
   ] as const) {
     test(`XREADGROUP BLOCK: overwriting the stream (${how}) unblocks it with WRONGTYPE`, async () => {
+      const waiters = await openWaiters()
       const key = `{${randomKey()}}`
       await feeder.xGroupCreate(key, 'g', '$', { MKSTREAM: true })
       const reply = waiters[0].xReadGroup(
@@ -345,6 +363,119 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
       await overwrite(key)
       await rejected
       assert.ok(Date.now() - started < 1000, 'unblocked, not timed out')
+    })
+  }
+
+  // Real Redis unblocks XREADGROUP with NOGROUP once its stream or its group
+  // is gone (the re-run finds neither), and keeps it blocked while the group
+  // survives the change.
+  const nogroupCases: Array<[string, (key: string) => Promise<unknown>]> = [
+    ['DEL', key => feeder.del(key)],
+    ['UNLINK', key => feeder.unlink(key)],
+    ['XGROUP DESTROY', key => feeder.xGroupDestroy(key, 'g')],
+    ['RENAME', key => feeder.rename(key, `${key}:moved`)],
+    [
+      'MULTI; DEL; XADD; EXEC',
+      key => feeder.multi().del(key).xAdd(key, '*', { f: 'v' }).exec(),
+    ],
+    ['PEXPIRE (active expiry)', key => feeder.pExpire(key, 100)],
+  ]
+
+  for (const [how, act] of nogroupCases) {
+    test(`XREADGROUP BLOCK: ${how} unblocks it with NOGROUP`, async () => {
+      const waiters = await openWaiters()
+      const key = `{${randomKey()}}`
+      await feeder.xGroupCreate(key, 'g', '$', { MKSTREAM: true })
+      const reply = waiters[0].xReadGroup(
+        'g',
+        'c',
+        { key, id: '>' },
+        { BLOCK: 2000 },
+      )
+      await waitForPark()
+
+      const started = Date.now()
+      const rejected = assert.rejects(
+        reply,
+        errorWithMessage(
+          `NOGROUP No such key '${key}' or consumer group 'g' in XREADGROUP with GROUP option`,
+        ),
+      )
+      await act(key)
+      await rejected
+      assert.ok(Date.now() - started < 1000, 'unblocked, not timed out')
+    })
+  }
+
+  test('XREADGROUP BLOCK on two streams: deleting the second unblocks it with NOGROUP', async () => {
+    const waiters = await openWaiters()
+    const base = randomKey()
+    const k1 = `{${base}}:1`
+    const k2 = `{${base}}:2`
+    await feeder.xGroupCreate(k1, 'g', '$', { MKSTREAM: true })
+    await feeder.xGroupCreate(k2, 'g', '$', { MKSTREAM: true })
+    const reply = waiters[0].xReadGroup(
+      'g',
+      'c',
+      [
+        { key: k1, id: '>' },
+        { key: k2, id: '>' },
+      ],
+      { BLOCK: 2000 },
+    )
+    await waitForPark()
+
+    const rejected = assert.rejects(
+      reply,
+      errorWithMessage(
+        `NOGROUP No such key '${k2}' or consumer group 'g' in XREADGROUP with GROUP option`,
+      ),
+    )
+    await feeder.del(k2)
+    await rejected
+  })
+
+  const groupSurvivesCases: Array<[string, (key: string) => Promise<unknown>]> =
+    [
+      [
+        'XGROUP DESTROY of another group',
+        async key => {
+          await feeder.xGroupCreate(key, 'other', '$')
+          await feeder.xGroupDestroy(key, 'other')
+        },
+      ],
+      [
+        'MULTI; XGROUP DESTROY; XGROUP CREATE; EXEC',
+        key =>
+          feeder
+            .multi()
+            .xGroupDestroy(key, 'g')
+            .xGroupCreate(key, 'g', '$')
+            .exec(),
+      ],
+    ]
+
+  for (const [how, act] of groupSurvivesCases) {
+    test(`XREADGROUP BLOCK: ${how} keeps it blocked`, async () => {
+      const waiters = await openWaiters()
+      const key = `{${randomKey()}}`
+      await feeder.xGroupCreate(key, 'g', '$', { MKSTREAM: true })
+      let settled = false
+      const reply = waiters[0]
+        .xReadGroup('g', 'c', { key, id: '>' }, { BLOCK: 2000 })
+        .finally(() => {
+          settled = true
+        })
+      await waitForPark()
+
+      await act(key)
+      await waitForPark()
+      assert.strictEqual(settled, false, 'still blocked')
+
+      await feeder.xAdd(key, '1-0', { f: 'v' })
+      assert.deepStrictEqual(await reply, [
+        { name: key, messages: [{ id: '1-0', message: { f: 'v' } }] },
+      ])
     })
   }
 })

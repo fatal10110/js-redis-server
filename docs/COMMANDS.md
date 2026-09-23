@@ -451,7 +451,7 @@ with `GT` or `LT`.
 - [x] `XTRIM key MAXLEN|MINID [~] threshold [LIMIT count]` - Trim a stream to a size or minimum ID
 - [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id|+ [id|+ ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs); Redis 7.4+ profiles accept `+` to return the latest entry from each stream
 - [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER|HELP ...` - Manage stream consumer groups and consumers
-- [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery
+- [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery; a blocked call is unblocked with `NOGROUP` when its stream is deleted (DEL, expiry, RENAME, FLUSHDB) or its group destroyed, and with `WRONGTYPE` when the stream is overwritten with another type
 - [x] `XACK key group ID [ID ...]` - Acknowledge pending stream entries
 - [x] `XPENDING key group [[IDLE min-idle-time] start end count [consumer]]` - Inspect pending stream entries
 - [x] `XCLAIM key group consumer min-idle-time ID [ID ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID] [LASTID id]` - Claim pending entries for another consumer

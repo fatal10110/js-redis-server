@@ -149,8 +149,10 @@ async function blockingXreadGroup(
 ): Promise<RedisResult> {
   const result = await blockOnKeys(ctx, {
     keys: streams.map(s => s.key),
-    // No `type`: any write wakes XREADGROUP, so a stream overwritten with
-    // another type unblocks it with WRONGTYPE, as in real Redis.
+    // No `type`: every change to the keys wakes XREADGROUP, as in real Redis.
+    // A stream overwritten with another type unblocks it with WRONGTYPE; one
+    // deleted (DEL, expiry, RENAME, FLUSHDB) or whose group is destroyed
+    // unblocks it with NOGROUP.
     timeoutMs: blockMs === 0 ? undefined : blockMs,
     attempt: () =>
       readGroupEntries(groupName, consumerName, streams, count, noack, ctx),

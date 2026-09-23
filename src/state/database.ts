@@ -26,6 +26,7 @@ import {
   Unsubscribe,
 } from './mutation-events'
 import { WrongTypeRedisError } from '../core/redis-error'
+import { KeyReadySignals } from './key-ready-signals'
 import {
   TrackedHashData,
   TrackedListData,
@@ -36,6 +37,7 @@ import {
 
 export class RedisDatabase {
   readonly mutations = new RedisMutationBus()
+  private readonly readySignals = new KeyReadySignals()
   /**
    * The command this handle mutates on behalf of, stamped on every event it
    * emits as {@link RedisMutationEvent.command}. `undefined` on the database
@@ -519,6 +521,19 @@ export class RedisDatabase {
 
   subscribeKey(key: Buffer, listener: RedisMutationListener): Unsubscribe {
     return this.mutations.subscribeKey(key, listener)
+  }
+
+  /**
+   * Wake the clients blocked on `key` without modifying it (real Redis'
+   * `signalKeyAsReady`): no WATCH is dirtied and no notification fires. See
+   * {@link KeyReadySignals}.
+   */
+  signalKeyReady(key: Buffer): void {
+    this.readySignals.signal(key)
+  }
+
+  subscribeKeyReady(key: Buffer, listener: () => void): Unsubscribe {
+    return this.readySignals.subscribe(key, listener)
   }
 
   private getLiveEntry(key: Buffer): KeyspaceEntry | null {

@@ -354,4 +354,119 @@ describe(`Blocking waiters are served FIFO (${testRunner.getBackendName()})`, ()
       assert.ok(Date.now() - started < 1000, 'unblocked, not timed out')
     })
   }
+
+  // Real Redis unblocks XREADGROUP with NOGROUP once its stream or its group
+  // is gone (the re-run finds neither), and keeps it blocked while the group
+  // survives the change.
+  const nogroupCases: Array<[string, (key: string) => Promise<unknown>]> = [
+    ['DEL', key => feeder.del(key)],
+    ['UNLINK', key => feeder.unlink(key)],
+    ['XGROUP DESTROY', key => feeder.xgroup('DESTROY', key, 'g')],
+    ['RENAME', key => feeder.rename(key, `${key}:moved`)],
+    [
+      'MULTI; DEL; XADD; EXEC',
+      key => feeder.multi().del(key).xadd(key, '*', 'f', 'v').exec(),
+    ],
+    ['PEXPIRE (active expiry)', key => feeder.pexpire(key, 100)],
+  ]
+
+  for (const [how, act] of nogroupCases) {
+    test(`XREADGROUP BLOCK: ${how} unblocks it with NOGROUP`, async () => {
+      const key = `{${randomKey()}}`
+      await feeder.xgroup('CREATE', key, 'g', '$', 'MKSTREAM')
+      const reply = waiters[0].xreadgroup(
+        'GROUP',
+        'g',
+        'c',
+        'BLOCK',
+        2000,
+        'STREAMS',
+        key,
+        '>',
+      )
+      await waitForPark()
+
+      const started = Date.now()
+      const rejected = assert.rejects(
+        reply,
+        errorWithMessage(
+          `NOGROUP No such key '${key}' or consumer group 'g' in XREADGROUP with GROUP option`,
+        ),
+      )
+      await act(key)
+      await rejected
+      assert.ok(Date.now() - started < 1000, 'unblocked, not timed out')
+    })
+  }
+
+  test('XREADGROUP BLOCK on two streams: deleting the second unblocks it with NOGROUP', async () => {
+    const base = randomKey()
+    const k1 = `{${base}}:1`
+    const k2 = `{${base}}:2`
+    await feeder.xgroup('CREATE', k1, 'g', '$', 'MKSTREAM')
+    await feeder.xgroup('CREATE', k2, 'g', '$', 'MKSTREAM')
+    const reply = waiters[0].xreadgroup(
+      'GROUP',
+      'g',
+      'c',
+      'BLOCK',
+      2000,
+      'STREAMS',
+      k1,
+      k2,
+      '>',
+      '>',
+    )
+    await waitForPark()
+
+    const rejected = assert.rejects(
+      reply,
+      errorWithMessage(
+        `NOGROUP No such key '${k2}' or consumer group 'g' in XREADGROUP with GROUP option`,
+      ),
+    )
+    await feeder.del(k2)
+    await rejected
+  })
+
+  const groupSurvivesCases: Array<[string, (key: string) => Promise<unknown>]> =
+    [
+      [
+        'XGROUP DESTROY of another group',
+        async key => {
+          await feeder.xgroup('CREATE', key, 'other', '$')
+          await feeder.xgroup('DESTROY', key, 'other')
+        },
+      ],
+      [
+        'MULTI; XGROUP DESTROY; XGROUP CREATE; EXEC',
+        key =>
+          feeder
+            .multi()
+            .xgroup('DESTROY', key, 'g')
+            .xgroup('CREATE', key, 'g', '$')
+            .exec(),
+      ],
+    ]
+
+  for (const [how, act] of groupSurvivesCases) {
+    test(`XREADGROUP BLOCK: ${how} keeps it blocked`, async () => {
+      const key = `{${randomKey()}}`
+      await feeder.xgroup('CREATE', key, 'g', '$', 'MKSTREAM')
+      let settled = false
+      const reply = waiters[0]
+        .xreadgroup('GROUP', 'g', 'c', 'BLOCK', 2000, 'STREAMS', key, '>')
+        .finally(() => {
+          settled = true
+        })
+      await waitForPark()
+
+      await act(key)
+      await waitForPark()
+      assert.strictEqual(settled, false, 'still blocked')
+
+      await feeder.xadd(key, '1-0', 'f', 'v')
+      assert.deepStrictEqual(await reply, [[key, [['1-0', ['f', 'v']]]]])
+    })
+  }
 })
