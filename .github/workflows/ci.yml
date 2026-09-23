@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     # Outer bound: the Redis startup budget (--wait-timeout 420 below), plus
     # the test step's own 15-minute cap, plus the log dump and teardown.
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -150,7 +150,7 @@ jobs:
         run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 420
 
       - name: Run integration tests (${{ matrix.name }})
-        # Below the job's 25-minute cap on purpose: a step timeout *fails* the
+        # Below the job's 30-minute cap on purpose: a step timeout *fails* the
         # step, so the failure()-gated log dump below still runs. A job-level
         # timeout cancels the job instead, and that step would be skipped.
         timeout-minutes: 15
