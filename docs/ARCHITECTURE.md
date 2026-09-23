@@ -41,7 +41,7 @@ flowchart LR
     C -- "command, args" --> D
     D -- "executeRaw(cmd, args, ctx)" --> F
     F -. "plan(): lookup + parse + keys" .-> G
-    F -. "beforeExecute / afterExecute / onStream" .-> H
+    F -. "beforeExecute" .-> H
     F -- "execute(args, ctx)" --> I
     I <--> J
     I -- "RedisResult / ResponseStream" --> F
@@ -171,8 +171,6 @@ sequenceDiagram
         Cmd->>DB: read / write keyspace
         DB-->>Cmd: RedisDataValue
         Cmd-->>CE: RedisResult or ResponseStream
-        CE->>EP: afterExecute / onStream
-        EP-->>CE: (possibly rewritten) result
     end
     CE-->>CS: RedisResult or ResponseStream
     CS-->>SA: result
@@ -190,7 +188,7 @@ Two execution paths share this same plan:
 
 - [`executePlan`](../src/core/command-executor.ts#L65) — the normal async path
   used for client-issued commands and `MULTI`/`EXEC` playback. Supports
-  streaming results (`ResponseStream`) and `afterExecute`/`onStream` rewriting.
+  streaming results (`ResponseStream`) and async commands.
 - [`executePlanSync`](../src/core/command-executor.ts#L116) — a synchronous path
   used exclusively by the Lua runtime for `redis.call`/`redis.pcall`. It runs
   the **same** policies and registry, and rejects any command or policy hook
@@ -199,13 +197,11 @@ Two execution paths share this same plan:
 
 ## Execution policies
 
-An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L9) wraps every
-command with three optional hooks:
+An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L7) guards every
+command with a single optional hook:
 
 ```ts
 beforeExecute(plan, ctx) // can short-circuit with a RedisResult (queue, redirect, reject)
-afterExecute(plan, ctx, result) // can rewrite the result
-onStream(plan, ctx, stream) // can wrap/replace a streaming result
 ```
 
 [`createRedisCommandExecutor`](../src/commands/index.ts#L41) always prepends
@@ -403,7 +399,12 @@ wires a transport to a fresh `ClientSession` per connection through a
 [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts), which
 owns a [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts)
 (handles both RESP multibulk arrays and inline commands, including quoted/escaped
-inline arguments) for the request side.
+inline arguments) for the request side. The adapter pulls one frame at a time
+(`push(chunk)` then `next()`) so each command has run before the next is
+parsed — which is what lets the decoder enforce the *live*
+`proto-max-bulk-len` on every bulk header, refusing an oversized argument with
+`Protocol error: invalid bulk length` and closing the connection before any
+command handler sees it, exactly as Redis does.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)

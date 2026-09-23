@@ -107,21 +107,37 @@ surface.
 >   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 >   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
 >   `AKE`; an unknown class character is rejected).
-> - `proto-max-bulk-len` — read by the commands that grow a string in place,
->   `APPEND` and `SETRANGE`, which reject rather than allocate past it. Accepts
->   Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces Redis' own
->   `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure wording
->   follows the profile (Redis 7.0 changed it — see
+> - `proto-max-bulk-len` — enforced in the three places Redis enforces it.
+>   Accepts Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces
+>   Redis' own `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure
+>   wording follows the profile (Redis 7.0 changed it — see
 >   [compatibility profiles](API.md#compatibility-profiles)).
+>
+>   1. **The protocol reader**, which is Redis' primary check and the one that
+>      covers every command: a bulk argument longer than the limit is refused
+>      while the frame is still being parsed, before the payload is read and
+>      before any handler runs. The reply is
+>      `-ERR Protocol error: invalid bulk length` and the server then closes the
+>      connection, so `SET`, `GETSET`, `MSET`, `LPUSH`, `HSET`, an `APPEND` to a
+>      missing key — anything — is bounded by it. A bulk exactly the size of the
+>      limit is still accepted.
+>   2. **`APPEND` and `SETRANGE`**, which reject rather than allocate a *result*
+>      past the limit (`APPEND` to a missing key is not size-checked at this
+>      layer, matching Redis — the protocol reader already bounded its value).
+>   3. **The `SETBIT` / `GETBIT` / `BITFIELD` bit-offset ceiling**, derived from
+>      the live limit exactly as Redis derives it: an offset whose byte is at or
+>      past `proto-max-bulk-len` (`(offset >> 3) >= proto-max-bulk-len`) is
+>      rejected with `ERR bit offset is not an integer or out of range`. At the
+>      512MB default that is the familiar "offset below 2^32"; lowering the
+>      limit lowers the ceiling with it.
+>
 >   Raising it past **512MB**, Redis' own default, does not raise what the mock
->   will allocate: beyond that the size error is returned rather than a buffer
->   the test process may not survive producing. At or below the default the
+>   will allocate — for the bit-offset ceiling (3) just as for `APPEND` and
+>   `SETRANGE` (2). Beyond the default the mock answers an error rather than
+>   producing a buffer the test process may not survive: the size error for a
+>   string that would grow too large, and the ordinary bit-offset error for an
+>   offset the raised setting would otherwise admit. At or below the default the
 >   behavior is Redis'.
->   **Enforcement is not yet general**: real Redis' primary check is in the
->   protocol reader, so it also bounds every bulk argument (`SET`, `MSET`,
->   `LPUSH`, `HSET`, ...) and the `SETBIT`/`BITFIELD` bit-offset ceiling. Neither
->   is modeled — tracked in
->   [#415](https://github.com/fatal10110/js-redis-server/issues/415).
 >
 > Since there is no backing config file,
 > `CONFIG REWRITE` reports the same no-config-file error as Redis.
@@ -572,6 +588,11 @@ key.
 - [x] `BITOP AND | OR | XOR | NOT destkey key [key ...]` - Bitwise operation across keys, storing the result
 - [x] `BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment] [OVERFLOW WRAP | SAT | FAIL]` - Operate on arbitrary-width integer fields
 - [x] `BITFIELD_RO key [GET type offset ...]` - Read-only variant of `BITFIELD`
+
+> `SETBIT`, `GETBIT` and `BITFIELD` cap a bit offset at the live
+> `proto-max-bulk-len` rather than at a fixed 2^32 — see
+> [Server Commands](#2-server-commands). The two agree at Redis' 512MB
+> default; lowering the limit lowers the ceiling.
 
 ## 18. HyperLogLog Commands
 

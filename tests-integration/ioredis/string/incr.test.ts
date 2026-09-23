@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -19,28 +23,28 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('INCR and DECR commands', async () => {
     // INCR on non-existent key
-    const incr1 = await redisClient?.incr('counter')
+    const incr1 = await redisClient?.incr(`counter:${RUN}`)
     assert.strictEqual(incr1, 1)
 
     // INCR on existing key
-    const incr2 = await redisClient?.incr('counter')
+    const incr2 = await redisClient?.incr(`counter:${RUN}`)
     assert.strictEqual(incr2, 2)
 
     // DECR
-    const decr1 = await redisClient?.decr('counter')
+    const decr1 = await redisClient?.decr(`counter:${RUN}`)
     assert.strictEqual(decr1, 1)
   })
 
   test('INCRBY and DECRBY commands', async () => {
     // INCRBY
-    const incr1 = await redisClient?.incrby('bycounter', 5)
+    const incr1 = await redisClient?.incrby(`bycounter:${RUN}`, 5)
     assert.strictEqual(incr1, 5)
 
-    const incr2 = await redisClient?.incrby('bycounter', 3)
+    const incr2 = await redisClient?.incrby(`bycounter:${RUN}`, 3)
     assert.strictEqual(incr2, 8)
 
     // DECRBY
-    const decr1 = await redisClient?.decrby('bycounter', 2)
+    const decr1 = await redisClient?.decrby(`bycounter:${RUN}`, 2)
     assert.strictEqual(decr1, 6)
   })
 
@@ -117,10 +121,10 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('INCRBYFLOAT command', async () => {
     // INCRBYFLOAT
-    const incr1 = await redisClient?.incrbyfloat('floatcounter', 1.5)
+    const incr1 = await redisClient?.incrbyfloat(`floatcounter:${RUN}`, 1.5)
     assert.strictEqual(incr1, '1.5')
 
-    const incr2 = await redisClient?.incrbyfloat('floatcounter', 2.3)
+    const incr2 = await redisClient?.incrbyfloat(`floatcounter:${RUN}`, 2.3)
     assert.strictEqual(incr2, '3.8')
   })
 

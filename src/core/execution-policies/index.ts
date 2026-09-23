@@ -1,30 +1,24 @@
 import type { CommandPlan } from '../command-definition'
 import type { RedisExecutionContext } from '../redis-context'
 import type { RedisResult } from '../redis-result'
-import type { ResponseStream } from '../response-stream'
 
 export type PolicyResult = RedisResult | void
-export type MaybePromise<TValue> = TValue | Promise<TValue>
 
 export interface ExecutionPolicy {
   readonly name: string
 
+  /**
+   * Runs before the command's own `execute`. Returning a {@link RedisResult}
+   * short-circuits execution (queue / redirect / reject); returning nothing
+   * lets the next policy — and ultimately the command — run.
+   *
+   * May be async, but only on the network path: the synchronous Lua path
+   * (`redis.call`) rejects a promise here with a `RedisCommandError`.
+   */
   beforeExecute?(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
-  ): MaybePromise<PolicyResult>
-
-  afterExecute?(
-    plan: CommandPlan,
-    ctx: RedisExecutionContext,
-    result: RedisResult,
-  ): MaybePromise<RedisResult>
-
-  onStream?(
-    plan: CommandPlan,
-    ctx: RedisExecutionContext,
-    stream: ResponseStream,
-  ): MaybePromise<ResponseStream | void>
+  ): PolicyResult | Promise<PolicyResult>
 }
 
 export { createTransactionPolicy } from './transaction-policy'

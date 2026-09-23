@@ -105,6 +105,40 @@ so the PR body is not a durable home for a breaking-change note.
 
   ioredis and node-redis always read, so none of this changes what they see.
 
+- **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
+  `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
+  subscribed-mode, transaction) ever implemented them — only tests did — and
+  supporting them forced a result/stream rewriting loop into both executor
+  paths, plus an `assertSyncPolicyResult` guard to reject an async hook on the
+  synchronous (Lua) path.
+
+  `beforeExecute` is unchanged and still the place to short-circuit a command
+  (queue / redirect / reject); it may still be async on the network path, and
+  is still rejected when it returns a promise under `redis.call`. A custom
+  policy that rewrote results or wrapped streams has no drop-in replacement —
+  do it inside the command definition, or wrap `CommandExecutor`. Because the
+  hooks were optional, a policy object that still declares them compiles and
+  runs, silently doing nothing.
+
+- **BREAKING (`/core`)** `CommandExecutor.executeRawWithPlan()` is removed
+  ([#359]). It was a public method on the exported `CommandExecutor` class with
+  exactly one caller — `executeRaw`, which discarded the `plan` half of its
+  return value — so it is folded into `executeRaw`. The `RawExecutionResult`
+  type it returned is gone with it (that type was never re-exported, so only the
+  method is a break).
+
+  ```
+  (await executor.executeRawWithPlan(cmd, args, ctx)).result
+    -> await executor.executeRaw(cmd, args, ctx)
+  ```
+
+  There is no replacement for the `plan` half. A caller that wants the
+  `CommandPlan` builds it with the still-public `executor.plan(cmd, args)` and
+  passes it to `executor.executePlan(plan, ctx)`. That is not equivalent to
+  `executeRaw`: `plan()` throws on any planning error (unknown command, arity,
+  argument parse) where `executeRaw` returns a RESP error reply, and the pair
+  skips the MULTI-dirty/EXECABORT handling `executeRaw` applies to those errors.
+
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**
   ([#410]). Real Redis stamps `MONITOR` lines from `gettimeofday()`, so the six
@@ -197,6 +231,55 @@ so the PR body is not a durable home for a breaking-change note.
   identical. `RespEncodeOptions` itself is **kept** — it is still the options
   parameter of `encodeRedisValue` / `encodeRedisResult`.
 
+### Changed
+
+- **BREAKING (`/core`)** `Resp2CommandDecoder` is now pull-based, and its
+  constructor requires the live bulk-length limit ([#431]). Two breaks to the
+  exported class:
+
+  1. `push(chunk)` only buffers and returns `void`; it no longer returns
+     `{ frames, error }`. Frames are taken one at a time from the new `next()`,
+     which returns a `Resp2CommandFrame`, or `null` when more bytes are needed,
+     and **throws** the `Resp2ParseError` instead of returning it. The decoder
+     is terminal after that throw: every later `next()` re-throws the same
+     error and `push()` is ignored, because a RESP stream cannot be
+     resynchronised mid-frame.
+  2. `new Resp2CommandDecoder()` with no argument now throws
+     `TypeError: Cannot read properties of undefined (reading 'maxBulkLength')`.
+     Pass `{ maxBulkLength: () => bigint }` — the `proto-max-bulk-len` in force,
+     read on every bulk header so a `CONFIG SET` applies to the next frame.
+
+  ```ts
+  // before
+  const decoder = new Resp2CommandDecoder()
+  const { frames, error } = decoder.push(chunk)
+  for (const frame of frames) handle(frame)
+  if (error) fail(error)
+
+  // after
+  const decoder = new Resp2CommandDecoder({
+    maxBulkLength: () => server.protoMaxBulkLen, // 536870912n is Redis' default
+  })
+  decoder.push(chunk)
+  try {
+    for (let frame; (frame = decoder.next()); ) handle(frame)
+  } catch (error) {
+    if (!(error instanceof Resp2ParseError)) throw error
+    fail(error) // terminal: report it and close the connection
+  }
+  ```
+
+  Pulling one frame at a time is what makes the limit live: the session runs
+  each command before framing the next, so a pipelined
+  `CONFIG SET proto-max-bulk-len` governs the frames behind it even when they
+  arrived in the same read. Only direct users of the decoder are affected;
+  `Resp2SessionAdapter`, `attachSession` and the servers built on them are
+  migrated and keep their signatures.
+
+  `Resp2ParseError` gains a `messageBytes` field and an optional second
+  constructor argument carrying the error text as raw bytes. This is additive:
+  existing callers of `new Resp2ParseError(message)` are unaffected.
+
 ### Added
 
 - `PubSubKind` (`'channel' | 'shard' | 'pattern'`) is exported from `/core`,
@@ -204,6 +287,63 @@ so the PR body is not a durable home for a breaking-change note.
   interface and declaration emit requires it ([#376]).
 
 ### Fixed
+
+- `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
+  protocol reader, for every command ([#431], [#415]). A bulk argument longer
+  than the limit is refused from its header, before the payload is read and
+  before any handler runs, with `-ERR Protocol error: invalid bulk length`, and
+  **the server then closes the connection**. Previously only `APPEND` and
+  `SETRANGE` checked the limit, so `SET`, `MSET`, `LPUSH`, `HSET` and the rest
+  accepted arguments of any size. A bulk exactly the size of the limit is still
+  accepted. Identical on Redis 6.2, 7.2 and 8.0, so it is not profile-gated.
+
+- `SETBIT`, `GETBIT`, `BITFIELD` and `BITFIELD_RO` derive their bit-offset
+  ceiling from the live `proto-max-bulk-len` — `(offset >> 3) >= limit` is
+  refused — instead of a hardcoded 2^32 ([#431], [#415]). They agree at the 512MB
+  default and diverge once the limit is lowered. For operations that allocate
+  (`SETBIT`, and `BITFIELD`'s `SET` / `INCRBY`) the ceiling is additionally
+  capped at 512MB, as `APPEND` / `SETRANGE` already are, so raising the setting
+  cannot make the test process materialise an unbounded string; reads are not
+  capped, because they never allocate.
+
+  Their argument errors are now **runtime** errors, as in Redis: inside `MULTI`
+  an out-of-range offset, a bad bit value, or a malformed `BITFIELD` operation
+  replies `+QUEUED` and surfaces as an element of the `EXEC` array, where it
+  used to fail at queue time and abort the transaction with `EXECABORT`. Only
+  arity errors still fire at queue time. `BITFIELD_RO`'s GET-only check now runs
+  after the whole operation list parses, and a `BITFIELD` operation missing its
+  arguments answers `ERR syntax error` before its type is read, both matching
+  Redis.
+
+- After a `SELECT`, `MOVE` and `COPY … DB` into the database that was selected
+  *before* it no longer publish their keyspace notifications as `select`
+  ([#359]). With `notify-keyspace-events KEA`, keyevent channel shown (the
+  keyspace channel carries the same event names):
+
+  ```
+  SELECT 1; SET k v; MOVE k 0
+    real Redis 7.2: __keyevent@1__:move_from k   __keyevent@0__:move_to k
+    before:         __keyevent@1__:del k         __keyevent@0__:select k
+    now:            __keyevent@1__:del k
+
+  SELECT 1; SET s v; COPY s c DB 0
+    real Redis 7.2: __keyevent@0__:copy_to c
+    before:         __keyevent@0__:select c
+    now:            (nothing)
+  ```
+
+  The executor names write events through a per-database tag, and `SELECT`
+  restored that tag onto the database it switched *to*, leaving the one it
+  switched *from* tagged `select`. Every later command restores the tag it
+  saved, so the stale value was never cleared, and `MOVE` / `COPY … DB` write
+  into a database the executor never tags. Because the tag lives on the
+  database rather than the connection, one client's `SELECT` mislabelled
+  another client's `MOVE`; it also happened through `MULTI`/`EXEC` and `EVAL`.
+
+  This removes the wrong event; it does not add the right ones. `MOVE` and
+  `COPY … DB` still publish nothing on the target database, where real Redis
+  sends `move_to` / `copy_to`. That gap predates this change and is tracked
+  separately.
 
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,
@@ -230,6 +370,8 @@ Released before this file existed. See the
 requests they contain.
 
 [#360]: https://github.com/fatal10110/js-redis-server/issues/360
+
+[#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376
@@ -237,5 +379,7 @@ requests they contain.
 [#378]: https://github.com/fatal10110/js-redis-server/pull/378
 [#410]: https://github.com/fatal10110/js-redis-server/pull/410
 [#413]: https://github.com/fatal10110/js-redis-server/issues/413
+[#415]: https://github.com/fatal10110/js-redis-server/issues/415
+[#431]: https://github.com/fatal10110/js-redis-server/pull/431
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

@@ -3,13 +3,17 @@ import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
 import {
-  assertNodeRedisDbSizeDelta,
+  assertNodeRedisKeyCount,
   flushNodeRedisCluster,
-  getNodeRedisTotalDbSize,
+  countExistingNodeRedisKeys,
   randomKey,
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -24,9 +28,9 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('Key commands workflow - Data Type Validation', async () => {
-    const userKey = '{app}user'
-    const cartKey = '{app}cart'
-    const scoresKey = '{app}scores'
+    const userKey = `{app:${RUN}}user`
+    const cartKey = `{app:${RUN}}cart`
+    const scoresKey = `{app:${RUN}}scores`
 
     await redisClient.hSet(userKey, {
       name: 'Alice',
@@ -63,22 +67,26 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
   test('Key commands workflow - Cache Validation', async () => {
     const cacheKeys = [
-      'cache:user_sessions',
-      'cache:popular_items',
-      'cache:daily_stats',
-      'cache:search_results',
+      `cache:user_sessions:${RUN}`,
+      `cache:popular_items:${RUN}`,
+      `cache:daily_stats:${RUN}`,
+      `cache:search_results:${RUN}`,
     ]
 
-    await redisClient.hSet('cache:user_sessions', {
+    await redisClient.hSet(`cache:user_sessions:${RUN}`, {
       session1: 'active',
       session2: 'expired',
     })
-    await redisClient.lPush('cache:popular_items', ['item1', 'item2', 'item3'])
+    await redisClient.lPush(`cache:popular_items:${RUN}`, [
+      'item1',
+      'item2',
+      'item3',
+    ])
     await redisClient.set(
-      'cache:daily_stats',
+      `cache:daily_stats:${RUN}`,
       JSON.stringify({ visits: 1000, sales: 50 }),
     )
-    await redisClient.zAdd('cache:search_results', [
+    await redisClient.zAdd(`cache:search_results:${RUN}`, [
       { score: 0.95, value: 'result1' },
       { score: 0.87, value: 'result2' },
     ])
@@ -114,29 +122,35 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
     )
     assert.strictEqual(searchCache?.type, 'zset')
 
-    await redisClient.del('cache:daily_stats')
+    await redisClient.del(`cache:daily_stats:${RUN}`)
 
-    assert.strictEqual(await redisClient.exists('cache:daily_stats'), 0)
-    assert.strictEqual(await redisClient.type('cache:daily_stats'), 'none')
+    assert.strictEqual(await redisClient.exists(`cache:daily_stats:${RUN}`), 0)
+    assert.strictEqual(
+      await redisClient.type(`cache:daily_stats:${RUN}`),
+      'none',
+    )
   })
 
   test('Key commands workflow - Multi-tenant Data Isolation', async () => {
-    await redisClient.hSet('{tenant1}users', { user1: 'alice', user2: 'bob' })
+    await redisClient.hSet(`{tenant1:${RUN}}users`, {
+      user1: 'alice',
+      user2: 'bob',
+    })
     await redisClient.set(
-      '{tenant1}settings',
+      `{tenant1:${RUN}}settings`,
       JSON.stringify({ theme: 'dark', lang: 'en' }),
     )
-    await redisClient.lPush('{tenant1}data', ['data1', 'data2'])
+    await redisClient.lPush(`{tenant1:${RUN}}data`, ['data1', 'data2'])
 
-    await redisClient.hSet('{tenant2}users', {
+    await redisClient.hSet(`{tenant2:${RUN}}users`, {
       user1: 'charlie',
       user2: 'diana',
     })
     await redisClient.set(
-      '{tenant2}settings',
+      `{tenant2:${RUN}}settings`,
       JSON.stringify({ theme: 'light', lang: 'es' }),
     )
-    await redisClient.sAdd('{tenant2}data', ['item1', 'item2'])
+    await redisClient.sAdd(`{tenant2:${RUN}}data`, ['item1', 'item2'])
 
     const checkTenantData = async (tenantTag: string) => {
       const expectedKeys = [
@@ -156,22 +170,22 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       return { existingCount, keyTypes }
     }
 
-    const tenant1Status = await checkTenantData('{tenant1}')
+    const tenant1Status = await checkTenantData(`{tenant1:${RUN}}`)
     assert.strictEqual(tenant1Status.existingCount, 3)
     assert.deepStrictEqual(tenant1Status.keyTypes, ['hash', 'string', 'list'])
 
-    const tenant2Status = await checkTenantData('{tenant2}')
+    const tenant2Status = await checkTenantData(`{tenant2:${RUN}}`)
     assert.strictEqual(tenant2Status.existingCount, 3)
     assert.deepStrictEqual(tenant2Status.keyTypes, ['hash', 'string', 'set'])
 
-    const tenant3Status = await checkTenantData('{tenant3}')
+    const tenant3Status = await checkTenantData(`{tenant3:${RUN}}`)
     assert.strictEqual(tenant3Status.existingCount, 0)
     assert.deepStrictEqual(tenant3Status.keyTypes, ['none', 'none', 'none'])
 
-    const tenant1Users = await redisClient.hGetAll('{tenant1}users')
+    const tenant1Users = await redisClient.hGetAll(`{tenant1:${RUN}}users`)
     assert.strictEqual(tenant1Users.user1, 'alice')
 
-    const tenant2Users = await redisClient.hGetAll('{tenant2}users')
+    const tenant2Users = await redisClient.hGetAll(`{tenant2:${RUN}}users`)
     assert.strictEqual(tenant2Users.user1, 'charlie')
   })
 
@@ -193,15 +207,13 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       )
     }
 
-    const baseline = await getNodeRedisTotalDbSize(redisClient)
-
     try {
       await redisClient.hSet(`${tag}:config`, {
         max_users: '1000',
         timeout: '3600',
       })
       await redisClient.set(`${tag}:app_version`, '1.2.3')
-      await assertNodeRedisDbSizeDelta(redisClient, baseline, 2)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 2)
 
       const userActivities: Array<Promise<unknown>> = []
       for (let i = 1; i <= 10; i++) {
@@ -221,7 +233,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         )
       }
       await Promise.all(userActivities)
-      await assertNodeRedisDbSizeDelta(redisClient, baseline, 32)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 32)
 
       await redisClient.sAdd(`${tag}:popular_items`, [
         'item1',
@@ -239,7 +251,7 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
         visitors: '500',
         sales: '25',
       })
-      await assertNodeRedisDbSizeDelta(redisClient, baseline, 35)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 35)
 
       const expiredSessions: Promise<number>[] = []
       for (let i = 6; i <= 10; i++) {
@@ -247,26 +259,28 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
       }
       await Promise.all(expiredSessions)
 
-      const cleanedSize = await getNodeRedisTotalDbSize(redisClient)
-      const cleanedDelta = cleanedSize - baseline
+      const cleanedCount = await countExistingNodeRedisKeys(
+        redisClient,
+        createdKeys,
+      )
       const capacityThreshold = 50
-      const currentUtilization = (cleanedDelta / capacityThreshold) * 100
+      const currentUtilization = (cleanedCount / capacityThreshold) * 100
 
       assert.ok(
         currentUtilization < 80,
         'Database utilization should be under 80%',
       )
-      assert.strictEqual(cleanedDelta, 30)
+      assert.strictEqual(cleanedCount, 30)
 
       await redisClient.del(`${tag}:daily_stats`)
-      await assertNodeRedisDbSizeDelta(redisClient, baseline, 29)
+      await assertNodeRedisKeyCount(redisClient, `${tag}:*`, createdKeys, 29)
     } finally {
       await redisClient.del(createdKeys)
     }
   })
 
   test('Expiration workflow - Session Management', async () => {
-    const sessionId = '{session}user123'
+    const sessionId = `{session:${RUN}}user123`
     const sessionData = JSON.stringify({
       userId: 123,
       loginTime: Date.now(),
@@ -292,9 +306,9 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
   test('Expiration workflow - Cache with Scheduled Invalidation', async () => {
     const cacheKeys = [
-      '{cache}daily_report',
-      '{cache}hourly_stats',
-      '{cache}temp_data',
+      `{cache:${RUN}}daily_report`,
+      `{cache:${RUN}}hourly_stats`,
+      `{cache:${RUN}}temp_data`,
     ]
 
     for (const key of cacheKeys) {

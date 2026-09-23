@@ -128,7 +128,16 @@ jobs:
 
       - name: Start Redis (cluster + standalone)
         if: matrix.needsRedis
-        run: docker compose -f docker-compose.test.yml up -d --wait
+        # --wait-timeout is the OUTER backstop, not the primary budget. The
+        # cluster init script gives up first (294s worst case, even with a hung
+        # node) and exits non-zero after dumping CLUSTER INFO/NODES and every
+        # node's log, which the step below then surfaces. The healthcheck's
+        # start_period (330s) sits between the two. 420s keeps that ordering:
+        # set it below the script's budget and the retries and the diagnostics
+        # both become unreachable, which is how #398 stayed undiagnosed for
+        # three sightings. See the budget block in
+        # docker/redis-cluster-init.sh before changing.
+        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 420
 
       - name: Run integration tests (${{ matrix.name }})
         env:
@@ -139,6 +148,29 @@ jobs:
           # Password-protected standalone for AUTH/NOAUTH enforcement tests.
           REDIS_STANDALONE_AUTH_PORT: 6400
         run: npm run ${{ matrix.script }}
+
+      # Runs whenever an earlier step failed — including the startup step, so a
+      # container that dies during cluster formation leaves a diagnosable trail
+      # instead of a bare "exited (1)" (issue #398).
+      - name: Dump Redis container state and logs on failure
+        if: failure() && matrix.needsRedis
+        run: |
+          echo "::group::docker compose ps -a"
+          docker compose -f docker-compose.test.yml ps -a || true
+          echo "::endgroup::"
+          for svc in redis-cluster redis-standalone redis-standalone-auth; do
+            echo "::group::docker compose logs $svc"
+            docker compose -f docker-compose.test.yml logs --no-color --timestamps "$svc" || true
+            echo "::endgroup::"
+          done
+          echo "::group::redis-cluster container state"
+          cid=$(docker compose -f docker-compose.test.yml ps -aq redis-cluster || true)
+          if [ -n "$cid" ]; then
+            docker inspect --format '{{json .State}}' "$cid" || true
+          else
+            echo "no redis-cluster container found"
+          fi
+          echo "::endgroup::"
 
       - name: Stop Redis (cluster + standalone)
         if: always() && matrix.needsRedis
