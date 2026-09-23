@@ -13,7 +13,7 @@ import {
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { scoreValue } from '../helpers'
-import { deleteSortedSetIfEmpty, getSortedMembers } from './helpers'
+import { getSortedMembers } from './helpers'
 
 type ZsetMultiPopSide = 'min' | 'max'
 
@@ -154,12 +154,15 @@ export function tryZsetMultiPop(
     const toRemove = candidates.slice(0, count)
     if (toRemove.length === 0) continue
 
-    db.updateSortedSet(key, zset => {
-      for (const entry of toRemove) {
-        zset.deleteMember(entry.member)
-      }
-    })
-    deleteSortedSetIfEmpty(db, key)
+    // Published as the underlying zpopmin/zpopmax, as real Redis does (#446).
+    db.withOrigin(side === 'min' ? 'zpopmin' : 'zpopmax').updateSortedSet(
+      key,
+      zset => {
+        for (const entry of toRemove) {
+          zset.deleteMember(entry.member)
+        }
+      },
+    )
 
     return RedisResult.create(
       RedisValue.array([

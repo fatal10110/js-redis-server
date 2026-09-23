@@ -282,9 +282,12 @@ class DatabaseReplicationLink implements ReplicationLink {
       return
     }
 
+    // A write's value is cloned on first read; read it now, so the replica
+    // later applies this write's value rather than the key's state by then.
+    const snapshot = { ...event }
     const timer = setTimeout(() => {
       this.timers.delete(timer)
-      applyReplicationEvent(this.replica, event)
+      applyReplicationEvent(this.replica, snapshot)
     }, this.delayMs)
     this.timers.add(timer)
   }
@@ -310,6 +313,9 @@ function applyReplicationEvent(
       return
     case 'flush':
       replica.flush()
+      return
+    case 'notify':
+      // Notification-only: carries no value to replicate.
       return
   }
 }

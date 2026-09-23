@@ -30,12 +30,18 @@ import {
 // final value is equal (for example identical STORE rewrites or full-range
 // LTRIM). Stream consumer-group / pending / last-id mutations deliberately do
 // NOT mark the key dirty: real Redis leaves a WATCH on the stream key intact for
-// those, only entry-set changes (XADD/XDEL/…) touch it.
+// those, only entry-set changes (XADD/XDEL/…) touch it. The ones real Redis
+// still announces (XGROUP subcommands, XSETID) call markCommitted() instead.
 
 export class TrackedHashData {
+  /**
+   * @param onFieldExpiry told every field deadline this write sets, so the
+   *   database can schedule active field expiry without rescanning the hash.
+   */
   constructor(
     private readonly hash: RedisHashData,
     private readonly tracker: KeyspaceMutationTracker,
+    private readonly onFieldExpiry: (expiresAt: number) => void = () => {},
   ) {}
 
   get size(): number {
@@ -75,6 +81,7 @@ export class TrackedHashData {
     const ttlChanged = existing?.expiresAt !== expiresAt
 
     this.hash.fields.set(hex, { field, value, expiresAt })
+    if (expiresAt !== undefined) this.onFieldExpiry(expiresAt)
     if (options.forceDirty || valueChanged || ttlChanged) {
       this.tracker.markChanged()
     }
@@ -111,6 +118,7 @@ export class TrackedHashData {
 
     if (entry.expiresAt !== expiresAt) {
       entry.expiresAt = expiresAt
+      this.onFieldExpiry(expiresAt)
       this.tracker.markChanged()
     }
     return true
@@ -488,9 +496,9 @@ export class TrackedStreamData {
     return count
   }
 
-  // XSETID. The stream already exists (the command rejects a missing key), so
-  // mutating the live value in place is enough to persist; real Redis does not
-  // touch a WATCH on the stream key for a last-id change, so no markChanged().
+  // XSETID. The stream already exists (the command rejects a missing key).
+  // Real Redis announces a last-id change (`xsetid`) but does not touch a
+  // WATCH on the stream key, so markCommitted(), not markChanged().
   setId(
     id: StreamId,
     options: { entriesAdded: number | null; maxDeletedId: StreamId | null },
@@ -502,10 +510,12 @@ export class TrackedStreamData {
     if (options.maxDeletedId !== null) {
       this.stream.maxDeletedEntryId = cloneStreamId(options.maxDeletedId)
     }
+    this.tracker.markCommitted()
   }
 
-  // XGROUP SETID. Consumer-group metadata changes do not dirty a WATCH on the
-  // stream key in real Redis, so this never calls markChanged().
+  // XGROUP SETID. Consumer-group metadata changes are announced but do not
+  // dirty a WATCH on the stream key in real Redis: markCommitted(), never
+  // markChanged().
   setGroupId(
     group: RedisStreamConsumerGroup,
     lastDeliveredId: StreamId,
@@ -513,6 +523,7 @@ export class TrackedStreamData {
   ): void {
     group.lastDeliveredId = cloneStreamId(lastDeliveredId)
     group.entriesRead = entriesRead
+    this.tracker.markCommitted()
   }
 
   // XREADGROUP for a single stream. Returns the delivered entries (fields === null
@@ -526,7 +537,10 @@ export class TrackedStreamData {
     options: { count: number | null; noack: boolean },
     now: number,
   ): StreamDelivery[] {
-    ensureConsumer(group, consumerName, now).activeAt = now
+    // Every read refreshes the consumer's seen time (XINFO `idle`); only
+    // delivering new entries (`>`) refreshes its active time (`inactive`),
+    // as in real Redis 7.2+. A history read or an empty read does not.
+    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
     const { count, noack } = options
     const delivered: StreamDelivery[] = []
@@ -551,6 +565,7 @@ export class TrackedStreamData {
 
         if (limited && delivered.length >= count) break
       }
+      if (delivered.length > 0) consumer.activeAt = now
       return delivered
     }
 
@@ -588,7 +603,8 @@ export class TrackedStreamData {
     },
     now: number,
   ): ClaimedEntry[] {
-    ensureConsumer(group, consumerName, now).activeAt = now
+    // Seen on every attempt; active only once something is claimed.
+    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
     if (options.lastId) group.lastDeliveredId = cloneStreamId(options.lastId)
 
@@ -628,6 +644,7 @@ export class TrackedStreamData {
 
       claimed.push({ id: entry.id, fields: entry.fields })
     }
+    if (claimed.length > 0) consumer.activeAt = now
     return claimed
   }
 
@@ -646,7 +663,8 @@ export class TrackedStreamData {
     },
     now: number,
   ): AutoClaimResult {
-    ensureConsumer(group, consumerName, now).activeAt = now
+    // Seen on every attempt; active only once something is claimed.
+    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
     const claimed: AutoClaimedEntry[] = []
     const deleted: StreamId[] = []
@@ -697,6 +715,7 @@ export class TrackedStreamData {
       }
     }
 
+    if (claimed.length > 0) consumer.activeAt = now
     return { nextStartId, claimed, deleted }
   }
 
@@ -711,14 +730,18 @@ export class TrackedStreamData {
     this.tracker.markCommitted()
   }
 
-  // XGROUP DESTROY. In-place change to an existing stream key; real Redis does
-  // not dirty a WATCH on the stream key, so no markChanged().
+  // XGROUP DESTROY. In-place change to an existing stream key; real Redis
+  // announces it without dirtying a WATCH on the stream key, so markCommitted().
   deleteGroup(groupId: string): boolean {
-    return this.stream.groups.delete(groupId)
+    if (!this.stream.groups.delete(groupId)) {
+      return false
+    }
+    this.tracker.markCommitted()
+    return true
   }
 
   // XGROUP CREATECONSUMER. In-place change to an existing stream key; real
-  // Redis does not dirty a WATCH on the stream key, so no markChanged().
+  // Redis announces it without dirtying a WATCH, so markCommitted().
   addConsumer(
     group: RedisStreamConsumerGroup,
     consumerId: string,
@@ -729,15 +752,17 @@ export class TrackedStreamData {
     }
 
     group.consumers.set(consumerId, consumer)
+    this.tracker.markCommitted()
     return true
   }
 
   // XGROUP DELCONSUMER. In-place change to an existing stream key; real Redis
-  // does not dirty a WATCH on the stream key, so no markChanged().
+  // announces it without dirtying a WATCH, so markCommitted().
   deleteConsumer(group: RedisStreamConsumerGroup, consumerId: string): number {
     if (!group.consumers.delete(consumerId)) {
       return 0
     }
+    this.tracker.markCommitted()
 
     let removedPending = 0
     for (const [pendingId, pending] of Array.from(group.pending)) {

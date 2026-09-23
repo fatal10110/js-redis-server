@@ -1,23 +1,29 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
-  RedisSyntaxError,
+  RedisCommandError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
-import { requireStreamGroup } from './groups'
-import { parseExactId, parseNonNegativeInteger } from './ids'
+import { createConsumerIfMissing, requireStreamGroup } from './groups'
+import { parseExactId, parseLongLong } from './ids'
 import { entryToReply, streamIdValue } from './replies'
 
 type XclaimArgs = {
   key: Buffer
   group: Buffer
   consumer: Buffer
+  // min-idle-time, ids and options. Real Redis parses them only after the key
+  // type and group check, so a bad argument never beats WRONGTYPE / NOGROUP —
+  // see parseXclaimOptions, called from execute.
+  rest: readonly Buffer[]
+}
+
+type XclaimOptions = {
   minIdleMs: number
   ids: StreamId[]
-  idleMs: number | null
-  timeMs: number | null
+  deliveryTime: number | null
   retryCount: number | null
   force: boolean
   justId: boolean
@@ -31,93 +37,104 @@ function createXclaimSchema() {
       const key = input[index]
       const group = input[index + 1]
       const consumer = input[index + 2]
-      const rawMinIdle = input[index + 3]
-      if (!key || !group || !consumer || !rawMinIdle) {
+      if (!key || !group || !consumer || input.length - index < 5) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
-
-      let cursor = index + 4
-      const ids: StreamId[] = []
-      while (cursor < input.length && !isXclaimOption(input[cursor])) {
-        ids.push(parseExactId(input[cursor].toString()))
-        cursor++
-      }
-      if (ids.length === 0)
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
-
-      let idleMs: number | null = null
-      let timeMs: number | null = null
-      let retryCount: number | null = null
-      let force = false
-      let justId = false
-      let lastId: StreamId | null = null
-
-      while (cursor < input.length) {
-        const option = input[cursor].toString().toUpperCase()
-        if (option === 'IDLE' || option === 'TIME' || option === 'RETRYCOUNT') {
-          const rawValue = input[cursor + 1]
-          if (!rawValue) throw new WrongNumberOfArgumentsError(ctx.commandName)
-          const value = parseNonNegativeInteger(rawValue)
-          if (option === 'IDLE') idleMs = value
-          if (option === 'TIME') timeMs = value
-          if (option === 'RETRYCOUNT') retryCount = value
-          cursor += 2
-          continue
-        }
-
-        if (option === 'FORCE') {
-          force = true
-          cursor++
-          continue
-        }
-
-        if (option === 'JUSTID') {
-          justId = true
-          cursor++
-          continue
-        }
-
-        if (option === 'LASTID') {
-          const rawValue = input[cursor + 1]
-          if (!rawValue) throw new WrongNumberOfArgumentsError(ctx.commandName)
-          lastId = parseExactId(rawValue.toString())
-          cursor += 2
-          continue
-        }
-
-        throw new RedisSyntaxError()
       }
 
       return {
-        value: {
-          key,
-          group,
-          consumer,
-          minIdleMs: parseNonNegativeInteger(rawMinIdle),
-          ids,
-          idleMs,
-          timeMs,
-          retryCount,
-          force,
-          justId,
-          lastId,
-        },
+        value: { key, group, consumer, rest: input.slice(index + 3) },
         nextIndex: input.length,
       }
     },
   )
 }
 
-function isXclaimOption(token: Buffer): boolean {
-  const option = token.toString().toUpperCase()
-  return (
-    option === 'IDLE' ||
-    option === 'TIME' ||
-    option === 'RETRYCOUNT' ||
-    option === 'FORCE' ||
-    option === 'JUSTID' ||
-    option === 'LASTID'
+function tryParseId(token: Buffer): StreamId | null {
+  try {
+    return parseExactId(token.toString())
+  } catch {
+    return null
+  }
+}
+
+// Mirrors real Redis' xclaimCommand: min-idle-time, then ids up to the first
+// token that is not one (possibly none), then options. An option missing its
+// value, or any other token, is `Unrecognized XCLAIM option '<token>'`.
+function parseXclaimOptions(
+  rest: readonly Buffer[],
+  now: number,
+): XclaimOptions {
+  const minIdle = parseLongLong(
+    rest[0],
+    'Invalid min-idle-time argument for XCLAIM',
   )
+
+  let cursor = 1
+  const ids: StreamId[] = []
+  while (cursor < rest.length) {
+    const id = tryParseId(rest[cursor])
+    if (!id) break
+    ids.push(id)
+    cursor++
+  }
+
+  const options: XclaimOptions = {
+    minIdleMs: minIdle < 0n ? 0 : Number(minIdle),
+    ids,
+    deliveryTime: null,
+    retryCount: null,
+    force: false,
+    justId: false,
+    lastId: null,
+  }
+  let deliveryTime: bigint | null = null
+  for (; cursor < rest.length; cursor++) {
+    const token = rest[cursor]
+    const option = token.toString().toUpperCase()
+    const value = cursor + 1 < rest.length ? rest[cursor + 1] : undefined
+    if (option === 'FORCE') {
+      options.force = true
+    } else if (option === 'JUSTID') {
+      options.justId = true
+    } else if (option === 'IDLE' && value) {
+      const idle = parseLongLong(
+        value,
+        'Invalid IDLE option argument for XCLAIM',
+      )
+      deliveryTime = BigInt(now) - idle
+      cursor++
+    } else if (option === 'TIME' && value) {
+      deliveryTime = parseLongLong(
+        value,
+        'Invalid TIME option argument for XCLAIM',
+      )
+      cursor++
+    } else if (option === 'RETRYCOUNT' && value) {
+      const retryCount = parseLongLong(
+        value,
+        'Invalid RETRYCOUNT option argument for XCLAIM',
+      )
+      // A negative count means "not given", as in real Redis.
+      options.retryCount = retryCount < 0n ? null : Number(retryCount)
+      cursor++
+    } else if (option === 'LASTID' && value) {
+      options.lastId = parseExactId(value.toString())
+      cursor++
+    } else {
+      throw new RedisCommandError(
+        `Unrecognized XCLAIM option '${token.toString()}'`,
+      )
+    }
+  }
+
+  // A delivery time in the past or future is clamped to now, not an error.
+  if (deliveryTime !== null) {
+    options.deliveryTime =
+      deliveryTime < 0n || deliveryTime > BigInt(now)
+        ? now
+        : Number(deliveryTime)
+  }
+  return options
 }
 
 export const xclaimCommand = defineCommand({
@@ -133,27 +150,35 @@ export const xclaimCommand = defineCommand({
       command.key,
       command.group,
     )
+    const options = parseXclaimOptions(command.rest, now)
+    createConsumerIfMissing(
+      ctx.db,
+      command.key,
+      command.group,
+      command.consumer,
+      now,
+    )
     const claimed = ctx.db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream.value, command.key, command.group)
       return stream.claim(
         group,
         command.consumer,
-        command.ids,
+        options.ids,
         {
-          minIdleMs: command.minIdleMs,
-          idleMs: command.idleMs,
-          timeMs: command.timeMs,
-          retryCount: command.retryCount,
-          force: command.force,
-          justId: command.justId,
-          lastId: command.lastId,
+          minIdleMs: options.minIdleMs,
+          idleMs: null,
+          timeMs: options.deliveryTime,
+          retryCount: options.retryCount,
+          force: options.force,
+          justId: options.justId,
+          lastId: options.lastId,
         },
         now,
       )
     })
 
     const replies = claimed.map(entry =>
-      command.justId
+      options.justId
         ? streamIdValue(entry.id)
         : entryToReply(entry.id, entry.fields),
     )

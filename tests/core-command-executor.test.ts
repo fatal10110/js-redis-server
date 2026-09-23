@@ -344,31 +344,88 @@ describe('new command executor core', () => {
     )
   })
 
-  test('restores the notify-command tag on the database it tagged', async () => {
-    // `ctx.db` is a live getter, so a command that switches databases mid-flight
-    // must not have its keyspace-notification tag restored onto the *new*
-    // database — that would leave the original tagged forever and mis-name a
-    // later write event.
+  test('stamps mutation events with the originating command (#444)', async () => {
+    // Keyspace notifications name write events after the command that caused
+    // them. The name rides on the event itself, so it does not matter which
+    // database the command started on (a mid-command SELECT, #359) — and a
+    // mutation outside any command carries no name at all.
     const { executor, ctx, server } = createSelectMidCommandFixture()
+    const commands: (string | undefined)[] = []
+    server.getDatabase(1).subscribe(event => commands.push(event.command))
 
     await executor.executeRaw('select-then-write', [], ctx)
-
-    assert.strictEqual(server.getDatabase(0).activeNotifyCommand, null)
-    assert.strictEqual(server.getDatabase(1).activeNotifyCommand, null)
-  })
-
-  test('restores the notify-command tag on the database it tagged (sync path)', () => {
-    // Same invariant through `executePlanSync`, the Lua `redis.call` path —
-    // the two paths share `tagNotifyCommand`, but each has its own `finally`.
-    const { executor, ctx, server } = createSelectMidCommandFixture()
-
     assert.deepStrictEqual(
       executor.executePlanSync(executor.plan('select-then-write', []), ctx),
       RedisResult.ok(),
     )
+    server.getDatabase(1).setString(Buffer.from('outside'), Buffer.from('v'))
 
-    assert.strictEqual(server.getDatabase(0).activeNotifyCommand, null)
-    assert.strictEqual(server.getDatabase(1).activeNotifyCommand, null)
+    assert.deepStrictEqual(commands, [
+      'select-then-write',
+      'select-then-write',
+      undefined,
+    ])
+  })
+
+  test('keeps each command name across awaits, whatever order they resume in (#444)', async () => {
+    // Two commands suspend and resume first-in-first-out — not LIFO, which a
+    // save/restore tag on the database could not survive. Each write must
+    // still carry its own command's name, and a command running while they
+    // wait must not inherit either name.
+    const gates = new Map<string, () => void>()
+    const registry = new CommandRegistry()
+    for (const name of ['first-waiter', 'second-waiter']) {
+      registry.register(
+        defineCommand({
+          name,
+          schema: t.object({}),
+          flags: ['write'],
+          keys: () => [],
+          execute: async (_args, commandCtx) => {
+            await new Promise<void>(resolve => gates.set(name, resolve))
+            commandCtx.db.setString(Buffer.from(name), Buffer.from('v'))
+            return RedisResult.ok()
+          },
+        }),
+      )
+    }
+    registry.register(
+      defineCommand({
+        name: 'plain-write',
+        schema: t.object({}),
+        flags: ['write'],
+        keys: () => [],
+        execute: (_args, commandCtx) => {
+          commandCtx.db.setString(Buffer.from('plain'), Buffer.from('v'))
+          return RedisResult.ok()
+        },
+      }),
+    )
+    const executor = new CommandExecutor({ registry })
+    const ctx = createContext(executor)
+    const events: [string, string | undefined][] = []
+    ctx.db.subscribe(event => {
+      if (event.type === 'write') {
+        events.push([event.key.toString(), event.command])
+      }
+    })
+
+    const first = executor.executeRaw('first-waiter', [], ctx)
+    const second = executor.executeRaw('second-waiter', [], ctx)
+    await new Promise(resolve => setImmediate(resolve))
+    await executor.executeRaw('plain-write', [], ctx)
+    gates.get('first-waiter')!()
+    await first
+    gates.get('second-waiter')!()
+    await second
+    await executor.executeRaw('plain-write', [], ctx)
+
+    assert.deepStrictEqual(events, [
+      ['plain', 'plain-write'],
+      ['first-waiter', 'first-waiter'],
+      ['second-waiter', 'second-waiter'],
+      ['plain', 'plain-write'],
+    ])
   })
 
   test('supports open command registration and explicit overrides', () => {
