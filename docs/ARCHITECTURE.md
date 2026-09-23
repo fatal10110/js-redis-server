@@ -497,8 +497,9 @@ to scripts via a host callback
 
 1. builds a `CommandPlan` with `ctx.executor.plan(name, args)` — the _exact_
    same lookup/parse/key-extraction the normal path uses,
-2. rejects commands flagged `noscript` with the standard Redis script error,
-   and
+2. rejects commands flagged `noscript` with the standard Redis script error
+   (on 7.0+ profiles a `noscript` container's `HELP` subcommand is exempt,
+   mirroring Redis's per-subcommand flags), and
 3. runs the plan through [`executePlanSync`](../src/core/command-executor.ts#L116)
    — the same registry and policies as a client-issued command, so cluster
    slot validation and transaction-flag rules apply _inside_ scripts too, and

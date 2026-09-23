@@ -67,4 +67,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // accept; valkey 8.0.0/8.0.1 refuse and 8.0.2+ accept. Before that it is
   // hashed like any other pattern and therefore denied.
   'sort.cluster-get-hash': { redis: '7.4.2', valkey: '8.0.2' },
+  // Redis 7.0 moved `noscript` from the container to each subcommand, and no
+  // container's HELP subcommand carries it: `redis.pcall('CLIENT','HELP')`
+  // (likewise CONFIG/ACL/SCRIPT/FUNCTION) returns the help text on 7.0+, where
+  // 6.2 refuses the whole container. Verified against redis-server 6.2, 7.0,
+  // 8.0 and valkey 7.2/8.0/9.0.
+  'script.per-subcommand-noscript': { redis: '7.0.0', valkey: '7.2.0' },
 }

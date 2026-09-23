@@ -42,6 +42,12 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
+
+`CLIENT` is flagged `noscript`: every subcommand is rejected from Lua with
+`This Redis command is not allowed from script`, except `CLIENT HELP` on Redis
+7.0+ / Valkey profiles, where (as for `ACL`, `SCRIPT`, `CONFIG` and `FUNCTION`)
+real Redis leaves each container's HELP runnable from scripts. `RESET` and
+`QUIT` are `noscript` too.
 - [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 - [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
 - [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details

@@ -160,6 +160,7 @@ Current profile gates:
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
 | `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |
 | `SORT`/`SORT_RO` cluster `GET '#'` exempt from that slot comparison | `redis-7.4+` (7.4.2) | `valkey-9.0+` (8.0.2) |
+| `<container> HELP` callable from a Lua script although the container (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) is `noscript` — 6.2 refuses every subcommand | `redis-7.0+` | `valkey-8.0+` |
 
 ## Package Entry Points
 

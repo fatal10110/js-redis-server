@@ -530,6 +530,31 @@ describe(
       }
     })
 
+    test('a noscript container HELP from a script matches the profile (#452)', async () => {
+      // 6.2 flags the whole container noscript; 7.0+ flags each subcommand
+      // and leaves HELP runnable from scripts.
+      for (const container of ['CLIENT', 'ACL', 'SCRIPT']) {
+        const reply = await send(
+          'EVAL',
+          `return redis.pcall('${container}','HELP')`,
+          '0',
+        )
+        if (profile === 'redis-6.2') {
+          assert.match(reply, /^-.*not allowed from script/, container)
+        } else {
+          assert.ok(reply.startsWith('*'), `${container}: ${reply}`)
+        }
+      }
+
+      // Every other subcommand stays refused on every profile.
+      const refused = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','GETNAME')",
+        '0',
+      )
+      assert.match(refused, /^-.*not allowed from script/)
+    })
+
     test('RESP3 subscribed PUBLISH self-reply order matches the profile', async () => {
       const channel = `compat:${profile}:self-publish`
 

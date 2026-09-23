@@ -91,7 +91,7 @@ export class RedisLuaRuntime {
       throw err
     }
 
-    if (plan.definition.flags.includes('noscript')) {
+    if (isRefusedFromScript(plan, ctx.server.profile)) {
       return redisErrorToLuaReply(new ScriptNotAllowedCommandError())
     }
 
@@ -106,6 +106,35 @@ export class RedisLuaRuntime {
     const result = ctx.executor.executePlanSync(plan, createLuaCallContext(ctx))
     return redisValueToLuaReply(normalizeScriptCommandValue(result.value))
   }
+}
+
+/**
+ * Whether a script's `redis.call`/`redis.pcall` must be refused as `noscript`.
+ *
+ * On Redis 6.2 `noscript` is a property of the whole command, so a flagged
+ * container (CLIENT, CONFIG, ACL, SCRIPT) refuses every subcommand. From 7.0
+ * the flag lives on each subcommand and no container's HELP carries it, so
+ * `<container> HELP` runs from a script there.
+ */
+function isRefusedFromScript(
+  plan: CommandPlan,
+  profile: CompatibilityProfile,
+): boolean {
+  const { definition } = plan
+  if (!definition.flags.includes('noscript')) {
+    return false
+  }
+
+  if (!profile.has('script.per-subcommand-noscript')) {
+    return true
+  }
+
+  const subcommand = plan.rawArgs[0]?.toString().toLowerCase()
+  const helpName = `${definition.name}|help`
+  const hasHelp = definition.introspection?.subcommands?.some(
+    sub => sub.name === helpName,
+  )
+  return !(subcommand === 'help' && hasHelp)
 }
 
 /**
