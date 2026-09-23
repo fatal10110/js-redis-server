@@ -39,7 +39,7 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return encodeBulkString(Buffer.from(formatNumber(value.value)))
+      return encodeBulkString(Buffer.from(formatRedisDouble(value.value)))
     case 'boolean':
       return Buffer.from(`:${value.value ? 1 : 0}\r\n`)
     case 'big-number':
@@ -87,7 +87,7 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return Buffer.from(`,${formatNumber(value.value)}\r\n`)
+      return Buffer.from(`,${formatRedisDouble(value.value)}\r\n`)
     case 'boolean':
       return Buffer.from(value.value ? '#t\r\n' : '#f\r\n')
     case 'big-number':
@@ -208,7 +208,18 @@ function encodeError(value: Extract<RedisValue, { kind: 'error' }>): Buffer {
   ])
 }
 
-function formatNumber(value: number): string {
+/**
+ * The text of a `double` on the wire — a RESP3 `,` double, and the bulk string
+ * RESP2 sends in its place, which is therefore also what a client reads back
+ * off a RESP2 connection. `decodeRedisValue` shares it so encode and decode
+ * cannot drift.
+ *
+ * `inf` / `-inf` / `nan` and `-0` match Redis. Everything else is JavaScript's
+ * `toString()`, which is not always Redis's spelling: Redis 7.2+ writes `1e20`
+ * as `1e+20` and `0.0000123` as `1.23e-5`, and 6.2 / 7.0 print `%.17g`.
+ * Profile-aware formatting is tracked in #451.
+ */
+export function formatRedisDouble(value: number): string {
   if (Number.isNaN(value)) {
     return 'nan'
   }

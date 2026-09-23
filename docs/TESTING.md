@@ -256,15 +256,40 @@ Three flavours, depending on which client you want to look like:
 | `createInMemoryClient` | our own bespoke | a thin client that returns native JS replies, no RESP      |
 
 The two hand-rolled clients (`createNodeRedisMock`, `createInMemoryClient`)
-start on RESP2 and follow a `HELLO 3` the way a real connection does, so the
-pair-shaped replies change with the protocol: `WITHSCORES` / `WITHVALUES` come
-back flat (`['a', 1, 'b', 2]`) on RESP2 and as tuples (`[['a', 1], ['b', 2]]`)
-on RESP3, matching node-redis. (`createIoredisMock` drives the real `ioredis@5`,
-which is RESP2-only.) Note the scalars inside those replies are not yet fully
-faithful at RESP2: scores decode to numbers where real node-redis at RESP2
-hands back strings (`['a', '1', 'b', '2']`), and a map reply decodes to an
-object where RESP2 puts a flat array on the wire — both tracked in
-[#414](https://github.com/fatal10110/js-redis-server/issues/414).
+start on RESP2 and follow a `HELLO 3` the way a real connection does, so every
+reply whose shape the protocol decides changes with it — RESP2 has no map,
+double, boolean, big-number or pair type, and these clients hand back what a
+real client reads off the wire at each version:
+
+| reply                      | RESP2                    | RESP3                      |
+| :------------------------- | :----------------------- | :------------------------- |
+| `ZRANGE … WITHSCORES`      | `['a', '1', 'b', '2']`   | `[['a', 1], ['b', 2]]`     |
+| `HRANDFIELD … WITHVALUES`  | `['f1', 'v1']`           | `[['f1', 'v1']]`           |
+| `HGETALL`, `CONFIG GET`    | `['f1', 'v1']`           | `{ f1: 'v1' }`             |
+| `XREAD`                    | `[['s', […]]]`           | `{ s: […] }`               |
+| `ZSCORE`, `ZINCRBY`        | `'2.5'`                  | `2.5`                      |
+
+Only the pair *shape* is shared between the first two rows: a `WITHSCORES`
+score is a double, so it is a string at RESP2 and a number at RESP3, while a
+`WITHVALUES` hash value is a bulk string at both.
+
+A Lua script can return two more of these kinds. A `{big_number=…}` table is a
+digit string at RESP2 and a `bigint` at RESP3. A boolean is `1` / `0` at RESP2
+and `true` / `false` at RESP3 — but only from a script that has called
+`redis.setresp(3)`, since without it real Redis converts a Lua `true` to the
+integer `1` and `false` to nil. (The `setresp(3)` requirement is Redis's rule
+for booleans only. Real Redis also converts `{big_number=…}`, `{double=…}` and
+`{map=…}` tables without it; the mock's Lua engine currently returns `[]` for
+those unless the script calls `redis.setresp(3)` first — a gap in the mock, not
+Redis behaviour.)
+
+(`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
+only ever sees the left column.) The *curated* methods on the node-redis facade
+are protocol-independent where node-redis' own `transformReply` is: `hGetAll()`
+returns an object at RESP2 as well, because the real client builds that object
+from the flat array itself. The facade's raw paths follow the table:
+`sendCommand()`, `eval()` (real node-redis gives `EVAL` no `transformReply`),
+and `multi().addCommand(…).exec()`.
 
 ### `createIoredisMock` — virtual-socket ioredis client
 
@@ -449,7 +474,9 @@ const client = await createInMemoryClient({
 await client.command('SET', 'k', 'v')
 await client.command('GET', 'k') // 'v'
 await client.command('INCR', 'n') // 1 (number)
-await client.command('HGETALL', 'h') // { field: 'value', ... }
+await client.command('HGETALL', 'h') // ['field', 'value', ...] — RESP2 shape
+await client.command('HELLO', 3)
+await client.command('HGETALL', 'h') // { field: 'value', ... } — RESP3 shape
 
 client.close() // tears down its keyspace
 ```

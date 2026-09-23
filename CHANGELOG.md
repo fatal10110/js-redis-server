@@ -254,6 +254,33 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
+- **BREAKING** The two socketless clients now decode maps, doubles, big
+  numbers and booleans according to the protocol the connection negotiated
+  ([#414]). They used to decode a map to an object, and those three scalars to
+  their RESP3 JS types, whatever the protocol. Affected: `createInMemoryClient()`'s
+  `command()`, and on `createNodeRedisMock()` the raw paths — `sendCommand()`,
+  `eval()` and `multi().addCommand(…).exec()`. Both clients start on RESP2, so
+  on a connection that never sends `HELLO 3` the visible replies change:
+
+  ```
+  HGETALL / CONFIG GET                 { f1: 'v1' }   -> ['f1', 'v1']
+  XREAD                                { s: […] }     -> [['s', […]]]
+  ZSCORE / ZINCRBY                     2.5            -> '2.5'
+  ZRANGE … WITHSCORES                  ['a', 1]       -> ['a', '1']
+  big number (Lua)                     12345678n      -> '12345678'
+  boolean (Lua, under redis.setresp(3)) true / false  -> 1 / 0
+  ```
+
+  The `WITHSCORES` row was already flat at RESP2 ([#408] made the pair shape
+  protocol-dependent); only its scores change. This is what real node-redis
+  returns on the same paths, which the old shapes contradicted at RESP2. Two
+  ways forward for a caller that wants the object and number shapes back: send
+  `HELLO 3` on the connection (a real RESP3 client is what produces them), or,
+  on the node-redis facade, use the curated method — `hGetAll()` still returns
+  an object at both protocols, because node-redis' own `transformReply` builds
+  it from the flat array. `createIoredisMock()` drives the real RESP2-only
+  `ioredis` and is unaffected by this entry.
+
 - **BREAKING (`/core`)** `Resp2CommandDecoder` is now pull-based, and its
   constructor requires the live bulk-length limit ([#431]). Two breaks to the
   exported class:
@@ -424,8 +451,11 @@ requests they contain.
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376
 [#377]: https://github.com/fatal10110/js-redis-server/pull/377
 [#378]: https://github.com/fatal10110/js-redis-server/pull/378
+[#408]: https://github.com/fatal10110/js-redis-server/pull/408
 [#410]: https://github.com/fatal10110/js-redis-server/pull/410
 [#413]: https://github.com/fatal10110/js-redis-server/issues/413
+[#414]: https://github.com/fatal10110/js-redis-server/issues/414
+
 [#430]: https://github.com/fatal10110/js-redis-server/pull/430
 [#437]: https://github.com/fatal10110/js-redis-server/issues/437
 
