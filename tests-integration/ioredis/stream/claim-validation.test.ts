@@ -13,17 +13,13 @@ import { errorWithMessage, randomKey } from '../../utils'
 const testRunner = new TestRunner()
 
 describe(`XCLAIM / XAUTOCLAIM validation (${testRunner.getBackendName()})`, () => {
-  let port: number
   let client: Redis
 
   before(async () => {
-    port = await testRunner.setupRawStandalone()
-    client = new Redis({ host: '127.0.0.1', port, lazyConnect: true })
-    await client.connect()
+    client = await testRunner.setupIoredisStandalone()
   })
 
   after(async () => {
-    client.disconnect()
     await testRunner.cleanup()
   })
 

@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
-import { createClient, RedisClientType } from 'redis'
+import { RedisClientType } from 'redis'
 import { TestRunner } from '../../test-config'
 import { errorWithMessage, randomKey } from '../../utils'
 
@@ -16,16 +16,10 @@ describe(`XCLAIM / XAUTOCLAIM validation (node-redis, ${testRunner.getBackendNam
   let client: RedisClientType
 
   before(async () => {
-    const port = await testRunner.setupRawStandalone()
-    client = createClient({
-      url: `redis://127.0.0.1:${port}`,
-    }) as RedisClientType
-    client.on('error', () => {})
-    await client.connect()
+    client = await testRunner.setupNodeRedisStandalone()
   })
 
   after(async () => {
-    client.destroy()
     await testRunner.cleanup()
   })
 
