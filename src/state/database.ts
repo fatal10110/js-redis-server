@@ -44,12 +44,16 @@ export class RedisDatabase {
   readonly origin: string | undefined = undefined
   private readonly entries = new Map<string, KeyspaceEntry>()
   /**
-   * Ids of hash keys that hold at least one field with a TTL — the only keys
-   * the active sweep has to visit for field expiry. Kept in sync wherever a
-   * hash is written (`set`, `updateHash`); ids whose key is gone or no longer
-   * carries field TTLs are pruned by the sweep itself.
+   * For each hash key that may hold a field with a TTL: a lower bound on its
+   * earliest field deadline. Only a hash whose bound is due is ever scanned for
+   * expired fields, so writes to a hash with no due field cost O(1) here.
+   *
+   * The bound may be too early, never too late. A write that sets a field TTL
+   * lowers it (`noteHashFieldExpiry`); removing or extending a TTL leaves it
+   * stale-early, and the next due scan then finds nothing and resets it to the
+   * exact earliest deadline — or drops the key once no field has a TTL.
    */
-  private readonly hashesWithFieldTtl = new Set<string>()
+  private readonly hashFieldExpiry = new Map<string, number>()
 
   constructor(public readonly id: number) {}
 
@@ -109,7 +113,14 @@ export class RedisDatabase {
     }
 
     this.entries.set(id, entry)
-    this.trackHashFieldTtls(id)
+    this.hashFieldExpiry.delete(id)
+    if (entry.value.type === 'hash') {
+      for (const field of entry.value.fields.values()) {
+        if (field.expiresAt !== undefined) {
+          this.noteHashFieldExpiry(id, field.expiresAt)
+        }
+      }
+    }
     this.emitWrite(entry)
   }
 
@@ -289,15 +300,17 @@ export class RedisDatabase {
     mutator: (hash: TrackedHashData) => TResult,
   ): TResult {
     this.purgeExpiredHashFields(key)
-    const result = this.updateTyped(
+    const id = keyId(key)
+    return this.updateTyped(
       key,
       'hash',
       createHashData,
       mutator,
-      (value, tracker) => new TrackedHashData(value, tracker),
+      (value, tracker) =>
+        new TrackedHashData(value, tracker, expiresAt =>
+          this.noteHashFieldExpiry(id, expiresAt),
+        ),
     )
-    this.trackHashFieldTtls(keyId(key))
-    return result
   }
 
   updateList<TResult>(
@@ -371,15 +384,30 @@ export class RedisDatabase {
    * purges, publishes `hexpired` and dirties a WATCH on the key.
    */
   private purgeExpiredHashFields(key: Buffer, now = Date.now()): void {
-    const entry = this.getLiveEntry(key)
-    if (!entry || entry.value.type !== 'hash') {
+    const id = keyId(key)
+    const due = this.hashFieldExpiry.get(id)
+    if (due === undefined || due > now) {
       return
     }
 
-    const fields = entry.value.fields
-    const expired = Array.from(fields.entries()).filter(
-      ([, field]) => field.expiresAt !== undefined && field.expiresAt <= now,
-    )
+    const entry = this.getLiveEntry(key)
+    if (!entry || entry.value.type !== 'hash') {
+      this.hashFieldExpiry.delete(id)
+      return
+    }
+
+    const expired: string[] = []
+    let next = Infinity
+    for (const [fieldId, field] of entry.value.fields) {
+      if (field.expiresAt === undefined) continue
+      if (field.expiresAt <= now) expired.push(fieldId)
+      else if (field.expiresAt < next) next = field.expiresAt
+    }
+    if (next === Infinity) {
+      this.hashFieldExpiry.delete(id)
+    } else {
+      this.hashFieldExpiry.set(id, next)
+    }
     if (expired.length === 0) {
       return
     }
@@ -389,12 +417,20 @@ export class RedisDatabase {
       'hash',
       createHashData,
       (hash, tracker) => {
-        for (const [id] of expired) {
-          hash.fields.delete(id)
+        for (const fieldId of expired) {
+          hash.fields.delete(fieldId)
         }
         tracker.markChanged()
       },
     )
+  }
+
+  // Lower the key's earliest-field-deadline bound to `expiresAt` if earlier.
+  private noteHashFieldExpiry(id: string, expiresAt: number): void {
+    const due = this.hashFieldExpiry.get(id)
+    if (due === undefined || expiresAt < due) {
+      this.hashFieldExpiry.set(id, expiresAt)
+    }
   }
 
   private getTyped<TValue extends RedisDataValue>(
@@ -421,7 +457,7 @@ export class RedisDatabase {
 
   flush(): void {
     this.entries.clear()
-    this.hashesWithFieldTtl.clear()
+    this.hashFieldExpiry.clear()
     this.emit({
       type: 'flush',
       database: this.id,
@@ -450,7 +486,8 @@ export class RedisDatabase {
 
   /**
    * Active expiry: evict expired keys, then purge expired fields of the
-   * hashes that carry field TTLs. Returns the number of keys removed.
+   * hashes whose earliest field deadline is due. Returns the number of keys
+   * removed.
    */
   sweepExpired(now = Date.now()): number {
     let count = 0
@@ -461,35 +498,19 @@ export class RedisDatabase {
       }
     }
 
-    for (const id of Array.from(this.hashesWithFieldTtl)) {
+    for (const [id, due] of Array.from(this.hashFieldExpiry)) {
+      if (due > now) continue
       const entry = this.entries.get(id)
       if (!entry) {
-        this.hashesWithFieldTtl.delete(id)
+        this.hashFieldExpiry.delete(id)
         continue
       }
 
       this.purgeExpiredHashFields(entry.key, now)
       if (!this.entries.has(id)) count += 1
-      this.trackHashFieldTtls(id)
     }
 
     return count
-  }
-
-  // Keep `id` in hashesWithFieldTtl exactly while its key is a hash with at
-  // least one field TTL.
-  private trackHashFieldTtls(id: string): void {
-    const value = this.entries.get(id)?.value
-    const hasFieldTtl =
-      value?.type === 'hash' &&
-      Array.from(value.fields.values()).some(
-        field => field.expiresAt !== undefined,
-      )
-    if (hasFieldTtl) {
-      this.hashesWithFieldTtl.add(id)
-    } else {
-      this.hashesWithFieldTtl.delete(id)
-    }
   }
 
   subscribe(listener: RedisMutationListener): Unsubscribe {
@@ -533,6 +554,7 @@ export class RedisDatabase {
       database: this.id,
       key: entry.key,
       value: entry.value,
+      valueType: entry.value.type,
       expiresAt: entry.expiresAt,
     })
   }

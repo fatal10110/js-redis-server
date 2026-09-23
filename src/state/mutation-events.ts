@@ -18,7 +18,11 @@ export type RedisMutationEvent = (
       type: 'write'
       database: number
       key: Buffer
+      // Cloned lazily, on first read — see cloneMutationEvent. A listener
+      // that keeps the event past the emit (delayed replication) must read it
+      // synchronously to snapshot the value as of this write.
       value: RedisDataValue
+      valueType: RedisDataValue['type']
       expiresAt?: number
     }
   | {
@@ -130,12 +134,21 @@ function keyId(key: Buffer): string {
 
 function cloneMutationEvent(event: RedisMutationEvent): RedisMutationEvent {
   switch (event.type) {
-    case 'write':
-      return {
-        ...event,
-        key: Buffer.from(event.key),
-        value: cloneRedisDataValue(event.value),
-      }
+    case 'write': {
+      // Most listeners (WATCH, blocked clients, keyspace notifications) never
+      // read the value, and cloning a whole collection for every listener on
+      // every write made filling one hash element by element quadratic. So
+      // the copy is made on first read, once per listener's event.
+      const source = event.value
+      let copy: RedisDataValue | undefined
+      const cloned = { ...event, key: Buffer.from(event.key) }
+      Object.defineProperty(cloned, 'value', {
+        enumerable: true,
+        configurable: true,
+        get: () => (copy ??= cloneRedisDataValue(source)),
+      })
+      return cloned
+    }
     case 'delete':
     case 'expire':
     case 'persist':

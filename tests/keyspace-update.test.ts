@@ -375,4 +375,37 @@ describe('RedisDatabase.sweepExpired — active hash-field expiry (#486 review)'
     assert.strictEqual(db.sweepExpired(now + 200), 0)
     assert.deepStrictEqual(events, [])
   })
+
+  test('a removed or extended field TTL never expires the field early', () => {
+    // The sweep's per-hash deadline is only a lower bound: PERSIST or a later
+    // TTL leaves it early, and the due scan must then expire nothing.
+    const { db, events } = setup()
+    const now = Date.now()
+    const key = Buffer.from('h')
+    db.updateHash(key, hash => {
+      hash.setField(Buffer.from('persisted'), Buffer.from('v'))
+      hash.setFieldExpiration(Buffer.from('persisted'), now + 50)
+      hash.setField(Buffer.from('extended'), Buffer.from('v'))
+      hash.setFieldExpiration(Buffer.from('extended'), now + 60)
+    })
+    db.updateHash(key, hash => {
+      hash.clearFieldExpiration(Buffer.from('persisted'))
+      hash.setFieldExpiration(Buffer.from('extended'), now + 1000)
+    })
+    events.length = 0
+
+    assert.strictEqual(db.sweepExpired(now + 100), 0)
+    assert.deepStrictEqual(events, [])
+    assert.strictEqual(db.getHash(key)!.fields.size, 2)
+
+    assert.strictEqual(db.sweepExpired(now + 1000), 0)
+    assert.deepStrictEqual(
+      events.map(event => [event.type, event.command]),
+      [['write', 'hexpired']],
+    )
+    assert.deepStrictEqual(
+      Array.from(db.getHash(key)!.fields.values()).map(f => f.field.toString()),
+      ['persisted'],
+    )
+  })
 })

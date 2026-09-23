@@ -338,9 +338,10 @@ types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`,
 attach an `expiresAt` timestamp to individual fields for the hash-field TTL
 commands. Expired fields are dropped as a mutation of their own, published as
 `hexpired` (then `del` if the hash empties) — never under the name of the
-command that touched the key: by the active sweep, which visits only the
-hashes `RedisDatabase` tracks as carrying field TTLs, and lazily by
-`updateHash` for a field that expired since the last tick. The keyspace
+command that touched the key: by the active sweep, which scans a hash only
+once the lower bound `RedisDatabase` keeps on its earliest field deadline is
+due (so an ordinary hash write costs O(1)), and lazily by `updateHash` for a
+field that expired since the last tick. The keyspace
 removes the hash key when the last live field disappears. Stream values store ordered entries plus consumer groups, per-group
 pending-entry lists, and consumer idle metadata. Key (and hash-field) expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
@@ -351,8 +352,11 @@ the master's replicated deletion. `getLiveEntry` still calls
 expired key before the next sweep. Either path deletes the entry and emits an
 `evict` mutation event so `WATCH` observes expiry exactly like a real delete.
 Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`/`notify`)
-flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L98),
-which clones values before fan-out so subscribers can never mutate shared state.
+flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L102),
+which gives each subscriber its own copy of the event — a `write`'s value is
+cloned on the subscriber's first read of it (most never read it; each write
+also carries `valueType`), so subscribers can never mutate shared state and an
+unread value costs nothing.
 `notify` is the odd one out: it is the keyspace-notification signal on its own
 (real Redis' `notifyKeyspaceEvent` without `signalModifiedKey`), so the bus
 delivers it only to global listeners, never to the per-key listeners `WATCH`

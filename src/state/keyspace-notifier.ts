@@ -200,11 +200,9 @@ export class KeyspaceNotifier {
           return null
         }
         const name = WRITE_EVENT_OVERRIDES[command] ?? command
-        const valueType =
-          event.type === 'write' ? event.value.type : event.valueType
         const eventClass = GENERIC_WRITE_COMMANDS.has(command)
           ? 'g'
-          : CLASS_FOR_TYPE[valueType]
+          : CLASS_FOR_TYPE[event.valueType]
         return {
           database: event.database,
           key: event.key,

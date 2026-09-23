@@ -34,9 +34,14 @@ import {
 // still announces (XGROUP subcommands, XSETID) call markCommitted() instead.
 
 export class TrackedHashData {
+  /**
+   * @param onFieldExpiry told every field deadline this write sets, so the
+   *   database can schedule active field expiry without rescanning the hash.
+   */
   constructor(
     private readonly hash: RedisHashData,
     private readonly tracker: KeyspaceMutationTracker,
+    private readonly onFieldExpiry: (expiresAt: number) => void = () => {},
   ) {}
 
   get size(): number {
@@ -76,6 +81,7 @@ export class TrackedHashData {
     const ttlChanged = existing?.expiresAt !== expiresAt
 
     this.hash.fields.set(hex, { field, value, expiresAt })
+    if (expiresAt !== undefined) this.onFieldExpiry(expiresAt)
     if (options.forceDirty || valueChanged || ttlChanged) {
       this.tracker.markChanged()
     }
@@ -112,6 +118,7 @@ export class TrackedHashData {
 
     if (entry.expiresAt !== expiresAt) {
       entry.expiresAt = expiresAt
+      this.onFieldExpiry(expiresAt)
       this.tracker.markChanged()
     }
     return true
