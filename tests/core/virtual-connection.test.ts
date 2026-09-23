@@ -435,9 +435,9 @@ describe('createVirtualConnection — client-side half-close', () => {
     const seen = record(conn.clientSocket)
     await once(conn.clientSocket, 'connect')
 
-    // The confirmations are already queued when the client's EOF is read. main
-    // (and 4127ed6) deliver all three; tearing down on EOF must not cut the
-    // background drain off after the first.
+    // The confirmations are one reply, already being written when the client's
+    // EOF is read; tearing down on EOF must not cut it off before all three
+    // are delivered.
     conn.clientSocket.write(commandFrame('SUBSCRIBE', 'a', 'b', 'c'))
     conn.clientSocket.end()
 

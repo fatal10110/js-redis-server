@@ -13,6 +13,7 @@ export type FeatureId =
   | 'command.getkeysandflags'
   | 'acl.dryrun'
   | 'config.set.failure-message'
+  | 'config.set.multi-pair'
   | 'config.memory-value.reject-overflow'
   | 'client.no-evict'
   | 'client.kill.maxage'

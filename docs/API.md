@@ -156,6 +156,7 @@ Current profile gates:
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
 | Unknown-subcommand error wording for every container command (`unknown subcommand '<name>'. Try <CMD> HELP.` with the echoed name cut at 128 bytes, vs. 6.2's untruncated `Unknown subcommand or wrong number of arguments for '<name>'.`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`) | `redis-7.0+` | `valkey-8.0+` |
+| `CONFIG SET` with several parameter/value pairs, its `config\|set` arity / `syntax error` split, and `duplicate parameter` detection (6.2 accepts exactly one pair and answers any other shape with `Unknown subcommand or wrong number of arguments for 'SET'.`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
 | `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |
