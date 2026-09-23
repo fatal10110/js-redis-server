@@ -22,7 +22,10 @@
  *    different failure than the one recorded — a regression hiding behind the
  *    todo);
  *  - never ran its body (a hook failed first: the cause is not the recorded
- *    one, so the file needs a `skip` entry).
+ *    one, so the file needs a `skip` entry);
+ *  - ran its body but never finished it — node:test timed it out or cancelled
+ *    it, so it neither passed nor failed with the recorded error (a hang is a
+ *    different failure too).
  * Every `todo` entry names its titles; only `skip` entries may cover a whole
  * file, so a test added to a listed file still has to pass or be listed.
  *
@@ -34,11 +37,18 @@
  * entry) and each `todo` entry must name its titles and `error`. A bad list
  * fails every file. (The `--test` orchestrator itself does not run `--import`
  * preloads, so the check cannot live there.)
+ *
+ * `SOCKETLESS_KNOWN_GAPS_MODULE` swaps in another list (a module exporting
+ * `SOCKETLESS_KNOWN_GAPS`); only `tests/socketless-register.test.ts` uses it,
+ * to run this preload against fixtures.
  */
 import { createRequire, syncBuiltinESMExports } from 'node:module'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
-import { SOCKETLESS_KNOWN_GAPS, type KnownGap } from './known-gaps'
+import {
+  SOCKETLESS_KNOWN_GAPS as DEFAULT_KNOWN_GAPS,
+  type KnownGap,
+} from './known-gaps'
 
 type TestFn = (...args: unknown[]) => unknown
 type Variant = 'skip' | 'todo' | 'only'
@@ -61,6 +71,16 @@ if (process.env.TEST_BACKEND !== 'socketless') {
 const INTEGRATION_DIR = path.resolve(__dirname, '..')
 const INTEGRATION_ROOT = `${path.sep}tests-integration${path.sep}`
 const AUDIT_SKIPS = process.env.SOCKETLESS_AUDIT_SKIPS === '1'
+const requireHere = createRequire(path.join(process.cwd(), 'noop.js'))
+
+const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = process.env
+  .SOCKETLESS_KNOWN_GAPS_MODULE
+  ? (
+      requireHere(path.resolve(process.env.SOCKETLESS_KNOWN_GAPS_MODULE)) as {
+        SOCKETLESS_KNOWN_GAPS: readonly KnownGap[]
+      }
+    ).SOCKETLESS_KNOWN_GAPS
+  : DEFAULT_KNOWN_GAPS
 
 validateList()
 
@@ -69,7 +89,7 @@ validateList()
 if ((process.env.NODE_TEST_CONTEXT ?? '').startsWith('child')) {
   const testFile = process.argv
     .slice(1)
-    .find(arg => arg.includes(INTEGRATION_ROOT) && arg.endsWith('.test.ts'))
+    .find(arg => arg.includes(INTEGRATION_ROOT) && arg.endsWith('.ts'))
   const fileKey = testFile
     ?.slice(testFile.lastIndexOf(INTEGRATION_ROOT) + INTEGRATION_ROOT.length)
     .split(path.sep)
@@ -108,19 +128,26 @@ type Seen = {
   paths: string[]
   passed: string[]
   ran: Set<string>
+  /** Bodies that finished: passed, or failed (with any error). */
+  settled: Set<string>
   unexpected: string[]
 }
 
 function install(gaps: readonly KnownGap[]): void {
-  const require = createRequire(path.join(process.cwd(), 'noop.js'))
-  const nodeTest = require('node:test') as NodeTestModule
+  const nodeTest = requireHere('node:test') as NodeTestModule
 
   const seen = new Map<string, Seen>()
   const seenFor = (gap: KnownGap, title: string): Seen => {
     const key = `${gaps.indexOf(gap)}\0${title}`
     let entry = seen.get(key)
     if (!entry) {
-      entry = { paths: [], passed: [], ran: new Set(), unexpected: [] }
+      entry = {
+        paths: [],
+        passed: [],
+        ran: new Set(),
+        settled: new Set(),
+        unexpected: [],
+      }
       seen.set(key, entry)
     }
     return entry
@@ -261,6 +288,10 @@ function staleness(
         problems.push(
           `${gap.file} > '${p}': its body never ran (a hook failed first) — that is not the recorded cause; use a skip entry`,
         )
+      } else if (!record.settled.has(p)) {
+        problems.push(
+          `${gap.file} > '${p}': never finished (timed out or cancelled) — that is not the recorded cause`,
+        )
       }
     }
   }
@@ -278,6 +309,7 @@ function observe(
   expected: RegExp | undefined,
 ): TestFn {
   const failed = (err: unknown) => {
+    record.settled.add(fullPath)
     const message = err instanceof Error ? err.message : String(err)
     if (expected && !expected.test(message)) {
       record.unexpected.push(
@@ -295,6 +327,7 @@ function observe(
           if (err) {
             failed(err)
           } else {
+            record.settled.add(fullPath)
             record.passed.push(fullPath)
           }
           callback(err)
@@ -313,6 +346,7 @@ function observe(
       failed(err)
       throw err
     }
+    record.settled.add(fullPath)
     record.passed.push(fullPath)
   }
 }

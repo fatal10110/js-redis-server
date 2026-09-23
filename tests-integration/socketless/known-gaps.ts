@@ -17,8 +17,9 @@
  * signatures — most of these are surface it does not have yet, not wrong
  * replies.
  *
- * One divergence is not listed per test because the harness mirrors it away:
- * see {@link FACADE_DEFAULT_PROTOCOL}.
+ * Two divergences are not listed per test, because the harness works around
+ * them or no suite can observe them through the facade: see
+ * {@link FACADE_DEFAULT_PROTOCOL} and {@link FACADE_PUBSUB_PROTOCOL}.
  */
 export type KnownGap = {
   /** Test file, relative to `tests-integration/` (e.g. `ioredis/multi.test.ts`). */
@@ -50,54 +51,78 @@ export type KnownGap = {
  * facade answers ZSCORE with `'2.5'` and HGETALL (via `sendCommand`) with
  * `['f', 'v']` where a default node-redis 6 client gets `2.5` and
  * `{ f: 'v' }`. The socketless harness sends `HELLO 3` to every facade so the
- * suites run on the protocol they run on against mock/real; the divergence
- * itself is pinned as a todo by `node-redis/socketless-parity.test.ts`.
+ * suites run on the protocol they run on against mock/real. The divergence
+ * itself is pinned by `node-redis/socketless-parity.test.ts`, which asserts
+ * today's facade replies — so it fails, loudly, once the facade is fixed.
  * Follow-up for `src/`: default the facade to node-redis' own default.
  */
 export const FACADE_DEFAULT_PROTOCOL =
   "createNodeRedisMock() starts on RESP2; node-redis 6's default client negotiates RESP3 (HELLO 3), so default-protocol replies differ (ZSCORE '2.5' vs 2.5, HGETALL flat array vs object)"
 
+/**
+ * The facade's pub/sub runs on a dedicated session it opens on first
+ * subscribe (`ensurePubSub()`), and that session never negotiates RESP3 —
+ * not even on a client that sent `HELLO 3` — so a RESP3 facade subscriber
+ * still receives RESP2 frames. The listener API (`(message, channel)`) hides
+ * the frame shape, so no test through the facade can observe it; the parity
+ * suite's facade pub/sub case therefore claims delivery parity only.
+ * Follow-up for `src/`: open the pub/sub session at the client's protocol.
+ */
+export const FACADE_PUBSUB_PROTOCOL =
+  "NodeRedisMockClient's pub/sub session (ensurePubSub) always runs RESP2, even after HELLO 3 on the client"
+
 type Cause = { reason: string; error: RegExp }
 
-/** The recurring causes, spelled once, each with the failure it produces. */
+/**
+ * The recurring causes, spelled once. Each `error` is the narrowest pattern
+ * that still names the cause itself — never a bare assertion failure — so a
+ * listed test that starts failing some other way is caught. Where a test
+ * asserts on a server error, the facade's actual error text appears inside
+ * node:assert's message, which is what these patterns then match.
+ */
 const CAUSE = {
   clusterSendCommand: {
     reason:
-      "calls node-redis' cluster `sendCommand(firstKey, isReadonly, args)`; `NodeRedisMockCluster.sendCommand` only takes `(args)`, so the key is read as the argument list",
+      "calls node-redis' cluster `sendCommand(firstKey, isReadonly, args)`; `NodeRedisMockCluster.sendCommand` only takes `(args)`, so the key is read as the argument list (`undefined` has no length; a key string is spread into characters)",
     error:
-      /must be of type "string \| Buffer"|Cannot read properties of undefined \(reading 'length'\)|unknown command '|Expected values to be strictly/,
+      /Cannot read properties of undefined \(reading 'length'\)|ERR unknown command '\{', with args beginning with/,
   },
   clusterTopology: {
     reason:
-      "reads node-redis' cluster topology (`cluster.slots` / `cluster.masters`) to find a slot owner and open a direct node client; `NodeRedisMockCluster` exposes neither",
-    error: /Cannot read properties of undefined \(reading '(?:\d+|length)'\)/,
+      "looks up a slot owner through node-redis' `cluster.slots`, which `NodeRedisMockCluster` does not expose",
+    error: /cluster\.slots is not available on this cluster client/,
   },
   argumentShapes: {
     reason:
       "passes node-redis' array / object argument forms (`sAdd(key, [members])`, `hSet(key, { … })`, `set(key, v, { expiration })`, …); the facade's curated methods only take positional strings",
-    error: /must be of type "string \| Buffer", got object/,
+    error: /"arguments\[\d+\]" must be of type "string \| Buffer", got object/,
   },
-  zRangeOptions: {
+  zRangeOptionsError: {
     reason:
-      "the facade's `zRange(key, start, stop)` silently drops node-redis' options argument (`BY` / `REV` / `LIMIT`) and runs a plain index ZRANGE — wrong results, not an error",
-    error: /Expected values to be strictly|ERR value is not an integer/,
+      "the facade's `zRange(key, start, stop)` drops node-redis' options argument (`BY` / `REV` / `LIMIT`) and runs a plain index ZRANGE, which rejects score/lex bounds",
+    error: /ERR value is not an integer or out of range/,
+  },
+  zRangeOptionsWrongResult: {
+    reason:
+      "the facade's `zRange(key, start, stop)` silently drops node-redis' options argument (`REV` / `BY`) and runs a plain index ZRANGE — wrong results, not an error. The only observable failure is the test's own deep-equal on the reply, so the pattern cannot be narrower than that; keep this entry to these titles",
+    error: /^Expected values to be strictly deep-equal:/,
   },
   duplicatePromise: {
     reason:
       '`NodeRedisMockClient.duplicate()` returns a Promise; node-redis returns the (unconnected) client synchronously',
-    error: /\.on is not a function/,
+    error: /^client\.on is not a function$/,
   },
   secondClusterClient: {
     reason:
       'needs a second cluster client on the same keyspace (blocking pop + push, WATCH from another connection); `NodeRedisMockCluster` has no `duplicate()` or equivalent',
-    error: /second node-redis cluster client/,
+    error: /second node-redis cluster client on the same keyspace/,
   },
 } as const satisfies Record<string, Cause>
 
 /** Skip reasons: setups the backend cannot provide at all. */
 const SKIP = {
   topologyInBefore:
-    "before() reads node-redis' cluster topology (`cluster.slots`) to find a slot owner; `NodeRedisMockCluster` does not expose it",
+    "before() looks up a slot owner through node-redis' `cluster.slots`, which `NodeRedisMockCluster` does not expose",
   secondClusterClient: CAUSE.secondClusterClient.reason,
   flushAllInHook:
     'beforeEach() calls `flushAll()`, which the facade does not have',
@@ -109,7 +134,7 @@ const SKIP = {
 function missing(...methods: string[]): Cause {
   return {
     reason: `the facade has no ${methods.map(m => `\`${m}()\``).join(', ')}`,
-    error: new RegExp(`\\b(?:${methods.join('|')}) is not a function`),
+    error: new RegExp(`\\.(?:${methods.join('|')}) is not a function$`),
   }
 }
 
@@ -124,17 +149,17 @@ function skip(file: string, reason: string): KnownGap {
 export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/cluster-integration.test.ts', CAUSE.clusterSendCommand, [
     'HELLO reports master and replica roles for direct node connections',
+    'Lua redis.call and redis.pcall non-local key errors match Redis',
     'READONLY and READWRITE arity errors match Redis',
     'READONLY lets direct replica connections serve readonly commands for master slots',
     'RESET clears READONLY replica mode',
+    'direct node connections return MOVED for keys owned by another node',
+    'direct replica connections redirect keyed commands to the master',
   ]),
   todo('node-redis/cluster-integration.test.ts', CAUSE.clusterTopology, [
     'CLUSTER NODES reports bus port as client port + 10000',
     'CLUSTER SHARDS returns structured shard metadata',
     'CLUSTER arity and subcommand errors match Redis',
-    'Lua redis.call and redis.pcall non-local key errors match Redis',
-    'direct node connections return MOVED for keys owned by another node',
-    'direct replica connections redirect keyed commands to the master',
   ]),
   todo('node-redis/command-integration.test.ts', CAUSE.clusterSendCommand, [
     'COMMAND COUNT and HELP expose the command surface',
@@ -202,11 +227,9 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'GEOSEARCH rejects wrong type key',
   ]),
   todo('node-redis/geo/search.test.ts', CAUSE.argumentShapes, [
-    'GEOSEARCHSTORE stores geohash score, STOREDIST stores distance',
-  ]),
-  todo('node-redis/geo/search.test.ts', CAUSE.clusterSendCommand, [
     'GEORADIUS STORE / STOREDIST write results, reject combining with WITH*',
     'GEOSEARCHSTORE rejects WITH* options',
+    'GEOSEARCHSTORE stores geohash score, STOREDIST stores distance',
   ]),
   todo('node-redis/hash/basic.test.ts', missing('hExists', 'hLen', 'hSetNX'), [
     'HEXISTS command',
@@ -235,10 +258,8 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'Hash commands workflow - Shopping Cart',
   ]),
   todo('node-redis/hash/errors-workflow.test.ts', CAUSE.argumentShapes, [
-    'Hash commands workflow - User Profile',
-  ]),
-  todo('node-redis/hash/errors-workflow.test.ts', CAUSE.clusterSendCommand, [
     'Hash command errors match Redis',
+    'Hash commands workflow - User Profile',
   ]),
   todo('node-redis/hash/field-expire.test.ts', CAUSE.clusterTopology, [
     'HEXPIRE arg-content errors stay inline inside MULTI/EXEC',
@@ -280,10 +301,8 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/key/commands.test.ts', CAUSE.argumentShapes, [
     'DBSIZE command',
     'EXISTS command',
-    'UNLINK command removes keys and returns the deleted count',
-  ]),
-  todo('node-redis/key/commands.test.ts', CAUSE.clusterSendCommand, [
     'Key command errors and past expiration match Redis',
+    'UNLINK command removes keys and returns the deleted count',
   ]),
   todo('node-redis/key/commands.test.ts', CAUSE.clusterTopology, [
     'TOUCH command counts live keys without mutating keyspace',
@@ -293,7 +312,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'PERSIST removes expiration and EXPIRE 0 deletes the key',
     'TTL integration with EXPIRE and EXPIREAT',
   ]),
-  todo('node-redis/key/expire.test.ts', CAUSE.clusterSendCommand, [
+  todo('node-redis/key/expire.test.ts', CAUSE.argumentShapes, [
     'EXPIRETIME and PEXPIRETIME return absolute expiry, -1, -2',
     'TTL rounds to nearest second like real Redis (#59)',
   ]),
@@ -434,8 +453,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'SPOP command with count',
     'SRANDMEMBER command',
     'SREM command',
-  ]),
-  todo('node-redis/set/core.test.ts', CAUSE.clusterSendCommand, [
     'Set command errors match Redis',
   ]),
   todo('node-redis/set/core.test.ts', CAUSE.clusterTopology, [
@@ -683,10 +700,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     ],
   ),
   todo('node-redis/zset/core.test.ts', CAUSE.argumentShapes, [
+    'Sorted set command errors match Redis',
     'sorted set commands accept and return Redis infinity score tokens',
   ]),
   todo('node-redis/zset/core.test.ts', CAUSE.clusterSendCommand, [
-    'Sorted set command errors match Redis',
     'ZADD option syntax errors match Redis',
   ]),
   todo(
@@ -716,7 +733,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'ZRANGEBYLEX validates LIMIT clause',
     'lex commands reject wrong arity',
   ]),
-  todo('node-redis/zset/lex.test.ts', CAUSE.zRangeOptions, [
+  todo('node-redis/zset/lex.test.ts', CAUSE.zRangeOptionsError, [
     'ZREVRANGEBYLEX returns members in reverse lex order (max then min)',
   ]),
   todo(
@@ -747,24 +764,26 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   ),
   todo('node-redis/zset/modern-range.test.ts', CAUSE.argumentShapes, [
     'ZRANGESTORE deletes destination when source is missing or range is empty',
+    'ZRANGESTORE rejects invalid syntax and wrong-type sources',
     'ZRANGESTORE supports BYSCORE and BYLEX ranges',
   ]),
   todo('node-redis/zset/modern-range.test.ts', CAUSE.clusterSendCommand, [
     'ZMSCORE rejects wrong arity',
     'ZRANDMEMBER with non-integer count errors',
     'ZRANGE rejects invalid option combinations',
-    'ZRANGESTORE rejects invalid syntax and wrong-type sources',
   ]),
   todo('node-redis/zset/modern-range.test.ts', CAUSE.clusterTopology, [
     'ZRANGESTORE rejects destination and source keys from different slots',
   ]),
-  todo('node-redis/zset/modern-range.test.ts', CAUSE.zRangeOptions, [
+  todo('node-redis/zset/modern-range.test.ts', CAUSE.zRangeOptionsError, [
     'ZRANGE BYLEX REV takes bounds as max min and reverses',
     'ZRANGE BYLEX filters by lex bounds',
-    'ZRANGE BYSCORE REV takes bounds as max min and reverses',
     'ZRANGE BYSCORE filters by score bounds',
-    'ZRANGE REV reverses the index ordering',
     'ZRANGE on a missing key returns empty array',
+  ]),
+  todo('node-redis/zset/modern-range.test.ts', CAUSE.zRangeOptionsWrongResult, [
+    'ZRANGE BYSCORE REV takes bounds as max min and reverses',
+    'ZRANGE REV reverses the index ordering',
   ]),
   todo(
     'node-redis/zset/range.test.ts',
@@ -775,10 +794,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'score range commands support infinite and exclusive bounds',
     ],
   ),
-  todo('node-redis/zset/range.test.ts', CAUSE.clusterSendCommand, [
+  todo('node-redis/zset/range.test.ts', CAUSE.argumentShapes, [
     'ZRANK and ZREVRANK WITHSCORE option',
   ]),
-  todo('node-redis/zset/range.test.ts', CAUSE.zRangeOptions, [
+  todo('node-redis/zset/range.test.ts', CAUSE.zRangeOptionsWrongResult, [
     'ZREVRANGE command',
   ]),
   todo(
@@ -813,7 +832,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'ZREMRANGEBYRANK rejects non-integer rank',
     'ZREMRANGEBYRANK rejects wrong arity',
   ]),
-  todo('node-redis/zset/score-range.test.ts', CAUSE.zRangeOptions, [
+  todo('node-redis/zset/score-range.test.ts', CAUSE.zRangeOptionsError, [
     'ZREVRANGEBYSCORE exclusive bounds',
     'ZREVRANGEBYSCORE on missing key returns empty',
     'ZREVRANGEBYSCORE rejects non-float bound',

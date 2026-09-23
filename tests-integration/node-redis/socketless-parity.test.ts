@@ -15,7 +15,6 @@ import {
   type NodeRedisMockClient,
   type NodeRedisMockCluster,
 } from '../../src/index'
-import { FACADE_DEFAULT_PROTOCOL } from '../socketless/known-gaps'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 
@@ -263,42 +262,53 @@ describe(
       ]
     }
 
-    test(
-      'default protocol: createNodeRedisMock() answers like a default node-redis client',
-      { todo: FACADE_DEFAULT_PROTOCOL },
-      async () => {
-        // No RESP option and no HELLO on either side: what a user gets out of
-        // the box. node-redis 6 negotiates RESP3; the facade stays on RESP2.
-        const ref = createClient({
-          url: `redis://127.0.0.1:${port}`,
-        }) as RedisClientType
-        ref.on('error', () => {})
-        await ref.connect()
-        references.push(ref)
-        const mock = (await createNodeRedisMock()) as NodeRedisMockClient
-        facades.push(mock)
+    // KNOWN GAP, pinned (FACADE_DEFAULT_PROTOCOL in socketless/known-gaps.ts):
+    // out of the box the facade answers on RESP2 while a default node-redis 6
+    // client negotiates RESP3. This asserts today's divergence, so it fails
+    // once the facade defaults to RESP3 — then assert equality instead.
+    test('default protocol: createNodeRedisMock() still diverges from a default node-redis client', async () => {
+      // No RESP option and no HELLO on either side: what a user gets.
+      const ref = createClient({
+        url: `redis://127.0.0.1:${port}`,
+      }) as RedisClientType
+      ref.on('error', () => {})
+      await ref.connect()
+      references.push(ref)
+      const mock = (await createNodeRedisMock()) as NodeRedisMockClient
+      facades.push(mock)
 
-        const tag = `{parity-default:${randomKey()}}`
-        for (const args of [
-          ['ZADD', `${tag}:z`, '1', 'a', '2.5', 'b'],
-          ['HSET', `${tag}:h`, 'f', 'v'],
-        ]) {
-          await ref.sendCommand(args)
-          await mock.sendCommand(args)
-        }
-        for (const probe of [
-          ['ZSCORE', `${tag}:z`, 'b'],
-          ['HGETALL', `${tag}:h`],
-          ['ZRANGE', `${tag}:z`, '0', '-1', 'WITHSCORES'],
-        ]) {
-          assert.deepStrictEqual(
-            await outcome(() => mock.sendCommand(probe)),
-            await outcome(() => ref.sendCommand(probe)),
-            probe[0],
-          )
-        }
-      },
-    )
+      const tag = `{parity-default:${randomKey()}}`
+      for (const args of [
+        ['ZADD', `${tag}:z`, '1', 'a', '2.5', 'b'],
+        ['HSET', `${tag}:h`, 'f', 'v'],
+      ]) {
+        await ref.sendCommand(args)
+        await mock.sendCommand(args)
+      }
+
+      const zscore = ['ZSCORE', `${tag}:z`, 'b']
+      assert.strictEqual(await ref.sendCommand(zscore), 2.5)
+      assert.strictEqual(await mock.sendCommand(zscore), '2.5')
+
+      const hgetall = ['HGETALL', `${tag}:h`]
+      assert.deepStrictEqual(
+        { ...(await ref.sendCommand(hgetall)) },
+        { f: 'v' },
+      )
+      assert.deepStrictEqual(await mock.sendCommand(hgetall), ['f', 'v'])
+
+      const withScores = ['ZRANGE', `${tag}:z`, '0', '-1', 'WITHSCORES']
+      assert.deepStrictEqual(await ref.sendCommand(withScores), [
+        ['a', 1],
+        ['b', 2.5],
+      ])
+      assert.deepStrictEqual(await mock.sendCommand(withScores), [
+        'a',
+        '1',
+        'b',
+        '2.5',
+      ])
+    })
 
     for (const RESP of PROTOCOLS) {
       describe(`RESP${RESP}`, () => {
@@ -370,7 +380,11 @@ describe(
           )
         })
 
-        test('pub/sub delivers the same (message, channel) pushes', async () => {
+        // Delivery parity only, at either protocol: the facade's pub/sub
+        // session always runs RESP2 (FACADE_PUBSUB_PROTOCOL in
+        // socketless/known-gaps.ts), and its `(message, channel)` listener
+        // API hides the frame shape, so the RESP3 run cannot observe frames.
+        test('pub/sub delivers the same (message, channel) to listeners', async () => {
           const [ref, mock] = [await reference(RESP), await facade(RESP)]
           const channel = `parity-pubsub:${RESP}:${randomKey()}`
           const received = { ref: [] as string[][], mock: [] as string[][] }
@@ -384,11 +398,6 @@ describe(
           })
           const mockSub = await mock.duplicate()
           facades.push(mockSub)
-          // duplicate() does not carry the protocol over (a real node-redis
-          // duplicate re-handshakes with its RESP option), so say it again.
-          if (RESP === 3) {
-            await mockSub.sendCommand(['HELLO', '3'])
-          }
           await mockSub.subscribe(channel, (message, ch) => {
             received.mock.push([message, ch])
           })
