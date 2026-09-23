@@ -442,16 +442,15 @@ async function runLuaScript(
   const runtime = await ctx.server.getLuaRuntime()
 
   try {
-    const { reply: result, raisedByRedisCall } = runtime.evalScript(
-      script,
-      keys,
-      argv,
-      ctx,
-      { readOnly },
-    )
+    const {
+      reply: result,
+      raisedByRedisCall,
+      raisedByScriptRejection,
+    } = runtime.evalScript(script, keys, argv, ctx, { readOnly })
     const reply = renderScriptError(result, {
       profile: ctx.server.profile,
       raisedByRedisCall,
+      raisedByScriptRejection,
     })
     return RedisResult.create(luaReplyToRedisValue(reply))
   } catch (err) {

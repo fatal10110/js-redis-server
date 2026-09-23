@@ -39,12 +39,14 @@ export function errorReplyBytes(error: RedisCommandError): Buffer {
 
 // A subclass is kept only when (a) code tells it apart with `instanceof`
 // (WrongNumberOfArguments, UnknownRedisCommand and UnknownSubcommand in the
-// executor and Lua bridge; WrongType in tests), or (b) the pipeline raises it
-// around a command
-// rather than a command raising it: the state layer's WRONGTYPE, ClusterPolicy's
-// MOVED / CROSSSLOT / CLUSTERDOWN, AuthPolicy's NOAUTH, and the executor's
-// EXECABORT for a malformed EXEC. Every error a command raises itself is a
-// plain RedisCommandError from `errors` below, whatever its code prefix.
+// executor and Lua bridge; WrongType in tests), or (b) it is one of the
+// errors the pipeline raises outside any single command: ClusterPolicy's
+// MOVED / CROSSSLOT / CLUSTERDOWN, the executor's EXECABORT for a malformed
+// EXEC, AuthPolicy's NOAUTH, and the state layer's WRONGTYPE. Commands reuse
+// the last two for the same condition (HELLO's NOAUTH, a command's own type
+// check), and that is the only way a command throws a subclass: every other
+// error a command raises is a plain RedisCommandError from `errors` below,
+// whatever its code prefix.
 
 export class WrongNumberOfArgumentsError extends RedisCommandError {
   constructor(commandName: string) {
@@ -185,6 +187,9 @@ function cString(value: Buffer, precision: number): Buffer {
  */
 export const errors = Object.freeze({
   syntax: () => new RedisCommandError('syntax error'),
+  /** Redis 6.2's MSET / MSETNX odd-count error (`error.mset-odd-pairs-wording`). */
+  legacyMsetOddPairs: () =>
+    new RedisCommandError('wrong number of arguments for MSET'),
 
   // Auth / handshake
   /** `AUTH <password>` (single-arg) when the server has no `requirepass` set. */

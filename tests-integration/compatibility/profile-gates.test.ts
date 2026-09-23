@@ -880,7 +880,8 @@ describe(
     // the host's redis.pcall callback, so this server answers the wording
     // without it. The argument-type rejection is raised by the engine itself,
     // even under pcall, so it aborts the script instead (on every profile).
-    // Tighten to the real frames once the engine exposes the line.
+    // Tighten to the real frames once the engine exposes the line
+    // (fatal10110/lua-redis-wasm#28, #503).
     test(
       'script-level redis.pcall rejections on 6.2 (known gap: inner position)',
       {
@@ -899,6 +900,48 @@ describe(
         }
       },
     )
+
+    // Only a count the command table rejects is the scripting layer's arity
+    // error. HSET with a dangling field and an odd MSET pass the table (arity
+    // -4 / -3), so the command runs and answers its own error, `ERR` code
+    // included, in the profile's decoration. 6.2's MSET (and MSETNX) word it
+    // `wrong number of arguments for MSET`. Byte for byte against real
+    // redis-server 6.2.24, 7.0, 8.0.6 and Valkey 8.0.
+    test("a count the command table accepts gets the command's own arity error", async () => {
+      const legacy = !supportsSuffixScriptErrorDecoration()
+      const cases: Array<[string, string]> = [
+        [
+          "redis.call('hset', 'h', 'f', 'v', 'x')",
+          "ERR wrong number of arguments for 'hset' command",
+        ],
+        [
+          "redis.call('mset', 'k', 'v', 'x')",
+          legacy
+            ? 'ERR wrong number of arguments for MSET'
+            : "ERR wrong number of arguments for 'mset' command",
+        ],
+      ]
+      for (const [call, error] of cases) {
+        const pcall = `return ${call.replace('redis.call', 'redis.pcall')}`
+        assert.strictEqual(await send('EVAL', pcall, '0'), `-${error}\r\n`)
+
+        const script = `return ${call}`
+        assert.strictEqual(
+          await send('EVAL', script, '0'),
+          legacy
+            ? `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ${error}\r\n`
+            : `-${error} script: ${sha1(script)}, on @user_script:1.\r\n`,
+        )
+      }
+
+      // From a client, too.
+      assert.strictEqual(
+        await send('MSETNX', 'k', 'v', 'x'),
+        legacy
+          ? '-ERR wrong number of arguments for MSET\r\n'
+          : "-ERR wrong number of arguments for 'msetnx' command\r\n",
+      )
+    })
 
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so

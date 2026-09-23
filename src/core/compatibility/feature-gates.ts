@@ -82,6 +82,12 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // on 7.0+). Verified against redis-server 6.2.24, 7.0, 7.2, 8.0.6 and
   // Valkey 7.2 / 8.0, which answer the 7.0 form (#384).
   'error.unknown-command-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // MSET / MSETNX with an odd count of 3+ tokens (the command table accepts
+  // it, the command itself refuses it): 6.2 answers `wrong number of
+  // arguments for MSET` for both, 7.0 moved to the standard arity wording
+  // (`... for 'mset' command`, `... for 'msetnx' command`). Verified against
+  // redis-server 6.2.24 and 7.0 (#492).
+  'error.mset-odd-pairs-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },

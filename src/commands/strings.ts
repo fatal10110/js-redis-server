@@ -680,6 +680,15 @@ function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
         const key = input[cursor]
         const value = input[cursor + 1]
         if (!key || !value) {
+          // An odd count the command table accepts (3+ tokens) is MSET's own
+          // check. 6.2 words it `wrong number of arguments for MSET`, for
+          // MSETNX too.
+          if (
+            input.length - index >= 2 &&
+            !ctx.profile.has('error.mset-odd-pairs-wording')
+          ) {
+            throw errors.legacyMsetOddPairs()
+          }
           throwWrongArity(ctx.commandName)
         }
         pairs.push({ key, value })

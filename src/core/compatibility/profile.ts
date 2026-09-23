@@ -25,6 +25,7 @@ export type FeatureId =
   | 'reply.help-print-wording'
   | 'xgroup.help-entriesread'
   | 'error.unknown-command-wording'
+  | 'error.mset-odd-pairs-wording'
   | 'info.multi-section'
   | 'shutdown.now-force-abort'
   | 'pubsub.sharded'

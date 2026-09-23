@@ -243,10 +243,11 @@ so the PR body is not a durable home for a breaking-change note.
   - `WrongNumberOfArgumentsError`, `UnknownRedisCommandError` and
     `UnknownSubcommandError`: code checks them with `instanceof`. The last
     is new since 0.3.0 and is now exported from the root as well.
-  - `WrongTypeRedisError`: raised by the state layer.
+  - `WrongTypeRedisError`: raised by the state layer (and by commands that
+    check a key's type themselves).
   - `RedisMovedError`, `RedisCrossSlotError` and `RedisClusterDownError`:
     raised by the cluster policy.
-  - `NoAuthError`: raised by the auth policy.
+  - `NoAuthError`: raised by the auth policy (and by HELLO before auth).
   - `ExecCommandAbortError`: raised by the executor. It is newly exported
     from the root.
 
@@ -554,7 +555,14 @@ so the PR body is not a durable home for a breaking-change note.
   Lua script`, with no `ERR` code. A `redis.call` abort also gets 6.2's inner
   `@user_script: <line>: ` position, byte for byte against redis-server
   6.2.24. A `redis.pcall` rejection still lacks that position, because the Lua
-  engine does not pass the calling line to the host.
+  engine does not pass the calling line to the host
+  (fatal10110/lua-redis-wasm#28, [#503]). Only an argument count the command
+  table rejects gets the scripting layer's arity error, and it now comes
+  before the noscript / read-only checks, as in Redis. A count the table
+  accepts but the command refuses (`HSET h f v x`, an odd `MSET`) returns the
+  command's own error, `ERR` code included, on every profile ([#492]). On
+  `redis-6.2` that error for `MSET` / `MSETNX` reads `wrong number of
+  arguments for MSET` (new gate `error.mset-odd-pairs-wording`).
 
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print
@@ -858,5 +866,7 @@ requests they contain.
 [#486]: https://github.com/fatal10110/js-redis-server/pull/486
 [#364]: https://github.com/fatal10110/js-redis-server/issues/364
 [#384]: https://github.com/fatal10110/js-redis-server/issues/384
+[#492]: https://github.com/fatal10110/js-redis-server/issues/492
+[#503]: https://github.com/fatal10110/js-redis-server/issues/503
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
