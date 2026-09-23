@@ -11,7 +11,6 @@ import {
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
 import { RedisResult } from './core/redis-result'
-import { isResponseStream, type ResponseStream } from './core/response-stream'
 import { seedStandalone, type SeedEntry } from './seed'
 import { RedisServerState } from './state'
 
@@ -74,24 +73,16 @@ function anySignal(signals: readonly AbortSignal[]): AbortSignal {
  * to issue commands and read native JS replies without pulling in a real client
  * library.
  *
- * Streaming commands (SUBSCRIBE / PSUBSCRIBE / MONITOR) are not supported here;
- * use a real client for those.
+ * Push-mode commands (SUBSCRIBE / PSUBSCRIBE / SSUBSCRIBE / MONITOR) resolve to
+ * their immediate reply; the frames that follow arrive through {@link pushes}.
  */
 export class InMemoryRedisClient {
   private readonly session: ClientSession
   private readonly decodeOptions: ClientDecodeOptions
   private readonly onClose?: () => void
   private closed = false
-  /** Aborted on close — tears down any active stream and push readers. */
+  /** Aborted on close — ends every push reader. */
   private readonly lifetime = new AbortController()
-  /**
-   * Set once a streaming command (e.g. MONITOR) hands back a `ResponseStream`.
-   * `command()` consumes its first frame as the immediate reply; {@link pushes}
-   * drains the rest. Pub/sub doesn't set this — its messages flow through the
-   * session push channel instead (see {@link pushes}).
-   */
-  private activeStream?: ResponseStream
-  private streamFrames?: AsyncIterator<RedisResult>
 
   constructor(options: InMemoryRedisClientOptions) {
     this.session = new ClientSession({
@@ -111,9 +102,11 @@ export class InMemoryRedisClient {
    * to its native reply. Throws a {@link RedisCommandError} for `-ERR` replies,
    * mirroring what a real client surfaces.
    *
-   * Streaming commands (MONITOR / SUBSCRIBE / …) resolve to their *immediate*
+   * Push-mode commands (MONITOR / SUBSCRIBE / …) resolve to their *immediate*
    * reply (MONITOR's `OK`, the subscribe confirmation); their server-initiated
-   * frames are delivered through {@link pushes}.
+   * frames are delivered through {@link pushes}. A multi-target (UN)SUBSCRIBE
+   * resolves to its first confirmation; the rest arrive through
+   * {@link pushes}, ahead of any message.
    */
   async command(
     name: string,
@@ -128,19 +121,14 @@ export class InMemoryRedisClient {
       args.map(toRedisArgument),
     )
 
-    if (isResponseStream(result)) {
-      // A long-lived (MONITOR) or finite (multi-channel subscribe) stream: keep
-      // the iterator so pushes() continues it, and return the first frame as the
-      // immediate reply.
-      this.activeStream = result
-      this.streamFrames = result
-        .frames(this.lifetime.signal)
-        [Symbol.asyncIterator]()
-      const first = await this.streamFrames.next()
-      return first.done ? null : this.decode(first.value.value)
+    // The reply has been "delivered": the rest of a multi-target SUBSCRIBE's
+    // confirmations follow it, then whatever the command held back until now
+    // (MONITOR's first feed lines, a RESP3 PUBLISH's own message).
+    for (const frame of result.options?.trailingFrames ?? []) {
+      this.session.enqueuePush(RedisResult.create(frame))
     }
-
-    return this.decode((result as RedisResult).value)
+    result.options?.afterReply?.()
+    return this.decode(result.value)
   }
 
   /** Alias for {@link InMemoryRedisClient.command}. */
@@ -152,70 +140,28 @@ export class InMemoryRedisClient {
   }
 
   /**
-   * True once the last command put the connection into *push mode* — an active
-   * MONITOR stream, or a SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE that entered subscribed
-   * mode. Consumers should switch to draining {@link pushes} while this holds.
+   * True once the last command put the connection into *push mode* — MONITOR,
+   * or a SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE that entered subscribed mode.
+   * Consumers should switch to draining {@link pushes} while this holds.
    */
   get streaming(): boolean {
-    return this.activeStream !== undefined || this.session.mode === 'subscribed'
+    return this.session.monitoring || this.session.mode === 'subscribed'
   }
 
   /**
-   * Server-initiated frames for a connection in *push mode* — pub/sub messages
-   * (via the session push channel) and the tail of a MONITOR stream — decoded to
-   * native replies. Iterate it after issuing SUBSCRIBE/PSUBSCRIBE/MONITOR. Ends
-   * when `signal` (or the connection) is closed.
+   * Server-initiated frames for a connection in *push mode* — pub/sub messages,
+   * the 2nd..Nth confirmations of a multi-target (UN)SUBSCRIBE, and MONITOR
+   * lines — decoded to native replies. Iterate it after issuing
+   * SUBSCRIBE/PSUBSCRIBE/MONITOR. Ends when `signal` (or the connection) is
+   * closed.
    */
   async *pushes(signal?: AbortSignal): AsyncIterable<RedisNativeReply> {
     const sig = signal
       ? anySignal([this.lifetime.signal, signal])
       : this.lifetime.signal
 
-    const sources: AsyncIterator<RedisResult>[] = []
-    if (this.streamFrames) {
-      sources.push(this.streamFrames)
-    }
-    sources.push(this.session.readPushes(sig)[Symbol.asyncIterator]())
-
-    const queue: RedisResult[] = []
-    let finished = 0
-    let wake: (() => void) | null = null
-    const ping = () => {
-      wake?.()
-      wake = null
-    }
-
-    for (const source of sources) {
-      void (async () => {
-        try {
-          for (;;) {
-            const { value, done } = await source.next()
-            if (done) {
-              break
-            }
-            queue.push(value)
-            ping()
-          }
-        } finally {
-          finished++
-          ping()
-        }
-      })()
-    }
-
-    while (!sig.aborted) {
-      const frame = queue.shift()
-      if (frame) {
-        yield this.decode(frame.value)
-        continue
-      }
-      if (finished === sources.length) {
-        return
-      }
-      await new Promise<void>(resolve => {
-        wake = resolve
-        sig.addEventListener('abort', () => resolve(), { once: true })
-      })
+    for await (const frame of this.session.readPushes(sig)) {
+      yield this.decode(frame.value)
     }
   }
 
@@ -225,7 +171,6 @@ export class InMemoryRedisClient {
     }
     this.closed = true
     this.lifetime.abort()
-    this.activeStream?.close('client closed')
     this.session.close()
     this.onClose?.()
   }

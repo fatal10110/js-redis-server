@@ -415,12 +415,23 @@ facade deliberately does not reproduce that, and tears everything down.
 
 That `instanceof` works because the facade throws the `redis` package's *own*
 error classes (the same mechanism behind `WatchError` / `ErrorReply` /
-`MultiErrorReply`). They are resolved lazily, the first time a facade client is
-constructed — importing `js-redis-server` never loads `redis`, so ioredis-only
-users don't pay for it. Only if `redis` genuinely cannot be required (or predates
-one of these classes, as v4 predates `MultiErrorReply`) does the facade fall back
-to local classes that match in message and shape but are not `instanceof` the
-real ones; match on `err.message` if you need to support that.
+`SimpleError` / `MultiErrorReply`). Server errors are `SimpleError` — a subclass
+of `ErrorReply` — exactly as real node-redis v5+ decodes them, so both
+`instanceof ErrorReply` and `instanceof SimpleError` hold; on redis 4.1–4.x,
+which has no `SimpleError`, they are plain `ErrorReply`, again as that version
+throws. The classes are resolved lazily, the first time a facade client is
+constructed or an error is decoded — importing `js-redis-server` never loads
+`redis`, so ioredis-only users don't pay for it.
+
+They are resolved one at a time, and the facade follows the installed version:
+a class it does not export costs only that class, never the ones that do exist.
+Before redis 4.6.12 there is no `MultiErrorReply`, and — as on those releases —
+`exec()` then resolves with a failed command's `ErrorReply` inline in the reply
+array instead of throwing. redis 4.0.x exports no `ErrorReply` at all, so server
+errors there are a local look-alike that is not `instanceof` anything you can
+import; match on `err.message` on 4.0.x. The same look-alikes (matching node-redis
+v6 in message, `name` and `constructor.name`) are used if `redis` cannot be
+required at all.
 
 **Known gap ([#440](https://github.com/fatal10110/js-redis-server/issues/440)):**
 real node-redis re-opens a closed client (`connect()` reconnects,

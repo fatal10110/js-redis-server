@@ -10,20 +10,12 @@ import {
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
-import { isResponseStream, ResponseStream } from './response-stream'
 import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
 import { monitorTimestampMicros } from './clock'
 import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
 } from './compatibility'
-
-/**
- * The result of running a command: either a finished {@link RedisResult} or a
- * long-lived {@link ResponseStream} (e.g. SUBSCRIBE / MONITOR) whose frames the
- * transport drains over time.
- */
-export type ExecutorResult = RedisResult | ResponseStream
 
 export type CommandExecutorOptions = {
   registry: CommandRegistry
@@ -44,10 +36,10 @@ export type CommandExecutorOptions = {
  *
  * Two execution paths exist on purpose:
  *  - {@link executePlan} / {@link executeRaw} — async, used for real network
- *    clients; may return a {@link ResponseStream} and may await async commands.
+ *    clients; may await async commands.
  *  - {@link executePlanSync} — synchronous mirror used by the Lua runtime, where
- *    `redis.call` must complete in a single tick. Streams and promises are
- *    rejected rather than awaited.
+ *    `redis.call` must complete in a single tick. Promises are rejected rather
+ *    than awaited.
  *
  * The executor is stateless per-call: all mutable state lives on the
  * {@link RedisExecutionContext} (and the session it carries).
@@ -107,7 +99,7 @@ export class CommandExecutor {
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
     ctx: RedisExecutionContext,
-  ): Promise<ExecutorResult> {
+  ): Promise<RedisResult> {
     try {
       return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
     } catch (err) {
@@ -150,8 +142,7 @@ export class CommandExecutor {
    *     short-circuits execution (e.g. the transaction policy queues the command
    *     and returns "+QUEUED"; the cluster policy returns a MOVED/CROSSSLOT
    *     error). A short-circuit error during MULTI also dirties the transaction.
-   *  2. The command's own `execute`, awaited unless it produced a
-   *     {@link ResponseStream}.
+   *  2. The command's own `execute`, awaited.
    *
    * Execution-time {@link RedisCommandError}s become RESP error replies (and
    * dirty an open transaction when appropriate). Non-Redis errors propagate.
@@ -159,7 +150,7 @@ export class CommandExecutor {
   async executePlan(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
-  ): Promise<ExecutorResult> {
+  ): Promise<RedisResult> {
     const monitorCtx = createMonitorDeferredContext(ctx)
     const result = await this.executePlanInternal(plan, monitorCtx)
     publishMonitorEvent(plan, monitorCtx, result)
@@ -170,7 +161,7 @@ export class CommandExecutor {
   private async executePlanInternal(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
-  ): Promise<ExecutorResult> {
+  ): Promise<RedisResult> {
     try {
       for (const policy of this.policies) {
         const policyResult = await policy.beforeExecute?.(plan, ctx)
@@ -181,10 +172,7 @@ export class CommandExecutor {
 
       const restoreNotifyCommand = tagNotifyCommand(plan, ctx)
       try {
-        const result = plan.definition.execute(plan.args, ctx)
-        return isResponseStream(result)
-          ? ensureNonThenableStream(result)
-          : await result
+        return await plan.definition.execute(plan.args, ctx)
       } finally {
         restoreNotifyCommand()
       }
@@ -197,7 +185,7 @@ export class CommandExecutor {
    * Synchronous counterpart to {@link executePlan}, used by the Lua runtime for
    * `redis.call` / `redis.pcall`. Lua expects each nested command to resolve
    * immediately, so anything that would require awaiting — a command that
-   * returns a promise, a {@link ResponseStream}, or an async policy hook — is
+   * returns a promise, or an async policy hook — is
    * rejected with a {@link RedisCommandError} instead of being awaited. Async
    * command definitions are rejected before invocation so they cannot leave
    * orphaned work running after the script error (see
@@ -279,7 +267,7 @@ export class CommandExecutor {
 function publishMonitorEvent(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-  result: ExecutorResult,
+  result: RedisResult,
 ): void {
   if (!shouldPublishMonitorEvent(plan, ctx, result)) {
     return
@@ -350,7 +338,7 @@ function flushDeferredMonitorEvents(ctx: RedisExecutionContext): void {
 function shouldPublishMonitorEvent(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-  result: ExecutorResult,
+  result: RedisResult,
 ): boolean {
   if (ctx.monitor?.disabled) {
     return false
@@ -362,10 +350,6 @@ function shouldPublishMonitorEvent(
 
   if (plan.definition.monitor?.skip) {
     return false
-  }
-
-  if (!(result instanceof RedisResult)) {
-    return true
   }
 
   if (isQueuedTransactionCommand(plan, ctx, result)) {
@@ -480,50 +464,14 @@ function executionErrorResult(
 }
 
 /**
- * A command may return an object that is both a {@link ResponseStream} and
- * thenable (e.g. an async wrapper). Callers `await` the executor result, and
- * awaiting a thenable stream would unwrap it into its resolved value, breaking
- * streaming. This re-wraps such a stream in a plain, non-thenable object so it
- * survives the surrounding `await` untouched.
- *
- * NOTE: no *shipped* command needs this — both stream producers in the tree
- * (`src/commands/monitor.ts`, `src/commands/pubsub.ts`) return plain object
- * literals with no `then`. It guards the third-party `defineCommand` surface
- * only, so grepping `src/` for a caller finds nothing; that is expected, not
- * evidence it is dead. It goes away with `ResponseStream` itself (#366).
- */
-function ensureNonThenableStream(stream: ResponseStream): ResponseStream {
-  if (!('then' in stream)) {
-    return stream
-  }
-
-  return {
-    kind: 'response-stream',
-    get closed() {
-      return stream.closed
-    },
-    frames: signal => stream.frames(signal),
-    close: reason => stream.close(reason),
-  }
-}
-
-/**
  * Guard for the synchronous (Lua) path: a command's result must be a ready
- * {@link RedisResult}. Streaming commands and async commands are not callable
- * from scripts, so a stream is closed and both cases are surfaced as a
- * script-facing {@link RedisCommandError}.
+ * {@link RedisResult}. Async commands are not callable from scripts, so a
+ * promise is surfaced as a script-facing {@link RedisCommandError}.
  */
 function assertSyncCommandResult(
   plan: CommandPlan,
   result: ReturnType<CommandDefinition['execute']>,
 ): RedisResult {
-  if (isResponseStream(result)) {
-    result.close('Lua redis.call cannot run streaming commands')
-    throw new RedisCommandError(
-      `${plan.definition.name.toUpperCase()} is not allowed from scripts`,
-    )
-  }
-
   if (isThenable(result)) {
     throw new RedisCommandError(
       `${plan.definition.name.toUpperCase()} cannot run asynchronously from scripts`,

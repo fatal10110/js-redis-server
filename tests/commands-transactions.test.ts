@@ -5,7 +5,6 @@ import {
   RedisResult,
   RedisServerState,
   RedisValue,
-  type ResponseStream,
   Resp2SessionAdapter,
   createRedisCommandExecutor,
   defineCommand,
@@ -126,7 +125,12 @@ describe('new transaction commands', () => {
       flags: ['pubsub'],
       capabilities: { pushOnly: true },
       keys: () => [],
-      execute: () => createSingleFrameStream(),
+      execute: () =>
+        RedisResult.create(
+          RedisValue.push('message', [
+            RedisValue.bulkString(Buffer.from('updates')),
+          ]),
+        ),
     })
     const server = new RedisServerState()
     const executor = createRedisCommandExecutor({
@@ -381,19 +385,4 @@ describe('new transaction commands', () => {
 
 function queued(): RedisResult {
   return RedisResult.create(RedisValue.simpleString('QUEUED'))
-}
-
-function createSingleFrameStream(): ResponseStream {
-  return {
-    kind: 'response-stream',
-    closed: Promise.resolve(),
-    frames: async function* () {
-      yield RedisResult.create(
-        RedisValue.push('message', [
-          RedisValue.bulkString(Buffer.from('updates')),
-        ]),
-      )
-    },
-    close: () => {},
-  }
 }

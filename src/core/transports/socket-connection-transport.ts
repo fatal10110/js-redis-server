@@ -115,8 +115,9 @@ export class SocketConnectionTransport implements ConnectionTransport {
    * Redis's freeClient does (and main did over TCP): output the client has not
    * read is dropped. Waiting on it instead — which close()'s half-close does —
    * would park the session, and leak the stream, behind a client that stopped
-   * reading. `abort()` settles the in-flight writes, so the adapter's pending
-   * drains finish; `end()` still hands EOF to a client that is reading.
+   * reading. `abort()` settles the in-flight writes, so the adapter's write
+   * chain and push writer finish; `end()` still hands EOF to a client that is
+   * reading.
    *
    * Deferred by one immediate: the adapter's finally runs first and flushes
    * output that is already queued and can go out (e.g. the confirmations for a
@@ -125,11 +126,11 @@ export class SocketConnectionTransport implements ConnectionTransport {
    * bounds is writes that cannot complete, to a peer that stopped reading.
    *
    * This only runs once the read loop has seen the EOF. A bounded stream whose
-   * loop is blocked writing an ordinary request/response reply (not a
-   * background drain) to a client that stopped reading never gets that far, so
-   * that session stays parked until the stream closes. The shipped paths do
-   * not hit this: the virtual wire cannot back up, and a TCP peer that goes
-   * away errors or closes the socket, which aborts the transport.
+   * loop is blocked writing a reply to a client that stopped reading never
+   * gets that far, so that session stays parked until the stream closes. The
+   * shipped paths do not hit this: the virtual wire cannot back up, and a TCP
+   * peer that goes away errors or closes the socket, which aborts the
+   * transport.
    */
   private dropOnPeerEof(): void {
     setImmediate(() => {
