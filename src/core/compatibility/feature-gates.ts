@@ -15,6 +15,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Redis 6.2 saturates a memory value above the parameter's maximum to that
   // maximum; 7.0+ rejects it with the out-of-range error instead.
   'config.memory-value.reject-overflow': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 relaxed the RESP multibulk element-count bound in
+  // `processMultibulkBuffer` from `ll > 1024*1024` to `ll > INT_MAX`: `*1048577`
+  // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
+  // 7.0.15 / 8.0. Valkey forked after the change (7.2.14 accepts it).
+  'protocol.multibulk-count-int-max': { redis: '7.0.0', valkey: '7.2.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },

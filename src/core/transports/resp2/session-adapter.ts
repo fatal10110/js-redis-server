@@ -36,6 +36,7 @@ export class Resp2SessionAdapter {
       // Read per bulk header, not captured once: `CONFIG SET
       // proto-max-bulk-len` moves the ceiling for every connection immediately.
       maxBulkLength: () => this.session.server.protoMaxBulkLen,
+      profile: this.session.server.profile,
     })
   }
 

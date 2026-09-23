@@ -1,3 +1,5 @@
+import type { CompatibilityProfile } from '../../compatibility'
+
 export type Resp2CommandFrame = {
   command: Buffer
   args: Buffer[]
@@ -11,6 +13,12 @@ export type Resp2CommandDecoderOptions = {
    * server this connection belongs to is currently running with.
    */
   maxBulkLength: () => bigint
+  /**
+   * The server's compatibility profile, for the framing rules that differ by
+   * version (the multibulk element-count bound). Omitted, the decoder applies
+   * the 7.0+ rules, matching the default profile.
+   */
+  profile?: Pick<CompatibilityProfile, 'has'>
 }
 
 export class Resp2ParseError extends Error {
@@ -31,8 +39,19 @@ export class Resp2ParseError extends Error {
   }
 }
 
-/** Redis' `INT_MAX` ceiling on a multibulk element count (networking.c). */
+/**
+ * Redis' ceiling on a multibulk element count (networking.c,
+ * `processMultibulkBuffer`): `INT_MAX` since 7.0, `1024*1024` before it. Gated
+ * by `protocol.multibulk-count-int-max`.
+ */
 const MAX_MULTIBULK_COUNT = 2147483647
+const PRE_7_0_MAX_MULTIBULK_COUNT = 1024 * 1024
+
+/**
+ * Redis' `PROTO_INLINE_MAX_SIZE`: how many bytes of an inline request may sit
+ * in the buffer with no newline before it is refused.
+ */
+const INLINE_MAX_SIZE = 64 * 1024
 
 type ParseOutcome =
   | { kind: 'frame'; frame: Resp2CommandFrame; nextIndex: number }
@@ -42,6 +61,7 @@ type ParseOutcome =
 export class Resp2CommandDecoder {
   private buffered = Buffer.alloc(0)
   private readonly maxBulkLength: () => bigint
+  private readonly maxMultibulkCount: number
   /**
    * Set once a protocol error is raised. A RESP stream cannot be resynchronised
    * after one — Redis' own parser marks the client `CLIENT_CLOSE_AFTER_REPLY`
@@ -52,6 +72,10 @@ export class Resp2CommandDecoder {
 
   constructor(options: Resp2CommandDecoderOptions) {
     this.maxBulkLength = options.maxBulkLength
+    this.maxMultibulkCount =
+      options.profile?.has('protocol.multibulk-count-int-max') === false
+        ? PRE_7_0_MAX_MULTIBULK_COUNT
+        : MAX_MULTIBULK_COUNT
   }
 
   /**
@@ -131,14 +155,11 @@ export class Resp2CommandDecoder {
       return { kind: 'incomplete' }
     }
 
-    // Redis bounds the element count as well as each bulk. The upper bound is
-    // version-specific: 7.2.16 rejects above INT_MAX, while 6.2.24 rejects
-    // anything above 1024*1024 (`*1048577` errors on 6.2 and is accepted on
-    // 7.2). Only the INT_MAX bound is applied here, because it is the one every
-    // supported profile agrees on; the tighter pre-7.0 bound needs a
-    // compatibility gate and is tracked in #441.
+    // Redis bounds the element count as well as each bulk, but only from above:
+    // `ll <= 0` (including `*-5`) is skipped like `*0`, never an error. The
+    // bound is version-specific — see `maxMultibulkCount`.
     const count = parseLength(header.line, 'multibulk')
-    if (count < -1 || count > MAX_MULTIBULK_COUNT) {
+    if (count > this.maxMultibulkCount) {
       throw new Resp2ParseError('Protocol error: invalid multibulk length')
     }
 
@@ -175,25 +196,17 @@ export class Resp2CommandDecoder {
         throw new Resp2ParseError('Protocol error: invalid bulk length')
       }
 
+      // Redis reads exactly `length` bytes and then skips two *without looking
+      // at them*: a wrong terminator is not a protocol error, so
+      // `*1\r\n$3\r\nfooXX` dispatches `foo`. Verified on redis 6.2.24,
+      // 7.0.15, 7.2.4 and 8.0, and valkey 8.0.0 / 9.0.0. (Later valkey patch
+      // releases — 7.2.14, 8.0.11 — refuse it with `invalid CRLF in request`;
+      // not modelled, since no preset profile is one of them.)
       const valueStart = bulkHeader.nextIndex
       const valueEnd = valueStart + length
       const lineEnd = valueEnd + 2
       if (this.buffered.length < lineEnd) {
         return { kind: 'incomplete' }
-      }
-
-      if (
-        this.buffered[valueEnd] !== 0x0d ||
-        this.buffered[valueEnd + 1] !== 0x0a
-      ) {
-        // Known divergence, pre-dating #415 and deliberately left alone here:
-        // real Redis does not verify the trailing CRLF at all. It reads exactly
-        // `ll` bytes and skips two, so `*1\r\n$3\r\nfooXX` dispatches `foo`
-        // (6.2.24 and 7.2.16 both answer `unknown command`). The wording below
-        // is ours, not Redis'. Tracked in #441 — matching Redis means dropping
-        // the check, which changes framing for malformed input and is unrelated
-        // to proto-max-bulk-len.
-        throw new Resp2ParseError('Protocol error: bulk string not terminated')
       }
 
       items.push(Buffer.from(this.buffered.subarray(valueStart, valueEnd)))
@@ -209,22 +222,35 @@ export class Resp2CommandDecoder {
   }
 
   private parseInlineFrame(index: number): ParseOutcome {
-    const line = readLine(this.buffered, index)
-    if (!line) {
+    // An inline request ends at `\n`; a `\r` just before it is optional
+    // (networking.c, `processInlineBuffer`).
+    const newline = this.buffered.indexOf(0x0a, index)
+    if (newline === -1) {
+      // Redis' 64KB inline cap bounds an *unterminated* buffer, not a line's
+      // length: it is checked only when no newline has arrived at all, so a
+      // line longer than 64KB whose newline turns up in the same read is still
+      // served. Verified on redis 6.2.24, 7.0.15, 8.0 and valkey 7.2.14.
+      if (this.buffered.length - index > INLINE_MAX_SIZE) {
+        throw new Resp2ParseError('Protocol error: too big inline request')
+      }
       return { kind: 'incomplete' }
     }
 
-    const parts = parseInlineArguments(line.line)
+    const lineEnd =
+      newline > index && this.buffered[newline - 1] === 0x0d
+        ? newline - 1
+        : newline
+    const parts = parseInlineArguments(this.buffered.subarray(index, lineEnd))
 
     if (parts.length === 0) {
-      return { kind: 'skip', nextIndex: line.nextIndex }
+      return { kind: 'skip', nextIndex: newline + 1 }
     }
 
     const [command, ...args] = parts
     return {
       kind: 'frame',
       frame: { command, args },
-      nextIndex: line.nextIndex,
+      nextIndex: newline + 1,
     }
   }
 }

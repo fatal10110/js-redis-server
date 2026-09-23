@@ -404,7 +404,11 @@ inline arguments) for the request side. The adapter pulls one frame at a time
 parsed — which is what lets the decoder enforce the *live*
 `proto-max-bulk-len` on every bulk header, refusing an oversized argument with
 `Protocol error: invalid bulk length` and closing the connection before any
-command handler sees it, exactly as Redis does.
+command handler sees it, exactly as Redis does. The adapter also hands the
+decoder the server's compatibility profile, which picks the multibulk
+element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+). Like Redis, the
+decoder refuses an inline request once more than 64KB is buffered with no
+newline.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)

@@ -154,6 +154,7 @@ Current profile gates:
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
+| RESP multibulk element count bounded at `INT_MAX` (6.2 refuses more than `1024*1024` with `Protocol error: invalid multibulk length`) | `redis-7.0+` | `valkey-8.0+` |
 | Unknown-subcommand error wording for every container command (`unknown subcommand '<name>'. Try <CMD> HELP.` with the echoed name cut at 128 bytes, vs. 6.2's untruncated `Unknown subcommand or wrong number of arguments for '<name>'.`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |
