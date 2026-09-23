@@ -5,6 +5,10 @@ import { TestRunner } from '../test-config'
 import { connectToSlotOwner, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe('multi', () => {
   let redisClient: Cluster | undefined
@@ -22,9 +26,9 @@ describe('multi', () => {
 
     try {
       const multi = redisClient!.multi()
-      multi.set('myKey', 'myValue')
-      const anotherRes = await anotherRedisClient.get('myKey')
-      multi.get('myKey')
+      multi.set(`myKey:${RUN}`, 'myValue')
+      const anotherRes = await anotherRedisClient.get(`myKey:${RUN}`)
+      multi.get(`myKey:${RUN}`)
 
       const res = await multi.exec()
 
@@ -43,7 +47,7 @@ describe('multi', () => {
 
   test('handle errors in multi', async () => {
     const multi = redisClient!.multi()
-    multi.set('myKey', 'myValue')
+    multi.set(`myKey:${RUN}`, 'myValue')
     multi.evalsha('abc')
 
     let error: Error | undefined
@@ -60,7 +64,7 @@ describe('multi', () => {
 
   test('handle graceful errors in multi', async () => {
     const multi = redisClient!.multi()
-    multi.set('myKey', 'myValue')
+    multi.set(`myKey:${RUN}`, 'myValue')
     multi.evalsha('abc', 0)
 
     const res = await multi.exec()

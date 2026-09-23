@@ -139,6 +139,150 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('SORT with a constant BY reads a zset in rank order', async () => {
+    await withOps(async (c, k) => {
+      // sortCommand()'s dontsort path walks the skiplist, so the reply is in
+      // rank order. Rank order (c, a, b) differs from both insertion order and
+      // ALPHA order (both a, b, c), so this cannot pass by accident.
+      await c.zadd(k('z'), '2', 'a', '3', 'b', '1', 'c')
+      await c.mset(k('w_a'), 'A', k('w_b'), 'B', k('w_c'), 'C')
+
+      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), ['c', 'a', 'b'])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort'), [
+        'c',
+        'a',
+        'b',
+      ])
+      assert.deepStrictEqual(await c.sort_ro(k('z'), 'BY', 'nosort'), [
+        'c',
+        'a',
+        'b',
+      ])
+      // Any BY pattern without a '*' is constant, so it takes the same path.
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', k('konstant')), [
+        'c',
+        'a',
+        'b',
+      ])
+
+      // LIMIT, GET and STORE all consume that same source ordering.
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'LIMIT', '1', '5'),
+        ['a', 'b'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'GET', k('w_*')),
+        ['C', 'A', 'B'],
+      )
+      assert.strictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'STORE', k('zd')),
+        3,
+      )
+      assert.deepStrictEqual(await c.lrange(k('zd'), '0', '-1'), [
+        'c',
+        'a',
+        'b',
+      ])
+
+      // A zset is already ordered, so it is never force-sorted ALPHA the way
+      // an unordered set is inside a script — ALPHA would say a, b, c here.
+      assert.deepStrictEqual(
+        await c.eval(
+          "return redis.call('SORT', KEYS[1], 'BY', 'nosort')",
+          1,
+          k('z'),
+        ),
+        ['c', 'a', 'b'],
+      )
+    })
+  })
+
+  test('SORT with a constant BY keeps a zset rank tie-break by raw bytes', async () => {
+    await withOps(async (c, k) => {
+      // Equal scores rank by memcmp, so the uppercase members sort first —
+      // the same order ZRANGE reports, and not the insertion order.
+      await c.zadd(k('z'), '1', 'b', '1', 'a', '1', 'c', '1', 'A', '1', 'B')
+
+      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), [
+        'A',
+        'B',
+        'a',
+        'b',
+        'c',
+      ])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort'), [
+        'A',
+        'B',
+        'a',
+        'b',
+        'c',
+      ])
+    })
+  })
+
+  test('SORT with a constant BY reads the source backwards for DESC', async () => {
+    await withOps(async (c, k) => {
+      // dontsort does not mean "ignore DESC": sortCommand() walks both the
+      // list and the skiplist from the tail toward the head instead, with
+      // LIMIT applied to that reversed walk. A set has no such branch, so
+      // DESC is genuinely a no-op there.
+      await c.rpush(k('l'), 'a', 'c', 'b')
+      await c.zadd(k('z'), '2', 'a', '3', 'b', '1', 'c')
+      await c.sadd(k('s'), 'a', 'c', 'b')
+
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', 'nosort', 'DESC'), [
+        'b',
+        'c',
+        'a',
+      ])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort', 'DESC'), [
+        'b',
+        'a',
+        'c',
+      ])
+      assert.deepStrictEqual(await c.sort_ro(k('z'), 'BY', 'nosort', 'DESC'), [
+        'b',
+        'a',
+        'c',
+      ])
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'DESC', 'LIMIT', '0', '2'),
+        ['b', 'a'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'DESC', 'LIMIT', '1', '5'),
+        ['a', 'c'],
+      )
+
+      // A set is unordered, so DESC changes nothing about its plain reply.
+      assert.deepStrictEqual(
+        await c.sort(k('s'), 'BY', 'nosort', 'DESC'),
+        await c.sort(k('s'), 'BY', 'nosort'),
+      )
+
+      // STORE consumes the reversed order for a list and a zset, while a set
+      // is still force-sorted ALPHA first and only then reversed.
+      await c.sort(k('l'), 'BY', 'nosort', 'DESC', 'STORE', k('ld'))
+      assert.deepStrictEqual(await c.lrange(k('ld'), '0', '-1'), [
+        'b',
+        'c',
+        'a',
+      ])
+      await c.sort(k('z'), 'BY', 'nosort', 'DESC', 'STORE', k('zd'))
+      assert.deepStrictEqual(await c.lrange(k('zd'), '0', '-1'), [
+        'b',
+        'a',
+        'c',
+      ])
+      await c.sort(k('s'), 'BY', 'nosort', 'DESC', 'STORE', k('sd'))
+      assert.deepStrictEqual(await c.lrange(k('sd'), '0', '-1'), [
+        'c',
+        'b',
+        'a',
+      ])
+    })
+  })
+
   // -------------------------------------------------------------------- STORE
 
   test('SORT STORE writes the result as a list and returns its length', async () => {
