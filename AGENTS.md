@@ -26,6 +26,8 @@ node --enable-source-maps --import tsx --no-warnings --test ./tests/path/to/test
 TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test ./tests-integration/**/*.test.ts
 ```
 
+Every `test*` npm script passes `--test-timeout` (60s; 30s for the real backend), so a hung test becomes a failure instead of a stalled run (#454). On Node 24 the timeout applies to each test and names it. On Node 22 it applies to each test *file*: the file's child process is killed and only the file is named, so give a test its own `{ timeout }` if you want a hang to name it. On Node 24, a timed-out test that leaks a socket or timer can still keep its file's process alive, and the CI job's `timeout-minutes` is the backstop for that. Don't add `--test-force-exit`: on Node 22 under macOS it drops whole files from the report.
+
 ### Building & Running
 
 ```bash

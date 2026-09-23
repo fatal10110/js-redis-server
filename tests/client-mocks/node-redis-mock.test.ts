@@ -61,7 +61,8 @@ function settleWithin(promise: Promise<unknown>, ms = 2000): Promise<unknown> {
 /**
  * For tests that park a blocking command: if a regression leaves something
  * pending forever, the test must FAIL and name itself, not stall the run
- * (node:test has no default timeout, and neither does `npm test`).
+ * (node:test has no default timeout, and on Node 22 `npm test`'s
+ * `--test-timeout` bounds the whole file, so it names only the file).
  */
 const BLOCKING_TEST = { timeout: 10_000 }
 

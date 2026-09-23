@@ -12,6 +12,7 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -35,6 +36,9 @@ jobs:
   unit:
     name: unit (node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    # Outer backstop only: the npm test scripts pass --test-timeout, so a hung
+    # test fails by name long before this (#454).
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +68,7 @@ jobs:
   packages:
     name: package (${{ matrix.package }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -90,6 +95,8 @@ jobs:
   integration:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    # Covers the Redis startup budget (--wait-timeout 420 below) plus the run.
+    timeout-minutes: 25
 
     strategy:
       fail-fast: false
