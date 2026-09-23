@@ -3,7 +3,6 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   ClientSession,
-  InMemoryConnectionTransport,
   RedisClusterTopology,
   RedisResult,
   RedisServerState,
@@ -14,6 +13,7 @@ import {
 } from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
+import { InMemoryTransport } from './in-memory-transport-test-helper'
 
 describe('new script commands', () => {
   test('loads scripts into the server-wide script cache', async () => {
@@ -321,7 +321,7 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
     assert.deepStrictEqual(
       await session.execute('function', [Buffer.from('missing')]),
       RedisResult.error(
-        "unknown subcommand 'missing'. Try FUNCTION HELP.",
+        Buffer.from("unknown subcommand 'missing'. Try FUNCTION HELP."),
         'ERR',
       ),
     )
@@ -532,7 +532,7 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
     assert.deepStrictEqual(
       await session.execute('script', [Buffer.from('missing')]),
       RedisResult.error(
-        "unknown subcommand 'missing'. Try SCRIPT HELP.",
+        Buffer.from("unknown subcommand 'missing'. Try SCRIPT HELP."),
         'ERR',
       ),
     )
@@ -634,8 +634,12 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
 
     assert.deepStrictEqual(
       await session.execute('eval', [script, Buffer.from('0'), key]),
+      // A script's error reply carries the engine's bytes verbatim, so the
+      // expectation is built from a Buffer too.
       RedisResult.error(
-        `Script attempted to access a non local key in a cluster node script: ${sha}, on @user_script:1.`,
+        Buffer.from(
+          `Script attempted to access a non local key in a cluster node script: ${sha}, on @user_script:1.`,
+        ),
         'ERR',
       ),
     )
@@ -643,7 +647,7 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
 
   test('runs SCRIPT commands through the RESP2 adapter', async () => {
     const { session } = createSession()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
     const script = 'return 1'

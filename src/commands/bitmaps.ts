@@ -16,34 +16,74 @@ import {
   BitfieldTypeError,
   ExpectedIntegerError,
   RedisSyntaxError,
+  StringExceedsMaxSizeError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { ensureStringOrMissing, INT64_MAX, INT64_MIN, integer } from './helpers'
-
-// The highest addressable bit. Redis caps a bit offset's *start byte* at
-// proto-max-bulk-len (512MB) — i.e. the offset itself must be < 2^32 bits.
-// A field may still spill one type-width past this, growing the buffer.
-const MAX_BIT_OFFSET = 0x1_0000_0000
+import { MAX_MATERIALISABLE_LENGTH } from './strings'
 
 const EMPTY = Buffer.alloc(0)
 
 // --- shared bit helpers ----------------------------------------------------
 
+// `Math.floor(/8)` rather than `>>> 3` throughout: a raised proto-max-bulk-len
+// makes offsets past 2^32 reachable, and JS bit shifts truncate to 32 bits.
+// `& 7` is safe at any magnitude — it keeps the low three bits either way.
+function byteIndexOf(bitIndex: number): number {
+  return Math.floor(bitIndex / 8)
+}
+
 function getBit(buf: Buffer, bitIndex: number): number {
-  const byteIndex = bitIndex >>> 3
+  const byteIndex = byteIndexOf(bitIndex)
   if (byteIndex >= buf.length) {
     return 0
   }
   return (buf[byteIndex]! >> (7 - (bitIndex & 7))) & 1
 }
 
+/**
+ * Allocate a bitmap buffer, turning an allocation failure into the ordinary
+ * Redis size error rather than a `RangeError` that escapes the command-error
+ * path and drops the connection.
+ *
+ * {@link assertBitOffsetWithinLimit} already keeps requests at or below
+ * {@link MAX_MATERIALISABLE_LENGTH}; this is the backstop for a host too short
+ * on memory to honour even that. Mirrors `allocateStringBuffer` in ./strings.ts.
+ */
+function allocateBitmapBuffer(size: number): Buffer<ArrayBuffer> {
+  try {
+    return Buffer.alloc(size)
+  } catch {
+    throw new StringExceedsMaxSizeError()
+  }
+}
+
 function byteAt(buf: Buffer, index: number): number {
   return index < buf.length ? buf[index]! : 0
 }
 
-function parseBitOffset(token: Buffer | undefined): number {
+/**
+ * Parse a bit offset and check it against the live `proto-max-bulk-len`.
+ *
+ * Redis caps the offset by the *byte* it addresses: `(offset >> 3) >=
+ * server.proto_max_bulk_len` is rejected (bitops.c,
+ * `getBitOffsetFromArgument`). At the 512MB default that is exactly "offset <
+ * 2^32", which is why a hardcoded ceiling was indistinguishable until
+ * `proto-max-bulk-len` became a live setting (#415). A field may still spill
+ * one type-width past the ceiling, growing the buffer — Redis allows that too.
+ *
+ * Callers run this at *execute* time, not while parsing arguments, because the
+ * limit is server state; that also matches Redis, where every bit-offset error
+ * is a runtime error (so inside MULTI the command queues and fails at EXEC).
+ * Ground-truthed against redis-server 6.2.24, 7.2.16 and 8.0.6.
+ */
+function parseBitOffset(
+  token: Buffer | undefined,
+  protoMaxBulkLen: bigint,
+  access: OffsetAccess,
+): number {
   if (!token) {
     throw new BitOffsetError()
   }
@@ -52,10 +92,48 @@ function parseBitOffset(token: Buffer | undefined): number {
     throw new BitOffsetError()
   }
   const value = Number(raw)
-  if (!Number.isSafeInteger(value) || value < 0 || value >= MAX_BIT_OFFSET) {
+  if (!Number.isSafeInteger(value) || value < 0) {
     throw new BitOffsetError()
   }
+  assertBitOffsetWithinLimit(value, protoMaxBulkLen, access)
   return value
+}
+
+/**
+ * Whether the operation an offset belongs to can grow the string. Only writes
+ * allocate; a read past the end of the value simply sees zero bits.
+ */
+type OffsetAccess = 'read' | 'write'
+
+/**
+ * @see parseBitOffset — the shared `(offset >> 3) >= limit` ceiling.
+ *
+ * For a *write* the effective limit is the lower of `proto-max-bulk-len` and
+ * {@link MAX_MATERIALISABLE_LENGTH}, exactly as `assertWithinProtoMaxBulkLen`
+ * in ./strings.ts caps `APPEND` / `SETRANGE`. Without that second term,
+ * raising `proto-max-bulk-len` past 512MB would let one SETBIT or BITFIELD
+ * SET/INCRBY allocate unbounded memory inside the test process — and
+ * `Buffer.alloc` is no backstop, since `buffer.constants.MAX_LENGTH` is 2^53-1
+ * on Node 22. That is a deliberate divergence: real Redis would allocate.
+ *
+ * A *read* (GETBIT, BITFIELD GET) keeps only Redis' own ceiling. It never
+ * allocates, in Redis or here, so capping it would add a divergence that makes
+ * nothing safer — just as ./strings.ts caps the string writers but not
+ * `GETRANGE`. Ground-truthed with `proto-max-bulk-len 629145600` on redis
+ * 6.2.24, 7.2.16 and 8.0.6: `GETBIT k 4294967296` answers `0` on all three.
+ */
+function assertBitOffsetWithinLimit(
+  offset: number,
+  protoMaxBulkLen: bigint,
+  access: OffsetAccess,
+): void {
+  const limit =
+    access === 'write' && MAX_MATERIALISABLE_LENGTH < protoMaxBulkLen
+      ? MAX_MATERIALISABLE_LENGTH
+      : protoMaxBulkLen
+  if (BigInt(byteIndexOf(offset)) >= limit) {
+    throw new BitOffsetError()
+  }
 }
 
 function parseRangeIndex(token: Buffer): number {
@@ -105,7 +183,18 @@ function countBits(buf: Buffer, firstBit: number, lastBit: number): number {
 
 // --- SETBIT / GETBIT -------------------------------------------------------
 
-type SetBitArgs = { key: Buffer; offset: number; value: number }
+// The offset and the bit are kept as raw tokens: both are validated at execute
+// time, because the offset's ceiling depends on the live `proto-max-bulk-len`
+// and Redis reports an out-of-range offset *before* an invalid bit value.
+type SetBitArgs = { key: Buffer; offset: Buffer; value: Buffer }
+
+function parseBitValue(token: Buffer): number {
+  const raw = token.toString()
+  if (raw !== '0' && raw !== '1') {
+    throw new BitValueError()
+  }
+  return Number(raw)
+}
 
 export const setbitCommand = defineCommand({
   name: 'setbit',
@@ -114,13 +203,12 @@ export const setbitCommand = defineCommand({
       if (input.length - index !== 3) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      const offset = parseBitOffset(input[index + 1])
-      const valueRaw = input[index + 2]!.toString()
-      if (valueRaw !== '0' && valueRaw !== '1') {
-        throw new BitValueError()
-      }
       return {
-        value: { key: input[index]!, offset, value: Number(valueRaw) },
+        value: {
+          key: input[index]!,
+          offset: input[index + 1]!,
+          value: input[index + 2]!,
+        },
         nextIndex: index + 3,
       }
     },
@@ -128,20 +216,28 @@ export const setbitCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    const offset = parseBitOffset(
+      args.offset,
+      ctx.server.protoMaxBulkLen,
+      'write',
+    )
+    const value = parseBitValue(args.value)
     const existing = ensureStringOrMissing(ctx.db, args.key)
-    const byteIndex = args.offset >>> 3
-    const bitMask = 1 << (7 - (args.offset & 7))
+    const byteIndex = byteIndexOf(offset)
+    const bitMask = 1 << (7 - (offset & 7))
 
     const current = existing ?? EMPTY
     const requiredSize = byteIndex + 1
     const target =
-      requiredSize > current.length ? Buffer.alloc(requiredSize) : current
+      requiredSize > current.length
+        ? allocateBitmapBuffer(requiredSize)
+        : current
     if (target !== current) {
       current.copy(target, 0)
     }
 
     const oldBit = (target[byteIndex]! & bitMask) === 0 ? 0 : 1
-    if (args.value === 1) {
+    if (value === 1) {
       target[byteIndex]! |= bitMask
     } else {
       target[byteIndex]! &= ~bitMask
@@ -152,7 +248,7 @@ export const setbitCommand = defineCommand({
   },
 })
 
-type GetBitArgs = { key: Buffer; offset: number }
+type GetBitArgs = { key: Buffer; offset: Buffer }
 
 export const getbitCommand = defineCommand({
   name: 'getbit',
@@ -162,7 +258,7 @@ export const getbitCommand = defineCommand({
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
       return {
-        value: { key: input[index]!, offset: parseBitOffset(input[index + 1]) },
+        value: { key: input[index]!, offset: input[index + 1]! },
         nextIndex: index + 2,
       }
     },
@@ -170,11 +266,16 @@ export const getbitCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    const offset = parseBitOffset(
+      args.offset,
+      ctx.server.protoMaxBulkLen,
+      'read',
+    )
     const existing = ensureStringOrMissing(ctx.db, args.key)
     if (!existing) {
       return integer(0)
     }
-    return integer(getBit(existing, args.offset))
+    return integer(getBit(existing, offset))
   },
 })
 
@@ -423,7 +524,25 @@ type BitFieldOp =
       operand: bigint
       overflow: Overflow
     }
-type BitFieldArgs = { key: Buffer; ops: BitFieldOp[] }
+/**
+ * BITFIELD's operation list is kept as raw tokens and validated at execute
+ * time, because a field offset is bounded by the live `proto-max-bulk-len`.
+ *
+ * That also matches Redis, which parses and validates the whole operation list
+ * inside the command (bitops.c, `bitfieldGeneric`) before running any of it, so
+ * a rejected op anywhere in the list leaves the key untouched. The parse pass
+ * walks the ops in argument order and, for each one, checks first that enough
+ * arguments remain for it (a short op is `ERR syntax error`, before its type is
+ * even read), then its type, offset and value. `OVERFLOW` is checked where it
+ * appears. The one exception to argument order is BITFIELD_RO's GET-only
+ * restriction, which Redis applies in a *second* pass once everything has
+ * parsed; see {@link parseBitFieldOps}.
+ */
+type BitFieldArgs = {
+  key: Buffer
+  tokens: readonly Buffer[]
+  readonly: boolean
+}
 
 function parseFieldType(token: Buffer | undefined): FieldType {
   if (!token) {
@@ -442,7 +561,12 @@ function parseFieldType(token: Buffer | undefined): FieldType {
   return { signed, bits }
 }
 
-function parseFieldOffset(token: Buffer | undefined, bits: number): number {
+function parseFieldOffset(
+  token: Buffer | undefined,
+  bits: number,
+  protoMaxBulkLen: bigint,
+  access: OffsetAccess,
+): number {
   if (!token) {
     throw new RedisSyntaxError()
   }
@@ -458,10 +582,13 @@ function parseFieldOffset(token: Buffer | undefined, bits: number): number {
   if (!Number.isSafeInteger(n) || n < 0) {
     throw new BitOffsetError()
   }
+  // Redis multiplies a `#<index>` offset by the type width and only then
+  // applies the proto-max-bulk-len ceiling.
   const offset = useWidth ? n * bits : n
-  if (offset >= MAX_BIT_OFFSET) {
+  if (!Number.isSafeInteger(offset)) {
     throw new BitOffsetError()
   }
+  assertBitOffsetWithinLimit(offset, protoMaxBulkLen, access)
   return offset
 }
 
@@ -482,27 +609,24 @@ function parseFieldValue(token: Buffer | undefined): bigint {
 
 function parseBitFieldOps(
   input: readonly Buffer[],
-  index: number,
-  ctx: ParseContext,
   readonly: boolean,
-): { value: BitFieldArgs; nextIndex: number } {
-  const key = input[index]
-  if (!key) {
-    throw new WrongNumberOfArgumentsError(ctx.commandName)
-  }
+  protoMaxBulkLen: bigint,
+): BitFieldOp[] {
   const ops: BitFieldOp[] = []
   let overflow: Overflow = 'WRAP'
-  let cursor = index + 1
+  let cursor = 0
 
   while (cursor < input.length) {
     const sub = input[cursor]!.toString().toUpperCase()
+    // Arguments left after the subcommand itself. Redis gates every
+    // subcommand on this *before* parsing any of its arguments, so a short op
+    // is a syntax error whatever its type token says: `BITFIELD k GET x9`
+    // answers `ERR syntax error`, not the bitfield-type error. Verified on
+    // redis 6.2.24, 7.2.16 and 8.0.6.
+    const remaining = input.length - cursor - 1
 
-    if (sub === 'OVERFLOW') {
-      const modeToken = input[cursor + 1]
-      if (!modeToken) {
-        throw new RedisSyntaxError()
-      }
-      const mode = modeToken.toString().toUpperCase()
+    if (sub === 'OVERFLOW' && remaining >= 1) {
+      const mode = input[cursor + 1]!.toString().toUpperCase()
       if (mode !== 'WRAP' && mode !== 'SAT' && mode !== 'FAIL') {
         throw new BitfieldOverflowTypeError()
       }
@@ -511,33 +635,47 @@ function parseBitFieldOps(
       continue
     }
 
-    if (sub === 'GET') {
+    if (sub === 'GET' && remaining >= 2) {
       const type = parseFieldType(input[cursor + 1])
-      const offset = parseFieldOffset(input[cursor + 2], type.bits)
+      const offset = parseFieldOffset(
+        input[cursor + 2],
+        type.bits,
+        protoMaxBulkLen,
+        'read',
+      )
       ops.push({ kind: 'GET', type, offset })
       cursor += 3
       continue
     }
 
-    if (sub === 'SET' || sub === 'INCRBY') {
-      if (readonly) {
-        throw new BitfieldRoGetOnlyError()
-      }
+    if ((sub === 'SET' || sub === 'INCRBY') && remaining >= 3) {
       const type = parseFieldType(input[cursor + 1])
-      const offset = parseFieldOffset(input[cursor + 2], type.bits)
+      const offset = parseFieldOffset(
+        input[cursor + 2],
+        type.bits,
+        protoMaxBulkLen,
+        'write',
+      )
       const operand = parseFieldValue(input[cursor + 3])
       ops.push({ kind: sub, type, offset, operand, overflow })
       cursor += 4
       continue
     }
 
-    if (readonly) {
-      throw new BitfieldRoGetOnlyError()
-    }
     throw new RedisSyntaxError()
   }
 
-  return { value: { key, ops }, nextIndex: input.length }
+  // BITFIELD_RO's GET-only restriction is a *second* pass in Redis, run only
+  // once the whole list has parsed — so a malformed op is reported by its own
+  // error first. Verified on 6.2.24 and 7.2.16: `BITFIELD_RO k SET u8 <over> 1`
+  // answers the bit-offset error, `BITFIELD_RO k SET u99 0 1` the type error,
+  // and `BITFIELD_RO k NOPE` a plain syntax error — only a well-formed non-GET
+  // op reaches "BITFIELD_RO only supports the GET subcommand".
+  if (readonly && ops.some(op => op.kind !== 'GET')) {
+    throw new BitfieldRoGetOnlyError()
+  }
+
+  return ops
 }
 
 function readField(buf: Buffer, offset: number, type: FieldType): bigint {
@@ -561,7 +699,7 @@ function writeField(
   for (let i = 0; i < type.bits; i++) {
     const bit = Number((stored >> BigInt(type.bits - 1 - i)) & 1n)
     const bitIndex = offset + i
-    const byteIndex = bitIndex >>> 3
+    const byteIndex = byteIndexOf(bitIndex)
     const mask = 1 << (7 - (bitIndex & 7))
     if (bit) {
       buf[byteIndex]! |= mask
@@ -601,26 +739,34 @@ function executeBitField(
   args: BitFieldArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
+  // Validated here, not in the schema: a field offset is bounded by the live
+  // `proto-max-bulk-len`, and the whole list is rejected before anything runs.
+  const ops = parseBitFieldOps(
+    args.tokens,
+    args.readonly,
+    ctx.server.protoMaxBulkLen,
+  )
+
   const existing = ensureStringOrMissing(ctx.db, args.key)
-  const hasWrite = args.ops.some(op => op.kind !== 'GET')
+  const hasWrite = ops.some(op => op.kind !== 'GET')
 
   let buf = existing ? Buffer.from(existing) : Buffer.alloc(0)
   // Pre-grow once to fit every write op — Redis grows the key even for an op
   // that ultimately FAILs its overflow check.
   let maxBytes = buf.length
-  for (const op of args.ops) {
+  for (const op of ops) {
     if (op.kind === 'GET') continue
     const need = Math.ceil((op.offset + op.type.bits) / 8)
     if (need > maxBytes) maxBytes = need
   }
   if (maxBytes > buf.length) {
-    const grown = Buffer.alloc(maxBytes)
+    const grown = allocateBitmapBuffer(maxBytes)
     buf.copy(grown, 0)
     buf = grown
   }
 
   const results: RedisValue[] = []
-  for (const op of args.ops) {
+  for (const op of ops) {
     if (op.kind === 'GET') {
       results.push(RedisValue.integer(readField(buf, op.offset, op.type)))
       continue
@@ -652,9 +798,21 @@ function executeBitField(
   return RedisResult.create(RedisValue.array(results))
 }
 
+// Only the key is resolved here — Redis checks BITFIELD's arity before the
+// command runs and everything else inside it, so the operation list is carried
+// through as raw tokens and validated by `executeBitField`.
 function bitFieldSchema(readonly: boolean): CommandSchema<BitFieldArgs> {
-  return t.custom((input, index, ctx) =>
-    parseBitFieldOps(input, index, ctx, readonly),
+  return t.custom(
+    (input, index, ctx): { value: BitFieldArgs; nextIndex: number } => {
+      const key = input[index]
+      if (!key) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      return {
+        value: { key, tokens: input.slice(index + 1), readonly },
+        nextIndex: input.length,
+      }
+    },
   )
 }
 

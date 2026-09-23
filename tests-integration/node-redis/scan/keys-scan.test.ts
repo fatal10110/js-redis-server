@@ -151,15 +151,20 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
         '2',
       ])
 
+      // A full cursor traversal must yield every matching key and nothing
+      // else. `values` stays exact because MATCH filters.
       assert.deepStrictEqual(result.values, expected)
 
-      // Multi-step traversal across COUNT batches. We can't assert an exact
-      // page partition or empty-page positions: top-level SCAN sweeps the
-      // whole node keyspace, so keys from other tests sharing the node (the
-      // suite runs files concurrently) consume COUNT budget and shift which
-      // page each hit lands on. `values` stays exact because MATCH filters.
-      // Lower bound holds on both backends — extra keys only raise iterations.
-      assert.ok(result.iterations > Math.ceil(expected.length / 2))
+      // ...and it must actually have been a traversal. Without this, a backend
+      // that ignored the cursor and returned everything in one round-trip
+      // would pass. The bound is deliberately independent of the keyspace
+      // size: the old `iterations > Math.ceil(expected.length / 2)` needed the
+      // node to hold a known number of keys, which on a shared backend it
+      // never does (#267, #395). `> 1` only needs SCAN to paginate at all.
+      assert.ok(
+        result.iterations > 1,
+        `expected a multi-step traversal, got ${result.iterations} iteration(s)`,
+      )
     } finally {
       await directClient.del(keys)
       directClient.destroy()

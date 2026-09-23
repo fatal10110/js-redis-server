@@ -166,7 +166,18 @@ The `docker-compose.test.yml` file defines three services, all on the official `
 - Ports: 30000-30005 (bus ports 40000-4000x stay container-internal).
 - All six `redis-server` processes run in **one** container so they reach each other over 127.0.0.1 and the host port map is 1:1.
 - Mac-compatible networking via `--cluster-announce-ip 127.0.0.1`, so MOVED/ASK redirects resolve from the host.
-- Healthcheck waits for `cluster_state:ok` (every slot assigned) before the cluster is marked healthy.
+- Startup is driven by [`docker/redis-cluster-init.sh`](../docker/redis-cluster-init.sh), mounted read-only into the container. It wipes each node's data directory (below), waits for **all six** nodes to answer `PING` and report `cluster_enabled:1`, then retries `redis-cli --cluster create` (up to 3 times, resetting the nodes between attempts) until the readiness gate below passes.
+- The readiness gate requires, **on every node**: `cluster_state:ok`, all 16384 slots assigned, `cluster_known_nodes:6`, and exactly 3 masters + 3 replicas with no `fail`/`fail?`/`handshake`/`noaddr` flags. Each condition catches something the others miss — in particular a dead *replica* leaves `cluster_state` at `ok`, because the surviving masters still cover every slot.
+- Each `redis-server` logs to `/var/log/redis-cluster/<port>.log` inside the container; those logs plus every node's `CLUSTER INFO` and `CLUSTER NODES` are dumped to stdout if formation fails, so `docker compose logs redis-cluster` explains the failure.
+- The healthcheck runs the same script in `check` mode, so the liveness probe applies exactly the gate above plus the ready marker. `docker compose up --wait` therefore cannot return while the cluster is still forming, and a node dying mid-run marks the container unhealthy.
+
+- Each node runs in its own directory, `/data/<port>`, wiped on every boot. `/data` is a volume that survives `docker restart`, and a replica writes the RDB it receives during full sync there even with `--save ''`; with a shared directory all six nodes would reload that one file on the next boot and fail the create as "not empty".
+
+**Timeout budget.** The init script is the authoritative budget: worst case 294s (35s node gate + 3 attempts x (45s create + 35s settle) + 2 x (5s reset + 2s backoff) + 5s diagnostics), after which it exits non-zero having dumped diagnostics. That bound holds even with a *hung* node, because every `redis-cli` call is capped at 5s and whenever all six nodes are queried they are queried in parallel, so a round costs one 5s cap at most. The healthcheck's `start_period` (330s) covers the whole script budget so a slow-but-healthy boot can never exhaust its retries, and the workflow's `--wait-timeout` (420s) is only an outer backstop. Keep that ordering if you change any of them — inverting it is how a failure ends up with no diagnostics at all.
+
+Tunables (env vars on the `redis-cluster` service): `NODE_READY_TIMEOUT`, `CLUSTER_READY_TIMEOUT`, `CREATE_TIMEOUT`, `CREATE_ATTEMPTS`, `CLI_TIMEOUT`, `CLUSTER_NODE_TIMEOUT`, `DATA_DIR`.
+
+Either compose spelling works for the commands in this document: the `docker compose` v2 plugin and the standalone `docker-compose` v2 binary are the same implementation, and everything used here (`--wait`, `--wait-timeout`) needs only v2.17+.
 
 ## Benefits
 

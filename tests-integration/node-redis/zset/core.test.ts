@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -19,26 +23,26 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('ZADD and ZCARD commands', async () => {
-    const add1 = await redisClient.zAdd('zset1', {
+    const add1 = await redisClient.zAdd(`zset1:${RUN}`, {
       score: 10,
       value: 'member1',
     })
     assert.strictEqual(add1, 1)
 
-    const add2 = await redisClient.zAdd('zset1', [
+    const add2 = await redisClient.zAdd(`zset1:${RUN}`, [
       { score: 20, value: 'member2' },
       { score: 30, value: 'member3' },
     ])
     assert.strictEqual(add2, 2)
 
     // Update existing member score
-    const add3 = await redisClient.zAdd('zset1', {
+    const add3 = await redisClient.zAdd(`zset1:${RUN}`, {
       score: 15,
       value: 'member1',
     })
     assert.strictEqual(add3, 0) // No new members added
 
-    const card = await redisClient.zCard('zset1')
+    const card = await redisClient.zCard(`zset1:${RUN}`)
     assert.strictEqual(card, 3)
   })
 
@@ -242,23 +246,32 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('ZSCORE command', async () => {
-    await redisClient.zAdd('zset2', [
+    await redisClient.zAdd(`zset2:${RUN}`, [
       { score: 15, value: 'member1' },
       { score: 25, value: 'member2' },
     ])
 
-    assert.strictEqual(await redisClient.zScore('zset2', 'member1'), 15)
-    assert.strictEqual(await redisClient.zScore('zset2', 'nonexistent'), null)
+    assert.strictEqual(await redisClient.zScore(`zset2:${RUN}`, 'member1'), 15)
+    assert.strictEqual(
+      await redisClient.zScore(`zset2:${RUN}`, 'nonexistent'),
+      null,
+    )
   })
 
   test('ZINCRBY command', async () => {
-    await redisClient.zAdd('zset6', { score: 10, value: 'member1' })
+    await redisClient.zAdd(`zset6:${RUN}`, { score: 10, value: 'member1' })
 
-    assert.strictEqual(await redisClient.zIncrBy('zset6', 25, 'member1'), 35)
-    assert.strictEqual(await redisClient.zIncrBy('zset6', 50, 'member2'), 50)
+    assert.strictEqual(
+      await redisClient.zIncrBy(`zset6:${RUN}`, 25, 'member1'),
+      35,
+    )
+    assert.strictEqual(
+      await redisClient.zIncrBy(`zset6:${RUN}`, 50, 'member2'),
+      50,
+    )
 
-    assert.strictEqual(await redisClient.zScore('zset6', 'member1'), 35)
-    assert.strictEqual(await redisClient.zScore('zset6', 'member2'), 50)
+    assert.strictEqual(await redisClient.zScore(`zset6:${RUN}`, 'member1'), 35)
+    assert.strictEqual(await redisClient.zScore(`zset6:${RUN}`, 'member2'), 50)
   })
 
   test('sorted set commands accept and return Redis infinity score tokens', async () => {
@@ -443,19 +456,24 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('ZREM command', async () => {
-    await redisClient.zAdd('zset7', [
+    await redisClient.zAdd(`zset7:${RUN}`, [
       { score: 1, value: 'one' },
       { score: 2, value: 'two' },
       { score: 3, value: 'three' },
       { score: 4, value: 'four' },
     ])
 
-    assert.strictEqual(await redisClient.zRem('zset7', 'two'), 1)
+    assert.strictEqual(await redisClient.zRem(`zset7:${RUN}`, 'two'), 1)
 
-    assert.strictEqual(await redisClient.zRem('zset7', ['one', 'three']), 2)
+    assert.strictEqual(
+      await redisClient.zRem(`zset7:${RUN}`, ['one', 'three']),
+      2,
+    )
 
-    assert.strictEqual(await redisClient.zRem('zset7', 'nonexistent'), 0)
+    assert.strictEqual(await redisClient.zRem(`zset7:${RUN}`, 'nonexistent'), 0)
 
-    assert.deepStrictEqual(await redisClient.zRange('zset7', 0, -1), ['four'])
+    assert.deepStrictEqual(await redisClient.zRange(`zset7:${RUN}`, 0, -1), [
+      'four',
+    ])
   })
 })

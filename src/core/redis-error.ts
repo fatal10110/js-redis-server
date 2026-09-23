@@ -1,11 +1,38 @@
 export class RedisCommandError extends Error {
+  /**
+   * The byte-exact reply body, set only when the error was built from a
+   * Buffer. `Error.message` is a `string`, so an error that echoes raw client
+   * bytes (an unknown subcommand, say) would lose them to U+FFFD on the way to
+   * the wire; this keeps the original alongside the lossy `message` used for
+   * logging and assertions. Read it through {@link errorReplyBody}.
+   */
+  readonly messageBytes?: Buffer
+
   constructor(
-    message: string,
+    message: string | Buffer,
     public readonly code = 'ERR',
   ) {
-    super(message)
+    super(typeof message === 'string' ? message : message.toString())
     this.name = code
+    if (typeof message !== 'string') {
+      this.messageBytes = message
+    }
   }
+}
+
+/**
+ * The reply body to put on the wire for a {@link RedisCommandError} — its raw
+ * bytes when it carries any, otherwise its message. Every conversion from a
+ * caught error to a reply goes through this (or {@link RedisResult.fromError},
+ * which wraps it); reading `error.message` directly drops the bytes.
+ */
+export function errorReplyBody(error: RedisCommandError): string | Buffer {
+  return error.messageBytes ?? error.message
+}
+
+/** {@link errorReplyBody} for the callers that need a Buffer either way. */
+export function errorReplyBytes(error: RedisCommandError): Buffer {
+  return error.messageBytes ?? Buffer.from(error.message)
 }
 
 export class WrongNumberOfArgumentsError extends RedisCommandError {
@@ -354,18 +381,6 @@ export class RedisMovedError extends RedisCommandError {
 export class RedisClusterDownError extends RedisCommandError {
   constructor() {
     super('Hash slot not served', 'CLUSTERDOWN')
-  }
-}
-
-export class UnknownScriptSubcommandError extends RedisCommandError {
-  constructor(subcommand: string | Buffer) {
-    super(`unknown subcommand '${subcommand}'. Try SCRIPT HELP.`)
-  }
-}
-
-export class UnknownClusterSubcommandError extends RedisCommandError {
-  constructor(subcommand: string | Buffer) {
-    super(`unknown subcommand '${subcommand}'. Try CLUSTER HELP.`)
   }
 }
 

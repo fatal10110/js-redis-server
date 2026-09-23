@@ -16,6 +16,12 @@ export default defineConfig([
     // `core`. Keeps the published output a couple of self-contained files
     // rather than a web of cross-referenced chunks.
     splitting: false,
+    // The node-redis facade resolves its optional `redis` peer lazily and
+    // synchronously with `createRequire(__filename)` (destroy() is synchronous,
+    // so it cannot await an import). `__filename` is native in the CJS build;
+    // this injects the ESM equivalent (`fileURLToPath(import.meta.url)`) into
+    // the ESM build, only where it is referenced.
+    shims: true,
     outDir: 'dist',
   },
   {

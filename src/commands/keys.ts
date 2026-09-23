@@ -33,6 +33,7 @@ import {
   ttlSeconds,
   typeName,
 } from './helpers'
+import { getSortedMembers } from './zsets/helpers'
 
 export const delCommand = defineCommand({
   name: 'del',
@@ -681,13 +682,26 @@ function sortSchema(allowStore: boolean) {
   }))
 }
 
-function readSortSource(db: RedisDatabase, key: Buffer): Buffer[] {
+// The source's type travels with its elements so the rest of SORT never looks
+// the key up again — a second lookup is a second clock read, and the key could
+// expire in between.
+type SortSource = {
+  type: 'list' | 'set' | 'zset' | null
+  elements: Buffer[]
+}
+
+function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
   const type = db.getType(key)
-  if (type === null) return []
-  if (type === 'list') return db.getList(key)!.values
-  if (type === 'set') return Array.from(db.getSet(key)!.members.values())
+  if (type === null) return { type, elements: [] }
+  if (type === 'list') return { type, elements: db.getList(key)!.values }
+  if (type === 'set') {
+    return { type, elements: Array.from(db.getSet(key)!.members.values()) }
+  }
   if (type === 'zset') {
-    return Array.from(db.getSortedSet(key)!.members.values(), m => m.member)
+    // sortCommand() walks the skiplist, so a zset source is read in rank
+    // order — the same order ZRANGE reports, not insertion order (#418).
+    const members = getSortedMembers(db.getSortedSet(key)!)
+    return { type, elements: members.map(entry => entry.member) }
   }
   throw new WrongTypeRedisError()
 }
@@ -701,15 +715,28 @@ function sortNumericScore(element: Buffer): number {
 }
 
 function sortElements(
-  elements: readonly Buffer[],
+  { type, elements }: SortSource,
   args: SortArgs,
   db: RedisDatabase,
 ): Buffer[] {
   if (args.by && isConstantSortPattern(args.by)) {
-    return [...elements]
+    // A constant BY does not simply skip the sort: for DESC, sortCommand()'s
+    // dontsort branch walks a list and a zset's skiplist from the tail toward
+    // the head, and applies LIMIT to that reversed walk. A set has no such
+    // branch, so there DESC really is a no-op (#426).
+    const unsorted = [...elements]
+    if (args.desc && type !== 'set') unsorted.reverse()
+    return unsorted
   }
 
   if (args.alpha) {
+    // Known difference from real Redis: when every element compares equal —
+    // e.g. a `BY` glob whose weights are all missing — the stable sort below
+    // keeps the load order, which for a zset is rank order. Real Redis loads
+    // a zset from its dict, whose hash seed is random per process: for
+    // `ZADD zr 3 c 2 b 1 a`, `SORT zr BY missing_* ALPHA` gave `b c a`,
+    // `c a b` and `a c b` across three starts of 8.0.6. That order is
+    // undefined, so it is deliberately left untested.
     const sorted = [...elements].sort((a, b) =>
       Buffer.compare(sortByValue(a, args, db), sortByValue(b, args, db)),
     )
@@ -747,13 +774,13 @@ function applySortLimit(
  * means "do not sort", but an unordered SET source whose output has to be
  * reproducible — it is written by STORE, or returned to a script — is
  * force-sorted ALPHA with the `BY` dropped. Lists have a defined order, so
- * only sets are overridden. (Real Redis leaves zsets alone for the same
- * reason; `readSortSource` reads them in insertion rather than rank order
- * here, which is tracked separately in #418.)
+ * only sets are overridden. Real Redis leaves zsets alone for the same reason:
+ * `sortCommand()` walks the skiplist, so a zset source already arrives in rank
+ * order — which `readSortSource` now reproduces (#418).
  */
 function forceDeterministicSetOrder(
   args: SortArgs,
-  db: RedisDatabase,
+  type: SortSource['type'],
   ctx: RedisExecutionContext,
 ): SortArgs {
   if (!args.by || !isConstantSortPattern(args.by)) {
@@ -762,7 +789,7 @@ function forceDeterministicSetOrder(
   if (!args.store && !ctx.inScript) {
     return args
   }
-  if (db.getType(args.key) !== 'set') {
+  if (type !== 'set') {
     return args
   }
 
@@ -772,7 +799,7 @@ function forceDeterministicSetOrder(
 function runSort(args: SortArgs, ctx: RedisExecutionContext) {
   const db = ctx.db
   const source = readSortSource(db, args.key)
-  const effective = forceDeterministicSetOrder(args, db, ctx)
+  const effective = forceDeterministicSetOrder(args, source.type, ctx)
   const sorted = applySortLimit(sortElements(source, effective, db), args.limit)
   const output = projectSortOutput(sorted, args, db)
 

@@ -9,6 +9,7 @@ import {
 import type { CompatibilityProfile } from './compatibility/profile'
 import type { CommandPlan } from './command-definition'
 import {
+  errorReplyBytes,
   RedisCommandError,
   ScriptCallNoCommandError,
   ScriptNotAllowedCommandError,
@@ -215,7 +216,9 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   if ('err' in value) {
     // The engine supplies an explicit code (or none, for verbatim returned error
     // tables); the host does not infer one.
-    return RedisValue.error(value.err.toString(), value.code?.toString())
+    // `value.err` is already bytes; decoding it here would undo the
+    // byte-exact echo a command like `CONFIG <raw bytes>` produced.
+    return RedisValue.error(value.err, value.code?.toString())
   }
 
   // RESP3 reply shapes the engine produces under redis.setresp(3).
@@ -279,21 +282,33 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
   }
 
   const { line, sha, kind, name } = meta
-  let body: string
+  let body: Buffer
   switch (kind) {
     case 'global-read':
-      body = `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`
+      body = Buffer.from(
+        `user_script:${line}: Script attempted to access nonexistent global variable '${name}'`,
+      )
       break
     case 'command-arg-type':
       // Raised by redis.call/pcall without a script-position prefix.
-      body = 'Lua redis lib command arguments must be strings or integers'
+      body = Buffer.from(
+        'Lua redis lib command arguments must be strings or integers',
+      )
       break
     default:
-      body = value.err.toString('utf8')
+      // Kept as bytes: a propagated command error or a Lua runtime error can
+      // carry raw client bytes (`error(ARGV[1])`, a nested unknown-subcommand
+      // echo), and a UTF-8 round trip would turn them into U+FFFD.
+      body = value.err
   }
 
-  const message = `${body} script: ${sha}, on @user_script:${line}.`
-  return { err: Buffer.from(message, 'utf8'), code: value.code }
+  return {
+    err: Buffer.concat([
+      body,
+      Buffer.from(` script: ${sha}, on @user_script:${line}.`),
+    ]),
+    code: value.code,
+  }
 }
 
 function redisValueToLuaReply(value: RedisValue): ReplyValue {
@@ -339,7 +354,7 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
       return null
     case 'error':
       return {
-        err: Buffer.from(value.message),
+        err: value.messageBytes ?? Buffer.from(value.message),
         code: value.code ? Buffer.from(value.code) : undefined,
       }
   }
@@ -360,7 +375,7 @@ function normalizeScriptCommandValue(value: RedisValue): RedisValue {
 
 function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {
   return {
-    err: Buffer.from(err.message),
+    err: errorReplyBytes(err),
     code: Buffer.from(err.code),
   }
 }
