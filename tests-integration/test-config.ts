@@ -177,8 +177,7 @@ export type IoredisClusterSetupOptions = {
 export class TestRunner {
   readonly backend = (process.env.TEST_BACKEND as TestBackend) || 'mock'
   private readonly compatibility = process.env.REDIS_COMPAT as
-    | CompatibilitySpec
-    | undefined
+    CompatibilitySpec | undefined
   private readonly mockClusters = new Map<string, RedisCluster>()
   private activeMockCluster: RedisCluster | null = null
   private ioredisCluster: Cluster[] = []

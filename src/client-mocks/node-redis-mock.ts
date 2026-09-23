@@ -58,8 +58,7 @@ type RedisErrorConstructors = {
    * failed command — it resolves, with the error inline in the reply array.
    */
   MultiErrorReply:
-    | (new (replies: unknown[], errorIndexes: number[]) => Error)
-    | undefined
+    (new (replies: unknown[], errorIndexes: number[]) => Error) | undefined
   ClientClosedError: new () => Error
   DisconnectsClientError: new () => Error
 }
