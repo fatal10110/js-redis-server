@@ -1,4 +1,4 @@
-import { asciiLowerCase } from './ascii-case'
+import { asciiLowerCase, asciiUpperCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
 import { parseCommandArgs } from './command-schema'
@@ -7,6 +7,7 @@ import {
   ExecCommandAbortError,
   RedisCommandError,
   UnknownRedisCommandError,
+  type UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
@@ -17,11 +18,24 @@ import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
 } from './compatibility'
+import { containerSubcommandExists } from './compatibility/subcommand-gates'
 
 export type CommandExecutorOptions = {
   registry: CommandRegistry
   policies?: readonly ExecutionPolicy[]
   profile?: CompatibilityProfile
+  /**
+   * Builds the reply for a container subcommand that fails command lookup —
+   * `unknownSubcommandError` from src/commands/helpers.ts, which the
+   * containers also use, so the plan-time and execute-time replies are the
+   * same bytes. Without it {@link CommandExecutor.plan} skips the lookup and
+   * every container resolves its own subcommand when it runs.
+   */
+  unknownSubcommand?: (
+    container: string,
+    subcommand: Buffer,
+    profile: CompatibilityProfile,
+  ) => UnknownSubcommandError
 }
 
 /**
@@ -48,11 +62,13 @@ export type CommandExecutorOptions = {
 export class CommandExecutor {
   private readonly registry: CommandRegistry
   private readonly policies: readonly ExecutionPolicy[]
+  private readonly unknownSubcommand: CommandExecutorOptions['unknownSubcommand']
   readonly profile: CompatibilityProfile
 
   constructor(options: CommandExecutorOptions) {
     this.registry = options.registry
     this.policies = options.policies ?? []
+    this.unknownSubcommand = options.unknownSubcommand
     this.profile = options.profile ?? resolveCompatibilityProfile()
   }
 
@@ -71,6 +87,8 @@ export class CommandExecutor {
    * U+212A KELVIN SIGN + "eys" is an unknown command, not KEYS (#382).
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
+   * @throws {UnknownSubcommandError} if a container's subcommand fails lookup
+   *   (see {@link lookupSubcommand}).
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
     const definition = this.registry.get(rawCommand.toString())
@@ -79,7 +97,49 @@ export class CommandExecutor {
       throw new UnknownRedisCommandError(rawCommand, rawArgs)
     }
 
+    this.lookupSubcommand(definition, rawArgs)
     return this.createPlan(definition, rawCommand, rawArgs)
+  }
+
+  /**
+   * Redis 7.0 put container subcommands (`config|get`, `xgroup|create`, ...)
+   * in the command table, so from 7.0 command lookup resolves the subcommand
+   * too and an unknown one fails right there — ahead of arity, the schema,
+   * routing keys and every policy. Doing it here, the one place every command
+   * is planned, is what makes MULTI refuse to queue it (#435), keeps XGROUP /
+   * XINFO from looking their key up first (#436) and gives a script's
+   * `redis.call` the unknown-command error (#439).
+   *
+   * 6.2 has no such lookup; there each container rejects the subcommand when
+   * it runs. The table is the *real* one (`subcommand-gates.ts`), so a real
+   * subcommand this server does not implement passes and is rejected by its
+   * container at execute time, as before.
+   */
+  private lookupSubcommand(
+    definition: CommandDefinition<unknown>,
+    rawArgs: readonly Buffer[],
+  ): void {
+    if (
+      !this.unknownSubcommand ||
+      rawArgs.length === 0 ||
+      !this.profile.has('error.unknown-subcommand-dispatch-timing')
+    ) {
+      return
+    }
+
+    const subcommand = rawArgs[0]
+    if (
+      containerSubcommandExists(definition.name, subcommand, this.profile) !==
+      false
+    ) {
+      return
+    }
+
+    throw this.unknownSubcommand(
+      asciiUpperCase(definition.name),
+      subcommand,
+      this.profile,
+    )
   }
 
   /**

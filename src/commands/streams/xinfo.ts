@@ -36,6 +36,7 @@ type XinfoArgs =
   | { subcommand: 'stream'; key: Buffer; full: boolean; count: number | null }
   | { subcommand: 'groups'; key: Buffer }
   | { subcommand: 'consumers'; key: Buffer; group: Buffer }
+  | { subcommand: 'unknown'; name: Buffer; key: Buffer | undefined }
 
 function isToken(arg: Buffer, token: string): boolean {
   return arg.toString().toUpperCase() === token
@@ -102,7 +103,18 @@ function createXinfoSchema() {
         }
       }
 
-      throw unknownSubcommandError('XINFO', rawSubcommand, ctx.profile)
+      // Not rejected here: on 7.0+ profiles command lookup has already turned
+      // an unknown name away (`CommandExecutor.plan()`), so only 6.2 — which
+      // rejects it when XINFO runs, after the key — and a real subcommand
+      // this server does not implement (HELP) get this far (#436).
+      return {
+        value: {
+          subcommand: 'unknown',
+          name: rawSubcommand,
+          key: input[index + 1],
+        },
+        nextIndex: input.length,
+      }
     },
   )
 }
@@ -111,9 +123,18 @@ export const xinfoCommand = defineCommand({
   name: 'xinfo',
   schema: t.object({ args: createXinfoSchema() }),
   flags: ['readonly'],
-  keys: args => [args.args.key],
+  keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args
+    if (command.subcommand === 'unknown') {
+      // Real 6.2 looks the key up (getStream: WRONGTYPE) before it looks at
+      // the subcommand.
+      if (command.key && !ctx.db.getStream(command.key)) {
+        throw new NoSuchKeyError()
+      }
+      throw unknownSubcommandError('XINFO', command.name, ctx.server.profile)
+    }
+
     const stream = ctx.db.getStream(command.key)
     if (!stream) throw new NoSuchKeyError()
 

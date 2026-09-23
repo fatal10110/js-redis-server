@@ -10,6 +10,7 @@ import {
   InvalidExpireTimeError,
   RedisCommandError,
   RedisSyntaxError,
+  UnknownSubcommandError,
   WrongTypeRedisError,
 } from '../core/redis-error'
 import type { CompatibilityProfile } from '../core/compatibility'
@@ -181,13 +182,20 @@ const SUBCOMMAND_ECHO_LIMIT = 128
  * `container` is the upper-case parent name as it appears in the
  * `Try ... HELP.` suffix; `subcommand` is echoed with the bytes the client
  * sent, casing and all.
+ *
+ * On 7.0+ profiles `CommandExecutor.plan()` raises this for a subcommand the
+ * real command table lacks, before the container runs (#435, #436, #439); the
+ * containers raise it themselves on 6.2 and for real subcommands this server
+ * does not implement. Both go through here, so the two cannot drift apart.
  */
 export function unknownSubcommandError(
   container: string,
   subcommand: Buffer | string,
   profile: CompatibilityProfile,
-): RedisCommandError {
-  return subcommandError(container, subcommand, profile, 'unknown')
+): UnknownSubcommandError {
+  return new UnknownSubcommandError(
+    subcommandErrorBody(container, subcommand, profile, 'unknown'),
+  )
 }
 
 /**
@@ -207,7 +215,9 @@ export function subcommandSyntaxError(
   subcommand: Buffer | string,
   profile: CompatibilityProfile,
 ): RedisCommandError {
-  return subcommandError(container, subcommand, profile, 'syntax')
+  return new RedisCommandError(
+    subcommandErrorBody(container, subcommand, profile, 'syntax'),
+  )
 }
 
 /**
@@ -219,17 +229,17 @@ export function subcommandSyntaxError(
  * survives byte for byte — real 8.0.6 answers `CONFIG \xff\xfe\xfd` with those
  * three bytes, where a UTF-8 decode would turn each into U+FFFD.
  */
-function subcommandError(
+function subcommandErrorBody(
   container: string,
   subcommand: Buffer | string,
   profile: CompatibilityProfile,
   kind: 'unknown' | 'syntax',
-): RedisCommandError {
+): Buffer {
   const raw = Buffer.isBuffer(subcommand) ? subcommand : Buffer.from(subcommand)
   const echoed = asCString(raw)
 
   if (!profile.has('error.unknown-subcommand-wording')) {
-    return subcommandErrorFrom(
+    return subcommandBody(
       'Unknown subcommand or wrong number of arguments for',
       echoed,
       container,
@@ -237,14 +247,14 @@ function subcommandError(
   }
 
   if (kind === 'syntax') {
-    return subcommandErrorFrom(
+    return subcommandBody(
       'unknown subcommand or wrong number of arguments for',
       echoed,
       container,
     )
   }
 
-  return subcommandErrorFrom(
+  return subcommandBody(
     'unknown subcommand',
     echoed.subarray(0, SUBCOMMAND_ECHO_LIMIT),
     container,
@@ -275,18 +285,16 @@ function asCString(value: Buffer): Buffer {
   return nul === -1 ? value : value.subarray(0, nul)
 }
 
-function subcommandErrorFrom(
+function subcommandBody(
   lead: string,
   echoed: Buffer,
   container: string,
-): RedisCommandError {
-  return new RedisCommandError(
-    Buffer.concat([
-      Buffer.from(`${lead} '`),
-      echoed,
-      Buffer.from(`'. Try ${container} HELP.`),
-    ]),
-  )
+): Buffer {
+  return Buffer.concat([
+    Buffer.from(`${lead} '`),
+    echoed,
+    Buffer.from(`'. Try ${container} HELP.`),
+  ])
 }
 
 export function requireNextOptionValue(

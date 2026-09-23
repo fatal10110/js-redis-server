@@ -21,6 +21,7 @@ export type FeatureId =
   | 'client.kill.maxage'
   | 'client.setinfo'
   | 'error.unknown-subcommand-wording'
+  | 'error.unknown-subcommand-dispatch-timing'
   | 'info.multi-section'
   | 'shutdown.now-force-abort'
   | 'pubsub.sharded'

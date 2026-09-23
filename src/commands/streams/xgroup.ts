@@ -53,6 +53,12 @@ type XgroupArgs =
       consumer: Buffer
     }
   | { subcommand: 'delconsumer'; key: Buffer; group: Buffer; consumer: Buffer }
+  | {
+      subcommand: 'unknown'
+      name: Buffer
+      key: Buffer | undefined
+      group: Buffer | undefined
+    }
 
 function createXgroupSchema() {
   return t.custom<XgroupArgs>(
@@ -148,7 +154,19 @@ function createXgroupSchema() {
         }
       }
 
-      throw unknownSubcommandError('XGROUP', rawSubcommand, ctx.profile)
+      // Not rejected here: on 7.0+ profiles command lookup has already turned
+      // an unknown name away (`CommandExecutor.plan()`), so only 6.2 — which
+      // rejects it when XGROUP runs, after the key — and a real subcommand
+      // this server does not implement (HELP) get this far (#436).
+      return {
+        value: {
+          subcommand: 'unknown',
+          name: rawSubcommand,
+          key: input[index + 1],
+          group: input[index + 2],
+        },
+        nextIndex: input.length,
+      }
     },
   )
 }
@@ -157,9 +175,18 @@ export const xgroupCommand = defineCommand({
   name: 'xgroup',
   schema: t.object({ args: createXgroupSchema() }),
   flags: ['write'],
-  keys: args => [args.args.key],
+  keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args
+
+    if (command.subcommand === 'unknown') {
+      // Real 6.2 looks the key up (getStream: WRONGTYPE) as soon as a group
+      // name is present, before it looks at the subcommand.
+      if (command.key && command.group && !ctx.db.getStream(command.key)) {
+        throw new XgroupCreateMissingKeyError()
+      }
+      throw unknownSubcommandError('XGROUP', command.name, ctx.server.profile)
+    }
 
     if (command.subcommand === 'create') {
       const type = ctx.db.getType(command.key)

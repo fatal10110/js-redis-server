@@ -604,6 +604,15 @@ export class UnknownRedisCommandError extends RedisCommandError {
   }
 }
 
+/**
+ * A container was given a subcommand it does not have (`CONFIG BOGUS`). The
+ * body is profile-specific and built only by `unknownSubcommandError` in
+ * src/commands/helpers.ts; the class exists so the Lua runtime can tell a
+ * failed 7.0+ subcommand *lookup* in `CommandExecutor.plan()` apart from other
+ * planning errors, and answer it like an unknown command (#439).
+ */
+export class UnknownSubcommandError extends RedisCommandError {}
+
 function formatUnknownCommandName(commandName: string | Buffer): string {
   return typeof commandName === 'string'
     ? commandName
