@@ -1,7 +1,6 @@
 import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
 import type { RedisResult } from './redis-result'
-import type { ResponseStream } from './response-stream'
 import type { VersionGate } from './compatibility'
 
 export type CommandFlag =
@@ -81,10 +80,7 @@ export type CommandIntrospection = {
   docs?: CommandDocumentation
 }
 
-export type CommandExecutionResult =
-  | RedisResult
-  | Promise<RedisResult>
-  | ResponseStream
+export type CommandExecutionResult = RedisResult | Promise<RedisResult>
 
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string

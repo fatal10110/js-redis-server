@@ -6,6 +6,12 @@ export type RedisResultOptions = {
   disconnect?: boolean
   omitReply?: boolean
   afterReply?: () => void
+  /**
+   * Frames `encoded` already carries after `value` — the 2nd..Nth confirmation
+   * of a multi-target SUBSCRIBE. The wire path writes them with the reply; a
+   * front end that reads `value` instead of bytes delivers them as pushes.
+   */
+  trailingFrames?: readonly RedisValue[]
 }
 
 export class RedisResult {

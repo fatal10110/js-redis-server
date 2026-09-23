@@ -65,6 +65,45 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(reply[2], null)
   })
 
+  test('COMMAND INFO ECHO reports arity, flags and categories like Redis', async () => {
+    const [info] = (await redisClient?.command('INFO', 'ECHO')) as [
+      CommandInfoReply,
+    ]
+
+    // Whole reply, incl. tips / key specs / subcommands (indices 7-9).
+    assert.deepStrictEqual(info, [
+      'echo',
+      2,
+      ['loading', 'stale', 'fast'],
+      0,
+      0,
+      0,
+      ['@fast', '@connection'],
+      [],
+      [],
+      [],
+    ])
+  })
+
+  test('COMMAND DOCS ECHO reports summary, since, group, complexity and arguments', async () => {
+    const docs = (await redisClient?.command('DOCS', 'ECHO')) as unknown[]
+    assert.strictEqual(docs.length, 2)
+    assert.strictEqual(docs[0], 'echo')
+
+    const echoDocs = docs[1] as unknown[]
+    assertMapEntry(echoDocs, 'summary', 'Returns the given string.')
+    assertMapEntry(echoDocs, 'since', '1.0.0')
+    assertMapEntry(echoDocs, 'group', 'connection')
+    assertMapEntry(echoDocs, 'complexity', 'O(1)')
+
+    const args = resp2MapGet(echoDocs, 'arguments') as unknown[][]
+    assert.strictEqual(args.length, 1)
+    // `display_text` is not asserted: real 7.2+ sends it, but no command in
+    // this repo emits it yet (tracked as a follow-up).
+    assertMapEntry(args[0], 'name', 'message')
+    assertMapEntry(args[0], 'type', 'string')
+  })
+
   test('COMMAND LIST returns names and supports Redis FILTERBY variants', async () => {
     const names = (await redisClient?.command('LIST')) as string[]
     assert.ok(names.includes('get'))
