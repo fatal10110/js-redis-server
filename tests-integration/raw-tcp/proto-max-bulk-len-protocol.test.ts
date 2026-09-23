@@ -207,9 +207,9 @@ describe(`Raw TCP proto-max-bulk-len protocol errors (${testRunner.getBackendNam
   // What this does *not* claim: that inline commands are exempt from
   // `proto-max-bulk-len`. That is unobservable on real Redis, whose smallest
   // settable limit (1MB) is far above the 64KB cap it puts on inline requests
-  // — a cap the mock does not model yet, tracked in #441. This only pins that
-  // an inline command with a sizable argument, well under both, is still
-  // parsed and answered. Verified on redis 6.2.24, 7.2.16 and 8.0.6.
+  // (modelled since #441, covered in resp2-decoder-framing.test.ts). This only
+  // pins that an inline command with a sizable argument, well under both, is
+  // still parsed and answered. Verified on redis 6.2.24, 7.2.16 and 8.0.6.
   test('an inline command with a large argument is still served', async () => {
     const conn = await connect()
     const value = 'a'.repeat(60000)

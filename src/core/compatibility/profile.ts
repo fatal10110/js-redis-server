@@ -15,6 +15,7 @@ export type FeatureId =
   | 'config.set.failure-message'
   | 'config.set.multi-pair'
   | 'config.memory-value.reject-overflow'
+  | 'protocol.multibulk-count-int-max'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'
