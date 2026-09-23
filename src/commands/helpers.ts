@@ -77,14 +77,23 @@ export function typeName(type: RedisDataTypeName | null): string {
   return type ?? 'none'
 }
 
-export function ttlSeconds(expiresAt: number): number {
-  // Redis rounds remaining time to the nearest second ((ms+500)/1000),
-  // not ceil/floor — matches EXPIRETIME and real TTL behavior.
-  return Math.max(0, Math.round((expiresAt - Date.now()) / 1000))
+// Key-level TTL (TTL): Redis rounds remaining time to the nearest second
+// ((ms+500)/1000), not ceil/floor — matches EXPIRETIME and real TTL behavior.
+export function keyTtlSeconds(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, Math.round((expiresAt - now) / 1000))
 }
 
-export function ttlMilliseconds(expiresAt: number): number {
-  return Math.max(0, expiresAt - Date.now())
+// Hash-field TTL (HTTL): Redis rounds remaining time *up* to the next second
+// ((ms+999)/1000), so any sub-second remainder reports 1, not 0 (#432).
+export function hashFieldTtlSeconds(
+  expiresAt: number,
+  now = Date.now(),
+): number {
+  return Math.max(0, Math.ceil((expiresAt - now) / 1000))
+}
+
+export function ttlMilliseconds(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, expiresAt - now)
 }
 
 export function parseIntegerToken(token: Buffer): number {
