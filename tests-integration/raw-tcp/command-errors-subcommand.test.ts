@@ -3,6 +3,7 @@ import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
+import { randomKey } from '../utils'
 
 /**
  * Raw TCP unknown-subcommand error tests (#413).
@@ -342,19 +343,98 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
   // an arity error naming `<container>|<subcommand>` on 7.0+. Pinned here so
   // the refactor cannot quietly widen the unknown-subcommand path over it.
   //
-  // Only CONFIG is asserted. `XGROUP CREATE` and `XINFO STREAM` reach the same
-  // real reply (`... for 'xgroup|create' command`) but this server answers
-  // `... for 'xgroup' command`, because their arity check lives in a schema
-  // parser that only knows `ctx.commandName` — the dispatched-subcommand naming
-  // problem tracked as #438 (and #384 part 1). Asserting it here would fail on
-  // mock for a reason this change does not address.
+  // XGROUP and XINFO resolve their subcommand in a schema parser, which only
+  // knows the container name, so they used to answer `... for 'xgroup'
+  // command` (#438). The name is lower-cased whatever the client sent, and a
+  // bare container with no subcommand at all names just the container.
+  // Captured from 8.0.6.
   test('a known subcommand with the wrong arity is still an arity error', async () => {
     const conn = await connect()
+    const key = `subcmd-arity:${randomKey()}`
 
+    const cases: [string[], string][] = [
+      [['CONFIG', 'GET'], 'config|get'],
+      [['XGROUP'], 'xgroup'],
+      [['XGROUP', 'CREATE', key, 'g'], 'xgroup|create'],
+      [['XGROUP', 'create', key, 'g'], 'xgroup|create'],
+      [['XGROUP', 'SETID', key, 'g'], 'xgroup|setid'],
+      [['XGROUP', 'DESTROY', key], 'xgroup|destroy'],
+      [['XGROUP', 'DESTROY', key, 'g', 'x'], 'xgroup|destroy'],
+      [['XGROUP', 'CREATECONSUMER', key, 'g'], 'xgroup|createconsumer'],
+      [
+        ['XGROUP', 'CREATECONSUMER', key, 'g', 'c', 'x'],
+        'xgroup|createconsumer',
+      ],
+      [['XGROUP', 'DELCONSUMER', key, 'g'], 'xgroup|delconsumer'],
+      [['XGROUP', 'DELCONSUMER', key, 'g', 'c', 'x'], 'xgroup|delconsumer'],
+      [['XINFO'], 'xinfo'],
+      [['XINFO', 'STREAM'], 'xinfo|stream'],
+      [['xinfo', 'stream'], 'xinfo|stream'],
+      [['XINFO', 'GROUPS'], 'xinfo|groups'],
+      [['XINFO', 'GROUPS', key, 'x'], 'xinfo|groups'],
+      [['XINFO', 'CONSUMERS', key], 'xinfo|consumers'],
+      [['XINFO', 'CONSUMERS', key, 'g', 'x'], 'xinfo|consumers'],
+    ]
+
+    for (const [args, name] of cases) {
+      await expectReply(
+        conn,
+        args,
+        `-ERR wrong number of arguments for '${name}' command\r\n`,
+      )
+    }
+  })
+
+  // Past the arity table, an XINFO STREAM / XGROUP CREATE|SETID option list
+  // the subcommand cannot use (a dangling `COUNT`/`ENTRIESREAD`, a stray token,
+  // trailing junk) is `addReplySubcommandSyntaxError`, not an arity error. The
+  // subcommand is echoed exactly as the client sent it. Captured from 8.0.6.
+  //
+  // The two subcommands order their checks differently in real Redis:
+  //  - XGROUP parses its options before it looks the key up, so
+  //    `XGROUP CREATE <missing> g $ BOGUS` is the same syntax error. That case
+  //    is in the table below.
+  //  - XINFO STREAM looks the key up first, so `XINFO STREAM <missing> x` is
+  //    `ERR no such key`. This server checks the option list in the schema
+  //    parser before any key lookup, so it answers the syntax error instead.
+  //    That is a known divergence and is not asserted here. The XINFO rows
+  //    therefore run against a live stream, where both orders give the same
+  //    reply.
+  test('an unusable XINFO/XGROUP option list is a subcommand syntax error', async () => {
+    const conn = await connect()
+    const key = `subcmd-syntax:${randomKey()}`
+    const missing = `subcmd-syntax-missing:${randomKey()}`
     await expectReply(
       conn,
-      ['CONFIG', 'GET'],
-      "-ERR wrong number of arguments for 'config|get' command\r\n",
+      ['XGROUP', 'CREATE', key, 'g', '$', 'MKSTREAM'],
+      '+OK\r\n',
     )
+
+    const cases: [string[], string, string][] = [
+      [['XINFO', 'STREAM', key, 'x'], 'XINFO', 'STREAM'],
+      [['XINFO', 'sTrEaM', key, 'x'], 'XINFO', 'sTrEaM'],
+      [['XINFO', 'STREAM', key, 'COUNT', '1'], 'XINFO', 'STREAM'],
+      [['XINFO', 'STREAM', key, 'FULL', 'x'], 'XINFO', 'STREAM'],
+      [['XINFO', 'STREAM', key, 'FULL', 'COUNT'], 'XINFO', 'STREAM'],
+      [['XINFO', 'STREAM', key, 'FULL', 'COUNT', '1', 'x'], 'XINFO', 'STREAM'],
+      [['XGROUP', 'CREATE', key, 'g2', '$', 'ENTRIESREAD'], 'XGROUP', 'CREATE'],
+      [['XGROUP', 'CREATE', key, 'g2', '$', 'BOGUS'], 'XGROUP', 'CREATE'],
+      [['XGROUP', 'cReAtE', key, 'g2', '$', 'BOGUS'], 'XGROUP', 'cReAtE'],
+      [['XGROUP', 'CREATE', missing, 'g', '$', 'BOGUS'], 'XGROUP', 'CREATE'],
+      [['XGROUP', 'SETID', key, 'g', '$', 'ENTRIESREAD'], 'XGROUP', 'SETID'],
+      [['XGROUP', 'SETID', key, 'g', '$', 'MKSTREAM'], 'XGROUP', 'SETID'],
+    ]
+
+    try {
+      for (const [args, container, echoed] of cases) {
+        await expectReply(
+          conn,
+          args,
+          `-ERR unknown subcommand or wrong number of arguments for '${echoed}'. Try ${container} HELP.\r\n`,
+        )
+      }
+    } finally {
+      await expectReply(conn, ['DEL', key], ':1\r\n')
+    }
   })
 })

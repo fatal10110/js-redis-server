@@ -26,11 +26,11 @@ import {
   array,
   bulk,
   integer,
+  keyTtlSeconds,
   ok,
   parseIntegerToken,
   simpleString,
   ttlMilliseconds,
-  ttlSeconds,
   typeName,
 } from './helpers'
 import { getSortedMembers } from './zsets/helpers'
@@ -148,7 +148,7 @@ export const ttlCommand = defineCommand({
       return integer(-1)
     }
 
-    return integer(ttlSeconds(expiration.expiresAt))
+    return integer(keyTtlSeconds(expiration.expiresAt))
   },
 })
 

@@ -1,6 +1,8 @@
+import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
-import { RawRedisConnection } from './raw-connection'
+import { commandFrame } from '../utils'
+import { RawRedisConnection, respText } from './raw-connection'
 import { expectReply } from './helpers'
 
 /**
@@ -42,6 +44,24 @@ import { expectReply } from './helpers'
  *    out of scope for #388; no test is added because pinning this server's
  *    current (wrong) reply would fail against the real backend this suite also
  *    runs against.
+ *
+ * `CONFIG SET`'s pair parsing (#419) is pinned here too. Redis 7.0 rewrote the
+ * subcommand to take several parameter/value pairs, which brought a new arity
+ * split and duplicate detection with it. Captured from real servers, and
+ * identical on 7.0.15, 8.0.6 and Valkey 7.2.14:
+ *
+ * ```
+ * CONFIG SET                               -> wrong number of arguments for 'config|set' command
+ * CONFIG SET timeout 0 maxmemory           -> syntax error
+ * CONFIG SET timeout 0 timeout 0           -> CONFIG SET failed (possibly related to argument 'timeout') - duplicate parameter
+ * CONFIG SET timeout 0 nosuch 1 timeout 0  -> Unknown option or number of arguments for CONFIG SET - 'nosuch'
+ * ```
+ *
+ * Every name is resolved (unknown or duplicate, first failure in argument
+ * order wins) before any value is validated. Redis 6.2 accepts exactly one
+ * pair and answers anything else with the legacy subcommand syntax error; that
+ * side of the `config.set.multi-pair` gate is asserted by the profile sweep in
+ * `tests-integration/compatibility/profile-gates.test.ts`.
  */
 const testRunner = new TestRunner()
 
@@ -176,5 +196,205 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
       ['CONFIG'],
       "-ERR wrong number of arguments for 'config' command\r\n",
     )
+  })
+
+  describe('CONFIG SET pair parsing (#419)', () => {
+    async function configGet(
+      conn: RawRedisConnection,
+      name: string,
+    ): Promise<string> {
+      conn.write(commandFrame('CONFIG', 'GET', name))
+      const reply = await conn.readFrame()
+      assert.ok(Array.isArray(reply), `CONFIG GET ${name} reply`)
+      return respText(reply[1])
+    }
+
+    const duplicate = (name: string): string =>
+      `-ERR CONFIG SET failed (possibly related to argument '${name}') - duplicate parameter\r\n`
+    const unknown = (name: string): string =>
+      `-ERR Unknown option or number of arguments for CONFIG SET - '${name}'\r\n`
+
+    // Every accepted pair sets a parameter to the value it already holds, so a
+    // shared real server is left exactly as it was found.
+    test('several pairs are accepted in one call', async () => {
+      const conn = await connect()
+      const timeout = await configGet(conn, 'timeout')
+      const maxmemory = await configGet(conn, 'maxmemory')
+
+      await expectReply(
+        conn,
+        ['CONFIG', 'SET', 'timeout', timeout, 'maxmemory', maxmemory],
+        '+OK\r\n',
+      )
+      await expectReply(
+        conn,
+        ['config', 'SeT', 'maxmemory', maxmemory, 'timeout', timeout],
+        '+OK\r\n',
+      )
+    })
+
+    test('fewer than one pair is a config|set arity error', async () => {
+      const conn = await connect()
+
+      for (const args of [
+        ['CONFIG', 'SET'],
+        ['CONFIG', 'SET', 'timeout'],
+      ]) {
+        await expectReply(
+          conn,
+          args,
+          "-ERR wrong number of arguments for 'config|set' command\r\n",
+        )
+      }
+    })
+
+    // The odd count is checked before any name is looked up, so an unknown
+    // parameter does not change the reply.
+    test('a dangling name after the first pair is a syntax error', async () => {
+      const conn = await connect()
+
+      await expectReply(
+        conn,
+        ['CONFIG', 'SET', 'timeout', '0', 'maxmemory'],
+        '-ERR syntax error\r\n',
+      )
+      await expectReply(
+        conn,
+        ['CONFIG', 'SET', 'nosuch', '1', 'timeout'],
+        '-ERR syntax error\r\n',
+      )
+    })
+
+    test('a repeated parameter is rejected, echoing the repeat as sent', async () => {
+      const conn = await connect()
+      const timeout = await configGet(conn, 'timeout')
+      const maxmemory = await configGet(conn, 'maxmemory')
+
+      await expectReply(
+        conn,
+        ['CONFIG', 'SET', 'timeout', timeout, 'timeout', timeout],
+        duplicate('timeout'),
+      )
+      // Names match case-insensitively; the echo is the repeat's spelling.
+      await expectReply(
+        conn,
+        ['CONFIG', 'SET', 'timeout', timeout, 'TIMEOUT', timeout],
+        duplicate('TIMEOUT'),
+      )
+      await expectReply(
+        conn,
+        [
+          'CONFIG',
+          'SET',
+          'timeout',
+          timeout,
+          'maxmemory',
+          maxmemory,
+          'timeout',
+          timeout,
+        ],
+        duplicate('timeout'),
+      )
+      // The server-backed parameters take the same path as the plain ones.
+      await expectReply(
+        conn,
+        [
+          'CONFIG',
+          'SET',
+          'notify-keyspace-events',
+          '',
+          'notify-keyspace-events',
+          '',
+        ],
+        duplicate('notify-keyspace-events'),
+      )
+    })
+
+    // Real Redis resolves every name in one pass and only then validates the
+    // values, so a bad value never masks a duplicate or an unknown name.
+    test('names are resolved before any value is validated', async () => {
+      const conn = await connect()
+
+      await expectReply(
+        conn,
+        [
+          'CONFIG',
+          'SET',
+          'proto-max-bulk-len',
+          'bad',
+          'proto-max-bulk-len',
+          '512mb',
+        ],
+        duplicate('proto-max-bulk-len'),
+      )
+      await expectReply(
+        conn,
+        ['CONFIG', 'SET', 'proto-max-bulk-len', 'bad', 'nosuch', '1'],
+        unknown('nosuch'),
+      )
+    })
+
+    test('the first failing name in argument order wins', async () => {
+      const conn = await connect()
+      const timeout = await configGet(conn, 'timeout')
+
+      await expectReply(
+        conn,
+        [
+          'CONFIG',
+          'SET',
+          'timeout',
+          timeout,
+          'nosuch',
+          '1',
+          'timeout',
+          timeout,
+        ],
+        unknown('nosuch'),
+      )
+      await expectReply(
+        conn,
+        [
+          'CONFIG',
+          'SET',
+          'timeout',
+          timeout,
+          'timeout',
+          timeout,
+          'nosuch',
+          '1',
+        ],
+        duplicate('timeout'),
+      )
+    })
+
+    test('a rejected duplicate applies neither value', async () => {
+      const conn = await connect()
+      const original = await configGet(conn, 'proto-max-bulk-len')
+
+      try {
+        await expectReply(
+          conn,
+          [
+            'CONFIG',
+            'SET',
+            'proto-max-bulk-len',
+            '2mb',
+            'proto-max-bulk-len',
+            '3mb',
+          ],
+          duplicate('proto-max-bulk-len'),
+        )
+        assert.strictEqual(
+          await configGet(conn, 'proto-max-bulk-len'),
+          original,
+        )
+      } finally {
+        conn.write(
+          commandFrame('CONFIG', 'SET', 'proto-max-bulk-len', original),
+        )
+        await conn.readRawFrame()
+      }
+    })
   })
 })

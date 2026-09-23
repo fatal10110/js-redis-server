@@ -13,6 +13,7 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 ## 1. Connection Commands
 
 - [x] `PING [message]` - Return PONG, or echo `message`
+- [x] `ECHO message` - Return `message` verbatim (binary-safe). Like real Redis, rejected in RESP2 subscribed mode and allowed in RESP3 subscribed mode
 - [x] `QUIT` - Close the connection
 - [x] `SELECT index` - Change the selected database
 - [x] `RESET` - Reset connection state (auth, MULTI/WATCH, RESP version, db, cluster read-only flag, client name) to defaults
@@ -60,8 +61,10 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 
 - [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
 
-`MONITOR` is implemented as a long-lived `ResponseStream` backed by a
-server-level command event feed. Monitor lines include an epoch timestamp, the
+`MONITOR` replies `OK` and then delivers lines as session push frames, fed by
+a server-level command event feed. A repeated `MONITOR` gets no reply, and
+`MONITOR` inside `MULTI` fails with `MONITOR isn't allowed for DENY BLOCKING
+client`, as in Redis. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
 arguments. Unknown commands and arity/syntax failures are not emitted; commands
 that parse successfully but return execution errors are emitted, matching Redis.
@@ -91,7 +94,7 @@ surface.
 #### CONFIG
 
 - [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (glob-matched against a fixed set of plausible defaults; RESP3 map / RESP2 flat array)
-- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown parameter names with the real Redis error, matching CONFIG SET's "all-or-nothing" validation)
+- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2)
 - [x] `CONFIG HELP`
 - [x] `CONFIG RESETSTAT` - Reset the stats returned by INFO (no-op in the mock)
 - [x] `CONFIG REWRITE` - Rewrite the configuration file (returns Redis' no-config-file error)
