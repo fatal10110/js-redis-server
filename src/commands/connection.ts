@@ -548,7 +548,9 @@ export const echoCommand = defineCommand({
 export const quitCommand = defineCommand({
   name: 'quit',
   schema: t.object({}),
-  flags: ['readonly', 'fast', 'subscribed'],
+  // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
+  // entry at all, so its script sees an unknown command instead).
+  flags: ['readonly', 'fast', 'subscribed', 'noscript'],
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
@@ -595,7 +597,9 @@ export const clientCommand = defineCommand({
     subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
-  flags: ['readonly', 'admin'],
+  // noscript: real Redis refuses CLIENT from scripts on every version — every
+  // subcommand but HELP on 7.0+ (see lua-runtime's isRefusedFromScript).
+  flags: ['readonly', 'admin', 'noscript'],
   introspection: {
     arity: -2,
     flags: [],
@@ -868,7 +872,8 @@ export const resetCommand = defineCommand({
   // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
   // discardTransaction() instead of being queued until EXEC (matches real
   // Redis, which excludes RESET from queueMultiCommand).
-  flags: ['admin', 'subscribed', 'transaction'],
+  // noscript: real Redis refuses RESET from a script on every version.
+  flags: ['admin', 'subscribed', 'transaction', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     clientNames.delete(ctx.session)
