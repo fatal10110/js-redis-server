@@ -105,6 +105,31 @@ so the PR body is not a durable home for a breaking-change note.
 
   ioredis and node-redis always read, so none of this changes what they see.
 
+- **BREAKING (`/core`)** `ResponseStream`, `isResponseStream` and
+  `ExecutorResult` are removed ([#366]). A command's `execute` now returns
+  `RedisResult | Promise<RedisResult>`, and server-initiated frames have one
+  channel, the session push queue. The two shipped producers moved onto it:
+
+  ```
+  SUBSCRIBE a b c (any (UN)SUBSCRIBE family) -> one RedisResult pre-encoded
+                                                with every confirmation frame;
+                                                `value` is the first frame
+  MONITOR                                    -> +OK, then feed lines as session
+                                                pushes (ClientSession.startMonitor)
+  ExecutorResult                             -> RedisResult
+  ```
+
+  A custom command that returned a stream should enqueue its frames as pushes
+  (`ClientSession.enqueuePush`, or `deferPushesUntilAfterReply` to hold them
+  behind its reply) and return an ordinary `RedisResult`. The
+  `RedisClientSession` interface swaps `registerResponseStreamCleanup` /
+  `resetResponseStreams` for `monitoring` / `startMonitor` / `stopMonitor`.
+
+  `InMemoryRedisClient` follows suit: a multi-target (UN)SUBSCRIBE resolves to
+  its first confirmation, and the remaining confirmations are no longer
+  replayed through `pushes()` — only messages and MONITOR lines are. The client
+  now also runs a reply's `afterReply` step, as the network path does.
+
 - **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
   `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
   subscribed-mode, transaction) ever implemented them — only tests did — and
@@ -336,6 +361,16 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- A command pipelined behind a multi-channel `SUBSCRIBE` / `PSUBSCRIBE` /
+  `SSUBSCRIBE` could have its reply written between the confirmations. They
+  now go out as one reply, in Redis's order ([#455]).
+- A multi-channel `SUBSCRIBE` queued in `MULTI` replied `Streaming command is
+  not allowed in transaction` from `EXEC`. It now runs, and `EXEC` embeds every
+  confirmation in its array exactly as Redis does ([#366]).
+- `MONITOR` queued in `MULTI` now fails with Redis's `MONITOR isn't allowed for
+  DENY BLOCKING client`, and a repeated `MONITOR` gets no reply and does not
+  double the feed, as in Redis ([#366]).
+
 - `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
   protocol reader, for every command ([#431], [#415]). A bulk argument longer
   than the limit is refused from its header, before the payload is read and
@@ -461,5 +496,7 @@ requests they contain.
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
+[#366]: https://github.com/fatal10110/js-redis-server/issues/366
+[#455]: https://github.com/fatal10110/js-redis-server/issues/455
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

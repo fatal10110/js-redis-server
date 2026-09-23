@@ -1,5 +1,5 @@
 import type { CommandPlan } from './command-definition'
-import { CommandExecutor, type ExecutorResult } from './command-executor'
+import { CommandExecutor } from './command-executor'
 import {
   createDefaultParkHandler,
   createNonBlockingParkHandler,
@@ -20,6 +20,7 @@ import type { RedisClusterNodeRole } from '../state/cluster-topology'
 import type { RedisDatabase } from '../state/database'
 import type { RedisServerState } from '../state/server-state'
 import type { Unsubscribe } from '../state/mutation-events'
+import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
 import type { RedisPubSubBroker } from '../state/pubsub-broker'
 
 export type ClientSessionOptions = {
@@ -205,7 +206,8 @@ export class ClientSession implements RedisClientSession {
   private readonly pushWaiters = new Set<() => void>()
   private deferredPushes: RedisResult[] | null = null
   private pushQueueClosed = false
-  private readonly responseStreamCleanups = new Set<() => void>()
+  /** Set while this connection is in MONITOR mode; releases the feed. */
+  private unsubscribeMonitor?: Unsubscribe
   private unregisterClientSession?: Unsubscribe
 
   constructor(options: ClientSessionOptions) {
@@ -366,16 +368,18 @@ export class ClientSession implements RedisClientSession {
   /**
    * EXEC step 2: run the drained plans in order and collect their replies into a
    * single array reply. Each command runs in its own fresh execution context.
-   * Streaming commands (SUBSCRIBE/MONITOR) are not permitted inside a
-   * transaction: the stream is closed immediately and replaced with an error
-   * entry so the array stays positionally aligned with the queued commands.
+   *
+   * The reply is pre-encoded item by item whenever an item's wire bytes cannot
+   * be rebuilt from the array value alone: a queued `HELLO` switched the
+   * protocol partway, or a command pre-encoded its own reply (a multi-channel
+   * `SUBSCRIBE`, whose extra confirmations Redis appends inside the array).
    */
   async executeTransaction(
     plans: readonly CommandPlan[],
   ): Promise<RedisResult> {
     const values: RedisValue[] = []
     const encodedValues: Buffer[] = []
-    let sawProtocolSwitch = false
+    let preEncode = false
 
     // Blocking commands must not park while the EXEC turn is held — that would
     // deadlock because no other session could produce the wakeup write. Override
@@ -409,7 +413,7 @@ export class ClientSession implements RedisClientSession {
       // etc.) would otherwise propagate out and abandon the partial results
       // array. Real Redis always replies with an N-element EXEC array, so trap
       // the failure into this command's slot and keep running the rest (#83).
-      let result: Awaited<ReturnType<typeof this.executor.executePlan>>
+      let result: RedisResult
       const versionBefore = this.protocolVersion
       try {
         result = await this.executor.executePlan(plan, noBlockCtx)
@@ -422,32 +426,22 @@ export class ClientSession implements RedisClientSession {
           values,
           encodedValues,
         )
-        sawProtocolSwitch ||= this.protocolVersion !== versionBefore
+        preEncode ||= this.protocolVersion !== versionBefore
         continue
       }
 
-      if (result instanceof RedisResult) {
-        this.appendTransactionValue(
-          result.value,
-          values,
-          encodedValues,
-          result.encoded,
-        )
-        sawProtocolSwitch ||= this.protocolVersion !== versionBefore
-        continue
-      }
-
-      result.close('streaming command is not allowed in transaction')
       this.appendTransactionValue(
-        RedisValue.error('Streaming command is not allowed in transaction'),
+        result.value,
         values,
         encodedValues,
+        result.encoded,
       )
-      sawProtocolSwitch ||= this.protocolVersion !== versionBefore
+      preEncode ||=
+        this.protocolVersion !== versionBefore || result.encoded !== undefined
     }
 
     const value = RedisValue.array(values)
-    if (!sawProtocolSwitch) {
+    if (!preEncode) {
       return RedisResult.create(value)
     }
 
@@ -647,20 +641,30 @@ export class ClientSession implements RedisClientSession {
     }
   }
 
-  registerResponseStreamCleanup(cleanup: () => void): Unsubscribe {
-    this.responseStreamCleanups.add(cleanup)
-    return () => {
-      this.responseStreamCleanups.delete(cleanup)
-    }
+  get monitoring(): boolean {
+    return this.unsubscribeMonitor !== undefined
   }
 
-  resetResponseStreams(): void {
-    const cleanups = Array.from(this.responseStreamCleanups)
-    this.responseStreamCleanups.clear()
-
-    for (const cleanup of cleanups) {
-      cleanup()
+  /**
+   * MONITOR: deliver every other client's command to this connection as a push
+   * frame, rendered by `frame`, until {@link stopMonitor} (RESET) or close.
+   * No-op while already monitoring, so a repeated MONITOR cannot double lines.
+   */
+  startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
+    if (this.unsubscribeMonitor) {
+      return
     }
+
+    this.unsubscribeMonitor = this.server.monitorFeed.subscribe(event => {
+      if (event.clientId !== this.id) {
+        this.enqueuePush(frame(event))
+      }
+    })
+  }
+
+  stopMonitor(): void {
+    this.unsubscribeMonitor?.()
+    this.unsubscribeMonitor = undefined
   }
 
   enqueuePush(result: RedisResult): void {
@@ -706,7 +710,7 @@ export class ClientSession implements RedisClientSession {
   async execute(
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
-  ): Promise<ExecutorResult> {
+  ): Promise<RedisResult> {
     this.signal.throwIfAborted()
 
     let turn: RedisTurnHandle | undefined = await this.db.turnQueue.waitTurn()
@@ -767,7 +771,7 @@ export class ClientSession implements RedisClientSession {
   close(): void {
     this.unregisterClientSession?.()
     this.unregisterClientSession = undefined
-    this.resetResponseStreams()
+    this.stopMonitor()
     this.signalSource?.abort()
     this.unwatch()
     this.resetPubSub()

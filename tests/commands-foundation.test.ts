@@ -2,7 +2,6 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
   connectionCommands,
-  isResponseStream,
   monitorCommand,
   RedisResult,
   RedisValue,
@@ -145,45 +144,37 @@ describe('new foundation commands', () => {
     session.close()
   })
 
-  test('MONITOR returns a stream and unsubscribes when closed', async () => {
+  test('MONITOR replies OK once and unsubscribes when the session closes', async () => {
     const { session, server } = createSession()
     const result = await session.execute('monitor', [])
 
-    assert.ok(isResponseStream(result))
+    assert.deepStrictEqual(result.value, RedisValue.simpleString('OK'))
+    assert.strictEqual(session.monitoring, true)
     assert.strictEqual(server.monitorFeed.subscriberCount, 1)
 
-    const iterator = result
-      .frames(new AbortController().signal)
-      [Symbol.asyncIterator]()
-    assert.deepStrictEqual(await iterator.next(), {
-      done: false,
-      value: RedisResult.ok(),
-    })
+    // Redis ignores a repeated MONITOR: no reply, no second subscription.
+    const again = await session.execute('monitor', [])
+    assert.strictEqual(again.options?.omitReply, true)
+    assert.strictEqual(server.monitorFeed.subscriberCount, 1)
 
-    result.close('test complete')
-    await result.closed
-    assert.deepStrictEqual(await iterator.next(), {
-      done: true,
-      value: undefined,
-    })
+    session.close()
+    assert.strictEqual(session.monitoring, false)
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
 
     assert.strictEqual(monitorCommand.name, 'monitor')
   })
 
-  test('RESET closes active MONITOR streams', async () => {
+  test('RESET leaves MONITOR mode', async () => {
     const { session, server } = createSession()
-    const result = await session.execute('monitor', [])
-
-    assert.ok(isResponseStream(result))
+    await session.execute('monitor', [])
     assert.strictEqual(server.monitorFeed.subscriberCount, 1)
 
     assert.deepStrictEqual(
       await session.execute('reset', []),
       RedisResult.create(RedisValue.simpleString('RESET')),
     )
-    await result.closed
 
+    assert.strictEqual(session.monitoring, false)
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
   })
 

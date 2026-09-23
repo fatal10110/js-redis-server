@@ -15,7 +15,6 @@ import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
 import type { RespVersion } from '../core/resp-encoder'
-import { isResponseStream, type ResponseStream } from '../core/response-stream'
 import { RedisServerState, RedisClusterTopology } from '../state'
 
 /**
@@ -1308,8 +1307,8 @@ export class NodeRedisMockCluster extends CommandRunner {
 /**
  * Execute a tokenised command on a session and return its raw {@link RedisValue}
  * (callers decode it to the node-redis-correct shape). Throws when the client is
- * closed, and rejects streaming commands the facade can't deliver as a reply
- * (pub/sub uses the dedicated push-draining session instead).
+ * closed. A multi-target (UN)SUBSCRIBE's value is its first confirmation;
+ * messages never flow here (pub/sub uses the dedicated push-draining session).
  */
 async function runOnSession(
   session: ClientSession,
@@ -1331,31 +1330,7 @@ async function runOnSession(
     rest.map((arg, index) => toBuffer(arg, index + 1)),
   )
 
-  if (isResponseStream(result)) {
-    // A multi-channel SUBSCRIBE/PSUBSCRIBE returns the per-channel confirmation
-    // frames as a stream. The actual *messages* never flow here — they go to
-    // the session's push queue (drained via readPushes). So consume the
-    // confirmations to settle the subscription and return the last one as the
-    // ack value.
-    return drainSubscribeAck(result)
-  }
-
   return result.value
-}
-
-/**
- * Consume a SUBSCRIBE/PSUBSCRIBE confirmation stream to completion and return
- * the final confirmation frame's value as the ack. Messages are delivered out
- * of band via {@link ClientSession.readPushes}, so this stream only ever yields
- * the subscribe confirmations.
- */
-async function drainSubscribeAck(stream: ResponseStream): Promise<RedisValue> {
-  let last: RedisValue = { kind: 'simple-string', value: 'OK' }
-  const abort = new AbortController()
-  for await (const frame of stream.frames(abort.signal)) {
-    last = frame.value
-  }
-  return last
 }
 
 /**

@@ -60,8 +60,10 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 
 - [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
 
-`MONITOR` is implemented as a long-lived `ResponseStream` backed by a
-server-level command event feed. Monitor lines include an epoch timestamp, the
+`MONITOR` replies `OK` and then delivers lines as session push frames, fed by
+a server-level command event feed. A repeated `MONITOR` gets no reply, and
+`MONITOR` inside `MULTI` fails with `MONITOR isn't allowed for DENY BLOCKING
+client`, as in Redis. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
 arguments. Unknown commands and arity/syntax failures are not emitted; commands
 that parse successfully but return execution errors are emitted, matching Redis.
