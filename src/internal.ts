@@ -32,6 +32,8 @@ export type {
 export type {
   ExpirationState,
   KeyspaceEntry,
+  KeyspaceNotifyFlag,
+  KeyspaceNotifyFlags,
   RedisClusterNode,
   RedisClusterNodeRole,
   RedisDataTypeName,

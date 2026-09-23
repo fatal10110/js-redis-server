@@ -105,4 +105,42 @@ describe(`Raw TCP list command errors (${testRunner.getBackendName()})`, () => {
     await expectReply(conn, ['SORT', num, 'FOO'], SYNTAX)
     await expectReply(conn, ['SORT_RO', num, 'STORE', dst], SYNTAX)
   })
+
+  test('SORT BY/GET globs are not cluster-guarded on a standalone server', async () => {
+    // These globs have a '*' before any hash tag, so a cluster node refuses
+    // them ("denied in Cluster mode"); outside a cluster they just work.
+    const conn = await connect()
+    const prefix = `sort-standalone:${randomKey()}`
+    const list = `${prefix}:l`
+
+    await expectReply(conn, ['RPUSH', list, '1', '2'], ':2\r\n')
+    await expectReply(
+      conn,
+      ['MSET', `${prefix}:w_1`, '20', `${prefix}:w_2`, '10'],
+      '+OK\r\n',
+    )
+    await expectReply(
+      conn,
+      ['MSET', `${prefix}:n_1`, 'one', `${prefix}:n_2`, 'two'],
+      '+OK\r\n',
+    )
+
+    const reply = '*4\r\n$3\r\ntwo\r\n$1\r\n2\r\n$3\r\none\r\n$1\r\n1\r\n'
+    for (const command of ['SORT', 'SORT_RO']) {
+      await expectReply(
+        conn,
+        [
+          command,
+          list,
+          'BY',
+          `${prefix}:w_*`,
+          'GET',
+          `${prefix}:n_*`,
+          'GET',
+          '#',
+        ],
+        reply,
+      )
+    }
+  })
 })

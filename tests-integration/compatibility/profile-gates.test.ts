@@ -332,6 +332,88 @@ describe(
       }
     })
 
+    // The `n` (new-key) class is Redis 7.0+. Real 6.2.14/6.2.24 reject `KEn`
+    // through the bare `badfmt` wording (but accept `m` and `d`); 7.0.15,
+    // 8.0.x and valkey 8.0/9.0 accept it.
+    test('the n notify-keyspace-events class matches the profile', async () => {
+      try {
+        const reply = await send(
+          'CONFIG',
+          'SET',
+          'notify-keyspace-events',
+          'KEn',
+        )
+        if (supportsNewKeyNotifyClass()) {
+          assert.strictEqual(reply, '+OK\r\n')
+          assert.strictEqual(
+            await send('CONFIG', 'GET', 'notify-keyspace-events'),
+            '*2\r\n$22\r\nnotify-keyspace-events\r\n$3\r\nnKE\r\n',
+          )
+        } else {
+          assert.strictEqual(
+            reply,
+            "-ERR Invalid argument 'KEn' for CONFIG SET 'notify-keyspace-events'\r\n",
+          )
+        }
+
+        // `m` and `d` exist on every profile.
+        assert.strictEqual(
+          await send('CONFIG', 'SET', 'notify-keyspace-events', 'KEmd'),
+          '+OK\r\n',
+        )
+      } finally {
+        await send('CONFIG', 'SET', 'notify-keyspace-events', '')
+      }
+    })
+
+    // Invalid-value and unknown-parameter CONFIG SET failures share the one
+    // gated template (#416), not only proto-max-bulk-len's. Captured from real
+    // 6.2.14 / 7.0.15 / 8.0.0 / valkey 8.0.0 / valkey 9.0.0:
+    // - notify-keyspace-events is hand-parsed in 6.2 (`goto badfmt`), so its
+    //   6.2 reply carries no ` - <detail>` suffix at all;
+    // - 6.2 echoes the parameter name as the client sent it, 7.0+ echoes it
+    //   lower-cased;
+    // - an unknown parameter has its own 6.2 wording.
+    test('every CONFIG SET failure uses the profile wording', async () => {
+      const badNotify = await send(
+        'CONFIG',
+        'SET',
+        'Notify-Keyspace-Events',
+        'Xz',
+      )
+      const badMemory = await send('CONFIG', 'SET', 'Proto-Max-Bulk-Len', 'abc')
+      const unknown = await send('CONFIG', 'SET', 'Bogus-Param', '1')
+
+      if (supportsConfigSetFailureWording()) {
+        assert.strictEqual(
+          badNotify,
+          "-ERR CONFIG SET failed (possibly related to argument 'notify-keyspace-events') - Invalid event class character. Use 'Ag$lshzxeKEtmdn'.\r\n",
+        )
+        assert.strictEqual(
+          badMemory,
+          "-ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value\r\n",
+        )
+        assert.strictEqual(
+          unknown,
+          "-ERR Unknown option or number of arguments for CONFIG SET - 'Bogus-Param'\r\n",
+        )
+        return
+      }
+
+      assert.strictEqual(
+        badNotify,
+        "-ERR Invalid argument 'Xz' for CONFIG SET 'Notify-Keyspace-Events'\r\n",
+      )
+      assert.strictEqual(
+        badMemory,
+        "-ERR Invalid argument 'abc' for CONFIG SET 'Proto-Max-Bulk-Len' - argument must be a memory value\r\n",
+      )
+      assert.strictEqual(
+        unknown,
+        '-ERR Unsupported CONFIG parameter: Bogus-Param\r\n',
+      )
+    })
+
     // `config.set.multi-pair` (#419). Redis 7.0 rewrote CONFIG SET to accept
     // several pairs, splitting its arity errors and adding duplicate
     // detection. Real 6.2 dispatches SET only for exactly one pair
@@ -741,6 +823,11 @@ describe(
             'This Redis command is not allowed from script',
           ],
           [
+            // A noscript container refuses every subcommand on 6.2 (#474).
+            "return redis.call('CLIENT', 'NOPE')",
+            'This Redis command is not allowed from script',
+          ],
+          [
             'redis.call()',
             'Please specify at least one argument for this redis lib call',
           ],
@@ -790,6 +877,96 @@ describe(
       } else {
         assert.match(osReply, /nonexistent global variable 'os'/)
       }
+    })
+
+    test('a noscript container HELP from a script matches the profile (#452)', async () => {
+      // 6.2 flags the whole container noscript; 7.0+ flags each subcommand
+      // and leaves HELP runnable from scripts.
+      for (const container of ['CLIENT', 'ACL', 'SCRIPT']) {
+        const reply = await send(
+          'EVAL',
+          `return redis.pcall('${container}','HELP')`,
+          '0',
+        )
+        if (profile === 'redis-6.2') {
+          assert.match(reply, /^-.*not allowed from script/, container)
+        } else {
+          assert.ok(reply.startsWith('*'), `${container}: ${reply}`)
+        }
+      }
+
+      // Every other subcommand stays refused on every profile.
+      const refused = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','GETNAME')",
+        '0',
+      )
+      assert.match(refused, /^-.*not allowed from script/)
+
+      // 7.0+ resolves `container|subcommand` first, so an unknown (or
+      // not-yet-introduced) subcommand fails lookup; 6.2 refuses the container.
+      const unknownOnNewer =
+        profile === 'redis-6.2'
+          ? /not allowed from script/
+          : /Unknown .*command/
+      const nope = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','NOPE')",
+        '0',
+      )
+      assert.match(nope, /^-/)
+      assert.match(nope, unknownOnNewer)
+
+      const setinfo = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','SETINFO','lib-name','x')",
+        '0',
+      )
+      assert.match(
+        setinfo,
+        profile === 'redis-7.0'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
+
+      // The lookup is against the real table: a real subcommand this server
+      // does not implement is refused, and one the profile's server does not
+      // have yet is unknown.
+      const cases: Array<[string, boolean]> = [
+        ["'ACL','CAT'", true],
+        ["'CLIENT','PAUSE','0'", true],
+        ["'CLIENT','NO-TOUCH','ON'", profile !== 'redis-7.0'],
+        [
+          "'CLIENT','CAPA','redirect'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'SCRIPT','SHOW','x'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'CLIENT','IMPORT-SOURCE','ON'",
+          profile === 'valkey-9.0' || profile === 'redis-6.2',
+        ],
+      ]
+      for (const [call, refused] of cases) {
+        const reply = await send('EVAL', `return redis.pcall(${call})`, '0')
+        assert.match(
+          reply,
+          refused ? /^-.*not allowed from script/ : /^-.*Unknown .*command/,
+          call,
+        )
+      }
+
+      // QUIT has a command-table entry (and so the noscript refusal) only from
+      // 7.0; a 6.2 script sees an unknown command.
+      const quit = await send('EVAL', "return redis.pcall('QUIT')", '0')
+      assert.match(
+        quit,
+        profile === 'redis-6.2'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
     })
 
     test('RESP3 subscribed PUBLISH self-reply order matches the profile', async () => {
@@ -1040,6 +1217,10 @@ function supportsConfigSetMultiPair(): boolean {
 }
 
 function supportsMemoryValueOverflowRejection(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsNewKeyNotifyClass(): boolean {
   return profile !== 'redis-6.2'
 }
 

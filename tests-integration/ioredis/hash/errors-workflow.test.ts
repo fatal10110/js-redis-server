@@ -2,8 +2,13 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420, #453).
+const RUN = randomKey()
 
 describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -17,7 +22,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('Hash commands workflow - User Profile', async () => {
-    const userId = 'user:1001'
+    const userId = `user:1001:${RUN}`
 
     // Create user profile
     await redisClient?.hmset(
@@ -82,7 +87,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('Hash commands workflow - Shopping Cart', async () => {
-    const cartId = 'cart:session123'
+    const cartId = `cart:session123:${RUN}`
 
     // Add items to cart
     await redisClient?.hset(cartId, 'item:001', '2') // quantity 2

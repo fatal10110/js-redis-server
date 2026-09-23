@@ -1,3 +1,4 @@
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t } from '../core/command-schema'
 import type {
@@ -74,12 +75,8 @@ function setClientName(session: RedisClientSession, name: Buffer): void {
   clientNames.set(session, name)
 }
 
-function isClusterMode(ctx: RedisExecutionContext): boolean {
-  return ctx.server.clusterTopology.nodes.length > 0
-}
-
 function redisMode(ctx: RedisExecutionContext): string {
-  return isClusterMode(ctx) ? 'cluster' : 'standalone'
+  return ctx.server.clusterEnabled ? 'cluster' : 'standalone'
 }
 
 function value(value: string): RedisValue {
@@ -104,7 +101,7 @@ function buildInfo(
     sections.length === 0
       ? ['default']
       : sections.map(section => section.toLowerCase())
-  const clustered = isClusterMode(ctx)
+  const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
     'clients',
@@ -497,10 +494,6 @@ function redactedMonitorArg(): Buffer {
   return Buffer.from('(redacted)')
 }
 
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
-}
-
 export const pingCommand = defineCommand({
   name: 'ping',
   schema: t.object({
@@ -552,7 +545,9 @@ export const echoCommand = defineCommand({
 export const quitCommand = defineCommand({
   name: 'quit',
   schema: t.object({}),
-  flags: ['readonly', 'fast', 'subscribed'],
+  // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
+  // entry at all, so its script sees an unknown command instead).
+  flags: ['readonly', 'fast', 'subscribed', 'noscript'],
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
@@ -599,7 +594,9 @@ export const clientCommand = defineCommand({
     subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
-  flags: ['readonly', 'admin'],
+  // noscript: real Redis refuses CLIENT from scripts on every version — every
+  // subcommand but HELP on 7.0+ (see lua-runtime's isRefusedFromScript).
+  flags: ['readonly', 'admin', 'noscript'],
   introspection: {
     arity: -2,
     flags: [],
@@ -622,7 +619,7 @@ export const clientCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'setname') {
       expectArgCount('client|setname', args.args, 1)
@@ -872,7 +869,8 @@ export const resetCommand = defineCommand({
   // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
   // discardTransaction() instead of being queued until EXEC (matches real
   // Redis, which excludes RESET from queueMultiCommand).
-  flags: ['admin', 'subscribed', 'transaction'],
+  // noscript: real Redis refuses RESET from a script on every version.
+  flags: ['admin', 'subscribed', 'transaction', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     clientNames.delete(ctx.session)
@@ -946,7 +944,7 @@ export const aclCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'whoami') {
       expectArgCount('acl|whoami', args.args, 0)
@@ -1030,7 +1028,7 @@ export const slowlogCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
       if (args.args.length > 1) {

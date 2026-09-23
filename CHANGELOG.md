@@ -293,6 +293,24 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
+- **BREAKING (`/core`)** `RedisServerState.notifyKeyspaceEvents` is now the
+  parsed flag set (`ReadonlySet<KeyspaceNotifyFlag>`), not the canonical
+  string ([#371]); both types are now exported from `/core`. CONFIG SET parses the value once instead of the notifier
+  re-parsing the string on every mutation. Code that assigned the field
+  directly must now assign a set with `A` already expanded:
+
+  ```
+  state.notifyKeyspaceEvents = 'KEA'
+    -> state.notifyKeyspaceEvents = new Set(['K', 'E', 'g', '$', 'l', 's',
+                                             'h', 'z', 'x', 'e', 't', 'd'])
+  ```
+
+  Or send `CONFIG SET notify-keyspace-events KEA` through a client, which
+  validates it. In plain JS an old string assignment is not caught at compile
+  time: the next key write throws `TypeError: flags.has is not a function`
+  from the mutation-bus subscriber, after the write has already been applied.
+  Reads that expected the string should render it with CONFIG GET.
+
 - **BREAKING** The two socketless clients now decode maps, doubles, big
   numbers and booleans according to the protocol the connection negotiated
   ([#414]). They used to decode a map to an object, and those three scalars to
@@ -374,6 +392,29 @@ so the PR body is not a durable home for a breaking-change note.
   interface and declaration emit requires it ([#376]).
 
 ### Fixed
+
+- `SORT` / `SORT_RO` scan their options when they run, left to right, the way
+  `sortCommand()` does, and the cluster `BY` / `GET` pattern guard moved from
+  `ClusterPolicy` into that scan ([#417]). The first offending option in
+  argument order is now the one reported (it was always `BY` before `GET`); a
+  denied pattern is reported before a later token fails to parse (a trailing
+  syntax error used to win); and inside `MULTI` every SORT option error — the
+  cluster denial, `ERR syntax error`, a bad `LIMIT` integer — replies `+QUEUED`
+  and surfaces as an element of the `EXEC` array, where it used to fail at
+  queue time and abort the transaction with `EXECABORT`. Holds for both the
+  pre-7.4 and the 7.4+ wordings. `ClusterPolicy` no longer knows about SORT.
+
+- `SORT` tie order and option handling now match Redis ([#443]): elements that
+  compare equal keep their load order under `DESC` too (`ALPHA DESC` used to
+  reverse them); under `ALPHA` a missing `BY` weight orders before an empty
+  one; a constant `BY` disables sorting even when a glob `BY` comes after it,
+  and otherwise the *last* glob is the one looked up; and a set whose members
+  are all canonical 64-bit integers is read in ascending numeric order, as an
+  intset is stored, so `SORT s BY nosort` returns it sorted. The source key is
+  also read once rather than twice. Set order still differs where it depends
+  on the set's encoding history, which the mock does not track: a set created
+  from an integer keeps its integers sorted ahead of later non-integer members
+  in Redis (`SADD s 3 1 a` → `1 3 a`; the mock gives `3 1 a`).
 
 - A command pipelined behind a multi-channel `SUBSCRIBE` / `PSUBSCRIBE` /
   `SSUBSCRIBE` could have its reply written between the confirmations. They
@@ -481,6 +522,20 @@ so the PR body is not a durable home for a breaking-change note.
   subcommand with unusable arguments — took the same 7.0 case flip and is now
   gated alongside it. It reaches `PUBSUB` only so far ([#437]).
 
+- `CONFIG SET` failures under the `redis-6.2` profile now match real 6.2
+  ([#416]). Before, the mock sent the 7.0+ wording (or behaviour) on every
+  profile in four places:
+  - an invalid `notify-keyspace-events` value now gets
+    `Invalid argument '<value>' for CONFIG SET '<name>'`, with no ` - <detail>`
+    suffix (6.2 hand-parses this parameter);
+  - the parameter name is echoed exactly as the client typed it (7.0+ echoes it
+    lower-cased);
+  - an unknown parameter gets `Unsupported CONFIG parameter: <name>`;
+  - the `n` (new-key) class, which Redis only added in 7.0, is rejected
+    (gated as `notify.keyspace.new-key-class`, Redis 7.0 / Valkey 7.2).
+
+  7.0+ profiles are unchanged.
+
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,
   which replaced `Unknown subcommand or wrong number of arguments for '%s'. Try
@@ -525,7 +580,11 @@ requests they contain.
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
+[#417]: https://github.com/fatal10110/js-redis-server/issues/417
+[#443]: https://github.com/fatal10110/js-redis-server/issues/443
 [#366]: https://github.com/fatal10110/js-redis-server/issues/366
 [#455]: https://github.com/fatal10110/js-redis-server/issues/455
+[#371]: https://github.com/fatal10110/js-redis-server/issues/371
+[#416]: https://github.com/fatal10110/js-redis-server/issues/416
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

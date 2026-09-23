@@ -4,7 +4,6 @@ import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
 import {
   assertNodeRedisKeyCount,
-  flushNodeRedisCluster,
   countExistingNodeRedisKeys,
   randomKey,
 } from '../../utils'
@@ -20,7 +19,6 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
