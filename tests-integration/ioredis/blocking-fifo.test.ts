@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, type ChainableCommander } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { randomKey } from '../utils'
+import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -93,6 +93,11 @@ describe(`Blocking waiters are served FIFO (${testRunner.getBackendName()})`, ()
     for (let i = 0; i < WAITERS; i++) {
       waiters.push(await testRunner.setupIoredisCluster())
     }
+    // ioredis opens node connections lazily; a waiter paying a TCP connect on
+    // its first command could reach the server after a later waiter.
+    await Promise.all(
+      [feeder, ...waiters].flatMap(c => c.nodes('master').map(n => n.ping())),
+    )
   })
 
   after(async () => {
@@ -310,4 +315,43 @@ describe(`Blocking waiters are served FIFO (${testRunner.getBackendName()})`, ()
 
     assert.deepStrictEqual(await reply, [k1, 'v'])
   })
+
+  // Unlike the pop commands, real Redis unblocks XREADGROUP when its stream is
+  // overwritten with another type, and the re-run replies WRONGTYPE.
+  for (const [how, overwrite] of [
+    ['SET', (key: string) => feeder.set(key, 'foo')],
+    [
+      'MULTI; DEL; SET; EXEC',
+      (key: string) => feeder.multi().del(key).set(key, 'foo').exec(),
+    ],
+  ] as const) {
+    test(`XREADGROUP BLOCK: overwriting the stream (${how}) unblocks it with WRONGTYPE`, async () => {
+      const key = `{${randomKey()}}`
+      await feeder.xgroup('CREATE', key, 'g', '$', 'MKSTREAM')
+      const reply = waiters[0].xreadgroup(
+        'GROUP',
+        'g',
+        'c',
+        'BLOCK',
+        2000,
+        'STREAMS',
+        key,
+        '>',
+      )
+      await waitForPark()
+
+      // Attach the assertion first: real Redis may reply before the
+      // overwrite's own reply arrives.
+      const started = Date.now()
+      const rejected = assert.rejects(
+        reply,
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await overwrite(key)
+      await rejected
+      assert.ok(Date.now() - started < 1000, 'unblocked, not timed out')
+    })
+  }
 })

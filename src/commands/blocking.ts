@@ -8,8 +8,12 @@ export type BlockOnKeysOptions<TResult> = {
    * as in real Redis (7.2+): a key overwritten with another type (`SET k foo`
    * on a key a `BLPOP` waits on) keeps the client blocked instead of waking it
    * into a WRONGTYPE reply.
+   *
+   * Omit it to wake on any write. `XREADGROUP` does: real Redis unblocks it
+   * when its stream is overwritten with another type, and the re-run replies
+   * WRONGTYPE.
    */
-  type: RedisDataValue['type']
+  type?: RedisDataValue['type']
   /** `undefined` blocks forever. */
   timeoutMs: number | undefined
   /**
@@ -47,7 +51,8 @@ export async function blockOnKeys<TResult>(
   const db = ctx.db
   const unsubs = keys.map(key =>
     db.subscribeKey(key, event => {
-      if (event.type === 'write' && event.value.type === type) wake?.()
+      if (event.type !== 'write') return
+      if (type === undefined || event.value.type === type) wake?.()
     }),
   )
 

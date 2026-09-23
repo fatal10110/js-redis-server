@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../test-config'
-import { randomKey } from '../utils'
+import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -312,4 +312,39 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
 
     assert.deepStrictEqual(await reply, { key: k1, element: 'v' })
   })
+
+  // Unlike the pop commands, real Redis unblocks XREADGROUP when its stream is
+  // overwritten with another type, and the re-run replies WRONGTYPE.
+  for (const [how, overwrite] of [
+    ['SET', (key: string) => feeder.set(key, 'foo')],
+    [
+      'MULTI; DEL; SET; EXEC',
+      (key: string) => feeder.multi().del(key).set(key, 'foo').exec(),
+    ],
+  ] as const) {
+    test(`XREADGROUP BLOCK: overwriting the stream (${how}) unblocks it with WRONGTYPE`, async () => {
+      const key = `{${randomKey()}}`
+      await feeder.xGroupCreate(key, 'g', '$', { MKSTREAM: true })
+      const reply = waiters[0].xReadGroup(
+        'g',
+        'c',
+        { key, id: '>' },
+        { BLOCK: 2000 },
+      )
+      await waitForPark()
+
+      // Attach the assertion first: real Redis may reply before the
+      // overwrite's own reply arrives.
+      const started = Date.now()
+      const rejected = assert.rejects(
+        reply,
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+      await overwrite(key)
+      await rejected
+      assert.ok(Date.now() - started < 1000, 'unblocked, not timed out')
+    })
+  }
 })
