@@ -1,7 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
-import { createClient, RedisClientType } from 'redis'
-import { TestRunner } from '../../test-config'
+import { RedisClientType } from 'redis'
+import { TestRunner, duplicateNodeRedisClient } from '../../test-config'
 import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
@@ -48,11 +48,13 @@ class EventBus {
 }
 
 describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, () => {
-  let port: number
+  // Every client is a duplicate() of one standalone client: a new connection to
+  // the same server (mock/real), or to the same in-memory keyspace (socketless).
+  let base: RedisClientType
   const clients: RedisClientType[] = []
 
   before(async () => {
-    port = await testRunner.setupRawStandalone()
+    base = await testRunner.setupNodeRedisStandalone()
   })
 
   after(async () => {
@@ -178,6 +180,48 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
     assert.strictEqual(await renameTo, true)
   })
 
+  test('does not name a cross-database write after an earlier SELECT', async () => {
+    // SELECT runs against the database selected *before* it, so that is the
+    // one tagged with the active command name. Restoring the tag through the
+    // live `ctx.db` getter hit the newly selected database instead, leaving the
+    // old one tagged `select` — and since every later command restores the tag
+    // it saved, the stale value was never cleared. COPY ... DB and MOVE write
+    // into a database the executor never tags, so their events there were
+    // published as `select` (#359). Real Redis names them copy_to / move_to.
+    const actor = await connect()
+    const sentinelWriter = await connect()
+    await actor.configSet('notify-keyspace-events', 'KEA')
+    const source = randomKey()
+    const copied = randomKey()
+    const moved = randomKey()
+    const sentinel = randomKey()
+
+    const { bus } = await subscribe(['__keyspace@0__:*', '__keyevent@0__:*'])
+    const events = bus.collect()
+
+    await actor.select(1)
+    await actor.set(source, 'v')
+    assert.strictEqual(await actor.copy(source, copied, { DB: 0 }), 1)
+    await actor.set(moved, 'v')
+    assert.strictEqual(await actor.move(moved, 0), 1)
+
+    // Pub/sub delivery to one subscriber is ordered: once this db0 event
+    // arrives, every event published before it has too. It also proves the
+    // subscription is live, so the assertion below cannot pass vacuously.
+    const flushed = bus.waitForEvent(`__keyevent@0__:set`, sentinel)
+    await sentinelWriter.set(sentinel, 'v')
+    assert.strictEqual(await flushed, true)
+
+    assert.deepStrictEqual(
+      events.filter(
+        e =>
+          e.channel === `__keyevent@0__:select` ||
+          (e.channel.startsWith('__keyspace@0__:') && e.message === 'select'),
+      ),
+      [],
+    )
+  })
+
   test('delivers nothing when notify-keyspace-events is disabled', async () => {
     const actor = await connect()
     await actor.configSet('notify-keyspace-events', '')
@@ -243,11 +287,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
   })
 
   async function connect(): Promise<RedisClientType> {
-    const client = createClient({
-      url: `redis://127.0.0.1:${port}`,
-    }) as RedisClientType
-    client.on('error', () => {})
-    await client.connect()
+    const client = await duplicateNodeRedisClient(base)
     clients.push(client)
     return client
   }

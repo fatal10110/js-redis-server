@@ -2,10 +2,15 @@ import { createRedisCommandExecutor } from './commands'
 import { ClientSession } from './core/client-session'
 import type { CompatibilitySpec } from './core/compatibility'
 import type { CommandExecutor } from './core/command-executor'
+import {
+  decodeRedisValue,
+  toRedisArgument,
+  type ClientDecodeOptions,
+  type NativeRedisReply,
+} from './core/decode-redis-value'
 import { RedisCommandError } from './core/redis-error'
 import type { RedisValue } from './core/redis-value'
 import { RedisResult } from './core/redis-result'
-import { isResponseStream, type ResponseStream } from './core/response-stream'
 import { seedStandalone, type SeedEntry } from './seed'
 import { RedisServerState } from './state'
 
@@ -15,15 +20,7 @@ const DEFAULT_DATABASE_COUNT = 16
 export type RedisCommandArgument = string | number | Buffer
 
 /** Native JS value an in-memory reply decodes to. */
-export type RedisNativeReply =
-  | string
-  | number
-  | bigint
-  | boolean
-  | Buffer
-  | null
-  | RedisNativeReply[]
-  | { [key: string]: RedisNativeReply }
+export type RedisNativeReply = NativeRedisReply
 
 export type InMemoryRedisClientOptions = {
   server: RedisServerState
@@ -34,6 +31,26 @@ export type InMemoryRedisClientOptions = {
   returnBuffers?: boolean
   /** Called once when the client is closed — used to tear down owned state. */
   onClose?: () => void
+}
+
+/**
+ * How this client reads a {@link RedisValue}, and therefore where it diverges
+ * from the node-redis facade's `NODE_REDIS_DECODE_OPTIONS`. Exported so a test
+ * can assert the two apart — the divergences are deliberate, and a silent
+ * re-convergence is the failure mode worth catching.
+ *
+ * `returnBuffers` is per-connection and layered on top in the constructor.
+ */
+export const IN_MEMORY_DECODE_OPTIONS: ClientDecodeOptions = {
+  // Widen past Number.MAX_SAFE_INTEGER rather than lose precision. Deliberately
+  // *unlike* a real client (none of them widen) — callers here read replies
+  // directly rather than comparing against real-client output.
+  narrowBigInt: 'when-safe',
+  // RESP2 encodes a push as `[name, ...items]` on the wire (a pub/sub message
+  // is `["message", channel, payload]`); keep the type tag so push-mode
+  // consumers see the same shape a real client would.
+  pushShape: 'tagged',
+  error: (text, code) => new RedisCommandError(text, code),
 }
 
 /** Aborts when any of the given signals abort (or immediately if one already has). */
@@ -56,24 +73,16 @@ function anySignal(signals: readonly AbortSignal[]): AbortSignal {
  * to issue commands and read native JS replies without pulling in a real client
  * library.
  *
- * Streaming commands (SUBSCRIBE / PSUBSCRIBE / MONITOR) are not supported here;
- * use a real client for those.
+ * Push-mode commands (SUBSCRIBE / PSUBSCRIBE / SSUBSCRIBE / MONITOR) resolve to
+ * their immediate reply; the frames that follow arrive through {@link pushes}.
  */
 export class InMemoryRedisClient {
   private readonly session: ClientSession
-  private readonly returnBuffers: boolean
+  private readonly decodeOptions: ClientDecodeOptions
   private readonly onClose?: () => void
   private closed = false
-  /** Aborted on close — tears down any active stream and push readers. */
+  /** Aborted on close — ends every push reader. */
   private readonly lifetime = new AbortController()
-  /**
-   * Set once a streaming command (e.g. MONITOR) hands back a `ResponseStream`.
-   * `command()` consumes its first frame as the immediate reply; {@link pushes}
-   * drains the rest. Pub/sub doesn't set this — its messages flow through the
-   * session push channel instead (see {@link pushes}).
-   */
-  private activeStream?: ResponseStream
-  private streamFrames?: AsyncIterator<RedisResult>
 
   constructor(options: InMemoryRedisClientOptions) {
     this.session = new ClientSession({
@@ -81,7 +90,10 @@ export class InMemoryRedisClient {
       executor: options.executor,
       database: options.database,
     })
-    this.returnBuffers = options.returnBuffers ?? false
+    this.decodeOptions = {
+      ...IN_MEMORY_DECODE_OPTIONS,
+      returnBuffers: options.returnBuffers ?? false,
+    }
     this.onClose = options.onClose
   }
 
@@ -90,9 +102,11 @@ export class InMemoryRedisClient {
    * to its native reply. Throws a {@link RedisCommandError} for `-ERR` replies,
    * mirroring what a real client surfaces.
    *
-   * Streaming commands (MONITOR / SUBSCRIBE / …) resolve to their *immediate*
+   * Push-mode commands (MONITOR / SUBSCRIBE / …) resolve to their *immediate*
    * reply (MONITOR's `OK`, the subscribe confirmation); their server-initiated
-   * frames are delivered through {@link pushes}.
+   * frames are delivered through {@link pushes}. A multi-target (UN)SUBSCRIBE
+   * resolves to its first confirmation; the rest arrive through
+   * {@link pushes}, ahead of any message.
    */
   async command(
     name: string,
@@ -104,22 +118,17 @@ export class InMemoryRedisClient {
 
     const result = await this.session.execute(
       Buffer.from(name),
-      args.map(toBuffer),
+      args.map(toRedisArgument),
     )
 
-    if (isResponseStream(result)) {
-      // A long-lived (MONITOR) or finite (multi-channel subscribe) stream: keep
-      // the iterator so pushes() continues it, and return the first frame as the
-      // immediate reply.
-      this.activeStream = result
-      this.streamFrames = result
-        .frames(this.lifetime.signal)
-        [Symbol.asyncIterator]()
-      const first = await this.streamFrames.next()
-      return first.done ? null : this.decode(first.value.value)
+    // The reply has been "delivered": the rest of a multi-target SUBSCRIBE's
+    // confirmations follow it, then whatever the command held back until now
+    // (MONITOR's first feed lines, a RESP3 PUBLISH's own message).
+    for (const frame of result.options?.trailingFrames ?? []) {
+      this.session.enqueuePush(RedisResult.create(frame))
     }
-
-    return this.decode((result as RedisResult).value)
+    result.options?.afterReply?.()
+    return this.decode(result.value)
   }
 
   /** Alias for {@link InMemoryRedisClient.command}. */
@@ -131,70 +140,28 @@ export class InMemoryRedisClient {
   }
 
   /**
-   * True once the last command put the connection into *push mode* — an active
-   * MONITOR stream, or a SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE that entered subscribed
-   * mode. Consumers should switch to draining {@link pushes} while this holds.
+   * True once the last command put the connection into *push mode* — MONITOR,
+   * or a SUBSCRIBE/PSUBSCRIBE/SSUBSCRIBE that entered subscribed mode.
+   * Consumers should switch to draining {@link pushes} while this holds.
    */
   get streaming(): boolean {
-    return this.activeStream !== undefined || this.session.mode === 'subscribed'
+    return this.session.monitoring || this.session.mode === 'subscribed'
   }
 
   /**
-   * Server-initiated frames for a connection in *push mode* — pub/sub messages
-   * (via the session push channel) and the tail of a MONITOR stream — decoded to
-   * native replies. Iterate it after issuing SUBSCRIBE/PSUBSCRIBE/MONITOR. Ends
-   * when `signal` (or the connection) is closed.
+   * Server-initiated frames for a connection in *push mode* — pub/sub messages,
+   * the 2nd..Nth confirmations of a multi-target (UN)SUBSCRIBE, and MONITOR
+   * lines — decoded to native replies. Iterate it after issuing
+   * SUBSCRIBE/PSUBSCRIBE/MONITOR. Ends when `signal` (or the connection) is
+   * closed.
    */
   async *pushes(signal?: AbortSignal): AsyncIterable<RedisNativeReply> {
     const sig = signal
       ? anySignal([this.lifetime.signal, signal])
       : this.lifetime.signal
 
-    const sources: AsyncIterator<RedisResult>[] = []
-    if (this.streamFrames) {
-      sources.push(this.streamFrames)
-    }
-    sources.push(this.session.readPushes(sig)[Symbol.asyncIterator]())
-
-    const queue: RedisResult[] = []
-    let finished = 0
-    let wake: (() => void) | null = null
-    const ping = () => {
-      wake?.()
-      wake = null
-    }
-
-    for (const source of sources) {
-      void (async () => {
-        try {
-          for (;;) {
-            const { value, done } = await source.next()
-            if (done) {
-              break
-            }
-            queue.push(value)
-            ping()
-          }
-        } finally {
-          finished++
-          ping()
-        }
-      })()
-    }
-
-    while (!sig.aborted) {
-      const frame = queue.shift()
-      if (frame) {
-        yield this.decode(frame.value)
-        continue
-      }
-      if (finished === sources.length) {
-        return
-      }
-      await new Promise<void>(resolve => {
-        wake = resolve
-        sig.addEventListener('abort', () => resolve(), { once: true })
-      })
+    for await (const frame of this.session.readPushes(sig)) {
+      yield this.decode(frame.value)
     }
   }
 
@@ -204,68 +171,20 @@ export class InMemoryRedisClient {
     }
     this.closed = true
     this.lifetime.abort()
-    this.activeStream?.close('client closed')
     this.session.close()
     this.onClose?.()
   }
 
   private decode(value: RedisValue): RedisNativeReply {
-    switch (value.kind) {
-      case 'simple-string':
-        return value.value
-      case 'bulk-string':
-        if (value.value === null) {
-          return null
-        }
-        return this.returnBuffers ? value.value : value.value.toString('utf8')
-      case 'verbatim':
-        return this.returnBuffers ? value.value : value.value.toString('utf8')
-      case 'integer':
-        // Integer replies are plain numbers in real clients; only widen to
-        // bigint when the value genuinely overflows a JS safe integer.
-        if (typeof value.value === 'bigint') {
-          return isSafeBigInt(value.value) ? Number(value.value) : value.value
-        }
-        return value.value
-      case 'double':
-        return value.value
-      case 'boolean':
-        return value.value
-      case 'big-number':
-        return value.value
-      case 'array':
-      case 'set':
-        return value.items.map(item => this.decode(item))
-      case 'push':
-        // RESP2 encodes a push as `[name, ...items]` on the wire (e.g. a pub/sub
-        // message is `["message", channel, payload]`); keep the type tag so
-        // push-mode consumers see the same shape a real client would.
-        return [value.name, ...value.items.map(item => this.decode(item))]
-      case 'map':
-      case 'map-pairs': {
-        const out: { [key: string]: RedisNativeReply } = {}
-        for (const [key, val] of value.entries) {
-          out[decodeKey(key)] = this.decode(val)
-        }
-        return out
-      }
-      case 'flat-pairs':
-        // Flat on the wire in RESP2; keep the flat array shape here too.
-        return value.entries.flatMap(([key, val]) => [
-          this.decode(key),
-          this.decode(val),
-        ])
-      case 'null':
-      case 'null-array':
-        return null
-      case 'error':
-        // Surface the full error text a real client sees — `<CODE> <message>`
-        // (e.g. `MOVED 1234 host:port`, `WRONGTYPE …`), not just the detail.
-        throw new RedisCommandError(
-          value.code ? `${value.code} ${value.message}` : value.message,
-          value.code,
-        )
-    }
+    // The protocol is read off the session at decode time, not pinned at
+    // construction: `HELLO` can switch it mid-connection, and it decides the
+    // shape of every protocol-dependent reply — maps, pairs, doubles, big
+    // numbers and booleans (see `DecodeRedisValueOptions.version`).
+    return decodeRedisValue(value, {
+      ...this.decodeOptions,
+      version: this.session.protocolVersion,
+      profile: this.session.server.profile,
+    })
   }
 }
 
@@ -368,38 +287,4 @@ function wrapWithInstanceClose(
     instance.close()
   }
   return client
-}
-
-function isSafeBigInt(value: bigint): boolean {
-  return (
-    value >= BigInt(Number.MIN_SAFE_INTEGER) &&
-    value <= BigInt(Number.MAX_SAFE_INTEGER)
-  )
-}
-
-function toBuffer(arg: RedisCommandArgument): Buffer {
-  if (Buffer.isBuffer(arg)) {
-    return arg
-  }
-  return Buffer.from(typeof arg === 'number' ? String(arg) : arg)
-}
-
-/** Map keys are always plain strings, regardless of `returnBuffers`. */
-function decodeKey(value: RedisValue): string {
-  switch (value.kind) {
-    case 'simple-string':
-      return value.value
-    case 'bulk-string':
-      return value.value === null ? '' : value.value.toString('utf8')
-    case 'verbatim':
-      return value.value.toString('utf8')
-    case 'integer':
-    case 'double':
-    case 'big-number':
-      return String(value.value)
-    case 'boolean':
-      return String(value.value)
-    default:
-      return ''
-  }
 }

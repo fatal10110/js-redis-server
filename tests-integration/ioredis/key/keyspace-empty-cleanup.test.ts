@@ -2,13 +2,18 @@ import { Cluster } from 'ioredis'
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../../test-config'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420, #453).
+const RUN = randomKey()
 
 // Issue #124: the "delete a key when its collection becomes empty" and
 // "don't create a ghost key for a no-op mutation" rules used to live in each
 // command (HDEL/SREM/... pre-check existence and self-delete) rather than in
-// RedisKeyspace.update(). The root-cause fix centralizes both rules in
+// RedisDatabase.update(). The root-cause fix centralizes both rules in
 // update(). These wire-level tests guard that the centralized behavior matches
 // real Redis end-to-end: no-op mutations on a missing key don't disturb a
 // WATCH, emptying a key removes it, and a real emptying still dirties a WATCH.
@@ -28,7 +33,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
 
   test('no-op HDEL on a non-existent key must not invalidate a WATCH on that key', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
-    const key = 'ghost:hdel'
+    const key = `ghost:hdel:${RUN}`
 
     try {
       // Ensure the key does not exist.
@@ -56,7 +61,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
 
   test('no-op SREM on a non-existent key must not invalidate a WATCH on that key', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
-    const key = 'ghost:srem'
+    const key = `ghost:srem:${RUN}`
 
     try {
       await redisClient!.del(key)
@@ -77,7 +82,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
   })
 
   test('emptying a hash via HDEL deletes the key (no phantom empty hash persists)', async () => {
-    const key = 'cleanup:hash'
+    const key = `cleanup:hash:${RUN}`
 
     await redisClient!.del(key)
     await redisClient!.hset(key, 'f', 'v')
@@ -91,7 +96,7 @@ describe('Empty-collection cleanup / no-op mutations (#124)', () => {
 
   test('emptying an EXISTING watched collection still invalidates the WATCH', async () => {
     const anotherClient = await testRunner.setupIoredisCluster()
-    const key = 'cleanup:watch:existing'
+    const key = `cleanup:watch:existing:${RUN}`
 
     try {
       await redisClient!.del(key)

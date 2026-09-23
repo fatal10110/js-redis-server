@@ -2,9 +2,13 @@ import { RedisClusterType, WatchError } from 'redis'
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../../test-config'
-import { connectToNodeRedisSlotOwner } from '../../utils'
+import { connectToNodeRedisSlotOwner, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420, #453).
+const RUN = randomKey()
 
 // Issue #124: empty-collection cleanup + no-op-mutation rules, verified at the
 // wire level — no-op mutations on a missing key don't disturb a WATCH, emptying
@@ -21,7 +25,7 @@ describe('Empty-collection cleanup / no-op mutations (#124) (node-redis)', () =>
   })
 
   test('no-op HDEL on a non-existent key must not invalidate a WATCH on that key', async () => {
-    const key = 'ghost:hdel'
+    const key = `ghost:hdel:${RUN}`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, key)
 
     try {
@@ -40,7 +44,7 @@ describe('Empty-collection cleanup / no-op mutations (#124) (node-redis)', () =>
   })
 
   test('no-op SREM on a non-existent key must not invalidate a WATCH on that key', async () => {
-    const key = 'ghost:srem'
+    const key = `ghost:srem:${RUN}`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, key)
 
     try {
@@ -58,7 +62,7 @@ describe('Empty-collection cleanup / no-op mutations (#124) (node-redis)', () =>
   })
 
   test('emptying a hash via HDEL deletes the key (no phantom empty hash persists)', async () => {
-    const key = 'cleanup:hash'
+    const key = `cleanup:hash:${RUN}`
 
     await redisClient.del(key)
     await redisClient.hSet(key, 'f', 'v')
@@ -71,7 +75,7 @@ describe('Empty-collection cleanup / no-op mutations (#124) (node-redis)', () =>
   })
 
   test('emptying an EXISTING watched collection still invalidates the WATCH', async () => {
-    const key = 'cleanup:watch:existing'
+    const key = `cleanup:watch:existing:${RUN}`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, key)
 
     try {

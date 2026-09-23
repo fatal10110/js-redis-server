@@ -352,7 +352,212 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
       Buffer.from('+PONG\r\n'),
     )
   })
+
+  test('MONITOR queued in MULTI fails inside EXEC like Redis', async () => {
+    const conn = await connect()
+
+    conn.write(
+      Buffer.concat([
+        commandFrame('MULTI'),
+        commandFrame('MONITOR'),
+        commandFrame('EXEC'),
+        commandFrame('PING'),
+      ]),
+    )
+
+    const actual: string[] = []
+    for (let i = 0; i < 4; i++) {
+      actual.push((await conn.readRawFrame()).toString())
+    }
+    assert.strictEqual(
+      actual.join(''),
+      "+OK\r\n+QUEUED\r\n*1\r\n-ERR MONITOR isn't allowed for DENY BLOCKING client\r\n+PONG\r\n",
+    )
+  })
+
+  test('a second MONITOR is ignored: no reply, no duplicate lines', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const marker = `monitor-twice:${randomKey()}`
+
+    monitor.write(
+      Buffer.concat([
+        commandFrame('MONITOR'),
+        commandFrame('MONITOR'),
+        commandFrame('PING', marker),
+      ]),
+    )
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+    // Real Redis sends nothing for the second MONITOR, so the next reply on the
+    // connection is the PING's.
+    assert.strictEqual(
+      (await readMonitorReply(monitor)).toString(),
+      `$${Buffer.byteLength(marker)}\r\n${marker}\r\n`,
+    )
+
+    actor.write(commandFrame('PING', `${marker}:1`))
+    await actor.readRawFrame()
+    actor.write(commandFrame('PING', `${marker}:2`))
+    await actor.readRawFrame()
+
+    const lines = await collectMonitorLines(monitor, `${marker}:`, 2)
+    assert.deepStrictEqual(
+      lines.map(line => line.slice(line.indexOf('"PING"'))),
+      [`"PING" "${marker}:1"`, `"PING" "${marker}:2"`],
+    )
+  })
+
+  test('MONITOR replies +OK before any monitor line', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const marker = `monitor-first:${randomKey()}`
+    const burst = Buffer.concat(
+      Array.from({ length: 50 }, (_, i) =>
+        commandFrame('PING', `${marker}:${i}`),
+      ),
+    )
+
+    // Another connection is busy while MONITOR registers: whatever it runs,
+    // the monitoring connection must see MONITOR's own +OK first.
+    actor.write(burst)
+    monitor.write(commandFrame('MONITOR'))
+    actor.write(burst)
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+    for (let i = 0; i < 100; i++) {
+      await actor.readRawFrame()
+    }
+  })
+
+  // Real Redis stamps each monitor line from `gettimeofday()`, so the six
+  // fractional digits carry genuine microsecond resolution. A `Date.now()`
+  // source looks right (it still prints six digits) but quantizes every line
+  // to a whole millisecond, so the last three digits are always `000` — a
+  // systematic difference on every line when diffing against a real capture
+  // (#388).
+  test('stamps monitor lines with microsecond, not millisecond, resolution (#388)', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const marker = `a388:${randomKey()}`
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    // Pipelined in one write so the commands land inside the same millisecond
+    // and only a sub-millisecond clock can tell them apart.
+    const sampleCount = 24
+    const frames: Buffer[] = []
+    for (let i = 0; i < sampleCount; i++) {
+      frames.push(commandFrame('ping', `${marker}:${i}`))
+    }
+    // Captured before the write, so it is a genuine lower bound on every
+    // timestamp under test rather than a reading taken after they were stamped.
+    const before = Date.now()
+    actor.write(Buffer.concat(frames))
+    for (let i = 0; i < sampleCount; i++) {
+      await actor.readRawFrame()
+    }
+
+    const timestamps = await collectMonitorTimestamps(
+      monitor,
+      marker,
+      sampleCount,
+    )
+    const after = Date.now()
+
+    // Sub-millisecond resolution: with a microsecond clock the odds of all 24
+    // samples landing on an exact millisecond boundary are ~1e-72. With
+    // `Date.now()` it happens every time.
+    const subMillisecond = timestamps.filter(
+      value => !value.microseconds.endsWith('000'),
+    )
+    assert.ok(
+      subMillisecond.length > 0,
+      `all ${sampleCount} monitor timestamps were millisecond-quantized: ${timestamps
+        .map(value => value.text)
+        .join(', ')}`,
+    )
+
+    // Still a plausible wall clock, not a raw monotonic counter. Symmetric
+    // 1s slack on both ends, since `before`/`after` genuinely bracket the
+    // window in which every line was stamped.
+    for (const value of timestamps) {
+      const millis = value.micros / 1000
+      assert.ok(
+        millis >= before - 1_000 && millis <= after + 1_000,
+        `monitor timestamp ${value.text} is not near wall-clock time (window ${before}..${after})`,
+      )
+    }
+
+    // Monotonic across the feed, like a real capture. Compared as integer
+    // microseconds, not as strings: a string compare only trips once the
+    // inversion reaches the millisecond digits.
+    for (let i = 1; i < timestamps.length; i++) {
+      assert.ok(
+        timestamps[i].micros >= timestamps[i - 1].micros,
+        `monitor timestamps went backwards: ${timestamps[i - 1].text} then ${timestamps[i].text}`,
+      )
+    }
+  })
 })
+
+type MonitorTimestamp = {
+  /** The raw `<seconds>.<6 digits>` field, for assertion messages. */
+  text: string
+  /** Just the six fractional digits. */
+  microseconds: string
+  /** The whole timestamp as integer microseconds, for ordering compares. */
+  micros: number
+}
+
+/**
+ * Read monitor feed lines until `count` of them mention `marker`, returning the
+ * parsed timestamp field of each. Lines from unrelated clients are skipped —
+ * the real backend is a shared server, so other traffic interleaves.
+ */
+async function collectMonitorTimestamps(
+  connection: RawRedisConnection,
+  marker: string,
+  count: number,
+): Promise<MonitorTimestamp[]> {
+  const timestamps: MonitorTimestamp[] = []
+
+  while (timestamps.length < count) {
+    const line = respText(
+      await withTimeout(connection.readFrame(), 5000, 'monitor feed line'),
+    )
+    if (!line.includes(marker)) {
+      continue
+    }
+
+    const match = /^((\d+)\.(\d{6})) \[/.exec(line)
+    assert.ok(match, `unexpected monitor line: ${line}`)
+    timestamps.push({
+      text: match[1],
+      microseconds: match[3],
+      micros: Number(match[2]) * 1_000_000 + Number(match[3]),
+    })
+  }
+
+  return timestamps
+}
+
+/** Read monitor feed lines until `count` of them mention `marker`. */
+async function collectMonitorLines(
+  connection: RawRedisConnection,
+  marker: string,
+  count: number,
+): Promise<string[]> {
+  const lines: string[] = []
+  while (lines.length < count) {
+    const line = respText(
+      await withTimeout(connection.readFrame(), 5000, 'monitor feed line'),
+    )
+    if (line.includes(marker)) {
+      lines.push(line)
+    }
+  }
+  return lines
+}
 
 /**
  * Read the next command reply on a monitoring connection, skipping any monitor

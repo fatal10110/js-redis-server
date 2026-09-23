@@ -65,6 +65,36 @@ npm run test:integration:real
 npm run test:all
 ```
 
+The real backend is a shared Redis cluster that is **not** flushed between test
+files, so every integration test must namespace the keys it touches with
+`randomKey()` (see `tests-integration/utils.ts`) — no fixed literal key names,
+no assertions that depend on a key being absent at start, and no assertions on
+total `DBSIZE`. The suite has to pass twice in a row without a flush in between.
+
+`npm run test:integration:real` flushes first via `npm run clean:redis`, which
+uses `scripts/flush-redis.ts` (no `redis-cli` required) and exits non-zero
+unless every endpoint is verifiably empty and the cluster reports
+`cluster_state:ok`. Its error output says what to do about each failure; start
+the backends with `docker compose -f docker-compose.test.yml up -d --wait`
+beforehand.
+
+Both the harness and that script read the same env vars, so you can point them
+at a private cluster when the default one is shared:
+
+```bash
+REDIS_CLUSTER_PORTS=31100 \
+REDIS_STANDALONE_PORT=7811 \
+REDIS_STANDALONE_AUTH_PORT=7812 \
+  npm run test:integration:real
+```
+
+`REDIS_CLUSTER_PORTS` is a comma-separated list of **seed** ports, defaulting
+to `30000,30001,30002,30003,30004,30005`. One reachable node is enough: the
+harness's cluster clients discover the rest from it, and `clean:redis` flushes
+the whole topology it finds, failing if any node in it is unreachable. Ranges
+like `30000-30005` are rejected rather than expanded, and any malformed entry —
+in this or either standalone port — is an error instead of being skipped.
+
 ## Adding New Redis Commands
 
 1. Create the command file in the appropriate directory:
@@ -102,6 +132,33 @@ npm run test:all
 - Include tests for new functionality
 - Update documentation if needed
 - Ensure CI passes before requesting review
+
+## Changing the published API surface
+
+The package publishes two entry points: the curated root (`src/index.ts`) and
+the `/core` hand-wiring subpath (`src/internal.ts`). Both are public API.
+
+Removing or renaming anything exported from either is a breaking change. Note it
+under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) in the same PR.
+
+## Releasing both npm packages
+
+`js-redis-server` and `js-valkey-server` share this repository, version, source,
+and API. Neither name replaces the other. Keep the checked-in package name
+`js-redis-server`; the release workflow selects the other name and its matching
+CLI in a separate job, after installing dependencies from the shared lockfile.
+
+Update the version in `package.json` and `package-lock.json` together, and
+rename the `Unreleased` section in [CHANGELOG.md](CHANGELOG.md) to the new
+version with its date. After CI passes, a `v<version>` tag runs both publish
+jobs. The tag must match the package
+version. The `NPM_TOKEN` secret needs permission to publish **both** names;
+verify access to `js-valkey-server` before the first release.
+
+Each job builds and tests its selected identity, including CommonJS, ESM, and
+`/core`. npm cannot publish two packages atomically: if one job publishes and
+the other fails, rerun only the failed job after resolving the failure. Do not
+deprecate either package or change the GitHub repository/demo URLs.
 
 ## Questions?
 

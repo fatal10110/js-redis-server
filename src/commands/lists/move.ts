@@ -9,7 +9,7 @@ import type { RedisDatabase } from '../../state'
 import { bulk } from '../helpers'
 
 function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
-  return t.custom<'left' | 'right'>((input, index, ctx) => {
+  return t.custom<'left' | 'right'>({ min: 1, max: 1 }, (input, index, ctx) => {
     const token = input[index]
     if (!token) {
       throw new WrongNumberOfArgumentsError(ctx.commandName)

@@ -13,8 +13,8 @@ export const geodistCommand = defineCommand({
   name: 'geodist',
   schema: t.object({
     key: t.key(),
-    member1: t.key(),
-    member2: t.key(),
+    member1: t.bulk(),
+    member2: t.bulk(),
     unit: t.optional(t.string()),
   }),
   flags: ['readonly'],

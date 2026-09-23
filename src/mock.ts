@@ -191,6 +191,9 @@ export async function createRedisMock(
   return createTcpStandaloneMock(options)
 }
 
+/** Alternative name for the same factory; compatibility defaults are unchanged. */
+export const createValkeyMock = createRedisMock
+
 async function createTcpStandaloneMock(
   options: CreateRedisMockOptions,
 ): Promise<RedisMock> {

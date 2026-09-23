@@ -6,6 +6,8 @@ import {
   WrongTypeRedisError,
   createRedisCommandExecutor,
   createStringData,
+  formatMonitorTimestamp,
+  monitorTimestampMicros,
 } from '../src/internal'
 import type {
   RedisDataValue,
@@ -256,7 +258,7 @@ describe('new Redis state core', () => {
     const value = Buffer.from('value')
 
     server.monitorFeed.publish({
-      timestampMs: 1234,
+      timestampMicros: 1234,
       database: 2,
       clientId: 'client-1',
       clientAddress: '127.0.0.1:5000',
@@ -282,6 +284,108 @@ describe('new Redis state core', () => {
 
     unsubscribeFirst()
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
+  })
+
+  // The wire behavior is pinned by the raw-TCP MONITOR suite, but a live feed
+  // cannot be made to produce a chosen microsecond value, so the formatting
+  // edge cases (zero-padding a small fraction, an exact second boundary) are
+  // only reachable as a unit test (#388).
+  test('formats monitor timestamps with six fractional digits', () => {
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_000_000),
+      '1695000000.000000',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_000_001),
+      '1695000000.000001',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_012_345),
+      '1695000000.012345',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_999_999),
+      '1695000000.999999',
+    )
+
+    // `formatMonitorTimestamp` is published API via `/core`, so a caller can
+    // hand it a non-integer even though `monitorTimestampMicros()` never does.
+    // Without the `Math.trunc` guard `padStart` cannot repair a fractional
+    // string and the output grows a second decimal point.
+    assert.strictEqual(
+      formatMonitorTimestamp(1_695_000_000_000_000.5),
+      '1695000000.000000',
+    )
+    assert.strictEqual(formatMonitorTimestamp(1.5), '0.000001')
+
+    // Math.trunc leaves NaN/Infinity alone, so they need the finiteness check:
+    // without it these render as "NaN.000NaN" and "Infinity.000NaN".
+    assert.strictEqual(formatMonitorTimestamp(Number.NaN), '0.000000')
+    assert.strictEqual(
+      formatMonitorTimestamp(Number.POSITIVE_INFINITY),
+      '0.000000',
+    )
+    assert.strictEqual(
+      formatMonitorTimestamp(Number.NEGATIVE_INFINITY),
+      '0.000000',
+    )
+  })
+
+  test('monitor timestamps have sub-millisecond resolution', () => {
+    const samples: number[] = []
+    for (let i = 0; i < 64; i++) {
+      samples.push(monitorTimestampMicros())
+    }
+
+    for (const sample of samples) {
+      assert.ok(Number.isSafeInteger(sample))
+    }
+
+    // Non-decreasing while the wall clock is stable, and — the whole point of
+    // #388 — not quantized to whole milliseconds. This catches an inversion as
+    // small as one microsecond, where the raw-TCP feed test needs ~3ms.
+    for (let i = 1; i < samples.length; i++) {
+      assert.ok(
+        samples[i] >= samples[i - 1],
+        `sample ${i} went backwards: ${samples[i - 1]} then ${samples[i]}`,
+      )
+    }
+    assert.ok(samples.some(sample => sample % 1000 !== 0))
+  })
+
+  // The clock deliberately follows a large wall-clock step rather than clamping
+  // forward, matching real Redis's `gettimeofday()`. Pinned here so the
+  // trade-off is a decision on record rather than an accident, and so the
+  // "monotonic" claim in the JSDoc stays scoped to a stable wall clock.
+  test('re-anchors on a wall-clock step instead of drifting from it', () => {
+    const realDateNow = Date.now
+
+    try {
+      // Anchor against the real clock first.
+      monitorTimestampMicros()
+
+      const steppedBackMs = realDateNow() - 5_000
+      Date.now = () => steppedBackMs
+      const afterStepBack = monitorTimestampMicros()
+      assert.ok(
+        Math.abs(afterStepBack / 1000 - steppedBackMs) <= 1,
+        `a backwards wall-clock step must re-anchor, got ${afterStepBack} for ${steppedBackMs}`,
+      )
+
+      const steppedForwardMs = realDateNow() + 5_000
+      Date.now = () => steppedForwardMs
+      const afterStepForward = monitorTimestampMicros()
+      assert.ok(
+        Math.abs(afterStepForward / 1000 - steppedForwardMs) <= 1,
+        `a forwards wall-clock step must re-anchor, got ${afterStepForward} for ${steppedForwardMs}`,
+      )
+    } finally {
+      Date.now = realDateNow
+    }
+
+    // Restoring the real clock is itself a >1s step, so the next call re-anchors
+    // and the helper is left usable for any later test.
+    assert.ok(Math.abs(monitorTimestampMicros() / 1000 - Date.now()) <= 1000)
   })
 })
 

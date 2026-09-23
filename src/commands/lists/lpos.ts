@@ -20,7 +20,7 @@ type LposArgs = {
 
 export const lposCommand = defineCommand({
   name: 'lpos',
-  schema: t.custom<LposArgs>((input, index, ctx) => {
+  schema: t.custom<LposArgs>({ min: 2, keys: [0] }, (input, index, ctx) => {
     const key = input[index]
     const element = input[index + 1]
     if (!key || !element) {

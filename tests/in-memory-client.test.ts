@@ -24,9 +24,20 @@ describe('createInMemoryClient', () => {
     assert.strictEqual(typeof incremented, 'number')
   })
 
-  test('decodes a hash reply into an object', async () => {
+  test('decodes a hash reply the way the negotiated protocol shapes it', async () => {
     client = await createInMemoryClient()
     await client.command('HSET', 'h', 'name', 'bob', 'age', '30')
+
+    // RESP2 has no map type — HGETALL is a flat array there, and only becomes
+    // an object after HELLO 3. Same as real node-redis' raw reply path (#414).
+    assert.deepStrictEqual(await client.command('HGETALL', 'h'), [
+      'name',
+      'bob',
+      'age',
+      '30',
+    ])
+
+    await client.command('HELLO', 3)
     assert.deepStrictEqual(await client.command('HGETALL', 'h'), {
       name: 'bob',
       age: '30',
@@ -94,5 +105,29 @@ describe('createInMemoryClient', () => {
 
     client = await createInMemoryClient()
     assert.strictEqual(await client.command('LMPOP', '1', 'k', 'LEFT'), null)
+  })
+
+  test('spells a RESP2 double the way the profile does (#451)', async () => {
+    // The socketless client never encodes: it decodes the reply's double
+    // itself, so it needs the served profile as much as the encoder does.
+    client = await createInMemoryClient({ compatibility: 'redis-6.2' })
+    await client.command('ZADD', 'z', '0.1', 'm')
+    assert.strictEqual(
+      await client.command('ZSCORE', 'z', 'm'),
+      '0.10000000000000001',
+    )
+    await client.command('GEOADD', 'g', '13.361389', '38.115556', 'p')
+    assert.deepStrictEqual(await client.command('GEOPOS', 'g', 'p'), [
+      ['13.36138933897018433', '38.11555639549629859'],
+    ])
+    client.close()
+
+    client = await createInMemoryClient()
+    await client.command('ZADD', 'z', '0.1', 'm')
+    assert.strictEqual(await client.command('ZSCORE', 'z', 'm'), '0.1')
+    await client.command('GEOADD', 'g', '13.361389', '38.115556', 'p')
+    assert.deepStrictEqual(await client.command('GEOPOS', 'g', 'p'), [
+      ['13.361389338970184', '38.1155563954963'],
+    ])
   })
 })

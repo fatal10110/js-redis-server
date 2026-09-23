@@ -12,13 +12,14 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: 'npm'
@@ -33,16 +34,28 @@ jobs:
         run: npx prettier --check "**/*.{js,ts,json}"
 
   unit:
+    name: unit (node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    # Outer backstop. On Node 22, --test-timeout kills a hung test file after
+    # 60s. On Node 24 it is enforced in-process, so a hang that keeps the
+    # process alive (a leaked handle, or a blocked main thread) only ends here
+    # (#454).
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.6 is the engines.node floor (stream.duplexPair landed there), so it
+        # is exercised rather than merely declared.
+        node-version: ['22.6', 24]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
       - name: Install dependencies
@@ -54,9 +67,39 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+  packages:
+    name: package (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [js-redis-server, js-valkey-server]
+    env:
+      NPM_PACKAGE_NAME: ${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: 'npm'
+      - run: npm ci
+      - name: Select npm package identity
+        run: |
+          npm pkg set "name=$NPM_PACKAGE_NAME"
+          npm pkg delete bin
+          npm pkg set "bin.$NPM_PACKAGE_NAME=./dist/cli.js"
+      - name: Verify both module formats and package contents
+        run: |
+          npm run test:package
+          npm pack --dry-run --ignore-scripts
+
   integration:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    # Outer bound: the Redis startup budget (--wait-timeout 420 below), plus
+    # the test step's own 15-minute cap, plus the log dump and teardown.
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -79,13 +122,18 @@ jobs:
           - name: node-redis-real
             script: test:integration:real:node-redis
             needsRedis: true
+          # The ioredis + node-redis suites against the socketless client mocks
+          # (createIoredisMock / createNodeRedisMock); known divergences are
+          # todo'd in tests-integration/socketless/known-gaps.ts (#412).
+          - name: socketless
+            script: test:integration:socketless
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: 'npm'
@@ -95,9 +143,22 @@ jobs:
 
       - name: Start Redis (cluster + standalone)
         if: matrix.needsRedis
-        run: docker compose -f docker-compose.test.yml up -d --wait
+        # --wait-timeout is the OUTER backstop, not the primary budget. The
+        # cluster init script gives up first (294s worst case, even with a hung
+        # node) and exits non-zero after dumping CLUSTER INFO/NODES and every
+        # node's log, which the step below then surfaces. The healthcheck's
+        # start_period (330s) sits between the two. 420s keeps that ordering:
+        # set it below the script's budget and the retries and the diagnostics
+        # both become unreachable, which is how #398 stayed undiagnosed for
+        # three sightings. See the budget block in
+        # docker/redis-cluster-init.sh before changing.
+        run: docker compose -f docker-compose.test.yml up -d --wait --wait-timeout 420
 
       - name: Run integration tests (${{ matrix.name }})
+        # Below the job's 30-minute cap on purpose: a step timeout *fails* the
+        # step, so the failure()-gated log dump below still runs. A job-level
+        # timeout cancels the job instead, and that step would be skipped.
+        timeout-minutes: 15
         env:
           # Points the harness at the standalone service for SELECT/multi-DB
           # tests that cluster mode cannot serve (see test-config.ts).
@@ -106,6 +167,29 @@ jobs:
           # Password-protected standalone for AUTH/NOAUTH enforcement tests.
           REDIS_STANDALONE_AUTH_PORT: 6400
         run: npm run ${{ matrix.script }}
+
+      # Runs whenever an earlier step failed — including the startup step, so a
+      # container that dies during cluster formation leaves a diagnosable trail
+      # instead of a bare "exited (1)" (issue #398).
+      - name: Dump Redis container state and logs on failure
+        if: failure() && matrix.needsRedis
+        run: |
+          echo "::group::docker compose ps -a"
+          docker compose -f docker-compose.test.yml ps -a || true
+          echo "::endgroup::"
+          for svc in redis-cluster redis-standalone redis-standalone-auth; do
+            echo "::group::docker compose logs $svc"
+            docker compose -f docker-compose.test.yml logs --no-color --timestamps "$svc" || true
+            echo "::endgroup::"
+          done
+          echo "::group::redis-cluster container state"
+          cid=$(docker compose -f docker-compose.test.yml ps -aq redis-cluster || true)
+          if [ -n "$cid" ]; then
+            docker inspect --format '{{json .State}}' "$cid" || true
+          else
+            echo "no redis-cluster container found"
+          fi
+          echo "::endgroup::"
 
       - name: Stop Redis (cluster + standalone)
         if: always() && matrix.needsRedis

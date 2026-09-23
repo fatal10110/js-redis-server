@@ -94,7 +94,7 @@ All changes gated behind `-DREDIS_LUA_DEBUG` so the default binary is unchanged.
 
 2. **`src/commands/scripts.ts`** — change `const reply = runtime.eval(...)` to `const reply = await runtime.eval(...)`. EVAL holding its DB turn while paused is **correct** (single-threaded Redis: a paused script blocks the keyspace, which the debugger wants frozen). Comment it; no `park`/`turn.suspend` needed for v1.
 
-3. **Enablement** — put the durable config on `RedisServerStateOptions.luaDebug` (and optionally `luaRuntimeFactory` for tests), because `RedisServerState.getLuaRuntime()` owns the memoized runtime. `Resp2Server`, CLI, and `buildRedisCluster` only pass this option through when `REDIS_LUA_DEBUG=1` or explicit `luaDebug` is supplied. Default off.
+3. **Enablement** — put the durable config on `RedisServerStateOptions.luaDebug` (and optionally `luaRuntimeFactory` for tests), because `RedisServerState.getLuaRuntime()` owns the memoized runtime. `Resp2Server`, CLI, and `createRedisCluster` only pass this option through when `REDIS_LUA_DEBUG=1` or explicit `luaDebug` is supplied. Default off.
 
 4. **Cancel/cleanup contract** — `LuaDebugController` exposes `cancel(reason)` and the runtime registers it with `ctx.signal`. DAP `disconnect`, Redis client disconnect, server close, or test teardown must resolve/reject any pending `host_debug_request`, let `_eval_debug` unwind, restore hooks, and release the held DB turn.
 

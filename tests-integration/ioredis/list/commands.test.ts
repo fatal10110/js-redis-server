@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -19,35 +23,35 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('LPUSH and RPUSH commands', async () => {
     // LPUSH single item
-    const lpush1 = await redisClient?.lpush('list1', 'item1')
+    const lpush1 = await redisClient?.lpush(`list1:${RUN}`, 'item1')
     assert.strictEqual(lpush1, 1)
 
     // LPUSH multiple items
-    const lpush2 = await redisClient?.lpush('list1', 'item2', 'item3')
+    const lpush2 = await redisClient?.lpush(`list1:${RUN}`, 'item2', 'item3')
     assert.strictEqual(lpush2, 3)
 
     // RPUSH items
-    const rpush1 = await redisClient?.rpush('list1', 'item4', 'item5')
+    const rpush1 = await redisClient?.rpush(`list1:${RUN}`, 'item4', 'item5')
     assert.strictEqual(rpush1, 5)
   })
 
   test('LPOP and RPOP commands', async () => {
-    await redisClient?.lpush('list2', 'a', 'b', 'c')
+    await redisClient?.lpush(`list2:${RUN}`, 'a', 'b', 'c')
 
     // LPOP
-    const lpop = await redisClient?.lpop('list2')
+    const lpop = await redisClient?.lpop(`list2:${RUN}`)
     assert.strictEqual(lpop, 'c') // Last pushed is first popped
 
     // RPOP
-    const rpop = await redisClient?.rpop('list2')
+    const rpop = await redisClient?.rpop(`list2:${RUN}`)
     assert.strictEqual(rpop, 'a') // First pushed is last popped
 
     // Remaining item
-    const remaining = await redisClient?.lpop('list2')
+    const remaining = await redisClient?.lpop(`list2:${RUN}`)
     assert.strictEqual(remaining, 'b')
 
     // Empty list
-    const empty = await redisClient?.lpop('list2')
+    const empty = await redisClient?.lpop(`list2:${RUN}`)
     assert.strictEqual(empty, null)
   })
 
@@ -96,57 +100,57 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('LLEN command', async () => {
     // Empty list
-    const len1 = await redisClient?.llen('emptylist')
+    const len1 = await redisClient?.llen(`emptylist:${RUN}`)
     assert.strictEqual(len1, 0)
 
-    await redisClient?.lpush('list3', 'a', 'b', 'c')
-    const len2 = await redisClient?.llen('list3')
+    await redisClient?.lpush(`list3:${RUN}`, 'a', 'b', 'c')
+    const len2 = await redisClient?.llen(`list3:${RUN}`)
     assert.strictEqual(len2, 3)
   })
 
   test('LINDEX command', async () => {
-    await redisClient?.lpush('list4', 'a', 'b', 'c') // [c, b, a]
+    await redisClient?.lpush(`list4:${RUN}`, 'a', 'b', 'c') // [c, b, a]
 
-    const index0 = await redisClient?.lindex('list4', 0)
+    const index0 = await redisClient?.lindex(`list4:${RUN}`, 0)
     assert.strictEqual(index0, 'c')
 
-    const index1 = await redisClient?.lindex('list4', 1)
+    const index1 = await redisClient?.lindex(`list4:${RUN}`, 1)
     assert.strictEqual(index1, 'b')
 
-    const indexNeg1 = await redisClient?.lindex('list4', -1)
+    const indexNeg1 = await redisClient?.lindex(`list4:${RUN}`, -1)
     assert.strictEqual(indexNeg1, 'a')
 
-    const indexOut = await redisClient?.lindex('list4', 10)
+    const indexOut = await redisClient?.lindex(`list4:${RUN}`, 10)
     assert.strictEqual(indexOut, null)
   })
 
   test('LRANGE command', async () => {
-    await redisClient?.lpush('list5', 'a', 'b', 'c', 'd', 'e') // [e, d, c, b, a]
+    await redisClient?.lpush(`list5:${RUN}`, 'a', 'b', 'c', 'd', 'e') // [e, d, c, b, a]
 
     // Get all elements
-    const all = await redisClient?.lrange('list5', 0, -1)
+    const all = await redisClient?.lrange(`list5:${RUN}`, 0, -1)
     assert.deepStrictEqual(all, ['e', 'd', 'c', 'b', 'a'])
 
     // Get subset
-    const subset = await redisClient?.lrange('list5', 1, 3)
+    const subset = await redisClient?.lrange(`list5:${RUN}`, 1, 3)
     assert.deepStrictEqual(subset, ['d', 'c', 'b'])
 
     // Get from negative index
-    const fromNeg = await redisClient?.lrange('list5', -2, -1)
+    const fromNeg = await redisClient?.lrange(`list5:${RUN}`, -2, -1)
     assert.deepStrictEqual(fromNeg, ['b', 'a'])
   })
 
   test('LSET command', async () => {
-    await redisClient?.lpush('list6', 'a', 'b', 'c') // [c, b, a]
+    await redisClient?.lpush(`list6:${RUN}`, 'a', 'b', 'c') // [c, b, a]
 
     // Set element at index 1
-    await redisClient?.lset('list6', 1, 'newb')
+    await redisClient?.lset(`list6:${RUN}`, 1, 'newb')
 
-    const check = await redisClient?.lindex('list6', 1)
+    const check = await redisClient?.lindex(`list6:${RUN}`, 1)
     assert.strictEqual(check, 'newb')
 
     // Verify full list
-    const all = await redisClient?.lrange('list6', 0, -1)
+    const all = await redisClient?.lrange(`list6:${RUN}`, 0, -1)
     assert.deepStrictEqual(all, ['c', 'newb', 'a'])
   })
 
@@ -190,38 +194,38 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('LREM command', async () => {
-    await redisClient?.rpush('list7', 'a', 'b', 'a', 'c', 'a') // [a, b, a, c, a]
+    await redisClient?.rpush(`list7:${RUN}`, 'a', 'b', 'a', 'c', 'a') // [a, b, a, c, a]
 
     // Remove 2 occurrences of 'a' from left
-    const rem1 = await redisClient?.lrem('list7', 2, 'a')
+    const rem1 = await redisClient?.lrem(`list7:${RUN}`, 2, 'a')
     assert.strictEqual(rem1, 2)
 
-    const after1 = await redisClient?.lrange('list7', 0, -1)
+    const after1 = await redisClient?.lrange(`list7:${RUN}`, 0, -1)
     assert.deepStrictEqual(after1, ['b', 'c', 'a'])
 
     // Remove all occurrences of 'a'
-    const rem2 = await redisClient?.lrem('list7', 0, 'a')
+    const rem2 = await redisClient?.lrem(`list7:${RUN}`, 0, 'a')
     assert.strictEqual(rem2, 1)
 
-    const after2 = await redisClient?.lrange('list7', 0, -1)
+    const after2 = await redisClient?.lrange(`list7:${RUN}`, 0, -1)
     assert.deepStrictEqual(after2, ['b', 'c'])
   })
 
   test('LTRIM command', async () => {
-    await redisClient?.rpush('list8', 'a', 'b', 'c', 'd', 'e') // [a, b, c, d, e]
+    await redisClient?.rpush(`list8:${RUN}`, 'a', 'b', 'c', 'd', 'e') // [a, b, c, d, e]
 
     // Trim to keep only elements 1-3
-    await redisClient?.ltrim('list8', 1, 3)
+    await redisClient?.ltrim(`list8:${RUN}`, 1, 3)
 
-    const trimmed = await redisClient?.lrange('list8', 0, -1)
+    const trimmed = await redisClient?.lrange(`list8:${RUN}`, 0, -1)
     assert.deepStrictEqual(trimmed, ['b', 'c', 'd'])
 
-    const len = await redisClient?.llen('list8')
+    const len = await redisClient?.llen(`list8:${RUN}`)
     assert.strictEqual(len, 3)
   })
 
   test('List commands workflow - Task Queue', async () => {
-    const queueKey = 'tasks:urgent'
+    const queueKey = `tasks:urgent:${RUN}`
 
     // Add tasks to queue (FIFO - use RPUSH to add, LPOP to consume)
     await redisClient?.rpush(queueKey, 'task1', 'task2', 'task3')
@@ -258,7 +262,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('List commands workflow - Chat Messages', async () => {
-    const chatKey = 'chat:room123'
+    const chatKey = `chat:room123:${RUN}`
 
     // Add messages
     await redisClient?.rpush(
@@ -308,7 +312,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('List commands workflow - Undo Stack', async () => {
-    const undoKey = 'user:123:undo'
+    const undoKey = `user:123:undo:${RUN}`
 
     // Simulate user actions (LIFO - use LPUSH to add, LPOP to undo)
     await redisClient?.lpush(undoKey, 'action:create_file')

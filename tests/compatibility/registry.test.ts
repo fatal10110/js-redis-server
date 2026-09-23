@@ -9,6 +9,11 @@ import { defineCommand } from '../../src/core/command-definition'
 import { t } from '../../src/core/command-schema'
 import { RedisResult } from '../../src/core/redis-result'
 import { resolveCompatibilityProfile } from '../../src/core/compatibility'
+import type { CommandRegistry } from '../../src/core/command-registry'
+
+function hasCommand(registry: CommandRegistry, name: string): boolean {
+  return registry.get(name) !== undefined
+}
 
 const futureCommand = defineCommand({
   name: 'future',
@@ -68,13 +73,13 @@ describe('compatibility registry filtering', () => {
       [futureCommand],
       resolveCompatibilityProfile('redis-6.2'),
     )
-    assert.strictEqual(redis62.has('future'), false)
+    assert.strictEqual(hasCommand(redis62, 'future'), false)
 
     const redis70 = createRedisCommandRegistry(
       [futureCommand],
       resolveCompatibilityProfile('redis-7.0'),
     )
-    assert.strictEqual(redis70.has('future'), true)
+    assert.strictEqual(hasCommand(redis70, 'future'), true)
   })
 
   test('passes one resolved profile to the registry and executor', () => {
@@ -93,7 +98,7 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile({ flavor: 'redis', version: '6.0.0' }),
     )
     for (const command of redis62Commands) {
-      assert.strictEqual(redis60.has(command), false, command)
+      assert.strictEqual(hasCommand(redis60, command), false, command)
     }
 
     const redis62 = createRedisCommandRegistry(
@@ -101,10 +106,10 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile('redis-6.2'),
     )
     for (const command of redis62Commands) {
-      assert.strictEqual(redis62.has(command), true, command)
+      assert.strictEqual(hasCommand(redis62, command), true, command)
     }
     for (const command of redis70Commands) {
-      assert.strictEqual(redis62.has(command), false, command)
+      assert.strictEqual(hasCommand(redis62, command), false, command)
     }
 
     const redis70 = createRedisCommandRegistry(
@@ -112,7 +117,7 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile('redis-7.0'),
     )
     for (const command of redis70Commands) {
-      assert.strictEqual(redis70.has(command), true, command)
+      assert.strictEqual(hasCommand(redis70, command), true, command)
     }
 
     const redis72 = createRedisCommandRegistry(
@@ -120,13 +125,13 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile('redis-7.2'),
     )
     for (const command of redis70Commands) {
-      assert.strictEqual(redis72.has(command), true, command)
+      assert.strictEqual(hasCommand(redis72, command), true, command)
     }
     for (const command of hashFieldExpirationCommands) {
-      assert.strictEqual(redis72.has(command), false, command)
+      assert.strictEqual(hasCommand(redis72, command), false, command)
     }
     for (const command of ['hgetdel', 'hgetex']) {
-      assert.strictEqual(redis72.has(command), false, command)
+      assert.strictEqual(hasCommand(redis72, command), false, command)
     }
 
     const redis74 = createRedisCommandRegistry(
@@ -134,10 +139,10 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile('redis-7.4'),
     )
     for (const command of hashFieldExpirationCommands) {
-      assert.strictEqual(redis74.has(command), true, command)
+      assert.strictEqual(hasCommand(redis74, command), true, command)
     }
     for (const command of ['hgetdel', 'hgetex']) {
-      assert.strictEqual(redis74.has(command), false, command)
+      assert.strictEqual(hasCommand(redis74, command), false, command)
     }
 
     const redis80 = createRedisCommandRegistry(
@@ -145,7 +150,7 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile('redis-8.0'),
     )
     for (const command of ['hgetdel', 'hgetex']) {
-      assert.strictEqual(redis80.has(command), true, command)
+      assert.strictEqual(hasCommand(redis80, command), true, command)
     }
   })
 
@@ -155,14 +160,14 @@ describe('compatibility registry filtering', () => {
       resolveCompatibilityProfile('valkey-8.0'),
     )
     for (const command of [...redis62Commands, ...redis70Commands]) {
-      assert.strictEqual(valkey8.has(command), true, command)
+      assert.strictEqual(hasCommand(valkey8, command), true, command)
     }
     for (const command of [
       ...hashFieldExpirationCommands,
       'hgetex',
       'hgetdel',
     ]) {
-      assert.strictEqual(valkey8.has(command), false, command)
+      assert.strictEqual(hasCommand(valkey8, command), false, command)
     }
 
     const valkey9 = createRedisCommandRegistry(
@@ -175,8 +180,8 @@ describe('compatibility registry filtering', () => {
       ...hashFieldExpirationCommands,
       'hgetex',
     ]) {
-      assert.strictEqual(valkey9.has(command), true, command)
+      assert.strictEqual(hasCommand(valkey9, command), true, command)
     }
-    assert.strictEqual(valkey9.has('hgetdel'), false)
+    assert.strictEqual(hasCommand(valkey9, 'hgetdel'), false)
   })
 })

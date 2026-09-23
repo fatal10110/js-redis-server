@@ -2,7 +2,12 @@ export type RedisValue =
   | { kind: 'simple-string'; value: string }
   | { kind: 'bulk-string'; value: Buffer | null }
   | { kind: 'integer'; value: number | bigint }
-  | { kind: 'double'; value: number }
+  /**
+   * `text`, when set, is the reply's exact spelling (a command whose Redis
+   * reply is not `addReplyDouble()`, e.g. GEO coordinates); otherwise the
+   * encoder spells `value` per profile with `formatRedisDouble`.
+   */
+  | { kind: 'double'; value: number; text?: string }
   | { kind: 'boolean'; value: boolean }
   | { kind: 'big-number'; value: bigint }
   | { kind: 'verbatim'; format: string; value: Buffer }
@@ -14,7 +19,16 @@ export type RedisValue =
   | { kind: 'push'; name: string; items: RedisValue[] }
   | { kind: 'null' }
   | { kind: 'null-array' }
-  | { kind: 'error'; message: string; code?: string }
+  // `messageBytes` is set only when the body must reach the wire byte for
+  // byte — an error that echoes a token the client sent (see
+  // `unknownSubcommandError` in src/core/subcommand-errors.ts), whose bytes need not
+  // be valid UTF-8. `message` is always the readable form of the same body.
+  | {
+      kind: 'error'
+      message: string
+      messageBytes?: Buffer
+      code?: string
+    }
 
 export const RedisValue = {
   simpleString: (value: string): RedisValue => ({
@@ -26,7 +40,10 @@ export const RedisValue = {
     value,
   }),
   integer: (value: number | bigint): RedisValue => ({ kind: 'integer', value }),
-  double: (value: number): RedisValue => ({ kind: 'double', value }),
+  double: (value: number, text?: string): RedisValue =>
+    text === undefined
+      ? { kind: 'double', value }
+      : { kind: 'double', value, text },
   boolean: (value: boolean): RedisValue => ({ kind: 'boolean', value }),
   bigNumber: (value: bigint): RedisValue => ({ kind: 'big-number', value }),
   verbatim: (format: string, value: Buffer): RedisValue => ({
@@ -58,9 +75,13 @@ export const RedisValue = {
   }),
   null: (): RedisValue => ({ kind: 'null' }),
   nullArray: (): RedisValue => ({ kind: 'null-array' }),
-  error: (message: string, code?: string): RedisValue => ({
-    kind: 'error',
-    message,
-    code,
-  }),
+  error: (message: string | Buffer, code?: string): RedisValue =>
+    typeof message === 'string'
+      ? { kind: 'error', message, code }
+      : {
+          kind: 'error',
+          message: message.toString(),
+          messageBytes: message,
+          code,
+        },
 }

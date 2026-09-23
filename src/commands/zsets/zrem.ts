@@ -4,7 +4,7 @@ import { integer } from '../helpers'
 
 export const zremCommand = defineCommand({
   name: 'zrem',
-  schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), members: t.variadic(t.bulk(), { min: 1 }) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {

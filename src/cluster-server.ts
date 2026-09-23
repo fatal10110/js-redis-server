@@ -50,11 +50,13 @@ export class RedisCluster {
     }
 
     // Backfill actual ports — when basePort is 0 the OS assigns random ports
-    // and the handles/topology need to reflect what was actually bound.
+    // and the handles/topology need to reflect what was actually bound. Both
+    // arrays are `readonly` in the array sense only; their elements carry a
+    // mutable `port`, so no cast is needed.
     this.servers.forEach((server, index) => {
       const actualPort = server.getPort()
-      ;(this.nodes[index] as { port: number }).port = actualPort
-      ;(this.topology.nodes[index] as { port: number }).port = actualPort
+      this.nodes[index].port = actualPort
+      this.topology.nodes[index].port = actualPort
     })
   }
 
@@ -119,10 +121,3 @@ export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
 
   return new RedisCluster(topology, handles, servers, replicationLinks)
 }
-
-/**
- * @deprecated Renamed to {@link createRedisCluster} for naming consistency with
- * `createRedisServer` / `createRedisMock`. This alias will be removed in a
- * future release.
- */
-export const buildRedisCluster = createRedisCluster

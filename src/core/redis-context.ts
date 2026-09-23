@@ -19,6 +19,13 @@ export type ParkHandler = <TValue>(
 
 export type ClientSessionMode = 'normal' | 'transaction' | 'subscribed'
 
+/**
+ * The three independent pub/sub registries a session can hold subscriptions in:
+ * plain channels (`SUBSCRIBE`), shard channels (`SSUBSCRIBE`) and glob patterns
+ * (`PSUBSCRIBE`).
+ */
+export type PubSubKind = 'channel' | 'shard' | 'pattern'
+
 export type RedisMonitorContext = {
   readonly disabled?: boolean
   readonly defer?: boolean
@@ -54,16 +61,15 @@ export interface RedisClientSession {
   readonly pubsubShardChannelCount: number
   readonly pubsubPatternCount: number
   readonly pubsubSubscriptionCount: number
-  subscribePubSubChannels(channels: readonly Buffer[]): RedisResult[]
-  unsubscribePubSubChannels(channels: readonly Buffer[]): RedisResult[]
-  subscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[]
-  unsubscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[]
-  subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
-  unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[]
+  pubsubSubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
+  pubsubUnsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
-  registerResponseStreamCleanup(cleanup: () => void): () => void
-  resetResponseStreams(): void
+  enqueuePush(result: RedisResult): void
+  onReset(cleanup: () => void): () => void
+  resetPushProducers(): void
+  readonly monitoring: boolean
+  startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void
   disconnect(reason?: string): void
 }
 
@@ -73,6 +79,12 @@ export interface RedisExecutionContext {
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
   readonly transactionReplay?: boolean
+  /**
+   * Set while the command runs inside a Lua script (`redis.call`/`pcall`),
+   * mirroring real Redis' `CLIENT_SCRIPT` flag. Commands whose reply must be
+   * reproducible across replicas — `SORT` over a set, today — branch on it.
+   */
+  readonly inScript?: boolean
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal
@@ -123,10 +135,6 @@ export function createDefaultParkHandler(): ParkHandler {
     })
 }
 
-export function createNoopParkHandler(): ParkHandler {
-  return createDefaultParkHandler()
-}
-
 /**
  * Park handler for commands replayed inside MULTI/EXEC.
  *
@@ -162,6 +170,16 @@ export function createNonBlockingParkHandler(): ParkHandler {
   }
 }
 
+/**
+ * Deterministic `AbortError` for the park handlers: a parked command sees this
+ * however the session was aborted, so `controller.abort('bye')` cannot surface
+ * a bare string out of `ctx.park(...)`.
+ *
+ * `ClientSession` instead uses `signal.throwIfAborted()`, which rethrows
+ * `signal.reason` verbatim — that path yields an `AbortError` only for the
+ * default abort. No message is matched on anywhere; `name === 'AbortError'` is
+ * the only assertion in the tree.
+ */
 function createAbortError(): Error {
   const err = new Error('The operation was aborted')
   err.name = 'AbortError'

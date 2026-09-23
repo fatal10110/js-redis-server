@@ -1,0 +1,82 @@
+version: 2
+
+updates:
+  # The server itself. This is also the only tree that declares
+  # `lua-redis-wasm`: the demo reads its version from here to build the
+  # jsDelivr URL, so one bump moves the bundled loader and the CDN assets
+  # together and they cannot drift apart.
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+    # Note this is a real ceiling: two group PRs plus ungrouped majors can hit
+    # it and silently defer the rest to a later run. It does not apply to
+    # security updates, which are never subject to this limit.
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per risk class instead of one per package. Majors stay
+      # ungrouped so they get read individually. Each group is declared twice
+      # because `groups` defaults to `applies-to: version-updates`, and a week
+      # where several transitive advisories land at once is exactly when one
+      # PR beats eight.
+      dev-minor-patch:
+        dependency-type: development
+        update-types: ['minor', 'patch']
+      dev-minor-patch-security:
+        applies-to: security-updates
+        dependency-type: development
+        update-types: ['minor', 'patch']
+      prod-minor-patch:
+        dependency-type: production
+        update-types: ['minor', 'patch']
+      prod-minor-patch-security:
+        applies-to: security-updates
+        dependency-type: production
+        update-types: ['minor', 'patch']
+
+  # The GitHub Pages demo. It has its own package.json/package-lock.json, and
+  # Dependabot never opens *version* update PRs for a directory that is not
+  # listed here — which is why this sub-project's deps only ever moved when a
+  # security update touched them (security updates need no config at all).
+  - package-ecosystem: npm
+    directory: '/examples/browser-demo'
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    # The demo is an application, not a published package: rewrite the declared
+    # range on every bump so a peer-incompatible pairing is visible in the
+    # package.json diff rather than only in a four-figure lockfile diff.
+    versioning-strategy: increase
+    groups:
+      # vite and vite-plugin-node-polyfills are joined by a peer range that
+      # lags vite by a major. Moving them in one PR is what keeps `npm ci`
+      # resolvable; see #391, where vite jumped to 8 on its own and the
+      # plugin's peer range still stopped at 7.
+      vite:
+        patterns:
+          - 'vite'
+          - 'vite-plugin-*'
+      # `groups` defaults to version updates only, and #391's breaking bump
+      # arrived as a *security* update — so the pairing needs a twin that
+      # covers that class too.
+      vite-security:
+        applies-to: security-updates
+        patterns:
+          - 'vite'
+          - 'vite-plugin-*'
+    # No `ignore` rule on vite majors, deliberately. `ignore` *does* apply to
+    # security updates, so such a rule would have been honoured against #391's
+    # bump — and that bump existed to move off a vulnerable esbuild reached
+    # through vite. Blocking vite majors would have left Dependabot no path to
+    # remediate and opened no PR at all: a silently unpatched vulnerability
+    # instead of a red build. Grouping plus the PR-time demo build is the
+    # better trade — breakage becomes visible rather than suppressed.
+
+  # Workflow actions are pinned by major tag (@v4, @v5); keep them current.
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: monthly
+    groups:
+      github-actions:
+        patterns: ['*']

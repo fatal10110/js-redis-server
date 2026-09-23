@@ -3,27 +3,44 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
-// Demo-only config. Polyfills the one Node builtin the js-redis-server source
-// graph still needs in the browser (buffer). `lua-redis-wasm` ≥1.4 ships a
-// browser build with no `node:*` imports (resolved via its `browser` export
-// condition), and main.ts points its WASM + glue at jsDelivr, so there's no fs
-// alias and no vendored copy. The demo imports the net-free `src/cluster`
-// (node-assembly only); the socket-backed `src/cluster-server` is never imported,
-// so no `net` shim either. None of this touches the published package.
+// Demo-only config. Polyfills the one Node builtin module the js-redis-server
+// source graph still needs in the browser (buffer) — and ONLY that one:
+// `nodePolyfills()` with no `include` bundles the whole node-stdlib-browser
+// set, whose `crypto-browserify` drags `elliptic`, `bn.js` and curve tables
+// into the Pages artifact (#393). The Buffer/process/global *globals* are
+// injected regardless of `include`. The graph's only other builtin, crypto
+// (`createHash('sha1')`), goes to the small ./crypto-shim.ts below instead.
+//
+// `lua-redis-wasm` ≥1.4 ships a browser build with no `node:*` imports
+// (resolved via its `browser` export condition), and main.ts points its WASM +
+// glue at jsDelivr, so there's no fs alias and no vendored copy. The demo
+// imports the net-free `src/cluster` (node-assembly only); the socket-backed
+// `src/cluster-server` is never imported, so no `net` shim either. None of this touches the published package.
 //
 // The demo imports `../../src/in-memory-client`, OUTSIDE this demo's package
 // root. node-polyfills injects `import ... from
 // 'vite-plugin-node-polyfills/shims/<x>'` into those source files, and Rollup
 // resolves that bare specifier from the source file's location (repo root),
-// where the shim isn't installed. Alias the three shims to absolute paths in the
-// demo's own node_modules so they resolve regardless of importer location.
+// where the shim isn't installed. Alias the three shims to absolute paths (in
+// the demo's own node_modules, or the demo-local process-shim.ts) so they
+// resolve regardless of importer location.
 const abs = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
 
 // Pin the CDN-loaded WASM + glue to the SAME version we bundle the JS loader
-// from, so a root-level `lua-redis-wasm` bump can't leave the loader and the
-// jsDelivr assets on mismatched (ABI-incompatible) versions.
+// from, so a `lua-redis-wasm` bump can't leave the loader and the jsDelivr
+// assets on mismatched (ABI-incompatible) versions.
+//
+// Read from the ROOT node_modules deliberately — that is the copy Rollup
+// resolves, because the only import of this package is src/core/lua-runtime.ts
+// (see the note above about `../../src` resolving from the repo root). The demo
+// does not declare `lua-redis-wasm` at all: one tree, one version, so loader
+// and CDN URL cannot diverge. Declaring it here too would reintroduce a second
+// version that nothing imports and that Dependabot would bump separately.
+// Bare-specifier resolution is not an option: the package's `exports` map has
+// only ".", so `require.resolve('lua-redis-wasm/package.json')` throws
+// ERR_PACKAGE_PATH_NOT_EXPORTED.
 const luaWasmVersion = JSON.parse(
-  readFileSync(abs('./node_modules/lua-redis-wasm/package.json'), 'utf8'),
+  readFileSync(abs('../../node_modules/lua-redis-wasm/package.json'), 'utf8'),
 ).version as string
 
 const shim = (name: string) =>
@@ -59,12 +76,16 @@ const stripBundledLuaAssets = {
 export default defineConfig({
   base: '/js-redis-server/',
   define: { __LUA_WASM_VERSION__: JSON.stringify(luaWasmVersion) },
-  plugins: [stripBundledLuaAssets, nodePolyfills()],
+  plugins: [stripBundledLuaAssets, nodePolyfills({ include: ['buffer'] })],
   resolve: {
     alias: {
+      // Sync SHA-1 only; see crypto-shim.ts. Anything else from crypto throws.
+      'node:crypto': abs('./crypto-shim.ts'),
+      crypto: abs('./crypto-shim.ts'),
       'vite-plugin-node-polyfills/shims/buffer': shim('buffer'),
       'vite-plugin-node-polyfills/shims/global': shim('global'),
-      'vite-plugin-node-polyfills/shims/process': shim('process'),
+      // The plugin's process shim plus process.hrtime; see process-shim.ts.
+      'vite-plugin-node-polyfills/shims/process': abs('./process-shim.ts'),
     },
   },
 })

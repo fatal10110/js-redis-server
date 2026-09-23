@@ -6,7 +6,7 @@ export const lpushCommand = defineCommand({
   name: 'lpush',
   schema: t.object({
     key: t.key(),
-    values: t.variadic(t.key(), { min: 1 }),
+    values: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
@@ -20,7 +20,7 @@ export const rpushCommand = defineCommand({
   name: 'rpush',
   schema: t.object({
     key: t.key(),
-    values: t.variadic(t.key(), { min: 1 }),
+    values: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
@@ -34,7 +34,7 @@ export const lpushxCommand = defineCommand({
   name: 'lpushx',
   schema: t.object({
     key: t.key(),
-    values: t.variadic(t.key(), { min: 1 }),
+    values: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
@@ -51,7 +51,7 @@ export const rpushxCommand = defineCommand({
   name: 'rpushx',
   schema: t.object({
     key: t.key(),
-    values: t.variadic(t.key(), { min: 1 }),
+    values: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],

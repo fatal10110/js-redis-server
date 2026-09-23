@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { GEO_REPLY_WITH, RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
+import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -15,7 +15,6 @@ describe(`Geo Search Commands Integration (node-redis, ${testRunner.getBackendNa
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

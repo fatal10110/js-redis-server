@@ -1,6 +1,5 @@
 import { ClientSession } from '../client-session'
 import type { CommandExecutor } from '../command-executor'
-import type { RespEncodeOptions } from '../resp-encoder'
 import type { Logger } from '../../logger'
 import type { RedisClusterNodeRole, RedisServerState } from '../../state'
 import type { ConnectionTransport } from './connection-transport'
@@ -11,7 +10,6 @@ export type AttachSessionOptions = {
   executor: CommandExecutor
   nodeRole?: RedisClusterNodeRole
   logger?: Pick<Logger, 'error'>
-  encoder?: RespEncodeOptions
   clientAddress?: string
 }
 
@@ -51,7 +49,6 @@ export function attachSession(
     transport,
     session,
     logger: opts.logger,
-    encoder: opts.encoder,
   })
 
   const done = adapter.run().catch(err => opts.logger?.error(err))

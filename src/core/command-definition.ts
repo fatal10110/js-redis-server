@@ -1,8 +1,8 @@
 import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
 import type { RedisResult } from './redis-result'
-import type { ResponseStream } from './response-stream'
-import type { VersionGate } from './compatibility'
+import type { CompatibilityProfile, VersionGate } from './compatibility'
+import { asciiLowerCase } from './ascii-case'
 
 export type CommandFlag =
   | 'readonly'
@@ -67,13 +67,18 @@ export type CommandDocumentationArgument = {
   flags?: readonly string[]
 }
 
+/**
+ * `COMMAND INFO` / `COMMAND DOCS` metadata that cannot be derived from the
+ * rest of the definition (#370). Arity comes from `schema` and the legacy
+ * first/last/step key range from `keySpecs` (or, without them, from the
+ * schema's key positions) — declare `arity` only where the schema cannot
+ * express it, such as synthetic subcommand entries or a version-gated
+ * argument whose arity differs by compatibility profile.
+ */
 export type CommandIntrospection = {
   name?: string
-  arity: number
+  arity?: number | ((profile: CompatibilityProfile) => number)
   flags?: readonly string[]
-  firstKey?: number
-  lastKey?: number
-  keyStep?: number
   categories?: readonly string[]
   tips?: readonly string[]
   keySpecs?: readonly CommandKeySpec[]
@@ -81,10 +86,7 @@ export type CommandIntrospection = {
   docs?: CommandDocumentation
 }
 
-export type CommandExecutionResult =
-  | RedisResult
-  | Promise<RedisResult>
-  | ResponseStream
+export type CommandExecutionResult = RedisResult | Promise<RedisResult>
 
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string
@@ -102,16 +104,34 @@ export type CommandPlan<TArgs = unknown> = {
   definition: CommandDefinition<TArgs>
   args: TArgs
   keys: readonly Buffer[]
-  flags: readonly CommandFlag[]
   rawCommand: Buffer
   rawArgs: readonly Buffer[]
 }
 
+/**
+ * Builds a command definition, pinning `TArgs` from the schema so `keys` and
+ * `execute` get their arguments typed without a manual annotation, and
+ * lowercasing the declared name.
+ *
+ * It returns a **copy**. That is unobservable for the idiomatic literal form —
+ * `export const getCommand = defineCommand({ ... })`, where nothing else ever
+ * held the argument — but it is not unobservable in general:
+ *
+ *  - a definition you already hold a reference to comes back as a *different*
+ *    object, so metadata keyed off the one you authored will not match the one
+ *    that ends up registered;
+ *  - a class instance loses the `keys`/`execute` that live on its prototype,
+ *    because a spread copies own enumerable properties only. This type-checks —
+ *    `CommandDefinition` is an interface — and fails at the first invocation.
+ *
+ * Register those with {@link CommandRegistry.register} directly: it stores by
+ * reference, at the cost of leaving the name's casing alone.
+ */
 export function defineCommand<TArgs>(
   definition: CommandDefinition<TArgs>,
 ): CommandDefinition<TArgs> {
   return {
     ...definition,
-    name: definition.name.toLowerCase(),
+    name: asciiLowerCase(definition.name),
   }
 }

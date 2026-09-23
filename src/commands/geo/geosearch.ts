@@ -28,6 +28,7 @@ type GeoSearchArgs = GeoOrderCount & {
 
 function createGeoSearchSchema() {
   return t.custom<GeoSearchArgs>(
+    { min: 6, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
@@ -108,6 +109,7 @@ export const geosearchCommand = defineCommand({
         withHash: args.withHash,
       },
       args.by.unit,
+      ctx.server.profile,
     )
   },
 })

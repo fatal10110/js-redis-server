@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
+import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -17,7 +17,6 @@ describe(`BLMOVE Integration (node-redis, ${testRunner.getBackendName()})`, () =
   before(async () => {
     client1 = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
     client2 = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(client1)
   })
 
   after(async () => {

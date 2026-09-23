@@ -29,6 +29,7 @@ type GeoSearchStoreArgs = GeoOrderCount & {
 
 function createGeoSearchStoreSchema() {
   return t.custom<GeoSearchStoreArgs>(
+    { min: 7, keys: [0, 1] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const destination = input[index]
       const source = input[index + 1]

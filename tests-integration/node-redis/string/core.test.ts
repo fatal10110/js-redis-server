@@ -5,18 +5,20 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -24,33 +26,33 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
   })
 
   test('APPEND command', async () => {
-    const append1 = await redisClient.append('appendkey', 'hello')
+    const append1 = await redisClient.append(`appendkey:${RUN}`, 'hello')
     assert.strictEqual(append1, 5)
 
-    const append2 = await redisClient.append('appendkey', ' world')
+    const append2 = await redisClient.append(`appendkey:${RUN}`, ' world')
     assert.strictEqual(append2, 11)
 
-    const value = await redisClient.get('appendkey')
+    const value = await redisClient.get(`appendkey:${RUN}`)
     assert.strictEqual(value, 'hello world')
   })
 
   test('STRLEN command', async () => {
-    const len1 = await redisClient.strLen('nonexistent')
+    const len1 = await redisClient.strLen(`nonexistent:${RUN}`)
     assert.strictEqual(len1, 0)
 
-    await redisClient.set('strlenkey', 'hello')
-    const len2 = await redisClient.strLen('strlenkey')
+    await redisClient.set(`strlenkey:${RUN}`, 'hello')
+    const len2 = await redisClient.strLen(`strlenkey:${RUN}`)
     assert.strictEqual(len2, 5)
   })
 
   test('MGET command', async () => {
-    await redisClient.set('{same}mget1', 'value1')
-    await redisClient.set('{same}mget2', 'value2')
+    await redisClient.set(`{same:${RUN}}mget1`, 'value1')
+    await redisClient.set(`{same:${RUN}}mget2`, 'value2')
 
     const values = await redisClient.mGet([
-      '{same}mget1',
-      '{same}mget2',
-      '{same}nonexistent',
+      `{same:${RUN}}mget1`,
+      `{same:${RUN}}mget2`,
+      `{same:${RUN}}nonexistent`,
     ])
     assert.deepStrictEqual(values, ['value1', 'value2', null])
   })
@@ -67,51 +69,69 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
 
   test('MSET command', async () => {
     await redisClient.mSet([
-      ['{same}mset1', 'value1'],
-      ['{same}mset2', 'value2'],
-      ['{same}mset3', 'value3'],
+      [`{same:${RUN}}mset1`, 'value1'],
+      [`{same:${RUN}}mset2`, 'value2'],
+      [`{same:${RUN}}mset3`, 'value3'],
     ])
 
-    const get1 = await redisClient.get('{same}mset1')
-    const get2 = await redisClient.get('{same}mset2')
-    const get3 = await redisClient.get('{same}mset3')
+    const get1 = await redisClient.get(`{same:${RUN}}mset1`)
+    const get2 = await redisClient.get(`{same:${RUN}}mset2`)
+    const get3 = await redisClient.get(`{same:${RUN}}mset3`)
 
     assert.strictEqual(get1, 'value1')
     assert.strictEqual(get2, 'value2')
     assert.strictEqual(get3, 'value3')
   })
 
+  test('MSET cross-slot error', async () => {
+    // Pins the per-command CROSSSLOT wording against a real client on both
+    // backends — `TEST_BACKEND=real` checks it byte-for-byte against Redis.
+    // Not a guard for any client-side routing: this suite drives the real
+    // node-redis client over TCP, so the error comes from ClusterPolicy.
+    await assert.rejects(
+      () =>
+        redisClient.mSet([
+          ['{mset-slot-a}key', 'value1'],
+          ['{mset-slot-b}key', 'value2'],
+        ]),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
+  })
+
   test('MSETNX command', async () => {
     // All keys new
     const result1 = await redisClient.mSetNX([
-      ['{same}msetnx1', 'value1'],
-      ['{same}msetnx2', 'value2'],
+      [`{same:${RUN}}msetnx1`, 'value1'],
+      [`{same:${RUN}}msetnx2`, 'value2'],
     ])
     assert.strictEqual(result1, 1)
 
     // Some keys exist
     const result2 = await redisClient.mSetNX([
-      ['{same}msetnx1', 'newvalue'],
-      ['{same}msetnx3', 'value3'],
+      [`{same:${RUN}}msetnx1`, 'newvalue'],
+      [`{same:${RUN}}msetnx3`, 'value3'],
     ])
     assert.strictEqual(result2, 0)
 
     // Verify original values unchanged
-    const check = await redisClient.get('{same}msetnx1')
+    const check = await redisClient.get(`{same:${RUN}}msetnx1`)
     assert.strictEqual(check, 'value1')
   })
 
   test('GETSET command', async () => {
-    await redisClient.set('getsetkey', 'oldvalue')
+    await redisClient.set(`getsetkey:${RUN}`, 'oldvalue')
 
-    const oldValue = await redisClient.getSet('getsetkey', 'newvalue')
+    const oldValue = await redisClient.getSet(`getsetkey:${RUN}`, 'newvalue')
     assert.strictEqual(oldValue, 'oldvalue')
 
-    const newValue = await redisClient.get('getsetkey')
+    const newValue = await redisClient.get(`getsetkey:${RUN}`)
     assert.strictEqual(newValue, 'newvalue')
 
     // GETSET on non-existent key
-    const nullValue = await redisClient.getSet('newgetsetkey', 'firstvalue')
+    const nullValue = await redisClient.getSet(
+      `newgetsetkey:${RUN}`,
+      'firstvalue',
+    )
     assert.strictEqual(nullValue, null)
   })
 
@@ -144,38 +164,38 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
 
   test('String commands workflow', async () => {
     // Create a session counter with user data
-    await redisClient.set('{user1001}name', 'Alice')
-    await redisClient.set('{user1001}sessions', '0')
+    await redisClient.set(`{user1001:${RUN}}name`, 'Alice')
+    await redisClient.set(`{user1001:${RUN}}sessions`, '0')
 
     // Increment session count
-    const sessions1 = await redisClient.incr('{user1001}sessions')
+    const sessions1 = await redisClient.incr(`{user1001:${RUN}}sessions`)
     assert.strictEqual(sessions1, 1)
 
     // Add login timestamp
-    await redisClient.append('{user1001}name', ' (Online)')
-    const nameWithStatus = await redisClient.get('{user1001}name')
+    await redisClient.append(`{user1001:${RUN}}name`, ' (Online)')
+    const nameWithStatus = await redisClient.get(`{user1001:${RUN}}name`)
     assert.strictEqual(nameWithStatus, 'Alice (Online)')
 
     // Get multiple user fields
     const userData = await redisClient.mGet([
-      '{user1001}name',
-      '{user1001}sessions',
+      `{user1001:${RUN}}name`,
+      `{user1001:${RUN}}sessions`,
     ])
     assert.deepStrictEqual(userData, ['Alice (Online)', '1'])
 
     // Update multiple fields atomically
     await redisClient.mSet([
-      ['{user1001}lastlogin', Date.now().toString()],
-      ['{user1001}score', '0'],
+      [`{user1001:${RUN}}lastlogin`, Date.now().toString()],
+      [`{user1001:${RUN}}score`, '0'],
     ])
 
     // Increment score by points
-    await redisClient.incrBy('{user1001}score', 150)
-    const score = await redisClient.get('{user1001}score')
+    await redisClient.incrBy(`{user1001:${RUN}}score`, 150)
+    const score = await redisClient.get(`{user1001:${RUN}}score`)
     assert.strictEqual(score, '150')
 
     // Check total data length
-    const nameLen = await redisClient.strLen('{user1001}name')
+    const nameLen = await redisClient.strLen(`{user1001:${RUN}}name`)
     assert.strictEqual(nameLen, 14) // 'Alice (Online)'.length
   })
 

@@ -356,7 +356,7 @@ describe('compatibility behavior gates', () => {
     )
     assertErrorMessage(
       (await redis62.execute('slowlog', buf('BOGUS'))) as RedisResult,
-      "unknown subcommand 'BOGUS'. Try SLOWLOG HELP.",
+      "Unknown subcommand or wrong number of arguments for 'BOGUS'. Try SLOWLOG HELP.",
     )
   })
 

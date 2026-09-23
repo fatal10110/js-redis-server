@@ -12,6 +12,11 @@ const testRunner = new TestRunner()
 // churning a fresh connection per test against the shared real cluster.
 const TAG = '{bitmap}'
 
+const mockOnly =
+  testRunner.backend === 'real'
+    ? { skip: 'allocates 512MB on the master and replica; mock backend only' }
+    : {}
+
 describe(`Bitmap Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
   let client: Redis
@@ -78,8 +83,15 @@ describe(`Bitmap Commands Integration (${testRunner.getBackendName()})`, () => {
       () => client.call('GETBIT', key),
       errorWithMessage("ERR wrong number of arguments for 'getbit' command"),
     )
+  })
 
-    // The max valid offset is 2^32 - 1.
+  // The max valid offset is 2^32 - 1. Setting it makes real Redis allocate a
+  // 512MB string on the master and again on its replica, which is enough to
+  // get nodes of the shared test cluster OOM-killed; no cleanup afterwards can
+  // undo that spike. So this runs on the mock only. The ceiling itself is still
+  // proven on real Redis without allocating: bitmap-offset-limit reads
+  // GETBIT at 2^32 - 1, and 2^32 is rejected above.
+  test('SETBIT accepts the max offset 2^32 - 1', mockOnly, async () => {
     assert.strictEqual(
       await client.call('SETBIT', `${ns()}:max`, '4294967295', '1'),
       0,

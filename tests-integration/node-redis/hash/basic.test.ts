@@ -6,18 +6,20 @@ import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
   findNodeRedisSlotOwner,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -25,13 +27,13 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HSET and HGET commands', async () => {
-    const result1 = await redisClient.hSet('hash1', 'field1', 'value1')
+    const result1 = await redisClient.hSet(`hash1:${RUN}`, 'field1', 'value1')
     assert.strictEqual(result1, 1)
 
-    const value = await redisClient.hGet('hash1', 'field1')
+    const value = await redisClient.hGet(`hash1:${RUN}`, 'field1')
     assert.strictEqual(value, 'value1')
 
-    const result2 = await redisClient.hSet('hash1', {
+    const result2 = await redisClient.hSet(`hash1:${RUN}`, {
       field2: 'value2',
       field3: 'value3',
     })
@@ -39,13 +41,13 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HMSET and HMGET commands', async () => {
-    await redisClient.hSet('hash2', {
+    await redisClient.hSet(`hash2:${RUN}`, {
       field1: 'value1',
       field2: 'value2',
       field3: 'value3',
     })
 
-    const values = await redisClient.hmGet('hash2', [
+    const values = await redisClient.hmGet(`hash2:${RUN}`, [
       'field1',
       'field2',
       'nonexistent',
@@ -54,9 +56,12 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HGETALL command', async () => {
-    await redisClient.hSet('hash3', { field1: 'value1', field2: 'value2' })
+    await redisClient.hSet(`hash3:${RUN}`, {
+      field1: 'value1',
+      field2: 'value2',
+    })
 
-    const all = await redisClient.hGetAll('hash3')
+    const all = await redisClient.hGetAll(`hash3:${RUN}`)
     assert.deepStrictEqual(all, { field1: 'value1', field2: 'value2' })
   })
 
@@ -89,12 +94,15 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HKEYS and HVALS commands', async () => {
-    await redisClient.hSet('hash4', { field1: 'value1', field2: 'value2' })
+    await redisClient.hSet(`hash4:${RUN}`, {
+      field1: 'value1',
+      field2: 'value2',
+    })
 
-    const keys = await redisClient.hKeys('hash4')
+    const keys = await redisClient.hKeys(`hash4:${RUN}`)
     assert.deepStrictEqual(keys.sort(), ['field1', 'field2'])
 
-    const vals = await redisClient.hVals('hash4')
+    const vals = await redisClient.hVals(`hash4:${RUN}`)
     assert.deepStrictEqual(vals.sort(), ['value1', 'value2'])
   })
 
@@ -220,41 +228,56 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HLEN command', async () => {
-    const len1 = await redisClient.hLen('emptyhash')
+    const len1 = await redisClient.hLen(`emptyhash:${RUN}`)
     assert.strictEqual(len1, 0)
 
-    await redisClient.hSet('hash5', { field1: 'value1', field2: 'value2' })
-    const len2 = await redisClient.hLen('hash5')
+    await redisClient.hSet(`hash5:${RUN}`, {
+      field1: 'value1',
+      field2: 'value2',
+    })
+    const len2 = await redisClient.hLen(`hash5:${RUN}`)
     assert.strictEqual(len2, 2)
   })
 
   test('HEXISTS command', async () => {
-    await redisClient.hSet('hash6', 'field1', 'value1')
+    await redisClient.hSet(`hash6:${RUN}`, 'field1', 'value1')
 
-    const exists1 = await redisClient.hExists('hash6', 'field1')
+    const exists1 = await redisClient.hExists(`hash6:${RUN}`, 'field1')
     assert.strictEqual(exists1, 1)
 
-    const exists2 = await redisClient.hExists('hash6', 'field2')
+    const exists2 = await redisClient.hExists(`hash6:${RUN}`, 'field2')
     assert.strictEqual(exists2, 0)
   })
 
   test('HSETNX command', async () => {
-    const result1 = await redisClient.hSetNX('hashsetnx', 'field1', 'value1')
+    const result1 = await redisClient.hSetNX(
+      `hashsetnx:${RUN}`,
+      'field1',
+      'value1',
+    )
     assert.strictEqual(result1, 1)
 
-    const value1 = await redisClient.hGet('hashsetnx', 'field1')
+    const value1 = await redisClient.hGet(`hashsetnx:${RUN}`, 'field1')
     assert.strictEqual(value1, 'value1')
 
-    const result2 = await redisClient.hSetNX('hashsetnx', 'field1', 'value2')
+    const result2 = await redisClient.hSetNX(
+      `hashsetnx:${RUN}`,
+      'field1',
+      'value2',
+    )
     assert.strictEqual(result2, 0)
 
-    const value2 = await redisClient.hGet('hashsetnx', 'field1')
+    const value2 = await redisClient.hGet(`hashsetnx:${RUN}`, 'field1')
     assert.strictEqual(value2, 'value1')
 
-    const result3 = await redisClient.hSetNX('hashsetnx', 'field2', 'value2')
+    const result3 = await redisClient.hSetNX(
+      `hashsetnx:${RUN}`,
+      'field2',
+      'value2',
+    )
     assert.strictEqual(result3, 1)
 
-    const len = await redisClient.hLen('hashsetnx')
+    const len = await redisClient.hLen(`hashsetnx:${RUN}`)
     assert.strictEqual(len, 2)
   })
 })

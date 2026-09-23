@@ -253,7 +253,7 @@ Both public builders compose `RedisServerState` + `createRedisCommandExecutor` +
 
 ### Exports
 
-- `src/index.ts`: export `createRedisServer`, `createRedisMock`, `createRedisCluster`, `resolveCompatibilityProfile`, `gateSatisfied`, and the `CompatibilityProfile` / `CompatibilitySpec` / `RedisFlavor` / `VersionGate` / `FeatureId` types. Keep `buildRedisCluster` as the existing deprecated alias only.
+- `src/index.ts`: export `createRedisServer`, `createRedisMock`, `createRedisCluster`, `resolveCompatibilityProfile`, `gateSatisfied`, and the `CompatibilityProfile` / `CompatibilitySpec` / `RedisFlavor` / `VersionGate` / `FeatureId` types. (The deprecated `buildRedisCluster` alias was later removed in #365.)
 
 ## Package-user documentation
 

@@ -5,7 +5,6 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
@@ -16,7 +15,6 @@ describe(`Sorted Set Set-Operations (node-redis, ${testRunner.getBackendName()})
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -151,6 +149,21 @@ describe(`Sorted Set Set-Operations (node-redis, ${testRunner.getBackendName()})
       await c.zUnionStore(k('dest'), [k('za'), k('zb')])
       assert.strictEqual(await c.zScore(k('dest'), 'm'), 0)
     })
+  })
+
+  test('ZUNIONSTORE rejects sources outside the destination slot', async () => {
+    // ZUNIONSTORE's keys are the destination *and* every source. Pins that
+    // wording against a real client on both backends — `TEST_BACKEND=real`
+    // checks it byte-for-byte against Redis. The error itself comes from
+    // ClusterPolicy; this suite never instantiates the client-side mocks.
+    await assert.rejects(
+      () =>
+        redisClient.zUnionStore('{zunion-slot-a}dest', [
+          '{zunion-slot-a}src',
+          '{zunion-slot-b}src',
+        ]),
+      errorWithMessage("CROSSSLOT Keys in request don't hash to the same slot"),
+    )
   })
 
   // ---------------------------------------------------------------- ZINTERSTORE

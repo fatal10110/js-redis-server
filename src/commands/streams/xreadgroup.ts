@@ -198,7 +198,9 @@ async function blockingXreadGroup(
 
 export const xreadgroupCommand = defineCommand({
   name: 'xreadgroup',
-  schema: t.object({ args: createXreadGroupSchema() }),
+  schema: t.object({
+    args: t.withLayout(createXreadGroupSchema(), { min: 6 }),
+  }),
   flags: ['write', 'blocking'],
   capabilities: { blocking: true },
   keys: args => args.args.streams.map(s => s.key),

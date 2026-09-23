@@ -1,11 +1,12 @@
 import type { CommandPlan } from './command-definition'
-import { CommandExecutor, type ExecutorResult } from './command-executor'
+import { CommandExecutor } from './command-executor'
 import {
   createDefaultParkHandler,
   createNonBlockingParkHandler,
   type ClientSessionMode,
   type ParkHandler,
   type ParkRequest,
+  type PubSubKind,
   type RedisClientSession,
   type RedisExecutionContext,
   type RedisMonitorContext,
@@ -14,11 +15,13 @@ import { RedisCommandError } from './redis-error'
 import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
 import { encodeRedisValue, type RespVersion } from './resp-encoder'
-import { type RedisTurnHandle, type RedisTurnQueue } from './turn-queue'
+import { type RedisTurnHandle } from './turn-queue'
 import type { RedisClusterNodeRole } from '../state/cluster-topology'
 import type { RedisDatabase } from '../state/database'
 import type { RedisServerState } from '../state/server-state'
 import type { Unsubscribe } from '../state/mutation-events'
+import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
+import type { RedisPubSubBroker } from '../state/pubsub-broker'
 
 export type ClientSessionOptions = {
   id?: string
@@ -29,7 +32,6 @@ export type ClientSessionOptions = {
   nodeRole?: RedisClusterNodeRole
   signal?: AbortSignal
   park?: ParkHandler
-  turnQueue?: RedisTurnQueue
   closeConnection?: (reason?: string) => void
 }
 
@@ -55,6 +57,91 @@ type PubSubRegistration = {
 }
 
 /**
+ * The command-name prefix each kind's frames carry. All nine frame names are
+ * derived from these three, so a row cannot borrow another kind's names.
+ */
+type PubSubFramePrefix = {
+  channel: ''
+  shard: 's'
+  pattern: 'p'
+}
+
+/**
+ * Everything that distinguishes one pub/sub kind from the other two. The three
+ * `SUBSCRIBE`/`UNSUBSCRIBE` families are otherwise identical bookkeeping, so
+ * they are driven from this table instead of being written out per kind.
+ *
+ * The kind parameter defaults to the full union so the type stays usable bare
+ * (see `pubsubCount` and `PUBSUB_KIND_ENTRIES`); the table below binds each row
+ * to its own kind, which is what makes a crossed frame name a compile error.
+ */
+type PubSubKindSpec<TKind extends PubSubKind = PubSubKind> = {
+  /**
+   * Registers the session's listener with the broker and builds the items of
+   * every push frame it delivers — `pmessage` carries the matched pattern in
+   * front of the channel, the other two do not.
+   */
+  readonly listen: (
+    broker: RedisPubSubBroker,
+    target: Buffer,
+    emit: (items: RedisValue[]) => void,
+  ) => Unsubscribe
+  /** Push frame name used to deliver a message to a subscriber. */
+  readonly message: `${PubSubFramePrefix[TKind]}message`
+  /** Confirmation frame name echoed back by SUBSCRIBE/SSUBSCRIBE/PSUBSCRIBE. */
+  readonly subscribed: `${PubSubFramePrefix[TKind]}subscribe`
+  /** Confirmation frame name echoed back by the matching UNSUBSCRIBE. */
+  readonly unsubscribed: `${PubSubFramePrefix[TKind]}unsubscribe`
+  /**
+   * Which counter the confirmation frames report. Redis reports channels and
+   * patterns together, but keeps the shard count separate — do not unify.
+   */
+  readonly counter: 'regular' | 'shard'
+}
+
+const PUBSUB_KINDS: { readonly [TKind in PubSubKind]: PubSubKindSpec<TKind> } =
+  {
+    channel: {
+      listen: (broker, target, emit) =>
+        broker.subscribe(target, m => emit([bulk(m.channel), bulk(m.message)])),
+      message: 'message',
+      subscribed: 'subscribe',
+      unsubscribed: 'unsubscribe',
+      counter: 'regular',
+    },
+    shard: {
+      listen: (broker, target, emit) =>
+        broker.ssubscribe(target, m =>
+          emit([bulk(m.channel), bulk(m.message)]),
+        ),
+      message: 'smessage',
+      subscribed: 'ssubscribe',
+      unsubscribed: 'sunsubscribe',
+      counter: 'shard',
+    },
+    pattern: {
+      listen: (broker, target, emit) =>
+        broker.psubscribe(target, m =>
+          emit([bulk(m.pattern), bulk(m.channel), bulk(m.message)]),
+        ),
+      message: 'pmessage',
+      subscribed: 'psubscribe',
+      unsubscribed: 'punsubscribe',
+      counter: 'regular',
+    },
+  }
+
+/**
+ * `Object.entries` widens the key to `string`; the table is keyed by
+ * `PubSubKind`, so narrowing it back is sound and keeps the kind list derived
+ * from the table instead of restated beside it.
+ */
+const PUBSUB_KIND_ENTRIES = Object.entries(PUBSUB_KINDS) as [
+  PubSubKind,
+  PubSubKindSpec,
+][]
+
+/**
  * Per-connection server state and the concrete {@link RedisClientSession}.
  *
  * One instance exists per connected client and owns everything that is scoped
@@ -66,9 +153,9 @@ type PubSubRegistration = {
  *  - the MULTI command queue and its dirty bit;
  *  - WATCH key registrations for optimistic locking.
  *
- * Commands are serialized through a per-database turn queue so that, even though
- * execution is async, only one command mutates a given database at a time. This
- * is also what makes blocking commands (BLPOP, ...) cooperate instead of
+ * Commands are serialized through the server's single turn queue so that, even
+ * though execution is async, only one command runs at a time on any database.
+ * This is also what makes blocking commands (BLPOP, ...) cooperate instead of
  * deadlock — see {@link createTurnAwareParkHandler}.
  */
 export class ClientSession implements RedisClientSession {
@@ -85,14 +172,7 @@ export class ClientSession implements RedisClientSession {
   private readonly signalSource?: AbortController
   private readonly nodeRole?: RedisClusterNodeRole
   private readonly parkHandler: ParkHandler
-  private readonly turnQueueOverride?: RedisTurnQueue
   private readonly closeConnection?: (reason?: string) => void
-  /**
-   * The turn handle of the command currently executing on this session,
-   * exposed so {@link executeTransaction} can hand the turn off to another
-   * database's queue when a queued SELECT switches databases mid-EXEC.
-   */
-  private activeTurnAccess?: TurnAccess
   private selectedDatabaseId: number
   private sessionMode: ClientSessionMode = 'normal'
   private respVersion: RespVersion = 2
@@ -107,14 +187,23 @@ export class ClientSession implements RedisClientSession {
   private readonly watches = new Map<string, WatchRegistration>()
   /** Subset of watched keys mutated since WATCH — non-empty fails the next EXEC. */
   private readonly dirtyWatches = new Set<string>()
-  private readonly pubsubChannels = new Map<string, PubSubRegistration>()
-  private readonly pubsubShardChannels = new Map<string, PubSubRegistration>()
-  private readonly pubsubPatterns = new Map<string, PubSubRegistration>()
+  /** Active pub/sub registrations per kind, keyed by `channelOrPatternHex`. */
+  private readonly pubsubSubscriptions: Record<
+    PubSubKind,
+    Map<string, PubSubRegistration>
+  > = {
+    channel: new Map(),
+    shard: new Map(),
+    pattern: new Map(),
+  }
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
   private deferredPushes: RedisResult[] | null = null
   private pushQueueClosed = false
-  private readonly responseStreamCleanups = new Set<() => void>()
+  /** Teardown for push producers (MONITOR); run on RESET and close. */
+  private readonly resetHooks = new Set<() => void>()
+  /** Set while this connection is in MONITOR mode; leaves it. */
+  private stopMonitor?: () => void
   private unregisterClientSession?: Unsubscribe
 
   constructor(options: ClientSessionOptions) {
@@ -126,7 +215,6 @@ export class ClientSession implements RedisClientSession {
     this.selectedDatabaseId = options.database ?? 0
     this.nodeRole = options.nodeRole
     this.parkHandler = options.park ?? createDefaultParkHandler()
-    this.turnQueueOverride = options.turnQueue
     this.closeConnection = options.closeConnection
 
     if (options.signal) {
@@ -165,23 +253,24 @@ export class ClientSession implements RedisClientSession {
   }
 
   get pubsubChannelCount(): number {
-    return this.pubsubChannels.size
+    return this.pubsubSubscriptions.channel.size
   }
 
   get pubsubShardChannelCount(): number {
-    return this.pubsubShardChannels.size
+    return this.pubsubSubscriptions.shard.size
   }
 
   get pubsubPatternCount(): number {
-    return this.pubsubPatterns.size
-  }
-
-  get pubsubRegularSubscriptionCount(): number {
-    return this.pubsubChannelCount + this.pubsubPatternCount
+    return this.pubsubSubscriptions.pattern.size
   }
 
   get pubsubSubscriptionCount(): number {
-    return this.pubsubRegularSubscriptionCount + this.pubsubShardChannelCount
+    let total = 0
+    for (const registrations of Object.values(this.pubsubSubscriptions)) {
+      total += registrations.size
+    }
+
+    return total
   }
 
   setAuthenticated(value: boolean): void {
@@ -275,16 +364,18 @@ export class ClientSession implements RedisClientSession {
   /**
    * EXEC step 2: run the drained plans in order and collect their replies into a
    * single array reply. Each command runs in its own fresh execution context.
-   * Streaming commands (SUBSCRIBE/MONITOR) are not permitted inside a
-   * transaction: the stream is closed immediately and replaced with an error
-   * entry so the array stays positionally aligned with the queued commands.
+   *
+   * The reply is pre-encoded item by item whenever an item's wire bytes cannot
+   * be rebuilt from the array value alone: a queued `HELLO` switched the
+   * protocol partway, or a command pre-encoded its own reply (a multi-channel
+   * `SUBSCRIBE`, whose extra confirmations Redis appends inside the array).
    */
   async executeTransaction(
     plans: readonly CommandPlan[],
   ): Promise<RedisResult> {
     const values: RedisValue[] = []
     const encodedValues: Buffer[] = []
-    let sawProtocolSwitch = false
+    let preEncode = false
 
     // Blocking commands must not park while the EXEC turn is held — that would
     // deadlock because no other session could produce the wakeup write. Override
@@ -298,29 +389,17 @@ export class ClientSession implements RedisClientSession {
       undefined,
       true,
     )
-    let currentDbId = this.selectedDatabaseId
-
+    // The EXEC turn is server-wide, so a queued SELECT switching databases
+    // mid-EXEC needs no turn handoff: later commands stay serialized (#94).
     for (const plan of plans) {
-      if (this.signal.aborted) {
-        throw createAbortError()
-      }
-
-      // A queued SELECT on a previous iteration may have switched databases.
-      // Move the held turn onto the now-selected database's queue so its
-      // keyspace stays serialized against other sessions (#94 follow-up). Only
-      // one turn is ever held at a time (release-then-acquire), so this cannot
-      // deadlock even if two transactions select databases in opposite orders.
-      if (this.selectedDatabaseId !== currentDbId) {
-        await this.handoffTurnToSelectedDb()
-        currentDbId = this.selectedDatabaseId
-      }
+      this.signal.throwIfAborted()
 
       // executePlan converts RedisCommandErrors into error results, but a
       // command whose execute() throws an unexpected runtime error (TypeError,
       // etc.) would otherwise propagate out and abandon the partial results
       // array. Real Redis always replies with an N-element EXEC array, so trap
       // the failure into this command's slot and keep running the rest (#83).
-      let result: Awaited<ReturnType<typeof this.executor.executePlan>>
+      let result: RedisResult
       const versionBefore = this.protocolVersion
       try {
         result = await this.executor.executePlan(plan, noBlockCtx)
@@ -333,32 +412,22 @@ export class ClientSession implements RedisClientSession {
           values,
           encodedValues,
         )
-        sawProtocolSwitch ||= this.protocolVersion !== versionBefore
+        preEncode ||= this.protocolVersion !== versionBefore
         continue
       }
 
-      if (result instanceof RedisResult) {
-        this.appendTransactionValue(
-          result.value,
-          values,
-          encodedValues,
-          result.encoded,
-        )
-        sawProtocolSwitch ||= this.protocolVersion !== versionBefore
-        continue
-      }
-
-      result.close('streaming command is not allowed in transaction')
       this.appendTransactionValue(
-        RedisValue.error('Streaming command is not allowed in transaction'),
+        result.value,
         values,
         encodedValues,
+        result.encoded,
       )
-      sawProtocolSwitch ||= this.protocolVersion !== versionBefore
+      preEncode ||=
+        this.protocolVersion !== versionBefore || result.encoded !== undefined
     }
 
     const value = RedisValue.array(values)
-    if (!sawProtocolSwitch) {
+    if (!preEncode) {
       return RedisResult.create(value)
     }
 
@@ -375,31 +444,11 @@ export class ClientSession implements RedisClientSession {
     encodedValues.push(
       encoded
         ? Buffer.from(encoded)
-        : encodeRedisValue(value, { version: this.protocolVersion }),
+        : encodeRedisValue(value, {
+            version: this.protocolVersion,
+            profile: this.server.profile,
+          }),
     )
-  }
-
-  /**
-   * Release the currently held serialization turn and acquire a fresh one on
-   * the selected database's queue. Called when a queued SELECT switches
-   * databases mid-EXEC so subsequent commands run under the correct
-   * per-database turn (see {@link executeTransaction}).
-   *
-   * No-op when a fixed turn-queue override is in force (a single queue already
-   * serializes every database) or when no managed turn is active.
-   */
-  private async handoffTurnToSelectedDb(): Promise<void> {
-    if (this.turnQueueOverride) {
-      return
-    }
-    const turnAccess = this.activeTurnAccess
-    if (!turnAccess) {
-      return
-    }
-
-    turnAccess.get()?.release()
-    const nextTurn = await this.db.turnQueue.waitTurn()
-    turnAccess.set(nextTurn)
   }
 
   /**
@@ -445,36 +494,37 @@ export class ClientSession implements RedisClientSession {
     return this.dirtyWatches.size > 0
   }
 
-  subscribePubSubChannels(channels: readonly Buffer[]): RedisResult[] {
+  /**
+   * SUBSCRIBE / SSUBSCRIBE / PSUBSCRIBE bookkeeping for one kind.
+   *
+   * Registering an already-subscribed target is a no-op on the broker but still
+   * produces a confirmation frame, exactly like real Redis.
+   */
+  pubsubSubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[] {
+    const spec = PUBSUB_KINDS[kind]
+    const registrations = this.pubsubSubscriptions[kind]
     const frames: RedisResult[] = []
 
-    for (const channel of channels) {
-      const key = pubsubId(channel)
-      if (!this.pubsubChannels.has(key)) {
-        const subscribedChannel = Buffer.from(channel)
-        const unsubscribe = this.server.pubsubBroker.subscribe(
-          subscribedChannel,
-          message => {
-            this.enqueuePush(
-              pubsubFrame('message', [
-                RedisValue.bulkString(Buffer.from(message.channel)),
-                RedisValue.bulkString(Buffer.from(message.message)),
-              ]),
-            )
+    for (const target of targets) {
+      const key = pubsubId(target)
+      if (!registrations.has(key)) {
+        const value = Buffer.from(target)
+        const unsubscribe = spec.listen(
+          this.server.pubsubBroker,
+          value,
+          items => {
+            this.enqueuePush(pubsubFrame(spec.message, items))
           },
         )
 
-        this.pubsubChannels.set(key, {
-          value: subscribedChannel,
-          unsubscribe,
-        })
+        registrations.set(key, { value, unsubscribe })
       }
 
       this.refreshPubSubMode()
       frames.push(
-        pubsubFrame('subscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+        pubsubFrame(spec.subscribed, [
+          bulk(target),
+          RedisValue.integer(this.pubsubCount(spec.counter)),
         ]),
       )
     }
@@ -482,194 +532,55 @@ export class ClientSession implements RedisClientSession {
     return frames
   }
 
-  unsubscribePubSubChannels(channels: readonly Buffer[]): RedisResult[] {
-    const targets =
-      channels.length > 0
-        ? channels
-        : Array.from(
-            this.pubsubChannels.values(),
-            entry => entry.value,
-          ).reverse()
+  /**
+   * UNSUBSCRIBE / SUNSUBSCRIBE / PUNSUBSCRIBE bookkeeping for one kind.
+   *
+   * With no targets Redis drops every current subscription of that kind and
+   * replies with a single nil-named frame when there was nothing to drop.
+   *
+   * Real Redis emits those frames in the iteration order of the client's
+   * subscription dict. That order is stable within one `redis-server` process
+   * and changes across restarts, because the dict hash seed is randomized at
+   * startup — so it is not a documented contract and not reproducible. We emit
+   * in reverse insertion order instead, purely because a mock should be
+   * deterministic. Do not pin this order in a test as though it were Redis
+   * behavior.
+   */
+  pubsubUnsubscribe(
+    kind: PubSubKind,
+    targets: readonly Buffer[],
+  ): RedisResult[] {
+    const spec = PUBSUB_KINDS[kind]
+    const registrations = this.pubsubSubscriptions[kind]
+    const resolved =
+      targets.length > 0
+        ? targets
+        : Array.from(registrations.values(), entry => entry.value).reverse()
 
-    if (targets.length === 0) {
+    if (resolved.length === 0) {
       this.refreshPubSubMode()
       return [
-        pubsubFrame('unsubscribe', [
+        pubsubFrame(spec.unsubscribed, [
           RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+          RedisValue.integer(this.pubsubCount(spec.counter)),
         ]),
       ]
     }
 
     const frames: RedisResult[] = []
-    for (const channel of targets) {
-      const key = pubsubId(channel)
-      const existing = this.pubsubChannels.get(key)
+    for (const target of resolved) {
+      const key = pubsubId(target)
+      const existing = registrations.get(key)
       if (existing) {
         existing.unsubscribe()
-        this.pubsubChannels.delete(key)
+        registrations.delete(key)
       }
 
       this.refreshPubSubMode()
       frames.push(
-        pubsubFrame('unsubscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  subscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[] {
-    const frames: RedisResult[] = []
-
-    for (const channel of channels) {
-      const key = pubsubId(channel)
-      if (!this.pubsubShardChannels.has(key)) {
-        const subscribedChannel = Buffer.from(channel)
-        const unsubscribe = this.server.pubsubBroker.ssubscribe(
-          subscribedChannel,
-          message => {
-            this.enqueuePush(
-              pubsubFrame('smessage', [
-                RedisValue.bulkString(Buffer.from(message.channel)),
-                RedisValue.bulkString(Buffer.from(message.message)),
-              ]),
-            )
-          },
-        )
-
-        this.pubsubShardChannels.set(key, {
-          value: subscribedChannel,
-          unsubscribe,
-        })
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('ssubscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubShardChannelCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  unsubscribePubSubShardChannels(channels: readonly Buffer[]): RedisResult[] {
-    const targets =
-      channels.length > 0
-        ? channels
-        : Array.from(
-            this.pubsubShardChannels.values(),
-            entry => entry.value,
-          ).reverse()
-
-    if (targets.length === 0) {
-      this.refreshPubSubMode()
-      return [
-        pubsubFrame('sunsubscribe', [
-          RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubShardChannelCount),
-        ]),
-      ]
-    }
-
-    const frames: RedisResult[] = []
-    for (const channel of targets) {
-      const key = pubsubId(channel)
-      const existing = this.pubsubShardChannels.get(key)
-      if (existing) {
-        existing.unsubscribe()
-        this.pubsubShardChannels.delete(key)
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('sunsubscribe', [
-          RedisValue.bulkString(Buffer.from(channel)),
-          RedisValue.integer(this.pubsubShardChannelCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  subscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[] {
-    const frames: RedisResult[] = []
-
-    for (const pattern of patterns) {
-      const key = pubsubId(pattern)
-      if (!this.pubsubPatterns.has(key)) {
-        const subscribedPattern = Buffer.from(pattern)
-        const unsubscribe = this.server.pubsubBroker.psubscribe(
-          subscribedPattern,
-          message => {
-            this.enqueuePush(
-              pubsubFrame('pmessage', [
-                RedisValue.bulkString(Buffer.from(message.pattern)),
-                RedisValue.bulkString(Buffer.from(message.channel)),
-                RedisValue.bulkString(Buffer.from(message.message)),
-              ]),
-            )
-          },
-        )
-
-        this.pubsubPatterns.set(key, {
-          value: subscribedPattern,
-          unsubscribe,
-        })
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('psubscribe', [
-          RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
-        ]),
-      )
-    }
-
-    return frames
-  }
-
-  unsubscribePubSubPatterns(patterns: readonly Buffer[]): RedisResult[] {
-    const targets =
-      patterns.length > 0
-        ? patterns
-        : Array.from(
-            this.pubsubPatterns.values(),
-            entry => entry.value,
-          ).reverse()
-
-    if (targets.length === 0) {
-      this.refreshPubSubMode()
-      return [
-        pubsubFrame('punsubscribe', [
-          RedisValue.bulkString(null),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
-        ]),
-      ]
-    }
-
-    const frames: RedisResult[] = []
-    for (const pattern of targets) {
-      const key = pubsubId(pattern)
-      const existing = this.pubsubPatterns.get(key)
-      if (existing) {
-        existing.unsubscribe()
-        this.pubsubPatterns.delete(key)
-      }
-
-      this.refreshPubSubMode()
-      frames.push(
-        pubsubFrame('punsubscribe', [
-          RedisValue.bulkString(Buffer.from(pattern)),
-          RedisValue.integer(this.pubsubRegularSubscriptionCount),
+        pubsubFrame(spec.unsubscribed, [
+          bulk(target),
+          RedisValue.integer(this.pubsubCount(spec.counter)),
         ]),
       )
     }
@@ -678,19 +589,14 @@ export class ClientSession implements RedisClientSession {
   }
 
   resetPubSub(): void {
-    for (const subscription of this.pubsubChannels.values()) {
-      subscription.unsubscribe()
-    }
-    for (const subscription of this.pubsubShardChannels.values()) {
-      subscription.unsubscribe()
-    }
-    for (const subscription of this.pubsubPatterns.values()) {
-      subscription.unsubscribe()
+    for (const registrations of Object.values(this.pubsubSubscriptions)) {
+      for (const registration of registrations.values()) {
+        registration.unsubscribe()
+      }
+
+      registrations.clear()
     }
 
-    this.pubsubChannels.clear()
-    this.pubsubShardChannels.clear()
-    this.pubsubPatterns.clear()
     this.refreshPubSubMode()
   }
 
@@ -705,19 +611,50 @@ export class ClientSession implements RedisClientSession {
     }
   }
 
-  registerResponseStreamCleanup(cleanup: () => void): Unsubscribe {
-    this.responseStreamCleanups.add(cleanup)
-    return () => {
-      this.responseStreamCleanups.delete(cleanup)
-    }
+  get monitoring(): boolean {
+    return this.stopMonitor !== undefined
   }
 
-  resetResponseStreams(): void {
-    const cleanups = Array.from(this.responseStreamCleanups)
-    this.responseStreamCleanups.clear()
+  /**
+   * MONITOR: deliver every other client's command to this connection as a push
+   * frame, rendered by `frame`, until RESET or close. No-op while already
+   * monitoring, so a repeated MONITOR cannot double lines.
+   */
+  startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
+    if (this.stopMonitor) {
+      return
+    }
 
-    for (const cleanup of cleanups) {
-      cleanup()
+    const unsubscribe = this.server.monitorFeed.subscribe(event => {
+      if (event.clientId !== this.id) {
+        this.enqueuePush(frame(event))
+      }
+    })
+    this.stopMonitor = this.onReset(() => {
+      unsubscribe()
+      this.stopMonitor = undefined
+    })
+  }
+
+  /**
+   * Register teardown for something that keeps producing pushes for this
+   * connection. It runs once, on RESET or close, unless the returned function
+   * runs it first.
+   */
+  onReset(cleanup: () => void): () => void {
+    const hook = () => {
+      if (this.resetHooks.delete(hook)) {
+        cleanup()
+      }
+    }
+    this.resetHooks.add(hook)
+    return hook
+  }
+
+  /** RESET / close: tear down every producer registered with {@link onReset}. */
+  resetPushProducers(): void {
+    for (const hook of Array.from(this.resetHooks)) {
+      hook()
     }
   }
 
@@ -754,8 +691,8 @@ export class ClientSession implements RedisClientSession {
   /**
    * Public entry point for executing one client command.
    *
-   * Acquires a turn on the database's turn queue before running, guaranteeing
-   * serialized access to the keyspace, and always releases it afterward. The
+   * Acquires a turn on the server's turn queue before running, guaranteeing
+   * serialized access to every database, and always releases it afterward. The
    * acquired turn is exposed to the command via a turn-aware park handler so a
    * blocking command can yield the turn while parked (see
    * {@link createTurnAwareParkHandler}); `turn` is reassigned through the
@@ -764,25 +701,21 @@ export class ClientSession implements RedisClientSession {
   async execute(
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
-  ): Promise<ExecutorResult> {
-    if (this.signal.aborted) {
-      throw createAbortError()
-    }
+  ): Promise<RedisResult> {
+    this.signal.throwIfAborted()
 
-    const turnQueue = this.turnQueueOverride ?? this.db.turnQueue
-    let turn: RedisTurnHandle | undefined = await turnQueue.waitTurn()
+    let turn: RedisTurnHandle | undefined =
+      await this.server.turnQueue.waitTurn()
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {
         turn = nextTurn
       },
     }
-    this.activeTurnAccess = turnAccess
     try {
       const ctx = this.createExecutionContext(turnAccess)
       return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
-      this.activeTurnAccess = undefined
       turn?.release()
     }
   }
@@ -828,7 +761,7 @@ export class ClientSession implements RedisClientSession {
   close(): void {
     this.unregisterClientSession?.()
     this.unregisterClientSession = undefined
-    this.resetResponseStreams()
+    this.resetPushProducers()
     this.signalSource?.abort()
     this.unwatch()
     this.resetPubSub()
@@ -851,7 +784,7 @@ export class ClientSession implements RedisClientSession {
   /**
    * Wrap the base park handler so that parking also yields the command's turn.
    *
-   * Blocking commands (BLPOP, BRPOP, ...) must not hold the database turn while
+   * Blocking commands (BLPOP, BRPOP, ...) must not hold the server turn while
    * they wait, or no other client could ever produce the value that unblocks
    * them — a deadlock. The flow:
    *  1. Start the underlying park, capturing its eventual value.
@@ -880,6 +813,23 @@ export class ClientSession implements RedisClientSession {
       turnAccess.set(nextTurn)
       return parkedValue
     }
+  }
+
+  /**
+   * Totals every kind that reports through the given counter — channels and
+   * patterns share the 'regular' one, shard channels have their own. Derived
+   * from the table rather than hand-enumerated so that adding a kind cannot
+   * silently under-count the frames it appears in.
+   */
+  private pubsubCount(counter: PubSubKindSpec['counter']): number {
+    let total = 0
+    for (const [kind, spec] of PUBSUB_KIND_ENTRIES) {
+      if (spec.counter === counter) {
+        total += this.pubsubSubscriptions[kind].size
+      }
+    }
+
+    return total
   }
 
   private refreshPubSubMode(): void {
@@ -936,6 +886,14 @@ function pubsubId(value: Buffer): string {
   return value.toString('hex')
 }
 
+/**
+ * Defensive copy — neither broker payloads nor caller-owned command args may
+ * alias into an emitted frame.
+ */
+function bulk(value: Buffer): RedisValue {
+  return RedisValue.bulkString(Buffer.from(value))
+}
+
 function pubsubFrame(name: string, items: RedisValue[]): RedisResult {
   return RedisResult.create(RedisValue.push(name, items))
 }
@@ -945,10 +903,4 @@ function encodeTransactionArray(encodedValues: readonly Buffer[]): Buffer {
     Buffer.from(`*${encodedValues.length}\r\n`),
     ...encodedValues,
   ])
-}
-
-function createAbortError(): Error {
-  const err = new Error('The operation was aborted')
-  err.name = 'AbortError'
-  return err
 }
