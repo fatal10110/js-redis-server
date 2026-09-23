@@ -141,7 +141,7 @@ export const zscanCommand = defineCommand({
         matchValue: entry.member,
         values: [
           RedisValue.bulkString(entry.member),
-          RedisValue.bulkString(scoreBuffer(entry.score)),
+          RedisValue.bulkString(scoreBuffer(entry.score, ctx.server.profile)),
         ],
       })
     }

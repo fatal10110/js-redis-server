@@ -150,6 +150,7 @@ export class Resp2SessionAdapter {
         await this.transport.write(
           encodeRedisResult(result, {
             version: this.session.protocolVersion,
+            profile: this.session.server.profile,
           }),
         )
       }

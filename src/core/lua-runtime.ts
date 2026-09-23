@@ -8,6 +8,7 @@ import {
 } from 'lua-redis-wasm'
 import type { CompatibilityProfile } from './compatibility/profile'
 import type { CommandPlan } from './command-definition'
+import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
 import {
   errorReplyBytes,
   RedisCommandError,
@@ -104,7 +105,10 @@ export class RedisLuaRuntime {
     }
 
     const result = ctx.executor.executePlanSync(plan, createLuaCallContext(ctx))
-    return redisValueToLuaReply(normalizeScriptCommandValue(result.value))
+    return redisValueToLuaReply(
+      normalizeScriptCommandValue(result.value),
+      ctx.server.profile,
+    )
   }
 }
 
@@ -311,7 +315,10 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
   }
 }
 
-function redisValueToLuaReply(value: RedisValue): ReplyValue {
+function redisValueToLuaReply(
+  value: RedisValue,
+  profile: DoubleFormatProfile,
+): ReplyValue {
   switch (value.kind) {
     case 'simple-string':
       return { ok: Buffer.from(value.value) }
@@ -320,7 +327,7 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
     case 'integer':
       return value.value
     case 'double':
-      return Buffer.from(formatNumber(value.value))
+      return Buffer.from(formatRedisDouble(value.value, profile))
     case 'boolean':
       return value.value ? 1 : 0
     case 'big-number':
@@ -328,27 +335,30 @@ function redisValueToLuaReply(value: RedisValue): ReplyValue {
     case 'verbatim':
       return value.value
     case 'array':
-      return value.items.map(redisValueToLuaReply)
+      return value.items.map(item => redisValueToLuaReply(item, profile))
     case 'set':
-      return value.items.map(redisValueToLuaReply)
+      return value.items.map(item => redisValueToLuaReply(item, profile))
     case 'map':
       return value.entries.flatMap(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        redisValueToLuaReply(key, profile),
+        redisValueToLuaReply(entryValue, profile),
       ])
     case 'map-pairs':
       return value.entries.map(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        redisValueToLuaReply(key, profile),
+        redisValueToLuaReply(entryValue, profile),
       ])
     case 'flat-pairs':
       // EVAL uses RESP2 semantics — WITHSCORES is a flat array to scripts.
       return value.entries.flatMap(([key, entryValue]) => [
-        redisValueToLuaReply(key),
-        redisValueToLuaReply(entryValue),
+        redisValueToLuaReply(key, profile),
+        redisValueToLuaReply(entryValue, profile),
       ])
     case 'push':
-      return [Buffer.from(value.name), ...value.items.map(redisValueToLuaReply)]
+      return [
+        Buffer.from(value.name),
+        ...value.items.map(item => redisValueToLuaReply(item, profile)),
+      ]
     case 'null':
     case 'null-array':
       return null
@@ -378,24 +388,4 @@ function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {
     err: errorReplyBytes(err),
     code: Buffer.from(err.code),
   }
-}
-
-function formatNumber(value: number): string {
-  if (Number.isNaN(value)) {
-    return 'nan'
-  }
-
-  if (value === Infinity) {
-    return 'inf'
-  }
-
-  if (value === -Infinity) {
-    return '-inf'
-  }
-
-  if (Object.is(value, -0)) {
-    return '-0'
-  }
-
-  return value.toString()
 }

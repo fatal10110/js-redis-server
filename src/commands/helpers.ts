@@ -2,6 +2,10 @@ import { RedisValue } from '../core/redis-value'
 import { RedisResult } from '../core/redis-result'
 import { isIntegerToken } from '../core/command-schema'
 import {
+  formatRedisDouble,
+  type DoubleFormatProfile,
+} from '../core/double-format'
+import {
   ExpectedIntegerError,
   InvalidExpireTimeError,
   RedisCommandError,
@@ -23,10 +27,16 @@ export function integer(value: number | bigint): RedisResult {
   return RedisResult.create(RedisValue.integer(value))
 }
 
-export function scoreBuffer(score: number): Buffer {
-  if (score === Infinity) return Buffer.from('inf')
-  if (score === -Infinity) return Buffer.from('-inf')
-  return Buffer.from(score.toString())
+// A score as text, for replies that carry it as a plain bulk string (ZSCAN).
+// Same profile-aware spelling as a `double` reply (#451); `-0` is normalized
+// to `0` like scoreValue.
+export function scoreBuffer(
+  score: number,
+  profile: DoubleFormatProfile,
+): Buffer {
+  return Buffer.from(
+    formatRedisDouble(Object.is(score, -0) ? 0 : score, profile),
+  )
 }
 
 // A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching

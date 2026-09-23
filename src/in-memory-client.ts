@@ -238,6 +238,7 @@ export class InMemoryRedisClient {
     return decodeRedisValue(value, {
       ...this.decodeOptions,
       version: this.session.protocolVersion,
+      profile: this.session.server.profile,
     })
   }
 }

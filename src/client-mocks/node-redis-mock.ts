@@ -4,6 +4,7 @@ import { createRedisCommandExecutor } from '../commands'
 import { buildClusterNodes, type ClusterNodePipeline } from '../cluster'
 import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
+import type { CompatibilityProfile } from '../core/compatibility'
 import {
   decodeRedisMapEntries,
   decodeRedisValue,
@@ -253,10 +254,13 @@ abstract class CommandRunner extends EventEmitter {
    */
   protected abstract get respVersion(): RespVersion
 
+  /** The served profile, which spells a RESP2 `double` (#451). */
+  protected abstract get profile(): CompatibilityProfile
+
   /** Generic escape hatch for any command, decoded to a native JS reply. */
   async sendCommand(args: NodeRedisCommandArgument[]): Promise<NodeRedisReply> {
     const value = await this.run(args)
-    return decodeReply(value, this.respVersion)
+    return decodeReply(value, this.respVersion, this.profile)
   }
 
   // --- strings -------------------------------------------------------------
@@ -403,7 +407,7 @@ abstract class CommandRunner extends EventEmitter {
       ...keys,
       ...args,
     ])
-    return decodeReply(value, this.respVersion)
+    return decodeReply(value, this.respVersion, this.profile)
   }
 }
 
@@ -498,6 +502,10 @@ export class NodeRedisMockClient extends CommandRunner {
 
   protected get respVersion(): RespVersion {
     return this.session.protocolVersion
+  }
+
+  protected get profile(): CompatibilityProfile {
+    return this.backend.state.profile
   }
 
   protected run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
@@ -636,6 +644,7 @@ export class NodeRedisMockClient extends CommandRunner {
     return {
       value,
       respVersion: this.session.protocolVersion,
+      profile: this.backend.state.profile,
       replyVersions: replayProtocolSwitches(queued, before, value),
     }
   }
@@ -850,6 +859,8 @@ type TransactionSpan = {
   value: RedisValue
   /** The protocol in force once the transaction finished. */
   respVersion: RespVersion
+  /** The served profile, which spells a RESP2 `double`. */
+  profile: CompatibilityProfile
   /** Protocol each queued command's reply was produced under, by index. */
   replyVersions: readonly RespVersion[]
 }
@@ -978,6 +989,7 @@ export class NodeRedisMockMulti {
     const {
       value: result,
       respVersion,
+      profile,
       replyVersions,
     } = await this.runTransaction(this.queued)
     const errors = redisErrors()
@@ -988,7 +1000,7 @@ export class NodeRedisMockMulti {
     }
     if (result.kind !== 'array' && result.kind !== 'set') {
       // Defensive: any non-array EXEC reply (shouldn't happen) → decode as-is.
-      return [decodeReply(result, respVersion)]
+      return [decodeReply(result, respVersion, profile)]
     }
 
     const replies: unknown[] = []
@@ -999,7 +1011,9 @@ export class NodeRedisMockMulti {
         errorIndexes.push(index)
         return
       }
-      replies.push(decodeReply(item, replyVersions[index] ?? respVersion))
+      replies.push(
+        decodeReply(item, replyVersions[index] ?? respVersion, profile),
+      )
     })
 
     if (errorIndexes.length > 0) {
@@ -1089,6 +1103,11 @@ export class NodeRedisMockCluster extends CommandRunner {
 
   protected get respVersion(): RespVersion {
     return this.clientRespVersion
+  }
+
+  protected get profile(): CompatibilityProfile {
+    // Every node shares one hoisted profile (see buildClusterNodes).
+    return this.masters[0].state.profile
   }
 
   protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
@@ -1445,10 +1464,12 @@ export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions = {
 function decodeReply(
   value: RedisValue,
   respVersion: RespVersion,
+  profile?: CompatibilityProfile,
 ): NodeRedisReply {
   return decodeRedisValue(value, {
     ...NODE_REDIS_DECODE_OPTIONS,
     version: respVersion,
+    profile,
   })
 }
 
