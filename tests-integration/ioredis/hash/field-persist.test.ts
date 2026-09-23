@@ -61,8 +61,8 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(seconds[0], -1)
       assert.strictEqual(typeof seconds[1], 'number')
       assert.ok(seconds[1] >= 0 && seconds[1] <= 5)
-      assert.strictEqual(typeof seconds[2], 'number')
-      assert.ok(seconds[2] >= 0 && seconds[2] <= 1)
+      // HTTL rounds up: any remaining time in (0, 1000ms] reports 1 (#432).
+      assert.strictEqual(seconds[2], 1)
       assert.strictEqual(seconds[3], -2)
 
       const milliseconds = await directClient.hpttl(
@@ -123,6 +123,40 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
     } finally {
       await directClient?.del(key)
+      directClient?.disconnect()
+    }
+  })
+
+  test('HTTL rounds hash-field TTLs up to the next second, unlike key TTL', async () => {
+    const tag = `{hash-field-ttl-ceil:${randomKey()}}`
+    const hashKey = `${tag}:hash`
+    const stringKey = `${tag}:string`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, hashKey)
+      await directClient.hset(hashKey, 'a', '1', 'b', '1')
+      assert.deepStrictEqual(
+        await directClient.hpexpire(hashKey, '1200', 'FIELDS', '1', 'a'),
+        [1],
+      )
+      assert.deepStrictEqual(
+        await directClient.hpexpire(hashKey, '2400', 'FIELDS', '1', 'b'),
+        [1],
+      )
+      await directClient.set(stringKey, 'v', 'PX', 1200)
+
+      // Hash-field TTL uses ceiling: 1200ms -> 2, 2400ms -> 3 (#432). Holds
+      // as long as under 200ms elapse between the expire and the read.
+      assert.deepStrictEqual(
+        await directClient.httl(hashKey, 'FIELDS', '2', 'a', 'b'),
+        [2, 3],
+      )
+      // Key-level TTL keeps round-to-nearest: 1200ms -> 1.
+      assert.strictEqual(await directClient.ttl(stringKey), 1)
+    } finally {
+      await directClient?.del(hashKey, stringKey)
       directClient?.disconnect()
     }
   })

@@ -26,7 +26,7 @@ import {
   ok,
   parseIntegerToken,
   ttlMilliseconds,
-  ttlSeconds,
+  hashFieldTtlSeconds,
 } from './helpers'
 
 type FieldValuePair = { field: Buffer; value: Buffer }
@@ -489,7 +489,7 @@ function hashFieldTtls(
 
         const ttl =
           mode === 'seconds'
-            ? ttlSeconds(entry.expiresAt)
+            ? hashFieldTtlSeconds(entry.expiresAt)
             : ttlMilliseconds(entry.expiresAt)
         return RedisValue.integer(ttl)
       }),
