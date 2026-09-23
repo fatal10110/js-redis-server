@@ -55,7 +55,6 @@ export type {
 
 export type { RedisResultOptions } from './core/redis-result'
 export type { RespEncodeOptions, RespVersion } from './core/resp-encoder'
-export type { ResponseStream } from './core/response-stream'
 export type { RedisTurnHandle } from './core/turn-queue'
 export type {
   CompatibilityProfile,
@@ -73,7 +72,7 @@ export type {
 } from './core/transports/resp2'
 
 export { ClientSession } from './core/client-session'
-export { CommandExecutor, type ExecutorResult } from './core/command-executor'
+export { CommandExecutor } from './core/command-executor'
 export { CommandRegistry } from './core/command-registry'
 export { defineCommand } from './core/command-definition'
 export { t, parseCommandArgs } from './core/command-schema'
@@ -102,7 +101,6 @@ export {
 export { RedisValue } from './core/redis-value'
 export { RedisResult } from './core/redis-result'
 export { encodeRedisResult, encodeRedisValue } from './core/resp-encoder'
-export { isResponseStream } from './core/response-stream'
 export { formatMonitorTimestamp, monitorTimestampMicros } from './core/clock'
 export { SerialTurnQueue } from './core/turn-queue'
 export {

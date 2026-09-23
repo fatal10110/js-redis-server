@@ -64,4 +64,40 @@ describe('formatReply', () => {
       '1) "message"\n2) 1) "x"\n   2) "y"',
     )
   })
+
+  // Pinned against real `redis-cli --no-raw` (its sdscatrepr escaping).
+  describe('Buffer reply', () => {
+    test('printable ASCII is quoted as-is', () => {
+      assert.strictEqual(
+        formatReply(Buffer.from('hello world~')),
+        '"hello world~"',
+      )
+    })
+
+    test('non-ASCII bytes render as lowercase \\xNN', () => {
+      assert.strictEqual(
+        formatReply(Buffer.from('éé')),
+        '"\\xc3\\xa9\\xc3\\xa9"',
+      )
+    })
+
+    test('matches redis-cli for quotes, backslash, C escapes, NUL and DEL', () => {
+      const bytes = Buffer.from('a\\b"c\n\r\t\x07\x08\u00e9\x00\x7f~ ', 'utf8')
+      assert.strictEqual(
+        formatReply(bytes),
+        String.raw`"a\\b\"c\n\r\t\a\b\xc3\xa9\x00\x7f~ "`,
+      )
+    })
+
+    test('empty buffer is an empty quoted string', () => {
+      assert.strictEqual(formatReply(Buffer.alloc(0)), '""')
+    })
+
+    test('inside an array, not treated as a map', () => {
+      assert.strictEqual(
+        formatReply(['k', Buffer.from([0xff])]),
+        '1) "k"\n2) "\\xff"',
+      )
+    })
+  })
 })
