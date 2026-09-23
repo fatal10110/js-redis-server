@@ -3,7 +3,8 @@
  * I/O so they can be unit-tested against CLUSTER NODES fixtures instead of by
  * breaking a real cluster (#458):
  *
- *  - which nodes the flush has to cover (`planCluster`), and
+ *  - which nodes the flush has to cover (`planCluster`),
+ *  - which masters were flushed and which failed (`masterOutcomes`), and
  *  - how a replica is judged when its master was not flushed
  *    (`replicaMasterProblem`).
  */
@@ -43,8 +44,8 @@ export type ClusterNode = {
  *   <config-epoch> <link-state> <slot> <slot> ...
  *
  * `<master>` is `-` for a master. Slots are `N` or `N-M`; the bracketed
- * `[N->-id]` / `[N-<-id]` entries only describe a migration in progress and do
- * not by themselves mean the node serves anything.
+ * `[N->-id]` / `[N-<-id]` entries describe a migration in progress, appear only
+ * on the `myself` line, and do not by themselves mean the node serves a slot.
  */
 export function parseClusterNodes(text: string): ClusterNode[] {
   return text
@@ -73,20 +74,34 @@ export function isAddressless(node: ClusterNode): boolean {
   return !(node.port > 0) || node.flags.includes('noaddr')
 }
 
-function isReplica(node: ClusterNode): boolean {
-  return node.masterId !== null || node.flags.includes('slave')
+/**
+ * A report of a node with no real server behind it to flush or check:
+ *
+ *  - a `handshake` entry is a CLUSTER MEET in progress, under a temporary id
+ *    only the node that issued the MEET knows — so it shows up in one seed's
+ *    view and not another's;
+ *  - an addressless (`noaddr`, port 0) entry that serves no slots cannot be
+ *    connected to and routes no keys.
+ *
+ * Every other node is covered, slots or not. A master with no slots can still
+ * hold keys a client reads: during a slot migration, keys land on the
+ * importing node before it is given the slot, and clients reach them through
+ * -ASK. Real Redis prints the migration markers only on the `myself` line, so
+ * from any other seed that node looks like a plain empty master — slot
+ * ownership cannot tell the two apart.
+ */
+function isPhantom(node: ClusterNode): boolean {
+  return (
+    node.flags.includes('handshake') || (isAddressless(node) && !node.ownsSlots)
+  )
 }
 
 export type ClusterPlan = {
-  /** Ids of the nodes that answered as `myself` — the seeds themselves. */
-  seedIds: Set<string>
-  /** Non-seed nodes the flush must cover: slot-owning masters and their replicas. */
+  /** The `myself` report of every seed, by id. */
+  seeds: Map<string, ClusterNode>
+  /** Non-seed nodes the flush must cover. */
   members: ClusterNode[]
-  /**
-   * Non-seed nodes that hold no part of the keyspace — a node still in
-   * `handshake`, a `noaddr` placeholder, a master left without slots — and
-   * are therefore neither flushed nor verified.
-   */
+  /** Non-seed nodes with no real server behind them (see `isPhantom`). */
   skipped: ClusterNode[]
 }
 
@@ -94,28 +109,20 @@ export type ClusterPlan = {
  * Decide which nodes the flush covers, given the CLUSTER NODES view of every
  * seed that answered.
  *
- * Only masters that own slots, plus their replicas, can hold keys a test will
- * read, so only they are flushed and verified. Anything else is skipped rather
- * than treated as a failure: a `handshake` entry exists only on the node that
- * issued the MEET, so failing on it would make the result depend on which
- * seed was listed (#458).
- *
- * Views are merged by node id. A node counts as a slot owner if any seed says
- * so, and a replica is covered if any seed puts it under such an owner, so a
- * seed with a stale view cannot shrink the flush.
+ * Views are merged by node id, and a node is skipped only if every report of
+ * it is a phantom, so a seed with a stale view cannot shrink the flush. The
+ * rule looks at each node alone — never at its master or at which seed
+ * reported it — so a node is covered or skipped the same way whichever seed
+ * is used (#458). Seeds answered, so they are always covered.
  */
 export function planCluster(views: readonly ClusterNode[][]): ClusterPlan {
-  const seedIds = new Set<string>()
-  const owners = new Set<string>()
+  const seeds = new Map<string, ClusterNode>()
   const reports = new Map<string, ClusterNode[]>()
 
   for (const view of views) {
     for (const node of view) {
       if (node.flags.includes('myself')) {
-        seedIds.add(node.id)
-      }
-      if (node.ownsSlots && !isReplica(node)) {
-        owners.add(node.id)
+        seeds.set(node.id, node)
       }
       reports.set(node.id, [...(reports.get(node.id) ?? []), node])
     }
@@ -125,53 +132,111 @@ export function planCluster(views: readonly ClusterNode[][]): ClusterPlan {
   const skipped: ClusterNode[] = []
 
   for (const [id, nodeReports] of reports) {
-    if (seedIds.has(id)) {
+    if (seeds.has(id)) {
       continue
     }
-    const covered =
-      owners.has(id) ||
-      nodeReports.some(
-        node => node.masterId !== null && owners.has(node.masterId),
-      )
     // Prefer a report that carries a usable address: seeds can disagree while
     // a node's address propagates.
     const node =
       nodeReports.findLast(report => !isAddressless(report)) ??
       nodeReports[nodeReports.length - 1]
-    ;(covered ? members : skipped).push(node)
+    ;(nodeReports.every(isPhantom) ? skipped : members).push(node)
   }
 
-  return { seedIds, members, skipped }
+  return { seeds, members, skipped }
+}
+
+/**
+ * The keys a master is known by, most specific first. Cluster nodes are matched
+ * by node id: a replica's CLUSTER NODES line names its master's id even when
+ * that master is `noaddr` (port 0), while `INFO replication` still reports the
+ * old port. The port is the fallback for what has no known id — a standalone
+ * server, or a seed whose CLUSTER NODES could not be read.
+ */
+function keysOf(id: string | null | undefined, port: number): string[] {
+  return id != null ? [`id:${id}`, `port:${port}`] : [`port:${port}`]
+}
+
+/** One endpoint of the run, as far as master bookkeeping is concerned. */
+export type EndpointOutcome = {
+  label: string
+  port: number
+  /** Its CLUSTER NODES report, for cluster nodes. */
+  node?: ClusterNode
+  /**
+   * The `INFO replication` role, or undefined when the endpoint could not be
+   * connected to. CLUSTER NODES then decides whether it is a master.
+   */
+  role?: 'master' | 'replica'
+  failed: boolean
+}
+
+export type MasterOutcomes = {
+  /** Keys of the masters this run flushed without a failure so far. */
+  flushed: Set<string>
+  /** key → label of every master this run tried and failed, reachable or not. */
+  failed: Map<string, string>
+}
+
+/** Sort every master of the run into flushed or failed, by id and by port. */
+export function masterOutcomes(
+  endpoints: readonly EndpointOutcome[],
+): MasterOutcomes {
+  const flushed = new Set<string>()
+  const failed = new Map<string, string>()
+
+  for (const endpoint of endpoints) {
+    const isMaster =
+      endpoint.role !== undefined
+        ? endpoint.role === 'master'
+        : endpoint.node !== undefined && endpoint.node.masterId === null
+    if (!isMaster) {
+      continue
+    }
+    for (const key of keysOf(endpoint.node?.id, endpoint.port)) {
+      if (endpoint.failed) {
+        failed.set(key, endpoint.label)
+      } else {
+        flushed.add(key)
+      }
+    }
+  }
+
+  return { flushed, failed }
 }
 
 /**
  * Judge a replica against its master before looking at its own keyspace.
  * Returns null when the master was flushed and the replica can be checked.
  *
- * A master that was part of this run but failed — unreachable, FLUSHALL
- * erroring or leaving keys, CLUSTER NODES unreadable — has already been
- * reported against itself with the hint that fits. Its replicas point back at
- * it instead of claiming the run skipped their master and suggesting a
- * replica resync that would not help (#458). Only a master the run never knew
- * about gets the stale-replica diagnosis.
+ * A master that was part of this run but failed — unreachable, addressless,
+ * FLUSHALL erroring or leaving keys, CLUSTER NODES unreadable — has already
+ * been reported against itself with the hint that fits. Its replicas point
+ * back at it instead of claiming the run skipped their master and suggesting
+ * a replica resync that would not help (#458). Only a master the run never
+ * knew about gets the stale-replica diagnosis.
  *
- * @param failedMasters port → label of every master this run tried and failed.
+ * @param masterPort `master_port` from the replica's INFO replication.
+ * @param masterId the master id from the replica's own CLUSTER NODES line,
+ *   when it is a cluster node and that is known.
  */
 export function replicaMasterProblem(
   masterPort: number,
-  flushedPorts: ReadonlySet<number>,
-  failedMasters: ReadonlyMap<number, string>,
+  masterId: string | null | undefined,
+  masters: MasterOutcomes,
 ): Failure | null {
-  if (flushedPorts.has(masterPort)) {
-    return null
-  }
-
-  const master = failedMasters.get(masterPort)
-  if (master !== undefined) {
-    return {
-      message:
-        `replica of port ${masterPort}, not verified: its master failed ` +
-        `(see ${master}) — fix the master first`,
+  // By id first; the port only when the master's id was never learned.
+  for (const key of keysOf(masterId, masterPort)) {
+    if (masters.flushed.has(key)) {
+      return null
+    }
+    const master = masters.failed.get(key)
+    if (master !== undefined) {
+      return {
+        message:
+          `replica of port ${masterPort}, not verified: its master failed ` +
+          `(see ${master}) — fix the master first`,
+      }
     }
   }
 

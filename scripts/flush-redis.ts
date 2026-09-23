@@ -20,11 +20,14 @@
  *  - REDIS_CLUSTER_PORTS are seeds, not the whole cluster. The harness's
  *    cluster clients discover every node from any one seed, so a run pointed at
  *    a single port still uses every master. The flush therefore reads CLUSTER
- *    NODES from each seed and covers every slot-owning master it finds, plus
- *    their replicas; flushing only the listed ports would leave the unlisted
- *    masters full and still exit 0. Nodes that own no slots (still in
- *    `handshake`, `noaddr`) hold no keys a test can reach and are skipped, so
- *    the result does not depend on which seed happened to see them (#458);
+ *    NODES from each seed and covers every node it finds; flushing only the
+ *    listed ports would leave the unlisted masters full and still exit 0. The
+ *    exceptions are entries with no server behind them — a `handshake` (a
+ *    CLUSTER MEET in progress, which only the node that issued it lists) or an
+ *    addressless entry serving no slots — which are skipped, so the result
+ *    does not depend on which seed happened to see them (#458). Masters
+ *    without slots are still flushed: mid-migration, the importing node holds
+ *    keys clients reach through -ASK before it owns the slot;
  *  - masters are flushed and then asserted empty with DBSIZE;
  *  - replicas refuse FLUSHALL with -READONLY, so they are checked rather than
  *    trusted: their master must be one of the endpoints this run flushed, and
@@ -54,6 +57,8 @@ import {
   type Failure,
   HINT,
   isAddressless,
+  type MasterOutcomes,
+  masterOutcomes,
   parseClusterNodes,
   planCluster,
   replicaMasterProblem,
@@ -81,8 +86,11 @@ type Endpoint = {
   port: number
   /** Cluster members must additionally report `cluster_state:ok`. */
   clustered: boolean
-  /** Set when CLUSTER NODES lists this endpoint as a slot-owning master. */
-  clusterMaster?: boolean
+  /**
+   * This node's CLUSTER NODES report: set up front for a discovered node, and
+   * from its own `myself` line for a seed once discovery has read it.
+   */
+  node?: ClusterNode
   password?: string
 }
 
@@ -100,10 +108,15 @@ type Target = Endpoint & {
 
 /**
  * A configured or discovered endpoint that could not even be connected to.
- * `masterPort` is set when CLUSTER NODES says it is a master, so its replicas
- * can point back at it.
+ * `node` (when discovered) tells whether it is a master, so its replicas can
+ * point back at it.
  */
-type Unreachable = { label: string; failure: Failure; masterPort?: number }
+type Unreachable = {
+  label: string
+  failure: Failure
+  port: number
+  node?: ClusterNode
+}
 
 function configuredEndpoints(): Endpoint[] {
   // De-duplicated: listing a seed twice must not flush one node twice and
@@ -235,7 +248,8 @@ async function openAll(
       unreachable.push({
         label: endpoint.label,
         failure: toFailure(result.reason, hint),
-        masterPort: endpoint.clusterMaster ? endpoint.port : undefined,
+        port: endpoint.port,
+        node: endpoint.node,
       })
     }
   })
@@ -244,13 +258,12 @@ async function openAll(
 }
 
 /**
- * Expand the cluster seeds into the part of the topology that holds keys:
- * every slot-owning master any seed reports in CLUSTER NODES, plus their
- * replicas (see `planCluster`). Nodes are matched by id, so a seed is never
- * opened twice under a second address. A covered node that cannot be reached
- * is a failure, never a silent omission — skipping it would be a partial
- * flush. Nodes that own no slots (a `handshake` entry, a `noaddr`
- * placeholder, a master with no slots) are listed as skipped instead.
+ * Expand the cluster seeds into the full topology: every node any seed
+ * reports in CLUSTER NODES, except entries with no server behind them (see
+ * `planCluster`), which are listed as skipped. Nodes are matched by id, so a
+ * seed is never opened twice under a second address. A covered node that
+ * cannot be reached is a failure, never a silent omission — skipping it would
+ * be a partial flush.
  */
 async function discoverCluster(
   seeds: Target[],
@@ -259,9 +272,11 @@ async function discoverCluster(
 
   for (const seed of seeds) {
     try {
-      views.push(
-        parseClusterNodes((await seed.client.cluster('NODES')) as string),
+      const view = parseClusterNodes(
+        (await seed.client.cluster('NODES')) as string,
       )
+      seed.node = view.find(node => node.flags.includes('myself'))
+      views.push(view)
     } catch (err) {
       seed.failure = {
         message: `cannot read CLUSTER NODES: ${describe(err)}`,
@@ -274,8 +289,8 @@ async function discoverCluster(
   for (const node of skipped) {
     const address = isAddressless(node) ? '' : ` ${node.host}:${node.port}`
     console.log(
-      `  cluster node ${node.id.slice(0, 12)}…${address}: skipped, owns no slots ` +
-        `and replicates no slot owner (flags: ${node.flags.join(',')})`,
+      `  cluster node ${node.id.slice(0, 12)}…${address}: skipped, no server ` +
+        `behind this entry (flags: ${node.flags.join(',')})`,
     )
   }
 
@@ -290,7 +305,7 @@ async function discoverCluster(
         host,
         port: node.port,
         clustered: true,
-        clusterMaster: node.masterId === null,
+        node,
       }
     }),
     HINT.clusterUnhealthy,
@@ -302,6 +317,8 @@ async function discoverCluster(
       ...unreachable,
       ...addressless.map(node => ({
         label: `cluster node ${node.id.slice(0, 12)}…`,
+        port: node.port,
+        node,
         failure: {
           message: `listed in CLUSTER NODES without a usable address (flags: ${node.flags.join(',')})`,
           hint: HINT.clusterUnhealthy,
@@ -347,14 +364,14 @@ async function flushMaster(target: Target): Promise<string> {
  * A replica whose master failed is reported against that master (see
  * `replicaMasterProblem`).
  *
- * Masters are matched by port: every endpoint here is on the local host, but a
- * replica may report its master under a different name for that host (e.g.
- * `host.docker.internal`), so comparing host strings would be wrong.
+ * Masters are matched by node id where CLUSTER NODES gave one, else by port:
+ * every endpoint here is on the local host, but a replica may report its
+ * master under a different name for that host (e.g. `host.docker.internal`),
+ * so comparing host strings would be wrong.
  */
 async function verifyReplica(
   target: Target,
-  flushedPorts: ReadonlySet<number>,
-  failedMasters: ReadonlyMap<number, string>,
+  masters: MasterOutcomes,
 ): Promise<string> {
   const replication = target.replication
   if (replication.role !== 'replica') {
@@ -363,8 +380,8 @@ async function verifyReplica(
 
   const problem = replicaMasterProblem(
     replication.masterPort,
-    flushedPorts,
-    failedMasters,
+    target.node?.masterId,
+    masters,
   )
   if (problem !== null) {
     throw new FlushFailure(problem.message, problem.hint)
@@ -418,27 +435,27 @@ async function main(): Promise<void> {
     )
     await forEachTarget(masters, flushMaster)
 
-    const flushedPorts = new Set(
-      masters.filter(t => t.failure === null).map(t => t.port),
-    )
-    // Every master this run tried and failed — including the ones it could not
-    // even connect to — so their replicas blame the master, not themselves.
-    const failedMasters = new Map<number, string>()
-    for (const { label, masterPort } of unreachable) {
-      if (masterPort !== undefined) {
-        failedMasters.set(masterPort, label)
-      }
-    }
-    for (const target of targets) {
-      if (target.replication.role === 'master' && target.failure !== null) {
-        failedMasters.set(target.port, target.label)
-      }
-    }
+    // Every master this run flushed, or tried and failed — including the ones
+    // it could not even connect to — so replicas of a failed master blame the
+    // master, not themselves.
+    const outcomes = masterOutcomes([
+      ...unreachable.map(({ label, port, node }) => ({
+        label,
+        port,
+        node,
+        failed: true,
+      })),
+      ...targets.map(({ label, port, node, replication, failure }) => ({
+        label,
+        port,
+        node,
+        role: replication.role,
+        failed: failure !== null,
+      })),
+    ])
 
     const replicas = targets.filter(t => t.replication.role === 'replica')
-    await forEachTarget(replicas, target =>
-      verifyReplica(target, flushedPorts, failedMasters),
-    )
+    await forEachTarget(replicas, target => verifyReplica(target, outcomes))
 
     // Last: a mid-flush cluster can legitimately report a transient state.
     await forEachTarget(
@@ -457,7 +474,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const failures: Unreachable[] = [
+  const failures: { label: string; failure: Failure }[] = [
     ...unreachable,
     ...targets
       .filter(t => t.failure !== null)
