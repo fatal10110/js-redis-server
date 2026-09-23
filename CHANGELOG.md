@@ -26,6 +26,40 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
+  `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
+  subscribed-mode, transaction) ever implemented them — only tests did — and
+  supporting them forced a result/stream rewriting loop into both executor
+  paths, plus an `assertSyncPolicyResult` guard to reject an async hook on the
+  synchronous (Lua) path.
+
+  `beforeExecute` is unchanged and still the place to short-circuit a command
+  (queue / redirect / reject); it may still be async on the network path, and
+  is still rejected when it returns a promise under `redis.call`. A custom
+  policy that rewrote results or wrapped streams has no drop-in replacement —
+  do it inside the command definition, or wrap `CommandExecutor`. Because the
+  hooks were optional, a policy object that still declares them compiles and
+  runs, silently doing nothing.
+
+- **BREAKING (`/core`)** `CommandExecutor.executeRawWithPlan()` is removed
+  ([#359]). It was a public method on the exported `CommandExecutor` class with
+  exactly one caller — `executeRaw`, which discarded the `plan` half of its
+  return value — so it is folded into `executeRaw`. The `RawExecutionResult`
+  type it returned is gone with it (that type was never re-exported, so only the
+  method is a break).
+
+  ```
+  (await executor.executeRawWithPlan(cmd, args, ctx)).result
+    -> await executor.executeRaw(cmd, args, ctx)
+  ```
+
+  There is no replacement for the `plan` half. A caller that wants the
+  `CommandPlan` builds it with the still-public `executor.plan(cmd, args)` and
+  passes it to `executor.executePlan(plan, ctx)`. That is not equivalent to
+  `executeRaw`: `plan()` throws on any planning error (unknown command, arity,
+  argument parse) where `executeRaw` returns a RESP error reply, and the pair
+  skips the MULTI-dirty/EXECABORT handling `executeRaw` applies to those errors.
+
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**
   ([#410]). Real Redis stamps `MONITOR` lines from `gettimeofday()`, so the six
@@ -126,6 +160,36 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- After a `SELECT`, `MOVE` and `COPY … DB` into the database that was selected
+  *before* it no longer publish their keyspace notifications as `select`
+  ([#359]). With `notify-keyspace-events KEA`, keyevent channel shown (the
+  keyspace channel carries the same event names):
+
+  ```
+  SELECT 1; SET k v; MOVE k 0
+    real Redis 7.2: __keyevent@1__:move_from k   __keyevent@0__:move_to k
+    before:         __keyevent@1__:del k         __keyevent@0__:select k
+    now:            __keyevent@1__:del k
+
+  SELECT 1; SET s v; COPY s c DB 0
+    real Redis 7.2: __keyevent@0__:copy_to c
+    before:         __keyevent@0__:select c
+    now:            (nothing)
+  ```
+
+  The executor names write events through a per-database tag, and `SELECT`
+  restored that tag onto the database it switched *to*, leaving the one it
+  switched *from* tagged `select`. Every later command restores the tag it
+  saved, so the stale value was never cleared, and `MOVE` / `COPY … DB` write
+  into a database the executor never tags. Because the tag lives on the
+  database rather than the connection, one client's `SELECT` mislabelled
+  another client's `MOVE`; it also happened through `MULTI`/`EXEC` and `EVAL`.
+
+  This removes the wrong event; it does not add the right ones. `MOVE` and
+  `COPY … DB` still publish nothing on the target database, where real Redis
+  sends `move_to` / `copy_to`. That gap predates this change and is tracked
+  separately.
+
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,
   which replaced `Unknown subcommand or wrong number of arguments for '%s'. Try
@@ -150,6 +214,7 @@ Released before this file existed. See the
 [release tags](https://github.com/fatal10110/js-redis-server/tags) and the pull
 requests they contain.
 
+[#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
 [#376]: https://github.com/fatal10110/js-redis-server/pull/376
