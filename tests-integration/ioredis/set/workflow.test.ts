@@ -2,8 +2,13 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420, #453).
+const RUN = randomKey()
 
 describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -19,8 +24,8 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('Set commands workflow - User Tags System', async () => {
-    const user1Tags = '{user}user:1001:tags'
-    const user2Tags = '{user}user:1002:tags'
+    const user1Tags = `{user:${RUN}}user:1001:tags`
+    const user2Tags = `{user:${RUN}}user:1002:tags`
 
     // Add tags for users
     await redisClient?.sadd(
@@ -70,8 +75,8 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('Set commands workflow - Online Users', async () => {
-    const onlineUsers = '{users}online:users'
-    const premiumUsers = '{users}premium:users'
+    const onlineUsers = `{users:${RUN}}online:users`
+    const premiumUsers = `{users:${RUN}}premium:users`
 
     // Users come online
     await redisClient?.sadd(onlineUsers, 'user1', 'user2', 'user3', 'user4')
@@ -114,9 +119,9 @@ describe(`Set Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('Set commands workflow - Content Categories', async () => {
-    const techArticles = '{category}category:tech'
-    const jsArticles = '{category}category:javascript'
-    const tutorialArticles = '{category}category:tutorial'
+    const techArticles = `{category:${RUN}}category:tech`
+    const jsArticles = `{category:${RUN}}category:javascript`
+    const tutorialArticles = `{category:${RUN}}category:tutorial`
 
     // Categorize articles
     await redisClient?.sadd(

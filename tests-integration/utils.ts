@@ -47,8 +47,10 @@ export function randomKey(): string {
  * an expiry may take, so it is only as strict as the deadline is tight relative
  * to the TTL: against a 5ms TTL the 5000ms default would also accept a TTL
  * 1000x too long (e.g. milliseconds treated as seconds). Choose `timeoutMs` per
- * call site relative to the TTL under test — the 5ms-TTL sites pass 1000ms, the
- * 500ms-TTL sites keep the default.
+ * call site relative to the TTL under test: comfortably above the TTL plus
+ * scheduling slack, but well below the next order of magnitude, so a unit
+ * mix-up still fails. The default suits TTLs in the hundreds of milliseconds;
+ * pass a tighter deadline for shorter ones.
  */
 export async function waitUntilGone(
   read: () => Promise<unknown>,
