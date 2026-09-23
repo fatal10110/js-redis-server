@@ -2,6 +2,7 @@ import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
 import type { RedisResult } from './redis-result'
 import type { VersionGate } from './compatibility'
+import { asciiLowerCase } from './ascii-case'
 
 export type CommandFlag =
   | 'readonly'
@@ -126,6 +127,6 @@ export function defineCommand<TArgs>(
 ): CommandDefinition<TArgs> {
   return {
     ...definition,
-    name: definition.name.toLowerCase(),
+    name: asciiLowerCase(definition.name),
   }
 }
