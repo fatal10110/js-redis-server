@@ -549,8 +549,9 @@ describe(
             ),
         },
         {
-          // A redis.call error caught by pcall and re-raised is a runtime
-          // error: Lua prefixes the position, and no code is folded in.
+          // A redis.call error caught by pcall and re-raised with `error(e)`
+          // (level 1) is a runtime error: Lua prefixes its own position, and
+          // the code stays inside the message. See the level-0 case below.
           args: [
             "local ok, e = pcall(redis.call, 'LPUSH', KEYS[1], 'v')\nerror(e)",
             '1',
@@ -607,6 +608,86 @@ describe(
         await send('DEL', key)
       }
     })
+
+    // `error(e, 0)` re-raises a pcall-caught redis.call error with no position
+    // added, so on 6.2 the frame is the same as the uncaught call's. Byte for
+    // byte against real 6.2.24. Pinned on 6.2 only: 7.0+ real Redis answers
+    // `-ERR WRONGTYPE ...`, but the engine splits the leading code off a Lua
+    // error string, so this server answers `-WRONGTYPE ...` there — a separate
+    // engine-side divergence (the same one as `error('WRONGTYPE x', 0)`).
+    test(
+      'a pcall-caught redis.call error re-raised at level 0 keeps the 6.2 frame',
+      {
+        skip:
+          supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        const key = `compat:${profile}:script-abort-l0:${randomKey()}`
+        const script =
+          "local ok, e = pcall(redis.call, 'LPUSH', KEYS[1], 'v')\nerror(e, 0)"
+        try {
+          await send('SET', key, 'v')
+          assert.strictEqual(
+            await send('EVAL', script, '1', key),
+            `-ERR Error running script (call to f_${sha1(script)}): @user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value\r\n`,
+          )
+        } finally {
+          await send('DEL', key)
+        }
+      },
+    )
+
+    // KNOWN GAP (#439): errors the scripting layer raises itself, before any
+    // command runs, are rendered by real 6.2 through `luaPushError`, with an
+    // inner `@user_script: <line>: ` position (the calling Lua line, which the
+    // engine does not expose to the host) and 6.2's own wording:
+    //   @user_script:1: @user_script: 1: Unknown Redis command called from Lua script
+    //   @user_script:1: @user_script: 1: This Redis command is not allowed from scripts
+    //   @user_script:1: @user_script: 1: Please specify at least one argument for redis.call()
+    //   @user_script:1: @user_script: 1: Lua redis() command arguments must be strings or integers
+    //   @user_script:1: @user_script: 1: Wrong number of args calling Redis command From Lua script
+    // This pins what this server answers today: the 6.2 wrapper around the
+    // 7.0+ body, with no `ERR ` code folded in (they are not command replies).
+    // Tighten to the real frames above once the wording and inner position are
+    // modelled.
+    test(
+      'script-level redis.call rejections on 6.2 (known gap: wording and inner position)',
+      {
+        skip:
+          supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
+      },
+      async () => {
+        const cases: Array<[string, string]> = [
+          [
+            "return redis.call('nosuchcmd')",
+            'Unknown Redis command called from script',
+          ],
+          [
+            "return redis.call('SUBSCRIBE', 'c')",
+            'This Redis command is not allowed from script',
+          ],
+          [
+            'redis.call()',
+            'Please specify at least one argument for this redis lib call',
+          ],
+          [
+            "return redis.call('SET', {}, 'v')",
+            'Lua redis lib command arguments must be strings or integers',
+          ],
+          [
+            "return redis.call('GET')",
+            "wrong number of arguments for 'get' command",
+          ],
+        ]
+        for (const [script, body] of cases) {
+          assert.strictEqual(
+            await send('EVAL', script, '0'),
+            `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ${body}\r\n`,
+            script,
+          )
+        }
+      },
+    )
 
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so

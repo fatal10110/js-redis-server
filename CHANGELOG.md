@@ -343,6 +343,11 @@ so the PR body is not a durable home for a breaking-change note.
   ([#442]). As in 6.2 the reply is always `-ERR`: a failing command's own code
   (`WRONGTYPE ...`) is folded into the body, and a runtime error shows its
   position twice. Gated as `script.abort-error-suffix` (Redis 7.0 / Valkey 7.2).
+  The frame is exact for errors a *command* returns and for Lua runtime errors;
+  rejections raised by the scripting layer itself (unknown or not-allowed
+  command, wrong arity, no arguments, bad argument type) still differ on 6.2,
+  which words them differently and adds an inner `@user_script: <line>: `
+  position the engine does not expose ([#439]).
 
 - `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
   protocol reader, for every command ([#431], [#415]). A bulk argument longer
@@ -467,6 +472,7 @@ requests they contain.
 [#430]: https://github.com/fatal10110/js-redis-server/pull/430
 [#437]: https://github.com/fatal10110/js-redis-server/issues/437
 [#442]: https://github.com/fatal10110/js-redis-server/issues/442
+[#439]: https://github.com/fatal10110/js-redis-server/issues/439
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
