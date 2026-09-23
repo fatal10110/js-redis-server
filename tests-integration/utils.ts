@@ -72,24 +72,70 @@ export async function waitUntilGone(
   }
 }
 
-export async function getTotalDbSize(redisClient: Cluster): Promise<number> {
-  const masterNodes = redisClient.nodes('master')
-  const sizes = await Promise.all(
-    masterNodes.map(async node => {
-      return await node.dbsize()
-    }),
-  )
+/**
+ * Build a key guaranteed to hash to a different slot than `key`.
+ *
+ * CROSSSLOT probes need two keys in genuinely different slots. Drawing both
+ * hash tags from `randomKey()` leaves a ~1/16384 chance of landing in the same
+ * slot, which turns the probe into a rare, unreproducible failure — exactly the
+ * run-to-run nondeterminism the rest of this sweep removes. Resample until the
+ * slots actually differ.
+ */
+export function keyInAnotherSlot(key: string, candidate: () => string): string {
+  const slot = clusterKeySlot(key)
 
-  return sizes.reduce((total, size) => total + size, 0)
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const next = candidate()
+    if (clusterKeySlot(next) !== slot) {
+      return next
+    }
+  }
+
+  throw new Error(`No key in a slot other than ${slot} after 1000 attempts`)
 }
 
-export async function assertDbSizeDelta(
+/** How many of `keys` exist right now. */
+export async function countExistingKeys(
   redisClient: Cluster,
-  baseline: number,
-  expectedDelta: number,
+  keys: readonly string[],
+): Promise<number> {
+  const flags = await Promise.all(keys.map(key => redisClient.exists(key)))
+  return flags.filter(Boolean).length
+}
+
+/**
+ * Assert that exactly `expected` of `keys` exist, and that the suite's own
+ * namespace holds nothing beyond them.
+ *
+ * This replaces an older `DBSIZE - baseline` delta assertion. Top-level DBSIZE
+ * counts the whole shared keyspace, which on the real backend also holds every
+ * other suite's keys — including ones with TTLs that expire mid-test — so the
+ * delta drifted for reasons unrelated to the commands under test (#420).
+ *
+ * `pattern` restores the one thing the delta caught that key-existence alone
+ * does not: a command that creates an EXTRA, unexpected key. Because every key
+ * here shares one hash tag, `KEYS <pattern>` on that tag's slot owner is both
+ * exact and unaffected by anything else on the node. DBSIZE is still asserted
+ * exactly (== 0 after a flush) by the flush-async-sync suites.
+ */
+export async function assertKeyCount(
+  redisClient: Cluster,
+  pattern: string,
+  keys: readonly string[],
+  expected: number,
 ): Promise<void> {
-  const size = await getTotalDbSize(redisClient)
-  assert.strictEqual(size - baseline, expectedDelta)
+  assert.strictEqual(await countExistingKeys(redisClient, keys), expected)
+
+  const owner = await connectToSlotOwner(redisClient, keys[0])
+  try {
+    assert.strictEqual(
+      (await owner.keys(pattern)).length,
+      expected,
+      `expected exactly ${expected} key(s) matching ${pattern}`,
+    )
+  } finally {
+    owner.disconnect()
+  }
 }
 
 export async function connectToSlotOwner(
@@ -328,25 +374,34 @@ export async function flushNodeRedisCluster(
   )
 }
 
-export async function getNodeRedisTotalDbSize(
+/** node-redis equivalent of {@link countExistingKeys}. */
+export async function countExistingNodeRedisKeys(
   cluster: RedisClusterType,
+  keys: readonly string[],
 ): Promise<number> {
-  const sizes = await Promise.all(
-    cluster.masters.map(async node => {
-      const client = await cluster.nodeClient(node)
-      return client.dbSize()
-    }),
-  )
-  return sizes.reduce((total, size) => total + size, 0)
+  const flags = await Promise.all(keys.map(key => cluster.exists(key)))
+  return flags.filter(Boolean).length
 }
 
-export async function assertNodeRedisDbSizeDelta(
+/** node-redis equivalent of {@link assertKeyCount}. */
+export async function assertNodeRedisKeyCount(
   cluster: RedisClusterType,
-  baseline: number,
-  expectedDelta: number,
+  pattern: string,
+  keys: readonly string[],
+  expected: number,
 ): Promise<void> {
-  const size = await getNodeRedisTotalDbSize(cluster)
-  assert.strictEqual(size - baseline, expectedDelta)
+  assert.strictEqual(await countExistingNodeRedisKeys(cluster, keys), expected)
+
+  const owner = await connectToNodeRedisSlotOwner(cluster, keys[0])
+  try {
+    assert.strictEqual(
+      (await owner.keys(pattern)).length,
+      expected,
+      `expected exactly ${expected} key(s) matching ${pattern}`,
+    )
+  } finally {
+    owner.destroy()
+  }
 }
 
 /**

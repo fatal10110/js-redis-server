@@ -3,20 +3,28 @@ import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
 import {
-  assertDbSizeDelta,
+  assertKeyCount,
   connectToSlotOwner,
   errorWithMessage,
-  getTotalDbSize,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
+
+// The cluster client namespaces every key with this prefix; KEYS runs on a
+// direct connection that does not, so patterns must spell it out.
+const PREFIX = 'key-integration'
 
 describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
 
   before(async () => {
-    redisClient = await testRunner.setupIoredisCluster('key-integration')
+    redisClient = await testRunner.setupIoredisCluster(PREFIX)
   })
 
   after(async () => {
@@ -25,25 +33,25 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('EXISTS command', async () => {
     // Set up test data
-    await redisClient?.set('{test}string_key', 'value')
-    await redisClient?.hset('{test}hash_key', 'field', 'value')
-    await redisClient?.lpush('{test}list_key', 'item')
-    await redisClient?.sadd('{test}set_key', 'member')
-    await redisClient?.zadd('{test}zset_key', 1, 'member')
+    await redisClient?.set(`{test:${RUN}}string_key`, 'value')
+    await redisClient?.hset(`{test:${RUN}}hash_key`, 'field', 'value')
+    await redisClient?.lpush(`{test:${RUN}}list_key`, 'item')
+    await redisClient?.sadd(`{test:${RUN}}set_key`, 'member')
+    await redisClient?.zadd(`{test:${RUN}}zset_key`, 1, 'member')
 
     // Test single key existence
-    const exists1 = await redisClient?.exists('{test}string_key')
+    const exists1 = await redisClient?.exists(`{test:${RUN}}string_key`)
     assert.strictEqual(exists1, 1)
 
-    const exists2 = await redisClient?.exists('{test}nonexistent')
+    const exists2 = await redisClient?.exists(`{test:${RUN}}nonexistent`)
     assert.strictEqual(exists2, 0)
 
     // Test multiple keys existence
     const existsMultiple = await redisClient?.exists(
-      '{test}string_key',
-      '{test}hash_key',
-      '{test}nonexistent',
-      '{test}list_key',
+      `{test:${RUN}}string_key`,
+      `{test:${RUN}}hash_key`,
+      `{test:${RUN}}nonexistent`,
+      `{test:${RUN}}list_key`,
     )
     assert.strictEqual(existsMultiple, 3) // 3 out of 4 keys exist
   })
@@ -55,7 +63,10 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
     const expiringKey = `${tag}:expired`
     const missingKey = `${tag}:missing`
     const crossSlotA = `{touch-cross-a:${randomKey()}}:key`
-    const crossSlotB = `{touch-cross-b:${randomKey()}}:key`
+    const crossSlotB = keyInAnotherSlot(
+      crossSlotA,
+      () => `{touch-cross-b:${randomKey()}}:key`,
+    )
     const directClient = await connectToSlotOwner(redisClient!, stringKey)
 
     try {
@@ -93,29 +104,29 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
 
   test('TYPE command', async () => {
     // Set up test data of different types
-    await redisClient?.set('{test}string_key', 'value')
-    await redisClient?.hset('{test}hash_key', 'field', 'value')
-    await redisClient?.lpush('{test}list_key', 'item')
-    await redisClient?.sadd('{test}set_key', 'member')
-    await redisClient?.zadd('{test}zset_key', 1, 'member')
+    await redisClient?.set(`{test:${RUN}}string_key`, 'value')
+    await redisClient?.hset(`{test:${RUN}}hash_key`, 'field', 'value')
+    await redisClient?.lpush(`{test:${RUN}}list_key`, 'item')
+    await redisClient?.sadd(`{test:${RUN}}set_key`, 'member')
+    await redisClient?.zadd(`{test:${RUN}}zset_key`, 1, 'member')
 
     // Test type detection
-    const stringType = await redisClient?.type('{test}string_key')
+    const stringType = await redisClient?.type(`{test:${RUN}}string_key`)
     assert.strictEqual(stringType, 'string')
 
-    const hashType = await redisClient?.type('{test}hash_key')
+    const hashType = await redisClient?.type(`{test:${RUN}}hash_key`)
     assert.strictEqual(hashType, 'hash')
 
-    const listType = await redisClient?.type('{test}list_key')
+    const listType = await redisClient?.type(`{test:${RUN}}list_key`)
     assert.strictEqual(listType, 'list')
 
-    const setType = await redisClient?.type('{test}set_key')
+    const setType = await redisClient?.type(`{test:${RUN}}set_key`)
     assert.strictEqual(setType, 'set')
 
-    const zsetType = await redisClient?.type('{test}zset_key')
+    const zsetType = await redisClient?.type(`{test:${RUN}}zset_key`)
     assert.strictEqual(zsetType, 'zset')
 
-    const noneType = await redisClient?.type('{test}nonexistent')
+    const noneType = await redisClient?.type(`{test:${RUN}}nonexistent`)
     assert.strictEqual(noneType, 'none')
   })
 
@@ -183,7 +194,6 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       expiring: `${tag}:expire_key1`,
     }
     const allKeys = Object.values(keys)
-    const baseline = await getTotalDbSize(redisClient!)
 
     try {
       await redisClient?.set(keys.string, 'value')
@@ -191,14 +201,14 @@ describe(`Key Commands Integration (${testRunner.getBackendName()})`, () => {
       await redisClient?.lpush(keys.list, 'item')
       await redisClient?.sadd(keys.set, 'member')
       await redisClient?.zadd(keys.zset, 1, 'member')
-      await assertDbSizeDelta(redisClient!, baseline, 5)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, allKeys, 5)
 
       await redisClient?.set(keys.expiring, 'value')
       await redisClient?.expire(keys.expiring, 3600)
-      await assertDbSizeDelta(redisClient!, baseline, 6)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, allKeys, 6)
 
       await redisClient?.del(keys.string, keys.hash)
-      await assertDbSizeDelta(redisClient!, baseline, 4)
+      await assertKeyCount(redisClient!, `${PREFIX}${tag}:*`, allKeys, 4)
     } finally {
       await redisClient?.del(...allKeys)
     }

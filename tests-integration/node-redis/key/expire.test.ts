@@ -10,6 +10,10 @@ import {
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -24,31 +28,34 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('EXPIRE and EXPIREAT commands', async () => {
-    await redisClient.set('{test}expire_key', 'value')
+    await redisClient.set(`{test:${RUN}}expire_key`, 'value')
 
-    const expireResult = await redisClient.expire('{test}expire_key', 10)
+    const expireResult = await redisClient.expire(`{test:${RUN}}expire_key`, 10)
     assert.strictEqual(expireResult, 1)
 
-    const ttlResult = await redisClient.ttl('{test}expire_key')
+    const ttlResult = await redisClient.ttl(`{test:${RUN}}expire_key`)
     assert.ok(ttlResult <= 10 && ttlResult > 0)
 
-    const expireNonExistent = await redisClient.expire('{test}nonexistent', 10)
+    const expireNonExistent = await redisClient.expire(
+      `{test:${RUN}}nonexistent`,
+      10,
+    )
     assert.strictEqual(expireNonExistent, 0)
 
-    await redisClient.set('{test}expireat_key', 'value')
+    await redisClient.set(`{test:${RUN}}expireat_key`, 'value')
 
     const futureTimestamp = Math.floor(Date.now() / 1000) + 10
     const expireatResult = await redisClient.expireAt(
-      '{test}expireat_key',
+      `{test:${RUN}}expireat_key`,
       futureTimestamp,
     )
     assert.strictEqual(expireatResult, 1)
 
-    const ttlResult2 = await redisClient.ttl('{test}expireat_key')
+    const ttlResult2 = await redisClient.ttl(`{test:${RUN}}expireat_key`)
     assert.ok(ttlResult2 <= 10 && ttlResult2 > 0)
 
     const expireatNonExistent = await redisClient.expireAt(
-      '{test}nonexistent',
+      `{test:${RUN}}nonexistent`,
       futureTimestamp,
     )
     assert.strictEqual(expireatNonExistent, 0)
@@ -292,25 +299,25 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('TTL integration with EXPIRE and EXPIREAT', async () => {
-    await redisClient.set('{test}ttl1', 'value1')
-    await redisClient.set('{test}ttl2', 'value2')
-    await redisClient.set('{test}ttl3', 'value3')
+    await redisClient.set(`{test:${RUN}}ttl1`, 'value1')
+    await redisClient.set(`{test:${RUN}}ttl2`, 'value2')
+    await redisClient.set(`{test:${RUN}}ttl3`, 'value3')
 
-    await redisClient.expire('{test}ttl1', 20)
+    await redisClient.expire(`{test:${RUN}}ttl1`, 20)
 
     const futureTimestamp = Math.floor(Date.now() / 1000) + 30
-    await redisClient.expireAt('{test}ttl2', futureTimestamp)
+    await redisClient.expireAt(`{test:${RUN}}ttl2`, futureTimestamp)
 
-    const ttl1 = await redisClient.ttl('{test}ttl1')
+    const ttl1 = await redisClient.ttl(`{test:${RUN}}ttl1`)
     assert.ok(ttl1 <= 20 && ttl1 > 0)
 
-    const ttl2 = await redisClient.ttl('{test}ttl2')
+    const ttl2 = await redisClient.ttl(`{test:${RUN}}ttl2`)
     assert.ok(ttl2 <= 30 && ttl2 > 0)
 
-    const ttl3 = await redisClient.ttl('{test}ttl3')
+    const ttl3 = await redisClient.ttl(`{test:${RUN}}ttl3`)
     assert.strictEqual(ttl3, -1)
 
-    const ttlNonExistent = await redisClient.ttl('{test}nonexistent')
+    const ttlNonExistent = await redisClient.ttl(`{test:${RUN}}nonexistent`)
     assert.strictEqual(ttlNonExistent, -2)
   })
 

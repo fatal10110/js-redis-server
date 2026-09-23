@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -19,19 +23,25 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
 
   test('ZADD and ZCARD commands', async () => {
     // ZADD single member
-    const add1 = await redisClient?.zadd('zset1', 10, 'member1')
+    const add1 = await redisClient?.zadd(`zset1:${RUN}`, 10, 'member1')
     assert.strictEqual(add1, 1)
 
     // ZADD multiple members
-    const add2 = await redisClient?.zadd('zset1', 20, 'member2', 30, 'member3')
+    const add2 = await redisClient?.zadd(
+      `zset1:${RUN}`,
+      20,
+      'member2',
+      30,
+      'member3',
+    )
     assert.strictEqual(add2, 2)
 
     // Update existing member score
-    const add3 = await redisClient?.zadd('zset1', 15, 'member1')
+    const add3 = await redisClient?.zadd(`zset1:${RUN}`, 15, 'member1')
     assert.strictEqual(add3, 0) // No new members added
 
     // Check cardinality
-    const card = await redisClient?.zcard('zset1')
+    const card = await redisClient?.zcard(`zset1:${RUN}`)
     assert.strictEqual(card, 3)
   })
 
@@ -117,29 +127,29 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('ZSCORE command', async () => {
-    await redisClient?.zadd('zset2', 15, 'member1', 25, 'member2')
+    await redisClient?.zadd(`zset2:${RUN}`, 15, 'member1', 25, 'member2')
 
-    const score1 = await redisClient?.zscore('zset2', 'member1')
+    const score1 = await redisClient?.zscore(`zset2:${RUN}`, 'member1')
     assert.strictEqual(score1, '15')
 
-    const score2 = await redisClient?.zscore('zset2', 'nonexistent')
+    const score2 = await redisClient?.zscore(`zset2:${RUN}`, 'nonexistent')
     assert.strictEqual(score2, null)
   })
 
   test('ZINCRBY command', async () => {
-    await redisClient?.zadd('zset6', 10, 'member1')
+    await redisClient?.zadd(`zset6:${RUN}`, 10, 'member1')
 
     // Increment existing member
-    const incr1 = await redisClient?.zincrby('zset6', 25, 'member1')
+    const incr1 = await redisClient?.zincrby(`zset6:${RUN}`, 25, 'member1')
     assert.strictEqual(incr1, '35')
 
     // Increment non-existent member
-    const incr2 = await redisClient?.zincrby('zset6', 50, 'member2')
+    const incr2 = await redisClient?.zincrby(`zset6:${RUN}`, 50, 'member2')
     assert.strictEqual(incr2, '50')
 
     // Verify scores
-    const score1 = await redisClient?.zscore('zset6', 'member1')
-    const score2 = await redisClient?.zscore('zset6', 'member2')
+    const score1 = await redisClient?.zscore(`zset6:${RUN}`, 'member1')
+    const score2 = await redisClient?.zscore(`zset6:${RUN}`, 'member2')
     assert.strictEqual(score1, '35')
     assert.strictEqual(score2, '50')
   })
@@ -217,22 +227,32 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('ZREM command', async () => {
-    await redisClient?.zadd('zset7', 1, 'one', 2, 'two', 3, 'three', 4, 'four')
+    await redisClient?.zadd(
+      `zset7:${RUN}`,
+      1,
+      'one',
+      2,
+      'two',
+      3,
+      'three',
+      4,
+      'four',
+    )
 
     // Remove single member
-    const rem1 = await redisClient?.zrem('zset7', 'two')
+    const rem1 = await redisClient?.zrem(`zset7:${RUN}`, 'two')
     assert.strictEqual(rem1, 1)
 
     // Remove multiple members
-    const rem2 = await redisClient?.zrem('zset7', 'one', 'three')
+    const rem2 = await redisClient?.zrem(`zset7:${RUN}`, 'one', 'three')
     assert.strictEqual(rem2, 2)
 
     // Remove non-existent member
-    const rem3 = await redisClient?.zrem('zset7', 'nonexistent')
+    const rem3 = await redisClient?.zrem(`zset7:${RUN}`, 'nonexistent')
     assert.strictEqual(rem3, 0)
 
     // Check remaining members
-    const remaining = await redisClient?.zrange('zset7', 0, -1)
+    const remaining = await redisClient?.zrange(`zset7:${RUN}`, 0, -1)
     assert.deepStrictEqual(remaining, ['four'])
   })
 })
