@@ -125,7 +125,8 @@ surface.
 > - `notify-keyspace-events` — see
 >   [Keyspace notifications](#14-pubsub-commands). Its value is validated and
 >   normalized exactly like Redis (e.g. `CONFIG SET ... KEA` reads back as
->   `AKE`; an unknown class character is rejected).
+>   `AKE`; an unknown class character is rejected with the profile's CONFIG
+>   SET failure wording).
 > - `proto-max-bulk-len` — enforced in the three places Redis enforces it.
 >   Accepts Redis memory values (`1048576`, `1mb`, `512MB`, ...) and enforces
 >   Redis' own `[1048576, 9223372036854775807]` bounds. The CONFIG SET failure
@@ -565,7 +566,8 @@ Key mutations are published to the standard `__keyspace@<db>__:<key>` (event in
 the message) and `__keyevent@<db>__:<event>` (key in the message) channels when
 enabled via `CONFIG SET notify-keyspace-events <flags>`. The flag string uses
 Redis' class characters (`K`, `E`, `A`, `g`, `$`, `l`, `s`, `h`, `z`, `x`, `e`,
-`t`, `m`, `n`, `d`); it is validated and normalized like real Redis.
+`t`, `m`, `n`, `d`); it is validated and normalized like real Redis. `n` is
+Redis 7.0+, so the `redis-6.2` profile rejects it.
 
 - [x] Lifecycle events derived from the keyspace itself: `del`, `expire`,
       `persist`, and `expired` (fired when a key is lazily evicted on access).
