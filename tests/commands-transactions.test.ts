@@ -246,9 +246,10 @@ describe('new transaction commands', () => {
     )
   })
 
-  test('EXEC holds the server turn across a queued SELECT', async () => {
+  test('EXEC holds the server turn across a queued SELECT', async testContext => {
     const { session, server, executor } = createSession({ databaseCount: 2 })
     const other = new ClientSession({ server, executor, database: 1 })
+    testContext.after(() => other.close())
     const key = Buffer.from('key')
 
     await session.execute('multi', [])

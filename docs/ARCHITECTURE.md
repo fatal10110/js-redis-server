@@ -87,7 +87,6 @@ graph TD
 
     subgraph "Session layer"
         CS[ClientSession]
-        TQ[SerialTurnQueue]
     end
 
     subgraph "Execution layer"
@@ -104,6 +103,7 @@ graph TD
 
     subgraph "State layer — src/state/*"
         SS[RedisServerState]
+        TQ["SerialTurnQueue<br/>(one per server)"]
         RD["RedisDatabase ×N<br/>(owns the keyspace map)"]
         MB[RedisMutationBus]
         CT[RedisClusterTopology]
@@ -123,6 +123,7 @@ graph TD
     CE --> CP
     CE --> CMD
     CMD --> RD
+    SS --> TQ
     SS --> RD
     SS --> CT
     SS --> SCC

@@ -132,7 +132,7 @@ Integration tests live in [tests-integration/](tests-integration/) with subdirec
 
 ### Concurrency Model
 
-Each `RedisServerState` owns one `SerialTurnQueue` ([src/core/turn-queue.ts](src/core/turn-queue.ts)) shared by all its databases. Every `session.execute()` waits for a turn before reaching the executor, so commands run to completion one at a time across every database — mirroring single-threaded Redis semantics (each cluster node has its own state, hence its own queue). `RedisExecutionContext` carries a `park` handler ([src/core/redis-context.ts](src/core/redis-context.ts)) so a command can release its turn while waiting on something and re-acquire one with priority once it resolves — plumbing for future blocking commands (`BLPOP`, `WAIT`, `XREAD BLOCK`, ...); no shipped command uses it yet.
+Each `RedisServerState` owns one `SerialTurnQueue` ([src/core/turn-queue.ts](src/core/turn-queue.ts)) shared by all its databases. Every `session.execute()` waits for a turn before reaching the executor, so commands run to completion one at a time across every database — mirroring single-threaded Redis semantics (each cluster node has its own state, hence its own queue). `RedisExecutionContext` carries a `park` handler ([src/core/redis-context.ts](src/core/redis-context.ts)) so a command can release the single server-wide turn while waiting on something and re-acquire one with priority once it resolves. The blocking commands (`BLPOP`, `BRPOP`, `BLMOVE`, `BLMPOP`, `BZMPOP`, `XREAD BLOCK`, ...) park this way, so a waiter on any database never stalls sessions on the others.
 
 ### Type System
 

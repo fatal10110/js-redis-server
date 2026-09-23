@@ -230,10 +230,7 @@ export class RedisServerState {
         return
       }
 
-      const now = Date.now()
-      for (const database of this.databases) {
-        database.sweepExpired(now)
-      }
+      this.sweepExpired(Date.now())
     } finally {
       turn.release()
     }
