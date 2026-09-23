@@ -39,10 +39,9 @@ const DEFAULT_DATABASE_COUNT = 16
 
 // node-redis throws its own error types (`instanceof WatchError` / `ErrorReply`
 // is the documented user idiom), so when the `redis` package is present — it
-// always is, since it's the thing being mocked — surface the real classes.
-// Resolved once, before any client is returned, and cached for the synchronous
-// decode path. Each class falls back to a shape-compatible local stand-in on its
-// own when the installed `redis` does not export it (or `redis` is absent).
+// always is, since it's the thing being mocked — surface the real classes, and
+// follow the installed version where their behavior differs. Resolved once, on
+// first need, and cached. Local stand-ins cover what `redis` does not export.
 type ErrorReplyConstructor = new (message: string) => Error
 type RedisErrorConstructors = {
   WatchError: new (message?: string) => Error
@@ -53,48 +52,46 @@ type RedisErrorConstructors = {
    * decodes it into `ErrorReply` itself, so that is the fallback.
    */
   SimpleError: ErrorReplyConstructor
-  MultiErrorReply: new (replies: unknown[], errorIndexes: number[]) => Error
+  /**
+   * What `exec()` throws when any queued command failed. `undefined` on a
+   * `redis` that predates it (< 4.6.12): that `exec()` never throws for a
+   * failed command — it resolves, with the error inline in the reply array.
+   */
+  MultiErrorReply:
+    | (new (replies: unknown[], errorIndexes: number[]) => Error)
+    | undefined
   ClientClosedError: new () => Error
   DisconnectsClientError: new () => Error
 }
 
-class FacadeWatchError extends Error {
-  constructor() {
-    super('One (or more) of the watched keys has been changed')
-    this.name = 'WatchError'
+// Local stand-ins, used when `redis` cannot be required at all (they then model
+// v6, the version this facade tracks) or lacks one of the classes. They mirror
+// node-redis' own classes: same message, same `name` ('Error' — none of the
+// real classes assigns one), and the same `constructor.name`, which is what
+// `util.inspect` and assertion libraries print. None is `instanceof` a class a
+// user can import, so code that must work without `redis` matches `message`.
+class WatchError extends Error {
+  constructor(message = 'One (or more) of the watched keys has been changed') {
+    super(message)
   }
 }
-class FacadeErrorReply extends Error {}
-
-/**
- * A `MultiErrorReply` stand-in extending whichever `ErrorReply` was resolved,
- * so `instanceof ErrorReply` still holds for the aggregate on a `redis` that
- * has the real `ErrorReply` but predates `MultiErrorReply`. Same message and
- * `constructor.name` as node-redis' own class.
- */
-function standInMultiErrorReply(
-  ErrorReply: ErrorReplyConstructor,
-): RedisErrorConstructors['MultiErrorReply'] {
-  return class MultiErrorReply extends ErrorReply {
-    constructor(
-      readonly replies: unknown[],
-      readonly errorIndexes: number[],
-    ) {
-      super(
-        `${errorIndexes.length} commands failed, see .replies and .errorIndexes for more information`,
-      )
-    }
-    *errors(): IterableIterator<unknown> {
-      for (const index of this.errorIndexes) {
-        yield this.replies[index]
-      }
+class ErrorReply extends Error {}
+class SimpleError extends ErrorReply {}
+class MultiErrorReply extends ErrorReply {
+  constructor(
+    readonly replies: unknown[],
+    readonly errorIndexes: number[],
+  ) {
+    super(
+      `${errorIndexes.length} commands failed, see .replies and .errorIndexes for more information`,
+    )
+  }
+  *errors(): IterableIterator<unknown> {
+    for (const index of this.errorIndexes) {
+      yield this.replies[index]
     }
   }
 }
-
-// Mirrors node-redis' own classes: same message, same `name` ('Error' — neither
-// real class assigns one), and the same `constructor.name`, which is what
-// `util.inspect` and assertion libraries print.
 class ClientClosedError extends Error {
   constructor() {
     super('The client is closed')
@@ -106,6 +103,15 @@ class DisconnectsClientError extends Error {
   }
 }
 
+const STAND_IN_REDIS_ERRORS: RedisErrorConstructors = {
+  WatchError,
+  ErrorReply,
+  SimpleError,
+  MultiErrorReply,
+  ClientClosedError,
+  DisconnectsClientError,
+}
+
 let resolvedRedisErrors: RedisErrorConstructors | undefined
 
 /**
@@ -113,53 +119,56 @@ let resolvedRedisErrors: RedisErrorConstructors | undefined
  *
  * - **Lazy.** Importing this module must do no work (`"sideEffects": false`),
  *   and ioredis-only consumers import it too, so nothing here may load the
- *   optional `redis` peer at import time. The first need is constructing a
- *   facade client ({@link CommandRunner}'s constructor), which is also what
- *   makes the decode path's direct reads of the cache safe: no client can run
- *   or close anything before its constructor has resolved the classes.
+ *   optional `redis` peer at import time — only the first facade client
+ *   constructed ({@link CommandRunner}'s constructor) or the first error
+ *   decoded does.
  * - **Synchronous.** `destroy()` throws synchronously, so the close path cannot
  *   await an import. `redis` and `@redis/client` are CommonJS-only packages (no
  *   `exports` map), so `require` returns the very module instance an ESM
  *   `import … from 'redis'` sees — the classes are identical and `instanceof`
  *   holds for ESM and CJS consumers alike.
  * - **Resolved from this module's own location**, as a static import would be.
- * - **Per class.** Older `redis` releases lack some classes — `MultiErrorReply`
- *   arrived in redis 4.6.12 (@redis/client 1.5.13), `SimpleError` in v5 — and a
- *   missing one must not cost the ones that do exist: `instanceof
- *   ClientClosedError` has to keep holding on every version that exports it.
- *   Each class falls back on its own, to a local look-alike (or, for
- *   `SimpleError`, to `ErrorReply`, which is what v4 decodes errors into).
+ * - **Per class.** Older `redis` releases lack some classes — `ErrorReply`
+ *   arrived in redis 4.1.0, `MultiErrorReply` in 4.6.12 (@redis/client 1.5.13),
+ *   `SimpleError` in v5 — and a missing one must not cost the ones that do
+ *   exist: `instanceof ClientClosedError` has to keep holding on every version
+ *   that exports it. A missing `SimpleError` becomes `ErrorReply` and a missing
+ *   `MultiErrorReply` stays `undefined`, as that version behaves; any other
+ *   missing class falls back to its stand-in alone.
  */
 function redisErrors(): RedisErrorConstructors {
   resolvedRedisErrors ??= loadRedisErrors()
   return resolvedRedisErrors
 }
 
-function loadRedisErrors(): RedisErrorConstructors {
-  let redis: Record<string, unknown> | undefined
+function requireRedis(): Record<string, unknown> | undefined {
   try {
-    redis = createRequire(__filename)('redis') as
-      | Record<string, unknown>
-      | undefined
+    return createRequire(__filename)('redis') as Record<string, unknown>
   } catch {
-    redis = undefined
+    return undefined
+  }
+}
+
+function loadRedisErrors(): RedisErrorConstructors {
+  const redis = requireRedis()
+  if (!redis) {
+    return STAND_IN_REDIS_ERRORS
   }
   const exported = <K extends keyof RedisErrorConstructors>(
     name: K,
   ): RedisErrorConstructors[K] | undefined => {
-    const value = redis?.[name]
+    const value = redis[name]
     return typeof value === 'function'
       ? (value as RedisErrorConstructors[K])
       : undefined
   }
 
-  const ErrorReply = exported('ErrorReply') ?? FacadeErrorReply
+  const errorReply = exported('ErrorReply') ?? ErrorReply
   return {
-    WatchError: exported('WatchError') ?? FacadeWatchError,
-    ErrorReply,
-    SimpleError: exported('SimpleError') ?? ErrorReply,
-    MultiErrorReply:
-      exported('MultiErrorReply') ?? standInMultiErrorReply(ErrorReply),
+    WatchError: exported('WatchError') ?? WatchError,
+    ErrorReply: errorReply,
+    SimpleError: exported('SimpleError') ?? errorReply,
+    MultiErrorReply: exported('MultiErrorReply'),
     ClientClosedError: exported('ClientClosedError') ?? ClientClosedError,
     DisconnectsClientError:
       exported('DisconnectsClientError') ?? DisconnectsClientError,
@@ -990,7 +999,8 @@ export class NodeRedisMockMulti {
    * Replay the queued commands inside a real MULTI/EXEC and return the array of
    * decoded replies. Matching node-redis, a watch-aborted transaction throws a
    * `WatchError` (never returns null), and per-command errors are aggregated
-   * into a single `MultiErrorReply` carrying every reply + the error indexes.
+   * into a single `MultiErrorReply` carrying every reply + the error indexes
+   * (on a `redis` that has that class — older ones resolve, errors inline).
    */
   async exec(): Promise<NodeRedisReply[]> {
     this.assertOpen()
@@ -1023,7 +1033,9 @@ export class NodeRedisMockMulti {
       replies.push(decodeReply(item, replyVersions[index] ?? respVersion))
     })
 
-    if (errorIndexes.length > 0) {
+    // A `redis` older than 4.6.12 has no MultiErrorReply, and its `exec()`
+    // resolves with each failed command's error inline instead of throwing.
+    if (errorIndexes.length > 0 && errors.MultiErrorReply) {
       throw new errors.MultiErrorReply(replies, errorIndexes)
     }
     return replies as NodeRedisReply[]
@@ -1452,14 +1464,8 @@ export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions = {
   pushShape: 'items',
   // Surface node-redis' own server-error class — `SimpleError`, a subclass of
   // `ErrorReply`, on v5+ — so both `instanceof ErrorReply` (the documented
-  // idiom) and the concrete class match real node-redis. Falls back to
-  // RedisCommandError only before any facade client has resolved the classes.
-  error: (text, code) => {
-    const SimpleError = resolvedRedisErrors?.SimpleError
-    return SimpleError
-      ? new SimpleError(text)
-      : new RedisCommandError(text, code)
-  },
+  // idiom) and the concrete class match real node-redis.
+  error: text => new (redisErrors().SimpleError)(text),
 }
 
 /**

@@ -1,10 +1,7 @@
-import { test, describe, before } from 'node:test'
+import { test, describe } from 'node:test'
 import assert from 'node:assert'
 import { ErrorReply, SimpleError } from 'redis'
-import {
-  createNodeRedisMock,
-  NODE_REDIS_DECODE_OPTIONS,
-} from '../../src/client-mocks/node-redis-mock'
+import { NODE_REDIS_DECODE_OPTIONS } from '../../src/client-mocks/node-redis-mock'
 import { IN_MEMORY_DECODE_OPTIONS } from '../../src/in-memory-client'
 import {
   decodeRedisValue,
@@ -42,14 +39,6 @@ const inMemoryAtResp2: DecodeRedisValueOptions = {
 }
 
 describe('decode option divergences between the two clients', () => {
-  before(async () => {
-    // Resolving node-redis' error classes is what createNodeRedisMock() does
-    // before handing back a client, and NODE_REDIS_DECODE_OPTIONS.error falls
-    // back to RedisCommandError until it has run.
-    const client = await createNodeRedisMock()
-    await client.quit()
-  })
-
   test('pushShape: the facade drops the type tag, in-memory keeps it', () => {
     const push: RedisValue = {
       kind: 'push',

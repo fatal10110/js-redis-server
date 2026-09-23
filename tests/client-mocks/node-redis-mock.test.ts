@@ -214,24 +214,51 @@ describe('createNodeRedisMock (standalone)', () => {
     )
   })
 
-  test('server errors are SimpleError, as real node-redis v6 throws', async () => {
-    const client = await makeClient()
-    await client.set('s', 'notAnInteger')
-    // Real node-redis v6 decodes every `-ERR` reply into a SimpleError (a
-    // subclass of ErrorReply), at RESP2 and RESP3 alike — so both the
-    // documented `instanceof ErrorReply` idiom and the concrete class hold.
-    for (const invoke of [
-      () => client.incr('s'),
-      () => client.sendCommand(['NOSUCHCOMMAND']),
-    ]) {
-      await assert.rejects(invoke, (err: unknown) => {
+  for (const resp of [2, 3] as const) {
+    test(`server errors are SimpleError at RESP${resp}, as real node-redis v6 throws`, async () => {
+      const client = await makeClient()
+      if (resp === 3) {
+        await client.sendCommand(['HELLO', '3'])
+      }
+      await client.set('s', 'notAnInteger')
+      // Real node-redis v6 decodes every `-ERR` reply into a SimpleError (a
+      // subclass of ErrorReply), at RESP2 and RESP3 alike — so both the
+      // documented `instanceof ErrorReply` idiom and the concrete class hold.
+      const isSimpleError = (message: string) => (err: unknown) => {
         assert.ok(err instanceof ErrorReply)
         assert.ok(err instanceof SimpleError)
         assert.strictEqual(err.constructor, SimpleError)
+        assert.strictEqual(err.name, 'Error')
+        assert.strictEqual(err.message, message)
         return true
-      })
-    }
-  })
+      }
+      await assert.rejects(
+        () => client.incr('s'),
+        isSimpleError('ERR value is not an integer or out of range'),
+      )
+      await assert.rejects(
+        () => client.sendCommand(['NOSUCHCOMMAND', 'a']),
+        isSimpleError(
+          "ERR unknown command 'NOSUCHCOMMAND', with args beginning with: 'a' ",
+        ),
+      )
+      await assert.rejects(
+        () => client.multi().set('ok', 'v').incr('s').exec(),
+        (err: unknown) => {
+          assert.ok(err instanceof MultiErrorReply)
+          assert.strictEqual(
+            err.message,
+            '1 commands failed, see .replies and .errorIndexes for more information',
+          )
+          assert.deepStrictEqual(err.errorIndexes, [1])
+          assert.strictEqual(err.replies[0], 'OK')
+          return isSimpleError('ERR value is not an integer or out of range')(
+            err.replies[1],
+          )
+        },
+      )
+    })
+  }
 
   test('pub/sub delivers messages to the subscribe callback', async () => {
     const publisher = await makeClient()

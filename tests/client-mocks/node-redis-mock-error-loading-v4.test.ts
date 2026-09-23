@@ -12,7 +12,9 @@ import { RedisServerState } from '../../src/state'
 // The stub stands in for `redis` ≤ 4.6.11 (@redis/client ≤ 1.5.12): exactly the
 // error classes that release exports. It predates `MultiErrorReply` (added in
 // @redis/client 1.5.13, i.e. redis 4.6.12) and `SimpleError` (added in v5). A
-// missing class must cost only that class, never the ones that do exist (#450).
+// missing class must cost only that class, never the ones that do exist (#450),
+// and the facade must behave as that release does: errors are `ErrorReply`, and
+// `exec()` resolves with a failed command's error inline rather than throwing.
 
 class AbortError extends Error {}
 class WatchError extends Error {
@@ -71,10 +73,6 @@ function newClient(): NodeRedisMockClient {
   })
 }
 
-test('the stub is what the facade loads', () => {
-  assert.strictEqual(facadeRequire('redis'), redis46)
-})
-
 test('a closed client still throws the installed ClientClosedError', async () => {
   const client = newClient()
   await client.quit()
@@ -130,27 +128,20 @@ test('with no SimpleError, server errors are the installed ErrorReply', async ()
   }
 })
 
-test('with no MultiErrorReply, the stand-in still extends the installed ErrorReply', async () => {
+test('with no MultiErrorReply, exec resolves with the error inline', async () => {
+  // @redis/client 1.5.12's `transformReplies` maps the EXEC array as-is — the
+  // aggregate throw arrived together with the MultiErrorReply class, in 1.5.13.
   const client = newClient()
   try {
     await client.set('s', 'notAnInteger')
-    await assert.rejects(
-      () => client.multi().set('ok', 'v').incr('s').exec(),
-      (err: unknown) => {
-        assert.ok(err instanceof ErrorReply)
-        const multiErr = err as ErrorReply & {
-          replies: unknown[]
-          errorIndexes: number[]
-        }
-        assert.strictEqual(multiErr.constructor.name, 'MultiErrorReply')
-        assert.deepStrictEqual(multiErr.errorIndexes, [1])
-        assert.strictEqual(multiErr.replies[0], 'OK')
-        assert.strictEqual(
-          (multiErr.replies[1] as Error).constructor,
-          ErrorReply,
-        )
-        return true
-      },
+    const replies = await client.multi().set('ok', 'v').incr('s').exec()
+    assert.strictEqual(replies.length, 2)
+    assert.strictEqual(replies[0], 'OK')
+    const failed = replies[1] as unknown as Error
+    assert.strictEqual(failed.constructor, ErrorReply)
+    assert.strictEqual(
+      failed.message,
+      'ERR value is not an integer or out of range',
     )
   } finally {
     await client.quit()
