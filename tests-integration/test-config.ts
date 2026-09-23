@@ -1,4 +1,4 @@
-import { Redis, Cluster } from 'ioredis'
+import { Redis, Cluster, type RedisOptions } from 'ioredis'
 import {
   createClient,
   createCluster,
@@ -8,6 +8,7 @@ import {
 import { spawn, ChildProcess } from 'node:child_process'
 import { createServer, AddressInfo } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
+import type { Duplex } from 'node:stream'
 import { createRedisCluster, RedisCluster } from '../src/cluster-server'
 import {
   realClusterPorts,
@@ -21,8 +22,145 @@ import {
   RedisServerState,
   createRedisCommandExecutor,
 } from '../src/internal'
+import {
+  createIoredisMock,
+  createNodeRedisMock,
+  type NodeRedisMockClient,
+  type NodeRedisMockCluster,
+} from '../src/index'
 
-export type TestBackend = 'mock' | 'real'
+/**
+ * Which server the integration suites talk to:
+ *
+ *  - `mock` (default): in-process `Resp2Server` / `createRedisCluster` over TCP.
+ *  - `real`: the docker-compose Redis cluster + standalone services.
+ *  - `socketless`: the packaged socketless client mocks — `createIoredisMock`
+ *    (the real ioredis client over a virtual socket) and `createNodeRedisMock`
+ *    (the hand-written node-redis facade, `NodeRedisMockClient` /
+ *    `NodeRedisMockCluster`). No port is ever bound: cluster node addresses
+ *    are the mock's synthetic `host:port`s, reachable only over its virtual
+ *    transport (see {@link openSocketlessStream}), and a setup that has to
+ *    hand a test a real port (raw-tcp standalone, requirepass servers) throws
+ *    {@link SocketlessUnsupportedError}. `REDIS_COMPAT` is ignored — the
+ *    socketless factories take no profile. Divergences are listed in
+ *    `tests-integration/socketless/known-gaps.ts` (#412).
+ */
+export type TestBackend = 'mock' | 'real' | 'socketless'
+
+/**
+ * socketless: the protocol the node-redis facades are switched to before a
+ * suite sees them. node-redis 5+ (`redis@6` here) defaults to RESP3 and opens
+ * every connection with `HELLO 3`, so that is what the node-redis suites run
+ * at on mock/real. `createNodeRedisMock()` itself starts at RESP2 — a known
+ * divergence of its default (see known-gaps.ts `FACADE_DEFAULT_PROTOCOL`),
+ * which the harness mirrors away here so the suites compare like with like.
+ */
+const NODE_REDIS_DEFAULT_HANDSHAKE = ['HELLO', '3']
+
+/**
+ * Thrown by a `TestRunner` setup method the `socketless` backend cannot serve
+ * — anything that needs a TCP port or a server option the socketless factories
+ * do not take.
+ */
+export class SocketlessUnsupportedError extends Error {
+  constructor(what: string) {
+    super(`socketless backend cannot provide ${what}`)
+    this.name = 'SocketlessUnsupportedError'
+  }
+}
+
+type SocketlessCluster = {
+  connector: NonNullable<RedisOptions['Connector']>
+  ports: number[]
+}
+
+/**
+ * socketless: the open `createIoredisMock({ cluster })` roots, by cluster
+ * shape. A direct node connection (`connectToEndpoint()`,
+ * `RawRedisConnection.connect()`) onto a node's synthetic `host:port` is opened
+ * through that root's in-memory `Connector` — the transport the mock cluster
+ * client uses for its own node connections — since there is no socket to dial.
+ */
+const socketlessClusters = new Map<string, SocketlessCluster>()
+
+/**
+ * The one socketless cluster a direct node connection can mean, `undefined`
+ * on the TCP backends. Every root advertises the same synthetic ports
+ * (`createIoredisMock` has no base-port option), so with two open an address
+ * is ambiguous — that, and a connection before any cluster exists, throw
+ * rather than fall back to dialling TCP.
+ */
+function socketlessClusterForDirectConnection(
+  what: string,
+): SocketlessCluster | undefined {
+  if (process.env.TEST_BACKEND !== 'socketless') {
+    return undefined
+  }
+  const [only, ...others] = socketlessClusters.values()
+  if (!only) {
+    throw new SocketlessUnsupportedError(
+      `${what} before a socketless cluster is set up — there is no TCP port to dial`,
+    )
+  }
+  if (others.length > 0) {
+    throw new SocketlessUnsupportedError(
+      `${what} while ${socketlessClusters.size} socketless clusters are open — their synthetic node ports overlap`,
+    )
+  }
+  return only
+}
+
+/**
+ * socketless: open a raw byte stream to a synthetic cluster node through the
+ * mock's virtual transport, for `RawRedisConnection`. `undefined` on the TCP
+ * backends (dial the port).
+ */
+export async function openSocketlessStream(
+  host: string,
+  port: number,
+): Promise<Duplex | undefined> {
+  const cluster = socketlessClusterForDirectConnection('a raw node connection')
+  if (!cluster) {
+    return undefined
+  }
+  const connector = new cluster.connector({ host, port })
+  return (await connector.connect(() => {})) as unknown as Duplex
+}
+
+/**
+ * A second node-redis connection onto the same server (mock/real) or the same
+ * in-memory keyspace (socketless) as `base`, connected and with its `'error'`
+ * events swallowed.
+ *
+ * Real node-redis' `duplicate()` returns an unconnected client synchronously;
+ * the socketless facade's returns a Promise of a client that is already usable
+ * and has no `isOpen`. That is a known divergence of the facade
+ * (`FACADE_DUPLICATE_PROMISE` in socketless/known-gaps.ts), which this helper
+ * absorbs so the pub/sub and keyspace-notification suites exercise the
+ * facade's pub/sub itself rather than stopping at `duplicate()`.
+ */
+export async function duplicateNodeRedisClient(
+  base: RedisClientType,
+): Promise<RedisClientType> {
+  const client = (await (base.duplicate() as unknown)) as RedisClientType
+  client.on('error', () => {})
+  if (client.isOpen === false) {
+    await client.connect()
+  }
+  return client
+}
+
+/** Extra `Redis` options for a direct node connection (see above). */
+export function directNodeRedisOptions(): Partial<RedisOptions> {
+  const cluster = socketlessClusterForDirectConnection('a direct node client')
+  return cluster
+    ? {
+        Connector: cluster.connector,
+        retryStrategy: () => null,
+        maxRetriesPerRequest: 1,
+      }
+    : {}
+}
 
 /**
  * Password used by the password-protected standalone server (see
@@ -49,6 +187,19 @@ export class TestRunner {
   private standaloneProcs: ChildProcess[] = []
   private ioredisStandalone: Redis[] = []
   private nodeRedisStandalone: RedisClientType[] = []
+  /**
+   * socketless: one `createIoredisMock({ cluster })` root per cluster shape.
+   * Tests get `duplicate()`s of it — same options, so the same in-memory
+   * `Connector` and therefore the same keyspace — which mirrors the mock
+   * backend handing every `setupIoredisCluster()` call a new client onto one
+   * shared cluster. The root itself is only closed by `cleanup()`.
+   */
+  private readonly socketlessIoredisRoots = new Map<string, Cluster>()
+  private readonly socketlessNodeRedisClusters = new Map<
+    string,
+    NodeRedisMockCluster
+  >()
+  private socketlessNodeRedisStandalone: NodeRedisMockClient[] = []
 
   private async ensureMockCluster(
     options: Required<IoredisClusterSetupOptions>,
@@ -77,6 +228,10 @@ export class TestRunner {
     const clusterOptions = {
       masters: options.masters ?? 3,
       replicasPerMaster: options.replicasPerMaster ?? 0,
+    }
+
+    if (this.backend === 'socketless') {
+      return this.setupSocketlessIoredisCluster(prefix, clusterOptions)
     }
 
     if (this.backend === 'mock') {
@@ -132,6 +287,15 @@ export class TestRunner {
       replicasPerMaster: options.replicasPerMaster ?? 0,
     }
 
+    if (this.backend === 'socketless') {
+      // The facade stands in for node-redis' RedisCluster; the cast is the
+      // point — the suites drive it through node-redis' typed surface, and a
+      // method the facade lacks fails the test that calls it.
+      return (await this.setupSocketlessNodeRedisCluster(
+        clusterOptions,
+      )) as unknown as ReturnType<typeof createCluster>
+    }
+
     if (this.backend === 'mock') {
       const mockCluster = await this.ensureMockCluster(clusterOptions)
 
@@ -171,6 +335,14 @@ export class TestRunner {
    *  - real: spawn a real `redis-server` child on a free port (also 16 DBs)
    */
   async setupIoredisStandalone(): Promise<Redis> {
+    if (this.backend === 'socketless') {
+      // A fresh 16-DB keyspace per call, like the mock backend's fresh
+      // Resp2Server per call.
+      const client = (await createIoredisMock()) as Redis
+      this.ioredisStandalone.push(client)
+      return client
+    }
+
     const port =
       this.backend === 'mock'
         ? await this.startMockStandalone()
@@ -191,6 +363,13 @@ export class TestRunner {
    *  - real: connect to REDIS_STANDALONE_PORT (docker-compose) or spawn a child
    */
   async setupNodeRedisStandalone(): Promise<RedisClientType> {
+    if (this.backend === 'socketless') {
+      const client = (await createNodeRedisMock()) as NodeRedisMockClient
+      this.socketlessNodeRedisStandalone.push(client)
+      await client.sendCommand(NODE_REDIS_DEFAULT_HANDSHAKE)
+      return client as unknown as RedisClientType
+    }
+
     const port =
       this.backend === 'mock'
         ? await this.startMockStandalone()
@@ -216,6 +395,7 @@ export class TestRunner {
    * which would otherwise fail with NOAUTH on an unauthenticated connection.
    */
   async setupNodeRedisStandaloneAuth(): Promise<RedisClientType> {
+    this.requireTcp('setupNodeRedisStandaloneAuth() (requirepass)')
     const port =
       this.backend === 'mock'
         ? await this.startMockStandaloneAuth()
@@ -247,6 +427,7 @@ export class TestRunner {
    *    local redis-server child as a dev fallback
    */
   async setupRawStandalone(): Promise<number> {
+    this.requireTcp('setupRawStandalone()')
     return this.backend === 'mock'
       ? this.startMockStandalone()
       : this.startRealStandalone()
@@ -258,6 +439,7 @@ export class TestRunner {
    * AUTH/NOAUTH/WRONGPASS handshake over a bare `RawRedisConnection`.
    */
   async setupRawStandaloneAuth(): Promise<number> {
+    this.requireTcp('setupRawStandaloneAuth()')
     return this.backend === 'mock'
       ? this.startMockStandaloneAuth()
       : this.startRealStandaloneAuth()
@@ -289,6 +471,7 @@ export class TestRunner {
    *    spawn a local `redis-server --requirepass` child as a dev fallback
    */
   async setupIoredisStandaloneAuth(): Promise<Redis> {
+    this.requireTcp('setupIoredisStandaloneAuth() (requirepass)')
     const port =
       this.backend === 'mock'
         ? await this.startMockStandaloneAuth()
@@ -385,6 +568,7 @@ export class TestRunner {
   async setupRawCluster(
     options: IoredisClusterSetupOptions = {},
   ): Promise<number[]> {
+    this.requireTcp('setupRawCluster()')
     if (this.backend === 'mock') {
       await this.ensureMockCluster({
         masters: options.masters ?? 3,
@@ -415,7 +599,16 @@ export class TestRunner {
     return realClusterPorts()
   }
 
+  /**
+   * socketless: the synthetic ports the in-memory cluster advertises in
+   * CLUSTER SLOTS. Nothing listens on them — they resolve only through
+   * `connectToEndpoint()` / `RawRedisConnection.connect()`, which route them
+   * over the mock's own virtual transport (see {@link openSocketlessStream}).
+   */
   getClusterPorts(): number[] {
+    if (this.backend === 'socketless') {
+      return socketlessClusterForDirectConnection('getClusterPorts()')!.ports
+    }
     return this.backend === 'mock'
       ? this.getMockClusterPorts()
       : this.getRealClusterPorts()
@@ -461,10 +654,105 @@ export class TestRunner {
     )
     this.mockClusters.clear()
     this.activeMockCluster = null
+
+    // socketless: the ioredis roots own their in-memory cluster (quit() tears
+    // it down); the node-redis facades own theirs too. A facade a test already
+    // closed throws ClientClosedError on a second close — that is its contract
+    // (see docs/TESTING.md), not a cleanup failure.
+    await Promise.all(
+      Array.from(this.socketlessIoredisRoots.values()).map(root =>
+        root.quit().catch(() => undefined),
+      ),
+    )
+    this.socketlessIoredisRoots.clear()
+    socketlessClusters.clear()
+    for (const cluster of this.socketlessNodeRedisClusters.values()) {
+      try {
+        cluster.destroy()
+      } catch {
+        // already closed by the test
+      }
+    }
+    this.socketlessNodeRedisClusters.clear()
+    for (const client of this.socketlessNodeRedisStandalone) {
+      try {
+        client.destroy()
+      } catch {
+        // already closed by the test
+      }
+    }
+    this.socketlessNodeRedisStandalone = []
   }
 
   getBackendName(): string {
+    if (this.backend === 'socketless') {
+      return 'Socketless Client Mock'
+    }
     return this.backend === 'mock' ? 'Mock Redis Server' : 'Real Redis Server'
+  }
+
+  /** Refuse, on the socketless backend, a setup that needs a TCP port. */
+  private requireTcp(what: string): void {
+    if (this.backend === 'socketless') {
+      throw new SocketlessUnsupportedError(`${what} — it needs a TCP port`)
+    }
+  }
+
+  private async setupSocketlessIoredisCluster(
+    prefix: string | undefined,
+    options: Required<IoredisClusterSetupOptions>,
+  ): Promise<Cluster> {
+    const key = mockClusterKey(options, undefined)
+    let root = this.socketlessIoredisRoots.get(key)
+    if (!root) {
+      root = (await createIoredisMock({
+        cluster: {
+          masters: options.masters,
+          replicasPerMaster: options.replicasPerMaster,
+        },
+      })) as Cluster
+      this.socketlessIoredisRoots.set(key, root)
+      socketlessClusters.set(key, {
+        connector: root.options.redisOptions!.Connector!,
+        ports: root
+          .nodes('all')
+          .map(node => Number(node.options.port))
+          .sort((a, b) => a - b),
+      })
+    }
+
+    const cluster = root.duplicate([], { keyPrefix: prefix, lazyConnect: true })
+    await cluster.connect()
+    this.ioredisCluster.push(cluster)
+    return cluster
+  }
+
+  /**
+   * The node-redis cluster facade has no `duplicate()` and no way to open a
+   * second client onto an existing `NodeRedisMockCluster`'s nodes, so unlike
+   * the other backends a second `setupNodeRedisCluster()` in one file cannot
+   * share the first one's keyspace. Handing back the same instance would put
+   * both "clients" on one session per node (a blocked BLPOP would wedge the
+   * other), so it throws instead and the file is listed in known-gaps.ts.
+   */
+  private async setupSocketlessNodeRedisCluster(
+    options: Required<IoredisClusterSetupOptions>,
+  ): Promise<NodeRedisMockCluster> {
+    const key = mockClusterKey(options, undefined)
+    if (this.socketlessNodeRedisClusters.has(key)) {
+      throw new SocketlessUnsupportedError(
+        'a second node-redis cluster client on the same keyspace (NodeRedisMockCluster has no duplicate())',
+      )
+    }
+    const cluster = (await createNodeRedisMock({
+      cluster: {
+        masters: options.masters,
+        replicas: options.replicasPerMaster,
+      },
+    })) as NodeRedisMockCluster
+    this.socketlessNodeRedisClusters.set(key, cluster)
+    await cluster.sendCommand(NODE_REDIS_DEFAULT_HANDSHAKE)
+    return cluster
   }
 }
 

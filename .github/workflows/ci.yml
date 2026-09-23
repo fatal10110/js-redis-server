@@ -122,6 +122,11 @@ jobs:
           - name: node-redis-real
             script: test:integration:real:node-redis
             needsRedis: true
+          # The ioredis + node-redis suites against the socketless client mocks
+          # (createIoredisMock / createNodeRedisMock); known divergences are
+          # todo'd in tests-integration/socketless/known-gaps.ts (#412).
+          - name: socketless
+            script: test:integration:socketless
 
     steps:
       - name: Checkout repository

@@ -7,6 +7,7 @@ import {
   type RedisClusterType,
 } from 'redis'
 import clusterKeySlot from 'cluster-key-slot'
+import { directNodeRedisOptions } from './test-config'
 export {
   assertBufferSetsEqual,
   assertBuffersEqual,
@@ -159,6 +160,7 @@ export async function connectToEndpoint(
     host: endpoint.host,
     port: endpoint.port,
     lazyConnect: true,
+    ...directNodeRedisOptions(),
   })
   await client.connect()
   return client
@@ -291,6 +293,11 @@ export function findNodeRedisSlotOwner(
   key: string | Buffer,
 ): RedisEndpoint {
   const slot = clusterKeySlot(key)
+  // Name the missing topology outright rather than fail on `undefined[slot]`:
+  // the socketless node-redis facade has no `slots` (see known-gaps.ts).
+  if (!cluster.slots) {
+    throw new Error('cluster.slots is not available on this cluster client')
+  }
   const shard = cluster.slots[slot]
   if (!shard) {
     throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)

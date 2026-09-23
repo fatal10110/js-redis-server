@@ -35,6 +35,16 @@ npm run test:integration:raw:mock          # raw-tcp wire tests, mock backend
 # ...and the matching :real:ioredis / :real:node-redis / raw:real variants
 ```
 
+### Run the Suites Against the Socketless Client Mocks
+
+```bash
+npm run test:integration:socketless              # ioredis + node-redis suites
+npm run test:integration:socketless:ioredis      # createIoredisMock only
+npm run test:integration:socketless:node-redis   # createNodeRedisMock only
+```
+
+See [Socketless backend](#socketless-backend) below.
+
 ## Prerequisites
 
 For testing against real Redis, you need:
@@ -104,6 +114,32 @@ For the `real` backend, the standalone services are located via:
 - `REDIS_STANDALONE_AUTH_PORT` — host port of `redis-standalone-auth` (6400 in docker-compose)
 
 If unset, the harness spawns a local `redis-server` child as a dev fallback.
+
+### Socketless backend
+
+`TEST_BACKEND=socketless` runs the same `ioredis/**` and `node-redis/**` suites against the packaged socketless client mocks instead of a TCP server (#412), so a reply-shape divergence in those clients fails an integration test rather than surviving to review:
+
+- `setupIoredisCluster()` / `setupIoredisStandalone()` return clients from `createIoredisMock()` — the real ioredis client over a virtual socket. Repeated cluster setups in one file are `duplicate()`s of one root, so they share its keyspace like the mock backend's shared cluster. Direct node connections (`connectToEndpoint()`, `RawRedisConnection.connect()`) resolve the mock's synthetic `host:port`s over the same virtual transport, and `getClusterPorts()` returns those synthetic ports.
+- `setupNodeRedisCluster()` / `setupNodeRedisStandalone()` return `createNodeRedisMock()` facades (`NodeRedisMockCluster` / `NodeRedisMockClient`), cast to node-redis' types — a method the facade lacks fails the test that calls it. The harness sends each facade `HELLO 3` first, because node-redis 6 defaults to RESP3 and that is the protocol the node-redis suites run at against `mock`/`real`.
+- Anything that needs a real port — `setupRawStandalone()`, `setupRawCluster()`, the requirepass setups — throws `SocketlessUnsupportedError`. A direct node connection made before any socketless cluster exists, or while two are open (their synthetic ports overlap), throws too instead of dialling TCP. `REDIS_COMPAT` is ignored.
+
+The cases the socketless clients cannot pass yet are listed in [`tests-integration/socketless/known-gaps.ts`](../tests-integration/socketless/known-gaps.ts), not in the test files. The `socketless` scripts preload [`tests-integration/socketless/register.ts`](../tests-integration/socketless/register.ts), which marks each listed test `todo` (it still runs; its failure is reported but not fatal) or skips a file (or test) whose setup the backend cannot provide.
+
+The list is strict:
+
+- Every `todo` entry names its tests and the error they must fail with. Only `skip` entries may cover a whole file, so a test added to a listed file still has to pass or be listed.
+- A test file fails if a listed title matches no test (or matches tests in more than one suite, when it must be given as its full `Suite > … > title` path), if a listed test passes, or if it fails with an error the entry does not expect — so a different failure cannot hide behind the todo.
+- It also fails if a listed test's body never ran because a hook failed first. That is not the recorded cause, so the file needs a `skip` entry.
+- Likewise, it fails if a listed test's body ran but never finished: node:test timed it out or cancelled it. A hang is a different failure too. `tests/socketless-register.test.ts` runs the preload against fixtures to pin each of these rules.
+- Every entry's `file` must exist.
+
+Fixing a divergence in `src/` therefore means deleting its entry. `skip` entries are not checked by a normal run; `SOCKETLESS_AUDIT_SKIPS=1` runs their files anyway and fails a file whose skipped tests now pass.
+
+`tests-integration/node-redis/socketless-parity.test.ts` complements this from the other side. It runs on the TCP backends (`mock`, `real`) and compares the socketless clients' decoded replies with real node-redis's, for `createNodeRedisMock()` (standalone and `NodeRedisMockCluster`) and `createInMemoryRedis()`, at RESP2 and RESP3. On `real`, real Redis plus real node-redis is the oracle.
+
+One known divergence is in the facade's default, not in any reply shape: `createNodeRedisMock()` starts on RESP2, while a default node-redis 6 client negotiates RESP3. Out of the box, the facade returns ZSCORE as `'2.5'` and HGETALL as `['f', 'v']`, where node-redis returns `2.5` and `{ f: 'v' }`. The parity suite pins this with a test that asserts today's divergence, so it fails once the facade is fixed (`FACADE_DEFAULT_PROTOCOL` in `known-gaps.ts`). The fix, defaulting the facade to RESP3, is a `src/` follow-up.
+
+A second one concerns pub/sub. The facade opens a dedicated session for pub/sub on first subscribe, and that session stays on RESP2 even after `HELLO 3` on the client. Its `(message, channel)` listener API hides the frame shape, so the parity suite claims delivery parity only (`FACADE_PUBSUB_PROTOCOL`). Opening that session at the client's protocol is also a `src/` follow-up.
 
 ### Test Structure
 

@@ -21,8 +21,9 @@ const RUN = randomKey()
 
 // Known mock gaps in the bundled `lua-redis-wasm` engine, pinned against real
 // Redis until they close.
+// mock and socketless run the same in-process server, so they share its gaps.
 const mockGap = (reason: string) =>
-  testRunner.backend === 'mock' ? reason : false
+  testRunner.backend !== 'real' ? reason : false
 const ENGINE_GAP = mockGap(
   'lua-redis-wasm drops typed tables without redis.setresp(3) (#449)',
 )
