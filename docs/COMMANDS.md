@@ -13,6 +13,7 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 ## 1. Connection Commands
 
 - [x] `PING [message]` - Return PONG, or echo `message`
+- [x] `ECHO message` - Return `message` verbatim (binary-safe). Like real Redis, rejected in RESP2 subscribed mode and allowed in RESP3 subscribed mode
 - [x] `QUIT` - Close the connection
 - [x] `SELECT index` - Change the selected database
 - [x] `RESET` - Reset connection state (auth, MULTI/WATCH, RESP version, db, cluster read-only flag, client name) to defaults
