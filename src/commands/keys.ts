@@ -913,11 +913,16 @@ function runSort(
   const output = projectSortOutput(sorted, options.get, db)
 
   if (options.store) {
-    db.delete(options.store)
-    if (output.length > 0) {
-      db.updateList(options.store, list =>
-        list.pushRight(output.map(value => value ?? Buffer.alloc(0))),
-      )
+    // An empty result deletes the destination (`del`); otherwise the list
+    // replaces whatever was there in one write, published as `sortstore` —
+    // not `del` followed by the command name.
+    if (output.length === 0) {
+      db.delete(options.store)
+    } else {
+      db.withOrigin('sortstore').set(options.store, {
+        type: 'list',
+        values: output.map(value => value ?? Buffer.alloc(0)),
+      })
     }
     return integer(output.length)
   }

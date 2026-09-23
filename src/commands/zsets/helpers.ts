@@ -2,7 +2,6 @@ import {
   ExpectedFloatError,
   ResultingScoreNaNError,
 } from '../../core/redis-error'
-import type { RedisDatabase } from '../../state/database'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
@@ -33,11 +32,5 @@ export function parseFloatArg(s: string): number {
 export function assertValidResultingScore(score: number) {
   if (Number.isNaN(score)) {
     throw new ResultingScoreNaNError()
-  }
-}
-
-export function deleteSortedSetIfEmpty(db: RedisDatabase, key: Buffer) {
-  if ((db.getSortedSet(key)?.members.size ?? 0) === 0) {
-    db.delete(key)
   }
 }

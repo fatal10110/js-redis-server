@@ -19,13 +19,19 @@ updates:
       # because `groups` defaults to `applies-to: version-updates`, and a week
       # where several transitive advisories land at once is exactly when one
       # PR beats eight.
+      # `redis` (node-redis) is a client the integration suite drives, so a
+      # minor bump can change client-side behaviour the tests assert on (6.2
+      # stopped surfacing CROSSSLOT for a multi-slot MGET). It gets its own PR
+      # so that breakage does not hold up the rest of the group.
       dev-minor-patch:
         dependency-type: development
         update-types: ['minor', 'patch']
+        exclude-patterns: ['redis']
       dev-minor-patch-security:
         applies-to: security-updates
         dependency-type: development
         update-types: ['minor', 'patch']
+        exclude-patterns: ['redis']
       prod-minor-patch:
         dependency-type: production
         update-types: ['minor', 'patch']
@@ -33,6 +39,15 @@ updates:
         applies-to: security-updates
         dependency-type: production
         update-types: ['minor', 'patch']
+    ignore:
+      # engines is `>=22.6`: types from a newer Node major would let code call
+      # APIs that do not exist on the oldest supported runtime.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # typescript-eslint pins a TypeScript peer range; a TS major lands only
+      # once it supports it, and is bumped by hand together with it.
+      - dependency-name: 'typescript'
+        update-types: ['version-update:semver-major']
 
   # The GitHub Pages demo. It has its own package.json/package-lock.json, and
   # Dependabot never opens *version* update PRs for a directory that is not

@@ -326,6 +326,21 @@ so the PR body is not a durable home for a breaking-change note.
   leftover named import now fails at load time; under CJS
   `require(...).buildRedisCluster` is `undefined`.
 
+- **BREAKING (`/core`)** `RedisDatabase.activeNotifyCommand` was removed
+  ([#444]). It was a mutable per-database tag holding the name of the command
+  running against that database, which keyspace notifications read to name write
+  events. A command that parked (BLPOP) or resumed out of order left a stale
+  name behind. The name now travels with each event as
+  `RedisMutationEvent.command`, stamped by a per-command view of the database:
+  `db.withOrigin(name)` returns a handle onto the same database whose events carry
+  `name`, and `db.origin` reads it (`undefined` on the database itself). Code
+  that set the field to name its own writes should write through a view instead:
+
+  ```
+  db.activeNotifyCommand = 'lpush'; db.updateList(key, ...)
+    -> db.withOrigin('lpush').updateList(key, ...)
+  ```
+
 ### Changed
 
 - **BREAKING (`/core`)** `RedisServerState.notifyKeyspaceEvents` is now the
@@ -430,6 +445,30 @@ so the PR body is not a durable home for a breaking-change note.
   Code that held `state.getDatabase(n).turnQueue` to fence a database should
   hold `state.turnQueue` instead. Blocking commands still release the turn
   while parked.
+
+- **BREAKING (`/core`)** `RedisMutationEvent` changed shape ([#379], [#486]):
+
+  - It has a new `notify` variant (`{ type: 'notify', database, key,
+    valueType }`): a keyspace notification with no modified-key signal, as in
+    real Redis where `notifyKeyspaceEvent` and `signalModifiedKey` are
+    independent. It is emitted for in-place stream consumer-group / last-id
+    changes and for the removal (`hdel`, `lpop`, ...) that empties a collection,
+    just before its `delete`. `RedisMutationBus` delivers it to `subscribe()`
+    listeners only, never to `subscribeKey()` ones (WATCH, blocked clients).
+    An exhaustive `switch (event.type)` stops type-checking. A non-exhaustive
+    listener must ignore `notify` rather than treat it as a write: it carries no
+    value, and a replica applying it would have nothing to apply.
+  - Every variant gained an optional `command`: the name of the command it was
+    emitted on behalf of (see `RedisDatabase.withOrigin` above).
+  - `write` events now carry a required `valueType`, so code that constructs
+    them (tests, custom buses) must set it.
+  - A delivered `write` event's `value` is now a lazy getter. Each listener's
+    copy is cloned from the key's *live* value on the listener's first read,
+    instead of being cloned for every listener up front, which made filling a
+    collection one element at a time quadratic. A listener that needs the value
+    as of that write must read it synchronously, during dispatch. Read after a
+    later mutation, it shows the later state. `{ ...event }` inside the listener
+    takes such a snapshot.
 
 ### Added
 
@@ -643,6 +682,71 @@ so the PR body is not a durable home for a breaking-change note.
   `GEORADIUS … STORE` by one key while they span several. CROSSSLOT reporting is
   preserved.
 
+- Keyspace notifications ([#379], [#381], [#444], [#446]) now match real
+  Redis in these cases:
+
+  - Removing the last element of a hash, list, set or sorted set publishes the
+    removal event (`hdel`, `lpop`, `srem`, `zrem`, `spop`, ...) and then `del`;
+    before, it published only `del`.
+  - XGROUP CREATE / CREATECONSUMER / SETID / DELCONSUMER / DESTROY publish
+    `xgroup-create`, `xgroup-createconsumer`, ... (before: nothing, or `xgroup`
+    for MKSTREAM), and XSETID publishes `xsetid`. Neither dirties a WATCH on
+    the stream. XREADGROUP / XCLAIM / XAUTOCLAIM publish
+    `xgroup-createconsumer` when they create a consumer.
+  - Blocking, multi-key and move-style commands are named after the operation,
+    not the command. `BLPOP`/`BRPOP`/`LMPOP`/`BLMPOP` publish `lpop`/`rpop`.
+    `BZPOPMIN`/`BZPOPMAX`/`ZMPOP`/`BZMPOP` publish `zpopmin`/`zpopmax`.
+    `LMOVE`/`BLMOVE`/`RPOPLPUSH` publish `lpush`/`rpush` on the destination,
+    then `lpop`/`rpop` on the source. `SMOVE` publishes `srem` then `sadd`.
+    A same-key `LMOVE` rotates the list without deleting it, and a same-key
+    `SMOVE` changes nothing.
+  - `HGETDEL` publishes `hdel`; the `HEXPIRE` family and `HGETEX EX/PX/...`
+    publish `hexpire` (`hdel` for a time already past); `HGETEX PERSIST`
+    publishes `hpersist`; `HSETEX` publishes `hset` then `hexpire` / `hdel`.
+  - `SORT ... STORE` and `ZRANGESTORE` over an existing key publish one
+    `sortstore` / `zrangestore` instead of `del` followed by the command name.
+  - A blocking command parked on a database no longer lends its name to other
+    commands' writes into that database, and blocking commands resumed out of
+    order no longer leave a stale name that every later MOVE / COPY into it
+    reused.
+
+- Hash-field TTLs expire actively ([#486]): a field is dropped at its deadline
+  by the server's active-expiry sweep, publishing `hexpired` (then `del` if the
+  hash empties), with no command touching the key, and `EXISTS` then reports an
+  emptied hash as gone. Before, fields were dropped only on the next access to
+  the hash, which then published under that command's name (`hgetall`, `hlen`,
+  ...). Between sweeps, any hash command still drops an expired field first.
+  That differs from real Redis with active expiry off, where only a field
+  lookup expires it.
+
+- `XAUTOCLAIM` and `XCLAIM` validate their arguments like real Redis ([#486]):
+
+  - **XAUTOCLAIM** checks all its arguments before the key, each with its own
+    message:
+    - `ERR Invalid min-idle-time argument for XAUTOCLAIM`
+    - `ERR COUNT must be > 0` for a COUNT outside `1..LONG_MAX/16`, including
+      0 (previously accepted, with a consumer created)
+    - `ERR invalid start ID for the interval`; `-`, `+` and exclusive `(`
+      starts are accepted
+  - **XCLAIM** checks WRONGTYPE / NOGROUP first, then parses min-idle-time,
+    ids up to the first non-id, then options:
+    - `ERR Unrecognized XCLAIM option '<token>'` for any other token (e.g.
+      `notanid` was `Invalid stream ID`)
+    - `ERR Invalid IDLE|TIME|RETRYCOUNT option argument for XCLAIM`
+    - out-of-range times are clamped instead of rejected, as in Redis
+  - Neither creates a consumer when it rejects the call.
+
+- `XINFO CONSUMERS` reports `inactive` as `-1` until the consumer is delivered
+  new entries or claims one ([#486]). Before, it echoed `idle` for a consumer
+  that never got an entry, and every read or claim attempt refreshed it. Now
+  only a `>` read that returns entries, or a claim that claims something, does.
+
+- Filling one hash field by field is no longer quadratic ([#486]): 20,000
+  single-field `HSET`s into one key took minutes and now take well under a
+  second. Every write used to clone the whole value for each mutation
+  listener; the clone is now made only when a listener reads it (see the
+  `RedisMutationEvent` change above).
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -679,5 +783,10 @@ requests they contain.
 [#371]: https://github.com/fatal10110/js-redis-server/issues/371
 [#416]: https://github.com/fatal10110/js-redis-server/issues/416
 [#370]: https://github.com/fatal10110/js-redis-server/issues/370
+[#379]: https://github.com/fatal10110/js-redis-server/issues/379
+[#381]: https://github.com/fatal10110/js-redis-server/issues/381
+[#444]: https://github.com/fatal10110/js-redis-server/issues/444
+[#446]: https://github.com/fatal10110/js-redis-server/issues/446
+[#486]: https://github.com/fatal10110/js-redis-server/pull/486
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

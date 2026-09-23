@@ -7,6 +7,7 @@ import {
 import { RedisResult } from '../../core/redis-result'
 import type { RedisDatabase } from '../../state'
 import { bulk } from '../helpers'
+import { listPopEvent, listPushEvent } from './helpers'
 
 function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
   return t.custom<'left' | 'right'>({ min: 1, max: 1 }, (input, index, ctx) => {
@@ -27,8 +28,15 @@ function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
   })
 }
 
-// Non-blocking LMOVE core. Returns a bulk-string result on success, or `null`
-// when the source is empty/missing (the caller decides whether to block).
+// Non-blocking LMOVE / RPOPLPUSH core. Returns a bulk-string result on
+// success, or `null` when the source is empty/missing (the caller decides
+// whether to block).
+//
+// Mirrors real Redis' order: the element is pushed onto the destination first
+// (`lpush`/`rpush` on it), then popped from the source (`lpop`/`rpop`, then
+// `del` if that emptied it). Pushing before popping also makes a same-key move
+// a plain rotation — the list is never momentarily empty, so it is never
+// deleted and recreated.
 export function tryListMove(
   source: Buffer,
   destination: Buffer,
@@ -39,22 +47,23 @@ export function tryListMove(
   const sourceList = db.getList(source)
   if (!sourceList || sourceList.values.length === 0) return null
 
-  // Validate destination type before mutating the source
+  // Validate destination type before mutating either key
   db.getList(destination)
 
-  const popped = db.updateList(source, list => {
-    const value = list.pop(fromDirection)
-    return { value, empty: list.length === 0 }
-  })
-  if (popped.empty) db.delete(source)
-  if (popped.value === null) return null
+  const values = sourceList.values
+  const value = Buffer.from(
+    fromDirection === 'left' ? values[0] : values[values.length - 1],
+  )
 
-  db.updateList(destination, list => {
-    if (toDirection === 'left') list.pushLeft([popped.value!])
-    else list.pushRight([popped.value!])
+  db.withOrigin(listPushEvent(toDirection)).updateList(destination, list => {
+    if (toDirection === 'left') list.pushLeft([value])
+    else list.pushRight([value])
+  })
+  db.withOrigin(listPopEvent(fromDirection)).updateList(source, list => {
+    list.pop(fromDirection)
   })
 
-  return bulk(popped.value)
+  return bulk(value)
 }
 
 export const rpoplpushCommand = defineCommand({
@@ -65,26 +74,9 @@ export const rpoplpushCommand = defineCommand({
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.source, args.destination],
-  execute: (args, ctx) => {
-    const sourceList = ctx.db.getList(args.source)
-    if (!sourceList || sourceList.values.length === 0) return bulk(null)
-
-    // Validate destination type before mutating
-    ctx.db.getList(args.destination)
-
-    const value = ctx.db.updateList(args.source, list => {
-      const val = list.pop('right')
-      return { val, empty: list.length === 0 }
-    })
-    if (value.empty) ctx.db.delete(args.source)
-    if (value.val === null) return bulk(null)
-
-    ctx.db.updateList(args.destination, list => {
-      list.pushLeft([value.val!])
-    })
-
-    return bulk(value.val)
-  },
+  execute: (args, ctx) =>
+    tryListMove(args.source, args.destination, 'right', 'left', ctx.db) ??
+    bulk(null),
 })
 
 export const lmoveCommand = defineCommand({

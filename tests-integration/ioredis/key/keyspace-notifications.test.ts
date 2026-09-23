@@ -209,6 +209,168 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  test('emits the type-specific event before del when the last element goes (#379)', async () => {
+    // Removing the last element deletes the key. Real Redis still announces
+    // the removal itself (hdel/lpop/srem/zrem/spop) and only then `del`.
+    const actor = await connect()
+    const subscriber = await connect()
+    const sentinelWriter = await connect()
+    await actor.config('SET', 'notify-keyspace-events', 'KEA')
+    await subscriber.psubscribe(`__keyevent@0__:*`)
+    await settle()
+    const events = collect(subscriber)
+
+    const hash = randomKey()
+    const list = randomKey()
+    const set = randomKey()
+    const zset = randomKey()
+    const popped = randomKey()
+
+    await actor.hset(hash, 'f', 'v')
+    assert.strictEqual(await actor.hdel(hash, 'f'), 1)
+    await actor.rpush(list, 'a')
+    assert.strictEqual(await actor.lpop(list), 'a')
+    await actor.sadd(set, 'm')
+    assert.strictEqual(await actor.srem(set, 'm'), 1)
+    await actor.zadd(zset, '1', 'm')
+    assert.strictEqual(await actor.zrem(zset, 'm'), 1)
+    await actor.sadd(popped, 'm')
+    assert.strictEqual(await actor.spop(popped), 'm')
+    await drain(subscriber, sentinelWriter, 0)
+
+    assert.deepStrictEqual(eventsFor(events, 0, hash), ['hset', 'hdel', 'del'])
+    assert.deepStrictEqual(eventsFor(events, 0, list), ['rpush', 'lpop', 'del'])
+    assert.deepStrictEqual(eventsFor(events, 0, set), ['sadd', 'srem', 'del'])
+    assert.deepStrictEqual(eventsFor(events, 0, zset), ['zadd', 'zrem', 'del'])
+    assert.deepStrictEqual(eventsFor(events, 0, popped), [
+      'sadd',
+      'spop',
+      'del',
+    ])
+  })
+
+  test('stream group metadata commands notify without dirtying WATCH (#379)', async () => {
+    // Real Redis keeps signalModifiedKey (WATCH) and notifyKeyspaceEvent
+    // independent: these commands fire a notification but leave a WATCH on the
+    // stream intact. No-ops (existing consumer, missing consumer/group) and
+    // XREADGROUP/XACK on an existing consumer fire nothing.
+    const actor = await connect()
+    const subscriber = await connect()
+    const watcher = await connect()
+    const sentinelWriter = await connect()
+    await actor.config('SET', 'notify-keyspace-events', 'KEA')
+    await subscriber.psubscribe(`__keyevent@0__:*`)
+    await settle()
+    const events = collect(subscriber)
+    const stream = randomKey()
+
+    await actor.xadd(stream, '1-1', 'f', 'v')
+    await watcher.watch(stream)
+    await actor.xgroup('CREATE', stream, 'g', '0')
+    assert.strictEqual(
+      await actor.xgroup('CREATECONSUMER', stream, 'g', 'c1'),
+      1,
+    )
+    assert.strictEqual(
+      await actor.xgroup('CREATECONSUMER', stream, 'g', 'c1'),
+      0,
+    )
+    await actor.xgroup('SETID', stream, 'g', '0')
+    await actor.xreadgroup('GROUP', 'g', 'c1', 'STREAMS', stream, '>')
+    assert.strictEqual(await actor.xack(stream, 'g', '1-1'), 1)
+    assert.strictEqual(await actor.xgroup('DELCONSUMER', stream, 'g', 'c1'), 0)
+    assert.strictEqual(
+      await actor.xgroup('DELCONSUMER', stream, 'g', 'missing'),
+      0,
+    )
+    await actor.xsetid(stream, '5-0')
+    assert.strictEqual(await actor.xgroup('DESTROY', stream, 'g'), 1)
+    assert.strictEqual(await actor.xgroup('DESTROY', stream, 'g'), 0)
+
+    assert.deepStrictEqual(await watcher.multi().ping().exec(), [
+      [null, 'PONG'],
+    ])
+
+    await drain(subscriber, sentinelWriter, 0)
+    // Each subcommand is published under its own name (#381).
+    assert.deepStrictEqual(eventsFor(events, 0, stream), [
+      'xadd',
+      'xgroup-create',
+      'xgroup-createconsumer',
+      'xgroup-setid',
+      'xgroup-delconsumer',
+      'xsetid',
+      'xgroup-destroy',
+    ])
+  })
+
+  test('a parked blocking command does not name writes into its database (#444)', async () => {
+    // BLPOP parked on db1 must not lend its name to an unrelated write that
+    // lands in db1 meanwhile (MOVE from db0).
+    const blocker = await connect()
+    const actor = await connect()
+    const subscriber = await connect()
+    const sentinelWriter = await connect()
+    await actor.config('SET', 'notify-keyspace-events', 'KEA')
+    await sentinelWriter.select(1)
+    await subscriber.psubscribe(`__keyspace@1__:*`, `__keyevent@1__:*`)
+    await settle()
+    const events = collect(subscriber)
+    const queue = randomKey()
+    const moved = randomKey()
+
+    await blocker.select(1)
+    const blocked = blocker.blpop(queue, 0)
+    await settle()
+
+    await actor.set(moved, 'v')
+    assert.strictEqual(await actor.move(moved, 1), 1)
+    await drain(subscriber, sentinelWriter, 1)
+
+    assertNotNamedBlpop(events, 1, moved)
+
+    await sentinelWriter.rpush(queue, 'x')
+    assert.deepStrictEqual(await blocked, [queue, 'x'])
+    await sentinelWriter.del(moved)
+  })
+
+  test('blocking commands resumed out of nesting order leave no stale name (#444)', async () => {
+    // Two BLPOPs park on db1 and are served in arrival order — not LIFO. A
+    // later write into db1 must still be named after its own command.
+    const first = await connect()
+    const second = await connect()
+    const actor = await connect()
+    const subscriber = await connect()
+    const pusher = await connect()
+    await actor.config('SET', 'notify-keyspace-events', 'KEA')
+    await pusher.select(1)
+    await subscriber.psubscribe(`__keyspace@1__:*`, `__keyevent@1__:*`)
+    await settle()
+    const events = collect(subscriber)
+    const firstQueue = randomKey()
+    const secondQueue = randomKey()
+    const moved = randomKey()
+
+    await first.select(1)
+    await second.select(1)
+    const firstBlocked = first.blpop(firstQueue, 0)
+    await settle()
+    const secondBlocked = second.blpop(secondQueue, 0)
+    await settle()
+
+    await pusher.rpush(firstQueue, 'a')
+    assert.deepStrictEqual(await firstBlocked, [firstQueue, 'a'])
+    await pusher.rpush(secondQueue, 'b')
+    assert.deepStrictEqual(await secondBlocked, [secondQueue, 'b'])
+
+    await actor.set(moved, 'v')
+    assert.strictEqual(await actor.move(moved, 1), 1)
+    await drain(subscriber, pusher, 1)
+
+    assertNotNamedBlpop(events, 1, moved)
+    await pusher.del(moved)
+  })
+
   test('delivers nothing when notify-keyspace-events is disabled', async () => {
     const actor = await connect()
     const subscriber = await connect()
@@ -291,6 +453,51 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
 
 function settle(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 50))
+}
+
+/**
+ * Wait until a fresh `set` published by `writer` (already on database `db`)
+ * reaches `subscriber`. Delivery to one subscriber is ordered, so every event
+ * published before it has arrived too — and the subscription is proven live.
+ */
+async function drain(subscriber: Redis, writer: Redis, db: number) {
+  const sentinel = randomKey()
+  const seen = waitForEvent(subscriber, `__keyevent@${db}__:set`, sentinel)
+  await writer.set(sentinel, 'v')
+  assert.strictEqual(await seen, true)
+  await writer.del(sentinel)
+}
+
+/** Keyevent names published for `key` on database `db`, in order. */
+function eventsFor(
+  events: { channel: string; message: string }[],
+  db: number,
+  key: string,
+): string[] {
+  const prefix = `__keyevent@${db}__:`
+  return events
+    .filter(e => e.channel.startsWith(prefix) && e.message === key)
+    .map(e => e.channel.slice(prefix.length))
+}
+
+/**
+ * The MOVE into `db` is not published under the parked BLPOP's name. Real
+ * Redis publishes it as `move_to`; the mock does not name MOVE's target write
+ * yet (#445), so only the absence of the stale `blpop` name is pinned here.
+ */
+function assertNotNamedBlpop(
+  events: { channel: string; message: string }[],
+  db: number,
+  key: string,
+): void {
+  assert.deepStrictEqual(
+    events.filter(
+      e =>
+        (e.channel === `__keyevent@${db}__:blpop` && e.message === key) ||
+        (e.channel === `__keyspace@${db}__:${key}` && e.message === 'blpop'),
+    ),
+    [],
+  )
 }
 
 function collect(client: Redis): { channel: string; message: string }[] {

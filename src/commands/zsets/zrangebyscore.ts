@@ -9,7 +9,7 @@ import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { array, integer, scorePairs } from '../helpers'
-import { getSortedMembers, deleteSortedSetIfEmpty } from './helpers'
+import { getSortedMembers } from './helpers'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
 // ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]
@@ -156,7 +156,6 @@ export const zremrangebyscoreCommand = defineCommand({
         }
       }
     })
-    if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(removed)
   },
 })
@@ -184,7 +183,6 @@ export const zremrangebyrankCommand = defineCommand({
         if (set.deleteMemberId(hex)) removed++
       }
     })
-    if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(removed)
   },
 })
