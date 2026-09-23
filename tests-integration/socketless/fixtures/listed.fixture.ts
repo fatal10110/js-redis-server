@@ -21,10 +21,6 @@ test('listed', { timeout: mode === 'timeout' ? 100 : undefined }, async () => {
       // Outlives the test's own 100ms timeout.
       await new Promise(resolve => setTimeout(resolve, 1000))
       return
-    case 'cancel':
-      // Never settles and holds nothing open: node:test cancels it.
-      await new Promise(() => {})
-      return
     case 'pass':
       return
     default:

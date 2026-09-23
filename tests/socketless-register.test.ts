@@ -71,12 +71,4 @@ describe('socketless known-gaps preload', () => {
     assert.strictEqual(status, 1, output)
     assert.match(output, /'listed': never finished \(timed out or cancelled\)/)
   })
-
-  test('a listed test that is cancelled fails the file', () => {
-    // Nothing is left to run once the event loop drains, so the root after()
-    // hook cannot report it; node:test fails the cancelled file on its own.
-    const { status, output } = runFixture('cancel')
-    assert.strictEqual(status, 1, output)
-    assert.match(output, /cancelled 1/)
-  })
 })

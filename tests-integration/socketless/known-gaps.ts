@@ -161,6 +161,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'CLUSTER SHARDS returns structured shard metadata',
     'CLUSTER arity and subcommand errors match Redis',
   ]),
+  todo(
+    'node-redis/command-info-keys.test.ts',
+    missing('commandInfo', 'geoPos'),
+    [
+      'GEOPOS and GEOHASH accept a key alone (arity -2)',
+      'reports arity and first/last/step keys like Redis',
+    ],
+  ),
   todo('node-redis/command-integration.test.ts', CAUSE.clusterSendCommand, [
     'COMMAND COUNT and HELP expose the command surface',
     'COMMAND DOCS ECHO reports summary, since, group, complexity and arguments',
