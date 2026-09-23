@@ -12,6 +12,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
   // `CONFIG SET failed (possibly related to argument '<name>') - <detail>`.
   'config.set.failure-message': { redis: '7.0.0', valkey: '7.2.0' },
+  // The same 7.0 rewrite let CONFIG SET take several parameter/value pairs.
+  // 6.2 dispatches SET only for exactly one pair and answers every other shape
+  // with the legacy subcommand syntax error; 7.0+ splits that into a
+  // `config|set` arity error (no pair) and `syntax error` (dangling name), and
+  // rejects a repeated parameter with `duplicate parameter`. Verified against
+  // redis-server 6.2.24, 7.0.15, 8.0.6 and Valkey 7.2.14 (#419).
+  'config.set.multi-pair': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 6.2 saturates a memory value above the parameter's maximum to that
   // maximum; 7.0+ rejects it with the out-of-range error instead.
   'config.memory-value.reject-overflow': { redis: '7.0.0', valkey: '7.2.0' },

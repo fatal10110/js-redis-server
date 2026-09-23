@@ -105,6 +105,45 @@ so the PR body is not a durable home for a breaking-change note.
 
   ioredis and node-redis always read, so none of this changes what they see.
 
+- **BREAKING (`/core`)** `ResponseStream`, `isResponseStream` and
+  `ExecutorResult` are removed ([#366]). A command's `execute` now returns
+  `RedisResult | Promise<RedisResult>`, and server-initiated frames have one
+  channel, the session push queue. The two shipped producers moved onto it:
+
+  ```
+  SUBSCRIBE a b c (any (UN)SUBSCRIBE family) -> one RedisResult pre-encoded
+                                                with every confirmation frame;
+                                                `value` is the first frame,
+                                                `options.trailingFrames` the rest
+  MONITOR                                    -> +OK, then feed lines as session
+                                                pushes (ClientSession.startMonitor)
+  ExecutorResult                             -> RedisResult
+  ```
+
+  A custom command that returned a long-lived stream now returns an ordinary
+  `RedisResult` and produces through `ctx.session`, which gained what that
+  needs:
+
+  ```ts
+  execute: (args, ctx) => {
+    const flush = ctx.session.deferPushesUntilAfterReply() // frames after +OK
+    const unsubscribe = source.subscribe(frame => ctx.session.enqueuePush(frame))
+    ctx.session.onReset(unsubscribe) // runs once on RESET or connection close
+    return RedisResult.create(RedisValue.simpleString('OK'), { afterReply: flush })
+  }
+  ```
+
+  On `RedisClientSession`, `registerResponseStreamCleanup` becomes `onReset`
+  and `resetResponseStreams` becomes `resetPushProducers`; `enqueuePush`,
+  `monitoring` and `startMonitor` are new. A front end that reads
+  `RedisResult.value` instead of wire bytes should deliver
+  `options.trailingFrames` as pushes after the reply and run
+  `options.afterReply`, as `InMemoryRedisClient` now does (so its `pushes()`
+  still yields the 2nd..Nth confirmations of `SUBSCRIBE a b c`). Both
+  `InMemoryRedisClient` and the node-redis mock now run `afterReply`, which
+  they previously skipped — e.g. `CLIENT KILL` of the caller's own connection
+  now takes effect there.
+
 - **BREAKING (`/core`)** The `afterExecute` and `onStream` hooks are gone from
   `ExecutionPolicy` ([#359]). None of the four shipped policies (auth, cluster,
   subscribed-mode, transaction) ever implemented them — only tests did — and
@@ -336,6 +375,16 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- A command pipelined behind a multi-channel `SUBSCRIBE` / `PSUBSCRIBE` /
+  `SSUBSCRIBE` could have its reply written between the confirmations. They
+  now go out as one reply, in Redis's order ([#455]).
+- A multi-channel `SUBSCRIBE` queued in `MULTI` replied `Streaming command is
+  not allowed in transaction` from `EXEC`. It now runs, and `EXEC` embeds every
+  confirmation in its array exactly as Redis does ([#366]).
+- `MONITOR` queued in `MULTI` now fails with Redis's `MONITOR isn't allowed for
+  DENY BLOCKING client`, and a repeated `MONITOR` gets no reply and does not
+  double the feed, as in Redis ([#366]).
+
 - On the `redis-6.2` profile a script that aborts — a failing `redis.call`, or
   a Lua runtime error — now carries Redis 6.2's decoration,
   `-ERR Error running script (call to f_<sha>): @user_script:<line>: <error>`,
@@ -476,5 +525,7 @@ requests they contain.
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
+[#366]: https://github.com/fatal10110/js-redis-server/issues/366
+[#455]: https://github.com/fatal10110/js-redis-server/issues/455
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

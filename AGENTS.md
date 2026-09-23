@@ -20,11 +20,18 @@ npm run test:integration:real
 npm run test:all
 
 # Run a single test file
-node --enable-source-maps --import tsx --no-warnings --test ./tests/path/to/test.test.ts
+node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test ./tests/path/to/test.test.ts
 
 # Run integration tests sequentially (needed for real Redis backend)
-TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test ./tests-integration/**/*.test.ts
+TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test ./tests-integration/**/*.test.ts
 ```
+
+Every `test*` npm script passes `--test-timeout` (60s; 30s for the real backend) to bound hung tests (#454). What that guarantees depends on the Node version:
+
+- **Node 22:** the timeout bounds each test *file*. The file's child process is killed, so the run always moves on, but only the file is named. If you want a hang to name the test, give that test its own `{ timeout }`. That timer runs in-process, so it names an async hang but not a blocked main thread.
+- **Node 24:** the timeout is enforced inside the test file's own process. A timed-out test is named, but the run can still stall in two cases: the test leaks a ref'd handle (socket, timer), or the main thread itself is blocked (a sync loop, or a V8 deadlock like nodejs/node#54918). In both cases the process never exits, and the CI job's `timeout-minutes` is the only backstop.
+
+Don't add `--test-force-exit`: on Node 22 under macOS it drops whole files from the report.
 
 ### Building & Running
 
@@ -72,7 +79,7 @@ Redis-compatible server (standalone + cluster modes) built as a layered pipeline
 #### 2. CommandExecutor & ExecutionPolicy ([src/core/command-executor.ts](src/core/command-executor.ts), [src/core/execution-policies/](src/core/execution-policies/))
 
 - `CommandExecutor.plan()` resolves a `CommandDefinition` from the `CommandRegistry`, parses raw `Buffer` args through the command's `schema`, and extracts routing keys via `definition.keys(args)` — producing a shared `CommandPlan`
-- `executePlan` is the normal async path (supports `ResponseStream` + async commands); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async or stream
+- `executePlan` is the normal async path (supports async commands); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async
 - An `ExecutionPolicy` guards every command with a single optional `beforeExecute` hook, which can short-circuit execution (queue/redirect/reject)
 - `TransactionPolicy` ([src/core/execution-policies/transaction-policy.ts](src/core/execution-policies/transaction-policy.ts)) is always appended last; `ClusterPolicy` ([src/core/execution-policies/cluster-policy.ts](src/core/execution-policies/cluster-policy.ts)) is prepended only for cluster nodes — order matters because cluster routing must validate (and possibly redirect/reject) **before** a command is queued into a transaction
 - There is no separate "cluster commander" type — cluster mode is the same `Resp2Server` + `CommandExecutor`, configured with one extra `CLUSTER` command and a `ClusterPolicy` bound to that node's id ([src/cluster.ts](src/cluster.ts))
@@ -90,7 +97,7 @@ interface CommandDefinition<TArgs> {
   execute(
     args: TArgs,
     ctx: RedisExecutionContext,
-  ): RedisResult | Promise<RedisResult> | ResponseStream
+  ): RedisResult | Promise<RedisResult>
 }
 ```
 
@@ -129,11 +136,11 @@ Each `RedisDatabase` owns a `SerialTurnQueue` ([src/core/turn-queue.ts](src/core
 
 ### Type System
 
-Core protocol/result types live in [src/core/redis-value.ts](src/core/redis-value.ts), [src/core/redis-result.ts](src/core/redis-result.ts), and [src/core/response-stream.ts](src/core/response-stream.ts):
+Core protocol/result types live in [src/core/redis-value.ts](src/core/redis-value.ts) and [src/core/redis-result.ts](src/core/redis-result.ts):
 
 - `RedisValue` - protocol-agnostic reply union (`simple-string`, `bulk-string`, `integer`, `array`, `map`, `error`, ...), encoded to RESP2/RESP3 wire bytes by [src/core/resp-encoder.ts](src/core/resp-encoder.ts)
 - `RedisResult` - command outcome wrapper returned by `execute()`
-- `ResponseStream` - streaming/push-style replies
+- Server-initiated frames (pub/sub messages, `MONITOR` lines) are not a result type: commands enqueue them on the session push queue (`ClientSession.enqueuePush`), which the transport adapter writes between replies
 - `CommandDefinition` / `CommandPlan` / `CommandSchema` - command shape, parsed invocation, and arg-parsing ([src/core/command-definition.ts](src/core/command-definition.ts), [src/core/command-schema.ts](src/core/command-schema.ts))
 - `RedisExecutionContext` - per-call context (`db`, `server`, `session`, `executor`, `signal`, `park`) ([src/core/redis-context.ts](src/core/redis-context.ts))
 
