@@ -65,8 +65,11 @@ export interface RedisClientSession {
   pubsubUnsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
-  registerResponseStreamCleanup(cleanup: () => void): () => void
-  resetResponseStreams(): void
+  enqueuePush(result: RedisResult): void
+  onReset(cleanup: () => void): () => void
+  resetPushProducers(): void
+  readonly monitoring: boolean
+  startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void
   disconnect(reason?: string): void
 }
 

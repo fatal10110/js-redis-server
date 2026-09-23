@@ -1,0 +1,31 @@
+{
+  // Typecheck config for the demo (`tsc -p examples/browser-demo`), run in CI
+  // by deploy-demo.yml. It type-checks the demo's ../../src imports too.
+  //
+  // Vite resolves the nearest tsconfig per file, so for its transform this
+  // file governs only the demo's own *.ts here; ../../src/** is still
+  // transformed under the root tsconfig. Transform-relevant options must match
+  // what the demo's files were built with before this file existed (the root
+  // config), or the shipped bundle silently changes under a typechecking
+  // title (#396):
+  //   - useDefineForClassFields: true — the root's `module: nodenext` infers
+  //     target es2022, which defaults this to true. Leaving it out flips it to
+  //     false and changes class-field emit in backend.ts/tabs.ts (and the
+  //     content hash).
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // node: format.test.ts (node:test), vite.config.ts, and ../../src's
+    // Buffer. vite/client: the `import '...css'` in main.ts.
+    "types": ["node", "vite/client"],
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["*.ts"]
+}

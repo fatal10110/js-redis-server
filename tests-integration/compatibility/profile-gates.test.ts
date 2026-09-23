@@ -326,6 +326,80 @@ describe(
       }
     })
 
+    // `config.set.multi-pair` (#419). Redis 7.0 rewrote CONFIG SET to accept
+    // several pairs, splitting its arity errors and adding duplicate
+    // detection. Real 6.2 dispatches SET only for exactly one pair
+    // (`c->argc == 4`) and answers every other shape — including a repeated
+    // parameter — with the legacy subcommand syntax error, echoing the
+    // subcommand as sent. Captured from real redis-server 6.2.24; the 7.0+
+    // replies are pinned against real 7.0.15 / 8.0.6 / Valkey 7.2.14 by
+    // tests-integration/raw-tcp/command-errors-config.test.ts.
+    test('CONFIG SET multi-pair form and duplicate detection match the profile', async () => {
+      assert.strictEqual(await send('CONFIG', 'SET', 'timeout', '0'), '+OK\r\n')
+
+      const multi = await send(
+        'CONFIG',
+        'SET',
+        'timeout',
+        '0',
+        'maxmemory',
+        '0',
+      )
+      const lowerCase = await send(
+        'config',
+        'set',
+        'timeout',
+        '0',
+        'maxmemory',
+        '0',
+      )
+      const mixedCase = await send(
+        'config',
+        'SeT',
+        'timeout',
+        '0',
+        'maxmemory',
+        '0',
+      )
+      const none = await send('CONFIG', 'SET')
+      const nameOnly = await send('CONFIG', 'SET', 'timeout')
+      const dangling = await send('CONFIG', 'SET', 'timeout', '0', 'maxmemory')
+      const repeated = await send(
+        'CONFIG',
+        'SET',
+        'timeout',
+        '0',
+        'timeout',
+        '0',
+      )
+
+      if (supportsConfigSetMultiPair()) {
+        assert.strictEqual(multi, '+OK\r\n')
+        assert.strictEqual(lowerCase, '+OK\r\n')
+        assert.strictEqual(mixedCase, '+OK\r\n')
+        const arity =
+          "-ERR wrong number of arguments for 'config|set' command\r\n"
+        assert.strictEqual(none, arity)
+        assert.strictEqual(nameOnly, arity)
+        assert.strictEqual(dangling, '-ERR syntax error\r\n')
+        assert.strictEqual(
+          repeated,
+          "-ERR CONFIG SET failed (possibly related to argument 'timeout') - duplicate parameter\r\n",
+        )
+        return
+      }
+
+      const legacy = (subcommand: string): string =>
+        `-ERR Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CONFIG HELP.\r\n`
+      assert.strictEqual(multi, legacy('SET'))
+      assert.strictEqual(lowerCase, legacy('set'))
+      assert.strictEqual(mixedCase, legacy('SeT'))
+      assert.strictEqual(none, legacy('SET'))
+      assert.strictEqual(nameOnly, legacy('SET'))
+      assert.strictEqual(dangling, legacy('SET'))
+      assert.strictEqual(repeated, legacy('SET'))
+    })
+
     // Redis 7.0 moved container commands into the command table, replacing the
     // 6.2 unknown-subcommand template and adding `%.128s` truncation of the
     // echoed name. Captured from real redis-server 6.2.24, 7.0.15 and 8.0.6.
@@ -528,6 +602,96 @@ describe(
       } else {
         assert.match(osReply, /nonexistent global variable 'os'/)
       }
+    })
+
+    test('a noscript container HELP from a script matches the profile (#452)', async () => {
+      // 6.2 flags the whole container noscript; 7.0+ flags each subcommand
+      // and leaves HELP runnable from scripts.
+      for (const container of ['CLIENT', 'ACL', 'SCRIPT']) {
+        const reply = await send(
+          'EVAL',
+          `return redis.pcall('${container}','HELP')`,
+          '0',
+        )
+        if (profile === 'redis-6.2') {
+          assert.match(reply, /^-.*not allowed from script/, container)
+        } else {
+          assert.ok(reply.startsWith('*'), `${container}: ${reply}`)
+        }
+      }
+
+      // Every other subcommand stays refused on every profile.
+      const refused = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','GETNAME')",
+        '0',
+      )
+      assert.match(refused, /^-.*not allowed from script/)
+
+      // 7.0+ resolves `container|subcommand` first, so an unknown (or
+      // not-yet-introduced) subcommand fails lookup; 6.2 refuses the container.
+      const unknownOnNewer =
+        profile === 'redis-6.2'
+          ? /not allowed from script/
+          : /Unknown .*command/
+      const nope = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','NOPE')",
+        '0',
+      )
+      assert.match(nope, /^-/)
+      assert.match(nope, unknownOnNewer)
+
+      const setinfo = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','SETINFO','lib-name','x')",
+        '0',
+      )
+      assert.match(
+        setinfo,
+        profile === 'redis-7.0'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
+
+      // The lookup is against the real table: a real subcommand this server
+      // does not implement is refused, and one the profile's server does not
+      // have yet is unknown.
+      const cases: Array<[string, boolean]> = [
+        ["'ACL','CAT'", true],
+        ["'CLIENT','PAUSE','0'", true],
+        ["'CLIENT','NO-TOUCH','ON'", profile !== 'redis-7.0'],
+        [
+          "'CLIENT','CAPA','redirect'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'SCRIPT','SHOW','x'",
+          !profile.startsWith('redis-') || profile === 'redis-6.2',
+        ],
+        [
+          "'CLIENT','IMPORT-SOURCE','ON'",
+          profile === 'valkey-9.0' || profile === 'redis-6.2',
+        ],
+      ]
+      for (const [call, refused] of cases) {
+        const reply = await send('EVAL', `return redis.pcall(${call})`, '0')
+        assert.match(
+          reply,
+          refused ? /^-.*not allowed from script/ : /^-.*Unknown .*command/,
+          call,
+        )
+      }
+
+      // QUIT has a command-table entry (and so the noscript refusal) only from
+      // 7.0; a 6.2 script sees an unknown command.
+      const quit = await send('EVAL', "return redis.pcall('QUIT')", '0')
+      assert.match(
+        quit,
+        profile === 'redis-6.2'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
     })
 
     test('RESP3 subscribed PUBLISH self-reply order matches the profile', async () => {
@@ -770,6 +934,10 @@ function supportsSetNxGet(): boolean {
 }
 
 function supportsConfigSetFailureWording(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function supportsConfigSetMultiPair(): boolean {
   return profile !== 'redis-6.2'
 }
 

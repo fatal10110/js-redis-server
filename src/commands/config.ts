@@ -4,12 +4,18 @@ import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   RedisCommandError,
+  RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import { normalizeKeyspaceNotifyConfig } from '../state'
-import { INT64_MAX, ok, unknownSubcommandError } from './helpers'
+import {
+  INT64_MAX,
+  ok,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 // Behavior-driving parameters whose authoritative value lives on the server
@@ -221,15 +227,76 @@ type ConfigUpdate =
   | { name: string; value: string }
   | { name: typeof PROTO_MAX_BULK_LEN_PARAM; bytes: bigint }
 
+/**
+ * CONFIG SET's repeated-parameter failure. The `CONFIG SET failed` wrapper of
+ * {@link configSetFailed}, but only ever reachable on 7.0+ profiles (6.2 never
+ * accepts a second pair), and it echoes the repeat exactly as the client sent
+ * it — real Redis reports `argv` here, not the canonical name its value
+ * failures report. Captured from 7.0.15, 8.0.6 and Valkey 7.2.14:
+ *
+ *   CONFIG SET timeout 0 TIMEOUT 0
+ *     -> ERR CONFIG SET failed (possibly related to argument 'TIMEOUT') - duplicate parameter
+ */
+function configSetDuplicateParameter(name: string): RedisCommandError {
+  return new RedisCommandError(
+    `CONFIG SET failed (possibly related to argument '${name}') - duplicate parameter`,
+  )
+}
+
+/**
+ * CONFIG SET's shape and name checks, run before any value is looked at.
+ *
+ * Redis 6.2 dispatches SET only for exactly one pair; every other shape falls
+ * through to the legacy subcommand syntax error. 7.0+ (`config.set.multi-pair`)
+ * takes any number of pairs, and — like its `configSetCommand` — resolves every
+ * name in one pass before validating a value: the first unknown or repeated
+ * name in argument order is the error, so a bad value never masks either.
+ */
+function checkConfigSetNames(
+  subcommand: Buffer,
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+  store: ReadonlyMap<string, string>,
+): void {
+  const { profile } = ctx.server
+  if (!profile.has('config.set.multi-pair')) {
+    if (args.length !== 2) {
+      throw subcommandSyntaxError('CONFIG', subcommand, profile)
+    }
+  } else if (args.length < 2) {
+    throw new WrongNumberOfArgumentsError('config|set')
+  } else if (args.length % 2 !== 0) {
+    throw new RedisSyntaxError()
+  }
+
+  const seen = new Set<string>()
+  for (let i = 0; i < args.length; i += 2) {
+    const raw = args[i].toString()
+    const name = raw.toLowerCase()
+    if (
+      name !== KEYSPACE_NOTIFY_PARAM &&
+      name !== PROTO_MAX_BULK_LEN_PARAM &&
+      !store.has(name)
+    ) {
+      throw new RedisCommandError(
+        `Unknown option or number of arguments for CONFIG SET - '${raw}'`,
+      )
+    }
+    if (seen.has(name)) {
+      throw configSetDuplicateParameter(raw)
+    }
+    seen.add(name)
+  }
+}
+
 function configSet(
+  subcommand: Buffer,
   args: readonly Buffer[],
   ctx: RedisExecutionContext,
 ): RedisResult {
-  if (args.length === 0 || args.length % 2 !== 0) {
-    throw new WrongNumberOfArgumentsError('config|set')
-  }
-
   const store = getConfigStore(ctx)
+  checkConfigSetNames(subcommand, args, ctx, store)
+
   const updates: ConfigUpdate[] = []
   for (let i = 0; i < args.length; i += 2) {
     const name = args[i].toString().toLowerCase()
@@ -251,11 +318,6 @@ function configSet(
         ),
       })
       continue
-    }
-    if (!store.has(name)) {
-      throw new RedisCommandError(
-        `Unknown option or number of arguments for CONFIG SET - '${args[i].toString()}'`,
-      )
     }
     updates.push({ name, value })
   }
@@ -330,7 +392,7 @@ export const configCommand = defineCommand({
     }
 
     if (subcommand === 'set') {
-      return configSet(args.args, ctx)
+      return configSet(args.subcommand, args.args, ctx)
     }
 
     if (subcommand === 'resetstat') {

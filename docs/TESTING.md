@@ -277,11 +277,27 @@ A Lua script can return two more of these kinds. A `{big_number=…}` table is a
 digit string at RESP2 and a `bigint` at RESP3. A boolean is `1` / `0` at RESP2
 and `true` / `false` at RESP3 — but only from a script that has called
 `redis.setresp(3)`, since without it real Redis converts a Lua `true` to the
-integer `1` and `false` to nil. (The `setresp(3)` requirement is Redis's rule
-for booleans only. Real Redis also converts `{big_number=…}`, `{double=…}` and
-`{map=…}` tables without it; the mock's Lua engine currently returns `[]` for
-those unless the script calls `redis.setresp(3)` first — a gap in the mock, not
-Redis behaviour.)
+integer `1` and `false` to nil. After `redis.setresp(3)`, `redis.call` also
+hands the script RESP3 replies — `HGETALL` as a `{map=…}` table, `ZSCORE` as a
+`{double=…}` table — so returning one gives the client a map or a double.
+
+Known mock gaps here — none of them Redis behaviour:
+
+- The `setresp(3)` requirement is Redis's rule for booleans only. Real Redis
+  converts `{big_number=…}`, `{double=…}`, `{map=…}`, `{set=…}` and
+  `{verbatim_string=…}` tables without it; the mock's bundled Lua engine
+  (`lua-redis-wasm`) returns `[]` for them unless the script calls
+  `redis.setresp(3)` first.
+- After `redis.setresp(3)`, a missing value (`GET` of an absent key, a missing
+  `HMGET`/`MGET` field) reaches the script as `false`, not `nil` — also the
+  engine. Returning it gives `false` to a RESP3 client and `0` to a RESP2
+  client rather than a null reply, and inside an array it does not end the
+  array the way a Lua `nil` does in Redis: `HMGET h f nope f` returns
+  `['v']` from real Redis but `['v', false, 'v']` (RESP2: `['v', 0, 'v']`)
+  from the mock.
+- The mock's `SMEMBERS` replies with an array, not a RESP3 set (`~`), so after
+  `redis.setresp(3)` the script sees a plain list instead of a `{set=…}`
+  table. This one is in this repo, not the engine.
 
 (`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
 only ever sees the left column.) The *curated* methods on the node-redis facade
@@ -415,12 +431,23 @@ facade deliberately does not reproduce that, and tears everything down.
 
 That `instanceof` works because the facade throws the `redis` package's *own*
 error classes (the same mechanism behind `WatchError` / `ErrorReply` /
-`MultiErrorReply`). They are resolved lazily, the first time a facade client is
-constructed — importing `js-redis-server` never loads `redis`, so ioredis-only
-users don't pay for it. Only if `redis` genuinely cannot be required (or predates
-one of these classes, as v4 predates `MultiErrorReply`) does the facade fall back
-to local classes that match in message and shape but are not `instanceof` the
-real ones; match on `err.message` if you need to support that.
+`SimpleError` / `MultiErrorReply`). Server errors are `SimpleError` — a subclass
+of `ErrorReply` — exactly as real node-redis v5+ decodes them, so both
+`instanceof ErrorReply` and `instanceof SimpleError` hold; on redis 4.1–4.x,
+which has no `SimpleError`, they are plain `ErrorReply`, again as that version
+throws. The classes are resolved lazily, the first time a facade client is
+constructed or an error is decoded — importing `js-redis-server` never loads
+`redis`, so ioredis-only users don't pay for it.
+
+They are resolved one at a time, and the facade follows the installed version:
+a class it does not export costs only that class, never the ones that do exist.
+Before redis 4.6.12 there is no `MultiErrorReply`, and — as on those releases —
+`exec()` then resolves with a failed command's `ErrorReply` inline in the reply
+array instead of throwing. redis 4.0.x exports no `ErrorReply` at all, so server
+errors there are a local look-alike that is not `instanceof` anything you can
+import; match on `err.message` on 4.0.x. The same look-alikes (matching node-redis
+v6 in message, `name` and `constructor.name`) are used if `redis` cannot be
+required at all.
 
 **Known gap ([#440](https://github.com/fatal10110/js-redis-server/issues/440)):**
 real node-redis re-opens a closed client (`connect()` reconnects,

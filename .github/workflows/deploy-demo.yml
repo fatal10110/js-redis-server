@@ -13,11 +13,12 @@ on:
     branches: [main]
     # Only redeploy when the demo or the inputs it actually consumes change.
     # The root manifests are in here because the job runs `npm ci` at the root
-    # too. The root tsconfig is in here because the demo has none of its own,
-    # so it is the nearest config for Vite's transform of the demo and src/**
-    # (`module: nodenext` infers target es2022, which defaults
-    # useDefineForClassFields to true — worth 70 bytes and a different content
-    # hash), and it is the config `tsx` loads for `test:demo`.
+    # too. The root tsconfig is in here because it is a build input: Vite
+    # resolves the nearest tsconfig per file, so every src/** file is still
+    # transformed under it (`module: nodenext` infers target es2022, which
+    # defaults useDefineForClassFields to true — it changes class-field emit
+    # and the content hash). examples/browser-demo/tsconfig.json covers only
+    # the demo's own files. It is also the config `tsx` loads for `test:demo`.
     paths:
       - 'examples/browser-demo/**'
       - 'src/**'
@@ -47,6 +48,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Backstop for a hung `test:demo` run on Node 24, where --test-timeout
+    # cannot end a process that stays alive (#454).
+    timeout-minutes: 15
     # Scoped per job rather than workflow-wide: this job runs `npm ci` twice
     # over a lockfile the PR author controls, so install lifecycle scripts
     # execute here. `id-token: write` belongs to `deploy` alone — only
@@ -82,14 +86,48 @@ jobs:
         run: npm ci
         working-directory: examples/browser-demo
 
-      # Note: these run transpile-only. The demo has no tsconfig, so nothing
-      # typechecks format.ts — adding one is blocked on the pre-existing
-      # Reply/Buffer errors tracked in #396.
+      # The tests below run transpile-only (tsx), so typecheck separately.
+      # Uses the root's TypeScript against the demo's own tsconfig; needs both
+      # installs above (vite/client types come from the demo tree, @types/node
+      # and ../../src's deps from the root). Also type-checks the demo's
+      # ../../src imports under this browser-oriented config (DOM lib, bundler
+      # resolution) — note the bundle transforms src/** under the root
+      # tsconfig; only the demo's own files use examples/browser-demo's.
+      - name: Typecheck demo
+        run: npx tsc -p examples/browser-demo
+
       - name: Run demo tests
         run: npm run test:demo
 
       - name: Build demo
         run: npm run build
+        working-directory: examples/browser-demo
+
+      # vite-plugin-node-polyfills inlines what it polyfills into the shipped
+      # artifact, so "it's only a dev dependency" does not hold for it (#393).
+      # The demo polyfills only `buffer` and shims crypto's SHA-1; this fails
+      # the build if a config change lets crypto-browserify's `elliptic` back
+      # into the Pages bundle.
+      # grep exits 0 on a match, 1 on none, 2 on error (e.g. the glob matched
+      # no file) — only 1 is a pass, so the guard can't pass vacuously.
+      - name: Check bundle has no elliptic
+        run: |
+          shopt -s nullglob
+          bundles=(dist/assets/*.js)
+          if [ ${#bundles[@]} -eq 0 ]; then
+            echo "::error::no dist/assets/*.js to check"
+            exit 1
+          fi
+          rc=0
+          grep -l -E 'elliptic|secp256k1' "${bundles[@]}" || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            if [ "$rc" -eq 0 ]; then
+              echo "::error::elliptic/secp256k1 found in the demo bundle (#393)"
+            else
+              echo "::error::grep failed (exit $rc) checking the demo bundle"
+            fi
+            exit 1
+          fi
         working-directory: examples/browser-demo
 
       - uses: actions/configure-pages@v5
@@ -104,6 +142,7 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pages: write
