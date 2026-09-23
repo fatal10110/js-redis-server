@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
+import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 // Unique per run: the real-backend suites share one Redis that is never
@@ -15,7 +15,6 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { flushNodeRedisCluster, randomKey } from '../../utils'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -18,7 +18,6 @@ describe(`Blocking Commands Integration (node-redis, ${testRunner.getBackendName
   before(async () => {
     client1 = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
     client2 = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(client1)
   })
 
   after(async () => {
