@@ -1,10 +1,5 @@
 export type RedisDataTypeName =
-  | 'string'
-  | 'hash'
-  | 'list'
-  | 'set'
-  | 'zset'
-  | 'stream'
+  'string' | 'hash' | 'list' | 'set' | 'zset' | 'stream'
 
 export type RedisStringData = {
   type: 'string'
