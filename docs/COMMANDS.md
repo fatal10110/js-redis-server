@@ -254,9 +254,21 @@ with `GT` or `LT`.
   every `GET` pattern is refused with the shorter `denied in Cluster mode.`
   wording, and `GET '#'` only becomes exempt from the slot check in Redis
   7.4.2 / Valkey 8.0.2 — so the `redis-7.4` profile (pinned at 7.4.4) exempts
-  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. Hash-field
-  dereference patterns such as
+  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. As in Redis, the
+  guard runs inside SORT's own left-to-right option scan when the command
+  executes: the first offending option is the one reported, a later syntax
+  error is never reached, and inside `MULTI` the command queues and the error
+  surfaces in `EXEC`. Hash-field dereference patterns such as
   `object_*->field` are not modeled.
+- `SORT` loads a set of canonical 64-bit integers in ascending numeric order
+  (as an intset is stored) and any other set in insertion order (as a small
+  listpack set is). Real Redis never converts a set back to an intset, so a
+  set that briefly held a non-integer keeps its listpack order there; the mock
+  re-derives the order from the current members. With `BY` plus a `LIMIT` that
+  does not cover every element, Redis' partial quicksort can reorder elements
+  that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
+  a small zset to the `skiplist` encoding is not observable until
+  `OBJECT ENCODING` exists (#117).
 
 #### Not implemented
 
