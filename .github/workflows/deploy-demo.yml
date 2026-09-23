@@ -13,11 +13,10 @@ on:
     branches: [main]
     # Only redeploy when the demo or the inputs it actually consumes change.
     # The root manifests are in here because the job runs `npm ci` at the root
-    # too. The root tsconfig is in here because the demo has none of its own,
-    # so it is the nearest config for Vite's transform of the demo and src/**
-    # (`module: nodenext` infers target es2022, which defaults
-    # useDefineForClassFields to true — worth 70 bytes and a different content
-    # hash), and it is the config `tsx` loads for `test:demo`.
+    # too. The root tsconfig is in here because it is the config `tsx` loads
+    # for `test:demo`. (Vite's transform of the demo and src/** now uses
+    # examples/browser-demo/tsconfig.json, which pins useDefineForClassFields
+    # to match what the root one implied — see the note there.)
     paths:
       - 'examples/browser-demo/**'
       - 'src/**'
@@ -82,9 +81,14 @@ jobs:
         run: npm ci
         working-directory: examples/browser-demo
 
-      # Note: these run transpile-only. The demo has no tsconfig, so nothing
-      # typechecks format.ts — adding one is blocked on the pre-existing
-      # Reply/Buffer errors tracked in #396.
+      # The tests below run transpile-only (tsx), so typecheck separately.
+      # Uses the root's TypeScript against the demo's own tsconfig; needs both
+      # installs above (vite/client types come from the demo tree, @types/node
+      # and ../../src's deps from the root). Covers the demo's ../../src
+      # imports too, under the browser-oriented config the bundle is built with.
+      - name: Typecheck demo
+        run: npx tsc -p examples/browser-demo
+
       - name: Run demo tests
         run: npm run test:demo
 
