@@ -1,4 +1,4 @@
-import { asciiLowerCase } from '../core/ascii-case'
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import {
   defineCommand,
   type CommandDefinition,
@@ -590,10 +590,6 @@ function expectArgCount(
   if (args.length !== count) {
     throw new WrongNumberOfArgumentsError(commandName)
   }
-}
-
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return asciiLowerCase(value.toString()) === expected
 }
 
 function bulkString(value: string): RedisValue {

@@ -45,7 +45,9 @@ describe('CommandRegistry', () => {
     // U+212A KELVIN SIGN lowercases to 'k' under Unicode folding.
     assert.strictEqual(registry.get('\u212Aeys'), undefined)
     assert.strictEqual(registry.get('\u212AEYS'), undefined)
-    // U+017F LATIN SMALL LETTER LONG S uppercases to 'S'.
+    // U+017F LATIN SMALL LETTER LONG S uppercases to 'S' but lowercases to
+    // itself, so this never resolved even before #382 — a regression guard
+    // against the lookup ever growing an upper-casing fold.
     assert.strictEqual(registry.get('\u017Fet'), undefined)
   })
 

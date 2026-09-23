@@ -11,19 +11,23 @@ import { expectReply, expectReplyPrefix } from './helpers'
  * only `A-Z` is case-insensitive. JavaScript's `toLowerCase()`/`toUpperCase()`
  * are Unicode-aware and fold a few non-ASCII characters onto ASCII letters:
  *
- *  - U+212A KELVIN SIGN lowercases to `k`, so `Keys` resolved to KEYS;
- *  - U+017F LATIN SMALL LETTER LONG S uppercases to `S`, so `XINFO ſTREAM`
- *    dispatched XINFO STREAM.
+ *  - U+212A KELVIN SIGN lowercases to `k`, so `<U+212A>eys` resolved to KEYS;
+ *  - U+017F LATIN SMALL LETTER LONG S uppercases to `S`, so
+ *    `XINFO <U+017F>TREAM` dispatched XINFO STREAM.
+ *
+ * U+017F only matters on the upper-casing paths (XINFO/XGROUP): it lowercases
+ * to itself, so `<U+017F>et` never resolved to SET even before the fix. The
+ * long-s command-name cases below are regression guards, not bug repros.
  *
  * Captured from real 8.0.6 — every one of these is rejected by name:
  *
  * ```
- * COMMAND INFO hKeys           -> *1 $-1
- * COMMAND GETKEYS hKeys h      -> -ERR Invalid command specified
- * COMMAND DOCS hKeys           -> *0
- * COMMAND GETKEYS SET k v      -> -ERR unknown subcommand 'GETKEYS'. Try COMMAND HELP.
- * XINFO ſTREAM k               -> -ERR unknown subcommand 'ſTREAM'. Try XINFO HELP.
- * EVAL "redis.pcall('hKeys')"  -> -ERR Unknown Redis command called from script
+ * COMMAND INFO h<U+212A>eys          -> *1 $-1
+ * COMMAND GETKEYS h<U+212A>eys h     -> -ERR Invalid command specified
+ * COMMAND DOCS h<U+212A>eys          -> *0
+ * COMMAND GET<U+212A>EYS SET k v     -> -ERR unknown subcommand 'GET<U+212A>EYS'. Try COMMAND HELP.
+ * XINFO <U+017F>TREAM k              -> -ERR unknown subcommand '<U+017F>TREAM'. Try XINFO HELP.
+ * EVAL "redis.pcall('h<U+212A>eys')" -> -ERR Unknown Redis command called from script
  * ```
  *
  * The *unknown command* replies are asserted by prefix only: real Redis echoes
@@ -33,8 +37,12 @@ import { expectReply, expectReplyPrefix } from './helpers'
  */
 const testRunner = new TestRunner()
 
-const KELVIN = 'K'
-const LONG_S = 'ſ'
+// Built from code points, not written as literals: a raw look-alike in source
+// is unreadable in review, and an editor or formatter normalizing it to ASCII
+// would silently turn the Kelvin case into a real `KEYS *` on the shared
+// backend.
+const KELVIN = String.fromCodePoint(0x212a)
+const LONG_S = String.fromCodePoint(0x017f)
 const UNKNOWN_COMMAND = "-ERR unknown command '"
 
 function unknownSubcommand(container: string, echoed: string): Buffer {
@@ -75,6 +83,9 @@ describe(`Raw TCP ASCII-only command-name folding (${testRunner.getBackendName()
     await expectReplyPrefix(conn, [`${KELVIN}EYS`, '*'], UNKNOWN_COMMAND)
   })
 
+  // Regression guard only: '<U+017F>' lowercases to itself, so this spelling was
+  // already rejected before #382. It pins that the command path never grows
+  // an upper-casing fold, which *would* map it onto SET.
   test('a long-s spelling of SET is an unknown command and writes nothing', async () => {
     const conn = await connect()
     const key = `fold:${randomKey()}`

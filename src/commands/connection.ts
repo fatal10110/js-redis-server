@@ -1,4 +1,4 @@
-import { asciiLowerCase } from '../core/ascii-case'
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t } from '../core/command-schema'
 import type {
@@ -496,10 +496,6 @@ function redactMonitorArgAt(args: Buffer[], index: number): void {
 
 function redactedMonitorArg(): Buffer {
   return Buffer.from('(redacted)')
-}
-
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return asciiLowerCase(value.toString()) === expected
 }
 
 export const pingCommand = defineCommand({
