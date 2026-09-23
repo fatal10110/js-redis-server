@@ -84,6 +84,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // accept; valkey 8.0.0/8.0.1 refuse and 8.0.2+ accept. Before that it is
   // hashed like any other pattern and therefore denied.
   'sort.cluster-get-hash': { redis: '7.4.2', valkey: '8.0.2' },
+  // Double replies (ZSCORE, ZINCRBY, WITHSCORES, RESP3 `,`): Redis 7.2 moved
+  // `addReplyDouble()` from `%.17g` (`0.1` → `0.10000000000000001`) to
+  // `d2string()`, i.e. exact integer digits within ±2^62 and `fpconv_dtoa`
+  // (Grisu2) otherwise (`0.1`). Checked against redis-server 6.2.14, 7.0.15,
+  // 7.2.4, 7.4.4, 8.0.6 and valkey-server 8.0.0 / 9.0.0 — see
+  // tests/fixtures/redis-double-format.json and src/core/double-format.ts.
+  'reply.double-fpconv': { redis: '7.2.0', valkey: '7.2.0' },
+  // GEOPOS / WITHCOORD coordinates: Redis 8.0 replies with `addReplyDouble()`
+  // (the `d2string()` spelling above, `13.361389338970184`); 6.2-7.4 and every
+  // Valkey through 9.0 use `addReplyHumanLongDouble()` (`%.17Lf` trimmed,
+  // `13.36138933897018433`). Both are a `,` double on RESP3. Checked against
+  // redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0, 8.0.6 and valkey-server
+  // 8.0.0 / 9.0.0.
+  'geo.coord-d2string': { redis: '8.0.0' },
   // Redis 7.0 moved `noscript` from the container to each subcommand, and no
   // container's HELP subcommand carries it: `redis.pcall('CLIENT','HELP')`
   // (likewise CONFIG/ACL/SCRIPT/FUNCTION) returns the help text on 7.0+, where

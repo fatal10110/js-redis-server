@@ -1,5 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
+import { formatGeoCoordinate } from '../../core/double-format'
 import { RedisValue } from '../../core/redis-value'
 import { array } from '../helpers'
 import { decodeGeoScore } from './helpers'
@@ -16,8 +17,8 @@ export const geoposCommand = defineCommand({
       if (!entry) return RedisValue.null()
       const { lon, lat } = decodeGeoScore(entry.score)
       return RedisValue.array([
-        RedisValue.bulkString(Buffer.from(lon.toString())),
-        RedisValue.bulkString(Buffer.from(lat.toString())),
+        RedisValue.double(lon, formatGeoCoordinate(lon, ctx.server.profile)),
+        RedisValue.double(lat, formatGeoCoordinate(lat, ctx.server.profile)),
       ])
     })
     return array(items)

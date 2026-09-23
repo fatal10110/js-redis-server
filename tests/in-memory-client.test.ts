@@ -106,4 +106,28 @@ describe('createInMemoryClient', () => {
     client = await createInMemoryClient()
     assert.strictEqual(await client.command('LMPOP', '1', 'k', 'LEFT'), null)
   })
+
+  test('spells a RESP2 double the way the profile does (#451)', async () => {
+    // The socketless client never encodes: it decodes the reply's double
+    // itself, so it needs the served profile as much as the encoder does.
+    client = await createInMemoryClient({ compatibility: 'redis-6.2' })
+    await client.command('ZADD', 'z', '0.1', 'm')
+    assert.strictEqual(
+      await client.command('ZSCORE', 'z', 'm'),
+      '0.10000000000000001',
+    )
+    await client.command('GEOADD', 'g', '13.361389', '38.115556', 'p')
+    assert.deepStrictEqual(await client.command('GEOPOS', 'g', 'p'), [
+      ['13.36138933897018433', '38.11555639549629859'],
+    ])
+    client.close()
+
+    client = await createInMemoryClient()
+    await client.command('ZADD', 'z', '0.1', 'm')
+    assert.strictEqual(await client.command('ZSCORE', 'z', 'm'), '0.1')
+    await client.command('GEOADD', 'g', '13.361389', '38.115556', 'p')
+    assert.deepStrictEqual(await client.command('GEOPOS', 'g', 'p'), [
+      ['13.361389338970184', '38.1155563954963'],
+    ])
+  })
 })

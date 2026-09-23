@@ -423,7 +423,12 @@ RESP3 — `RedisValue.map`/`mapPairs`/`set`/`double`/`boolean`/`bigNumber`/`push
 then encode as their native RESP3 types (`%`, `%`, `~`, `,`, `#`, `(`, `>`)
 instead of being downgraded to arrays/bulk-strings. `map` downgrades to a flat
 RESP2 key/value array, while `mapPairs` downgrades to a RESP2 array of
-`[key, value]` pairs for commands like `XREAD`. See the
+`[key, value]` pairs for commands like `XREAD`. A `double`'s text depends on
+the server's compatibility profile — `%.17g` on Redis 6.2 / 7.0, `d2string()`
+(exact integers, else a port of Redis's Grisu2 `fpconv_dtoa`) on 7.2+ and
+Valkey — so the encoder takes the profile alongside the RESP version, and the
+socketless decoders and the Lua bridge share the same
+[`formatRedisDouble`](../src/core/double-format.ts). See the
 [testing guide's "Connecting your client" section](TESTING.md#connecting-your-client)
 for the client-facing view of this negotiation.
 

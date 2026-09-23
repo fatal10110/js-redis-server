@@ -393,6 +393,39 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- Double replies are spelled the way the emulated version spells them ([#451]).
+  Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print
+  `d2string()`: every digit of an integer within ±2^62, otherwise Redis's
+  Grisu2 `fpconv_dtoa`, which is now ported rather than approximated with JS
+  `toString()`. Affected: `ZSCORE`, `ZMSCORE`, `ZINCRBY`, every `WITHSCORES`
+  reply, RESP3 `,` doubles, `ZSCAN` scores, and a score a script reads with
+  `redis.call` (the Lua bridge had its own copy of the old formatter). For
+  example:
+
+  ```
+  score               redis-6.2 / 7.0             redis-7.2+ / valkey   old (every profile)
+  0.1                 0.10000000000000001         0.1                   0.1
+  0.0000123           1.2300000000000001e-05      1.23e-5               0.0000123
+  2^62                4.6116860184273879e+18      4611686018427387904   4611686018427388000
+  1e20                1e+20                       1e+20                 100000000000000000000
+  ```
+
+  GEO coordinates (`GEOPOS`, `WITHCOORD` on `GEOSEARCH` / `GEORADIUS*`) are
+  now a `,` double on RESP3 — they were a bulk string — and follow their own
+  version split: Redis 8.0 prints `d2string()` (`13.361389338970184`), while
+  Redis 6.2–7.4 and every Valkey print `%.17Lf` with the trailing zeros
+  trimmed (`13.36138933897018433`). The coordinate *values* still come from
+  the mock's own geohash decode, which can differ from Redis's in the last
+  digits; that is a separate issue.
+
+  Pinned against 1,203 values captured from real redis-server 6.2.14 / 7.0.15 /
+  7.2.4 / 7.4.4 / 8.0.0 / 8.0.6 and valkey-server 8.0.0 / 9.0.0
+  (`tests/fixtures/redis-double-format.json`). `encodeRedisValue` /
+  `encodeRedisResult` (`js-redis-server/core`) take an optional `profile`
+  for this; without one they use the default profile's spelling.
+  `RedisValue.double()` takes an optional exact `text` for replies whose
+  spelling is not `addReplyDouble()`'s.
+
 - `SORT` / `SORT_RO` scan their options when they run, left to right, the way
   `sortCommand()` does, and the cluster `BY` / `GET` pattern guard moved from
   `ClusterPolicy` into that scan ([#417]). The first offending option in
@@ -580,6 +613,7 @@ requests they contain.
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
+[#451]: https://github.com/fatal10110/js-redis-server/issues/451
 [#417]: https://github.com/fatal10110/js-redis-server/issues/417
 [#443]: https://github.com/fatal10110/js-redis-server/issues/443
 [#366]: https://github.com/fatal10110/js-redis-server/issues/366

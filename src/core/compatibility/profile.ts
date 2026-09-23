@@ -32,6 +32,8 @@ export type FeatureId =
   | 'cluster.multi-db'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
+  | 'reply.double-fpconv'
+  | 'geo.coord-d2string'
   | 'script.per-subcommand-noscript'
   | 'command.quit-table-entry'
   | 'script.abort-error-suffix'

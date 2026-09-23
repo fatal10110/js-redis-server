@@ -1,5 +1,6 @@
 import type { RedisValue } from './redis-value'
-import { formatRedisDouble, type RespVersion } from './resp-encoder'
+import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
+import type { RespVersion } from './resp-encoder'
 
 /**
  * Native JS value a {@link RedisValue} decodes to — the shape a real client
@@ -54,6 +55,13 @@ export type DecodeRedisValueOptions = ClientDecodeOptions & {
    * letting this switch reach it. See #414.
    */
   version: RespVersion
+  /**
+   * The serving server's compatibility profile, which spells a RESP2 `double`
+   * (`%.17g` before Redis 7.2, `d2string()` after) exactly as
+   * `encodeRedisValue`'s `{ profile }` does. The default profile's spelling
+   * without it.
+   */
+  profile?: DoubleFormatProfile
 }
 
 /**
@@ -135,7 +143,7 @@ export function decodeRedisValue(
       if (options.version === 3) {
         return value.value
       }
-      const text = formatRedisDouble(value.value)
+      const text = value.text ?? formatRedisDouble(value.value, options.profile)
       return options.returnBuffers ? Buffer.from(text) : text
     }
     case 'boolean':

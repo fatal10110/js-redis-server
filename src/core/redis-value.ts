@@ -2,7 +2,12 @@ export type RedisValue =
   | { kind: 'simple-string'; value: string }
   | { kind: 'bulk-string'; value: Buffer | null }
   | { kind: 'integer'; value: number | bigint }
-  | { kind: 'double'; value: number }
+  /**
+   * `text`, when set, is the reply's exact spelling (a command whose Redis
+   * reply is not `addReplyDouble()`, e.g. GEO coordinates); otherwise the
+   * encoder spells `value` per profile with `formatRedisDouble`.
+   */
+  | { kind: 'double'; value: number; text?: string }
   | { kind: 'boolean'; value: boolean }
   | { kind: 'big-number'; value: bigint }
   | { kind: 'verbatim'; format: string; value: Buffer }
@@ -35,7 +40,10 @@ export const RedisValue = {
     value,
   }),
   integer: (value: number | bigint): RedisValue => ({ kind: 'integer', value }),
-  double: (value: number): RedisValue => ({ kind: 'double', value }),
+  double: (value: number, text?: string): RedisValue =>
+    text === undefined
+      ? { kind: 'double', value }
+      : { kind: 'double', value, text },
   boolean: (value: boolean): RedisValue => ({ kind: 'boolean', value }),
   bigNumber: (value: bigint): RedisValue => ({ kind: 'big-number', value }),
   verbatim: (format: string, value: Buffer): RedisValue => ({

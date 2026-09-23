@@ -9,6 +9,7 @@ import {
 import type { CompatibilityProfile } from './compatibility/profile'
 import { noscriptSubcommandExists } from './compatibility/subcommand-gates'
 import type { CommandPlan } from './command-definition'
+import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
 import {
   errorReplyBytes,
   RedisCommandError,
@@ -168,6 +169,7 @@ export class RedisLuaRuntime {
     return redisValueToLuaReply(
       normalizeScriptCommandValue(result.value),
       this.hostState.resp,
+      ctx.server.profile,
     )
   }
 }
@@ -484,13 +486,17 @@ function isErrorReply(
  * (`{map=…}`, `{double=…}`) — the shapes `encodeResp3` writes to the wire,
  * except null (see {@link resp3TypedLuaReply}).
  *
+ * At RESP2 a double reaches Lua as the text the served profile spells it
+ * with (#451); without a profile, the default profile's spelling.
+ *
  * Exported for unit tests only.
  */
 export function redisValueToLuaReply(
   value: RedisValue,
   resp: RespVersion,
+  profile?: DoubleFormatProfile,
 ): ReplyValue {
-  const toLua = (item: RedisValue) => redisValueToLuaReply(item, resp)
+  const toLua = (item: RedisValue) => redisValueToLuaReply(item, resp, profile)
   if (resp === 3) {
     const typed = resp3TypedLuaReply(value, toLua)
     if (typed !== undefined) {
@@ -506,7 +512,7 @@ export function redisValueToLuaReply(
     case 'integer':
       return value.value
     case 'double':
-      return Buffer.from(formatNumber(value.value))
+      return Buffer.from(value.text ?? formatRedisDouble(value.value, profile))
     case 'boolean':
       return value.value ? 1 : 0
     case 'big-number':
@@ -627,24 +633,4 @@ function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {
     err: errorReplyBytes(err),
     code: Buffer.from(err.code),
   }
-}
-
-function formatNumber(value: number): string {
-  if (Number.isNaN(value)) {
-    return 'nan'
-  }
-
-  if (value === Infinity) {
-    return 'inf'
-  }
-
-  if (value === -Infinity) {
-    return '-inf'
-  }
-
-  if (Object.is(value, -0)) {
-    return '-0'
-  }
-
-  return value.toString()
 }

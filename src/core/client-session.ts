@@ -460,7 +460,10 @@ export class ClientSession implements RedisClientSession {
     encodedValues.push(
       encoded
         ? Buffer.from(encoded)
-        : encodeRedisValue(value, { version: this.protocolVersion }),
+        : encodeRedisValue(value, {
+            version: this.protocolVersion,
+            profile: this.server.profile,
+          }),
     )
   }
 

@@ -1,10 +1,17 @@
 import { RedisResult } from './redis-result'
 import { RedisValue } from './redis-value'
+import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
 
 export type RespVersion = 2 | 3
 
 export type RespEncodeOptions = {
   version?: RespVersion
+  /**
+   * The server's compatibility profile. Decides how a `double` is spelled
+   * (`%.17g` before Redis 7.2, `d2string()` after — see
+   * {@link formatRedisDouble}); the default profile's spelling without it.
+   */
+  profile?: DoubleFormatProfile
 }
 
 export function encodeRedisResult(
@@ -24,13 +31,16 @@ export function encodeRedisValue(
 ): Buffer {
   const version = options?.version ?? 2
   if (version === 3) {
-    return encodeResp3(value)
+    return encodeResp3(value, options?.profile)
   }
 
-  return encodeResp2(value)
+  return encodeResp2(value, options?.profile)
 }
 
-function encodeResp2(value: RedisValue): Buffer {
+function encodeResp2(
+  value: RedisValue,
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   switch (value.kind) {
     case 'simple-string':
       return Buffer.from(`+${value.value}\r\n`)
@@ -39,7 +49,9 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return encodeBulkString(Buffer.from(formatRedisDouble(value.value)))
+      return encodeBulkString(
+        Buffer.from(value.text ?? formatRedisDouble(value.value, profile)),
+      )
     case 'boolean':
       return Buffer.from(`:${value.value ? 1 : 0}\r\n`)
     case 'big-number':
@@ -47,28 +59,34 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'verbatim':
       return encodeBulkString(value.value)
     case 'array':
-      return encodeArray(value.items)
+      return encodeArray(value.items, profile)
     case 'set':
-      return encodeArray(value.items)
+      return encodeArray(value.items, profile)
     case 'map':
       return encodeArray(
         value.entries.flatMap(([key, entryValue]) => [key, entryValue]),
+        profile,
       )
     case 'map-pairs':
       return encodeArray(
         value.entries.map(([key, entryValue]) =>
           RedisValue.array([key, entryValue]),
         ),
+        profile,
       )
     case 'flat-pairs':
       return encodeArray(
         value.entries.flatMap(([key, entryValue]) => [key, entryValue]),
+        profile,
       )
     case 'push':
-      return encodeArray([
-        { kind: 'bulk-string', value: Buffer.from(value.name) },
-        ...value.items,
-      ])
+      return encodeArray(
+        [
+          { kind: 'bulk-string', value: Buffer.from(value.name) },
+          ...value.items,
+        ],
+        profile,
+      )
     case 'null':
       return encodeBulkString(null)
     case 'null-array':
@@ -78,7 +96,10 @@ function encodeResp2(value: RedisValue): Buffer {
   }
 }
 
-function encodeResp3(value: RedisValue): Buffer {
+function encodeResp3(
+  value: RedisValue,
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   switch (value.kind) {
     case 'simple-string':
       return Buffer.from(`+${value.value}\r\n`)
@@ -87,7 +108,9 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return Buffer.from(`,${formatRedisDouble(value.value)}\r\n`)
+      return Buffer.from(
+        `,${value.text ?? formatRedisDouble(value.value, profile)}\r\n`,
+      )
     case 'boolean':
       return Buffer.from(value.value ? '#t\r\n' : '#f\r\n')
     case 'big-number':
@@ -95,21 +118,22 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'verbatim':
       return encodeResp3VerbatimString(value.format, value.value)
     case 'array':
-      return encodeResp3Array(value.items)
+      return encodeResp3Array(value.items, profile)
     case 'set':
-      return encodeResp3Set(value.items)
+      return encodeResp3Set(value.items, profile)
     case 'map':
-      return encodeResp3Map(value.entries)
+      return encodeResp3Map(value.entries, profile)
     case 'map-pairs':
-      return encodeResp3Map(value.entries)
+      return encodeResp3Map(value.entries, profile)
     case 'flat-pairs':
       return encodeResp3Array(
         value.entries.map(([key, entryValue]) =>
           RedisValue.array([key, entryValue]),
         ),
+        profile,
       )
     case 'push':
-      return encodeResp3Push(value.name, value.items)
+      return encodeResp3Push(value.name, value.items, profile)
     case 'null':
     case 'null-array':
       return Buffer.from('_\r\n')
@@ -118,40 +142,56 @@ function encodeResp3(value: RedisValue): Buffer {
   }
 }
 
-function encodeArray(items: readonly RedisValue[]): Buffer {
+function encodeArray(
+  items: readonly RedisValue[],
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   return Buffer.concat([
     Buffer.from(`*${items.length}\r\n`),
-    ...items.map(item => encodeResp2(item)),
+    ...items.map(item => encodeResp2(item, profile)),
   ])
 }
 
-function encodeResp3Array(items: readonly RedisValue[]): Buffer {
+function encodeResp3Array(
+  items: readonly RedisValue[],
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   return Buffer.concat([
     Buffer.from(`*${items.length}\r\n`),
-    ...items.map(item => encodeResp3(item)),
+    ...items.map(item => encodeResp3(item, profile)),
   ])
 }
 
-function encodeResp3Set(items: readonly RedisValue[]): Buffer {
+function encodeResp3Set(
+  items: readonly RedisValue[],
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   return Buffer.concat([
     Buffer.from(`~${items.length}\r\n`),
-    ...items.map(item => encodeResp3(item)),
+    ...items.map(item => encodeResp3(item, profile)),
   ])
 }
 
-function encodeResp3Map(entries: readonly [RedisValue, RedisValue][]): Buffer {
+function encodeResp3Map(
+  entries: readonly [RedisValue, RedisValue][],
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   const frames: Buffer[] = [Buffer.from(`%${entries.length}\r\n`)]
   for (const [key, value] of entries) {
-    frames.push(encodeResp3(key), encodeResp3(value))
+    frames.push(encodeResp3(key, profile), encodeResp3(value, profile))
   }
   return Buffer.concat(frames)
 }
 
-function encodeResp3Push(name: string, items: readonly RedisValue[]): Buffer {
+function encodeResp3Push(
+  name: string,
+  items: readonly RedisValue[],
+  profile: DoubleFormatProfile | undefined,
+): Buffer {
   return Buffer.concat([
     Buffer.from(`>${items.length + 1}\r\n`),
     encodeResp3BlobString(Buffer.from(name)),
-    ...items.map(item => encodeResp3(item)),
+    ...items.map(item => encodeResp3(item, profile)),
   ])
 }
 
@@ -206,37 +246,6 @@ function encodeError(value: Extract<RedisValue, { kind: 'error' }>): Buffer {
     ),
     Buffer.from('\r\n'),
   ])
-}
-
-/**
- * The text of a `double` on the wire — a RESP3 `,` double, and the bulk string
- * RESP2 sends in its place, which is therefore also what a client reads back
- * off a RESP2 connection. `decodeRedisValue` shares it so encode and decode
- * cannot drift.
- *
- * `inf` / `-inf` / `nan` and `-0` match Redis. Everything else is JavaScript's
- * `toString()`, which is not always Redis's spelling: Redis 7.2+ writes `1e20`
- * as `1e+20` and `0.0000123` as `1.23e-5`, and 6.2 / 7.0 print `%.17g`.
- * Profile-aware formatting is tracked in #451.
- */
-export function formatRedisDouble(value: number): string {
-  if (Number.isNaN(value)) {
-    return 'nan'
-  }
-
-  if (value === Infinity) {
-    return 'inf'
-  }
-
-  if (value === -Infinity) {
-    return '-inf'
-  }
-
-  if (Object.is(value, -0)) {
-    return '-0'
-  }
-
-  return value.toString()
 }
 
 /**

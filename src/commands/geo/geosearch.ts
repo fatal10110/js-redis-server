@@ -108,6 +108,7 @@ export const geosearchCommand = defineCommand({
         withHash: args.withHash,
       },
       args.by.unit,
+      ctx.server.profile,
     )
   },
 })

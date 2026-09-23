@@ -371,7 +371,12 @@ function confirmations(
   return RedisResult.preEncoded(
     frames[0].value,
     Buffer.concat(
-      frames.map(frame => encodeRedisValue(frame.value, { version })),
+      frames.map(frame =>
+        encodeRedisValue(frame.value, {
+          version,
+          profile: ctx.server.profile,
+        }),
+      ),
     ),
     { trailingFrames: frames.slice(1).map(frame => frame.value) },
   )

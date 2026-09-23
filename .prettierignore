@@ -9,3 +9,6 @@ redis-data
 # Markdown is hand-formatted (tables, diagrams); prettier would reflow it.
 # This was `.md`, which only ever matched a file literally named ".md".
 *.md
+# Captured from real servers by scripts/capture-double-format-fixture.ts;
+# kept byte-for-byte as the script writes it.
+tests/fixtures/redis-double-format.json

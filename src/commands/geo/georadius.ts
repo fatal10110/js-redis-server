@@ -88,6 +88,7 @@ function executeGeoRadius(args: GeoRadiusArgs, ctx: RedisExecutionContext) {
       withHash: args.withHash,
     },
     args.by.unit,
+    ctx.server.profile,
   )
 }
 
