@@ -72,16 +72,48 @@ describe(`noscript commands from Lua (ioredis, ${testRunner.getBackendName()})`,
   })
 
   test('RESET and QUIT are refused from scripts', async () => {
+    const name = `keep-${randomKey()}`
+    assert.strictEqual(await redis.client('SETNAME', name), 'OK')
+
     for (const command of ['RESET', 'QUIT']) {
       await assert.rejects(
         () => redis.eval(`return redis.pcall('${command}')`, 0),
-        errorWithMessage(NOT_ALLOWED),
+        errorWithMessage(
+          // 6.2 has no QUIT table entry: its scripts fail command lookup.
+          command === 'QUIT' && activeProfile === 'redis-6.2'
+            ? 'ERR Unknown Redis command called from script'
+            : NOT_ALLOWED,
+        ),
         command,
       )
     }
-    // Neither ran: the connection is still open and usable.
-    assert.strictEqual(await redis.ping(), 'PONG')
+    // Neither ran: RESET would have cleared the connection name.
+    assert.strictEqual(await redis.client('GETNAME'), name)
   })
+
+  test(
+    'an unknown noscript-container subcommand fails command lookup on 7.0+',
+    {
+      skip:
+        (!helpAllowedFromScripts || activeProfile.startsWith('valkey')) &&
+        'redis-6.2 refuses the container; Valkey wording is not modelled',
+    },
+    async () => {
+      for (const container of [
+        'CLIENT',
+        'ACL',
+        'CONFIG',
+        'SCRIPT',
+        'FUNCTION',
+      ]) {
+        await assert.rejects(
+          () => redis.eval(`return redis.pcall('${container}','NOPE')`, 0),
+          errorWithMessage('ERR Unknown Redis command called from script'),
+          container,
+        )
+      }
+    },
+  )
 
   test('CONFIG, ACL and SCRIPT stay refused from scripts', async () => {
     const calls = [

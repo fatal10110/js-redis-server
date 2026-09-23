@@ -553,6 +553,42 @@ describe(
         '0',
       )
       assert.match(refused, /^-.*not allowed from script/)
+
+      // 7.0+ resolves `container|subcommand` first, so an unknown (or
+      // not-yet-introduced) subcommand fails lookup; 6.2 refuses the container.
+      const unknownOnNewer =
+        profile === 'redis-6.2'
+          ? /not allowed from script/
+          : /Unknown .*command/
+      const nope = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','NOPE')",
+        '0',
+      )
+      assert.match(nope, /^-/)
+      assert.match(nope, unknownOnNewer)
+
+      const setinfo = await send(
+        'EVAL',
+        "return redis.pcall('CLIENT','SETINFO','lib-name','x')",
+        '0',
+      )
+      assert.match(
+        setinfo,
+        profile === 'redis-7.0'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
+
+      // QUIT has a command-table entry (and so the noscript refusal) only from
+      // 7.0; a 6.2 script sees an unknown command.
+      const quit = await send('EVAL', "return redis.pcall('QUIT')", '0')
+      assert.match(
+        quit,
+        profile === 'redis-6.2'
+          ? /Unknown .*command/
+          : /not allowed from script/,
+      )
     })
 
     test('RESP3 subscribed PUBLISH self-reply order matches the profile', async () => {

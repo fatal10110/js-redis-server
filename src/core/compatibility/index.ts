@@ -9,3 +9,4 @@ export {
   type RedisFlavor,
   type VersionGate,
 } from './profile'
+export { subcommandSupported } from './subcommand-gates'

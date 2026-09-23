@@ -73,4 +73,8 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 6.2 refuses the whole container. Verified against redis-server 6.2, 7.0,
   // 8.0 and valkey 7.2/8.0/9.0.
   'script.per-subcommand-noscript': { redis: '7.0.0', valkey: '7.2.0' },
+  // QUIT got a command-table entry in Redis 7.0; 6.2 special-cases it in the
+  // connection loop, so a 6.2 script calling QUIT fails command lookup
+  // (unknown command) instead of hitting its 7.0+ `noscript` refusal.
+  'command.quit-table-entry': { redis: '7.0.0', valkey: '7.2.0' },
 }
