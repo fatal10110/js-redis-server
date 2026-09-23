@@ -225,7 +225,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('List commands workflow - Task Queue', async () => {
-    const queueKey = 'tasks:urgent'
+    const queueKey = `tasks:urgent:${RUN}`
 
     // Add tasks to queue (FIFO - use RPUSH to add, LPOP to consume)
     await redisClient?.rpush(queueKey, 'task1', 'task2', 'task3')
@@ -262,7 +262,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('List commands workflow - Chat Messages', async () => {
-    const chatKey = 'chat:room123'
+    const chatKey = `chat:room123:${RUN}`
 
     // Add messages
     await redisClient?.rpush(
@@ -312,7 +312,7 @@ describe(`List Commands Integration (${testRunner.getBackendName()})`, () => {
   })
 
   test('List commands workflow - Undo Stack', async () => {
-    const undoKey = 'user:123:undo'
+    const undoKey = `user:123:undo:${RUN}`
 
     // Simulate user actions (LIFO - use LPUSH to add, LPOP to undo)
     await redisClient?.lpush(undoKey, 'action:create_file')
