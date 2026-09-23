@@ -8,6 +8,9 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Backstop for a hung `npm test` / `test:package` run on Node 24, where
+    # --test-timeout cannot end a process that stays alive (#454).
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

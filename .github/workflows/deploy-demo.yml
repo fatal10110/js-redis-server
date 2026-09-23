@@ -48,6 +48,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Backstop for a hung `test:demo` run on Node 24, where --test-timeout
+    # cannot end a process that stays alive (#454).
+    timeout-minutes: 15
     # Scoped per job rather than workflow-wide: this job runs `npm ci` twice
     # over a lockfile the PR author controls, so install lifecycle scripts
     # execute here. `id-token: write` belongs to `deploy` alone — only
@@ -139,6 +142,7 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       pages: write

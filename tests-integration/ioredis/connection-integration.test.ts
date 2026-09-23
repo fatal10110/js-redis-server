@@ -47,6 +47,25 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     assert.match(info, /cluster_enabled:1/)
   })
 
+  test('ECHO returns the message verbatim, binary-safe', async () => {
+    assert.strictEqual(await directClient?.echo('hello'), 'hello')
+    assert.strictEqual(await directClient?.echo(''), '')
+
+    const payload = Buffer.from([0xff, 0x00, 0xfe, 0x0d, 0x0a, 0x80])
+    assert.deepStrictEqual(await directClient?.echoBuffer(payload), payload)
+  })
+
+  test('ECHO rejects wrong arity like Redis', async () => {
+    const arityError = errorWithMessage(
+      "ERR wrong number of arguments for 'echo' command",
+    )
+    await assert.rejects(async () => directClient?.call('ECHO'), arityError)
+    await assert.rejects(
+      async () => directClient?.call('ECHO', 'a', 'b'),
+      arityError,
+    )
+  })
+
   test('CLIENT name, id, info, and list are connection-local', async () => {
     const name = `client-${randomKey()}`
 
