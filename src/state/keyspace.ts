@@ -25,18 +25,13 @@ export type SetOptions = {
 export type KeyspaceMutationTracker = {
   // A WATCH-dirtying write: persists the value AND dirties a WATCH on the key.
   markChanged(): void
-  // Persist the (possibly brand-new) value without, on its own, dirtying a
-  // WATCH. Used for stream consumer-group / pending-entry metadata changes,
-  // which real Redis does not treat as touching a WATCH on the stream key. A
-  // brand-new key still dirties — coming into existence is itself a write — so
-  // `RedisDatabase.update` only suppresses the dirty signal for in-place
-  // changes to an already-existing key.
-  //
-  // Caveat: WATCH-faithful, but not notification-faithful. In that in-place
-  // case the dirty signal is suppressed by dropping the mutation event
-  // outright, and the same bus drives keyspace notifications, so the
-  // notification real Redis would still fire is lost with it. Real Redis keeps
-  // the two signals independent (`signalModifiedKey` vs `notifyKeyspaceEvent`);
-  // splitting them here is tracked in #379.
+  // Persist the (possibly brand-new) value and announce it as a keyspace
+  // notification without, on its own, dirtying a WATCH. Used for stream
+  // consumer-group / last-id metadata changes, which real Redis notifies
+  // (`notifyKeyspaceEvent`) but does not treat as touching a WATCH on the
+  // stream key (`signalModifiedKey`). A brand-new key still dirties — coming
+  // into existence is itself a write — so `RedisDatabase.update` emits a
+  // notification-only `notify` event only for in-place changes to an
+  // already-existing key.
   markCommitted(): void
 }

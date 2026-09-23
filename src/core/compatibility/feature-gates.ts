@@ -42,29 +42,39 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // hit `addReplySubcommandSyntaxError`, which keeps the `or wrong number of
   // arguments` clause and gains no truncation, so one gate covers both (see
   // `unknownSubcommandError` / `subcommandSyntaxError` in
-  // src/commands/helpers.ts). Verified against redis-server 6.2.24, 7.0.15 and
+  // src/core/subcommand-errors.ts). Verified against redis-server 6.2.24, 7.0.15 and
   // 8.0.6. Valkey forked at 7.2, so every Valkey profile has the newer wording.
   //
-  // This gates the *wording* only. The same 7.0 change also moved *when* and
-  // *whether* a container sees its subcommand, and none of that is modelled
-  // yet. The known divergences, and which profiles they are wrong on:
-  //  - MULTI, 7.0+ profiles. 7.0 rejects an unknown container subcommand at
-  //    queue time and EXEC answers -EXECABORT; this server queues it and
-  //    errors at EXEC (#435).
-  //  - XGROUP/XINFO, `redis-6.2`. They resolve the subcommand in a schema
-  //    parser, i.e. at queue time, so they abort a transaction that real 6.2
-  //    queues. The same early resolution means that with a trailing key real
-  //    6.2 checks the key first (`ERR no such key`, `WRONGTYPE`, `...requires
-  //    the key to exist`) and only then the subcommand; this server always
-  //    answers the subcommand error (#436).
+  // This gates the *wording* only; *when* the subcommand is resolved is
+  // `error.unknown-subcommand-dispatch-timing` below. Still not modelled:
   //  - Arity errors, `redis-6.2`. `addReplySubcommandSyntaxError` reaches only
   //    PUBSUB, 1 of 11 containers; the rest answer the 7.0-era `wrong number
   //    of arguments for '<c>|<sub>'` arity error on every profile (#437).
-  //  - Scripts, 7.0+ profiles. An unknown subcommand called from Lua fails
-  //    command lookup and answers `ERR Unknown Redis command called from
-  //    script`; this server dispatches the container and produces the reply
-  //    below instead (#439).
   'error.unknown-subcommand-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // The same 7.0 change resolves `container|subcommand` at command-lookup
+  // time, so an unknown subcommand fails before anything else looks at the
+  // command: MULTI refuses to queue it and EXEC answers -EXECABORT (#435), a
+  // trailing key is never looked up (#436), and a script's redis.call gets
+  // `Unknown Redis command called from script` instead of the container's
+  // reply (#439). 6.2 has no such lookup; every container, XGROUP/XINFO
+  // included, rejects the subcommand only when it runs, and XGROUP/XINFO look
+  // their key up first. The lookup runs in `CommandExecutor.plan()` against
+  // the real subcommand tables in `subcommand-gates.ts`. Verified against
+  // redis-server 6.2.24, 7.0.15, 8.0.6 and Valkey 7.2 / 8.0 / 9.0.
+  'error.unknown-subcommand-dispatch-timing': {
+    redis: '7.0.0',
+    valkey: '7.2.0',
+  },
+  // The last line of a container's HELP reply: `Prints this help.` through
+  // 7.0, `Print this help.` from Redis 7.2 / Valkey 7.2. Only XINFO/XGROUP HELP
+  // read it so far; the other containers still say `Prints` on every profile.
+  // Verified against redis-server 6.2.24, 7.0.15, 7.2, 7.4, 8.0.6 and Valkey
+  // 7.2 / 8.0 / 8.1 / 9.0.
+  'reply.help-print-wording': { redis: '7.2.0', valkey: '7.2.0' },
+  // XGROUP HELP documents ENTRIESREAD (and gives DESTROY its own description
+  // line) from Redis 7.0; 6.2's text has neither. Verified against 6.2.24 and
+  // 7.0.15.
+  'xgroup.help-entriesread': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
@@ -115,6 +125,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // folding it into an `-ERR` body. Verified against redis-server 6.2.24,
   // 7.0.15 and 8.0; Valkey 7.2 and 8.0 answer the 7.0 form.
   'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 8.0 dropped the product name from the script lookup failure:
+  // `Unknown command called from script` where Redis (and Valkey 7.2) say
+  // `Unknown Redis command called from script`. Verified against Valkey 7.2,
+  // 8.0, 8.1 and 9.0.
+  'script.unknown-command-valkey-wording': { valkey: '8.0.0' },
   // COMMAND GETKEYS / GETKEYSANDFLAGS took arity -4 in 7.0 (a command and at
   // least one argument: `COMMAND GETKEYS GET` is a `command|getkeys` arity
   // error); 7.2 relaxed it to -3 and answers a short target with `Invalid

@@ -2,7 +2,6 @@ import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { RedisValue } from '../../core/redis-value'
 import { array, integer } from '../helpers'
-import { deleteSortedSetIfEmpty } from './helpers'
 import {
   applyLexLimit,
   createLexRangeSchema,
@@ -83,7 +82,6 @@ export const zremrangebylexCommand = defineCommand({
         }
       }
     })
-    if (removed > 0) deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(removed)
   },
 })

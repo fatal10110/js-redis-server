@@ -361,6 +361,24 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   // The facade's own pub/sub runs here (via duplicateNodeRedisClient()); what
   // stops these is the rest of its surface.
   todo(
+    'node-redis/key/keyspace-notification-names.test.ts',
+    missing('configSet'),
+    [
+      '8.x hash-field commands publish hdel / hexpire / hpersist',
+      'BLPOP / BRPOP publish lpop / rpop (#446)',
+      'LMOVE / BLMOVE / RPOPLPUSH publish the destination push, then the source pop (#446)',
+      'LMPOP / BLMPOP publish lpop / rpop by direction (#446)',
+      'SMOVE publishes srem on the source and sadd on the destination (#446)',
+      'XGROUP subcommands publish xgroup-<subcommand> (#381)',
+      'XREADGROUP / XCLAIM / XAUTOCLAIM publish xgroup-createconsumer for a new consumer',
+      'ZMPOP / BZMPOP / BZPOPMIN / BZPOPMAX publish zpopmin / zpopmax (#446)',
+      'a STORE over an existing destination publishes one event',
+      'a blocked pop served by a push publishes the push, then the pop (#446)',
+      'expired hash fields are published as hexpired, never as the reading command',
+      'expired hash fields are removed by active expiry, with no access to the key',
+    ],
+  ),
+  todo(
     'node-redis/key/keyspace-notifications.test.ts',
     CAUSE.argumentShapes,
     // pSubscribe([patterns], listener): the facade takes one pattern string.
@@ -368,13 +386,17 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   ),
   todo('node-redis/key/keyspace-notifications.test.ts', missing('configSet'), [
     'CONFIG normalizes flags and rejects invalid characters',
+    'a parked blocking command does not name writes into its database (#444)',
+    'blocking commands resumed out of nesting order leave no stale name (#444)',
     'delivers nothing when notify-keyspace-events is disabled',
     'does not name a cross-database write after an earlier SELECT',
+    'emits the type-specific event before del when the last element goes (#379)',
     'gates events by configured class',
     'names write events after the originating command',
     'publishes del, expire and persist generic notifications',
     'publishes expired event from active expiry without a forcing read',
     'publishes expired event when a key lazily expires',
+    'stream group metadata commands notify without dirtying WATCH (#379)',
     'translates RENAME into rename_from and rename_to',
   ]),
   todo('node-redis/key/workflow.test.ts', missing('expireAt'), [
@@ -569,6 +591,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XADD NOMKSTREAM appends to an existing stream normally',
     'XADD NOMKSTREAM returns null when key does not exist',
     'XADD handles auto-generated ids when the sequence overflows',
+  ]),
+  todo('node-redis/stream/claim-validation.test.ts', missing('xAdd'), [
+    'XAUTOCLAIM accepts interval start ids',
+    'XAUTOCLAIM rejects COUNT outside 1.. and creates no consumer',
+    'XAUTOCLAIM validates its arguments before the key',
+    'XCLAIM clamps out-of-range times instead of rejecting them',
+    'XCLAIM parses ids up to the first non-id, then options',
+    'XINFO CONSUMERS inactive stays -1 until a consumer gets entries',
   ]),
   todo('node-redis/stream/group.test.ts', CAUSE.clusterTopology, [
     'XCLAIM and XAUTOCLAIM transfer pending stream entries',

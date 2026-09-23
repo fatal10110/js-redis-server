@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../ascii-case'
 import {
   gateSatisfied,
   type CompatibilityProfile,
@@ -7,23 +8,28 @@ import {
 /** Present on every profile that has per-subcommand command-table entries. */
 const ALWAYS: VersionGate = { redis: '7.0.0', valkey: '7.2.0' }
 const REDIS_72: VersionGate = { redis: '7.2.0', valkey: '7.2.0' }
+const VALKEY_80: VersionGate = { valkey: '8.0.0' }
+const VALKEY_90: VersionGate = { valkey: '9.0.0' }
+// Newer than every preset, so these only matter for a custom
+// `{ flavor, version }` spec. Taken from the upstream command tables.
+const REDIS_84: VersionGate = { redis: '8.4.0' }
 
 /**
- * The real command-table subcommands of every `noscript` container, as real
- * servers list them in `COMMAND INFO` — including the ones this server does
- * not implement. A Redis 7.0+ script resolves `container|subcommand` before
- * checking `noscript`, so a real-but-unimplemented subcommand (`ACL CAT`,
- * `CLIENT PAUSE`) is still refused as not allowed; only a name absent from
- * the real table fails lookup as an unknown command.
+ * The real command-table subcommands of every container this server
+ * registers, as real servers list them in `COMMAND INFO` — including the ones
+ * this server does not implement. From Redis 7.0 command lookup resolves
+ * `container|subcommand` against this table before anything else sees the
+ * command, so a real-but-unimplemented subcommand (`ACL CAT`, `CLIENT PAUSE`)
+ * passes lookup (and a `noscript` one is still refused from a script); only a
+ * name absent from the real table fails lookup as an unknown subcommand.
  *
  * Captured from redis 7.0.15, 7.2.16, 7.4.11, 8.0.6 and valkey 7.2.14,
- * 8.0.11, 9.0.6. Redis 6.2 has no subcommand entries at all, so these gates
- * are only consulted on profiles with `script.per-subcommand-noscript`.
+ * 8.0.11, 8.1.0, 9.0.6; the redis 8.2 / 8.4 entries come from upstream.
+ * Redis 6.2 has no subcommand entries at all, so these gates are only
+ * consulted on profiles with `error.unknown-subcommand-dispatch-timing` (see
+ * `CommandExecutor.plan()`) or `script.per-subcommand-noscript`.
  */
-const NOSCRIPT_CONTAINER_SUBCOMMANDS: Record<
-  string,
-  Record<string, VersionGate>
-> = {
+const CONTAINER_SUBCOMMANDS: Record<string, Record<string, VersionGate>> = {
   acl: {
     cat: ALWAYS,
     deluser: ALWAYS,
@@ -41,12 +47,12 @@ const NOSCRIPT_CONTAINER_SUBCOMMANDS: Record<
   },
   client: {
     caching: ALWAYS,
-    capa: { valkey: '8.0.0' },
+    capa: VALKEY_80,
     getname: ALWAYS,
     getredir: ALWAYS,
     help: ALWAYS,
     id: ALWAYS,
-    'import-source': { valkey: '9.0.0' },
+    'import-source': { valkey: '8.1.0' },
     info: ALWAYS,
     kill: ALWAYS,
     list: ALWAYS,
@@ -61,12 +67,66 @@ const NOSCRIPT_CONTAINER_SUBCOMMANDS: Record<
     unblock: ALWAYS,
     unpause: ALWAYS,
   },
+  cluster: {
+    addslots: ALWAYS,
+    addslotsrange: ALWAYS,
+    bumpepoch: ALWAYS,
+    cancelslotmigrations: VALKEY_90,
+    'count-failure-reports': ALWAYS,
+    countkeysinslot: ALWAYS,
+    delslots: ALWAYS,
+    delslotsrange: ALWAYS,
+    failover: ALWAYS,
+    flushslot: VALKEY_90,
+    flushslots: ALWAYS,
+    forget: ALWAYS,
+    getkeysinslot: ALWAYS,
+    getslotmigrations: VALKEY_90,
+    help: ALWAYS,
+    info: ALWAYS,
+    keyslot: ALWAYS,
+    links: ALWAYS,
+    meet: ALWAYS,
+    migration: REDIS_84,
+    migrateslots: VALKEY_90,
+    myid: ALWAYS,
+    myshardid: REDIS_72,
+    nodes: ALWAYS,
+    replicas: ALWAYS,
+    replicate: ALWAYS,
+    reset: ALWAYS,
+    saveconfig: ALWAYS,
+    'set-config-epoch': ALWAYS,
+    setslot: ALWAYS,
+    shards: ALWAYS,
+    slaves: ALWAYS,
+    'slot-stats': { redis: '8.2.0', valkey: '8.0.0' },
+    slots: ALWAYS,
+    syncslots: { redis: '8.4.0', valkey: '9.0.0' },
+  },
+  command: {
+    count: ALWAYS,
+    docs: ALWAYS,
+    getkeys: ALWAYS,
+    getkeysandflags: ALWAYS,
+    help: ALWAYS,
+    info: ALWAYS,
+    list: ALWAYS,
+  },
   config: {
     get: ALWAYS,
     help: ALWAYS,
     resetstat: ALWAYS,
     rewrite: ALWAYS,
     set: ALWAYS,
+  },
+  pubsub: {
+    channels: ALWAYS,
+    help: ALWAYS,
+    numpat: ALWAYS,
+    numsub: ALWAYS,
+    shardchannels: ALWAYS,
+    shardnumsub: ALWAYS,
   },
   script: {
     debug: ALWAYS,
@@ -75,7 +135,7 @@ const NOSCRIPT_CONTAINER_SUBCOMMANDS: Record<
     help: ALWAYS,
     kill: ALWAYS,
     load: ALWAYS,
-    show: { valkey: '8.0.0' },
+    show: VALKEY_80,
   },
   function: {
     delete: ALWAYS,
@@ -88,25 +148,50 @@ const NOSCRIPT_CONTAINER_SUBCOMMANDS: Record<
     restore: ALWAYS,
     stats: ALWAYS,
   },
+  slowlog: {
+    get: ALWAYS,
+    help: ALWAYS,
+    len: ALWAYS,
+    reset: ALWAYS,
+  },
+  xgroup: {
+    create: ALWAYS,
+    createconsumer: ALWAYS,
+    delconsumer: ALWAYS,
+    destroy: ALWAYS,
+    help: ALWAYS,
+    setid: ALWAYS,
+  },
+  xinfo: {
+    consumers: ALWAYS,
+    groups: ALWAYS,
+    help: ALWAYS,
+    stream: ALWAYS,
+  },
 }
 
 /**
  * Whether real Redis/Valkey at `profile` has a `container|subcommand` table
- * entry for a `noscript` container. `undefined` when the container is not
- * one this table models.
+ * entry. `subcommand` is matched ASCII-case-insensitively, as real lookup
+ * does. `undefined` when `container` is not a container this table models.
  */
-export function noscriptSubcommandExists(
+export function containerSubcommandExists(
   container: string,
-  subcommand: string,
+  subcommand: Buffer | string,
   profile: CompatibilityProfile,
 ): boolean | undefined {
-  const subcommands = NOSCRIPT_CONTAINER_SUBCOMMANDS[container.toLowerCase()]
+  const subcommands = CONTAINER_SUBCOMMANDS[asciiLowerCase(container)]
   if (!subcommands) {
     return undefined
   }
 
-  const gate = Object.prototype.hasOwnProperty.call(subcommands, subcommand)
-    ? subcommands[subcommand]
+  // latin1 keeps one code unit per byte, so a non-ASCII name can never fold
+  // onto a table entry.
+  const name = asciiLowerCase(
+    Buffer.isBuffer(subcommand) ? subcommand.toString('latin1') : subcommand,
+  )
+  const gate = Object.prototype.hasOwnProperty.call(subcommands, name)
+    ? subcommands[name]
     : undefined
   return gate !== undefined && gateSatisfied(gate, profile)
 }

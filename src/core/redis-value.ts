@@ -21,7 +21,7 @@ export type RedisValue =
   | { kind: 'null-array' }
   // `messageBytes` is set only when the body must reach the wire byte for
   // byte — an error that echoes a token the client sent (see
-  // `unknownSubcommandError` in src/commands/helpers.ts), whose bytes need not
+  // `unknownSubcommandError` in src/core/subcommand-errors.ts), whose bytes need not
   // be valid UTF-8. `message` is always the readable form of the same body.
   | {
       kind: 'error'

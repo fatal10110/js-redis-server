@@ -450,7 +450,7 @@ with `GT` or `LT`.
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
 - [x] `XTRIM key MAXLEN|MINID [~] threshold [LIMIT count]` - Trim a stream to a size or minimum ID
 - [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id|+ [id|+ ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs); Redis 7.4+ profiles accept `+` to return the latest entry from each stream
-- [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER ...` - Manage stream consumer groups and consumers
+- [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER|HELP ...` - Manage stream consumer groups and consumers
 - [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery
 - [x] `XACK key group ID [ID ...]` - Acknowledge pending stream entries
 - [x] `XPENDING key group [[IDLE min-idle-time] start end count [consumer]]` - Inspect pending stream entries
@@ -459,6 +459,7 @@ with `GT` or `LT`.
 - [x] `XINFO STREAM key [FULL [COUNT count]]` - Inspect stream metadata, entries, groups, and PEL details
 - [x] `XINFO GROUPS key` - List stream consumer groups
 - [x] `XINFO CONSUMERS key group` - List consumers in a group
+- [x] `XINFO HELP` - Show XINFO subcommand help
 - [x] `XSETID key last-id [ENTRIESADDED entries-added] [MAXDELETEDID max-deleted-id]` - Set the last-generated stream ID and optionally stream metadata counters
 
 #### Notes / gaps vs. real Redis
@@ -579,11 +580,30 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
       `zincr` (from `ZINCRBY`), `zrem`, `xadd`, etc.
 - [x] `RENAME`/`RENAMENX` emit `rename_from` + `rename_to`; `COPY` emits
       `copy_to`.
+- [x] Removing the last element emits the removal event, then `del`
+      (`hdel`, `lpop`, `srem`, `zrem`, `spop`, ...).
+- [x] Blocking, multi-key and move-style pops are named after the operation:
+      `BLPOP`/`BRPOP`/`LMPOP`/`BLMPOP` → `lpop`/`rpop`,
+      `BZPOPMIN`/`BZPOPMAX`/`ZMPOP`/`BZMPOP` → `zpopmin`/`zpopmax`,
+      `LMOVE`/`BLMOVE`/`RPOPLPUSH` → `lpush`/`rpush` on the destination then
+      `lpop`/`rpop` on the source, `SMOVE` → `srem` + `sadd`.
+- [x] Stream consumer groups: `xgroup-create`, `xgroup-createconsumer`,
+      `xgroup-setid`, `xgroup-delconsumer`, `xgroup-destroy`, `xsetid` — without
+      dirtying a `WATCH` on the stream. `XREADGROUP`/`XCLAIM`/`XAUTOCLAIM` emit
+      `xgroup-createconsumer` when they create a consumer.
+- [x] Hash-field commands: `HGETDEL` → `hdel`; `HEXPIRE`/`HPEXPIRE`/
+      `HEXPIREAT`/`HPEXPIREAT`/`HGETEX EX|PX|...` → `hexpire` (`hdel` for a
+      time already past); `HGETEX PERSIST` → `hpersist`; `HSETEX` → `hset` then
+      `hexpire`/`hdel`. `SORT ... STORE` → `sortstore`.
 
 > Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
-> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; cross-DB
-> `COPY` does not name the destination event. Notifications are process-local to
-> the `RedisServerState`, so they are not delivered across mock cluster nodes.
+> secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; `MOVE` and
+> cross-DB `COPY` do not name the destination event. Expired hash fields are
+> dropped by the active sweep (`hexpired`, then `del`), like real Redis with
+> active expiry on; between sweeps any hash command drops them too, where real
+> Redis with active expiry *off* only expires a field on a field lookup.
+> Notifications are process-local to the `RedisServerState`, so they are not
+> delivered across mock cluster nodes.
 
 ## 15. Persistence Commands
 

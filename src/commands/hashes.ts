@@ -397,13 +397,12 @@ function setexHashFields(
   const plan = resolveHsetexPlan(args.expiration)
   const now = Date.now()
 
-  let remaining = 0
   // The condition check and the write share one updateHash call: TrackedHashData
   // (unlike the raw getHash() result) already knows how to check field
   // existence with expiry, and skipping any mutating call when the condition
   // fails means the framework never persists a hash for a previously-missing
   // key (see keyspace.ts's dirty/committed tracking).
-  const conditionMet = ctx.db.updateHash(args.key, hash => {
+  const conditionMet = ctx.db.withOrigin('hset').updateHash(args.key, hash => {
     if (args.condition) {
       const met = args.pairs.every(({ field }) => {
         const exists = hash.hasField(field)
@@ -413,21 +412,11 @@ function setexHashFields(
     }
 
     for (const { field, value } of args.pairs) {
-      if (plan.kind === 'keepttl') {
-        hash.setField(field, value, { forceDirty: true, keepTtl: true })
-        continue
-      }
-
-      hash.setField(field, value, { forceDirty: true })
-      if (plan.kind === 'expireAt') {
-        if (plan.at <= now) {
-          hash.deleteField(field)
-        } else {
-          hash.setFieldExpiration(field, plan.at)
-        }
-      }
+      hash.setField(field, value, {
+        forceDirty: true,
+        keepTtl: plan.kind === 'keepttl',
+      })
     }
-    remaining = hash.size
     return true
   })
 
@@ -435,8 +424,18 @@ function setexHashFields(
     return integer(0)
   }
 
-  if (remaining === 0) {
-    ctx.db.delete(args.key)
+  // Real Redis announces the TTL as its own event after `hset`: `hexpire`,
+  // or `hdel` (then `del` if the hash empties) for a time already past.
+  if (plan.kind === 'expireAt') {
+    const expired = plan.at <= now
+    ctx.db
+      .withOrigin(expired ? 'hdel' : 'hexpire')
+      .updateHash(args.key, hash => {
+        for (const { field } of args.pairs) {
+          if (expired) hash.deleteField(field)
+          else hash.setFieldExpiration(field, plan.at)
+        }
+      })
   }
 
   return integer(1)
@@ -644,7 +643,11 @@ function expireHashFields(
     return array(parsedArgs.fields.map(() => RedisValue.integer(-2)))
   }
 
-  return ctx.db.updateHash(args.key, hash => {
+  // Real Redis publishes every variant (HEXPIRE/HPEXPIRE/HEXPIREAT/
+  // HPEXPIREAT) as `hexpire`, and a time already past — which deletes the
+  // fields — as `hdel` (then `del` if the hash empties).
+  const origin = expiresAt <= now ? 'hdel' : 'hexpire'
+  return ctx.db.withOrigin(origin).updateHash(args.key, hash => {
     return array(
       parsedArgs.fields.map(field => {
         const entry = hash.getField(field)
@@ -694,35 +697,41 @@ function getexHashFields(
   }
 
   const now = Date.now()
-  let remaining = 0
-  const values = ctx.db.updateHash(args.key, hash => {
-    const replies: RedisValue[] = []
-    for (const field of args.fields) {
-      const entry = hash.getField(field)
-      replies.push(RedisValue.bulkString(entry?.value ?? null))
-      if (!entry) continue
+  const values = ctx.db
+    .withOrigin(hgetexEvent(plan, now))
+    .updateHash(args.key, hash => {
+      const replies: RedisValue[] = []
+      for (const field of args.fields) {
+        const entry = hash.getField(field)
+        replies.push(RedisValue.bulkString(entry?.value ?? null))
+        if (!entry) continue
 
-      if (plan.kind === 'persist') {
-        hash.clearFieldExpiration(field)
-        continue
-      }
+        if (plan.kind === 'persist') {
+          hash.clearFieldExpiration(field)
+          continue
+        }
 
-      if (plan.kind === 'expireAt') {
-        if (plan.at <= now) {
-          hash.deleteField(field)
-        } else {
-          hash.setFieldExpiration(field, plan.at)
+        if (plan.kind === 'expireAt') {
+          if (plan.at <= now) {
+            hash.deleteField(field)
+          } else {
+            hash.setFieldExpiration(field, plan.at)
+          }
         }
       }
-    }
-    remaining = hash.size
-    return replies
-  })
+      return replies
+    })
 
-  if (remaining === 0) {
-    ctx.db.delete(args.key)
-  }
   return array(values)
+}
+
+// HGETEX's keyspace event is the operation it performs: `hpersist`, `hexpire`,
+// or `hdel` (then `del` if the hash empties) for an expiry already past. A
+// plain HGETEX changes nothing, so its name is never published.
+function hgetexEvent(plan: HgetexPlan, now: number): string {
+  if (plan.kind === 'persist') return 'hpersist'
+  if (plan.kind === 'expireAt') return plan.at <= now ? 'hdel' : 'hexpire'
+  return 'hgetex'
 }
 
 function hashExpireTimeToTimestamp(
@@ -914,21 +923,17 @@ export const hgetdelCommand = defineCommand({
       return array(args.fields.map(() => RedisValue.bulkString(null)))
     }
 
-    let remaining = 0
-    const values = ctx.db.updateHash(args.key, hash => {
+    // Real Redis publishes HGETDEL as `hdel` (then `del` if the hash empties).
+    const values = ctx.db.withOrigin('hdel').updateHash(args.key, hash => {
       const replies: RedisValue[] = []
       for (const field of args.fields) {
         const entry = hash.getField(field)
         replies.push(RedisValue.bulkString(entry?.value ?? null))
         if (entry) hash.deleteField(field)
       }
-      remaining = hash.size
       return replies
     })
 
-    if (remaining === 0) {
-      ctx.db.delete(args.key)
-    }
     return array(values)
   },
 })

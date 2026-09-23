@@ -12,6 +12,7 @@ import {
   NoProtoError,
   RedisCommandError,
   RedisSyntaxError,
+  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
   WrongPassError,
 } from '../core/redis-error'
@@ -956,7 +957,18 @@ export const aclCommand = defineCommand({
       if (!ctx.executor.getCommandDefinition(command.toString())) {
         throw new RedisCommandError(`Command '${command.toString()}' not found`)
       }
-      ctx.executor.plan(command, args.args.slice(2))
+      try {
+        ctx.executor.plan(command, args.args.slice(2))
+      } catch (err) {
+        // A 7.0+ lookup resolves `command|subcommand` as one name, so an
+        // unknown subcommand is an unknown command here too (acl.c).
+        if (err instanceof UnknownSubcommandError) {
+          throw new RedisCommandError(
+            `Command '${command.toString()}' not found`,
+          )
+        }
+        throw err
+      }
       return ok()
     }
 

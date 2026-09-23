@@ -1,4 +1,4 @@
-import { asciiLowerCase } from './ascii-case'
+import { asciiLowerCase, asciiUpperCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
 import { parseCommandArgs } from './command-schema'
@@ -11,12 +11,15 @@ import {
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
+import type { RedisDatabase } from '../state/database'
 import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
 import { monitorTimestampMicros } from './clock'
 import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
 } from './compatibility'
+import { containerSubcommandExists } from './compatibility/subcommand-gates'
+import { unknownSubcommandError } from './subcommand-errors'
 
 export type CommandExecutorOptions = {
   registry: CommandRegistry
@@ -71,6 +74,8 @@ export class CommandExecutor {
    * U+212A KELVIN SIGN + "eys" is an unknown command, not KEYS (#382).
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
+   * @throws {UnknownSubcommandError} if a container's subcommand fails lookup
+   *   (see {@link lookupSubcommand}).
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
     const definition = this.registry.get(rawCommand.toString())
@@ -79,7 +84,48 @@ export class CommandExecutor {
       throw new UnknownRedisCommandError(rawCommand, rawArgs)
     }
 
+    this.lookupSubcommand(definition, rawArgs)
     return this.createPlan(definition, rawCommand, rawArgs)
+  }
+
+  /**
+   * Redis 7.0 put container subcommands (`config|get`, `xgroup|create`, ...)
+   * in the command table, so from 7.0 command lookup resolves the subcommand
+   * too and an unknown one fails right there — ahead of arity, the schema,
+   * routing keys and every policy. Doing it here, the one place every command
+   * is planned, is what makes MULTI refuse to queue it (#435), keeps XGROUP /
+   * XINFO from looking their key up first (#436) and gives a script's
+   * `redis.call` the unknown-command error (#439).
+   *
+   * 6.2 has no such lookup; there each container rejects the subcommand when
+   * it runs. The table is the *real* one (`subcommand-gates.ts`), so a real
+   * subcommand this server does not implement passes and is rejected by its
+   * container at execute time, as before.
+   */
+  private lookupSubcommand(
+    definition: CommandDefinition<unknown>,
+    rawArgs: readonly Buffer[],
+  ): void {
+    if (
+      rawArgs.length === 0 ||
+      !this.profile.has('error.unknown-subcommand-dispatch-timing')
+    ) {
+      return
+    }
+
+    const subcommand = rawArgs[0]
+    if (
+      containerSubcommandExists(definition.name, subcommand, this.profile) !==
+      false
+    ) {
+      return
+    }
+
+    throw unknownSubcommandError(
+      asciiUpperCase(definition.name),
+      subcommand,
+      this.profile,
+    )
   }
 
   /**
@@ -167,12 +213,10 @@ export class CommandExecutor {
         }
       }
 
-      const restoreNotifyCommand = tagNotifyCommand(plan, ctx)
-      try {
-        return await plan.definition.execute(plan.args, ctx)
-      } finally {
-        restoreNotifyCommand()
-      }
+      return await plan.definition.execute(
+        plan.args,
+        withMutationOrigin(plan, ctx),
+      )
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
     }
@@ -218,15 +262,10 @@ export class CommandExecutor {
 
       assertSyncCommandDefinition(plan)
 
-      const restoreNotifyCommand = tagNotifyCommand(plan, ctx)
-      try {
-        return assertSyncCommandResult(
-          plan,
-          plan.definition.execute(plan.args, ctx),
-        )
-      } finally {
-        restoreNotifyCommand()
-      }
+      return assertSyncCommandResult(
+        plan,
+        plan.definition.execute(plan.args, withMutationOrigin(plan, ctx)),
+      )
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
     }
@@ -407,36 +446,41 @@ function applyPolicyShortCircuit(
 }
 
 /**
- * Tag the database with the active command so keyspace notifications can name
- * write events after the originating command, and return the undo. Callers run
- * it in a `finally`, so a nested command (Lua `redis.call` inside EVAL) hands
- * the outer command's tag back when it returns.
+ * Derive the context a command executes with: `ctx.db` becomes a view of the
+ * selected database whose mutations carry the command's name (see
+ * `RedisDatabase.withOrigin`), which keyspace notifications name write events
+ * after. The name is bound to this command's handle, so it survives the
+ * command parking and resuming in any order, and cannot leak onto another
+ * command's writes (#444). A nested command (Lua `redis.call`, EXEC's queue)
+ * derives its own view from this one, shadowing the name.
  *
- * The database is resolved *once*, here, and the closure restores that same
- * one. `ctx.db` is a live getter, so a command that switches databases
- * mid-flight (SELECT) would otherwise have its tag restored onto the new
- * database, leaving the old one tagged `select`. Because every later command
- * restores the tag it saved, that stale value was never cleared, and MOVE /
- * COPY ... DB — which write into a database the executor never tags — then
- * published their events there as `select` (#359).
- *
- * LIMIT: save/restore is only correct for LIFO nesting. Commands that park and
- * resume out of order corrupt it: two BLPOPs parked on db1 and resumed in
- * arrival order leave db1 permanently tagged `blpop` (FLUSHALL does not clear
- * it), so every later MOVE into db1 publishes `blpop`. This predates #359 and is
- * tracked as a follow-up.
+ * Like {@link createMonitorDeferredContext}, this overrides `db` on a
+ * prototype link rather than copying the context, and keeps it a *live*
+ * getter: a SELECT mid-command (or mid-EXEC) must be seen by every later
+ * access (#94). The view is cached per underlying database so `ctx.db` keeps a
+ * stable identity within one command.
  */
-function tagNotifyCommand(
+function withMutationOrigin(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-): () => void {
-  const db = ctx.db
-  const previous = db.activeNotifyCommand
-  db.activeNotifyCommand = plan.definition.name
-
-  return () => {
-    db.activeNotifyCommand = previous
-  }
+): RedisExecutionContext {
+  const command = plan.definition.name
+  let base: RedisDatabase | undefined
+  let view: RedisDatabase | undefined
+  return Object.create(ctx, {
+    db: {
+      get(): RedisDatabase {
+        const db = ctx.db
+        if (db !== base || !view) {
+          base = db
+          view = db.withOrigin(command)
+        }
+        return view
+      },
+      enumerable: true,
+      configurable: true,
+    },
+  }) as RedisExecutionContext
 }
 
 /**

@@ -106,11 +106,7 @@ export class RedisServerState {
     const notifier = new KeyspaceNotifier(this.pubsubBroker)
     for (const database of this.databases) {
       database.subscribe(event =>
-        notifier.handle(
-          event,
-          database.activeNotifyCommand,
-          this.notifyKeyspaceEvents,
-        ),
+        notifier.handle(event, this.notifyKeyspaceEvents),
       )
     }
 
