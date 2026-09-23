@@ -72,8 +72,8 @@ Redis-compatible server (standalone + cluster modes) built as a layered pipeline
 #### 2. CommandExecutor & ExecutionPolicy ([src/core/command-executor.ts](src/core/command-executor.ts), [src/core/execution-policies/](src/core/execution-policies/))
 
 - `CommandExecutor.plan()` resolves a `CommandDefinition` from the `CommandRegistry`, parses raw `Buffer` args through the command's `schema`, and extracts routing keys via `definition.keys(args)` — producing a shared `CommandPlan`
-- `executePlan` is the normal async path (supports `ResponseStream` + `afterExecute`/`onStream` rewriting); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async or stream
-- An `ExecutionPolicy` wraps every command with optional `beforeExecute` (can short-circuit: queue/redirect/reject), `afterExecute` (rewrite the result), and `onStream` (wrap a streaming result) hooks
+- `executePlan` is the normal async path (supports `ResponseStream` + async commands); `executePlanSync` is a synchronous path used only by the Lua runtime for `redis.call`/`redis.pcall` — same registry/policies, and rejects anything that tries to go async or stream
+- An `ExecutionPolicy` guards every command with a single optional `beforeExecute` hook, which can short-circuit execution (queue/redirect/reject)
 - `TransactionPolicy` ([src/core/execution-policies/transaction-policy.ts](src/core/execution-policies/transaction-policy.ts)) is always appended last; `ClusterPolicy` ([src/core/execution-policies/cluster-policy.ts](src/core/execution-policies/cluster-policy.ts)) is prepended only for cluster nodes — order matters because cluster routing must validate (and possibly redirect/reject) **before** a command is queued into a transaction
 - There is no separate "cluster commander" type — cluster mode is the same `Resp2Server` + `CommandExecutor`, configured with one extra `CLUSTER` command and a `ClusterPolicy` bound to that node's id ([src/cluster.ts](src/cluster.ts))
 
