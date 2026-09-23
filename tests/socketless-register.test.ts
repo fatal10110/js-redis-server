@@ -71,4 +71,17 @@ describe('socketless known-gaps preload', () => {
     assert.strictEqual(status, 1, output)
     assert.match(output, /'listed': never finished \(timed out or cancelled\)/)
   })
+
+  test('a timed-out listed test that later throws the expected error fails the file', () => {
+    const { status, output } = runFixture('late-expected')
+    assert.strictEqual(status, 1, output)
+    assert.match(output, /'listed': never finished \(timed out or cancelled\)/)
+  })
+
+  test('a timed-out listed test that later returns fails the file as never finished', () => {
+    const { status, output } = runFixture('late-pass')
+    assert.strictEqual(status, 1, output)
+    assert.match(output, /'listed': never finished \(timed out or cancelled\)/)
+    assert.doesNotMatch(output, /passes now/)
+  })
 })

@@ -301,17 +301,25 @@ function staleness(
 /**
  * Wrap a todo'd test body to record whether it ran, passed, or failed with the
  * error its entry expects. Callback-style `(t, done)` bodies keep their arity.
+ *
+ * node:test aborts `t.signal` when it times a test out or cancels it, but the
+ * body keeps running. Whatever such a body does afterwards — settle with the
+ * expected error, or return — is not how the test ended, so it is not
+ * recorded, and `staleness()` reports the test as never finished.
  */
 function observe(
   fn: TestFn,
   fullPath: string,
   record: Seen,
-  expected: RegExp | undefined,
+  expected: KnownGap['error'],
 ): TestFn {
   const failed = (err: unknown) => {
     record.settled.add(fullPath)
     const message = err instanceof Error ? err.message : String(err)
-    if (expected && !expected.test(message)) {
+    const matches =
+      expected === undefined ||
+      (expected instanceof RegExp ? expected.test(message) : expected(err))
+    if (!matches) {
       record.unexpected.push(
         `'${fullPath}': failed with an unexpected error: ${message.split('\n')[0]}`,
       )
@@ -321,34 +329,51 @@ function observe(
     // Two declared parameters: node:test tells a callback body by its arity.
     return function (this: unknown, t: unknown, done: unknown) {
       const callback = done as (err?: unknown) => void
+      const ended = endedEarly(t)
       record.ran.add(fullPath)
       try {
         fn.call(this, t, (err?: unknown) => {
-          if (err) {
-            failed(err)
-          } else {
-            record.settled.add(fullPath)
-            record.passed.push(fullPath)
+          if (!ended()) {
+            if (err) {
+              failed(err)
+            } else {
+              record.settled.add(fullPath)
+              record.passed.push(fullPath)
+            }
           }
           callback(err)
         })
       } catch (err) {
-        failed(err)
+        if (!ended()) {
+          failed(err)
+        }
         throw err
       }
     }
   }
   return async function (this: unknown, t: unknown) {
+    const ended = endedEarly(t)
     record.ran.add(fullPath)
     try {
       await fn.call(this, t)
     } catch (err) {
-      failed(err)
+      if (!ended()) {
+        failed(err)
+      }
       throw err
+    }
+    if (ended()) {
+      return
     }
     record.settled.add(fullPath)
     record.passed.push(fullPath)
   }
+}
+
+/** Whether node:test has already ended this test (timed out or cancelled). */
+function endedEarly(t: unknown): () => boolean {
+  const signal = (t as { signal?: AbortSignal } | undefined)?.signal
+  return () => signal?.aborted === true
 }
 
 /** `test([name][, options][, fn])` → `[name, options, fn]`. */

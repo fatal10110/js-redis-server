@@ -21,6 +21,9 @@
  * them or no suite can observe them through the facade: see
  * {@link FACADE_DEFAULT_PROTOCOL} and {@link FACADE_PUBSUB_PROTOCOL}.
  */
+import assert from 'node:assert'
+import { isDeepStrictEqual } from 'node:util'
+
 export type KnownGap = {
   /** Test file, relative to `tests-integration/` (e.g. `ioredis/multi.test.ts`). */
   file: string
@@ -33,10 +36,11 @@ export type KnownGap = {
   /** Why it diverges on the socketless backend. */
   reason: string
   /**
-   * `todo` entries: the failure every listed test must fail with. A listed
+   * `todo` entries: the failure every listed test must fail with — a pattern
+   * over the error's message, or a predicate over the error itself. A listed
    * test failing with anything else fails the file.
    */
-  error?: RegExp
+  error?: RegExp | ((err: unknown) => boolean)
   /**
    * `todo` (default): the test still runs; a matching failure is reported but
    * does not fail the run. `skip`: not run at all — for files (or tests) whose
@@ -71,7 +75,7 @@ export const FACADE_DEFAULT_PROTOCOL =
 export const FACADE_PUBSUB_PROTOCOL =
   "NodeRedisMockClient's pub/sub session (ensurePubSub) always runs RESP2, even after HELLO 3 on the client"
 
-type Cause = { reason: string; error: RegExp }
+type Cause = { reason: string; error: NonNullable<KnownGap['error']> }
 
 /**
  * The recurring causes, spelled once. Each `error` is the narrowest pattern
@@ -102,11 +106,6 @@ const CAUSE = {
       "the facade's `zRange(key, start, stop)` drops node-redis' options argument (`BY` / `REV` / `LIMIT`) and runs a plain index ZRANGE, which rejects score/lex bounds",
     error: /ERR value is not an integer or out of range/,
   },
-  zRangeOptionsWrongResult: {
-    reason:
-      "the facade's `zRange(key, start, stop)` silently drops node-redis' options argument (`REV` / `BY`) and runs a plain index ZRANGE — wrong results, not an error. The only observable failure is the test's own deep-equal on the reply, so the pattern cannot be narrower than that; keep this entry to these titles",
-    error: /^Expected values to be strictly deep-equal:/,
-  },
   duplicatePromise: {
     reason:
       '`NodeRedisMockClient.duplicate()` returns a Promise; node-redis returns the (unconnected) client synchronously',
@@ -135,6 +134,22 @@ function missing(...methods: string[]): Cause {
   return {
     reason: `the facade has no ${methods.map(m => `\`${m}()\``).join(', ')}`,
     error: new RegExp(`\\.(?:${methods.join('|')}) is not a function$`),
+  }
+}
+
+/**
+ * The facade's `zRange(key, start, stop)` silently drops node-redis' options
+ * argument (`REV` / `BY`) and runs a plain index ZRANGE — wrong results, not an
+ * error. The only observable failure is the test's own deep-equal, so each
+ * title is pinned to the exact wrong reply it gets (`AssertionError.actual`);
+ * any other failure of that test is a different one.
+ */
+function zRangeWrongResult(actual: readonly string[]): Cause {
+  return {
+    reason: `the facade's \`zRange(key, start, stop)\` silently drops node-redis' options argument (\`REV\` / \`BY\`) and runs a plain index ZRANGE — wrong results, not an error (it returns ${JSON.stringify(actual)})`,
+    error: err =>
+      err instanceof assert.AssertionError &&
+      isDeepStrictEqual(err.actual, actual),
   }
 }
 
@@ -789,10 +804,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'ZRANGE BYSCORE filters by score bounds',
     'ZRANGE on a missing key returns empty array',
   ]),
-  todo('node-redis/zset/modern-range.test.ts', CAUSE.zRangeOptionsWrongResult, [
+  todo('node-redis/zset/modern-range.test.ts', zRangeWrongResult([]), [
     'ZRANGE BYSCORE REV takes bounds as max min and reverses',
-    'ZRANGE REV reverses the index ordering',
   ]),
+  todo(
+    'node-redis/zset/modern-range.test.ts',
+    zRangeWrongResult(['a', 'b', 'c']),
+    ['ZRANGE REV reverses the index ordering'],
+  ),
   todo(
     'node-redis/zset/range.test.ts',
     missing('zRangeByScore', 'zRangeWithScores', 'zRank'),
@@ -805,9 +824,11 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/zset/range.test.ts', CAUSE.argumentShapes, [
     'ZRANK and ZREVRANK WITHSCORE option',
   ]),
-  todo('node-redis/zset/range.test.ts', CAUSE.zRangeOptionsWrongResult, [
-    'ZREVRANGE command',
-  ]),
+  todo(
+    'node-redis/zset/range.test.ts',
+    zRangeWrongResult(['one', 'two', 'three']),
+    ['ZREVRANGE command'],
+  ),
   todo(
     'node-redis/zset/score-range.test.ts',
     missing(
