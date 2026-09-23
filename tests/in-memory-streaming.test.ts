@@ -48,6 +48,32 @@ describe('in-memory instance — streaming & blocking across connections', () =>
     assert.deepStrictEqual(await nextPush(pushes), ['message', 'ch', 'hi'])
   })
 
+  test('multi-target SUBSCRIBE: the reply is the first confirmation, pushes() carries the rest', async () => {
+    instance = await createInMemoryRedis()
+    const sub = instance.connect()
+    const pub = instance.connect()
+
+    assert.deepStrictEqual(await sub.command('SUBSCRIBE', 'a', 'b', 'c'), [
+      'subscribe',
+      'a',
+      1,
+    ])
+
+    const pushes = sub.pushes()
+    assert.deepStrictEqual(await nextPush(pushes), ['subscribe', 'b', 2])
+    assert.deepStrictEqual(await nextPush(pushes), ['subscribe', 'c', 3])
+
+    await pub.command('PUBLISH', 'b', 'hi')
+    assert.deepStrictEqual(await nextPush(pushes), ['message', 'b', 'hi'])
+
+    assert.deepStrictEqual(await sub.command('UNSUBSCRIBE', 'a', 'c'), [
+      'unsubscribe',
+      'a',
+      2,
+    ])
+    assert.deepStrictEqual(await nextPush(pushes), ['unsubscribe', 'c', 1])
+  })
+
   test('MONITOR: a monitoring connection sees another connection’s command', async () => {
     instance = await createInMemoryRedis()
     const mon = instance.connect()
