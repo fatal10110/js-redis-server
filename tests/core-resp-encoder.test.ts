@@ -6,6 +6,7 @@ import {
   encodeRedisResult,
   encodeRedisValue,
 } from '../src/internal'
+import { formatRedisDouble } from '../src/core/resp-encoder'
 
 describe('RESP encoder core', () => {
   test('encodes RESP2 scalar values', () => {
@@ -205,5 +206,76 @@ describe('RESP encoder core', () => {
         `format "${badFormat}" should be rejected`,
       )
     }
+  })
+})
+
+describe('formatRedisDouble', () => {
+  // Every expected value is `ZSCORE` output at RESP2 from real Redis 8.0.6 and
+  // 7.2.1 (identical), after `ZADD z <input> m`. RESP3's `,` double carries
+  // the same text — `d2string()` produces both.
+  // A `Number('…')` input is the ZADD argument as sent, parsed the way Redis's
+  // strtod parses it — a literal would lose precision before the test runs.
+  const cases: [input: number, redis: string][] = [
+    // Integer path: every digit, exactly, up to ±2^62 — JS's toString would
+    // round the tail.
+    [1, '1'],
+    [1e18, '1000000000000000000'],
+    [3e18, '3000000000000000000'],
+    [2 ** 62, '4611686018427387904'],
+    [-(2 ** 62), '-4611686018427387904'],
+    [Number('1234567890123456789'), '1234567890123456768'],
+    // fpconv past 2^62: plain while the trailing zeros number fewer than 8…
+    [4611686018427388928, '4611686018427389000'],
+    [12345678901234567000, '12345678901234567000'],
+    [Number('1.2345678901234567e22'), '12345678901234568000000'],
+    // …exponent form otherwise, whatever the magnitude.
+    [5e18, '5e+18'],
+    [-5e18, '-5e+18'],
+    [1e19, '1e+19'],
+    [1e20, '1e+20'],
+    [Number('99999999999999999999'), '1e+20'],
+    [9.99e20, '9.99e+20'],
+    [1e21, '1e+21'],
+    [1.7976931348623157e308, '1.7976931348623157e+308'],
+    // Fractions: a plain decimal while the last digit sits fewer than 7 places
+    // after the point, or the magnitude is below 10^4…
+    [2.5, '2.5'],
+    [0.1, '0.1'],
+    [123.456, '123.456'],
+    [123.4567891, '123.4567891'],
+    [0.000001, '0.000001'],
+    [0.00001, '0.00001'],
+    [0.000123, '0.000123'],
+    // …exponent form otherwise, even where JS would still print a decimal.
+    [0.0000123, '1.23e-5'],
+    [1.23456e-5, '1.23456e-5'],
+    [0.0001234567, '1.234567e-4'],
+    [1e-7, '1e-7'],
+    [1.5e-7, '1.5e-7'],
+    [1e-300, '1e-300'],
+    [5e-324, '5e-324'],
+    // Specials.
+    [Infinity, 'inf'],
+    [-Infinity, '-inf'],
+    [Number.NaN, 'nan'],
+    [0, '0'],
+    [-0, '-0'],
+  ]
+
+  for (const [input, redis] of cases) {
+    test(`${String(input)} → ${redis}`, () => {
+      assert.strictEqual(formatRedisDouble(input), redis)
+    })
+  }
+
+  test('reaches the wire at both protocols', () => {
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.double(1e20)),
+      Buffer.from('$5\r\n1e+20\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.double(1e20), { version: 3 }),
+      Buffer.from(',1e+20\r\n'),
+    )
   })
 })
