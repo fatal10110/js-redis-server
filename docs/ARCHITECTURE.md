@@ -336,9 +336,11 @@ types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`,
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
 `set`, `zset`, `stream`). Hash values store byte-safe field entries and can
 attach an `expiresAt` timestamp to individual fields for the hash-field TTL
-commands; tracked hash helpers lazily delete expired fields on hash reads and
-writes, and the keyspace removes the hash key when the last live field
-disappears. Stream values store ordered entries plus consumer groups, per-group
+commands. There is no active field expiry: `RedisDatabase.updateHash` first
+drops any expired fields as a mutation of their own, published as `hexpired`
+(then `del` if the hash empties) — never under the name of the command that
+touched the key — and the keyspace removes the hash key when the last live
+field disappears. Stream values store ordered entries plus consumer groups, per-group
 pending-entry lists, and consumer idle metadata. Key expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass that sweeps every database under one turn of
@@ -363,7 +365,13 @@ by the `CommandExecutor`, which hands each command a `ctx.db` view
 (`RedisDatabase.withOrigin`) that tags every event it emits with that
 command's name (#444) — a prototype-linked view rather than a mutable flag on
 the database, so a parked command (`BLPOP`) can't leak its name onto another
-command's writes when it resumes.
+command's writes when it resumes. A command whose event real Redis names after
+the underlying operation rather than the command mutates through its own
+`withOrigin` view at the call site: blocking / multi-key / move-style pops use
+`lpop`/`rpop`/`zpopmin`/`zpopmax` (and `lpush`/`rpush`, `srem`/`sadd` on the
+other key of a move), XGROUP subcommands `xgroup-<subcommand>`, the 8.x
+hash-field commands `hdel`/`hexpire`/`hpersist`, and `SORT ... STORE`
+`sortstore`.
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and
@@ -382,7 +390,9 @@ commit through `markCommitted()`, which persists the value, dirties `WATCH`
 only when the key is brand-new (coming into existence is itself a write), and
 otherwise emits a `notify` so the change is still announced as a keyspace
 notification — matching real Redis, which fires `notifyKeyspaceEvent` for
-these without calling `signalModifiedKey`.
+these without calling `signalModifiedKey`. When `XREADGROUP`/`XCLAIM`/
+`XAUTOCLAIM` name a consumer that does not exist yet, they first create it the
+same way, as its own `xgroup-createconsumer` notification.
 
 ## Concurrency model
 

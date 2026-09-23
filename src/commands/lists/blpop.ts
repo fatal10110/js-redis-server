@@ -8,6 +8,7 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
+import { listPopEvent } from './helpers'
 
 export function tryListPop(
   keys: readonly Buffer[],
@@ -18,15 +19,14 @@ export function tryListPop(
     const list = db.getList(key)
     if (!list || list.values.length === 0) continue
 
-    const result = db.updateList(key, list => {
-      const value = list.pop(side)
-      return { value, empty: list.length === 0 }
-    })
-    if (result.empty) db.delete(key)
+    // Published as the underlying lpop/rpop, as real Redis does (#446).
+    const value = db
+      .withOrigin(listPopEvent(side))
+      .updateList(key, list => list.pop(side))
     return RedisResult.create(
       RedisValue.array([
         RedisValue.bulkString(key),
-        RedisValue.bulkString(result.value),
+        RedisValue.bulkString(value),
       ]),
     )
   }

@@ -266,3 +266,54 @@ describe('RedisDatabase.set — empty values', () => {
     assert.deepStrictEqual(db.getString(key), Buffer.alloc(0))
   })
 })
+
+describe('RedisDatabase.withOrigin — a prototype-linked view (#444)', () => {
+  test('writes through a view stamp its origin and leave origin as its only own property', () => {
+    // The view reads all state through to the database; a RedisDatabase
+    // method that assigned `this.x` would silently land on the view instead.
+    const { db, events } = setup()
+    const view = db.withOrigin('x')
+
+    view.setString(Buffer.from('s'), Buffer.from('v'))
+    view.expire(Buffer.from('s'), Date.now() + 60_000)
+    view.persist(Buffer.from('s'))
+    view.updateHash(Buffer.from('h'), hash => {
+      hash.setField(Buffer.from('f'), Buffer.from('v'), { keepTtl: false })
+    })
+    view.updateHash(Buffer.from('h'), hash => {
+      hash.setFieldExpiration(Buffer.from('f'), Date.now() - 1)
+    })
+    view.updateHash(Buffer.from('h'), hash => hash.size)
+    view.updateList(Buffer.from('l'), list => {
+      list.pushRight([Buffer.from('a')])
+    })
+    view.updateList(Buffer.from('l'), list => {
+      list.pop('left')
+    })
+    view.delete(Buffer.from('s'))
+    view.flush()
+
+    assert.deepStrictEqual(Object.getOwnPropertyNames(view), ['origin'])
+    assert.strictEqual(db.origin, undefined)
+    assert.strictEqual(db.size(), 0)
+    // Everything is stamped with the view's origin, except the lazily purged
+    // hash field, which is always published as `hexpired`.
+    assert.deepStrictEqual(
+      events.map(event => [event.type, event.command]),
+      [
+        ['write', 'x'], // SET s
+        ['expire', 'x'],
+        ['persist', 'x'],
+        ['write', 'x'], // HSET h f
+        ['write', 'x'], // HPEXPIRE h f (in the past)
+        ['notify', 'hexpired'], // purge on next access empties h
+        ['delete', 'hexpired'],
+        ['write', 'x'], // RPUSH l
+        ['notify', 'x'], // LPOP l empties it
+        ['delete', 'x'],
+        ['delete', 'x'], // DEL s
+        ['flush', 'x'],
+      ],
+    )
+  })
+})

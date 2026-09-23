@@ -290,19 +290,15 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
     assert.deepStrictEqual(await watcher.multi().ping().exec(), ['PONG'])
 
     await drain(bus, sentinelWriter, 0)
-    // Real Redis names these after the subcommand (xgroup-create, ...); the
-    // subcommand naming is #381, so only the `xgroup` family is pinned here.
-    const names = eventsFor(events, 0, stream).map(name =>
-      name.startsWith('xgroup-') ? 'xgroup' : name,
-    )
-    assert.deepStrictEqual(names, [
+    // Each subcommand is published under its own name (#381).
+    assert.deepStrictEqual(eventsFor(events, 0, stream), [
       'xadd',
-      'xgroup', // CREATE
-      'xgroup', // CREATECONSUMER c1
-      'xgroup', // SETID
-      'xgroup', // DELCONSUMER c1
+      'xgroup-create',
+      'xgroup-createconsumer',
+      'xgroup-setid',
+      'xgroup-delconsumer',
       'xsetid',
-      'xgroup', // DESTROY
+      'xgroup-destroy',
     ])
   })
 

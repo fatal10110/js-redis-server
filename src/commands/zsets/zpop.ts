@@ -139,10 +139,13 @@ function tryBlockingZsetPop(
     const sorted = getSortedMembers(zset)
     const entry = side === 'min' ? sorted[0] : sorted[sorted.length - 1]
 
-    db.updateSortedSet(key, z => {
-      z.deleteMember(entry.member)
-    })
-    deleteSortedSetIfEmpty(db, key)
+    // Published as the underlying zpopmin/zpopmax, as real Redis does (#446).
+    db.withOrigin(side === 'min' ? 'zpopmin' : 'zpopmax').updateSortedSet(
+      key,
+      z => {
+        z.deleteMember(entry.member)
+      },
+    )
 
     return RedisResult.create(
       RedisValue.array([

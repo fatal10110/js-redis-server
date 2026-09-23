@@ -280,6 +280,7 @@ export class RedisDatabase {
     key: Buffer,
     mutator: (hash: TrackedHashData) => TResult,
   ): TResult {
+    this.purgeExpiredHashFields(key)
     return this.updateTyped(
       key,
       'hash',
@@ -338,6 +339,42 @@ export class RedisDatabase {
       createStreamData,
       mutator,
       (value, tracker) => new TrackedStreamData(value, tracker),
+    )
+  }
+
+  /**
+   * Drop a hash's expired fields as a mutation of their own, published as
+   * `hexpired` (then `del` if that empties the hash) — never under the name of
+   * the command that happened to touch the key, not even a read (HGETALL,
+   * HSCAN, HLEN, ...). Real Redis removes expired fields by active expiry,
+   * which publishes exactly `hexpired` / `del`; this mock has no active field
+   * expiry, so the first `updateHash` after the deadline stands in for it.
+   */
+  private purgeExpiredHashFields(key: Buffer): void {
+    const entry = this.getLiveEntry(key)
+    if (!entry || entry.value.type !== 'hash') {
+      return
+    }
+
+    const now = Date.now()
+    const fields = entry.value.fields
+    const expired = Array.from(fields.entries()).filter(
+      ([, field]) => field.expiresAt !== undefined && field.expiresAt <= now,
+    )
+    if (expired.length === 0) {
+      return
+    }
+
+    this.withOrigin('hexpired').update(
+      key,
+      'hash',
+      createHashData,
+      (hash, tracker) => {
+        for (const [id] of expired) {
+          hash.fields.delete(id)
+        }
+        tracker.markChanged()
+      },
     )
   }
 

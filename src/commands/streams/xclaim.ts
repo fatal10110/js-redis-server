@@ -6,7 +6,7 @@ import {
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
-import { requireStreamGroup } from './groups'
+import { createConsumerIfMissing, requireStreamGroup } from './groups'
 import { parseExactId, parseNonNegativeInteger } from './ids'
 import { entryToReply, streamIdValue } from './replies'
 
@@ -132,6 +132,13 @@ export const xclaimCommand = defineCommand({
       ctx.db.getStream(command.key),
       command.key,
       command.group,
+    )
+    createConsumerIfMissing(
+      ctx.db,
+      command.key,
+      command.group,
+      command.consumer,
+      now,
     )
     const claimed = ctx.db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream.value, command.key, command.group)
