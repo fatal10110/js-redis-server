@@ -26,7 +26,7 @@ import {
   simpleString,
   unknownSubcommandError,
 } from './helpers'
-import { commandSubcommandInfo } from './introspection'
+import { commandDocs, commandSubcommandInfo } from './introspection'
 
 const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
@@ -522,6 +522,30 @@ export const pingCommand = defineCommand({
   },
 })
 
+// Not flagged `subscribed`: RESP2 subscribed mode rejects ECHO in real Redis
+// (only RESP3 allows it there), and the subscribed-mode policy keys off that flag.
+export const echoCommand = defineCommand({
+  name: 'echo',
+  schema: t.object({
+    message: t.bulk(),
+  }),
+  flags: ['readonly', 'fast'],
+  introspection: {
+    arity: 2,
+    flags: ['loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+    keySpecs: [],
+    docs: commandDocs('Returns the given string.', 'connection', [
+      { name: 'message', type: 'string' },
+    ]),
+  },
+  keys: () => [],
+  execute: args => bulk(args.message),
+})
+
 export const quitCommand = defineCommand({
   name: 'quit',
   schema: t.object({}),
@@ -852,7 +876,7 @@ export const resetCommand = defineCommand({
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
     noEvictClients.delete(ctx.session)
-    ctx.session.resetResponseStreams()
+    ctx.session.resetPushProducers()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
     ctx.session.unwatch()
@@ -1112,6 +1136,7 @@ function parseShutdownOptions(
 
 export const connectionCommands = [
   pingCommand,
+  echoCommand,
   quitCommand,
   selectCommand,
   infoCommand,

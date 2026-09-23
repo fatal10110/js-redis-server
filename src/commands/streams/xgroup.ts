@@ -3,11 +3,15 @@ import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   RedisCommandError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
-import { integer, ok, unknownSubcommandError } from '../helpers'
+import {
+  integer,
+  ok,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from '../helpers'
 import { BusyStreamGroupError, requireStreamGroup } from './groups'
 import {
   bufferId,
@@ -58,13 +62,18 @@ function createXgroupSchema() {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
       const subcommand = asciiUpperCase(rawSubcommand.toString())
+      // A parser only knows the container (`ctx.commandName`), so arity errors
+      // for a dispatched subcommand spell out `xgroup|<sub>` themselves, as
+      // real Redis 7.0+ does (#438). An option list the subcommand cannot use
+      // is real Redis' `addReplySubcommandSyntaxError`, not an arity error.
 
       if (subcommand === 'CREATE' || subcommand === 'SETID') {
+        const name = subcommand === 'CREATE' ? 'create' : 'setid'
         const key = input[index + 1]
         const group = input[index + 2]
         const rawId = input[index + 3]?.toString()
         if (!key || !group || rawId === undefined) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
         }
 
         let cursor = index + 4
@@ -80,20 +89,22 @@ function createXgroupSchema() {
 
           if (option === 'ENTRIESREAD') {
             const rawEntriesRead = input[cursor + 1]
-            if (!rawEntriesRead) {
-              throw new WrongNumberOfArgumentsError(ctx.commandName)
-            }
+            if (!rawEntriesRead) break
             entriesRead = parseNonNegativeInteger(rawEntriesRead)
             cursor += 2
             continue
           }
 
-          throw new RedisSyntaxError()
+          break
+        }
+
+        if (cursor !== input.length) {
+          throw subcommandSyntaxError('XGROUP', rawSubcommand, ctx.profile)
         }
 
         return {
           value: {
-            subcommand: subcommand === 'CREATE' ? 'create' : 'setid',
+            subcommand: name,
             key,
             group,
             id: rawId === '$' ? '$' : parseExactId(rawId),
@@ -108,7 +119,7 @@ function createXgroupSchema() {
         const key = input[index + 1]
         const group = input[index + 2]
         if (!key || !group || input.length !== index + 3) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError('xgroup|destroy')
         }
         return {
           value: { subcommand: 'destroy', key, group },
@@ -117,18 +128,17 @@ function createXgroupSchema() {
       }
 
       if (subcommand === 'CREATECONSUMER' || subcommand === 'DELCONSUMER') {
+        const name =
+          subcommand === 'CREATECONSUMER' ? 'createconsumer' : 'delconsumer'
         const key = input[index + 1]
         const group = input[index + 2]
         const consumer = input[index + 3]
         if (!key || !group || !consumer || input.length !== index + 4) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
         }
         return {
           value: {
-            subcommand:
-              subcommand === 'CREATECONSUMER'
-                ? 'createconsumer'
-                : 'delconsumer',
+            subcommand: name,
             key,
             group,
             consumer,

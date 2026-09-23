@@ -11,7 +11,6 @@ import {
   defineCommand,
   t,
 } from '../src/internal'
-import type { ResponseStream } from '../src/internal'
 import { createRedisSessionHarness as createHarness } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
 import { InMemoryTransport } from './in-memory-transport-test-helper'
@@ -171,23 +170,6 @@ describe('new transport-neutral session path', () => {
     assert.strictEqual(transport.signal.aborted, true)
   })
 
-  test('drains ResponseStream frames through the same adapter', async () => {
-    const { session } = createHarness({ extraCommands: [streamCommand] })
-    const transport = new InMemoryTransport()
-    const adapter = new Resp2SessionAdapter({ transport, session })
-    const running = adapter.run()
-
-    transport.feed(commandFrame('STREAM'))
-    transport.endRead()
-
-    await running
-
-    assert.strictEqual(
-      transport.getWrittenBuffer().toString(),
-      '*2\r\n$7\r\nmessage\r\n$7\r\nupdates\r\n',
-    )
-  })
-
   test('tracks WATCH invalidation through database mutation events', () => {
     const { server, session } = createHarness()
     const key = Buffer.from('watched')
@@ -291,30 +273,6 @@ describe('new transport-neutral session path', () => {
     assert.deepStrictEqual(await withTimeout(competing), RedisResult.ok())
   })
 })
-
-const streamCommand = defineCommand({
-  name: 'stream',
-  schema: t.object({}),
-  flags: ['pubsub'],
-  capabilities: { pushOnly: true },
-  keys: () => [],
-  execute: () => createSingleFrameStream(),
-})
-
-function createSingleFrameStream(): ResponseStream {
-  return {
-    kind: 'response-stream',
-    closed: Promise.resolve(),
-    frames: async function* () {
-      yield RedisResult.create(
-        RedisValue.push('message', [
-          RedisValue.bulkString(Buffer.from('updates')),
-        ]),
-      )
-    },
-    close: () => {},
-  }
-}
 
 function defer<TValue>() {
   let resolve!: (value: TValue | PromiseLike<TValue>) => void

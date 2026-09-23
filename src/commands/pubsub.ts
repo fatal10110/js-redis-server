@@ -5,7 +5,7 @@ import { WrongNumberOfArgumentsError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { RedisExecutionContext } from '../core/redis-context'
-import type { ResponseStream } from '../core/response-stream'
+import { encodeRedisValue } from '../core/resp-encoder'
 import {
   array,
   integer,
@@ -35,7 +35,7 @@ export const subscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubSubscribe('channel', args.channels)),
+    confirmations(ctx, ctx.session.pubsubSubscribe('channel', args.channels)),
 })
 
 export const unsubscribeCommand = defineCommand({
@@ -54,7 +54,7 @@ export const unsubscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubUnsubscribe('channel', args.channels)),
+    confirmations(ctx, ctx.session.pubsubUnsubscribe('channel', args.channels)),
 })
 
 export const ssubscribeCommand = defineCommand({
@@ -74,7 +74,7 @@ export const ssubscribeCommand = defineCommand({
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubSubscribe('shard', args.channels)),
+    confirmations(ctx, ctx.session.pubsubSubscribe('shard', args.channels)),
 })
 
 export const sunsubscribeCommand = defineCommand({
@@ -94,7 +94,7 @@ export const sunsubscribeCommand = defineCommand({
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubUnsubscribe('shard', args.channels)),
+    confirmations(ctx, ctx.session.pubsubUnsubscribe('shard', args.channels)),
 })
 
 export const psubscribeCommand = defineCommand({
@@ -113,7 +113,7 @@ export const psubscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubSubscribe('pattern', args.patterns)),
+    confirmations(ctx, ctx.session.pubsubSubscribe('pattern', args.patterns)),
 })
 
 export const punsubscribeCommand = defineCommand({
@@ -132,7 +132,7 @@ export const punsubscribeCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) =>
-    framesResult(ctx.session.pubsubUnsubscribe('pattern', args.patterns)),
+    confirmations(ctx, ctx.session.pubsubUnsubscribe('pattern', args.patterns)),
 })
 
 export const publishCommand = defineCommand({
@@ -352,21 +352,29 @@ function pubsubHelp(ctx: RedisExecutionContext): RedisResult {
   )
 }
 
-function framesResult(frames: RedisResult[]): RedisResult | ResponseStream {
+/**
+ * A (UN)SUBSCRIBE-family reply: one confirmation frame per target, sent back to
+ * back as a single reply so nothing pipelined behind the command can land
+ * between them (#455). Inside EXEC the same bytes are embedded in the array, as
+ * Redis does. Front ends that read values get the first frame as `value` and
+ * the rest as `trailingFrames`.
+ */
+function confirmations(
+  ctx: RedisExecutionContext,
+  frames: RedisResult[],
+): RedisResult {
   if (frames.length === 1) {
     return frames[0]
   }
 
-  return {
-    kind: 'response-stream',
-    closed: Promise.resolve(),
-    frames: async function* () {
-      for (const frame of frames) {
-        yield frame
-      }
-    },
-    close: () => {},
-  }
+  const version = ctx.session.protocolVersion
+  return RedisResult.preEncoded(
+    frames[0].value,
+    Buffer.concat(
+      frames.map(frame => encodeRedisValue(frame.value, { version })),
+    ),
+    { trailingFrames: frames.slice(1).map(frame => frame.value) },
+  )
 }
 
 function expectArgCount(
