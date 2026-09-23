@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
-import { Cluster } from 'ioredis'
+import { Redis } from 'ioredis'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 
@@ -12,6 +12,9 @@ import { randomKey } from '../utils'
  * `{set=…}` tables convert whether or not the script called
  * `redis.setresp(3)`, and after `redis.setresp(3)` a `redis.call` reply
  * reaches the script as its RESP3 typed table (`{map=…}`, `{double=…}`).
+ *
+ * Lua semantics do not depend on cluster mode, so this runs on a standalone
+ * server (`REDIS_STANDALONE_PORT` on the real backend).
  */
 const testRunner = new TestRunner()
 const RUN = randomKey()
@@ -28,25 +31,26 @@ const ENGINE_NULL_GAP = mockGap(
 )
 
 describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`, () => {
-  const tag = `{lua449:${RUN}}`
-  const hashKey = `${tag}:h`
-  const zsetKey = `${tag}:z`
-  const missingKey = `${tag}:missing`
-  let redis: Cluster
+  const hashKey = `lua449:${RUN}:h`
+  const zsetKey = `lua449:${RUN}:z`
+  const missingKey = `lua449:${RUN}:missing`
+  const streamKey = `lua449:${RUN}:st`
+  let redis: Redis
 
   before(async () => {
-    redis = await testRunner.setupIoredisCluster()
+    redis = await testRunner.setupIoredisStandalone()
     await redis.hset(hashKey, 'f', 'v')
     await redis.zadd(zsetKey, 2.5, 'b')
+    await redis.xadd(streamKey, '1-1', 'a', '1')
   })
 
   after(async () => {
-    await redis.del(hashKey, zsetKey)
+    await redis.del(hashKey, zsetKey, streamKey)
     await testRunner.cleanup()
   })
 
   function evalScript(script: string): Promise<unknown> {
-    return redis.eval(script, 3, hashKey, zsetKey, missingKey)
+    return redis.eval(script, 4, hashKey, zsetKey, missingKey, streamKey)
   }
 
   describe('typed tables convert without redis.setresp(3)', () => {
@@ -71,6 +75,19 @@ describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`,
     test('{set=…} is an array', { todo: ENGINE_GAP }, async () => {
       assert.deepStrictEqual(await evalScript('return {set={a=true}}'), ['a'])
     })
+
+    test(
+      '{verbatim_string=…} is a bulk string',
+      { todo: ENGINE_GAP },
+      async () => {
+        assert.strictEqual(
+          await evalScript(
+            "return {verbatim_string={format='txt', string='hi'}}",
+          ),
+          'hi',
+        )
+      },
+    )
   })
 
   describe('redis.call replies after redis.setresp(3)', () => {
@@ -86,6 +103,21 @@ describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`,
           "redis.setresp(3); local r = redis.call('HGETALL', KEYS[1]); return {type(r.map), r.map.f}",
         ),
         ['table', 'v'],
+      )
+    })
+
+    test('XREAD is a map the script indexes by stream name', async () => {
+      assert.deepStrictEqual(
+        await evalScript(
+          "redis.setresp(3); return redis.call('XREAD', 'STREAMS', KEYS[4], '0')",
+        ),
+        [streamKey, [['1-1', ['a', '1']]]],
+      )
+      assert.strictEqual(
+        await evalScript(
+          "redis.setresp(3); local r = redis.call('XREAD', 'STREAMS', KEYS[4], '0'); return r.map[KEYS[4]][1][1]",
+        ),
+        '1-1',
       )
     })
 
@@ -123,6 +155,29 @@ describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`,
           "redis.setresp(3); return type(redis.call('GET', KEYS[3]))",
         ),
         'nil',
+      )
+    })
+
+    test(
+      'a missing value ends an array reply',
+      { todo: ENGINE_NULL_GAP },
+      async () => {
+        // A Lua nil ends the array Redis builds from a table.
+        assert.deepStrictEqual(
+          await evalScript(
+            "redis.setresp(3); return redis.call('HMGET', KEYS[1], 'f', 'nope', 'f')",
+          ),
+          ['v'],
+        )
+      },
+    )
+
+    test('redis.setresp(2) switches back to RESP2 shapes', async () => {
+      assert.deepStrictEqual(
+        await evalScript(
+          "redis.setresp(3); redis.setresp(2); local r = redis.call('HGETALL', KEYS[1]); return {type(r.map), r[1], r[2]}",
+        ),
+        ['nil', 'f', 'v'],
       )
     })
   })

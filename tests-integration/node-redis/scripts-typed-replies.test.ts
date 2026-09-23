@@ -1,8 +1,8 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
-import { createClient, RedisClientType, RedisClusterType } from 'redis'
+import { createClient, RESP_TYPES } from 'redis'
 import { TestRunner } from '../test-config'
-import { findNodeRedisSlotOwner, randomKey } from '../utils'
+import { randomKey } from '../utils'
 
 /**
  * How a Lua script's typed replies reach a client, at each protocol (#449).
@@ -16,12 +16,17 @@ import { findNodeRedisSlotOwner, randomKey } from '../utils'
  *     a map is a `{map=…}` table, a double a `{double=…}` table, a set a
  *     `{set=…}` table and a missing value `nil`. Returned as-is, they reach
  *     the client as the RESP3 type (downgraded by the client's own protocol).
+ *     The protocol is per script: `redis.setresp(2)` switches back, and every
+ *     EVAL starts at RESP2 again.
+ *
+ * Lua semantics do not depend on cluster mode, so this runs on a standalone
+ * server (`REDIS_STANDALONE_PORT` on the real backend).
  */
 const testRunner = new TestRunner()
 const RUN = randomKey()
 
 // Known mock gaps, pinned against real Redis until they close. The first two
-// live in the bundled `lua-redis-wasm` engine, not in this repo.
+// live in the bundled `lua-redis-wasm` engine; the third in this repo.
 const mockGap = (reason: string) =>
   testRunner.backend === 'mock' ? reason : false
 const ENGINE_GAP = mockGap(
@@ -32,42 +37,50 @@ const ENGINE_NULL_GAP = mockGap(
 )
 const SET_REPLY_GAP = mockGap('mock SMEMBERS replies an array, not a set')
 
+function connectAt(port: number, RESP: 2 | 3) {
+  const client = createClient({ url: `redis://127.0.0.1:${port}`, RESP })
+  client.on('error', () => {})
+  return client.connect()
+}
+
+type Client = Awaited<ReturnType<typeof connectAt>>
+
 describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendName()})`, () => {
-  const tag = `{lua449:${RUN}}`
-  const hashKey = `${tag}:h`
-  const zsetKey = `${tag}:z`
-  const setKey = `${tag}:s`
-  const missingKey = `${tag}:missing`
-  let cluster: RedisClusterType
-  const clients: Record<2 | 3, RedisClientType> = {} as never
+  const hashKey = `lua449:${RUN}:h`
+  const zsetKey = `lua449:${RUN}:z`
+  const setKey = `lua449:${RUN}:s`
+  const missingKey = `lua449:${RUN}:missing`
+  const streamKey = `lua449:${RUN}:st`
+  let clients: Record<2 | 3, Client> | undefined
 
   before(async () => {
-    cluster = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    const { host, port } = findNodeRedisSlotOwner(cluster, tag)
-    for (const RESP of [2, 3] as const) {
-      const client = createClient({
-        url: `redis://${host}:${port}`,
-        RESP,
-      }) as unknown as RedisClientType
-      client.on('error', () => {})
-      await client.connect()
-      clients[RESP] = client
-    }
-    await cluster.hSet(hashKey, 'f', 'v')
-    await cluster.zAdd(zsetKey, { score: 2.5, value: 'b' })
-    await cluster.sAdd(setKey, 'x')
+    const port = await testRunner.setupRawStandalone()
+    const [resp2, resp3] = await Promise.all([
+      connectAt(port, 2),
+      connectAt(port, 3),
+    ])
+    clients = { 2: resp2, 3: resp3 }
+    await resp2.hSet(hashKey, 'f', 'v')
+    await resp2.zAdd(zsetKey, { score: 2.5, value: 'b' })
+    await resp2.sAdd(setKey, 'x')
+    await resp2.xAdd(streamKey, '1-1', { a: '1' })
   })
 
   after(async () => {
-    await cluster.del([hashKey, zsetKey, setKey])
-    clients[2]?.destroy()
-    clients[3]?.destroy()
+    await clients?.[2].del([hashKey, zsetKey, setKey, streamKey])
+    clients?.[2].destroy()
+    clients?.[3].destroy()
     await testRunner.cleanup()
   })
 
+  function client(resp: 2 | 3): Client {
+    assert.ok(clients, 'clients are connected in before()')
+    return clients[resp]
+  }
+
   function evalAt(resp: 2 | 3, script: string): Promise<unknown> {
-    return clients[resp].eval(script, {
-      keys: [hashKey, zsetKey, setKey, missingKey],
+    return client(resp).eval(script, {
+      keys: [hashKey, zsetKey, setKey, missingKey, streamKey],
     })
   }
 
@@ -96,6 +109,12 @@ describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendNam
       assert.deepStrictEqual(await evalAt(3, script), ['a'])
     })
 
+    test('{verbatim_string=…}', { todo: ENGINE_GAP }, async () => {
+      const script = "return {verbatim_string={format='txt', string='hi'}}"
+      assert.strictEqual(await evalAt(2, script), 'hi')
+      assert.strictEqual(await evalAt(3, script), 'hi')
+    })
+
     test('a boolean still needs setresp(3) to be a boolean', async () => {
       assert.strictEqual(await evalAt(2, 'return true'), 1)
       assert.strictEqual(await evalAt(2, 'return false'), null)
@@ -115,6 +134,19 @@ describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendNam
       const script =
         "redis.setresp(3); local r = redis.call('HGETALL', KEYS[1]); return {type(r.map), r.map.f}"
       assert.deepStrictEqual(await evalAt(2, script), ['table', 'v'])
+    })
+
+    test('XREAD is a map of stream name to entries', async () => {
+      const script =
+        "redis.setresp(3); return redis.call('XREAD', 'STREAMS', KEYS[5], '0')"
+      const entries = [['1-1', ['a', '1']]]
+      assert.deepStrictEqual(await evalAt(2, script), [streamKey, entries])
+      assert.deepStrictEqual(await evalAt(3, script), {
+        [streamKey]: entries,
+      })
+      const seen =
+        "redis.setresp(3); local r = redis.call('XREAD', 'STREAMS', KEYS[5], '0'); return r.map[KEYS[5]][1][1]"
+      assert.strictEqual(await evalAt(2, seen), '1-1')
     })
 
     test('ZSCORE and ZINCRBY are doubles', async () => {
@@ -141,10 +173,14 @@ describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendNam
       assert.deepStrictEqual(await evalAt(3, script), [['b', 2.5]])
     })
 
-    test('SMEMBERS is a set', async () => {
+    test('SMEMBERS is a set', { todo: SET_REPLY_GAP }, async () => {
+      // node-redis reads a RESP3 set as a plain array unless told otherwise;
+      // mapping sets to `Set` is what tells `~` apart from `*`.
       const script = "redis.setresp(3); return redis.call('SMEMBERS', KEYS[3])"
-      assert.deepStrictEqual(await evalAt(2, script), ['x'])
-      assert.deepStrictEqual(await evalAt(3, script), ['x'])
+      const reply = await client(3)
+        .withTypeMapping({ [RESP_TYPES.SET]: Set })
+        .eval(script, { keys: [hashKey, zsetKey, setKey] })
+      assert.deepStrictEqual(reply, new Set(['x']))
     })
 
     test(
@@ -170,6 +206,36 @@ describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendNam
       assert.strictEqual(await evalAt(3, script), null)
       const type = "redis.setresp(3); return type(redis.call('GET', KEYS[4]))"
       assert.strictEqual(await evalAt(2, type), 'nil')
+    })
+
+    test(
+      'a missing value ends an array reply',
+      { todo: ENGINE_NULL_GAP },
+      async () => {
+        // A Lua nil ends the array Redis builds from a table.
+        const script =
+          "redis.setresp(3); return redis.call('HMGET', KEYS[1], 'f', 'nope', 'f')"
+        assert.deepStrictEqual(await evalAt(2, script), ['v'])
+        assert.deepStrictEqual(await evalAt(3, script), ['v'])
+      },
+    )
+  })
+
+  describe('the protocol belongs to one script run', () => {
+    test('redis.setresp(2) switches redis.call back to RESP2 shapes', async () => {
+      const script =
+        "redis.setresp(3); redis.setresp(2); local r = redis.call('HGETALL', KEYS[1]); return {type(r.map), r[1], r[2]}"
+      assert.deepStrictEqual(await evalAt(3, script), ['nil', 'f', 'v'])
+    })
+
+    test('every EVAL starts at RESP2 again', async () => {
+      const probe = "return type(redis.call('HGETALL', KEYS[1]).map)"
+      assert.strictEqual(await evalAt(3, 'redis.setresp(3); return 1'), 1)
+      assert.strictEqual(await evalAt(3, probe), 'nil')
+      await assert.rejects(() =>
+        evalAt(3, "redis.setresp(3); return redis.call('NOSUCHCOMMAND')"),
+      )
+      assert.strictEqual(await evalAt(3, probe), 'nil')
     })
   })
 

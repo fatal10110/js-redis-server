@@ -328,11 +328,13 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
  * Convert a `redis.call`/`redis.pcall` reply into the value the script sees.
  * Like real Redis, the shape follows the protocol the script selected with
  * `redis.setresp()`: at RESP2 every reply is flattened to what a RESP2 client
- * would read, while at RESP3 maps, doubles, sets, booleans, big numbers and
- * verbatim strings reach Lua as their typed tables (`{map=…}`, `{double=…}`,
- * …) — the same shapes `encodeResp3` writes to the wire.
+ * would read, while at RESP3 maps and doubles reach Lua as their typed tables
+ * (`{map=…}`, `{double=…}`) — the shapes `encodeResp3` writes to the wire,
+ * except null (see {@link resp3TypedLuaReply}).
+ *
+ * Exported for unit tests only.
  */
-function redisValueToLuaReply(
+export function redisValueToLuaReply(
   value: RedisValue,
   resp: RespVersion,
 ): ReplyValue {
@@ -397,6 +399,11 @@ function redisValueToLuaReply(
  * `encodeResp3`; `undefined` for every kind both protocols convert alike. (A
  * RESP3 null still reaches Lua as `false`, not `nil`: the engine decodes every
  * null that way.)
+ *
+ * Through `redis.call` only `double`, `map`, `map-pairs` and `flat-pairs` are
+ * reachable today. No command emits `set`, `boolean`, `big-number` or
+ * `verbatim` yet (real Redis sends SMEMBERS as a set and INFO as a verbatim
+ * string), so those branches just mirror `encodeResp3` for when one does.
  */
 function resp3TypedLuaReply(
   value: RedisValue,

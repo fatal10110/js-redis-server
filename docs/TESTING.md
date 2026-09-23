@@ -281,13 +281,23 @@ integer `1` and `false` to nil. After `redis.setresp(3)`, `redis.call` also
 hands the script RESP3 replies — `HGETALL` as a `{map=…}` table, `ZSCORE` as a
 `{double=…}` table — so returning one gives the client a map or a double.
 
-Known mock gaps here, both in the bundled Lua engine (`lua-redis-wasm`), not in
-Redis: the `setresp(3)` requirement is Redis's rule for booleans only — real
-Redis converts `{big_number=…}`, `{double=…}`, `{map=…}` and `{set=…}` tables
-without it, while the mock's engine returns `[]` for them unless the script
-calls `redis.setresp(3)` first. And after `redis.setresp(3)` a missing value
-(`GET` of an absent key) reaches the script as `false`, not `nil`, so returning
-it gives `false` rather than a null reply.
+Known mock gaps here — none of them Redis behaviour:
+
+- The `setresp(3)` requirement is Redis's rule for booleans only. Real Redis
+  converts `{big_number=…}`, `{double=…}`, `{map=…}`, `{set=…}` and
+  `{verbatim_string=…}` tables without it; the mock's bundled Lua engine
+  (`lua-redis-wasm`) returns `[]` for them unless the script calls
+  `redis.setresp(3)` first.
+- After `redis.setresp(3)`, a missing value (`GET` of an absent key, a missing
+  `HMGET`/`MGET` field) reaches the script as `false`, not `nil` — also the
+  engine. Returning it gives `false` to a RESP3 client and `0` to a RESP2
+  client rather than a null reply, and inside an array it does not end the
+  array the way a Lua `nil` does in Redis: `HMGET h f nope f` returns
+  `['v']` from real Redis but `['v', false, 'v']` (RESP2: `['v', 0, 'v']`)
+  from the mock.
+- The mock's `SMEMBERS` replies with an array, not a RESP3 set (`~`), so after
+  `redis.setresp(3)` the script sees a plain list instead of a `{set=…}`
+  table. This one is in this repo, not the engine.
 
 (`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
 only ever sees the left column.) The *curated* methods on the node-redis facade
