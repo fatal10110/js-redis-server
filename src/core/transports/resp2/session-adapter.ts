@@ -1,6 +1,7 @@
 import { ClientSession } from '../../client-session'
 import { RedisCommandError } from '../../redis-error'
 import { RedisResult } from '../../redis-result'
+import { RedisValue } from '../../redis-value'
 import { encodeRedisResult } from '../../resp-encoder'
 import { isResponseStream } from '../../response-stream'
 import type { ResponseStream } from '../../response-stream'
@@ -20,7 +21,7 @@ export type Resp2SessionAdapterOptions = {
 }
 
 export class Resp2SessionAdapter {
-  private readonly decoder = new Resp2CommandDecoder()
+  private readonly decoder: Resp2CommandDecoder
   private readonly transport: ConnectionTransport
   private readonly session: ClientSession
   private readonly logger?: Pick<Logger, 'error'>
@@ -31,6 +32,11 @@ export class Resp2SessionAdapter {
     this.transport = options.transport
     this.session = options.session
     this.logger = options.logger
+    this.decoder = new Resp2CommandDecoder({
+      // Read per bulk header, not captured once: `CONFIG SET
+      // proto-max-bulk-len` moves the ceiling for every connection immediately.
+      maxBulkLength: () => this.session.server.protoMaxBulkLen,
+    })
   }
 
   async run(): Promise<void> {
@@ -38,20 +44,34 @@ export class Resp2SessionAdapter {
 
     try {
       for await (const chunk of this.transport.read()) {
-        const { frames, error } = this.decoder.push(chunk)
-        for (const frame of frames) {
+        this.decoder.push(chunk)
+
+        for (;;) {
+          let frame: Resp2CommandFrame | null
+          try {
+            // Pulled one at a time so each command has run — and any config it
+            // changed has landed — before the next frame is parsed.
+            frame = this.decoder.next()
+          } catch (err) {
+            if (!(err instanceof Resp2ParseError)) {
+              throw err
+            }
+            // Valid frames before the bad one were answered by earlier passes
+            // of this loop; now report the protocol error and close, matching
+            // real Redis.
+            await this.writeError(err)
+            this.transport.close('resp2 protocol error')
+            return
+          }
+
+          if (!frame) {
+            break
+          }
+
           await this.handleFrame(frame)
           if (this.transport.signal.aborted) {
             return
           }
-        }
-
-        if (error) {
-          // Valid frames before the bad one have already been answered above;
-          // now report the protocol error and close, matching real Redis.
-          await this.writeError(error)
-          this.transport.close('resp2 protocol error')
-          return
         }
       }
     } catch (err) {
@@ -60,12 +80,22 @@ export class Resp2SessionAdapter {
         this.transport.close('resp2 adapter error')
       }
     } finally {
-      this.session.close()
-      await pushWriter
-      // Streams are torn down by session.close() (resetResponseStreams aborts
-      // them); wait for their drain tasks to settle so nothing writes after we
-      // return.
-      await Promise.allSettled(this.activeStreams)
+      try {
+        this.session.close()
+        await pushWriter
+        // Streams are torn down by session.close() (resetResponseStreams aborts
+        // them); wait for their drain tasks to settle so nothing writes after
+        // we return.
+        await Promise.allSettled(this.activeStreams)
+      } finally {
+        // The read loop is over, so close our side as Redis does. If the
+        // client ended first, the transport has already torn down (before the
+        // drains above, so they cannot wait on a client that stopped reading)
+        // and this is a no-op. Otherwise the server ended first and this is
+        // the half-close. Last, so pending drains still get to write; in a
+        // finally, so a throw from session.close() cannot skip it.
+        this.transport.close('session ended')
+      }
     }
   }
 
@@ -156,12 +186,23 @@ export class Resp2SessionAdapter {
     }
 
     if (err instanceof RedisCommandError) {
-      await this.writeRedisResult(RedisResult.error(err.message, err.code))
+      await this.writeRedisResult(RedisResult.fromError(err))
       return
     }
 
     if (err instanceof Resp2ParseError) {
-      await this.writeRedisResult(RedisResult.error(err.message, 'ERR'))
+      // Pre-encoded from `messageBytes`, not `message`: some protocol errors
+      // echo a raw client byte that a string would re-encode as UTF-8.
+      await this.writeRedisResult(
+        RedisResult.preEncoded(
+          RedisValue.error(err.message, 'ERR'),
+          Buffer.concat([
+            Buffer.from('-ERR '),
+            err.messageBytes,
+            Buffer.from('\r\n'),
+          ]),
+        ),
+      )
       return
     }
 

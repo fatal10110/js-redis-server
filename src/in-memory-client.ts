@@ -233,7 +233,8 @@ export class InMemoryRedisClient {
   private decode(value: RedisValue): RedisNativeReply {
     // The protocol is read off the session at decode time, not pinned at
     // construction: `HELLO` can switch it mid-connection, and it decides the
-    // shape of WITHSCORES-style pair replies.
+    // shape of every protocol-dependent reply — maps, pairs, doubles, big
+    // numbers and booleans (see `DecodeRedisValueOptions.version`).
     return decodeRedisValue(value, {
       ...this.decodeOptions,
       version: this.session.protocolVersion,

@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
 import { createRedisCommandExecutor } from '../commands'
 import { buildClusterNodes, type ClusterNodePipeline } from '../cluster'
 import { ClientSession } from '../core/client-session'
 import type { CommandExecutor } from '../core/command-executor'
 import {
+  decodeRedisMapEntries,
   decodeRedisValue,
   redisErrorText,
   type ClientDecodeOptions,
@@ -45,6 +47,8 @@ type RedisErrorConstructors = {
   WatchError: new (message?: string) => Error
   ErrorReply: new (message: string) => Error
   MultiErrorReply: new (replies: unknown[], errorIndexes: number[]) => Error
+  ClientClosedError: new () => Error
+  DisconnectsClientError: new () => Error
 }
 
 class FacadeWatchError extends Error {
@@ -69,34 +73,95 @@ class FacadeMultiErrorReply extends FacadeErrorReply {
   }
 }
 
+// Mirrors node-redis' own classes: same message, same `name` ('Error' — neither
+// real class assigns one), and the same `constructor.name`, which is what
+// `util.inspect` and assertion libraries print.
+class ClientClosedError extends Error {
+  constructor() {
+    super('The client is closed')
+  }
+}
+class DisconnectsClientError extends Error {
+  constructor() {
+    super('Disconnects client')
+  }
+}
+
 const FALLBACK_REDIS_ERRORS: RedisErrorConstructors = {
   WatchError: FacadeWatchError,
   ErrorReply: FacadeErrorReply,
   MultiErrorReply: FacadeMultiErrorReply,
+  ClientClosedError,
+  DisconnectsClientError,
 }
 
 let resolvedRedisErrors: RedisErrorConstructors | undefined
 
-async function ensureRedisErrors(): Promise<RedisErrorConstructors> {
-  if (resolvedRedisErrors) {
-    return resolvedRedisErrors
-  }
+/**
+ * node-redis' own error classes, resolved on first need and cached.
+ *
+ * - **Lazy.** Importing this module must do no work (`"sideEffects": false`),
+ *   and ioredis-only consumers import it too, so nothing here may load the
+ *   optional `redis` peer at import time. The first need is constructing a
+ *   facade client ({@link CommandRunner}'s constructor), which is also what
+ *   makes the decode path's direct reads of the cache safe: no client can run
+ *   or close anything before its constructor has resolved the classes.
+ * - **Synchronous.** `destroy()` throws synchronously, so the close path cannot
+ *   await an import. `redis` and `@redis/client` are CommonJS-only packages (no
+ *   `exports` map), so `require` returns the very module instance an ESM
+ *   `import … from 'redis'` sees — the classes are identical and `instanceof`
+ *   holds for ESM and CJS consumers alike.
+ * - **Resolved from this module's own location**, as a static import would be.
+ *
+ * The local look-alikes are used only when `redis` genuinely cannot be
+ * required, or predates one of the classes (v4 has no `MultiErrorReply`).
+ */
+function redisErrors(): RedisErrorConstructors {
+  resolvedRedisErrors ??= loadRedisErrors()
+  return resolvedRedisErrors
+}
+
+function loadRedisErrors(): RedisErrorConstructors {
+  let redis: Partial<RedisErrorConstructors> | undefined
   try {
-    const redis = (await import('redis')) as unknown as
+    redis = createRequire(__filename)('redis') as
       | Partial<RedisErrorConstructors>
       | undefined
-    resolvedRedisErrors =
-      redis?.WatchError && redis.ErrorReply && redis.MultiErrorReply
-        ? {
-            WatchError: redis.WatchError,
-            ErrorReply: redis.ErrorReply,
-            MultiErrorReply: redis.MultiErrorReply,
-          }
-        : FALLBACK_REDIS_ERRORS
   } catch {
-    resolvedRedisErrors = FALLBACK_REDIS_ERRORS
+    return FALLBACK_REDIS_ERRORS
   }
-  return resolvedRedisErrors
+  return redis?.WatchError &&
+    redis.ErrorReply &&
+    redis.MultiErrorReply &&
+    redis.ClientClosedError &&
+    redis.DisconnectsClientError
+    ? {
+        WatchError: redis.WatchError,
+        ErrorReply: redis.ErrorReply,
+        MultiErrorReply: redis.MultiErrorReply,
+        ClientClosedError: redis.ClientClosedError,
+        DisconnectsClientError: redis.DisconnectsClientError,
+      }
+    : FALLBACK_REDIS_ERRORS
+}
+
+/** A close-path error, synchronously — `destroy()` cannot await. */
+function closeError(which: 'ClientClosedError' | 'DisconnectsClientError') {
+  return new (redisErrors()[which])()
+}
+
+/** Thrown by any call on a closed client, a redundant close included. */
+function clientClosedError(): Error {
+  return closeError('ClientClosedError')
+}
+
+/**
+ * Real node-redis' `destroy()` flushes the in-flight command queue with this
+ * (`client/index.js`: `#queue.flushAll(new DisconnectsClientError())`), and
+ * `disconnect()` is an alias for `destroy()`.
+ */
+function disconnectsClientError(): Error {
+  return closeError('DisconnectsClientError')
 }
 
 /** A command argument node-redis accepts on the wire. */
@@ -128,9 +193,9 @@ export type NodeRedisPubSubListener = (message: string, channel: string) => void
 export async function createNodeRedisMock(
   options: CreateNodeRedisMockOptions = {},
 ): Promise<NodeRedisMockClient | NodeRedisMockCluster> {
-  // Resolve node-redis' error classes before any command can decode/throw, so
-  // the synchronous decode path can surface real WatchError/ErrorReply types.
-  await ensureRedisErrors()
+  // node-redis' error classes are resolved by each client's constructor (see
+  // redisErrors()), so every construction path — this factory or a direct
+  // `new`/`create()` — gets the real WatchError/ErrorReply/ClientClosedError.
   if ('cluster' in options && options.cluster) {
     return NodeRedisMockCluster.create(options.cluster)
   }
@@ -159,6 +224,21 @@ type FacadeBackend = {
  */
 abstract class CommandRunner extends EventEmitter {
   /**
+   * Whether this client has been torn down. Shared by both clients, but they
+   * act on it differently: the standalone one refuses every later call, while
+   * a real `RedisCluster` closes idempotently (see
+   * {@link NodeRedisMockCluster.quit}).
+   */
+  protected closed = false
+
+  constructor() {
+    super()
+    // First need of node-redis' error classes: resolve them before this client
+    // can run, decode or close anything. Not at import — see redisErrors().
+    redisErrors()
+  }
+
+  /**
    * Execute one already-tokenised command and return its decoded reply.
    * Implementations pick the session (standalone: the only one; cluster: the
    * slot owner for the command's keys).
@@ -166,8 +246,9 @@ abstract class CommandRunner extends EventEmitter {
   protected abstract run(args: NodeRedisCommandArgument[]): Promise<RedisValue>
 
   /**
-   * RESP version this client's replies decode under — what the `flat-pairs`
-   * shape keys off. `HELLO` switches it mid-connection, so it is read per
+   * RESP version this client's replies decode under — what every
+   * protocol-dependent shape keys off (map, map-pairs, flat-pairs, double,
+   * big-number, boolean). `HELLO` switches it mid-connection, so it is read per
    * reply rather than fixed at construction.
    */
   protected abstract get respVersion(): RespVersion
@@ -236,11 +317,13 @@ abstract class CommandRunner extends EventEmitter {
 
   async hGetAll(key: string): Promise<{ [field: string]: string }> {
     const value = await this.run(['HGETALL', key])
-    const reply = decodeReply(value, this.respVersion)
-    // This decoder renders a `map` reply as a plain object at either protocol,
-    // which is what node-redis' own `hGetAll` transformReply produces — not
-    // what RESP2 puts on the wire, where a map is a flat array (see #414).
-    return (reply as { [field: string]: string }) ?? {}
+    // Deliberately *not* `decodeReply`: node-redis' own `hGetAll`
+    // transformReply assembles the object itself, from the RESP2 flat array as
+    // readily as from the RESP3 map, so the curated method is an object on both
+    // protocols where the raw `sendCommand` path follows the protocol (#414).
+    return decodeMapReply(value, this.respVersion) as {
+      [field: string]: string
+    }
   }
 
   // --- lists ---------------------------------------------------------------
@@ -356,7 +439,20 @@ export class NodeRedisMockClient extends CommandRunner {
     /** The push-draining loop; awaited on teardown so nothing dangles. */
     drained: Promise<void>
   }
-  private closed = false
+  /**
+   * Set synchronously by `destroy()` (and so `disconnect()`), which — unlike
+   * `quit()` — flush instead of draining. Every unit of work not yet answered,
+   * queued or already executing, rejects with this (see {@link flushable}).
+   */
+  private flushPendingWith?: () => Error
+  /**
+   * Present exactly while a graceful `quit()` is draining. This is the
+   * "closing" state, as distinct from closed: new work is refused, but a
+   * forced close may still escalate — it calls this to reject the quit().
+   */
+  private rejectPendingQuit?: (err: Error) => void
+  /** Guards {@link teardown}; see its note on why {@link closed} cannot. */
+  private tornDown = false
 
   constructor(init: NodeRedisMockClientInit) {
     super()
@@ -375,8 +471,20 @@ export class NodeRedisMockClient extends CommandRunner {
     })
   }
 
-  /** node-redis clients require an explicit connect(); here it is a no-op. */
+  /**
+   * node-redis clients require an explicit connect(); on an open client it is a
+   * no-op here.
+   *
+   * KNOWN GAP: real node-redis re-opens a *closed* client — it reconnects,
+   * serves commands again and emits a second `'end'` on the next close. This
+   * facade cannot yet, because the client that owns its `RedisServerState`
+   * closes it during teardown and `RedisServerState.close()` is terminal.
+   * Rather than hand back a silently dead client, reconnection fails loudly
+   * with the same `ClientClosedError` every other call on a closed client
+   * throws. Tracked in #440; see docs/TESTING.md.
+   */
   async connect(): Promise<this> {
+    this.assertOpen()
     return this
   }
 
@@ -393,9 +501,44 @@ export class NodeRedisMockClient extends CommandRunner {
   }
 
   protected run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
+    // Open/closed is decided at *issue* time, the way a real client decides it
+    // when it writes the command to the socket. A command issued before a close
+    // is already in the queue and must not be retroactively killed by a close
+    // that happens while it waits its turn — `quit()` drains those, and
+    // `disconnect()`/`destroy()` flush them via `flushPendingWith`.
+    this.assertOpen()
     return this.runExclusive(() =>
-      runOnSession(this.session, args, this.closed),
+      this.flushable(() => runOnSession(this.session, args, false)),
     )
+  }
+
+  /**
+   * Run one queued unit of work subject to a hard close. Real node-redis'
+   * `#queue.flushAll(new DisconnectsClientError())` rejects every command it
+   * has not yet answered — still queued, *or already on the wire* — so a unit
+   * that has not started, or is still running when the flush lands, rejects
+   * with the flush error whatever it would otherwise have produced. That also
+   * covers a parked `BLPOP 0`: teardown's `session.close()` unblocks it, and
+   * the internal abort must not leak out as a bare `AbortError`.
+   */
+  private async flushable<T>(work: () => Promise<T>): Promise<T> {
+    this.throwIfFlushed()
+    let result: T
+    try {
+      result = await work()
+    } catch (err) {
+      this.throwIfFlushed()
+      throw err
+    }
+    this.throwIfFlushed()
+    return result
+  }
+
+  private throwIfFlushed(): void {
+    const flush = this.flushPendingWith
+    if (flush) {
+      throw flush()
+    }
   }
 
   /** Run `fn` after any in-flight command/transaction on this client settles. */
@@ -470,21 +613,26 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /** Begin a MULTI transaction. Commands are queued, then replayed on exec(). */
   multi(): NodeRedisMockMulti {
-    return new NodeRedisMockMulti(queued =>
-      this.runExclusive(() => this.runTransactionSpan(queued)),
-    )
+    return new NodeRedisMockMulti(queued => {
+      // Same issue-time gate as run(): a transaction handed to exec() before a
+      // close drains with the rest of the queue.
+      this.assertOpen()
+      return this.runExclusive(() =>
+        this.flushable(() => this.runTransactionSpan(queued)),
+      )
+    })
   }
 
   /** Replay MULTI → queued commands → EXEC on the shared session as one span. */
   private async runTransactionSpan(
     queued: NodeRedisCommandArgument[][],
   ): Promise<TransactionSpan> {
-    await runOnSession(this.session, ['MULTI'], this.closed)
+    await runOnSession(this.session, ['MULTI'], false)
     for (const args of queued) {
-      await runOnSession(this.session, args, this.closed)
+      await runOnSession(this.session, args, false)
     }
     const before = this.session.protocolVersion
-    const value = await runOnSession(this.session, ['EXEC'], this.closed)
+    const value = await runOnSession(this.session, ['EXEC'], false)
     return {
       value,
       respVersion: this.session.protocolVersion,
@@ -494,37 +642,113 @@ export class NodeRedisMockClient extends CommandRunner {
 
   // --- lifecycle -----------------------------------------------------------
 
-  /** Gracefully close: tear down pub/sub + the command session. */
+  /**
+   * Real node-redis rejects new work on a client that is closed *or closing*
+   * (a `quit()` still draining) with `ClientClosedError` — so defensive
+   * teardown that closes twice sees the same error here, and 'end' stays a
+   * once-per-close signal.
+   */
+  private assertOpen(): void {
+    if (this.closed) {
+      throw clientClosedError()
+    }
+  }
+
+  /**
+   * Graceful close. Real node-redis' `quit()` appends `QUIT` to the command
+   * queue, so every command already issued runs to completion first — 2000
+   * pending commands all resolve. Queueing the teardown through the same
+   * {@link runExclusive} lock reproduces that: the lock is FIFO, so by the time
+   * teardown runs, nothing issued before the `quit()` is left.
+   *
+   * While it drains the client is *closing*: new work is refused, but a forced
+   * {@link destroy}/{@link disconnect} can still escalate and reject this.
+   */
   async quit(): Promise<string> {
+    this.assertOpen()
+    // Claim the closed flag synchronously so commands issued *after* this point
+    // are refused (assertOpen in run()) while the ones before it still drain.
+    this.closed = true
+    const forced = new Promise<never>((_, reject) => {
+      this.rejectPendingQuit = reject
+    })
+    try {
+      // A drain can block indefinitely (a BLPOP 0 ahead of it), so it races the
+      // escalation rather than waiting on it.
+      await Promise.race([this.runExclusive(async () => undefined), forced])
+    } finally {
+      this.rejectPendingQuit = undefined
+    }
     await this.teardown()
     this.emit('end')
     return 'OK'
   }
 
-  /** Hard close (node-redis `disconnect()`). Same teardown as quit(). */
-  async disconnect(): Promise<void> {
-    await this.teardown()
-    this.emit('end')
+  /**
+   * Hard close. Unlike {@link quit} this does *not* drain. Real node-redis'
+   * `disconnect()` is literally `Promise.resolve(this.destroy())`, so all of
+   * it — including the throw on an already-closed client — happens
+   * synchronously inside destroy(), before any promise exists:
+   * `client.disconnect().catch(...)` crashes against the real client, and so
+   * it does here.
+   */
+  // Deliberately NOT `async`: that would turn destroy()'s synchronous throw into
+  // a rejection, which is exactly the divergence this mirrors away.
+  disconnect(): Promise<void> {
+    this.destroy()
+    return Promise.resolve()
   }
 
   /**
-   * node-redis exposes a synchronous destroy(); abort everything immediately.
-   * The push-drain loop settles on the next tick via the abort signal.
+   * node-redis exposes a synchronous destroy(). It flushes — every unit of
+   * work not yet answered, queued or executing, rejects with
+   * {@link disconnectsClientError} — then tears down and emits 'end' in-line.
+   *
+   * Escalating a pending {@link quit} (the "graceful, then force" teardown
+   * pattern) follows real node-redis v6 exactly as observed against a live
+   * server: the flush also rejects the quit() itself, and then destroy() STILL
+   * throws `ClientClosedError`, and no 'end' is emitted. That is because real
+   * destroy() flushes its queue first and only then reaches its socket, which
+   * the pending quit() had already marked closed. (Real node-redis also leaks
+   * the socket on this path — the server keeps the connection and the process
+   * never exits. That is deliberately NOT reproduced: the facade still tears
+   * everything down, so nothing hangs.)
    */
   destroy(): void {
+    const rejectQuit = this.rejectPendingQuit
+    if (this.closed && !rejectQuit) {
+      throw clientClosedError()
+    }
+    // Flush first. Both flags go up synchronously, so nothing queued slips
+    // past, and anything executing is rejected when it settles.
+    this.closed = true
+    this.flushPendingWith = disconnectsClientError
+    this.rejectPendingQuit = undefined
+    rejectQuit?.(disconnectsClientError())
     // teardown() is async (it awaits the push-drain loop). Re-emit a rejection
     // as an 'error' event, which is what node-redis does with a teardown
     // failure — and, like any EventEmitter, that itself throws when nothing is
     // listening. teardown() releases everything it owns before this point, so
-    // the throw leaks nothing.
+    // the throw leaks nothing. Its synchronous prefix closes the session, which
+    // is what unblocks an executing BLPOP so the flush can reject it.
     void this.teardown().catch(err => this.emit('error', err))
+    if (rejectQuit) {
+      throw clientClosedError()
+    }
     this.emit('end')
   }
 
+  /**
+   * Releases the session, pub/sub and (when owned) the state. Guarded by its
+   * own flag rather than {@link closed}, which the close methods claim earlier
+   * — `quit()` sets it before draining, so it is already true by the time
+   * teardown runs.
+   */
   private async teardown(): Promise<void> {
-    if (this.closed) {
+    if (this.tornDown) {
       return
     }
+    this.tornDown = true
     this.closed = true
     try {
       this.session.close()
@@ -756,7 +980,7 @@ export class NodeRedisMockMulti {
       respVersion,
       replyVersions,
     } = await this.runTransaction(this.queued)
-    const errors = await ensureRedisErrors()
+    const errors = redisErrors()
 
     if (result.kind === 'null' || result.kind === 'null-array') {
       // RESP2 `*-1` (a watched key changed). node-redis throws, never null.
@@ -833,7 +1057,6 @@ export class NodeRedisMockCluster extends CommandRunner {
    * switch, not to close it.
    */
   private clientRespVersion: RespVersion = 2
-  private closed = false
 
   private constructor(
     topology: RedisClusterTopology,
@@ -869,6 +1092,13 @@ export class NodeRedisMockCluster extends CommandRunner {
   }
 
   protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
+    // DELIBERATE DEVIATION: a command on a closed cluster throws
+    // ClientClosedError here, where real node-redis v6 throws an internal
+    // `TypeError: Cannot read properties of undefined (reading 'replicas')` —
+    // it dereferences the slot map its own close path just reset. That is an
+    // upstream crash, not a contract, and reproducing it would only teach
+    // callers to catch a TypeError. Everything else about the cluster close
+    // path follows real node-redis exactly; see the note above quit().
     const session = this.sessionForCommand(args)
     await this.syncProtocol(session)
     // Captured *after* syncProtocol, which moves the session itself: reading
@@ -908,23 +1138,48 @@ export class NodeRedisMockCluster extends CommandRunner {
     )
   }
 
-  // quit()/disconnect() are async to match node-redis' signatures, but cluster
+  // A real `RedisCluster` closes on completely different terms from a single
+  // client, so do NOT copy the standalone contract here. Ground-truthed against
+  // node-redis v6 driving a live 3-node cluster, and matching
+  // `cluster/cluster-slots.js`, where every close routes through `#destroy()`:
+  //
+  //  - it emits 'disconnect', and NEVER 'end' — no 'end' emit exists anywhere
+  //    under `cluster/`;
+  //  - a redundant close does NOT throw. `#destroy()` resets its slot/node maps
+  //    first, so a second call simply finds nothing to close, awaits
+  //    `Promise.allSettled([])` and emits 'disconnect' AGAIN. The event is
+  //    therefore once per close *call*, not once per open→closed transition;
+  //  - quit()/disconnect()/destroy() all resolve `undefined` — the cluster's
+  //    quit() returns `#destroy()`'s promise, not the standalone client's 'OK'.
+  //
+  // quit()/disconnect() stay async to match node-redis' signatures, but this
   // teardown is fully synchronous (no push-drain loop to await) — unlike the
-  // standalone client whose teardown awaits its pub/sub drain.
-  async quit(): Promise<string> {
-    this.teardown()
-    this.emit('end')
-    return 'OK'
+  // standalone client, whose teardown awaits its pub/sub drain.
+
+  async quit(): Promise<void> {
+    await this.closeAsync()
   }
 
   async disconnect(): Promise<void> {
-    this.teardown()
-    this.emit('end')
+    await this.closeAsync()
   }
 
+  /** Synchronous in real node-redis too, so it emits in-line. */
   destroy(): void {
     this.teardown()
-    this.emit('end')
+    this.emit('disconnect')
+  }
+
+  /**
+   * Real quit()/disconnect() run `#destroy()`, which tears down synchronously
+   * but emits 'disconnect' only after `await Promise.allSettled(...)` — so the
+   * caller never sees the event before the call returns, and always sees it
+   * before the returned promise settles. The await reproduces that ordering.
+   */
+  private async closeAsync(): Promise<void> {
+    this.teardown()
+    await Promise.allSettled([])
+    this.emit('disconnect')
   }
 
   private teardown(): void {
@@ -1062,7 +1317,9 @@ async function runOnSession(
   closed: boolean,
 ): Promise<RedisValue> {
   if (closed) {
-    throw new Error('node-redis mock client is closed')
+    // Real node-redis rejects a command on a closed client with this exact
+    // error, same as it does a redundant quit()/disconnect()/destroy().
+    throw clientClosedError()
   }
   if (args.length === 0) {
     throw new Error('command requires at least a name')
@@ -1148,11 +1405,15 @@ function notify(
 
 // --- reply decoding --------------------------------------------------------
 //
-// node-redis leaves most RESP2 replies untransformed, and the shared
-// RedisValue → native JS decoder already matches those defaults: bulk-string →
-// utf8 string, integer → number, map → object, array/set → array. So the
-// curated methods are thin coercions over that decoder rather than per-command
-// reply tables — uncommon commands get the same native shapes via sendCommand.
+// node-redis leaves most replies untransformed, and the shared RedisValue →
+// native JS decoder already matches what it hands back: bulk-string → utf8
+// string, integer → number, array/set → array, plus the protocol-dependent
+// kinds (map, map-pairs, flat-pairs, double, big-number, boolean) in whichever
+// shape the negotiated RESP version puts on the wire. So the curated methods
+// are thin coercions over that decoder rather than per-command reply tables —
+// uncommon commands get the same native shapes via sendCommand. The exceptions
+// are the few curated methods node-redis *does* transform, which decode through
+// their own helper: `hGetAll` builds an object on both protocols (#414).
 
 /**
  * How this facade reads a {@link RedisValue}, and therefore where it diverges
@@ -1193,11 +1454,48 @@ function decodeReply(
 
 /**
  * Decode a reply a curated method immediately narrows to a scalar (or a flat
- * string array). No protocol-dependent kind can reach these, so the version
- * passed is unobservable.
+ * string array). None of the commands behind those methods replies with a kind
+ * whose shape the protocol decides — no `map`, `double`, pair, `boolean` or
+ * `big-number` reaches here — so the pinned version is unobservable, and the
+ * `asNumber` / `asString` coercions on top of it stay honest.
+ *
+ * Adding a curated method for a command that *does* reply with one of those:
+ * do not reach for this, and do not reach for `decodeReply` either. Ask what
+ * node-redis' own `transformReply` for that command produces. Usually it
+ * normalises, so the method is protocol-*independent* — real `zScore()` is a
+ * number at RESP2 as well as RESP3, and `hGetAll()` an object at both — which
+ * means decoding the reply's own kind directly, as {@link decodeMapReply}
+ * does, not passing the live version to a decoder that would then follow it.
  */
 function decodeScalarReply(value: RedisValue): NodeRedisReply {
   return decodeRedisValue(value, { ...NODE_REDIS_DECODE_OPTIONS, version: 2 })
+}
+
+/**
+ * Decode a map reply for a curated method that presents it as an object on
+ * *both* protocols, the way node-redis' `transformReply` does — see #414.
+ * Entries still decode under the connection's own version, so only the
+ * container shape is pinned.
+ *
+ * Nothing else is coerced into an object. An `error` — what a wrong-type key
+ * replies with — goes through the ordinary decoder and throws, as real
+ * node-redis' `hGetAll()` does at both protocols; swallowed into `{}` it would
+ * be indistinguishable from a missing key. Any other kind (a `+QUEUED` after a
+ * raw `MULTI`, say) fails loudly the way `asNumber` does, rather than resolving
+ * to a string typed as an object.
+ */
+function decodeMapReply(
+  value: RedisValue,
+  respVersion: RespVersion,
+): { [key: string]: NodeRedisReply } {
+  const options = { ...NODE_REDIS_DECODE_OPTIONS, version: respVersion }
+  if (value.kind === 'map' || value.kind === 'map-pairs') {
+    return decodeRedisMapEntries(value.entries, options)
+  }
+  if (value.kind === 'error') {
+    decodeRedisValue(value, options) // throws the reply's own error
+  }
+  throw new RedisCommandError(`expected a map reply, got ${value.kind}`)
 }
 
 function asNumber(value: RedisValue): number {

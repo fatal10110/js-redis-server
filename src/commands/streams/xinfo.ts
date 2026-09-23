@@ -2,7 +2,6 @@ import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   NoSuchKeyError,
-  RedisCommandError,
   RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
@@ -13,7 +12,7 @@ import type {
   RedisStreamConsumerGroup,
   RedisStreamData,
 } from '../../state/data-types'
-import { array } from '../helpers'
+import { array, unknownSubcommandError } from '../helpers'
 import {
   consumerPendingCount,
   pendingEntriesSorted,
@@ -37,8 +36,11 @@ type XinfoArgs =
 function createXinfoSchema() {
   return t.custom<XinfoArgs>(
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
-      const subcommand = input[index]?.toString().toUpperCase()
-      if (!subcommand) throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const rawSubcommand = input[index]
+      if (!rawSubcommand) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+      const subcommand = rawSubcommand.toString().toUpperCase()
 
       if (subcommand === 'STREAM') {
         const key = input[index + 1]
@@ -98,9 +100,7 @@ function createXinfoSchema() {
         }
       }
 
-      throw new RedisCommandError(
-        `unknown subcommand '${subcommand}'. Try XINFO HELP.`,
-      )
+      throw unknownSubcommandError('XINFO', rawSubcommand, ctx.profile)
     },
   )
 }

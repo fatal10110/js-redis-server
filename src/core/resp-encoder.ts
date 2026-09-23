@@ -39,7 +39,7 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return encodeBulkString(Buffer.from(formatNumber(value.value)))
+      return encodeBulkString(Buffer.from(formatRedisDouble(value.value)))
     case 'boolean':
       return Buffer.from(`:${value.value ? 1 : 0}\r\n`)
     case 'big-number':
@@ -74,7 +74,7 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'null-array':
       return Buffer.from('*-1\r\n')
     case 'error':
-      return Buffer.from(`-${formatError(value)}\r\n`)
+      return encodeError(value)
   }
 }
 
@@ -87,7 +87,7 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return Buffer.from(`,${formatNumber(value.value)}\r\n`)
+      return Buffer.from(`,${formatRedisDouble(value.value)}\r\n`)
     case 'boolean':
       return Buffer.from(value.value ? '#t\r\n' : '#f\r\n')
     case 'big-number':
@@ -114,7 +114,7 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'null-array':
       return Buffer.from('_\r\n')
     case 'error':
-      return Buffer.from(`-${formatError(value)}\r\n`)
+      return encodeError(value)
   }
 }
 
@@ -190,12 +190,36 @@ function encodeResp3VerbatimString(format: string, value: Buffer): Buffer {
   ])
 }
 
-function formatError(value: Extract<RedisValue, { kind: 'error' }>): string {
-  const message = sanitizeErrorText(value.message)
-  return value.code ? `${sanitizeErrorText(value.code)} ${message}` : message
+/**
+ * Build a `-ERR ...` frame. The body is assembled as *bytes* rather than a
+ * string so an error that echoes a token the client sent (an unknown
+ * subcommand, say) reaches the wire byte for byte — real Redis echoes whatever
+ * the client wrote, which need not be valid UTF-8, and a `toString()` round
+ * trip would replace those bytes with U+FFFD.
+ */
+function encodeError(value: Extract<RedisValue, { kind: 'error' }>): Buffer {
+  const body = value.messageBytes ?? Buffer.from(value.message)
+  return Buffer.concat([
+    Buffer.from('-'),
+    sanitizeErrorBytes(
+      value.code ? Buffer.concat([Buffer.from(`${value.code} `), body]) : body,
+    ),
+    Buffer.from('\r\n'),
+  ])
 }
 
-function formatNumber(value: number): string {
+/**
+ * The text of a `double` on the wire — a RESP3 `,` double, and the bulk string
+ * RESP2 sends in its place, which is therefore also what a client reads back
+ * off a RESP2 connection. `decodeRedisValue` shares it so encode and decode
+ * cannot drift.
+ *
+ * `inf` / `-inf` / `nan` and `-0` match Redis. Everything else is JavaScript's
+ * `toString()`, which is not always Redis's spelling: Redis 7.2+ writes `1e20`
+ * as `1e+20` and `0.0000123` as `1.23e-5`, and 6.2 / 7.0 print `%.17g`.
+ * Profile-aware formatting is tracked in #451.
+ */
+export function formatRedisDouble(value: number): string {
   if (Number.isNaN(value)) {
     return 'nan'
   }
@@ -220,7 +244,23 @@ function formatNumber(value: number): string {
  * `sdsmapchars(s, "\r\n", "  ", 2)`, a 1:1 character map — so a `\r\n` run
  * becomes *two* spaces, not one. Collapsing runs is protocol-safe but changes
  * the byte count of every error reply that carries a newline (#388).
+ *
+ * Done on bytes rather than characters: `\r` and `\n` are single-byte, so the
+ * result is the same for UTF-8 text, and it also works on a body that is not
+ * valid UTF-8 at all.
  */
-function sanitizeErrorText(value: string): string {
-  return value.replace(/[\r\n]/g, ' ')
+function sanitizeErrorBytes(value: Buffer): Buffer {
+  const CR = 0x0d
+  const LF = 0x0a
+  const SPACE = 0x20
+  let sanitized: Buffer | null = null
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] !== CR && value[i] !== LF) {
+      continue
+    }
+    sanitized ??= Buffer.from(value)
+    sanitized[i] = SPACE
+  }
+
+  return sanitized ?? value
 }

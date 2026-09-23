@@ -41,7 +41,7 @@ flowchart LR
     C -- "command, args" --> D
     D -- "executeRaw(cmd, args, ctx)" --> F
     F -. "plan(): lookup + parse + keys" .-> G
-    F -. "beforeExecute / afterExecute / onStream" .-> H
+    F -. "beforeExecute" .-> H
     F -- "execute(args, ctx)" --> I
     I <--> J
     I -- "RedisResult / ResponseStream" --> F
@@ -79,8 +79,7 @@ command-specific argument knowledge.
 ```mermaid
 graph TD
     subgraph "Transport layer"
-        ST[SocketConnectionTransport]
-        IT["InMemoryConnectionTransport<br/>(tests / embedding)"]
+        ST["SocketConnectionTransport<br/>(net.Socket or duplexPair)"]
         SA[Resp2SessionAdapter]
         DEC[Resp2CommandDecoder]
         ENC["resp-encoder<br/>encodeResp2 / encodeResp3"]
@@ -113,7 +112,7 @@ graph TD
         MF[RedisMonitorFeed]
     end
 
-    ST & IT --> SA
+    ST --> SA
     SA --> DEC
     SA --> ENC
     SA --> CS
@@ -134,7 +133,7 @@ graph TD
 
 | Layer         | Responsibility                                                                                                     | Key types                                                                                                                                                                                                                                                                                                                          |
 | :------------ | :----------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`InMemoryConnectionTransport`](../src/core/transports/in-memory-connection-transport.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
+| **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`createVirtualConnection`](../src/core/transports/virtual-connection.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
 | **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
@@ -172,8 +171,6 @@ sequenceDiagram
         Cmd->>DB: read / write keyspace
         DB-->>Cmd: RedisDataValue
         Cmd-->>CE: RedisResult or ResponseStream
-        CE->>EP: afterExecute / onStream
-        EP-->>CE: (possibly rewritten) result
     end
     CE-->>CS: RedisResult or ResponseStream
     CS-->>SA: result
@@ -191,7 +188,7 @@ Two execution paths share this same plan:
 
 - [`executePlan`](../src/core/command-executor.ts#L65) — the normal async path
   used for client-issued commands and `MULTI`/`EXEC` playback. Supports
-  streaming results (`ResponseStream`) and `afterExecute`/`onStream` rewriting.
+  streaming results (`ResponseStream`) and async commands.
 - [`executePlanSync`](../src/core/command-executor.ts#L116) — a synchronous path
   used exclusively by the Lua runtime for `redis.call`/`redis.pcall`. It runs
   the **same** policies and registry, and rejects any command or policy hook
@@ -200,13 +197,11 @@ Two execution paths share this same plan:
 
 ## Execution policies
 
-An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L9) wraps every
-command with three optional hooks:
+An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L7) guards every
+command with a single optional hook:
 
 ```ts
 beforeExecute(plan, ctx) // can short-circuit with a RedisResult (queue, redirect, reject)
-afterExecute(plan, ctx, result) // can rewrite the result
-onStream(plan, ctx, stream) // can wrap/replace a streaming result
 ```
 
 [`createRedisCommandExecutor`](../src/commands/index.ts#L41) always prepends
@@ -393,16 +388,23 @@ contract without special session or queue code.
 ## Protocol & transports (RESP2 / RESP3)
 
 [`ConnectionTransport`](../src/core/transports/connection-transport.ts) is a
-minimal duplex-byte-stream interface (`read`/`write`/`close`/`signal`/`on`)
-with two implementations: [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts)
-for real TCP connections, and [`InMemoryConnectionTransport`](../src/core/transports/in-memory-connection-transport.ts)
-for tests and programmatic embedding (feed bytes in, inspect bytes out — no
-socket required). [`Resp2Server`](../src/core/transports/resp2/server.ts)
+minimal duplex-byte-stream interface (`read`/`write`/`close`/`signal`) with a
+single implementation: [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts),
+which wraps any `Duplex`. That is a real `net.Socket` for TCP connections, and
+one end of a [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions)
+for the socketless path ([`createVirtualConnection`](../src/core/transports/virtual-connection.ts)) —
+so tests and programmatic embedding exercise the same framing and teardown code
+as the wire. [`Resp2Server`](../src/core/transports/resp2/server.ts)
 wires a transport to a fresh `ClientSession` per connection through a
 [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts), which
 owns a [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts)
 (handles both RESP multibulk arrays and inline commands, including quoted/escaped
-inline arguments) for the request side.
+inline arguments) for the request side. The adapter pulls one frame at a time
+(`push(chunk)` then `next()`) so each command has run before the next is
+parsed — which is what lets the decoder enforce the *live*
+`proto-max-bulk-len` on every bulk header, refusing an oversized argument with
+`Protocol error: invalid bulk length` and closing the connection before any
+command handler sees it, exactly as Redis does.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)

@@ -4,10 +4,7 @@ import {
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { formatHostPort } from '../core/network-address'
-import {
-  UnknownClusterSubcommandError,
-  WrongNumberOfArgumentsError,
-} from '../core/redis-error'
+import { WrongNumberOfArgumentsError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
@@ -15,6 +12,7 @@ import {
   type RedisClusterNode,
   type RedisClusterTopology,
 } from '../state'
+import { unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 /**
@@ -26,7 +24,9 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
   return defineCommand({
     name: 'cluster',
     schema: t.object({
-      subcommand: t.string(),
+      // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+      // name the client sent, and a UTF-8 decode here would lose its bytes.
+      subcommand: t.bulk(),
       rest: t.variadic(t.bulk()),
     }),
     flags: ['admin'],
@@ -62,7 +62,7 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
     keys: () => [],
     execute: (args, ctx) => {
       const topology = ctx.server.clusterTopology
-      const subcommand = args.subcommand.toLowerCase()
+      const subcommand = args.subcommand.toString().toLowerCase()
 
       switch (subcommand) {
         case 'slots':
@@ -83,7 +83,11 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
             RedisValue.bulkString(Buffer.from(localNodeId)),
           )
         default:
-          throw new UnknownClusterSubcommandError(args.subcommand)
+          throw unknownSubcommandError(
+            'CLUSTER',
+            args.subcommand,
+            ctx.server.profile,
+          )
       }
     },
   })

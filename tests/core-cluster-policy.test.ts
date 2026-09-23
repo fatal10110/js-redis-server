@@ -126,7 +126,10 @@ describe('new cluster execution policy', () => {
     )
     assert.deepStrictEqual(
       await session.execute('cluster', [Buffer.from('nope')]),
-      RedisResult.error("unknown subcommand 'nope'. Try CLUSTER HELP.", 'ERR'),
+      RedisResult.error(
+        Buffer.from("unknown subcommand 'nope'. Try CLUSTER HELP."),
+        'ERR',
+      ),
     )
 
     for (const subcommand of ['slots', 'shards', 'nodes', 'info', 'myid']) {

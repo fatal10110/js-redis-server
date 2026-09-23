@@ -1,11 +1,19 @@
 import assert from 'node:assert'
 
-export function commandFrame(...items: string[]): Buffer {
-  return Buffer.from(
-    `*${items.length}\r\n${items
-      .map(item => `$${Buffer.byteLength(item)}\r\n${item}\r\n`)
-      .join('')}`,
+// Buffers are accepted so a test can put bytes on the wire that are not valid
+// UTF-8 — the argument reaches the server exactly as written.
+export function commandFrame(...items: (string | Buffer)[]): Buffer {
+  const tokens = items.map(item =>
+    Buffer.isBuffer(item) ? item : Buffer.from(item),
   )
+  return Buffer.concat([
+    Buffer.from(`*${tokens.length}\r\n`),
+    ...tokens.flatMap(token => [
+      Buffer.from(`$${token.length}\r\n`),
+      token,
+      Buffer.from('\r\n'),
+    ]),
+  ])
 }
 
 export function errorWithMessage(message: string): (error: unknown) => boolean {

@@ -9,6 +9,7 @@ import { IN_MEMORY_DECODE_OPTIONS } from '../../src/in-memory-client'
 import {
   decodeRedisValue,
   decodeRedisKey,
+  decodeRedisMapEntries,
   redisErrorText,
   toRedisArgument,
   type DecodeRedisValueOptions,
@@ -147,11 +148,14 @@ describe('decode option divergences between the two clients', () => {
     )
   })
 
+  // `version` is not a per-client divergence — it belongs to the connection,
+  // which is why it is not part of either constant. Both clients pass their
+  // session's negotiated version, so both must read the same reply the same way
+  // at the same protocol. Every shape it decides is asserted for both. #385,
+  // #414.
+  const bothClients = [NODE_REDIS_DECODE_OPTIONS, IN_MEMORY_DECODE_OPTIONS]
+
   test('version: flat-pairs is flat on RESP2 and tuples on RESP3, for both clients', () => {
-    // `version` is not a per-client divergence — it belongs to the connection,
-    // which is why it is not part of either constant. Both clients pass their
-    // session's negotiated version, so both must read the same reply the same
-    // way at the same protocol. #385.
     const withScores: RedisValue = {
       kind: 'flat-pairs',
       entries: [
@@ -160,15 +164,12 @@ describe('decode option divergences between the two clients', () => {
       ],
     }
 
-    // Real node-redis, sendCommand against Redis 8.0.6:
+    // Real node-redis, sendCommand against a real server:
     //   RESP2 → ["a","1","b","2"]   RESP3 → [["a",1],["b",2]]
-    for (const client of [
-      NODE_REDIS_DECODE_OPTIONS,
-      IN_MEMORY_DECODE_OPTIONS,
-    ]) {
+    for (const client of bothClients) {
       assert.deepStrictEqual(
         decodeRedisValue(withScores, { ...client, version: 2 }),
-        ['a', 1, 'b', 2],
+        ['a', '1', 'b', '2'],
       )
       assert.deepStrictEqual(
         decodeRedisValue(withScores, { ...client, version: 3 }),
@@ -180,18 +181,154 @@ describe('decode option divergences between the two clients', () => {
     }
   })
 
+  test('version: a map is flat on RESP2 and an object on RESP3, for both clients', () => {
+    const map: RedisValue = {
+      kind: 'map',
+      entries: [
+        [bulk('f1'), bulk('v1')],
+        [bulk('f2'), bulk('v2')],
+      ],
+    }
+
+    // Real node-redis, `sendCommand(['HGETALL', 'h'])`:
+    //   RESP2 → ["f1","v1","f2","v2"]   RESP3 → {f1:"v1",f2:"v2"}
+    for (const client of bothClients) {
+      assert.deepStrictEqual(decodeRedisValue(map, { ...client, version: 2 }), [
+        'f1',
+        'v1',
+        'f2',
+        'v2',
+      ])
+      assert.deepStrictEqual(decodeRedisValue(map, { ...client, version: 3 }), {
+        f1: 'v1',
+        f2: 'v2',
+      })
+    }
+  })
+
+  test('version: map-pairs is an array of pairs on RESP2, an object on RESP3', () => {
+    // `map-pairs` differs from `map` only at RESP2, where the encoder writes it
+    // as `[[k, v], …]` rather than flattening it — XREAD's shape.
+    const streams: RedisValue = {
+      kind: 'map-pairs',
+      entries: [[bulk('s'), { kind: 'array', items: [bulk('e')] }]],
+    }
+
+    for (const client of bothClients) {
+      assert.deepStrictEqual(
+        decodeRedisValue(streams, { ...client, version: 2 }),
+        [['s', ['e']]],
+      )
+      assert.deepStrictEqual(
+        decodeRedisValue(streams, { ...client, version: 3 }),
+        { s: ['e'] },
+      )
+    }
+  })
+
+  test('version: a double is the wire string on RESP2 and a number on RESP3', () => {
+    // Real node-redis, `sendCommand(['ZSCORE', 'z', 'b'])`:
+    //   RESP2 → "2.5"   RESP3 → 2.5
+    // The RESP2 text comes from the same formatter the encoder uses, so the
+    // Redis spellings of the specials survive the round trip.
+    for (const client of bothClients) {
+      const atResp2 = (value: number) =>
+        decodeRedisValue({ kind: 'double', value }, { ...client, version: 2 })
+
+      assert.strictEqual(atResp2(2.5), '2.5')
+      assert.strictEqual(atResp2(Infinity), 'inf')
+      assert.strictEqual(atResp2(-Infinity), '-inf')
+      assert.strictEqual(atResp2(Number.NaN), 'nan')
+      assert.strictEqual(
+        decodeRedisValue(
+          { kind: 'double', value: 2.5 },
+          { ...client, version: 3 },
+        ),
+        2.5,
+      )
+    }
+  })
+
+  test('version: big-number is the digit string on RESP2, a bigint on RESP3', () => {
+    // Real node-redis, `EVAL 'return {big_number="12345678901234567890"}' 0`:
+    //   RESP2 → "12345678901234567890"   RESP3 → 12345678901234567890n
+    // Reachable here through Lua's `redis.setresp(3)`, the same as `double`.
+    const huge = 12345678901234567890n
+    for (const client of bothClients) {
+      assert.strictEqual(
+        decodeRedisValue(
+          { kind: 'big-number', value: huge },
+          { ...client, version: 2 },
+        ),
+        '12345678901234567890',
+      )
+      assert.strictEqual(
+        decodeRedisValue(
+          { kind: 'big-number', value: huge },
+          { ...client, version: 3 },
+        ),
+        huge,
+      )
+    }
+  })
+
+  test('version: a boolean is the 1/0 integer on RESP2, a boolean on RESP3', () => {
+    // RESP2 has no boolean; `encodeRedisValue` writes `:1` / `:0`, so that is
+    // the number a client reads back. Only RESP3 has `#t` / `#f`.
+    for (const client of bothClients) {
+      for (const [value, resp2] of [
+        [true, 1],
+        [false, 0],
+      ] as const) {
+        assert.strictEqual(
+          decodeRedisValue(
+            { kind: 'boolean', value },
+            { ...client, version: 2 },
+          ),
+          resp2,
+        )
+        assert.strictEqual(
+          decodeRedisValue(
+            { kind: 'boolean', value },
+            { ...client, version: 3 },
+          ),
+          value,
+        )
+      }
+    }
+  })
+
   test('map keys stay utf8 strings even with returnBuffers', () => {
     const map: RedisValue = {
       kind: 'map',
       entries: [[bulk('field'), bulk('value')]],
     }
+    // At RESP3, where the map *is* an object. The RESP2 flat array is a plain
+    // array of decoded items, so its keys follow returnBuffers like any other.
     assert.deepStrictEqual(
       decodeRedisValue(map, {
         ...inMemoryAtResp2,
+        version: 3,
         returnBuffers: true,
       }),
       { field: Buffer.from('value') },
     )
+  })
+
+  test('decodeRedisMapEntries keeps a curated method on the object shape', () => {
+    // node-redis' `hGetAll` / `configGet` transformReply builds the object
+    // itself, so those curated methods are an object at RESP2 too — the one
+    // place the protocol switch must not reach. #414.
+    const entries: [RedisValue, RedisValue][] = [[bulk('f1'), bulk('v1')]]
+
+    for (const client of bothClients) {
+      for (const version of [2, 3] as const) {
+        assert.deepStrictEqual(
+          decodeRedisMapEntries(entries, { ...client, version }),
+          { f1: 'v1' },
+        )
+      }
+    }
   })
 })
 
@@ -205,6 +342,49 @@ describe('decodeRedisKey', () => {
     assert.strictEqual(decodeRedisKey({ kind: 'integer', value: 7 }), '7')
     assert.strictEqual(decodeRedisKey({ kind: 'bulk-string', value: null }), '')
     assert.strictEqual(decodeRedisKey({ kind: 'null' }), '')
+  })
+
+  test('a double map key follows real node-redis at each protocol', () => {
+    // The key and the value spellings deliberately differ at RESP3. Real
+    // node-redis against Redis 8.0.6:
+    //   EVAL "redis.setresp(3); return {map={[{double=1/0}]=1}}" 0
+    //     RESP2 → ["inf",1]         RESP3 → {"Infinity":1}
+    //   EVAL "redis.setresp(3); return {map={[{double=2.5}]=1}}" 0
+    //     RESP2 → ["2.5",1]         RESP3 → {"2.5":1}
+    //   …with {double=-1/0} and {double=0/0}:
+    //     RESP2 → ["-inf",1] / ["nan",1]   RESP3 → {"-Infinity":1} / {"NaN":1}
+    // At RESP2 the key is an array item spelled by Redis; at RESP3 node-redis
+    // parses `,inf` to a number and keys the object with `String()`.
+    const mapWith = (key: number): RedisValue => ({
+      kind: 'map',
+      entries: [
+        [
+          { kind: 'double', value: key },
+          { kind: 'integer', value: 1 },
+        ],
+      ],
+    })
+
+    for (const client of [
+      NODE_REDIS_DECODE_OPTIONS,
+      IN_MEMORY_DECODE_OPTIONS,
+    ]) {
+      const at = (key: number, version: 2 | 3) =>
+        decodeRedisValue(mapWith(key), { ...client, version })
+
+      assert.deepStrictEqual(at(Infinity, 2), ['inf', 1])
+      assert.deepStrictEqual(at(Infinity, 3), { Infinity: 1 })
+      assert.deepStrictEqual(at(-Infinity, 3), { '-Infinity': 1 })
+      assert.deepStrictEqual(at(Number.NaN, 3), { NaN: 1 })
+      assert.deepStrictEqual(at(2.5, 2), ['2.5', 1])
+      assert.deepStrictEqual(at(2.5, 3), { '2.5': 1 })
+    }
+
+    // decodeRedisKey on its own is the RESP3 half: JavaScript's spelling.
+    assert.strictEqual(
+      decodeRedisKey({ kind: 'double', value: Infinity }),
+      'Infinity',
+    )
   })
 })
 
