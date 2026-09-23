@@ -20,6 +20,7 @@ function parseFloatToken(token: Buffer): number {
 
 function createGeoAddSchema() {
   return t.custom<GeoAddArgs>(
+    { min: 4, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)

@@ -43,6 +43,7 @@ function isToken(arg: Buffer, token: string): boolean {
 
 function createXinfoSchema() {
   return t.custom<XinfoArgs>(
+    { min: 1 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const rawSubcommand = input[index]
       if (!rawSubcommand) {

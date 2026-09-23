@@ -26,6 +26,7 @@ type XclaimArgs = {
 
 function createXclaimSchema() {
   return t.custom<XclaimArgs>(
+    { min: 5, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       const group = input[index + 1]

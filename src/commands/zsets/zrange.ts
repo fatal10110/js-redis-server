@@ -116,7 +116,7 @@ function parseZrangeOptions(
 }
 
 function createZrangeSchema() {
-  return t.custom<ZrangeArgs>((input, index, ctx) => {
+  return t.custom<ZrangeArgs>({ min: 3, keys: [0] }, (input, index, ctx) => {
     const key = input[index]
     const min = input[index + 1]
     const max = input[index + 2]
@@ -137,7 +137,8 @@ function createZrangeSchema() {
 }
 
 function createZrangestoreSchema() {
-  return t.custom<ZrangestoreArgs>((input, index, ctx) => {
+  const layout = { min: 4, keys: [0, 1] }
+  return t.custom<ZrangestoreArgs>(layout, (input, index, ctx) => {
     const destination = input[index]
     const key = input[index + 1]
     const min = input[index + 2]

@@ -1,4 +1,7 @@
-import { defineCommand } from '../core/command-definition'
+import {
+  defineCommand,
+  type CommandIntrospection,
+} from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
   DbIndexOutOfRangeError,
@@ -291,6 +294,12 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   return { value: options, nextIndex: cursor }
 })
 
+// The NX/XX/GT/LT options arrived in 7.0. Before that the parser above stops
+// at the fixed `key time` pair, and Redis reported the family's arity as 3.
+const expireIntrospection: CommandIntrospection = {
+  arity: profile => (profile.has('expire.conditions') ? -3 : 3),
+}
+
 export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
@@ -298,6 +307,7 @@ export const expireCommand = defineCommand({
     seconds: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
@@ -311,6 +321,7 @@ export const pexpireCommand = defineCommand({
     milliseconds: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
@@ -380,6 +391,7 @@ export const expireatCommand = defineCommand({
     timestamp: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -394,6 +406,7 @@ export const pexpireatCommand = defineCommand({
     timestamp: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -616,7 +629,7 @@ type SortOptions = {
 }
 
 function sortSchema() {
-  return t.custom<SortArgs>((input, index, ctx) => {
+  return t.custom<SortArgs>({ min: 1, keys: [0] }, (input, index, ctx) => {
     const key = input[index]
     if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
     return {

@@ -34,7 +34,8 @@ function parseScoreLimitInt(token: Buffer): number {
 }
 
 function createScoreRangeSchema() {
-  return t.custom<ScoreRangeArgs>((input, index, ctx) => {
+  const layout = { min: 3, keys: [0] }
+  return t.custom<ScoreRangeArgs>(layout, (input, index, ctx) => {
     const key = input[index]
     const first = input[index + 1]
     const second = input[index + 2]

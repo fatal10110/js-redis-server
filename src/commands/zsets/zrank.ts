@@ -15,7 +15,8 @@ type ZRankArgs = {
   withScore: boolean
 }
 
-const zrankSchema = t.custom<ZRankArgs>((input, index, ctx) => {
+const zrankLayout = { min: 2, max: 3, keys: [0] }
+const zrankSchema = t.custom<ZRankArgs>(zrankLayout, (input, index, ctx) => {
   const remaining = input.length - index
   if (remaining < 2 || remaining > 3) {
     throw new WrongNumberOfArgumentsError(ctx.commandName)

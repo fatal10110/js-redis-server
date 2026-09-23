@@ -202,7 +202,7 @@ async function blockingListMultiPop(
 export const lmpopCommand = defineCommand({
   name: 'lmpop',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: t.custom<ListMultiPopArgs>((input, index, ctx) => ({
+  schema: t.custom<ListMultiPopArgs>({ min: 3 }, (input, index, ctx) => ({
     value: parseListMultiPopArgs(input, index, ctx, { blocking: false }),
     nextIndex: input.length,
   })),
@@ -216,10 +216,13 @@ export const lmpopCommand = defineCommand({
 export const blmpopCommand = defineCommand({
   name: 'blmpop',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: t.custom<BlockingListMultiPopArgs>((input, index, ctx) => ({
-    value: parseListMultiPopArgs(input, index, ctx, { blocking: true }),
-    nextIndex: input.length,
-  })),
+  schema: t.custom<BlockingListMultiPopArgs>(
+    { min: 4 },
+    (input, index, ctx) => ({
+      value: parseListMultiPopArgs(input, index, ctx, { blocking: true }),
+      nextIndex: input.length,
+    }),
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {

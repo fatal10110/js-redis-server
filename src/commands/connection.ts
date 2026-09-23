@@ -527,13 +527,8 @@ export const echoCommand = defineCommand({
   }),
   flags: ['readonly', 'fast'],
   introspection: {
-    arity: 2,
     flags: ['loading', 'stale', 'fast'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@fast', '@connection'],
-    keySpecs: [],
     docs: commandDocs('Returns the given string.', 'connection', [
       { name: 'message', type: 'string' },
     ]),
@@ -544,7 +539,8 @@ export const echoCommand = defineCommand({
 
 export const quitCommand = defineCommand({
   name: 'quit',
-  schema: t.object({}),
+  // Real Redis ignores anything after QUIT (arity -1).
+  schema: t.object({ ignored: t.variadic(t.bulk()) }),
   // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
   // entry at all, so its script sees an unknown command instead).
   flags: ['readonly', 'fast', 'subscribed', 'noscript'],
@@ -598,18 +594,13 @@ export const clientCommand = defineCommand({
   // subcommand but HELP on 7.0+ (see lua-runtime's isRefusedFromScript).
   flags: ['readonly', 'admin', 'noscript'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@connection'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('client|id', 2),
       commandSubcommandInfo('client|info', 2),
       commandSubcommandInfo('client|kill', -3),
-      commandSubcommandInfo('client|list', 2),
+      commandSubcommandInfo('client|list', -2),
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
       commandSubcommandInfo('client|no-evict', 3),
@@ -834,7 +825,7 @@ function serverIdentityLines(ctx: RedisExecutionContext): string[] {
 export const authCommand = defineCommand({
   name: 'auth',
   schema: t.object({
-    args: t.variadic(t.bulk()),
+    args: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['noscript'],
   monitor: {
@@ -923,13 +914,8 @@ export const aclCommand = defineCommand({
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('acl|whoami', 2, {
         categories: ['@admin', '@slow', '@dangerous'],
@@ -1004,13 +990,8 @@ export const slowlogCommand = defineCommand({
   }),
   flags: ['readonly', 'admin'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('slowlog|get', -2, {
         categories: ['@admin', '@slow', '@dangerous'],
@@ -1083,13 +1064,8 @@ export const shutdownCommand = defineCommand({
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    arity: -1,
     flags: ['admin', 'noscript', 'loading', 'stale', 'no_multi', 'allow_busy'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous', '@connection'],
-    keySpecs: [],
   },
   keys: () => [],
   execute: (args, ctx) => {

@@ -94,6 +94,7 @@ const HASH_FIELD_EXPIRE_MAX_ABS_MS = 0x0000ffffffffffffn >> 2n
 
 function createFieldValuePairsSchema() {
   return t.custom<FieldValuePair[]>(
+    { min: 2 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const pairs: FieldValuePair[] = []
       let cursor = index
@@ -119,6 +120,7 @@ function createFieldValuePairsSchema() {
 
 function createHrandfieldSchema() {
   return t.custom<HrandfieldArgs>(
+    { min: 1, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key) {
@@ -157,6 +159,7 @@ function createHrandfieldSchema() {
 
 function createHashFieldsSchema() {
   return t.custom<HashFieldsArgs>(
+    { min: 4, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key || input.length - index < 4) {
@@ -188,6 +191,7 @@ function createHashFieldsSchema() {
 
 function createHgetexSchema() {
   return t.custom<HgetexArgs>(
+    { min: 4, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key || input.length - index < 4) {
@@ -261,6 +265,7 @@ function hgetexExpireMode(
 
 function createHsetexSchema() {
   return t.custom<HsetexArgs>(
+    { min: 5, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key || input.length - index < 5) {
@@ -503,6 +508,7 @@ function hashFieldTtls(
 
 function createHashExpireSchema() {
   return t.custom<HashExpireArgs>(
+    { min: 5, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key || input.length - index < 5) {
@@ -848,7 +854,7 @@ export const hsetCommand = defineCommand({
 
 export const hsetnxCommand = defineCommand({
   name: 'hsetnx',
-  schema: t.object({ key: t.key(), field: t.key(), value: t.key() }),
+  schema: t.object({ key: t.key(), field: t.bulk(), value: t.bulk() }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -861,7 +867,7 @@ export const hsetnxCommand = defineCommand({
 
 export const hgetCommand = defineCommand({
   name: 'hget',
-  schema: t.object({ key: t.key(), field: t.key() }),
+  schema: t.object({ key: t.key(), field: t.bulk() }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -876,7 +882,7 @@ export const hgetCommand = defineCommand({
 
 export const hdelCommand = defineCommand({
   name: 'hdel',
-  schema: t.object({ key: t.key(), fields: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), fields: t.variadic(t.bulk(), { min: 1 }) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -1025,7 +1031,7 @@ export const hmsetCommand = defineCommand({
 
 export const hmgetCommand = defineCommand({
   name: 'hmget',
-  schema: t.object({ key: t.key(), fields: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), fields: t.variadic(t.bulk(), { min: 1 }) }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -1156,7 +1162,7 @@ export const hlenCommand = defineCommand({
 
 export const hexistsCommand = defineCommand({
   name: 'hexists',
-  schema: t.object({ key: t.key(), field: t.key() }),
+  schema: t.object({ key: t.key(), field: t.bulk() }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -1173,7 +1179,7 @@ export const hincrbyCommand = defineCommand({
   name: 'hincrby',
   schema: t.object({
     key: t.key(),
-    field: t.key(),
+    field: t.bulk(),
     increment: t.bigInteger({ min: LONG_MIN, max: LONG_MAX }),
   }),
   flags: ['write', 'fast'],
@@ -1208,7 +1214,7 @@ export const hincrbyCommand = defineCommand({
 
 export const hincrbyfloatCommand = defineCommand({
   name: 'hincrbyfloat',
-  schema: t.object({ key: t.key(), field: t.key(), increment: t.float() }),
+  schema: t.object({ key: t.key(), field: t.bulk(), increment: t.float() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -1242,7 +1248,7 @@ export const hincrbyfloatCommand = defineCommand({
 
 export const hstrlenCommand = defineCommand({
   name: 'hstrlen',
-  schema: t.object({ key: t.key(), field: t.key() }),
+  schema: t.object({ key: t.key(), field: t.bulk() }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {

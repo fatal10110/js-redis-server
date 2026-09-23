@@ -29,6 +29,7 @@ type XpendingArgs =
 
 function createXpendingSchema() {
   return t.custom<XpendingArgs>(
+    { min: 2, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       const group = input[index + 1]

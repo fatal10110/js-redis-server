@@ -159,7 +159,7 @@ export const scanCommands = [
 ]
 
 function createScanOptionsSchema(allowType: boolean) {
-  return t.custom<ScanOptions>((input, index, ctx) => {
+  return t.custom<ScanOptions>({ min: 1 }, (input, index, ctx) => {
     const cursor = parseCursor(readRequired(input, index, ctx.commandName))
     const options = parseScanOptions(
       input,
@@ -176,7 +176,8 @@ function createScanOptionsSchema(allowType: boolean) {
 }
 
 function createKeyedScanOptionsSchema() {
-  return t.custom<KeyedScanOptions>((input, index, ctx) => {
+  const layout = { min: 2, keys: [0] }
+  return t.custom<KeyedScanOptions>(layout, (input, index, ctx) => {
     const key = readRequired(input, index, ctx.commandName)
     const cursor = parseCursor(readRequired(input, index + 1, ctx.commandName))
     const options = parseScanOptions(

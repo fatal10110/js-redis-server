@@ -199,6 +199,7 @@ function parseBitValue(token: Buffer): number {
 export const setbitCommand = defineCommand({
   name: 'setbit',
   schema: t.custom(
+    { min: 3, max: 3, keys: [0] },
     (input, index, ctx): { value: SetBitArgs; nextIndex: number } => {
       if (input.length - index !== 3) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
@@ -253,6 +254,7 @@ type GetBitArgs = { key: Buffer; offset: Buffer }
 export const getbitCommand = defineCommand({
   name: 'getbit',
   schema: t.custom(
+    { min: 2, max: 2, keys: [0] },
     (input, index, ctx): { value: GetBitArgs; nextIndex: number } => {
       if (input.length - index !== 2) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
@@ -287,6 +289,7 @@ type BitCountArgs = { key: Buffer; range?: BitRange }
 export const bitcountCommand = defineCommand({
   name: 'bitcount',
   schema: t.custom(
+    { min: 1, keys: [0] },
     (input, index, ctx): { value: BitCountArgs; nextIndex: number } => {
       const key = input[index]
       if (!key) {
@@ -346,6 +349,7 @@ type BitPosArgs = {
 export const bitposCommand = defineCommand({
   name: 'bitpos',
   schema: t.custom(
+    { min: 2, keys: [0] },
     (input, index, ctx): { value: BitPosArgs; nextIndex: number } => {
       const key = input[index]
       const bitToken = input[index + 1]
@@ -447,6 +451,7 @@ type BitOpArgs = { op: BitOp; destKey: Buffer; sourceKeys: Buffer[] }
 export const bitopCommand = defineCommand({
   name: 'bitop',
   schema: t.custom(
+    { min: 3, keys: [1], keyRange: { start: 2, step: 1, last: -1 } },
     (input, index, ctx): { value: BitOpArgs; nextIndex: number } => {
       const opToken = input[index]
       const destKey = input[index + 1]
@@ -803,6 +808,7 @@ function executeBitField(
 // through as raw tokens and validated by `executeBitField`.
 function bitFieldSchema(readonly: boolean): CommandSchema<BitFieldArgs> {
   return t.custom(
+    { min: 1, keys: [0] },
     (input, index, ctx): { value: BitFieldArgs; nextIndex: number } => {
       const key = input[index]
       if (!key) {

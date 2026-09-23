@@ -27,6 +27,7 @@ type XsetidArgs = {
 
 function createXsetidSchema() {
   return t.custom<XsetidArgs>(
+    { min: 2, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       const rawId = input[index + 1]

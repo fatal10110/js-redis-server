@@ -85,14 +85,17 @@ async function blockingListPop(
 
 export const blpopCommand = defineCommand({
   name: 'blpop',
-  schema: t.custom<{ keys: Buffer[]; timeout: number }>((input, index, ctx) => {
-    if (input.length - index < 2)
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    const timeout = Number(input[input.length - 1].toString())
-    if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
-    const keys = Array.from(input.slice(index, input.length - 1))
-    return { value: { keys, timeout }, nextIndex: input.length }
-  }),
+  schema: t.custom<{ keys: Buffer[]; timeout: number }>(
+    { min: 2, keyRange: { start: 0, step: 1, last: -2 } },
+    (input, index, ctx) => {
+      if (input.length - index < 2)
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const timeout = Number(input[input.length - 1].toString())
+      if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
+      const keys = Array.from(input.slice(index, input.length - 1))
+      return { value: { keys, timeout }, nextIndex: input.length }
+    },
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {
@@ -104,14 +107,17 @@ export const blpopCommand = defineCommand({
 
 export const brpopCommand = defineCommand({
   name: 'brpop',
-  schema: t.custom<{ keys: Buffer[]; timeout: number }>((input, index, ctx) => {
-    if (input.length - index < 2)
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    const timeout = Number(input[input.length - 1].toString())
-    if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
-    const keys = Array.from(input.slice(index, input.length - 1))
-    return { value: { keys, timeout }, nextIndex: input.length }
-  }),
+  schema: t.custom<{ keys: Buffer[]; timeout: number }>(
+    { min: 2, keyRange: { start: 0, step: 1, last: -2 } },
+    (input, index, ctx) => {
+      if (input.length - index < 2)
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const timeout = Number(input[input.length - 1].toString())
+      if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
+      const keys = Array.from(input.slice(index, input.length - 1))
+      return { value: { keys, timeout }, nextIndex: input.length }
+    },
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {

@@ -209,10 +209,13 @@ async function blockingZsetPop(
 function defineBlockingZsetPop(name: string, side: ZsetPopSide) {
   return defineCommand({
     name,
-    schema: t.custom<BlockingZsetPopArgs>((input, index, ctx) => ({
-      value: parseBlockingZsetPopArgs(input, index, ctx.commandName),
-      nextIndex: input.length,
-    })),
+    schema: t.custom<BlockingZsetPopArgs>(
+      { min: 2, keyRange: { start: 0, step: 1, last: -2 } },
+      (input, index, ctx) => ({
+        value: parseBlockingZsetPopArgs(input, index, ctx.commandName),
+        nextIndex: input.length,
+      }),
+    ),
     flags: ['write', 'noscript'],
     keys: args => args.keys,
     execute: (args, ctx) => {
