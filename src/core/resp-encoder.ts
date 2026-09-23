@@ -74,7 +74,7 @@ function encodeResp2(value: RedisValue): Buffer {
     case 'null-array':
       return Buffer.from('*-1\r\n')
     case 'error':
-      return Buffer.from(`-${formatError(value)}\r\n`)
+      return encodeError(value)
   }
 }
 
@@ -114,7 +114,7 @@ function encodeResp3(value: RedisValue): Buffer {
     case 'null-array':
       return Buffer.from('_\r\n')
     case 'error':
-      return Buffer.from(`-${formatError(value)}\r\n`)
+      return encodeError(value)
   }
 }
 
@@ -190,9 +190,22 @@ function encodeResp3VerbatimString(format: string, value: Buffer): Buffer {
   ])
 }
 
-function formatError(value: Extract<RedisValue, { kind: 'error' }>): string {
-  const message = sanitizeErrorText(value.message)
-  return value.code ? `${sanitizeErrorText(value.code)} ${message}` : message
+/**
+ * Build a `-ERR ...` frame. The body is assembled as *bytes* rather than a
+ * string so an error that echoes a token the client sent (an unknown
+ * subcommand, say) reaches the wire byte for byte — real Redis echoes whatever
+ * the client wrote, which need not be valid UTF-8, and a `toString()` round
+ * trip would replace those bytes with U+FFFD.
+ */
+function encodeError(value: Extract<RedisValue, { kind: 'error' }>): Buffer {
+  const body = value.messageBytes ?? Buffer.from(value.message)
+  return Buffer.concat([
+    Buffer.from('-'),
+    sanitizeErrorBytes(
+      value.code ? Buffer.concat([Buffer.from(`${value.code} `), body]) : body,
+    ),
+    Buffer.from('\r\n'),
+  ])
 }
 
 function formatNumber(value: number): string {
@@ -220,7 +233,23 @@ function formatNumber(value: number): string {
  * `sdsmapchars(s, "\r\n", "  ", 2)`, a 1:1 character map — so a `\r\n` run
  * becomes *two* spaces, not one. Collapsing runs is protocol-safe but changes
  * the byte count of every error reply that carries a newline (#388).
+ *
+ * Done on bytes rather than characters: `\r` and `\n` are single-byte, so the
+ * result is the same for UTF-8 text, and it also works on a body that is not
+ * valid UTF-8 at all.
  */
-function sanitizeErrorText(value: string): string {
-  return value.replace(/[\r\n]/g, ' ')
+function sanitizeErrorBytes(value: Buffer): Buffer {
+  const CR = 0x0d
+  const LF = 0x0a
+  const SPACE = 0x20
+  let sanitized: Buffer | null = null
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] !== CR && value[i] !== LF) {
+      continue
+    }
+    sanitized ??= Buffer.from(value)
+    sanitized[i] = SPACE
+  }
+
+  return sanitized ?? value
 }

@@ -186,7 +186,7 @@ export class Resp2SessionAdapter {
     }
 
     if (err instanceof RedisCommandError) {
-      await this.writeRedisResult(RedisResult.error(err.message, err.code))
+      await this.writeRedisResult(RedisResult.fromError(err))
       return
     }
 

@@ -16,10 +16,11 @@ import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { FeatureId } from '../core/compatibility'
+import { unknownSubcommandError } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
 type CommandArgs = {
-  subcommand?: string
+  subcommand?: Buffer
   args: Buffer[]
 }
 
@@ -80,7 +81,9 @@ const commandIntrospection: CommandIntrospection = {
 export const commandCommand = defineCommand({
   name: 'command',
   schema: t.object({
-    subcommand: t.optional(t.string()),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.optional(t.bulk()),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly'],
@@ -92,7 +95,7 @@ export const commandCommand = defineCommand({
       return commandInfo(allRootCommandInfos(ctx))
     }
 
-    switch (args.subcommand.toLowerCase()) {
+    switch (args.subcommand.toString().toLowerCase()) {
       case 'count':
         return commandCount(args, ctx)
       case 'list':
@@ -101,31 +104,35 @@ export const commandCommand = defineCommand({
         return commandInfoSubcommand(args, ctx)
       case 'docs':
         if (!ctx.server.profile.has('command.docs')) {
-          throw commandSubcommandError(args.subcommand)
+          throw unknownSubcommandError(
+            'COMMAND',
+            args.subcommand,
+            ctx.server.profile,
+          )
         }
         return commandDocsSubcommand(args, ctx)
       case 'getkeys':
         return commandGetKeys(args, ctx)
       case 'getkeysandflags':
         if (!ctx.server.profile.has('command.getkeysandflags')) {
-          throw commandSubcommandError(args.subcommand)
+          throw unknownSubcommandError(
+            'COMMAND',
+            args.subcommand,
+            ctx.server.profile,
+          )
         }
         return commandGetKeysAndFlags(args, ctx)
       case 'help':
         return commandHelp(args, ctx)
       default:
-        throw new RedisCommandError(
-          `unknown subcommand '${args.subcommand}'. Try COMMAND HELP.`,
+        throw unknownSubcommandError(
+          'COMMAND',
+          args.subcommand,
+          ctx.server.profile,
         )
     }
   },
 })
-
-function commandSubcommandError(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try COMMAND HELP.`,
-  )
-}
 
 function commandCount(
   args: CommandArgs,

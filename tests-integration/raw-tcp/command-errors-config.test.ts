@@ -25,17 +25,14 @@ import { expectReply } from './helpers'
  * 8.0 backend, so it pins the 7.0+ form. The 6.2 side of the gate is asserted
  * by the profile sweep in `tests-integration/compatibility/profile-gates.test.ts`.
  *
- * Two known gaps are deliberately NOT asserted here, recorded so the omissions
- * are visible rather than accidental:
+ * Byte fidelity of the echoed name — raw non-UTF-8 bytes, and a 128-byte cut
+ * landing inside a multi-byte character — is no longer a gap; it is asserted
+ * for every container in `command-errors-subcommand.test.ts` (#413).
  *
- * 1. Byte fidelity of the echoed name. Real Redis echoes the raw bytes the
- *    client sent; the subcommand reaches `execute()` as a Buffer but
- *    `RedisCommandError` carries a `string`, so non-UTF-8 input becomes U+FFFD
- *    and a 128-byte cut landing inside a multi-byte character does too (real
- *    emits the raw partial byte — 128 echoed bytes against this server's 130).
- *    Needs the byte-oriented error pipeline tracked as #384 part 2.
+ * One known gap is deliberately NOT asserted here, recorded so the omission is
+ * visible rather than accidental:
  *
- * 2. `CONFIG HELP` is unimplemented, so the `Try CONFIG HELP.` suffix points at
+ * 1. `CONFIG HELP` is unimplemented, so the `Try CONFIG HELP.` suffix points at
  *    a reply that is itself this error. Real returns an 11-element array whose
  *    last line is version-specific — `    Prints this help.` on 6.2/7.0 and
  *    `    Print this help.` from 7.2 on (verified on 6.2.24, 7.0.15, 7.2.16,

@@ -1,18 +1,20 @@
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import {
-  RedisCommandError,
-  WrongNumberOfArgumentsError,
-} from '../core/redis-error'
+import { WrongNumberOfArgumentsError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { RedisExecutionContext } from '../core/redis-context'
 import type { ResponseStream } from '../core/response-stream'
-import { array, integer } from './helpers'
+import {
+  array,
+  integer,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
 type PubSubArgs = {
-  subcommand: string
+  subcommand: Buffer
   args: Buffer[]
 }
 
@@ -194,7 +196,9 @@ export const spublishCommand = defineCommand({
 export const pubsubCommand = defineCommand({
   name: 'pubsub',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly', 'pubsub', 'fast'],
@@ -228,7 +232,7 @@ export const pubsubCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = args.subcommand.toString().toLowerCase()
 
     if (subcommand === 'channels') {
       return pubsubChannels(args, ctx)
@@ -245,9 +249,13 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardchannels') {
       if (!ctx.server.profile.has('pubsub.sharded')) {
-        throw pubsubUnavailableSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'PUBSUB',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
-      expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
+      expectPubSubSubcommandMaxArgCount(args, 1, ctx)
       const channels = ctx.server.pubsubBroker.shardChannelsMatching(
         args.args[0],
       )
@@ -256,7 +264,11 @@ export const pubsubCommand = defineCommand({
 
     if (subcommand === 'shardnumsub') {
       if (!ctx.server.profile.has('pubsub.sharded')) {
-        throw pubsubUnavailableSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'PUBSUB',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
       return RedisResult.create(
         RedisValue.array(
@@ -275,9 +287,7 @@ export const pubsubCommand = defineCommand({
       return pubsubHelp(ctx)
     }
 
-    throw new RedisCommandError(
-      `unknown subcommand '${args.subcommand}'. Try PUBSUB HELP.`,
-    )
+    throw unknownSubcommandError('PUBSUB', args.subcommand, ctx.server.profile)
   },
 })
 
@@ -294,7 +304,7 @@ export const pubsubCommands = [
 ]
 
 function pubsubChannels(args: PubSubArgs, ctx: RedisExecutionContext) {
-  expectPubSubSubcommandMaxArgCount(args.subcommand, args.args, 1)
+  expectPubSubSubcommandMaxArgCount(args, 1, ctx)
   const channels = ctx.server.pubsubBroker.channelsMatching(args.args[0])
   return RedisResult.create(
     RedisValue.array(channels.map(channel => RedisValue.bulkString(channel))),
@@ -368,26 +378,17 @@ function expectArgCount(
   }
 }
 
+/**
+ * PUBSUB's variadic subcommands police their own argument count, so an excess
+ * argument is real Redis' `addReplySubcommandSyntaxError` rather than the
+ * dispatch-level unknown-subcommand reply or an arity error.
+ */
 function expectPubSubSubcommandMaxArgCount(
-  subcommand: string,
-  args: readonly Buffer[],
+  args: PubSubArgs,
   count: number,
+  ctx: RedisExecutionContext,
 ): void {
-  if (args.length > count) {
-    throw pubsubSubcommandError(subcommand)
+  if (args.args.length > count) {
+    throw subcommandSyntaxError('PUBSUB', args.subcommand, ctx.server.profile)
   }
-}
-
-function pubsubSubcommandError(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `unknown subcommand or wrong number of arguments for '${subcommand}'. Try PUBSUB HELP.`,
-  )
-}
-
-function pubsubUnavailableSubcommandError(
-  subcommand: string,
-): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try PUBSUB HELP.`,
-  )
 }

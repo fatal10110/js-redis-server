@@ -139,7 +139,7 @@ export class CommandExecutor {
     }
 
     ctx.session.markTransactionDirty()
-    return RedisResult.error(err.message, err.code)
+    return RedisResult.fromError(err)
   }
 
   /**
@@ -476,7 +476,7 @@ function executionErrorResult(
     ctx.session.markTransactionDirty()
   }
 
-  return RedisResult.error(err.message, err.code)
+  return RedisResult.fromError(err)
 }
 
 /**

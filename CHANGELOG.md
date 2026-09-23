@@ -139,6 +139,27 @@ so the PR body is not a durable home for a breaking-change note.
   argument parse) where `executeRaw` returns a RESP error reply, and the pair
   skips the MULTI-dirty/EXECABORT handling `executeRaw` applies to those errors.
 
+- **BREAKING** `UnknownScriptSubcommandError` and `UnknownClusterSubcommandError`
+  are removed from the root facade and from `/core` ([#430]). Both hard-coded
+  the Redis 7.0+ wording (`unknown subcommand '%s'. Try SCRIPT HELP.`) with no
+  compatibility profile in reach, so on a `redis-6.2` profile they produced a
+  message real 6.2 never sends. There is no drop-in replacement class — the
+  reply is now built by a profile-aware helper that needs the profile as an
+  argument:
+
+  ```
+  new UnknownScriptSubcommandError(sub)   -> unknownSubcommandError('SCRIPT', sub, ctx.server.profile)
+  new UnknownClusterSubcommandError(sub)  -> unknownSubcommandError('CLUSTER', sub, ctx.server.profile)
+  ```
+
+  `unknownSubcommandError` lives in `src/commands/helpers.ts` and is **not**
+  exported from either entry point, because a caller outside the command layer
+  has no `RedisExecutionContext` to take the profile from. A `/core` consumer
+  that was constructing these classes by hand was, by construction, emitting the
+  wrong text on older profiles; the two remaining uses of them were both inside
+  this package. Catching them still works through `RedisCommandError`, which
+  they extended and which every other error in the package extends too.
+
 - **BREAKING (`/core`)** `RedisMonitorCommandEvent.timestampMs` is renamed to
   `timestampMicros` and its unit changes from milliseconds to **microseconds**
   ([#410]). Real Redis stamps `MONITOR` lines from `gettimeofday()`, so the six
@@ -345,6 +366,32 @@ so the PR body is not a durable home for a breaking-change note.
   sends `move_to` / `copy_to`. That gap predates this change and is tracked
   separately.
 
+- Every container command's unknown-subcommand reply now matches real Redis on
+  every profile ([#430], closing [#413]). The message had fifteen hand-rolled
+  copies across the command modules with three wordings live at once; they are
+  replaced by one profile-aware helper, which fixes three things at once:
+
+  - The wording is gated on `error.unknown-subcommand-wording`
+    (Redis 7.0 / Valkey 7.2), so `redis-6.2` gets
+    `Unknown subcommand or wrong number of arguments for '<name>'. Try <CMD> HELP.`
+    where 7.0+ gets `unknown subcommand '<name>'. Try <CMD> HELP.`. Previously
+    `CONFIG` sent the 7.0 form on every profile and `XGROUP` sent the 6.2 form
+    on every profile.
+  - The echoed name is truncated the way real Redis truncates it: at the first
+    NUL byte on every profile, and then to 128 **bytes** from 7.0 (`%.128s`).
+    A cut that lands inside a multi-byte character emits the partial byte, as
+    real Redis does.
+  - The echoed name reaches the wire byte for byte. It was decoded as UTF-8, so
+    `CONFIG \xff\xfe\xfd` came back as three U+FFFD replacement characters —
+    nine bytes where real Redis sends three. Error replies are now assembled as
+    bytes end to end, including across the Lua boundary, so a nested
+    `redis.call` error keeps its bytes too.
+
+  `addReplySubcommandSyntaxError` — the `unknown subcommand or wrong number of
+  arguments for '<name>'. Try <CMD> HELP.` reply a container raises for a known
+  subcommand with unusable arguments — took the same 7.0 case flip and is now
+  gated alongside it. It reaches `PUBSUB` only so far ([#437]).
+
 - `CONFIG <unknown-subcommand>` now matches real Redis, and is gated on the
   profile ([#410]). Redis 7.0 moved container commands into the command table,
   which replaced `Unknown subcommand or wrong number of arguments for '%s'. Try
@@ -379,6 +426,9 @@ requests they contain.
 [#378]: https://github.com/fatal10110/js-redis-server/pull/378
 [#410]: https://github.com/fatal10110/js-redis-server/pull/410
 [#413]: https://github.com/fatal10110/js-redis-server/issues/413
+[#430]: https://github.com/fatal10110/js-redis-server/pull/430
+[#437]: https://github.com/fatal10110/js-redis-server/issues/437
+
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD

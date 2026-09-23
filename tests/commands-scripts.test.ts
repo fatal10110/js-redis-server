@@ -321,7 +321,7 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
     assert.deepStrictEqual(
       await session.execute('function', [Buffer.from('missing')]),
       RedisResult.error(
-        "unknown subcommand 'missing'. Try FUNCTION HELP.",
+        Buffer.from("unknown subcommand 'missing'. Try FUNCTION HELP."),
         'ERR',
       ),
     )
@@ -532,7 +532,7 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
     assert.deepStrictEqual(
       await session.execute('script', [Buffer.from('missing')]),
       RedisResult.error(
-        "unknown subcommand 'missing'. Try SCRIPT HELP.",
+        Buffer.from("unknown subcommand 'missing'. Try SCRIPT HELP."),
         'ERR',
       ),
     )
@@ -634,8 +634,12 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
 
     assert.deepStrictEqual(
       await session.execute('eval', [script, Buffer.from('0'), key]),
+      // A script's error reply carries the engine's bytes verbatim, so the
+      // expectation is built from a Buffer too.
       RedisResult.error(
-        `Script attempted to access a non local key in a cluster node script: ${sha}, on @user_script:1.`,
+        Buffer.from(
+          `Script attempted to access a non local key in a cluster node script: ${sha}, on @user_script:1.`,
+        ),
         'ERR',
       ),
     )

@@ -14,7 +14,16 @@ export type RedisValue =
   | { kind: 'push'; name: string; items: RedisValue[] }
   | { kind: 'null' }
   | { kind: 'null-array' }
-  | { kind: 'error'; message: string; code?: string }
+  // `messageBytes` is set only when the body must reach the wire byte for
+  // byte — an error that echoes a token the client sent (see
+  // `unknownSubcommandError` in src/commands/helpers.ts), whose bytes need not
+  // be valid UTF-8. `message` is always the readable form of the same body.
+  | {
+      kind: 'error'
+      message: string
+      messageBytes?: Buffer
+      code?: string
+    }
 
 export const RedisValue = {
   simpleString: (value: string): RedisValue => ({
@@ -58,9 +67,13 @@ export const RedisValue = {
   }),
   null: (): RedisValue => ({ kind: 'null' }),
   nullArray: (): RedisValue => ({ kind: 'null-array' }),
-  error: (message: string, code?: string): RedisValue => ({
-    kind: 'error',
-    message,
-    code,
-  }),
+  error: (message: string | Buffer, code?: string): RedisValue =>
+    typeof message === 'string'
+      ? { kind: 'error', message, code }
+      : {
+          kind: 'error',
+          message: message.toString(),
+          messageBytes: message,
+          code,
+        },
 }
