@@ -33,8 +33,7 @@ async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(typeof pkg.createRedisCluster, 'function')
   assert.strictEqual(typeof pkg.createInMemoryClient, 'function')
   assert.strictEqual(typeof pkg.InMemoryRedisClient, 'function')
-  assert.strictEqual(typeof pkg.buildRedisCluster, 'function')
-  assert.strictEqual(pkg.buildRedisCluster, pkg.createRedisCluster)
+  assert.strictEqual('buildRedisCluster' in pkg, false)
   assert.strictEqual(typeof pkg.RedisCommandError, 'function')
   // The executor and hand-wiring building blocks are intentionally not part of
   // the root surface — they live on `js-redis-server/core`.
