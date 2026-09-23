@@ -173,6 +173,55 @@ so the PR body is not a durable home for a breaking-change note.
   identical. `RespEncodeOptions` itself is **kept** — it is still the options
   parameter of `encodeRedisValue` / `encodeRedisResult`.
 
+### Changed
+
+- **BREAKING (`/core`)** `Resp2CommandDecoder` is now pull-based, and its
+  constructor requires the live bulk-length limit ([#431]). Two breaks to the
+  exported class:
+
+  1. `push(chunk)` only buffers and returns `void`; it no longer returns
+     `{ frames, error }`. Frames are taken one at a time from the new `next()`,
+     which returns a `Resp2CommandFrame`, or `null` when more bytes are needed,
+     and **throws** the `Resp2ParseError` instead of returning it. The decoder
+     is terminal after that throw: every later `next()` re-throws the same
+     error and `push()` is ignored, because a RESP stream cannot be
+     resynchronised mid-frame.
+  2. `new Resp2CommandDecoder()` with no argument now throws
+     `TypeError: Cannot read properties of undefined (reading 'maxBulkLength')`.
+     Pass `{ maxBulkLength: () => bigint }` — the `proto-max-bulk-len` in force,
+     read on every bulk header so a `CONFIG SET` applies to the next frame.
+
+  ```ts
+  // before
+  const decoder = new Resp2CommandDecoder()
+  const { frames, error } = decoder.push(chunk)
+  for (const frame of frames) handle(frame)
+  if (error) fail(error)
+
+  // after
+  const decoder = new Resp2CommandDecoder({
+    maxBulkLength: () => server.protoMaxBulkLen, // 536870912n is Redis' default
+  })
+  decoder.push(chunk)
+  try {
+    for (let frame; (frame = decoder.next()); ) handle(frame)
+  } catch (error) {
+    if (!(error instanceof Resp2ParseError)) throw error
+    fail(error) // terminal: report it and close the connection
+  }
+  ```
+
+  Pulling one frame at a time is what makes the limit live: the session runs
+  each command before framing the next, so a pipelined
+  `CONFIG SET proto-max-bulk-len` governs the frames behind it even when they
+  arrived in the same read. Only direct users of the decoder are affected;
+  `Resp2SessionAdapter`, `attachSession` and the servers built on them are
+  migrated and keep their signatures.
+
+  `Resp2ParseError` gains a `messageBytes` field and an optional second
+  constructor argument carrying the error text as raw bytes. This is additive:
+  existing callers of `new Resp2ParseError(message)` are unaffected.
+
 ### Added
 
 - `PubSubKind` (`'channel' | 'shard' | 'pattern'`) is exported from `/core`,
@@ -180,6 +229,33 @@ so the PR body is not a durable home for a breaking-change note.
   interface and declaration emit requires it ([#376]).
 
 ### Fixed
+
+- `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
+  protocol reader, for every command ([#431], [#415]). A bulk argument longer
+  than the limit is refused from its header, before the payload is read and
+  before any handler runs, with `-ERR Protocol error: invalid bulk length`, and
+  **the server then closes the connection**. Previously only `APPEND` and
+  `SETRANGE` checked the limit, so `SET`, `MSET`, `LPUSH`, `HSET` and the rest
+  accepted arguments of any size. A bulk exactly the size of the limit is still
+  accepted. Identical on Redis 6.2, 7.2 and 8.0, so it is not profile-gated.
+
+- `SETBIT`, `GETBIT`, `BITFIELD` and `BITFIELD_RO` derive their bit-offset
+  ceiling from the live `proto-max-bulk-len` — `(offset >> 3) >= limit` is
+  refused — instead of a hardcoded 2^32 ([#431], [#415]). They agree at the 512MB
+  default and diverge once the limit is lowered. For operations that allocate
+  (`SETBIT`, and `BITFIELD`'s `SET` / `INCRBY`) the ceiling is additionally
+  capped at 512MB, as `APPEND` / `SETRANGE` already are, so raising the setting
+  cannot make the test process materialise an unbounded string; reads are not
+  capped, because they never allocate.
+
+  Their argument errors are now **runtime** errors, as in Redis: inside `MULTI`
+  an out-of-range offset, a bad bit value, or a malformed `BITFIELD` operation
+  replies `+QUEUED` and surfaces as an element of the `EXEC` array, where it
+  used to fail at queue time and abort the transaction with `EXECABORT`. Only
+  arity errors still fire at queue time. `BITFIELD_RO`'s GET-only check now runs
+  after the whole operation list parses, and a `BITFIELD` operation missing its
+  arguments answers `ERR syntax error` before its type is read, both matching
+  Redis.
 
 - After a `SELECT`, `MOVE` and `COPY … DB` into the database that was selected
   *before* it no longer publish their keyspace notifications as `select`
@@ -271,5 +347,8 @@ requests they contain.
 [#413]: https://github.com/fatal10110/js-redis-server/issues/413
 [#430]: https://github.com/fatal10110/js-redis-server/pull/430
 [#437]: https://github.com/fatal10110/js-redis-server/issues/437
+
+[#415]: https://github.com/fatal10110/js-redis-server/issues/415
+[#431]: https://github.com/fatal10110/js-redis-server/pull/431
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

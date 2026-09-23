@@ -3,17 +3,36 @@ export type Resp2CommandFrame = {
   args: Buffer[]
 }
 
-export type Resp2DecodeResult = {
-  frames: Resp2CommandFrame[]
-  error?: Resp2ParseError
+export type Resp2CommandDecoderOptions = {
+  /**
+   * The live `proto-max-bulk-len`, read afresh for every bulk header so a
+   * `CONFIG SET` takes effect on the very next command. Required: there is no
+   * sensible default here, because the only correct value is the one the
+   * server this connection belongs to is currently running with.
+   */
+  maxBulkLength: () => bigint
 }
 
 export class Resp2ParseError extends Error {
-  constructor(message: string) {
+  /**
+   * The error text exactly as it goes on the wire, as raw bytes.
+   *
+   * Usually just `message` encoded, but some Redis protocol errors echo an
+   * arbitrary byte from the client (`expected '$', got '%c'`), and Redis sends
+   * that byte as-is. Carried as a Buffer because a JS string would be
+   * re-encoded as UTF-8 on the way out, turning a lone `0xE9` into `0xC3 0xA9`.
+   */
+  readonly messageBytes: Buffer
+
+  constructor(message: string, messageBytes?: Buffer) {
     super(message)
     this.name = 'Resp2ParseError'
+    this.messageBytes = messageBytes ?? Buffer.from(message)
   }
 }
+
+/** Redis' `INT_MAX` ceiling on a multibulk element count (networking.c). */
+const MAX_MULTIBULK_COUNT = 2147483647
 
 type ParseOutcome =
   | { kind: 'frame'; frame: Resp2CommandFrame; nextIndex: number }
@@ -22,37 +41,75 @@ type ParseOutcome =
 
 export class Resp2CommandDecoder {
   private buffered = Buffer.alloc(0)
+  private readonly maxBulkLength: () => bigint
+  /**
+   * Set once a protocol error is raised. A RESP stream cannot be resynchronised
+   * after one — Redis' own parser marks the client `CLIENT_CLOSE_AFTER_REPLY`
+   * and never reads another command from it — so the decoder is deliberately
+   * terminal rather than silently resuming mid-frame.
+   */
+  private fatalError: Resp2ParseError | null = null
 
-  push(chunk: Buffer): Resp2DecodeResult {
+  constructor(options: Resp2CommandDecoderOptions) {
+    this.maxBulkLength = options.maxBulkLength
+  }
+
+  /**
+   * Append freshly-read bytes; call {@link next} to drain complete frames.
+   *
+   * Ignored once the decoder has raised a protocol error — see
+   * {@link fatalError}. The connection is being torn down at that point, and
+   * buffering more of a stream we can no longer frame would be pointless.
+   */
+  push(chunk: Buffer): void {
+    if (this.fatalError) {
+      return
+    }
     this.buffered = Buffer.concat([this.buffered, chunk])
-    const frames: Resp2CommandFrame[] = []
-    let cursor = 0
-    let error: Resp2ParseError | undefined
+  }
 
-    try {
-      while (cursor < this.buffered.length) {
-        const outcome = this.parseFrame(cursor)
-        if (outcome.kind === 'incomplete') {
-          break
-        }
-
-        if (outcome.kind === 'frame') {
-          frames.push(outcome.frame)
-        }
-        cursor = outcome.nextIndex
-      }
-    } catch (err) {
-      if (!(err instanceof Resp2ParseError)) {
-        throw err
-      }
-      // Surface the protocol error alongside the frames already parsed from
-      // earlier in this pipeline so the caller can respond to the valid
-      // commands before reporting the error and closing the connection.
-      error = err
+  /**
+   * Take the next complete command frame off the buffer, or `null` when more
+   * bytes are needed.
+   *
+   * Pull-based rather than "decode the whole chunk at once" because the bulk
+   * limit is live: the caller runs each frame before asking for the next, so a
+   * `CONFIG SET proto-max-bulk-len` applies to everything parsed after it, even
+   * when it arrived in the same TCP read as the commands that follow it.
+   *
+   * @throws {Resp2ParseError} on a malformed frame. Frames already returned
+   * stay valid — real Redis answers the good commands that preceded the bad
+   * one, then reports the protocol error and closes the connection. **This is
+   * terminal**: the decoder keeps the error and every later `next()` re-throws
+   * it, so a caller that does not close the connection cannot accidentally
+   * resume framing from the middle of a frame it never consumed.
+   */
+  next(): Resp2CommandFrame | null {
+    if (this.fatalError) {
+      throw this.fatalError
     }
 
-    this.buffered = this.buffered.subarray(cursor)
-    return { frames, error }
+    try {
+      while (this.buffered.length > 0) {
+        const outcome = this.parseFrame(0)
+        if (outcome.kind === 'incomplete') {
+          return null
+        }
+
+        this.buffered = this.buffered.subarray(outcome.nextIndex)
+        if (outcome.kind === 'frame') {
+          return outcome.frame
+        }
+      }
+    } catch (err) {
+      if (err instanceof Resp2ParseError) {
+        this.fatalError = err
+        this.buffered = Buffer.alloc(0)
+      }
+      throw err
+    }
+
+    return null
   }
 
   private parseFrame(index: number): ParseOutcome {
@@ -74,8 +131,14 @@ export class Resp2CommandDecoder {
       return { kind: 'incomplete' }
     }
 
+    // Redis bounds the element count as well as each bulk. The upper bound is
+    // version-specific: 7.2.16 rejects above INT_MAX, while 6.2.24 rejects
+    // anything above 1024*1024 (`*1048577` errors on 6.2 and is accepted on
+    // 7.2). Only the INT_MAX bound is applied here, because it is the one every
+    // supported profile agrees on; the tighter pre-7.0 bound needs a
+    // compatibility gate and is tracked in #441.
     const count = parseLength(header.line, 'multibulk')
-    if (count < -1) {
+    if (count < -1 || count > MAX_MULTIBULK_COUNT) {
       throw new Resp2ParseError('Protocol error: invalid multibulk length')
     }
 
@@ -93,7 +156,7 @@ export class Resp2CommandDecoder {
       }
 
       if (prefix !== 0x24) {
-        throw new Resp2ParseError('Protocol error: expected bulk string')
+        throw unexpectedBulkPrefix(prefix)
       }
 
       const bulkHeader = readLine(this.buffered, cursor + 1)
@@ -101,8 +164,14 @@ export class Resp2CommandDecoder {
         return { kind: 'incomplete' }
       }
 
+      // Redis' primary `proto-max-bulk-len` enforcement point: the header is
+      // judged before a single byte of the payload is read, so an oversized
+      // argument to *any* command is refused at parse time rather than by the
+      // command that would have received it (networking.c,
+      // `processMultibulkBuffer`). `>` and not `>=` — a bulk exactly the size
+      // of the limit is accepted. Verified on redis 6.2.24, 7.2.16 and 8.0.6.
       const length = parseLength(bulkHeader.line, 'bulk')
-      if (length < 0) {
+      if (length < 0 || BigInt(length) > this.maxBulkLength()) {
         throw new Resp2ParseError('Protocol error: invalid bulk length')
       }
 
@@ -117,6 +186,13 @@ export class Resp2CommandDecoder {
         this.buffered[valueEnd] !== 0x0d ||
         this.buffered[valueEnd + 1] !== 0x0a
       ) {
+        // Known divergence, pre-dating #415 and deliberately left alone here:
+        // real Redis does not verify the trailing CRLF at all. It reads exactly
+        // `ll` bytes and skips two, so `*1\r\n$3\r\nfooXX` dispatches `foo`
+        // (6.2.24 and 7.2.16 both answer `unknown command`). The wording below
+        // is ours, not Redis'. Tracked in #441 — matching Redis means dropping
+        // the check, which changes framing for malformed input and is unrelated
+        // to proto-max-bulk-len.
         throw new Resp2ParseError('Protocol error: bulk string not terminated')
       }
 
@@ -258,6 +334,24 @@ function isInlineWhitespace(char: string): boolean {
 
 function isHexDigit(char: string | undefined): boolean {
   return char !== undefined && /^[0-9a-fA-F]$/.test(char)
+}
+
+/**
+ * Redis' `Protocol error: expected '$', got '%c'`, echoing the offending byte.
+ *
+ * The byte is echoed raw — a `0xE9` goes out as the single byte `0xE9`, not as
+ * its two-byte UTF-8 form — except CR and LF, which Redis' error-reply path
+ * rewrites to a space. Verified byte-for-byte on redis 6.2.24, 7.2.16 and
+ * 8.0.6: `*1\r\n\xE9x\r\n` answers `got '\xE9'` and `*2\r\n%3\r\nfoo\r\n`
+ * answers `got '%'`, both followed by a close.
+ */
+function unexpectedBulkPrefix(prefix: number): Resp2ParseError {
+  const shown = prefix === 0x0d || prefix === 0x0a ? 0x20 : prefix
+  const head = "Protocol error: expected '$', got '"
+  return new Resp2ParseError(
+    `${head}${String.fromCharCode(shown)}'`,
+    Buffer.concat([Buffer.from(head), Buffer.from([shown]), Buffer.from("'")]),
+  )
 }
 
 function readLine(
