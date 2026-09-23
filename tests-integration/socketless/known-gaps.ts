@@ -169,6 +169,40 @@ function skip(file: string, reason: string): KnownGap {
 }
 
 export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
+  // Waiters are opened in each test (not in before()), so every test fails
+  // on its own with this cause instead of a hook failure hiding them all.
+  todo('node-redis/blocking-fifo.test.ts', CAUSE.secondClusterClient, [
+    'BLMOVE: 3 waiters on one key are served in the order they blocked',
+    'BLMOVE: a write of another type does not wake the waiter',
+    'BLMPOP: a waiter woken to find nothing keeps its place in line',
+    'BLMPOP: a write of another type does not wake the waiter',
+    'BLPOP k1 k2: a type change on k2 keeps the client blocked for k1',
+    'BLPOP: 3 waiters on one key are served in the order they blocked',
+    'BLPOP: a single multi-value push serves the waiters in the order they blocked',
+    'BLPOP: a waiter woken to find nothing keeps its place in line',
+    'BLPOP: a write of another type does not wake the waiter',
+    'BRPOP: 3 waiters on one key are served in the order they blocked',
+    'BZMPOP: 3 waiters on one key are served in the order they blocked',
+    'BZMPOP: a waiter woken to find nothing keeps its place in line',
+    'BZMPOP: a write of another type does not wake the waiter',
+    'BZPOPMIN: 3 waiters on one key are served in the order they blocked',
+    'BZPOPMIN: a waiter woken to find nothing keeps its place in line',
+    'BZPOPMIN: a write of another type does not wake the waiter',
+    'XREAD BLOCK: a write of another type does not wake the waiter',
+    'XREAD BLOCK: every waiter on one key is served the new entry',
+    'XREADGROUP BLOCK on two streams: deleting the second unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: 3 waiters on one key are served in the order they blocked',
+    'XREADGROUP BLOCK: DEL unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: MULTI; DEL; XADD; EXEC unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: MULTI; XGROUP DESTROY; XGROUP CREATE; EXEC keeps it blocked',
+    'XREADGROUP BLOCK: PEXPIRE (active expiry) unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: RENAME unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: UNLINK unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: XGROUP DESTROY of another group keeps it blocked',
+    'XREADGROUP BLOCK: XGROUP DESTROY unblocks it with NOGROUP',
+    'XREADGROUP BLOCK: overwriting the stream (MULTI; DEL; SET; EXEC) unblocks it with WRONGTYPE',
+    'XREADGROUP BLOCK: overwriting the stream (SET) unblocks it with WRONGTYPE',
+  ]),
   todo('node-redis/cluster-integration.test.ts', CAUSE.clusterSendCommand, [
     'HELLO reports master and replica roles for direct node connections',
     'Lua redis.call and redis.pcall non-local key errors match Redis',

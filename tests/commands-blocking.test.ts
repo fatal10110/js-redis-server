@@ -278,3 +278,51 @@ describe('BLPOP thundering herd (unit)', () => {
     )
   })
 })
+
+describe('XREADGROUP BLOCK unblocking (unit)', () => {
+  function nogroup(key: string): RedisResult {
+    return RedisResult.error(
+      `No such key '${key}' or consumer group 'g' in XREADGROUP with GROUP option`,
+      'NOGROUP',
+    )
+  }
+
+  // Not a wire test: FLUSHDB on the shared real servers would wipe other
+  // suites' keys.
+  test('FLUSHDB unblocks it with NOGROUP', async () => {
+    const { server, executor, session } = createHarness()
+    const reader = new ClientSession({ server, executor })
+    await session.execute('xgroup', buf('CREATE', 's', 'g', '$', 'MKSTREAM'))
+
+    const reply = reader.execute(
+      'xreadgroup',
+      buf('GROUP', 'g', 'c', 'BLOCK', '0', 'STREAMS', 's', '>'),
+    )
+    await yieldToEventLoop()
+    await session.execute('flushdb', [])
+
+    assert.deepStrictEqual(await reply, nogroup('s'))
+  })
+
+  test('XGROUP DESTROY wakes it with NOGROUP and leaves a WATCH clean', async () => {
+    const { server, executor, session } = createHarness()
+    const reader = new ClientSession({ server, executor })
+    const watcher = new ClientSession({ server, executor })
+    await session.execute('xgroup', buf('CREATE', 's', 'g', '$', 'MKSTREAM'))
+
+    const reply = reader.execute(
+      'xreadgroup',
+      buf('GROUP', 'g', 'c', 'BLOCK', '0', 'STREAMS', 's', '>'),
+    )
+    await yieldToEventLoop()
+    await watcher.execute('watch', buf('s'))
+    await session.execute('xgroup', buf('DESTROY', 's', 'g'))
+
+    assert.deepStrictEqual(await reply, nogroup('s'))
+    // Real Redis signals the key ready without modifying it: EXEC still runs.
+    await watcher.execute('multi', [])
+    await watcher.execute('ping', [])
+    const exec = await watcher.execute('exec', [])
+    assert.strictEqual(exec.value.kind, 'array', 'WATCH not dirtied')
+  })
+})

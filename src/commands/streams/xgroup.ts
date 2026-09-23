@@ -289,6 +289,10 @@ export const xgroupCommand = defineCommand({
       const removed = db.updateStream(command.key, writable => {
         return writable.deleteGroup(bufferId(command.group))
       })
+      // Like real Redis: wake XREADGROUP clients blocked on the key, so those
+      // reading the destroyed group reply NOGROUP. Not a modification — WATCH
+      // stays clean.
+      if (removed) db.signalKeyReady(command.key)
       return integer(removed ? 1 : 0)
     }
 

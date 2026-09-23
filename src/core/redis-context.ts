@@ -9,6 +9,14 @@ import type { RespVersion } from './resp-encoder'
 
 export type ParkRequest<TValue> = {
   waitFor: Promise<TValue | null>
+  /**
+   * Optional synchronous view of a wake: registers a listener the command
+   * calls in the same tick it settles `waitFor` because of a write. A
+   * turn-aware park handler uses it to queue the resume while the writer still
+   * holds the turn, so no command queued behind the writer can run first. A
+   * wake is only a hint: the command re-checks its keys once resumed.
+   */
+  onWake?: (listener: () => void) => void
   timeoutMs?: number
   signal: AbortSignal
 }

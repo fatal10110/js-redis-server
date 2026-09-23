@@ -809,7 +809,9 @@ export class ClientSession implements RedisClientSession {
       })
 
       turnAccess.set(undefined)
-      const nextTurn = await turn.suspend(parked)
+      const nextTurn = await turn.suspend(parked, resume =>
+        request.onWake?.(resume),
+      )
       turnAccess.set(nextTurn)
       return parkedValue
     }
