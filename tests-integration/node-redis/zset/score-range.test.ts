@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
+import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -11,7 +11,6 @@ describe(`Sorted Set Score-Range (ZRANGEBYSCORE/ZREVRANGEBYSCORE/ZREMRANGEBYRANK
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

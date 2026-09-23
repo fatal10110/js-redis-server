@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
+import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -11,7 +11,6 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -120,7 +119,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('Hash commands workflow - User Profile', async () => {
-    const userId = 'user:1001'
+    const userId = `user:1001:${randomKey()}`
 
     await redisClient.hSet(userId, {
       name: 'Alice Johnson',
@@ -168,7 +167,7 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('Hash commands workflow - Shopping Cart', async () => {
-    const cartId = 'cart:session123'
+    const cartId = `cart:session123:${randomKey()}`
 
     await redisClient.hSet(cartId, 'item:001', '2') // quantity 2
     await redisClient.hSet(cartId, 'item:002', '1') // quantity 1

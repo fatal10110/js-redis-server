@@ -5,7 +5,6 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
@@ -20,7 +19,6 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -207,7 +205,7 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('List commands workflow - Task Queue', async () => {
-    const queueKey = 'tasks:urgent'
+    const queueKey = `tasks:urgent:${RUN}`
 
     await redisClient.rPush(queueKey, ['task1', 'task2', 'task3'])
 
@@ -236,7 +234,7 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('List commands workflow - Chat Messages', async () => {
-    const chatKey = 'chat:room123'
+    const chatKey = `chat:room123:${RUN}`
 
     await redisClient.rPush(chatKey, [
       'Alice: Hello!',
@@ -276,7 +274,7 @@ describe(`List Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('List commands workflow - Undo Stack', async () => {
-    const undoKey = 'user:123:undo'
+    const undoKey = `user:123:undo:${RUN}`
 
     await redisClient.lPush(undoKey, 'action:create_file')
     await redisClient.lPush(undoKey, 'action:edit_line_5')

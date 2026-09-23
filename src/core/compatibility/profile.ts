@@ -16,6 +16,7 @@ export type FeatureId =
   | 'config.set.multi-pair'
   | 'config.memory-value.reject-overflow'
   | 'notify.keyspace.new-key-class'
+  | 'protocol.multibulk-count-int-max'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'
@@ -31,6 +32,8 @@ export type FeatureId =
   | 'cluster.multi-db'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
+  | 'script.per-subcommand-noscript'
+  | 'command.quit-table-entry'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

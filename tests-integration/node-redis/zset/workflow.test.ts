@@ -2,16 +2,19 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { flushNodeRedisCluster } from '../../utils'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -19,7 +22,7 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('Sorted Set commands workflow - Leaderboard', async () => {
-    const leaderboard = 'game:leaderboard'
+    const leaderboard = `game:leaderboard:${RUN}`
 
     await redisClient.zAdd(leaderboard, [
       { score: 1000, value: 'player1' },
@@ -57,7 +60,7 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('Sorted Set commands workflow - Priority Queue', async () => {
-    const priorityQueue = 'tasks:priority'
+    const priorityQueue = `tasks:priority:${RUN}`
 
     await redisClient.zAdd(priorityQueue, [
       { score: 1, value: 'critical_bug' },
@@ -102,7 +105,7 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('Sorted Set commands workflow - Time Series Events', async () => {
-    const events = 'user:events'
+    const events = `user:events:${RUN}`
 
     const now = Date.now()
     await redisClient.zAdd(events, [
@@ -143,7 +146,7 @@ describe(`Sorted Set Commands Integration (node-redis, ${testRunner.getBackendNa
   })
 
   test('Sorted Set commands workflow - Search Results Ranking', async () => {
-    const searchResults = 'search:javascript'
+    const searchResults = `search:javascript:${RUN}`
 
     await redisClient.zAdd(searchResults, [
       { score: 95, value: 'js_tutorial_comprehensive' },

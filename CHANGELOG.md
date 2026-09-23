@@ -393,6 +393,29 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- `SORT` / `SORT_RO` scan their options when they run, left to right, the way
+  `sortCommand()` does, and the cluster `BY` / `GET` pattern guard moved from
+  `ClusterPolicy` into that scan ([#417]). The first offending option in
+  argument order is now the one reported (it was always `BY` before `GET`); a
+  denied pattern is reported before a later token fails to parse (a trailing
+  syntax error used to win); and inside `MULTI` every SORT option error — the
+  cluster denial, `ERR syntax error`, a bad `LIMIT` integer — replies `+QUEUED`
+  and surfaces as an element of the `EXEC` array, where it used to fail at
+  queue time and abort the transaction with `EXECABORT`. Holds for both the
+  pre-7.4 and the 7.4+ wordings. `ClusterPolicy` no longer knows about SORT.
+
+- `SORT` tie order and option handling now match Redis ([#443]): elements that
+  compare equal keep their load order under `DESC` too (`ALPHA DESC` used to
+  reverse them); under `ALPHA` a missing `BY` weight orders before an empty
+  one; a constant `BY` disables sorting even when a glob `BY` comes after it,
+  and otherwise the *last* glob is the one looked up; and a set whose members
+  are all canonical 64-bit integers is read in ascending numeric order, as an
+  intset is stored, so `SORT s BY nosort` returns it sorted. The source key is
+  also read once rather than twice. Set order still differs where it depends
+  on the set's encoding history, which the mock does not track: a set created
+  from an integer keeps its integers sorted ahead of later non-integer members
+  in Redis (`SADD s 3 1 a` → `1 3 a`; the mock gives `3 1 a`).
+
 - A command pipelined behind a multi-channel `SUBSCRIBE` / `PSUBSCRIBE` /
   `SSUBSCRIBE` could have its reply written between the confirmations. They
   now go out as one reply, in Redis's order ([#455]).
@@ -542,6 +565,8 @@ requests they contain.
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431
+[#417]: https://github.com/fatal10110/js-redis-server/issues/417
+[#443]: https://github.com/fatal10110/js-redis-server/issues/443
 [#366]: https://github.com/fatal10110/js-redis-server/issues/366
 [#455]: https://github.com/fatal10110/js-redis-server/issues/455
 [#371]: https://github.com/fatal10110/js-redis-server/issues/371

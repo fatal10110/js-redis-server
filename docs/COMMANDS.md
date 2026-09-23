@@ -43,9 +43,25 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
+
 - [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
 - [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
 - [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
+
+`CLIENT` is flagged `noscript`. From Lua, every subcommand is rejected with
+`This Redis command is not allowed from script`, with two exceptions on Redis
+7.0+ / Valkey profiles, where scripts resolve `container|subcommand` through
+the command table:
+
+- `CLIENT HELP` runs. Real Redis leaves every container's HELP runnable from
+  scripts; the same applies to `ACL`, `SCRIPT`, `CONFIG` and `FUNCTION`.
+- An unknown subcommand, or one the profile does not have yet (for example
+  `CLIENT SETINFO` on `redis-7.0`), fails lookup with
+  `Unknown Redis command called from script`.
+
+`RESET` is `noscript` on every profile. `QUIT` is `noscript` on 7.0+; on
+`redis-6.2` it has no command-table entry, so a script gets the
+unknown-command error.
 
 ## 2. Server Commands
 
@@ -258,9 +274,25 @@ with `GT` or `LT`.
   every `GET` pattern is refused with the shorter `denied in Cluster mode.`
   wording, and `GET '#'` only becomes exempt from the slot check in Redis
   7.4.2 / Valkey 8.0.2 — so the `redis-7.4` profile (pinned at 7.4.4) exempts
-  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. Hash-field
-  dereference patterns such as
+  it while `valkey-8.0` (pinned at 8.0.0) still refuses it. As in Redis, the
+  guard runs inside SORT's own left-to-right option scan when the command
+  executes: the first offending option is the one reported, a later syntax
+  error is never reached, and inside `MULTI` the command queues and the error
+  surfaces in `EXEC`. Hash-field dereference patterns such as
   `object_*->field` are not modeled.
+- `SORT` loads a set of canonical 64-bit integers in ascending numeric order
+  (as an intset is stored) and any other set in insertion order (as a small
+  listpack set built from a non-integer first is). The real order depends on
+  the set's encoding history, which the mock does not keep, so two cases
+  differ: a set created from an integer keeps its integers sorted ahead of
+  later non-integer members in Redis (`SADD s 3 1 a` loads `1 3 a`, the mock
+  `3 1 a`), and a set that briefly held a non-integer keeps its listpack order
+  in Redis after that member is removed, where the mock sorts it numerically
+  again. `SMEMBERS` has the same intset-order gap. With `BY` plus a `LIMIT` that
+  does not cover every element, Redis' partial quicksort can reorder elements
+  that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
+  a small zset to the `skiplist` encoding is not observable until
+  `OBJECT ENCODING` exists (#117).
 
 #### Not implemented
 

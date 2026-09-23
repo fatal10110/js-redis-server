@@ -746,12 +746,11 @@ describe('createNodeRedisMock (cluster)', () => {
       cluster: { masters: 3 },
     })) as NodeRedisMockCluster
 
-    // SORT's routing keys deliberately include its BY/GET *patterns* (see
-    // sortRoutingKeys in src/commands/keys.ts) so ClusterPolicy can run its own
-    // check on them. They are not keys — `COMMAND GETKEYS SORT k BY w_* GET p_*`
-    // on real Redis returns just `k` — so they usually look cross-slot. A
-    // client-side CROSSSLOT refusal in the facade would fire first and swallow
-    // the real error; routing must hand the command to a node instead.
+    // The BY/GET patterns are not keys — `COMMAND GETKEYS SORT k BY w_* GET
+    // p_*` returns just `k`, here as on real Redis — and they usually look
+    // cross-slot. The cluster-mode error comes from SORT's own option scan on
+    // the node (src/core/sort-cluster-guard.ts), so the facade must route the
+    // command by its source key and hand it over, not refuse it client side.
     for (const [option, pattern] of [
       ['BY', 'w_*'],
       ['GET', 'p_*'],

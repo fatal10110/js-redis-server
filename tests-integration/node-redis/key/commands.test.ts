@@ -6,7 +6,6 @@ import {
   assertNodeRedisKeyCount,
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   keyInAnotherSlot,
   randomKey,
 } from '../../utils'
@@ -22,7 +21,6 @@ describe(`Key Commands Integration (node-redis, ${testRunner.getBackendName()})`
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

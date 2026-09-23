@@ -2,8 +2,13 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420, #453).
+const RUN = randomKey()
 
 describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -17,7 +22,7 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('Sorted Set commands workflow - Leaderboard', async () => {
-    const leaderboard = 'game:leaderboard'
+    const leaderboard = `game:leaderboard:${RUN}`
 
     // Add player scores
     await redisClient?.zadd(
@@ -70,7 +75,7 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('Sorted Set commands workflow - Priority Queue', async () => {
-    const priorityQueue = 'tasks:priority'
+    const priorityQueue = `tasks:priority:${RUN}`
 
     // Add tasks with priorities (lower score = higher priority)
     await redisClient?.zadd(
@@ -131,7 +136,7 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('Sorted Set commands workflow - Time Series Events', async () => {
-    const events = 'user:events'
+    const events = `user:events:${RUN}`
 
     // Add events with timestamps
     const now = Date.now()
@@ -184,7 +189,7 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('Sorted Set commands workflow - Search Results Ranking', async () => {
-    const searchResults = 'search:javascript'
+    const searchResults = `search:javascript:${RUN}`
 
     // Add search results with relevance scores (using integers 0-100 scale)
     await redisClient?.zadd(

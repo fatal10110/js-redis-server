@@ -74,6 +74,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       await waitUntilGone(
         () => directClient!.hget(key, 'soon'),
         "hash field 'soon' (5ms TTL)",
+        { timeoutMs: 1000 },
       )
 
       assert.strictEqual(await directClient.hget(key, 'soon'), null)
@@ -119,6 +120,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       await waitUntilGone(
         () => directClient!.hget(key, 'gone'),
         "hash field 'gone' (5ms TTL)",
+        { timeoutMs: 1000 },
       )
 
       const [, scanEntries] = (await directClient.hscan(key, '0')) as [

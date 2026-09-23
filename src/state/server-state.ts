@@ -109,6 +109,16 @@ export class RedisServerState {
   }
 
   /**
+   * Redis' `server.cluster_enabled`: true on a cluster node, false on a
+   * standalone server, whose topology has no nodes. Commands that behave
+   * differently in cluster mode — `HELLO`/`INFO`'s mode, SORT's BY/GET
+   * pattern guard — branch on this rather than on the topology directly.
+   */
+  get clusterEnabled(): boolean {
+    return this.clusterTopology.nodes.length > 0
+  }
+
+  /**
    * Returns this server's own Lua runtime, created lazily and memoized per
    * RedisServerState instance. Scoping the runtime here (rather than a
    * process-wide singleton) keeps each logical node's LuaEngine + script
