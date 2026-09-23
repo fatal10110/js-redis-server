@@ -327,7 +327,7 @@ function redisValueToLuaReply(
     case 'integer':
       return value.value
     case 'double':
-      return Buffer.from(formatRedisDouble(value.value, profile))
+      return Buffer.from(value.text ?? formatRedisDouble(value.value, profile))
     case 'boolean':
       return value.value ? 1 : 0
     case 'big-number':

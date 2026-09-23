@@ -1,3 +1,7 @@
+import {
+  formatGeoCoordinate,
+  type DoubleFormatProfile,
+} from '../../core/double-format'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
 import {
@@ -350,6 +354,7 @@ export function buildSearchReply(
   matches: GeoMatch[],
   flags: GeoWithFlags,
   unit: string,
+  profile: DoubleFormatProfile,
 ): RedisResult {
   if (!flags.withCoord && !flags.withDist && !flags.withHash) {
     return array(matches.map(m => RedisValue.bulkString(m.member)))
@@ -369,8 +374,8 @@ export function buildSearchReply(
       if (flags.withCoord) {
         parts.push(
           RedisValue.array([
-            RedisValue.bulkString(Buffer.from(m.lon.toString())),
-            RedisValue.bulkString(Buffer.from(m.lat.toString())),
+            RedisValue.double(m.lon, formatGeoCoordinate(m.lon, profile)),
+            RedisValue.double(m.lat, formatGeoCoordinate(m.lat, profile)),
           ]),
         )
       }

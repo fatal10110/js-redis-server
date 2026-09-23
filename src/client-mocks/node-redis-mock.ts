@@ -837,7 +837,13 @@ export class NodeRedisMockClient extends CommandRunner {
     // …); `items` is just the payload. We only deliver actual messages —
     // subscribe/unsubscribe confirmations are consumed elsewhere.
     const items = value.items.map(item =>
-      String(decodeReply(item, pubsub.session.protocolVersion)),
+      String(
+        decodeReply(
+          item,
+          pubsub.session.protocolVersion,
+          pubsub.session.server.profile,
+        ),
+      ),
     )
 
     if (value.name === 'message') {
@@ -1464,7 +1470,7 @@ export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions = {
 function decodeReply(
   value: RedisValue,
   respVersion: RespVersion,
-  profile?: CompatibilityProfile,
+  profile: CompatibilityProfile,
 ): NodeRedisReply {
   return decodeRedisValue(value, {
     ...NODE_REDIS_DECODE_OPTIONS,

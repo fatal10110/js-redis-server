@@ -353,11 +353,21 @@ so the PR body is not a durable home for a breaking-change note.
   1e20                1e+20                       1e+20                 100000000000000000000
   ```
 
-  Pinned against 1,310 values captured from real redis-server 6.2.14 / 7.0.15 /
-  7.2.4 / 7.4.4 / 8.0.6 and valkey-server 8.0.0 / 9.0.0
+  GEO coordinates (`GEOPOS`, `WITHCOORD` on `GEOSEARCH` / `GEORADIUS*`) are
+  now a `,` double on RESP3 — they were a bulk string — and follow their own
+  version split: Redis 8.0 prints `d2string()` (`13.361389338970184`), while
+  Redis 6.2–7.4 and every Valkey print `%.17Lf` with the trailing zeros
+  trimmed (`13.36138933897018433`). The coordinate *values* still come from
+  the mock's own geohash decode, which can differ from Redis's in the last
+  digits; that is a separate issue.
+
+  Pinned against 1,203 values captured from real redis-server 6.2.14 / 7.0.15 /
+  7.2.4 / 7.4.4 / 8.0.0 / 8.0.6 and valkey-server 8.0.0 / 9.0.0
   (`tests/fixtures/redis-double-format.json`). `encodeRedisValue` /
   `encodeRedisResult` (`js-redis-server/core`) take an optional `profile`
   for this; without one they use the default profile's spelling.
+  `RedisValue.double()` takes an optional exact `text` for replies whose
+  spelling is not `addReplyDouble()`'s.
 - `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
   protocol reader, for every command ([#431], [#415]). A bulk argument longer
   than the limit is refused from its header, before the payload is read and

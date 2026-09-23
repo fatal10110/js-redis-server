@@ -3,7 +3,10 @@ import assert from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { formatRedisDouble } from '../../src/core/double-format'
+import {
+  formatGeoCoordinate,
+  formatRedisDouble,
+} from '../../src/core/double-format'
 import { resolveCompatibilityProfile } from '../../src/core/compatibility'
 import type { RedisFlavor } from '../../src/core/compatibility/profile'
 import { RedisValue, encodeRedisValue } from '../../src/internal'
@@ -136,6 +139,49 @@ describe('RESP encoder double text follows the profile', () => {
         profile: modern,
       }),
       Buffer.from(',0.00001\r\n'),
+    )
+  })
+
+  test('an explicit text wins over the profile spelling', () => {
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.double(0.1, '0.1000'), {
+        version: 3,
+        profile: old,
+      }),
+      Buffer.from(',0.1000\r\n'),
+    )
+  })
+})
+
+describe('formatGeoCoordinate (#451)', () => {
+  // Values read back with GEOPOS from real redis 7.4.4 / 8.0.0 / valkey 9.0.0.
+  const human = resolveCompatibilityProfile('redis-7.4')
+  const valkey = resolveCompatibilityProfile('valkey-9.0')
+  const modern = resolveCompatibilityProfile('redis-8.0')
+
+  test('%.17Lf trimmed before Redis 8.0 and on every Valkey', () => {
+    for (const profile of [human, valkey]) {
+      assert.strictEqual(
+        formatGeoCoordinate(13.361389338970184, profile),
+        '13.36138933897018433',
+      )
+      assert.strictEqual(
+        formatGeoCoordinate(4.9427062607109546e-5, profile),
+        '0.00004942706260711',
+      )
+      assert.strictEqual(formatGeoCoordinate(-0, profile), '0')
+      assert.strictEqual(formatGeoCoordinate(-12.5, profile), '-12.5')
+    }
+  })
+
+  test('d2string on Redis 8.0', () => {
+    assert.strictEqual(
+      formatGeoCoordinate(13.361389338970184, modern),
+      '13.361389338970184',
+    )
+    assert.strictEqual(
+      formatGeoCoordinate(4.9427062607109546e-5, modern),
+      '4.9427062607109546e-5',
     )
   })
 })

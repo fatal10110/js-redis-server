@@ -198,7 +198,13 @@ async function main(): Promise<void> {
   }
 
   const cases: [string, string, string][] = []
+  // The generator can draw the same value twice; keep each input once.
+  const seen = new Set<string>()
   values.forEach((v, i) => {
+    if (seen.has(inputs[i])) {
+      return
+    }
+    seen.add(inputs[i])
     const g17 = g17Server.replies[i]
     const fpconv = fpconvServer.replies[i]
     // Integers within ±2^62 print every digit (`ll2string`), so their digits

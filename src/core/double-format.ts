@@ -59,26 +59,41 @@ const G17_PRECISION = 17
 
 /**
  * `snprintf("%.17g", value)` for a finite, non-zero double, as glibc prints
- * it: correctly rounded, ties to even. `toPrecision(17)` would round a tie
- * *up* (`1234567890123456.25` → `…456.3`, where glibc prints `…456.2`), so the
- * digits come from the double's exact decimal expansion instead.
+ * it: correctly rounded, ties to even.
+ *
+ * `toExponential(16)` is correctly rounded too, but breaks a tie *up*
+ * (`1234567890123456.25` → `…456.3`, where glibc prints `…456.2`). A tie needs
+ * the exact decimal expansion to be exactly 18 significant digits long, which
+ * {@link g17TiePossible} rules out cheaply for almost every double; only the
+ * rest pay for the exact BigInt expansion.
  */
 function formatPercentG17(value: number): string {
   const sign = value < 0 ? '-' : ''
-  let { digits, exponent } = exactDecimal(Math.abs(value))
+  const abs = Math.abs(value)
+  let digits: string
+  let exponent: number
 
-  if (digits.length > G17_PRECISION) {
-    const kept = digits.slice(0, G17_PRECISION)
-    const dropped = digits.slice(G17_PRECISION)
-    const roundUp =
-      dropped[0] > '5' ||
-      (dropped[0] === '5' &&
-        (/[1-9]/.test(dropped.slice(1)) || Number(kept.at(-1)) % 2 === 1))
-    digits = roundUp ? (BigInt(kept) + 1n).toString() : kept
+  if (!g17TiePossible(abs)) {
+    const [mantissa, exponentText] = abs
+      .toExponential(G17_PRECISION - 1)
+      .split('e')
+    digits = mantissa.replace('.', '').replace(/0+$/, '')
+    exponent = Number(exponentText)
+  } else {
+    ;({ digits, exponent } = exactDecimal(abs))
     if (digits.length > G17_PRECISION) {
-      // 99…9 carried into a new leading digit.
-      digits = digits.slice(0, G17_PRECISION)
-      exponent++
+      const kept = digits.slice(0, G17_PRECISION)
+      const dropped = digits.slice(G17_PRECISION)
+      const roundUp =
+        dropped[0] > '5' ||
+        (dropped[0] === '5' &&
+          (/[1-9]/.test(dropped.slice(1)) || Number(kept.at(-1)) % 2 === 1))
+      digits = roundUp ? (BigInt(kept) + 1n).toString() : kept
+      if (digits.length > G17_PRECISION) {
+        // 99…9 carried into a new leading digit.
+        digits = digits.slice(0, G17_PRECISION)
+        exponent++
+      }
     }
   }
 
@@ -101,27 +116,103 @@ function formatPercentG17(value: number): string {
 }
 
 /**
+ * Whether rounding a positive double to 17 significant digits can hit an
+ * exact tie. With the mantissa's trailing zero bits stripped the value is
+ * `m · 2^-k` for odd `m`, i.e. `m · 5^k / 10^k`: its exact expansion is the
+ * digits of `m · 5^k`, which end in 5 and number at least
+ * `floor(k · log10 5) + 1` — more than 18 once `k > 25`, so no tie. An integer
+ * below 2^53 has at most 16 digits and is never rounded at all.
+ */
+function g17TiePossible(abs: number): boolean {
+  let { frac, exp } = buildFp(abs)
+  if (exp >= 0) {
+    return abs >= 2 ** 53
+  }
+  while ((frac & 1n) === 0n && exp < 0) {
+    frac >>= 1n
+    exp++
+  }
+  return exp < 0 && -exp <= 25
+}
+
+/**
+ * A positive finite double as an exact `integer / 10^scale`. Every double is
+ * `m · 2^e`, and for `e < 0` that is `m · 5^-e / 10^-e`.
+ */
+function exactScaled(value: number): { integer: bigint; scale: number } {
+  const { frac, exp } = buildFp(value)
+  if (exp >= 0) {
+    return { integer: frac << BigInt(exp), scale: 0 }
+  }
+  return { integer: frac * 5n ** BigInt(-exp), scale: -exp }
+}
+
+/**
  * The exact decimal value of a positive finite double: its significant digits
  * (no leading or trailing zeros) and the decimal exponent of the first one.
- * Every double is `m · 2^e`, and for `e < 0` that is `m · 5^-e / 10^-e`.
  */
 function exactDecimal(value: number): { digits: string; exponent: number } {
-  // buildFp: value = frac · 2^exp exactly.
-  const { frac, exp } = buildFp(value)
-  let integer: bigint
-  let scale = 0
-  if (exp >= 0) {
-    integer = frac << BigInt(exp)
-  } else {
-    integer = frac * 5n ** BigInt(-exp)
-    scale = -exp
-  }
-
+  const { integer, scale } = exactScaled(value)
   const text = integer.toString()
   return {
     digits: text.replace(/0+$/, ''),
     exponent: text.length - 1 - scale,
   }
+}
+
+// ---------------------------------------------------------------------------
+// GEO coordinates: addReplyHumanLongDouble() before Redis 8.0
+// ---------------------------------------------------------------------------
+
+const HUMAN_LONG_DOUBLE_DECIMALS = 17
+
+/**
+ * The text of a GEOPOS / `WITHCOORD` coordinate. Redis 8.0 replies with
+ * `addReplyDouble()`, i.e. {@link formatRedisDouble}'s `d2string()`; Redis
+ * 6.2–7.4 and every Valkey use `addReplyHumanLongDouble()`, which is
+ * `ld2string(…, LD_STR_HUMAN)`: `%.17Lf` with trailing zeros (and a bare `.`)
+ * dropped, `-0` shown as `0`. Both are a `,` double on RESP3.
+ */
+export function formatGeoCoordinate(
+  value: number,
+  profile: DoubleFormatProfile = DEFAULT_PROFILE,
+): string {
+  if (profile.has('geo.coord-d2string')) {
+    return formatRedisDouble(value, profile)
+  }
+  return formatHumanLongDouble(value)
+}
+
+/**
+ * `snprintf("%.17Lf")` of a double promoted (exactly) to `long double`, then
+ * trimmed the way `LD_STR_HUMAN` does. glibc rounds the exact value, ties to
+ * even.
+ */
+function formatHumanLongDouble(value: number): string {
+  if (!Number.isFinite(value)) {
+    return formatRedisDouble(value)
+  }
+  if (value === 0) {
+    return '0'
+  }
+
+  const sign = value < 0 ? '-' : ''
+  let { integer, scale } = exactScaled(Math.abs(value))
+  if (scale > HUMAN_LONG_DOUBLE_DECIMALS) {
+    const divisor = 10n ** BigInt(scale - HUMAN_LONG_DOUBLE_DECIMALS)
+    const quotient = integer / divisor
+    const twice = (integer - quotient * divisor) * 2n
+    const roundUp =
+      twice > divisor || (twice === divisor && (quotient & 1n) === 1n)
+    integer = roundUp ? quotient + 1n : quotient
+    scale = HUMAN_LONG_DOUBLE_DECIMALS
+  }
+
+  const text = integer.toString().padStart(scale + 1, '0')
+  const whole = text.slice(0, text.length - scale)
+  const fraction = text.slice(text.length - scale).replace(/0+$/, '')
+  const out = fraction ? `${whole}.${fraction}` : whole
+  return out === '0' ? '0' : sign + out
 }
 
 function stripFraction(text: string): string {

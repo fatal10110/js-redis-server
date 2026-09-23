@@ -50,7 +50,7 @@ function encodeResp2(
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
       return encodeBulkString(
-        Buffer.from(formatRedisDouble(value.value, profile)),
+        Buffer.from(value.text ?? formatRedisDouble(value.value, profile)),
       )
     case 'boolean':
       return Buffer.from(`:${value.value ? 1 : 0}\r\n`)
@@ -108,7 +108,9 @@ function encodeResp3(
     case 'integer':
       return Buffer.from(`:${value.value.toString()}\r\n`)
     case 'double':
-      return Buffer.from(`,${formatRedisDouble(value.value, profile)}\r\n`)
+      return Buffer.from(
+        `,${value.text ?? formatRedisDouble(value.value, profile)}\r\n`,
+      )
     case 'boolean':
       return Buffer.from(value.value ? '#t\r\n' : '#f\r\n')
     case 'big-number':

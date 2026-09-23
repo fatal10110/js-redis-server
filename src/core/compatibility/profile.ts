@@ -30,6 +30,7 @@ export type FeatureId =
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
+  | 'geo.coord-d2string'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

@@ -143,7 +143,7 @@ export function decodeRedisValue(
       if (options.version === 3) {
         return value.value
       }
-      const text = formatRedisDouble(value.value, options.profile)
+      const text = value.text ?? formatRedisDouble(value.value, options.profile)
       return options.returnBuffers ? Buffer.from(text) : text
     }
     case 'boolean':

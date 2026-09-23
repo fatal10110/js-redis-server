@@ -82,6 +82,7 @@ function executeGeoRadiusByMember(
       withHash: args.withHash,
     },
     args.by.unit,
+    ctx.server.profile,
   )
 }
 

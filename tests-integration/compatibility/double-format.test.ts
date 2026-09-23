@@ -97,5 +97,88 @@ describe(
       }
       await send('DEL', key)
     })
+
+    // Each of these reaches the formatter through its own plumbing: the
+    // ZSCAN reply builder, the transaction's own encoder (used when a HELLO
+    // inside MULTI switches protocol mid-EXEC) and the RESP3 flat-pairs
+    // encoding. Bytes read off real 6.2.14 and 8.0.0.
+    test('ZSCAN, EXEC across a HELLO, and RESP3 WITHSCORES', async () => {
+      const key = `compat:${profile}:${randomKey()}:dblpaths`
+      // Score order, so the mock's insertion-order ZSCAN matches the listpack.
+      await send('ZADD', key, '0.0000123', 'n', '0.1', 'm')
+      const small = usesFpconv ? '1.23e-5' : '1.2300000000000001e-05'
+      const tenth = usesFpconv ? '0.1' : '0.10000000000000001'
+
+      assert.strictEqual(
+        await send('ZSCAN', key, '0'),
+        `*2\r\n${bulk('0')}*4\r\n${bulk('n')}${bulk(small)}${bulk('m')}${bulk(tenth)}`,
+      )
+
+      assert.strictEqual(await send('MULTI'), '+OK\r\n')
+      assert.strictEqual(await send('ZSCORE', key, 'm'), '+QUEUED\r\n')
+      assert.strictEqual(await send('HELLO', '3'), '+QUEUED\r\n')
+      assert.strictEqual(await send('ZSCORE', key, 'm'), '+QUEUED\r\n')
+      try {
+        const exec = await send('EXEC')
+        assert.ok(
+          exec.startsWith(`*3\r\n${bulk(tenth)}`),
+          `EXEC should start with the RESP2 score: ${JSON.stringify(exec)}`,
+        )
+        assert.ok(
+          exec.endsWith(`,${tenth}\r\n`),
+          `EXEC should end with the RESP3 score: ${JSON.stringify(exec)}`,
+        )
+
+        assert.strictEqual(
+          await send('ZRANGE', key, '0', '-1', 'WITHSCORES'),
+          `*2\r\n*2\r\n${bulk('n')},${small}\r\n*2\r\n${bulk('m')},${tenth}\r\n`,
+        )
+      } finally {
+        await send('HELLO', '2')
+      }
+      await send('DEL', key)
+    })
+
+    // GEO coordinates are their own gate (`geo.coord-d2string`): Redis 8.0
+    // spells them with `d2string()`, 6.2–7.4 and every Valkey with
+    // `addReplyHumanLongDouble()` (`%.17Lf` trimmed). A `,` double on RESP3 on
+    // every version. Bytes read off real 6.2.14 … 8.0.6 and valkey 8.0 / 9.0.
+    test('GEOPOS / WITHCOORD coordinates', async () => {
+      const key = `compat:${profile}:${randomKey()}:geo`
+      await send('GEOADD', key, '13.361389', '38.115556', 'Palermo')
+      const d2string = profile === 'redis-8.0'
+      const lon = d2string ? '13.361389338970184' : '13.36138933897018433'
+      const lat = d2string ? '38.1155563954963' : '38.11555639549629859'
+
+      assert.strictEqual(
+        await send('GEOPOS', key, 'Palermo'),
+        `*1\r\n*2\r\n${bulk(lon)}${bulk(lat)}`,
+      )
+
+      await send('HELLO', '3')
+      try {
+        assert.strictEqual(
+          await send('GEOPOS', key, 'Palermo'),
+          `*1\r\n*2\r\n,${lon}\r\n,${lat}\r\n`,
+        )
+        assert.strictEqual(
+          await send(
+            'GEOSEARCH',
+            key,
+            'FROMMEMBER',
+            'Palermo',
+            'BYRADIUS',
+            '1',
+            'km',
+            'WITHCOORD',
+            'WITHDIST',
+          ),
+          `*1\r\n*3\r\n${bulk('Palermo')}${bulk('0.0000')}*2\r\n,${lon}\r\n,${lat}\r\n`,
+        )
+      } finally {
+        await send('HELLO', '2')
+      }
+      await send('DEL', key)
+    })
   },
 )
