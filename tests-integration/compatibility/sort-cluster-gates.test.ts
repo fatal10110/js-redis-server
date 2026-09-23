@@ -151,5 +151,55 @@ describe(
         assert.deepStrictEqual(await c.sort(k('ids'), 'GET', '#'), ['1', '2'])
       })
     })
+
+    // #417: the guard runs inside SORT's own left-to-right option scan, so the
+    // ordering rules hold under both wordings. The globs below have a '*'
+    // before any hash tag and are refused on every profile.
+    test('the first denied option in argument order is reported', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '1')
+        await assert.rejects(
+          () => c.sort(k('ids'), 'GET', 'n_*', 'BY', 'w_*'),
+          errorWithMessage(getError),
+        )
+        await assert.rejects(
+          () => c.sort(k('ids'), 'BY', 'w_*', 'GET', 'n_*'),
+          errorWithMessage(byError),
+        )
+      })
+    })
+
+    test('a denied pattern is reported before a later syntax error', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '1')
+        await assert.rejects(
+          () => c.sort(k('ids'), 'BY', 'w_*', 'BADARG'),
+          errorWithMessage(byError),
+        )
+        await assert.rejects(
+          () => c.sort(k('ids'), 'BADARG', 'BY', 'w_*'),
+          errorWithMessage('ERR syntax error'),
+        )
+      })
+    })
+
+    test('a denied pattern inside MULTI queues and fails in EXEC', async () => {
+      await withOps(async (c, k) => {
+        await c.rpush(k('ids'), '1')
+        const replies = await c
+          .multi()
+          .sort(k('ids'), 'BY', 'w_*')
+          .sort(k('ids'), 'GET', 'n_*')
+          .sort(k('ids'))
+          .exec()
+
+        assert.ok(replies)
+        assert.deepStrictEqual(
+          replies.map(([err]) => err?.message ?? null),
+          [byError, getError, null],
+        )
+        assert.deepStrictEqual(replies[2]?.[1], ['1'])
+      })
+    })
   },
 )
