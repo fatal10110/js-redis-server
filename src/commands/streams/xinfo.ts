@@ -323,8 +323,9 @@ function consumerInfoReply(
   now: number,
 ): RedisValue {
   const idle = Math.max(0, now - consumer.seenAt)
+  // -1 until the consumer is first delivered or claims an entry (real 7.2+).
   const inactive =
-    consumer.activeAt === null ? idle : Math.max(0, now - consumer.activeAt)
+    consumer.activeAt === null ? -1 : Math.max(0, now - consumer.activeAt)
   return kvMap([
     bulkString('name'),
     bulkString(consumer.name),

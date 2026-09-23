@@ -314,6 +314,50 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
     )
   })
 
+  test('expired hash fields are removed by active expiry, with no access to the key', async () => {
+    // Real Redis' active expiry drops expired fields on its own timer: a
+    // subscriber gets `hexpired` (and `del` once the hash is empty) without
+    // anyone touching the key, and EXISTS then reports it gone.
+    const actor = await connect()
+    const subscriber = await connect()
+    await actor.configSet('notify-keyspace-events', 'KEA')
+
+    const whole = randomKey()
+    const partial = randomKey()
+    const events: string[] = []
+    let settled!: () => void
+    const bothExpired = new Promise<void>(resolve => {
+      settled = resolve
+    })
+    await subscriber.pSubscribe('__keyevent@0__:*', (key, channel) => {
+      const name = key === whole ? 'whole' : key === partial ? 'partial' : null
+      if (!name) return
+      events.push(`${name}:${channel.slice('__keyevent@0__:'.length)}`)
+      if (events.includes('whole:del') && events.includes('partial:hexpired')) {
+        settled()
+      }
+    })
+    await settle()
+
+    await actor.hSet(whole, { f: 'v', g: 'w' })
+    await actor.hpExpire(whole, ['f', 'g'], 50)
+    await actor.hSet(partial, { f: 'v', g: 'w' })
+    await actor.hpExpire(partial, 'f', 50)
+    await withTimeout(bothExpired, 3000, `no active field expiry: ${events}`)
+
+    assert.deepStrictEqual(
+      events.filter(event => event.startsWith('whole:')),
+      ['whole:hset', 'whole:hexpire', 'whole:hexpired', 'whole:del'],
+    )
+    assert.deepStrictEqual(
+      events.filter(event => event.startsWith('partial:')),
+      ['partial:hset', 'partial:hexpire', 'partial:hexpired'],
+    )
+    assert.strictEqual(await actor.exists(whole), 0)
+    assert.deepStrictEqual({ ...(await actor.hGetAll(partial)) }, { g: 'w' })
+    await actor.del(partial)
+  })
+
   test('XGROUP subcommands publish xgroup-<subcommand> (#381)', async () => {
     const stream = randomKey()
     const created = randomKey()
@@ -445,4 +489,22 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
 
 function settle(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 50))
+}
+
+async function withTimeout(
+  promise: Promise<void>,
+  ms: number,
+  message: string,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }

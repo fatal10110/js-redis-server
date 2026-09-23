@@ -43,6 +43,13 @@ export class RedisDatabase {
    */
   readonly origin: string | undefined = undefined
   private readonly entries = new Map<string, KeyspaceEntry>()
+  /**
+   * Ids of hash keys that hold at least one field with a TTL — the only keys
+   * the active sweep has to visit for field expiry. Kept in sync wherever a
+   * hash is written (`set`, `updateHash`); ids whose key is gone or no longer
+   * carries field TTLs are pruned by the sweep itself.
+   */
+  private readonly hashesWithFieldTtl = new Set<string>()
 
   constructor(public readonly id: number) {}
 
@@ -102,6 +109,7 @@ export class RedisDatabase {
     }
 
     this.entries.set(id, entry)
+    this.trackHashFieldTtls(id)
     this.emitWrite(entry)
   }
 
@@ -281,13 +289,15 @@ export class RedisDatabase {
     mutator: (hash: TrackedHashData) => TResult,
   ): TResult {
     this.purgeExpiredHashFields(key)
-    return this.updateTyped(
+    const result = this.updateTyped(
       key,
       'hash',
       createHashData,
       mutator,
       (value, tracker) => new TrackedHashData(value, tracker),
     )
+    this.trackHashFieldTtls(keyId(key))
+    return result
   }
 
   updateList<TResult>(
@@ -345,18 +355,27 @@ export class RedisDatabase {
   /**
    * Drop a hash's expired fields as a mutation of their own, published as
    * `hexpired` (then `del` if that empties the hash) — never under the name of
-   * the command that happened to touch the key, not even a read (HGETALL,
-   * HSCAN, HLEN, ...). Real Redis removes expired fields by active expiry,
-   * which publishes exactly `hexpired` / `del`; this mock has no active field
-   * expiry, so the first `updateHash` after the deadline stands in for it.
+   * the command that happened to touch the key.
+   *
+   * Two callers, mirroring real Redis in its default mode (active expiry on):
+   * - the active sweep ({@link sweepExpired}, every server tick), which is what
+   *   publishes `hexpired` / `del` with no access to the key at all, and makes
+   *   `EXISTS` report the emptied hash as gone;
+   * - `updateHash`, as a lazy fallback for a field that expired since the last
+   *   tick, so no command ever observes an expired field.
+   *
+   * The lazy fallback differs from real Redis with active expiry *disabled*
+   * (`DEBUG SET-ACTIVE-EXPIRE 0`), where only field lookups (HGET, HEXISTS)
+   * expire a field and whole-hash reads (HGETALL, HLEN, ...) leave it in
+   * place, publish nothing and keep a WATCH intact; here any hash access
+   * purges, publishes `hexpired` and dirties a WATCH on the key.
    */
-  private purgeExpiredHashFields(key: Buffer): void {
+  private purgeExpiredHashFields(key: Buffer, now = Date.now()): void {
     const entry = this.getLiveEntry(key)
     if (!entry || entry.value.type !== 'hash') {
       return
     }
 
-    const now = Date.now()
     const fields = entry.value.fields
     const expired = Array.from(fields.entries()).filter(
       ([, field]) => field.expiresAt !== undefined && field.expiresAt <= now,
@@ -402,6 +421,7 @@ export class RedisDatabase {
 
   flush(): void {
     this.entries.clear()
+    this.hashesWithFieldTtl.clear()
     this.emit({
       type: 'flush',
       database: this.id,
@@ -428,6 +448,10 @@ export class RedisDatabase {
     return entries
   }
 
+  /**
+   * Active expiry: evict expired keys, then purge expired fields of the
+   * hashes that carry field TTLs. Returns the number of keys removed.
+   */
   sweepExpired(now = Date.now()): number {
     let count = 0
 
@@ -437,7 +461,35 @@ export class RedisDatabase {
       }
     }
 
+    for (const id of Array.from(this.hashesWithFieldTtl)) {
+      const entry = this.entries.get(id)
+      if (!entry) {
+        this.hashesWithFieldTtl.delete(id)
+        continue
+      }
+
+      this.purgeExpiredHashFields(entry.key, now)
+      if (!this.entries.has(id)) count += 1
+      this.trackHashFieldTtls(id)
+    }
+
     return count
+  }
+
+  // Keep `id` in hashesWithFieldTtl exactly while its key is a hash with at
+  // least one field TTL.
+  private trackHashFieldTtls(id: string): void {
+    const value = this.entries.get(id)?.value
+    const hasFieldTtl =
+      value?.type === 'hash' &&
+      Array.from(value.fields.values()).some(
+        field => field.expiresAt !== undefined,
+      )
+    if (hasFieldTtl) {
+      this.hashesWithFieldTtl.add(id)
+    } else {
+      this.hashesWithFieldTtl.delete(id)
+    }
   }
 
   subscribe(listener: RedisMutationListener): Unsubscribe {

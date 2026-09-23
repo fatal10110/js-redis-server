@@ -598,11 +598,12 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
 
 > Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
 > secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; `MOVE` and
-> cross-DB `COPY` do not name the destination event. There is no active
-> hash-field expiry: expired fields are dropped — and `hexpired` (then `del`)
-> published — on the next access to the hash rather than at the deadline, and
-> `EXISTS` still reports the key until then. Notifications are process-local to
-> the `RedisServerState`, so they are not delivered across mock cluster nodes.
+> cross-DB `COPY` do not name the destination event. Expired hash fields are
+> dropped by the active sweep (`hexpired`, then `del`), like real Redis with
+> active expiry on; between sweeps any hash command drops them too, where real
+> Redis with active expiry *off* only expires a field on a field lookup.
+> Notifications are process-local to the `RedisServerState`, so they are not
+> delivered across mock cluster nodes.
 
 ## 15. Persistence Commands
 

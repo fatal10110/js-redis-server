@@ -11,7 +11,7 @@ import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { array, scorePairs, scoreValue } from '../helpers'
-import { deleteSortedSetIfEmpty, getSortedMembers } from './helpers'
+import { getSortedMembers } from './helpers'
 
 type ZsetPopSide = 'min' | 'max'
 
@@ -59,7 +59,6 @@ export const zpopminCommand = defineCommand({
         z.deleteMember(entry.member)
       }
     })
-    deleteSortedSetIfEmpty(ctx.db, args.key)
     return zpopReply(toRemove, args.count !== undefined)
   },
 })
@@ -81,7 +80,6 @@ export const zpopmaxCommand = defineCommand({
         z.deleteMember(entry.member)
       }
     })
-    deleteSortedSetIfEmpty(ctx.db, args.key)
     return zpopReply(toRemove, args.count !== undefined)
   },
 })

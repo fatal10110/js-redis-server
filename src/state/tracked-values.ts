@@ -530,7 +530,10 @@ export class TrackedStreamData {
     options: { count: number | null; noack: boolean },
     now: number,
   ): StreamDelivery[] {
-    ensureConsumer(group, consumerName, now).activeAt = now
+    // Every read refreshes the consumer's seen time (XINFO `idle`); only
+    // delivering new entries (`>`) refreshes its active time (`inactive`),
+    // as in real Redis 7.2+. A history read or an empty read does not.
+    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
     const { count, noack } = options
     const delivered: StreamDelivery[] = []
@@ -555,6 +558,7 @@ export class TrackedStreamData {
 
         if (limited && delivered.length >= count) break
       }
+      if (delivered.length > 0) consumer.activeAt = now
       return delivered
     }
 
@@ -592,7 +596,8 @@ export class TrackedStreamData {
     },
     now: number,
   ): ClaimedEntry[] {
-    ensureConsumer(group, consumerName, now).activeAt = now
+    // Seen on every attempt; active only once something is claimed.
+    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
     if (options.lastId) group.lastDeliveredId = cloneStreamId(options.lastId)
 
@@ -632,6 +637,7 @@ export class TrackedStreamData {
 
       claimed.push({ id: entry.id, fields: entry.fields })
     }
+    if (claimed.length > 0) consumer.activeAt = now
     return claimed
   }
 
@@ -650,7 +656,8 @@ export class TrackedStreamData {
     },
     now: number,
   ): AutoClaimResult {
-    ensureConsumer(group, consumerName, now).activeAt = now
+    // Seen on every attempt; active only once something is claimed.
+    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
     const claimed: AutoClaimedEntry[] = []
     const deleted: StreamId[] = []
@@ -701,6 +708,7 @@ export class TrackedStreamData {
       }
     }
 
+    if (claimed.length > 0) consumer.activeAt = now
     return { nextStartId, claimed, deleted }
   }
 
