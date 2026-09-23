@@ -1,3 +1,5 @@
+import type { CompatibilityProfile } from './compatibility'
+
 export class RedisCommandError extends Error {
   /**
    * The byte-exact reply body, set only when the error was built from a
@@ -396,9 +398,18 @@ export class ScriptDebugModeError extends RedisCommandError {
   }
 }
 
+/**
+ * A script's `redis.call` named a command (or, from 7.0, a container
+ * subcommand) that command lookup cannot find. Valkey 8.0+ drops the product
+ * name; without a profile the Redis wording is used.
+ */
 export class ScriptUnknownCommandError extends RedisCommandError {
-  constructor() {
-    super('Unknown Redis command called from script')
+  constructor(profile?: CompatibilityProfile) {
+    super(
+      profile?.has('script.unknown-command-valkey-wording')
+        ? 'Unknown command called from script'
+        : 'Unknown Redis command called from script',
+    )
   }
 }
 
@@ -603,6 +614,15 @@ export class UnknownRedisCommandError extends RedisCommandError {
     )
   }
 }
+
+/**
+ * A container was given a subcommand it does not have (`CONFIG BOGUS`). The
+ * body is profile-specific and built only by `unknownSubcommandError` in
+ * src/core/subcommand-errors.ts; the class exists so the Lua runtime can tell a
+ * failed 7.0+ subcommand *lookup* in `CommandExecutor.plan()` apart from other
+ * planning errors, and answer it like an unknown command (#439).
+ */
+export class UnknownSubcommandError extends RedisCommandError {}
 
 function formatUnknownCommandName(commandName: string | Buffer): string {
   return typeof commandName === 'string'

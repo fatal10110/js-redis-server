@@ -7,7 +7,8 @@ import {
   type ReplyValue,
 } from 'lua-redis-wasm'
 import type { CompatibilityProfile } from './compatibility/profile'
-import { noscriptSubcommandExists } from './compatibility/subcommand-gates'
+import { containerSubcommandExists } from './compatibility/subcommand-gates'
+import { asciiLowerCase } from './ascii-case'
 import type { CommandPlan } from './command-definition'
 import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
 import {
@@ -17,6 +18,7 @@ import {
   ScriptNotAllowedCommandError,
   ScriptUnknownCommandError,
   UnknownRedisCommandError,
+  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
@@ -137,8 +139,17 @@ export class RedisLuaRuntime {
     try {
       plan = ctx.executor.plan(args[0], args.slice(1))
     } catch (err) {
-      if (err instanceof UnknownRedisCommandError) {
-        return scriptRejection(new ScriptUnknownCommandError())
+      // From 7.0 an unknown container subcommand fails the same command
+      // lookup as an unknown command (#439). Only `plan()`'s lookup throws it
+      // at plan time; a container that rejects its subcommand while running
+      // (6.2) returns the error as an ordinary command reply below.
+      if (
+        err instanceof UnknownRedisCommandError ||
+        err instanceof UnknownSubcommandError
+      ) {
+        return scriptRejection(
+          new ScriptUnknownCommandError(ctx.server.profile),
+        )
       }
 
       if (err instanceof WrongNumberOfArgumentsError) {
@@ -181,13 +192,11 @@ export class RedisLuaRuntime {
  * On Redis 6.2 `noscript` is a property of the whole command, so a flagged
  * container (CLIENT, CONFIG, ACL, SCRIPT) refuses every subcommand, unknown
  * ones included. From 7.0 a script resolves `container|subcommand` through
- * the command table and the flag lives on each subcommand: an unknown
- * subcommand fails that lookup, and no container's HELP carries the flag, so
- * `<container> HELP` runs. The lookup is modelled only for `noscript`
- * containers here; the general case for other containers is #439.
- *
- * Valkey words the lookup failure `Unknown command called from script`, which
- * {@link ScriptUnknownCommandError} does not model yet.
+ * the command table and the flag lives on each subcommand. An unknown
+ * subcommand has already failed that lookup in `CommandExecutor.plan()`
+ * (against the *real* table, so a real subcommand this server lacks, like
+ * `CLIENT PAUSE`, still gets here and is refused), and no container's HELP
+ * carries the flag, so `<container> HELP` runs.
  */
 function noscriptRefusal(
   plan: CommandPlan,
@@ -204,7 +213,7 @@ function noscriptRefusal(
       definition.name === 'quit' &&
       !profile.has('command.quit-table-entry')
     ) {
-      return new ScriptUnknownCommandError()
+      return new ScriptUnknownCommandError(profile)
     }
     return new ScriptNotAllowedCommandError()
   }
@@ -213,17 +222,12 @@ function noscriptRefusal(
     return new ScriptNotAllowedCommandError()
   }
 
-  // Look up against the *real* subcommand table, not the implemented subset:
-  // a real subcommand this server lacks (`CLIENT PAUSE`) is still refused.
-  const subcommand = plan.rawArgs[0].toString().toLowerCase()
-  const exists = noscriptSubcommandExists(definition.name, subcommand, profile)
-  if (exists === false) {
-    return new ScriptUnknownCommandError()
-  }
-
-  return exists && subcommand === 'help'
-    ? null
-    : new ScriptNotAllowedCommandError()
+  // Only a container has a HELP subcommand: `SUBSCRIBE help` is a channel.
+  const subcommand = plan.rawArgs[0]
+  const isContainerHelp =
+    asciiLowerCase(subcommand.toString()) === 'help' &&
+    containerSubcommandExists(definition.name, subcommand, profile) === true
+  return isContainerHelp ? null : new ScriptNotAllowedCommandError()
 }
 
 /**
