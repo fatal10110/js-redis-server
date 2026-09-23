@@ -32,6 +32,8 @@ export type FeatureId =
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
   | 'geo.coord-d2string'
+  | 'script.per-subcommand-noscript'
+  | 'command.quit-table-entry'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

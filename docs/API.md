@@ -163,6 +163,8 @@ Current profile gates:
 | `SORT`/`SORT_RO` cluster `GET '#'` exempt from that slot comparison | `redis-7.4+` (7.4.2) | `valkey-9.0+` (8.0.2) |
 | GEO coordinate text (`GEOPOS`, `WITHCOORD`) spelled by `d2string()` (`13.361389338970184`) instead of `%.17Lf` trimmed (`13.36138933897018433`); a `,` double on RESP3 on every profile | `redis-8.0+` | unsupported (every Valkey keeps `%.17Lf`) |
 | Double reply text (`ZSCORE`, `ZINCRBY`, `ZMSCORE`, `WITHSCORES`, RESP3 `,` doubles, scores read by `redis.call`, `ZSCAN`) spelled by `d2string()` / `fpconv_dtoa` (`0.1`, `1.23e-5`, `4611686018427387904`) instead of 6.2 / 7.0's `%.17g` (`0.10000000000000001`, `1.2300000000000001e-05`, `4.6116860184273879e+18`) | `redis-7.2+` | `valkey-8.0+` |
+| Lua scripts resolve a `noscript` container's (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) subcommand before refusing it: `<container> HELP` runs, and an unknown subcommand answers `Unknown Redis command called from script`. 6.2 refuses every subcommand. (The mock has no `CONFIG HELP` yet, so that one call still errors.) | `redis-7.0+` | `valkey-8.0+` |
+| `QUIT` from a Lua script is refused as `noscript` (6.2 has no `QUIT` table entry: unknown command) | `redis-7.0+` | `valkey-8.0+` |
 
 ## Package Entry Points
 
