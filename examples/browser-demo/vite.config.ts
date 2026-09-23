@@ -15,8 +15,9 @@ import { nodePolyfills } from 'vite-plugin-node-polyfills'
 // root. node-polyfills injects `import ... from
 // 'vite-plugin-node-polyfills/shims/<x>'` into those source files, and Rollup
 // resolves that bare specifier from the source file's location (repo root),
-// where the shim isn't installed. Alias the three shims to absolute paths in the
-// demo's own node_modules so they resolve regardless of importer location.
+// where the shim isn't installed. Alias the three shims to absolute paths (in
+// the demo's own node_modules, or the demo-local process-shim.ts) so they
+// resolve regardless of importer location.
 const abs = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
 
 // Pin the CDN-loaded WASM + glue to the SAME version we bundle the JS loader
@@ -74,7 +75,8 @@ export default defineConfig({
     alias: {
       'vite-plugin-node-polyfills/shims/buffer': shim('buffer'),
       'vite-plugin-node-polyfills/shims/global': shim('global'),
-      'vite-plugin-node-polyfills/shims/process': shim('process'),
+      // The plugin's process shim plus process.hrtime; see process-shim.ts.
+      'vite-plugin-node-polyfills/shims/process': abs('./process-shim.ts'),
     },
   },
 })
