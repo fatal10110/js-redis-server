@@ -2,9 +2,17 @@ import { RedisClusterType, WatchError } from 'redis'
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { connectToNodeRedisSlotOwner, errorWithMessage } from '../utils'
+import {
+  connectToNodeRedisSlotOwner,
+  errorWithMessage,
+  randomKey,
+} from '../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe('WATCH/UNWATCH (node-redis)', () => {
   let redisClient: RedisClusterType
@@ -18,7 +26,7 @@ describe('WATCH/UNWATCH (node-redis)', () => {
   })
 
   it('WATCH should abort transaction if watched key is modified', async () => {
-    const key = 'watchkey'
+    const key = `watchkey:${RUN}`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, key)
 
     try {
@@ -41,7 +49,7 @@ describe('WATCH/UNWATCH (node-redis)', () => {
   })
 
   it('WATCH should allow transaction if watched key is not modified', async () => {
-    const key = 'watchkey2'
+    const key = `watchkey2:${RUN}`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, key)
 
     try {
@@ -63,8 +71,9 @@ describe('WATCH/UNWATCH (node-redis)', () => {
   })
 
   it('WATCH should allow watching multiple keys in the same slot', async () => {
-    const firstKey = 'watch:{multi}:3'
-    const secondKey = 'watch:{multi}:4'
+    // RUN sits inside the hash tag so both keys share one slot, as WATCH needs.
+    const firstKey = `watch:{multi:${RUN}}:3`
+    const secondKey = `watch:{multi:${RUN}}:4`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, firstKey)
 
     try {
@@ -99,7 +108,7 @@ describe('WATCH/UNWATCH (node-redis)', () => {
   })
 
   it('EXEC should clear watched keys', async () => {
-    const key = 'watchkey6'
+    const key = `watchkey6:${RUN}`
     const watcher = await connectToNodeRedisSlotOwner(redisClient, key)
 
     try {

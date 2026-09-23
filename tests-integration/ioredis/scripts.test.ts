@@ -6,6 +6,10 @@ import { TestRunner } from '../test-config'
 import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
   let redisClient: Cluster | undefined
@@ -48,7 +52,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
     })
 
     test('gets utf8 value correctly', async () => {
-      redisClient?.set('myKey', 'фвфв')
+      await redisClient?.set(`myKey:${RUN}`, 'фвфв')
       const script = `
         local val = redis.call("get", KEYS[1])
 
@@ -59,7 +63,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         end
         `
 
-      const res = await redisClient?.eval(script, 1, 'myKey')
+      const res = await redisClient?.eval(script, 1, `myKey:${RUN}`)
 
       assert.strictEqual(res, 'yes')
     })
@@ -70,8 +74,8 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         return ''
         `
 
-      await redisClient?.eval(script, 1, 'myKey', 'фвфв')
-      const res = await redisClient?.get('myKey')
+      await redisClient?.eval(script, 1, `myKey:${RUN}`, 'фвфв')
+      const res = await redisClient?.get(`myKey:${RUN}`)
 
       assert.strictEqual(res, 'фвфв')
     })
@@ -81,14 +85,14 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489000000017352474200aece1ce90000000d49444154185763f8bf94e13f0006ef02a42609d4340000000049454e44ae426082'
       const buff = Buffer.from(dataHex, 'hex')
 
-      await redisClient?.set('myKey', buff)
+      await redisClient?.set(`myKey:${RUN}`, buff)
 
       const script = `
         return redis.call("get", KEYS[1])
         `
 
       // @ts-expect-error evalBuffer method exists but not in types
-      const res = await redisClient?.evalBuffer(script, 1, 'myKey')
+      const res = await redisClient?.evalBuffer(script, 1, `myKey:${RUN}`)
 
       assert.strictEqual(res.toString('hex'), dataHex)
     })
