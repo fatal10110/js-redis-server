@@ -24,7 +24,6 @@ import {
   RedisMutationListener,
   Unsubscribe,
 } from './mutation-events'
-import { SerialTurnQueue } from '../core/turn-queue'
 import { WrongTypeRedisError } from '../core/redis-error'
 import {
   TrackedHashData,
@@ -36,15 +35,6 @@ import {
 
 export class RedisDatabase {
   readonly mutations = new RedisMutationBus()
-  /**
-   * Per-database serialization turn. All sessions targeting this database
-   * acquire turns from here so writes do not interleave. Sessions on other
-   * databases run on independent queues, which means the mock allows
-   * cross-database parallelism — real Redis is single-threaded across all
-   * databases. Acceptable for a mock; do not rely on cross-database
-   * serialization in tests.
-   */
-  readonly turnQueue = new SerialTurnQueue()
   /**
    * Name of the command currently executing against this database, set by the
    * CommandExecutor around `definition.execute`. Keyspace notifications read it

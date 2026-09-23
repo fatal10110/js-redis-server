@@ -153,9 +153,9 @@ const PUBSUB_KIND_ENTRIES = Object.entries(PUBSUB_KINDS) as [
  *  - the MULTI command queue and its dirty bit;
  *  - WATCH key registrations for optimistic locking.
  *
- * Commands are serialized through a per-database turn queue so that, even though
- * execution is async, only one command mutates a given database at a time. This
- * is also what makes blocking commands (BLPOP, ...) cooperate instead of
+ * Commands are serialized through the server's single turn queue so that, even
+ * though execution is async, only one command runs at a time on any database.
+ * This is also what makes blocking commands (BLPOP, ...) cooperate instead of
  * deadlock — see {@link createTurnAwareParkHandler}.
  */
 export class ClientSession implements RedisClientSession {
@@ -173,12 +173,6 @@ export class ClientSession implements RedisClientSession {
   private readonly nodeRole?: RedisClusterNodeRole
   private readonly parkHandler: ParkHandler
   private readonly closeConnection?: (reason?: string) => void
-  /**
-   * The turn handle of the command currently executing on this session,
-   * exposed so {@link executeTransaction} can hand the turn off to another
-   * database's queue when a queued SELECT switches databases mid-EXEC.
-   */
-  private activeTurnAccess?: TurnAccess
   private selectedDatabaseId: number
   private sessionMode: ClientSessionMode = 'normal'
   private respVersion: RespVersion = 2
@@ -395,20 +389,10 @@ export class ClientSession implements RedisClientSession {
       undefined,
       true,
     )
-    let currentDbId = this.selectedDatabaseId
-
+    // The EXEC turn is server-wide, so a queued SELECT switching databases
+    // mid-EXEC needs no turn handoff: later commands stay serialized (#94).
     for (const plan of plans) {
       this.signal.throwIfAborted()
-
-      // A queued SELECT on a previous iteration may have switched databases.
-      // Move the held turn onto the now-selected database's queue so its
-      // keyspace stays serialized against other sessions (#94 follow-up). Only
-      // one turn is ever held at a time (release-then-acquire), so this cannot
-      // deadlock even if two transactions select databases in opposite orders.
-      if (this.selectedDatabaseId !== currentDbId) {
-        await this.handoffTurnToSelectedDb()
-        currentDbId = this.selectedDatabaseId
-      }
 
       // executePlan converts RedisCommandErrors into error results, but a
       // command whose execute() throws an unexpected runtime error (TypeError,
@@ -465,25 +449,6 @@ export class ClientSession implements RedisClientSession {
             profile: this.server.profile,
           }),
     )
-  }
-
-  /**
-   * Release the currently held serialization turn and acquire a fresh one on
-   * the selected database's queue. Called when a queued SELECT switches
-   * databases mid-EXEC so subsequent commands run under the correct
-   * per-database turn (see {@link executeTransaction}).
-   *
-   * No-op when no managed turn is active.
-   */
-  private async handoffTurnToSelectedDb(): Promise<void> {
-    const turnAccess = this.activeTurnAccess
-    if (!turnAccess) {
-      return
-    }
-
-    turnAccess.get()?.release()
-    const nextTurn = await this.db.turnQueue.waitTurn()
-    turnAccess.set(nextTurn)
   }
 
   /**
@@ -726,8 +691,8 @@ export class ClientSession implements RedisClientSession {
   /**
    * Public entry point for executing one client command.
    *
-   * Acquires a turn on the database's turn queue before running, guaranteeing
-   * serialized access to the keyspace, and always releases it afterward. The
+   * Acquires a turn on the server's turn queue before running, guaranteeing
+   * serialized access to every database, and always releases it afterward. The
    * acquired turn is exposed to the command via a turn-aware park handler so a
    * blocking command can yield the turn while parked (see
    * {@link createTurnAwareParkHandler}); `turn` is reassigned through the
@@ -739,19 +704,18 @@ export class ClientSession implements RedisClientSession {
   ): Promise<RedisResult> {
     this.signal.throwIfAborted()
 
-    let turn: RedisTurnHandle | undefined = await this.db.turnQueue.waitTurn()
+    let turn: RedisTurnHandle | undefined =
+      await this.server.turnQueue.waitTurn()
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {
         turn = nextTurn
       },
     }
-    this.activeTurnAccess = turnAccess
     try {
       const ctx = this.createExecutionContext(turnAccess)
       return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
-      this.activeTurnAccess = undefined
       turn?.release()
     }
   }
@@ -820,7 +784,7 @@ export class ClientSession implements RedisClientSession {
   /**
    * Wrap the base park handler so that parking also yields the command's turn.
    *
-   * Blocking commands (BLPOP, BRPOP, ...) must not hold the database turn while
+   * Blocking commands (BLPOP, BRPOP, ...) must not hold the server turn while
    * they wait, or no other client could ever produce the value that unblocks
    * them — a deadlock. The flow:
    *  1. Start the underlying park, capturing its eventual value.

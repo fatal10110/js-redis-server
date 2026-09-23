@@ -6,6 +6,7 @@ import type { Unsubscribe } from './mutation-events'
 import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
 import { RedisFunctionRegistry } from './function-registry'
+import { SerialTurnQueue } from '../core/turn-queue'
 import type { RedisClientSession } from '../core/redis-context'
 import {
   createRedisLuaRuntime,
@@ -52,6 +53,14 @@ export class RedisServerState {
   readonly clusterTopology: RedisClusterTopology
   readonly requirepass?: string
   readonly profile: CompatibilityProfile
+  /**
+   * The server's single serialization turn. Every command on every database —
+   * plus active expiry and seeding — runs under a turn from this queue, so the
+   * mock is single-threaded across all databases exactly like real Redis. A
+   * blocking command yields the turn while parked (`RedisTurnHandle.suspend`).
+   * Each cluster node has its own `RedisServerState`, hence its own queue.
+   */
+  readonly turnQueue = new SerialTurnQueue()
   /**
    * Parsed `notify-keyspace-events` flags; empty disables keyspace
    * notifications. Parsed once by CONFIG SET (and rendered back to Redis'
@@ -214,20 +223,16 @@ export class RedisServerState {
       return
     }
 
-    const now = Date.now()
-    for (const database of this.databases) {
+    // One turn per tick sweeps every database.
+    const turn = await this.turnQueue.waitTurn()
+    try {
       if (this.closed) {
         return
       }
 
-      const turn = await database.turnQueue.waitTurn()
-      try {
-        if (!this.closed) {
-          database.sweepExpired(now)
-        }
-      } finally {
-        turn.release()
-      }
+      this.sweepExpired(Date.now())
+    } finally {
+      turn.release()
     }
   }
 }

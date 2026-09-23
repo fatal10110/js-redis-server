@@ -87,7 +87,6 @@ graph TD
 
     subgraph "Session layer"
         CS[ClientSession]
-        TQ[SerialTurnQueue]
     end
 
     subgraph "Execution layer"
@@ -104,6 +103,7 @@ graph TD
 
     subgraph "State layer — src/state/*"
         SS[RedisServerState]
+        TQ["SerialTurnQueue<br/>(one per server)"]
         RD["RedisDatabase ×N<br/>(owns the keyspace map)"]
         MB[RedisMutationBus]
         CT[RedisClusterTopology]
@@ -123,6 +123,7 @@ graph TD
     CE --> CP
     CE --> CMD
     CMD --> RD
+    SS --> TQ
     SS --> RD
     SS --> CT
     SS --> SCC
@@ -335,8 +336,8 @@ writes, and the keyspace removes the hash key when the last live field
 disappears. Stream values store ordered entries plus consumer groups, per-group
 pending-entry lists, and consumer idle metadata. Key expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
-background active-expiry pass across its databases, under each database's
-`SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
+background active-expiry pass that sweeps every database under one turn of
+the server's `SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
 the master's replicated deletion. `getLiveEntry` still calls
 [`evictIfExpired`](../src/state/database.ts) on reads that encounter an
 expired key before the next sweep. Either path deletes the entry and emits an
@@ -370,13 +371,13 @@ into existence is itself a write).
 
 ## Concurrency model
 
-Each `RedisDatabase` owns a [`SerialTurnQueue`](../src/core/turn-queue.ts#L12).
-Every `session.execute()` call waits for a turn before reaching the executor
-and releases it in a `finally` block — so, within one database, commands run to
-completion one at a time, mirroring single-threaded Redis semantics. (Sessions
-on _different_ databases run independently; the mock intentionally allows
-cross-database parallelism that real Redis does not have — don't rely on
-cross-DB ordering in tests.)
+Each `RedisServerState` owns one [`SerialTurnQueue`](../src/core/turn-queue.ts#L12)
+shared by all of its databases. Every `session.execute()` call waits for a turn
+before reaching the executor and releases it in a `finally` block — so commands
+run to completion one at a time across every database, mirroring
+single-threaded Redis. A queued `SELECT` inside `MULTI`/`EXEC` therefore needs
+no turn handoff: the EXEC already holds the only turn. Each cluster node has its
+own `RedisServerState`, so nodes still run independently of one another.
 
 The turn handle also exposes `suspend(waitFor)`, and `RedisExecutionContext`
 carries a `park` handler
@@ -490,8 +491,8 @@ each entry maps to a `RedisDataValue` via the existing tracked
 `ttlMs` applied as an expiration and `db` selecting the logical database. In
 cluster mode it resolves each key's slot owner via the topology and writes into
 that master, letting the normal replication links propagate to replicas. Writes
-acquire the per-database `SerialTurnQueue` turn, so seeding never interleaves
-with an in-flight command.
+acquire the server's `SerialTurnQueue` turn, so seeding never interleaves with
+an in-flight command.
 
 ## Lua scripting
 
