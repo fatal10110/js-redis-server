@@ -20,13 +20,18 @@ npm run test:integration:real
 npm run test:all
 
 # Run a single test file
-node --enable-source-maps --import tsx --no-warnings --test ./tests/path/to/test.test.ts
+node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test ./tests/path/to/test.test.ts
 
 # Run integration tests sequentially (needed for real Redis backend)
-TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test ./tests-integration/**/*.test.ts
+TEST_BACKEND=real node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test ./tests-integration/**/*.test.ts
 ```
 
-Every `test*` npm script passes `--test-timeout` (60s; 30s for the real backend), so a hung test becomes a failure instead of a stalled run (#454). On Node 24 the timeout applies to each test and names it. On Node 22 it applies to each test *file*: the file's child process is killed and only the file is named, so give a test its own `{ timeout }` if you want a hang to name it. On Node 24, a timed-out test that leaks a socket or timer can still keep its file's process alive, and the CI job's `timeout-minutes` is the backstop for that. Don't add `--test-force-exit`: on Node 22 under macOS it drops whole files from the report.
+Every `test*` npm script passes `--test-timeout` (60s; 30s for the real backend) to bound hung tests (#454). What that guarantees depends on the Node version:
+
+- **Node 22:** the timeout bounds each test *file*. The file's child process is killed, so the run always moves on, but only the file is named. If you want a hang to name the test, give that test its own `{ timeout }`. That timer runs in-process, so it names an async hang but not a blocked main thread.
+- **Node 24:** the timeout is enforced inside the test file's own process. A timed-out test is named, but the run can still stall in two cases: the test leaks a ref'd handle (socket, timer), or the main thread itself is blocked (a sync loop, or a V8 deadlock like nodejs/node#54918). In both cases the process never exits, and the CI job's `timeout-minutes` is the only backstop.
+
+Don't add `--test-force-exit`: on Node 22 under macOS it drops whole files from the report.
 
 ### Building & Running
 
