@@ -6,10 +6,15 @@ import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
   flushNodeRedisCluster,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -24,20 +29,26 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('SDIFF command', async () => {
-    await redisClient.sAdd('{test}setA', ['a', 'b', 'c', 'd'])
-    await redisClient.sAdd('{test}setB', ['b', 'd', 'e'])
+    await redisClient.sAdd(`{test:${RUN}}setA`, ['a', 'b', 'c', 'd'])
+    await redisClient.sAdd(`{test:${RUN}}setB`, ['b', 'd', 'e'])
 
-    const diff = await redisClient.sDiff(['{test}setA', '{test}setB'])
+    const diff = await redisClient.sDiff([
+      `{test:${RUN}}setA`,
+      `{test:${RUN}}setB`,
+    ])
     assert.strictEqual(diff.length, 2)
     assert.ok(diff.includes('a'))
     assert.ok(diff.includes('c'))
   })
 
   test('SINTER command', async () => {
-    await redisClient.sAdd('{test}setX', ['a', 'b', 'c', 'd'])
-    await redisClient.sAdd('{test}setY', ['b', 'c', 'e', 'f'])
+    await redisClient.sAdd(`{test:${RUN}}setX`, ['a', 'b', 'c', 'd'])
+    await redisClient.sAdd(`{test:${RUN}}setY`, ['b', 'c', 'e', 'f'])
 
-    const inter = await redisClient.sInter(['{test}setX', '{test}setY'])
+    const inter = await redisClient.sInter([
+      `{test:${RUN}}setX`,
+      `{test:${RUN}}setY`,
+    ])
     assert.strictEqual(inter.length, 2)
     assert.ok(inter.includes('b'))
     assert.ok(inter.includes('c'))
@@ -50,7 +61,10 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
     const setC = `${tag}:c`
     const missing = `${tag}:missing`
     const stringKey = `${tag}:string`
-    const crossSlotKey = `sintercard-cross:${randomKey()}`
+    const crossSlotKey = keyInAnotherSlot(
+      setA,
+      () => `sintercard-cross:${randomKey()}`,
+    )
     let directClient: RedisClientType | undefined
 
     try {
@@ -148,10 +162,13 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('SUNION command', async () => {
-    await redisClient.sAdd('{test}setP', ['a', 'b'])
-    await redisClient.sAdd('{test}setQ', ['b', 'c', 'd'])
+    await redisClient.sAdd(`{test:${RUN}}setP`, ['a', 'b'])
+    await redisClient.sAdd(`{test:${RUN}}setQ`, ['b', 'c', 'd'])
 
-    const union = await redisClient.sUnion(['{test}setP', '{test}setQ'])
+    const union = await redisClient.sUnion([
+      `{test:${RUN}}setP`,
+      `{test:${RUN}}setQ`,
+    ])
     assert.strictEqual(union.length, 4)
     assert.ok(union.includes('a'))
     assert.ok(union.includes('b'))
@@ -160,21 +177,25 @@ describe(`Set Commands Integration (node-redis, ${testRunner.getBackendName()})`
   })
 
   test('SMOVE command', async () => {
-    await redisClient.sAdd('{test}source', ['a', 'b', 'c'])
-    await redisClient.sAdd('{test}dest', ['x', 'y'])
+    await redisClient.sAdd(`{test:${RUN}}source`, ['a', 'b', 'c'])
+    await redisClient.sAdd(`{test:${RUN}}dest`, ['x', 'y'])
 
-    const move1 = await redisClient.sMove('{test}source', '{test}dest', 'a')
+    const move1 = await redisClient.sMove(
+      `{test:${RUN}}source`,
+      `{test:${RUN}}dest`,
+      'a',
+    )
     assert.strictEqual(move1, 1)
 
-    const sourceHas = await redisClient.sIsMember('{test}source', 'a')
+    const sourceHas = await redisClient.sIsMember(`{test:${RUN}}source`, 'a')
     assert.strictEqual(sourceHas, 0)
 
-    const destHas = await redisClient.sIsMember('{test}dest', 'a')
+    const destHas = await redisClient.sIsMember(`{test:${RUN}}dest`, 'a')
     assert.strictEqual(destHas, 1)
 
     const move2 = await redisClient.sMove(
-      '{test}source',
-      '{test}dest',
+      `{test:${RUN}}source`,
+      `{test:${RUN}}dest`,
       'nonexistent',
     )
     assert.strictEqual(move2, 0)

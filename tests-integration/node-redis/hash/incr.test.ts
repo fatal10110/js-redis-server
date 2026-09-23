@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { errorWithMessage, flushNodeRedisCluster, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})`, () => {
   let redisClient: RedisClusterType
@@ -19,13 +23,13 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HINCRBY command', async () => {
-    const incr1 = await redisClient.hIncrBy('hash8', 'counter', 5)
+    const incr1 = await redisClient.hIncrBy(`hash8:${RUN}`, 'counter', 5)
     assert.strictEqual(incr1, 5)
 
-    const incr2 = await redisClient.hIncrBy('hash8', 'counter', 3)
+    const incr2 = await redisClient.hIncrBy(`hash8:${RUN}`, 'counter', 3)
     assert.strictEqual(incr2, 8)
 
-    const incr3 = await redisClient.hIncrBy('hash8', 'counter', -2)
+    const incr3 = await redisClient.hIncrBy(`hash8:${RUN}`, 'counter', -2)
     assert.strictEqual(incr3, 6)
   })
 
@@ -85,10 +89,10 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
   })
 
   test('HINCRBYFLOAT command', async () => {
-    const incr1 = await redisClient.hIncrByFloat('hash9', 'float', 1.5)
+    const incr1 = await redisClient.hIncrByFloat(`hash9:${RUN}`, 'float', 1.5)
     assert.strictEqual(incr1, '1.5')
 
-    const incr2 = await redisClient.hIncrByFloat('hash9', 'float', 2.3)
+    const incr2 = await redisClient.hIncrByFloat(`hash9:${RUN}`, 'float', 2.3)
     assert.strictEqual(incr2, '3.8')
   })
 })
