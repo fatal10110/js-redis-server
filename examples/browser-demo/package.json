@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@xterm/xterm": "^5.5.0"
+    "@xterm/xterm": "^6.0.0"
   },
   "devDependencies": {
     "vite": "^8.3.0",
