@@ -58,8 +58,7 @@ await cluster.close()
 
 > Need control over _when_ the cluster starts listening? The lower-level
 > [`createRedisCluster()`](#createrediscluster) builder returns an un-started
-> `RedisCluster` you call `.listen()` on yourself. (`buildRedisCluster` is a
-> deprecated alias of it.)
+> `RedisCluster` you call `.listen()` on yourself.
 
 ## CLI
 
@@ -269,8 +268,7 @@ Low-level builder that returns an **un-started** `RedisCluster` — call
 
 > **Prefer [`createRedisServer`](#createredisserver) with the `cluster` option**,
 > which builds and starts the cluster in one call. Use this builder only when you
-> need control over when `listen()` runs. (`buildRedisCluster` is a deprecated
-> alias of this function.)
+> need control over when `listen()` runs.
 
 ```typescript
 createRedisCluster(options: RedisClusterOptions): RedisCluster

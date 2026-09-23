@@ -33,8 +33,7 @@ async function assertWorkingRoot(pkg: Record<string, unknown>): Promise<void> {
   assert.strictEqual(typeof pkg.createRedisCluster, 'function')
   assert.strictEqual(typeof pkg.createInMemoryClient, 'function')
   assert.strictEqual(typeof pkg.InMemoryRedisClient, 'function')
-  assert.strictEqual(typeof pkg.buildRedisCluster, 'function')
-  assert.strictEqual(pkg.buildRedisCluster, pkg.createRedisCluster)
+  assert.strictEqual('buildRedisCluster' in pkg, false)
   assert.strictEqual(typeof pkg.RedisCommandError, 'function')
   // The executor and hand-wiring building blocks are intentionally not part of
   // the root surface — they live on `js-redis-server/core`.
@@ -63,6 +62,8 @@ function assertCore(core: Record<string, unknown>): void {
   assert.strictEqual(typeof core.createRedisCommandExecutor, 'function')
   // Facade lives at the root, not in the internals subpath.
   assert.strictEqual(core.createRedisMock, undefined)
+  // The deprecated alias was removed from `/core` too (#365).
+  assert.strictEqual('buildRedisCluster' in core, false)
 }
 
 describe('package CJS entry (require)', () => {

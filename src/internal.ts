@@ -222,7 +222,6 @@ export { computeSlotRange, type RedisClusterOptions } from './cluster'
 export {
   RedisCluster,
   createRedisCluster,
-  buildRedisCluster,
   type RedisClusterNodeHandle,
 } from './cluster-server'
 

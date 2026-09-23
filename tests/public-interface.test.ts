@@ -3,6 +3,7 @@ import assert from 'node:assert'
 // The root barrel is the curated consumer surface: the test-mock facade, the
 // `create*` builders, seeding, the socketless client, and the error classes.
 import * as root from '../src'
+import * as core from '../src/internal'
 import {
   createRedisMock,
   createRedisServer,
@@ -11,7 +12,6 @@ import {
   seedStandalone,
   seedCluster,
   createRedisCluster,
-  buildRedisCluster,
   RedisCluster,
   computeSlotRange,
   RedisCommandError,
@@ -35,7 +35,6 @@ describe('public interface — exported symbols', () => {
       seedStandalone,
       seedCluster,
       createRedisCluster,
-      buildRedisCluster,
       computeSlotRange,
     ]) {
       assert.strictEqual(typeof fn, 'function')
@@ -51,8 +50,9 @@ describe('public interface — exported symbols', () => {
     }
   })
 
-  test('buildRedisCluster is a deprecated alias of createRedisCluster', () => {
-    assert.strictEqual(buildRedisCluster, createRedisCluster)
+  test('the removed buildRedisCluster alias is gone from both entry points', () => {
+    assert.strictEqual('buildRedisCluster' in root, false)
+    assert.strictEqual('buildRedisCluster' in core, false)
   })
 
   test('hand-wiring building blocks ARE exported from the core subpath', () => {

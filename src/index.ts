@@ -55,13 +55,11 @@ export {
   type NodeRedisPubSubListener,
 } from './client-mocks/node-redis-mock'
 
-// Cluster builder (consistent `create*` naming; `buildRedisCluster` is a
-// deprecated alias kept for back-compat).
+// Cluster builder.
 export { computeSlotRange, type RedisClusterOptions } from './cluster'
 export {
   RedisCluster,
   createRedisCluster,
-  buildRedisCluster,
   type RedisClusterNodeHandle,
 } from './cluster-server'
 
