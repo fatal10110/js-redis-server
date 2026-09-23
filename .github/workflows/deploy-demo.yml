@@ -96,6 +96,19 @@ jobs:
         run: npm run build
         working-directory: examples/browser-demo
 
+      # vite-plugin-node-polyfills inlines what it polyfills into the shipped
+      # artifact, so "it's only a dev dependency" does not hold for it (#393).
+      # The demo polyfills only `buffer` and shims crypto's SHA-1; this fails
+      # the build if a config change lets crypto-browserify's `elliptic` back
+      # into the Pages bundle.
+      - name: Check bundle has no elliptic
+        run: |
+          if grep -l -E 'elliptic|secp256k1' dist/assets/*.js; then
+            echo "::error::elliptic/secp256k1 found in the demo bundle (#393)"
+            exit 1
+          fi
+        working-directory: examples/browser-demo
+
       - uses: actions/configure-pages@v5
         if: github.event_name != 'pull_request'
 

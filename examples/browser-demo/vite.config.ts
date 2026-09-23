@@ -3,13 +3,19 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
-// Demo-only config. Polyfills the one Node builtin the js-redis-server source
-// graph still needs in the browser (buffer). `lua-redis-wasm` ≥1.4 ships a
-// browser build with no `node:*` imports (resolved via its `browser` export
-// condition), and main.ts points its WASM + glue at jsDelivr, so there's no fs
-// alias and no vendored copy. The demo imports the net-free `src/cluster`
-// (node-assembly only); the socket-backed `src/cluster-server` is never imported,
-// so no `net` shim either. None of this touches the published package.
+// Demo-only config. Polyfills the one Node builtin module the js-redis-server
+// source graph still needs in the browser (buffer) — and ONLY that one:
+// `nodePolyfills()` with no `include` bundles the whole node-stdlib-browser
+// set, whose `crypto-browserify` drags `elliptic`, `bn.js` and curve tables
+// into the Pages artifact (#393). The Buffer/process/global *globals* are
+// injected regardless of `include`. The graph's only other builtin, crypto
+// (`createHash('sha1')`), goes to the small ./crypto-shim.ts below instead.
+//
+// `lua-redis-wasm` ≥1.4 ships a browser build with no `node:*` imports
+// (resolved via its `browser` export condition), and main.ts points its WASM +
+// glue at jsDelivr, so there's no fs alias and no vendored copy. The demo
+// imports the net-free `src/cluster` (node-assembly only); the socket-backed
+// `src/cluster-server` is never imported, so no `net` shim either. None of this touches the published package.
 //
 // The demo imports `../../src/in-memory-client`, OUTSIDE this demo's package
 // root. node-polyfills injects `import ... from
@@ -70,9 +76,12 @@ const stripBundledLuaAssets = {
 export default defineConfig({
   base: '/js-redis-server/',
   define: { __LUA_WASM_VERSION__: JSON.stringify(luaWasmVersion) },
-  plugins: [stripBundledLuaAssets, nodePolyfills()],
+  plugins: [stripBundledLuaAssets, nodePolyfills({ include: ['buffer'] })],
   resolve: {
     alias: {
+      // Sync SHA-1 only; see crypto-shim.ts. Anything else from crypto throws.
+      'node:crypto': abs('./crypto-shim.ts'),
+      crypto: abs('./crypto-shim.ts'),
       'vite-plugin-node-polyfills/shims/buffer': shim('buffer'),
       'vite-plugin-node-polyfills/shims/global': shim('global'),
       // The plugin's process shim plus process.hrtime; see process-shim.ts.
