@@ -1,7 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { RedisClientType } from 'redis'
-import { TestRunner } from '../test-config'
+import { TestRunner, duplicateNodeRedisClient } from '../test-config'
 import { randomKey } from '../utils'
 
 const testRunner = new TestRunner()
@@ -99,9 +99,7 @@ describe(`Pub/Sub integration (node-redis, ${testRunner.getBackendName()})`, () 
   })
 
   async function connect(): Promise<RedisClientType> {
-    const client = base.duplicate() as RedisClientType
-    client.on('error', () => {})
-    await client.connect()
+    const client = await duplicateNodeRedisClient(base)
     clients.push(client)
     return client
   }

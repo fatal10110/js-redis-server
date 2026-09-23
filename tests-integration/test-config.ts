@@ -127,6 +127,29 @@ export async function openSocketlessStream(
   return (await connector.connect(() => {})) as unknown as Duplex
 }
 
+/**
+ * A second node-redis connection onto the same server (mock/real) or the same
+ * in-memory keyspace (socketless) as `base`, connected and with its `'error'`
+ * events swallowed.
+ *
+ * Real node-redis' `duplicate()` returns an unconnected client synchronously;
+ * the socketless facade's returns a Promise of a client that is already usable
+ * and has no `isOpen`. That is a known divergence of the facade
+ * (`FACADE_DUPLICATE_PROMISE` in socketless/known-gaps.ts), which this helper
+ * absorbs so the pub/sub and keyspace-notification suites exercise the
+ * facade's pub/sub itself rather than stopping at `duplicate()`.
+ */
+export async function duplicateNodeRedisClient(
+  base: RedisClientType,
+): Promise<RedisClientType> {
+  const client = (await (base.duplicate() as unknown)) as RedisClientType
+  client.on('error', () => {})
+  if (client.isOpen === false) {
+    await client.connect()
+  }
+  return client
+}
+
 /** Extra `Redis` options for a direct node connection (see above). */
 export function directNodeRedisOptions(): Partial<RedisOptions> {
   const cluster = socketlessClusterForDirectConnection('a direct node client')

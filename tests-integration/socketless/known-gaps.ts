@@ -17,9 +17,10 @@
  * signatures — most of these are surface it does not have yet, not wrong
  * replies.
  *
- * Two divergences are not listed per test, because the harness works around
+ * Three divergences are not listed per test, because the harness works around
  * them or no suite can observe them through the facade: see
- * {@link FACADE_DEFAULT_PROTOCOL} and {@link FACADE_PUBSUB_PROTOCOL}.
+ * {@link FACADE_DEFAULT_PROTOCOL}, {@link FACADE_DUPLICATE_PROMISE} and
+ * {@link FACADE_PUBSUB_PROTOCOL}.
  */
 import assert from 'node:assert'
 import { isDeepStrictEqual } from 'node:util'
@@ -64,6 +65,17 @@ export const FACADE_DEFAULT_PROTOCOL =
   "createNodeRedisMock() starts on RESP2; node-redis 6's default client negotiates RESP3 (HELLO 3), so default-protocol replies differ (ZSCORE '2.5' vs 2.5, HGETALL flat array vs object)"
 
 /**
+ * `NodeRedisMockClient.duplicate()` returns a Promise of an already-usable
+ * client; real node-redis returns an unconnected client synchronously (you
+ * `connect()` it). The harness's `duplicateNodeRedisClient()` (test-config.ts)
+ * absorbs the difference so the pub/sub and keyspace-notification suites reach
+ * the facade's pub/sub. Follow-up for `src/`: return the client synchronously
+ * and make `connect()` do the work.
+ */
+export const FACADE_DUPLICATE_PROMISE =
+  'NodeRedisMockClient.duplicate() returns a Promise; node-redis returns the unconnected client synchronously'
+
+/**
  * The facade's pub/sub runs on a dedicated session it opens on first
  * subscribe (`ensurePubSub()`), and that session never negotiates RESP3 —
  * not even on a client that sent `HELLO 3` — so a RESP3 facade subscriber
@@ -105,11 +117,6 @@ const CAUSE = {
     reason:
       "the facade's `zRange(key, start, stop)` drops node-redis' options argument (`BY` / `REV` / `LIMIT`) and runs a plain index ZRANGE, which rejects score/lex bounds",
     error: /ERR value is not an integer or out of range/,
-  },
-  duplicatePromise: {
-    reason:
-      '`NodeRedisMockClient.duplicate()` returns a Promise; node-redis returns the (unconnected) client synchronously',
-    error: /^client\.on is not a function$/,
   },
   secondClusterClient: {
     reason:
@@ -351,22 +358,25 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'no-op HDEL on a non-existent key must not invalidate a WATCH on that key',
     'no-op SREM on a non-existent key must not invalidate a WATCH on that key',
   ]),
+  // The facade's own pub/sub runs here (via duplicateNodeRedisClient()); what
+  // stops these is the rest of its surface.
   todo(
     'node-redis/key/keyspace-notifications.test.ts',
-    CAUSE.duplicatePromise,
-    [
-      'CONFIG normalizes flags and rejects invalid characters',
-      'delivers nothing when notify-keyspace-events is disabled',
-      'does not name a cross-database write after an earlier SELECT',
-      'gates events by configured class',
-      'names write events after the originating command',
-      'publishes del, expire and persist generic notifications',
-      'publishes expired event from active expiry without a forcing read',
-      'publishes expired event when a key lazily expires',
-      'publishes set keyspace and keyevent notifications',
-      'translates RENAME into rename_from and rename_to',
-    ],
+    CAUSE.argumentShapes,
+    // pSubscribe([patterns], listener): the facade takes one pattern string.
+    ['publishes set keyspace and keyevent notifications'],
   ),
+  todo('node-redis/key/keyspace-notifications.test.ts', missing('configSet'), [
+    'CONFIG normalizes flags and rejects invalid characters',
+    'delivers nothing when notify-keyspace-events is disabled',
+    'does not name a cross-database write after an earlier SELECT',
+    'gates events by configured class',
+    'names write events after the originating command',
+    'publishes del, expire and persist generic notifications',
+    'publishes expired event from active expiry without a forcing read',
+    'publishes expired event when a key lazily expires',
+    'translates RENAME into rename_from and rename_to',
+  ]),
   todo('node-redis/key/workflow.test.ts', missing('expireAt'), [
     'Expiration workflow - Cache with Scheduled Invalidation',
   ]),
@@ -432,11 +442,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   ]),
   todo('node-redis/multi.test.ts', CAUSE.secondClusterClient, [
     'Queue commands before execution without piplining',
-  ]),
-  todo('node-redis/pubsub-integration.test.ts', CAUSE.duplicatePromise, [
-    'delivers channel messages and reports channel subscribers',
-    'delivers pattern messages and reports pattern subscribers',
-    'reports empty shard Pub/Sub state',
   ]),
   skip('node-redis/randomkey-integration.test.ts', SKIP.flushAllInHook),
   todo('node-redis/scan/keys-scan.test.ts', CAUSE.clusterSendCommand, [
