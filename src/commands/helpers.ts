@@ -2,11 +2,16 @@ import { RedisValue } from '../core/redis-value'
 import { RedisResult } from '../core/redis-result'
 import { isIntegerToken } from '../core/command-schema'
 import {
+  formatRedisDouble,
+  type DoubleFormatProfile,
+} from '../core/double-format'
+import {
   ExpectedIntegerError,
   InvalidExpireTimeError,
   RedisSyntaxError,
   WrongTypeRedisError,
 } from '../core/redis-error'
+import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisDataTypeName, RedisDatabase } from '../state'
 
 export function ok(): RedisResult {
@@ -21,10 +26,16 @@ export function integer(value: number | bigint): RedisResult {
   return RedisResult.create(RedisValue.integer(value))
 }
 
-export function scoreBuffer(score: number): Buffer {
-  if (score === Infinity) return Buffer.from('inf')
-  if (score === -Infinity) return Buffer.from('-inf')
-  return Buffer.from(score.toString())
+// A score as text, for replies that carry it as a plain bulk string (ZSCAN).
+// Same profile-aware spelling as a `double` reply (#451); `-0` is normalized
+// to `0` like scoreValue.
+export function scoreBuffer(
+  score: number,
+  profile: DoubleFormatProfile,
+): Buffer {
+  return Buffer.from(
+    formatRedisDouble(Object.is(score, -0) ? 0 : score, profile),
+  )
 }
 
 // A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching
@@ -55,6 +66,24 @@ export function array(items: RedisValue[]): RedisResult {
   return RedisResult.create(RedisValue.array(items))
 }
 
+/**
+ * A container's HELP reply, as real Redis' `addReplyHelp` builds it: the
+ * container's own lines followed by the `HELP` entry every container appends,
+ * all as status lines (`+...`). The entry reads `Prints this help.` through
+ * 7.0 and `Print this help.` from Redis 7.2 / Valkey 7.2.
+ */
+export function helpReply(
+  lines: readonly string[],
+  profile: CompatibilityProfile,
+): RedisResult {
+  const footer = profile.has('reply.help-print-wording')
+    ? '    Print this help.'
+    : '    Prints this help.'
+  return array(
+    [...lines, 'HELP', footer].map(line => RedisValue.simpleString(line)),
+  )
+}
+
 export function ensureStringOrMissing(
   db: RedisDatabase,
   key: Buffer,
@@ -75,14 +104,23 @@ export function typeName(type: RedisDataTypeName | null): string {
   return type ?? 'none'
 }
 
-export function ttlSeconds(expiresAt: number): number {
-  // Redis rounds remaining time to the nearest second ((ms+500)/1000),
-  // not ceil/floor — matches EXPIRETIME and real TTL behavior.
-  return Math.max(0, Math.round((expiresAt - Date.now()) / 1000))
+// Key-level TTL (TTL): Redis rounds remaining time to the nearest second
+// ((ms+500)/1000), not ceil/floor — matches EXPIRETIME and real TTL behavior.
+export function keyTtlSeconds(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, Math.round((expiresAt - now) / 1000))
 }
 
-export function ttlMilliseconds(expiresAt: number): number {
-  return Math.max(0, expiresAt - Date.now())
+// Hash-field TTL (HTTL): Redis rounds remaining time *up* to the next second
+// ((ms+999)/1000), so any sub-second remainder reports 1, not 0 (#432).
+export function hashFieldTtlSeconds(
+  expiresAt: number,
+  now = Date.now(),
+): number {
+  return Math.max(0, Math.ceil((expiresAt - now) / 1000))
+}
+
+export function ttlMilliseconds(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, expiresAt - now)
 }
 
 export function parseIntegerToken(token: Buffer): number {
@@ -130,6 +168,11 @@ export function parsePositiveExpireToken(
 
   return value
 }
+
+export {
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from '../core/subcommand-errors'
 
 export function requireNextOptionValue(
   args: readonly Buffer[],

@@ -1,5 +1,8 @@
-import { defineCommand } from '../core/command-definition'
-import { t, type ParseContext } from '../core/command-schema'
+import {
+  defineCommand,
+  type CommandIntrospection,
+} from '../core/command-definition'
+import { t } from '../core/command-schema'
 import {
   DbIndexOutOfRangeError,
   ExpireGtLtConflictError,
@@ -14,18 +17,26 @@ import {
   WrongTypeRedisError,
 } from '../core/redis-error'
 import { RedisValue } from '../core/redis-value'
+import type { RedisExecutionContext } from '../core/redis-context'
+import {
+  isConstantSortPattern,
+  isSelfSortPattern,
+  sortPatternWildcardIndex,
+} from '../core/sort-patterns'
+import { assertSortPatternAllowed } from '../core/sort-cluster-guard'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
   array,
   bulk,
   integer,
+  keyTtlSeconds,
   ok,
   parseIntegerToken,
   simpleString,
   ttlMilliseconds,
-  ttlSeconds,
   typeName,
 } from './helpers'
+import { getSortedMembers } from './zsets/helpers'
 
 export const delCommand = defineCommand({
   name: 'del',
@@ -140,7 +151,7 @@ export const ttlCommand = defineCommand({
       return integer(-1)
     }
 
-    return integer(ttlSeconds(expiration.expiresAt))
+    return integer(keyTtlSeconds(expiration.expiresAt))
   },
 })
 
@@ -221,19 +232,15 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   const options: ExpireOptions = {}
   let cursor = index
 
+  // Before 7.0 the family takes exactly `key time`: any extra token, option
+  // or not, is an arity error.
+  if (cursor < input.length && !ctx.profile.has('expire.conditions')) {
+    throw new WrongNumberOfArgumentsError(ctx.commandName)
+  }
+
   while (cursor < input.length) {
     const token = input[cursor]!.toString()
     const option = token.toUpperCase()
-
-    if (
-      (option === 'NX' ||
-        option === 'XX' ||
-        option === 'GT' ||
-        option === 'LT') &&
-      !ctx.profile.has('expire.conditions')
-    ) {
-      return { value: options, nextIndex: cursor }
-    }
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
@@ -283,6 +290,12 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   return { value: options, nextIndex: cursor }
 })
 
+// The NX/XX/GT/LT options arrived in 7.0. Before that the parser above
+// refuses anything past `key time`, and Redis reported the family's arity as 3.
+const expireIntrospection: CommandIntrospection = {
+  arity: profile => (profile.has('expire.conditions') ? -3 : 3),
+}
+
 export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
@@ -290,6 +303,7 @@ export const expireCommand = defineCommand({
     seconds: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
@@ -303,6 +317,7 @@ export const pexpireCommand = defineCommand({
     milliseconds: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
@@ -372,6 +387,7 @@ export const expireatCommand = defineCommand({
     timestamp: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -386,6 +402,7 @@ export const pexpireatCommand = defineCommand({
     timestamp: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -579,151 +596,271 @@ export const copyCommand = defineCommand({
 // not score). Numeric by default — every element must parse as a double, or
 // the command errors; ALPHA switches to a byte-wise lexicographic sort. STORE
 // writes the sorted result to a destination list and replies with its length.
+//
+// Only the source key is parsed when the command is planned. The options are
+// scanned when it runs, left to right, exactly as sortCommand() does (#417):
+// the scan stops at the first offending token — a syntax error, a bad LIMIT
+// integer, or a BY/GET pattern the cluster guard refuses — so whichever comes
+// first is the error reported, and inside MULTI every one of them queues and
+// surfaces in EXEC instead of aborting the transaction.
 type SortArgs = {
   key: Buffer
+  options: Buffer[]
+}
+
+type SortOptions = {
   desc: boolean
   alpha: boolean
   limit?: { offset: number; count: number }
+  /**
+   * The last BY given. sortCommand() keeps overwriting it, but a constant BY
+   * sets `dontsort` for good, so once any BY was constant the weights are
+   * never looked up and `by` is irrelevant (#443). While `dontsort` is false,
+   * every BY seen was a glob.
+   */
   by?: Buffer
+  dontsort: boolean
   get: Buffer[]
   store?: Buffer
 }
 
-function parseSort(
-  input: readonly Buffer[],
-  index: number,
-  ctx: ParseContext,
+function sortSchema() {
+  return t.custom<SortArgs>({ min: 1, keys: [0] }, (input, index, ctx) => {
+    const key = input[index]
+    if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
+    return {
+      value: { key, options: input.slice(index + 1) },
+      nextIndex: input.length,
+    }
+  })
+}
+
+function scanSortOptions(
+  args: SortArgs,
   allowStore: boolean,
-): SortArgs {
-  const key = input[index]
-  if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
+  ctx: RedisExecutionContext,
+): SortOptions {
+  const { key, options } = args
+  const scanned: SortOptions = {
+    desc: false,
+    alpha: false,
+    dontsort: false,
+    get: [],
+  }
 
-  let cursor = index + 1
-  let desc = false
-  let alpha = false
-  let limit: { offset: number; count: number } | undefined
-  let by: Buffer | undefined
-  const get: Buffer[] = []
-  let store: Buffer | undefined
-
-  while (cursor < input.length) {
-    const option = input[cursor]!.toString().toUpperCase()
-
-    if (option === 'BY') {
-      const pattern = input[cursor + 1]
-      if (!pattern) throw new RedisSyntaxError()
-      by = pattern
-      cursor += 2
-      continue
-    }
-
-    if (option === 'GET') {
-      const pattern = input[cursor + 1]
-      if (!pattern) throw new RedisSyntaxError()
-      get.push(pattern)
-      cursor += 2
-      continue
-    }
+  for (let j = 0; j < options.length; j++) {
+    const option = options[j]!.toString().toUpperCase()
+    const remaining = options.length - j - 1
 
     if (option === 'ASC') {
-      desc = false
-      cursor++
+      scanned.desc = false
       continue
     }
 
     if (option === 'DESC') {
-      desc = true
-      cursor++
+      scanned.desc = true
       continue
     }
 
     if (option === 'ALPHA') {
-      alpha = true
-      cursor++
+      scanned.alpha = true
       continue
     }
 
-    if (option === 'LIMIT') {
-      const offsetToken = input[cursor + 1]
-      const countToken = input[cursor + 2]
-      if (!offsetToken || !countToken) throw new RedisSyntaxError()
-      limit = {
-        offset: parseIntegerToken(offsetToken),
-        count: parseIntegerToken(countToken),
+    if (option === 'LIMIT' && remaining >= 2) {
+      scanned.limit = {
+        offset: parseIntegerToken(options[j + 1]!),
+        count: parseIntegerToken(options[j + 2]!),
       }
-      cursor += 3
+      j += 2
       continue
     }
 
-    if (allowStore && option === 'STORE') {
-      const destination = input[cursor + 1]
-      if (!destination) throw new RedisSyntaxError()
-      store = destination
-      cursor += 2
+    if (allowStore && option === 'STORE' && remaining >= 1) {
+      scanned.store = options[++j]
+      continue
+    }
+
+    if (option === 'BY' && remaining >= 1) {
+      const pattern = options[++j]!
+      scanned.by = pattern
+      if (isConstantSortPattern(pattern)) {
+        scanned.dontsort = true
+      } else {
+        assertSortPatternAllowed(ctx, 'BY', pattern, key)
+      }
+      continue
+    }
+
+    if (option === 'GET' && remaining >= 1) {
+      const pattern = options[++j]!
+      assertSortPatternAllowed(ctx, 'GET', pattern, key)
+      scanned.get.push(pattern)
       continue
     }
 
     throw new RedisSyntaxError()
   }
 
-  return { key, desc, alpha, limit, by, get, store }
+  return scanned
 }
 
-function sortSchema(allowStore: boolean) {
-  return t.custom<SortArgs>((input, index, ctx) => ({
-    value: parseSort(input, index, ctx, allowStore),
-    nextIndex: input.length,
-  }))
+// The source's type travels with its elements so the rest of SORT never looks
+// the key up again — a second lookup is a second clock read, and the key could
+// expire in between.
+type SortSource = {
+  type: 'list' | 'set' | 'zset' | null
+  elements: Buffer[]
 }
 
-function readSortSource(db: RedisDatabase, key: Buffer): Buffer[] {
-  const type = db.getType(key)
-  if (type === null) return []
-  if (type === 'list') return db.getList(key)!.values
-  if (type === 'set') return Array.from(db.getSet(key)!.members.values())
-  if (type === 'zset') {
-    return Array.from(db.getSortedSet(key)!.members.values(), m => m.member)
+function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
+  // One lookup for both the type and the contents (#443).
+  const value = db.get(key)
+  if (!value) return { type: null, elements: [] }
+  if (value.type === 'list') return { type: 'list', elements: value.values }
+  if (value.type === 'set') {
+    return {
+      type: 'set',
+      elements: setLoadOrder(Array.from(value.members.values())),
+    }
+  }
+  if (value.type === 'zset') {
+    // sortCommand() walks the skiplist, so a zset source is read in rank
+    // order — the same order ZRANGE reports, not insertion order (#418).
+    const members = getSortedMembers(value)
+    return { type: 'zset', elements: members.map(entry => entry.member) }
   }
   throw new WrongTypeRedisError()
 }
 
-function sortNumericScore(element: Buffer): number {
-  // Redis converts every element with strtod; an empty string becomes 0, and
-  // anything that does not parse as a double aborts the whole command.
-  const value = Number(element.toString())
+const INT64_MIN = -(2n ** 63n)
+const INT64_MAX = 2n ** 63n - 1n
+
+/**
+ * The order `setTypeIterator` hands SORT a set's members in (#443). A set
+ * whose members are all canonical 64-bit integers is an intset, which is
+ * stored sorted, so it loads in ascending numeric order. Any other set is
+ * loaded in insertion order, which matches a small listpack set built from a
+ * non-integer first (a large hashtable-encoded set has no defined order).
+ *
+ * The real order depends on the set's encoding history, which the mock does
+ * not keep, so it is re-derived from the current members. Two known
+ * differences follow:
+ * - A set created from an integer starts as an intset. When a non-integer
+ *   arrives, Redis converts it to a listpack by walking the intset in sorted
+ *   order, so the integers stay sorted ahead of later members:
+ *   `SADD s 3 1 a` loads `1 3 a` in Redis and `3 1 a` here.
+ * - Redis never converts back to an intset, so a set that briefly held a
+ *   non-integer keeps its listpack order after that member is removed; the
+ *   mock sorts it numerically again.
+ * Tracking the encoding in the state layer would fix both, and `SMEMBERS`
+ * with them.
+ */
+function setLoadOrder(members: Buffer[]): Buffer[] {
+  const numbered: Array<{ member: Buffer; value: bigint }> = []
+  for (const member of members) {
+    const value = parseIntsetMember(member)
+    if (value === null) return members
+    numbered.push({ member, value })
+  }
+  numbered.sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+  return numbered.map(entry => entry.member)
+}
+
+/** `string2ll()`: no sign but '-', no leading zeros, no "-0", int64 range. */
+function parseIntsetMember(member: Buffer): bigint | null {
+  const text = member.toString('latin1')
+  if (!/^(?:0|-?[1-9][0-9]*)$/.test(text)) return null
+  const value = BigInt(text)
+  return value < INT64_MIN || value > INT64_MAX ? null : value
+}
+
+function sortNumericScore(weight: Buffer | null): number {
+  // A missing weight leaves the score at 0. Otherwise Redis converts with
+  // strtod; an empty string becomes 0, and anything that does not parse as a
+  // double aborts the whole command.
+  if (!weight) return 0
+  const value = Number(weight.toString())
   if (Number.isNaN(value)) throw new SortScoreNotDoubleError()
   return value
 }
 
+/**
+ * sortCompare()'s ALPHA branch: a missing BY weight (NULL `cmpobj`) orders
+ * before any present one — even an empty string — and two missing weights tie.
+ */
+function compareSortAlphaWeights(a: Buffer | null, b: Buffer | null): number {
+  if (a === null || b === null) {
+    if (a === b) return 0
+    return a === null ? -1 : 1
+  }
+  return Buffer.compare(a, b)
+}
+
 function sortElements(
-  elements: readonly Buffer[],
-  args: SortArgs,
+  { type, elements }: SortSource,
+  options: SortOptions,
   db: RedisDatabase,
 ): Buffer[] {
-  if (args.by && isNoSortPattern(args.by)) {
-    return [...elements]
+  if (options.dontsort) {
+    // A constant BY does not simply skip the sort: for DESC, sortCommand()'s
+    // dontsort branch walks a list and a zset's skiplist from the tail toward
+    // the head, and applies LIMIT to that reversed walk. A set has no such
+    // branch, so there DESC really is a no-op (#426).
+    const unsorted = [...elements]
+    if (options.desc && type !== 'set') unsorted.reverse()
+    return unsorted
   }
 
-  if (args.alpha) {
-    const sorted = [...elements].sort((a, b) =>
-      Buffer.compare(sortByValue(a, args, db), sortByValue(b, args, db)),
+  // sortCompare() negates its result for DESC instead of reversing the sorted
+  // vector, so elements that compare equal keep their load order in *both*
+  // directions (#443) — which a stable sort on the negated comparison gives.
+  const direction = options.desc ? -1 : 1
+  const by = options.by
+
+  if (options.alpha) {
+    // Known differences from real Redis, both about elements that tie:
+    // - With BY plus a LIMIT that does not cover the whole vector, real Redis
+    //   uses its own partial quicksort (pqsort), which is not stable beyond
+    //   six elements; the mock stays stable.
+    // - A zset is loaded from its dict, whose hash seed is random per
+    //   process: for `ZADD zr 3 c 2 b 1 a`, `SORT zr BY missing_* ALPHA` gave
+    //   `b c a`, `c a b` and `a c b` across three starts of 8.0.6. The mock
+    //   loads rank order. That order is undefined, so it is left untested.
+    const weighted = elements.map(element => ({
+      element,
+      weight: by ? readSortPattern(db, by, element) : element,
+    }))
+    weighted.sort(
+      (a, b) => direction * compareSortAlphaWeights(a.weight, b.weight),
     )
-    if (args.desc) sorted.reverse()
-    return sorted
+    return weighted.map(entry => entry.element)
   }
 
   const scored = elements.map(element => ({
     element,
-    score: sortNumericScore(sortByValue(element, args, db)),
+    score: sortNumericScore(by ? readSortPattern(db, by, element) : element),
   }))
-  scored.sort((a, b) => a.score - b.score)
-  if (args.desc) scored.reverse()
+  // sortCompare() falls through to compareStringObjects() on equal scores, so
+  // ties are broken lexicographically rather than left in insertion order.
+  scored.sort(
+    (a, b) =>
+      direction *
+      (compareNumbers(a.score, b.score) ||
+        Buffer.compare(a.element, b.element)),
+  )
   return scored.map(entry => entry.element)
+}
+
+function compareNumbers(a: number, b: number): number {
+  if (a > b) return 1
+  if (a < b) return -1
+  return 0
 }
 
 function applySortLimit(
   elements: Buffer[],
-  limit: SortArgs['limit'],
+  limit: SortOptions['limit'],
 ): Buffer[] {
   if (!limit) return elements
   // Redis clamps a negative offset to 0; a negative count means "all remaining".
@@ -733,17 +870,59 @@ function applySortLimit(
   return elements.slice(start, start + limit.count)
 }
 
-function runSort(args: SortArgs, db: RedisDatabase) {
-  const source = readSortSource(db, args.key)
-  const sorted = applySortLimit(sortElements(source, args, db), args.limit)
-  const output = projectSortOutput(sorted, args, db)
+/**
+ * Mirrors `sortCommand()`'s determinism override: a constant `BY` normally
+ * means "do not sort", but an unordered SET source whose output has to be
+ * reproducible — it is written by STORE, or returned to a script — is
+ * force-sorted ALPHA with the `BY` dropped. Lists have a defined order, so
+ * only sets are overridden. Real Redis leaves zsets alone for the same reason:
+ * `sortCommand()` walks the skiplist, so a zset source already arrives in rank
+ * order — which `readSortSource` now reproduces (#418).
+ */
+function forceDeterministicSetOrder(
+  options: SortOptions,
+  type: SortSource['type'],
+  ctx: RedisExecutionContext,
+): SortOptions {
+  if (!options.dontsort) {
+    return options
+  }
+  if (!options.store && !ctx.inScript) {
+    return options
+  }
+  if (type !== 'set') {
+    return options
+  }
 
-  if (args.store) {
-    db.delete(args.store)
-    if (output.length > 0) {
-      db.updateList(args.store, list =>
-        list.pushRight(output.map(value => value ?? Buffer.alloc(0))),
-      )
+  return { ...options, dontsort: false, by: undefined, alpha: true }
+}
+
+function runSort(
+  args: SortArgs,
+  ctx: RedisExecutionContext,
+  allowStore: boolean,
+) {
+  const options = scanSortOptions(args, allowStore, ctx)
+  const db = ctx.db
+  const source = readSortSource(db, args.key)
+  const effective = forceDeterministicSetOrder(options, source.type, ctx)
+  const sorted = applySortLimit(
+    sortElements(source, effective, db),
+    options.limit,
+  )
+  const output = projectSortOutput(sorted, options.get, db)
+
+  if (options.store) {
+    // An empty result deletes the destination (`del`); otherwise the list
+    // replaces whatever was there in one write, published as `sortstore` —
+    // not `del` followed by the command name.
+    if (output.length === 0) {
+      db.delete(options.store)
+    } else {
+      db.withOrigin('sortstore').set(options.store, {
+        type: 'list',
+        values: output.map(value => value ?? Buffer.alloc(0)),
+      })
     }
     return integer(output.length)
   }
@@ -751,30 +930,18 @@ function runSort(args: SortArgs, db: RedisDatabase) {
   return array(output.map(element => RedisValue.bulkString(element)))
 }
 
-function sortByValue(
-  element: Buffer,
-  args: SortArgs,
-  db: RedisDatabase,
-): Buffer {
-  if (!args.by) {
-    return element
-  }
-
-  return readSortPattern(db, args.by, element) ?? Buffer.alloc(0)
-}
-
 function projectSortOutput(
   elements: readonly Buffer[],
-  args: SortArgs,
+  get: readonly Buffer[],
   db: RedisDatabase,
 ): Array<Buffer | null> {
-  if (args.get.length === 0) {
+  if (get.length === 0) {
     return elements.map(element => Buffer.from(element))
   }
 
   const output: Array<Buffer | null> = []
   for (const element of elements) {
-    for (const pattern of args.get) {
+    for (const pattern of get) {
       output.push(
         isSelfSortPattern(pattern)
           ? Buffer.from(element)
@@ -785,74 +952,86 @@ function projectSortOutput(
   return output
 }
 
+/**
+ * Mirrors `lookupKeyByPattern()`: a pattern with no `*` resolves to nothing,
+ * and a key holding anything other than a string resolves to nothing either —
+ * real Redis never turns that into a WRONGTYPE for the whole SORT.
+ */
 function readSortPattern(
   db: RedisDatabase,
   pattern: Buffer,
   element: Buffer,
 ): Buffer | null {
-  const key = expandSortPattern(pattern, element)
-  const type = db.getType(key)
-  if (type === null) {
+  const wildcard = sortPatternWildcardIndex(pattern)
+  if (wildcard === -1) {
     return null
   }
-  if (type !== 'string') {
-    throw new WrongTypeRedisError()
+
+  const key = expandSortPattern(pattern, wildcard, element)
+  if (db.getType(key) !== 'string') {
+    return null
   }
   return db.getString(key)
 }
 
-function expandSortPattern(pattern: Buffer, element: Buffer): Buffer {
-  const index = pattern.indexOf(0x2a)
-  if (index === -1) {
-    return Buffer.from(pattern)
-  }
-
+function expandSortPattern(
+  pattern: Buffer,
+  wildcard: number,
+  element: Buffer,
+): Buffer {
   return Buffer.concat([
-    pattern.subarray(0, index),
+    pattern.subarray(0, wildcard),
     element,
-    pattern.subarray(index + 1),
+    pattern.subarray(wildcard + 1),
   ])
 }
 
-function isSelfSortPattern(pattern: Buffer): boolean {
-  return pattern.length === 1 && pattern[0] === 0x23
-}
-
-function isNoSortPattern(pattern: Buffer): boolean {
-  return pattern.toString().toLowerCase() === 'nosort'
-}
-
+/**
+ * Port of `sortGetKeys()`: the source key and, when present, the STORE
+ * destination — never the BY/GET patterns, whose cluster safety is checked by
+ * SORT's own option scan. The options are not parsed until the command runs,
+ * so this does its own light scan the way Redis does: skip LIMIT's two
+ * arguments and BY's or GET's one, so a `STORE` in value position is not
+ * mistaken for the option, and let the last STORE win.
+ */
 function sortRoutingKeys(args: SortArgs): Buffer[] {
-  const keys = [args.key]
-  if (args.by && !isNoSortPattern(args.by)) {
-    keys.push(args.by)
-  }
-  for (const pattern of args.get) {
-    if (!isSelfSortPattern(pattern)) {
-      keys.push(pattern)
+  const { options } = args
+  let store: Buffer | undefined
+
+  for (let i = 0; i < options.length; i++) {
+    const option = options[i]!.toString().toUpperCase()
+    if (option === 'LIMIT') {
+      i += 2
+      continue
+    }
+    if (option === 'GET' || option === 'BY') {
+      i += 1
+      continue
+    }
+    if (option === 'STORE' && i + 1 < options.length) {
+      store = options[i + 1]
     }
   }
-  if (args.store) {
-    keys.push(args.store)
-  }
-  return keys
+
+  return store ? [args.key, store] : [args.key]
 }
 
 export const sortCommand = defineCommand({
   name: 'sort',
-  schema: sortSchema(true),
+  schema: sortSchema(),
   flags: ['write', 'denyoom'],
   keys: sortRoutingKeys,
-  execute: (args, ctx) => runSort(args, ctx.db),
+  execute: (args, ctx) => runSort(args, ctx, true),
 })
 
 export const sortRoCommand = defineCommand({
   name: 'sort_ro',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: sortSchema(false),
+  schema: sortSchema(),
   flags: ['readonly'],
-  keys: sortRoutingKeys,
-  execute: (args, ctx) => runSort(args, ctx.db),
+  // sortROGetKeys() reports the source key only: SORT_RO has no STORE.
+  keys: args => [args.key],
+  execute: (args, ctx) => runSort(args, ctx, false),
 })
 
 export const keysCommands = [

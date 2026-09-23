@@ -1,6 +1,8 @@
+import { isIntegerToken } from '../../core/command-schema'
 import {
   ExpectedIntegerError,
   InvalidStreamIdError,
+  RedisCommandError,
 } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { MIN_ID } from '../../state/stream-ids'
@@ -83,6 +85,29 @@ export function exclusiveAware(
     return exclusive ? cmp > 0 : cmp >= 0
   }
   return exclusive ? cmp < 0 : cmp <= 0
+}
+
+const INT64_MIN = -(1n << 63n)
+const INT64_MAX = (1n << 63n) - 1n
+
+/**
+ * Redis' `getLongLongFromObjectOrReply` with a custom message: a strict
+ * `string2ll` int64 (no sign `+`, no leading zeros), or `ERR <message>`.
+ */
+export function parseLongLong(token: Buffer, message: string): bigint {
+  const raw = token.toString()
+  if (isIntegerToken(raw)) {
+    const value = BigInt(raw)
+    if (value >= INT64_MIN && value <= INT64_MAX) return value
+  }
+  throw new RedisCommandError(message)
+}
+
+// Redis' streamIncrID: the next id, or null past the maximum.
+export function incrementStreamId(id: StreamId): StreamId | null {
+  if (id.seq < MAX_UINT64) return { ms: id.ms, seq: id.seq + 1n }
+  if (id.ms < MAX_UINT64) return { ms: id.ms + 1n, seq: 0n }
+  return null
 }
 
 export function parseNonNegativeInteger(token: Buffer): number {

@@ -1,11 +1,12 @@
 import { RedisClusterTopology } from './cluster-topology'
 import { RedisDatabase } from './database'
-import { KeyspaceNotifier } from './keyspace-notifier'
+import { KeyspaceNotifier, type KeyspaceNotifyFlags } from './keyspace-notifier'
 import { RedisMonitorFeed } from './monitor-feed'
 import type { Unsubscribe } from './mutation-events'
 import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
 import { RedisFunctionRegistry } from './function-registry'
+import { SerialTurnQueue } from '../core/turn-queue'
 import type { RedisClientSession } from '../core/redis-context'
 import {
   createRedisLuaRuntime,
@@ -40,6 +41,9 @@ export type RedisServerStateOptions = {
 
 const DEFAULT_ACTIVE_EXPIRY_INTERVAL_MS = 100
 
+/** Redis' compiled-in default for `proto-max-bulk-len`: 512MB. */
+const DEFAULT_PROTO_MAX_BULK_LEN = 536870912n
+
 export class RedisServerState {
   readonly databases: RedisDatabase[]
   readonly scriptCache: RedisScriptCache
@@ -50,11 +54,27 @@ export class RedisServerState {
   readonly requirepass?: string
   readonly profile: CompatibilityProfile
   /**
-   * Normalized `notify-keyspace-events` flag string (Redis canonical form, e.g.
-   * `"AKE"`). Empty string disables keyspace notifications. Managed via
-   * CONFIG GET/SET; read by the wired {@link KeyspaceNotifier} on each mutation.
+   * The server's single serialization turn. Every command on every database —
+   * plus active expiry and seeding — runs under a turn from this queue, so the
+   * mock is single-threaded across all databases exactly like real Redis. A
+   * blocking command yields the turn while parked (`RedisTurnHandle.suspend`).
+   * Each cluster node has its own `RedisServerState`, hence its own queue.
    */
-  notifyKeyspaceEvents = ''
+  readonly turnQueue = new SerialTurnQueue()
+  /**
+   * Parsed `notify-keyspace-events` flags; empty disables keyspace
+   * notifications. Parsed once by CONFIG SET (and rendered back to Redis'
+   * canonical string by CONFIG GET), so the wired {@link KeyspaceNotifier}
+   * reads it on each mutation without re-parsing.
+   */
+  notifyKeyspaceEvents: KeyspaceNotifyFlags = new Set()
+  /**
+   * Redis `proto-max-bulk-len` (default 512MB), as a bigint so the full
+   * configurable range (up to int64 max) round-trips exactly. It caps how large
+   * a single string value may grow: APPEND and SETRANGE refuse rather than
+   * allocate past it. Managed via CONFIG GET/SET.
+   */
+  protoMaxBulkLen = DEFAULT_PROTO_MAX_BULK_LEN
   private readonly clientSessions = new Set<RedisClientSession>()
   private activeExpiryTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
@@ -86,15 +106,21 @@ export class RedisServerState {
     const notifier = new KeyspaceNotifier(this.pubsubBroker)
     for (const database of this.databases) {
       database.subscribe(event =>
-        notifier.handle(
-          event,
-          database.activeNotifyCommand,
-          this.notifyKeyspaceEvents,
-        ),
+        notifier.handle(event, this.notifyKeyspaceEvents),
       )
     }
 
     this.startActiveExpiry(options?.activeExpiryIntervalMs)
+  }
+
+  /**
+   * Redis' `server.cluster_enabled`: true on a cluster node, false on a
+   * standalone server, whose topology has no nodes. Commands that behave
+   * differently in cluster mode — `HELLO`/`INFO`'s mode, SORT's BY/GET
+   * pattern guard — branch on this rather than on the topology directly.
+   */
+  get clusterEnabled(): boolean {
+    return this.clusterTopology.nodes.length > 0
   }
 
   /**
@@ -193,20 +219,16 @@ export class RedisServerState {
       return
     }
 
-    const now = Date.now()
-    for (const database of this.databases) {
+    // One turn per tick sweeps every database.
+    const turn = await this.turnQueue.waitTurn()
+    try {
       if (this.closed) {
         return
       }
 
-      const turn = await database.turnQueue.waitTurn()
-      try {
-        if (!this.closed) {
-          database.sweepExpired(now)
-        }
-      } finally {
-        turn.release()
-      }
+      this.sweepExpired(Date.now())
+    } finally {
+      turn.release()
     }
   }
 }

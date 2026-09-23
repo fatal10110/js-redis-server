@@ -1,4 +1,5 @@
 import { RedisCommandError } from '../../core/redis-error'
+import type { RedisDatabase } from '../../state/database'
 import type {
   RedisStreamConsumerGroup,
   RedisStreamData,
@@ -58,6 +59,31 @@ export function requireStreamGroup(
     throw new NoSuchStreamGroupError(key, groupName, commandName)
   }
   return group
+}
+
+/**
+ * Create `consumerName` in the group if it does not exist yet, as its own
+ * mutation published as `xgroup-createconsumer` — what real Redis announces
+ * when XREADGROUP / XCLAIM / XAUTOCLAIM create a consumer implicitly (their
+ * own work publishes nothing). Like XGROUP CREATECONSUMER it leaves a WATCH on
+ * the stream intact. The caller has already validated that the group exists.
+ */
+export function createConsumerIfMissing(
+  db: RedisDatabase,
+  key: Buffer,
+  groupName: Buffer,
+  consumerName: Buffer,
+  now: number,
+): void {
+  db.withOrigin('xgroup-createconsumer').updateStream(key, stream => {
+    const group = streamGroup(stream.value, groupName)
+    if (!group) return
+    stream.addConsumer(group, bufferId(consumerName), {
+      name: Buffer.from(consumerName),
+      seenAt: now,
+      activeAt: null,
+    })
+  })
 }
 
 export function streamLag(

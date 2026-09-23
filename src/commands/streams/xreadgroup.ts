@@ -6,7 +6,7 @@ import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
 import { bulk } from '../helpers'
-import { requireStreamGroup } from './groups'
+import { createConsumerIfMissing, requireStreamGroup } from './groups'
 import { parseExactId, parseNonNegativeInteger } from './ids'
 import { bulkString, deletedEntryToReply, entryToReply } from './replies'
 
@@ -110,6 +110,7 @@ function readGroupEntries(
   }
 
   for (const { key, id } of streams) {
+    createConsumerIfMissing(ctx.db, key, groupName, consumerName, now)
     const delivered = ctx.db.updateStream(key, stream => {
       const group = requireStreamGroup(
         stream.value,
@@ -198,7 +199,9 @@ async function blockingXreadGroup(
 
 export const xreadgroupCommand = defineCommand({
   name: 'xreadgroup',
-  schema: t.object({ args: createXreadGroupSchema() }),
+  schema: t.object({
+    args: t.withLayout(createXreadGroupSchema(), { min: 6 }),
+  }),
   flags: ['write', 'blocking'],
   capabilities: { blocking: true },
   keys: args => args.args.streams.map(s => s.key),

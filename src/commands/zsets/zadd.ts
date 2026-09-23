@@ -9,11 +9,7 @@ import {
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { RedisResult } from '../../core/redis-result'
 import { bulk, integer, scoreValue } from '../helpers'
-import {
-  assertValidResultingScore,
-  deleteSortedSetIfEmpty,
-  parseFloatArg,
-} from './helpers'
+import { assertValidResultingScore, parseFloatArg } from './helpers'
 
 type ZaddPair = { score: number; member: Buffer }
 type ZaddCondition = 'NX' | 'XX'
@@ -34,6 +30,7 @@ type ZaddArgs = {
 
 function createZaddSchema() {
   return t.custom<ZaddArgs>(
+    { min: 3, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key) {
@@ -167,7 +164,6 @@ export const zaddCommand = defineCommand({
         zset.setScore(member, nextScore)
         return nextScore
       })
-      deleteSortedSetIfEmpty(ctx.db, args.key)
       return newScore === null
         ? bulk(null)
         : RedisResult.create(scoreValue(newScore))
@@ -190,7 +186,6 @@ export const zaddCommand = defineCommand({
       }
       return count
     })
-    deleteSortedSetIfEmpty(ctx.db, args.key)
     return integer(replyCount)
   },
 })

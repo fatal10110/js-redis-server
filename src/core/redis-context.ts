@@ -65,8 +65,11 @@ export interface RedisClientSession {
   pubsubUnsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
-  registerResponseStreamCleanup(cleanup: () => void): () => void
-  resetResponseStreams(): void
+  enqueuePush(result: RedisResult): void
+  onReset(cleanup: () => void): () => void
+  resetPushProducers(): void
+  readonly monitoring: boolean
+  startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void
   disconnect(reason?: string): void
 }
 
@@ -76,6 +79,12 @@ export interface RedisExecutionContext {
   readonly session: RedisClientSession
   readonly executor: CommandExecutor
   readonly transactionReplay?: boolean
+  /**
+   * Set while the command runs inside a Lua script (`redis.call`/`pcall`),
+   * mirroring real Redis' `CLIENT_SCRIPT` flag. Commands whose reply must be
+   * reproducible across replicas — `SORT` over a set, today — branch on it.
+   */
+  readonly inScript?: boolean
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

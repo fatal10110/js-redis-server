@@ -5,7 +5,6 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
@@ -16,7 +15,6 @@ describe(`LPOS / LMOVE Integration (node-redis, ${testRunner.getBackendName()})`
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

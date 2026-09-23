@@ -65,6 +65,36 @@ npm run test:integration:real
 npm run test:all
 ```
 
+The real backend is a shared Redis cluster that is **not** flushed between test
+files, so every integration test must namespace the keys it touches with
+`randomKey()` (see `tests-integration/utils.ts`) — no fixed literal key names,
+no assertions that depend on a key being absent at start, and no assertions on
+total `DBSIZE`. The suite has to pass twice in a row without a flush in between.
+
+`npm run test:integration:real` flushes first via `npm run clean:redis`, which
+uses `scripts/flush-redis.ts` (no `redis-cli` required) and exits non-zero
+unless every endpoint is verifiably empty and the cluster reports
+`cluster_state:ok`. Its error output says what to do about each failure; start
+the backends with `docker compose -f docker-compose.test.yml up -d --wait`
+beforehand.
+
+Both the harness and that script read the same env vars, so you can point them
+at a private cluster when the default one is shared:
+
+```bash
+REDIS_CLUSTER_PORTS=31100 \
+REDIS_STANDALONE_PORT=7811 \
+REDIS_STANDALONE_AUTH_PORT=7812 \
+  npm run test:integration:real
+```
+
+`REDIS_CLUSTER_PORTS` is a comma-separated list of **seed** ports, defaulting
+to `30000,30001,30002,30003,30004,30005`. One reachable node is enough: the
+harness's cluster clients discover the rest from it, and `clean:redis` flushes
+the whole topology it finds, failing if any node in it is unreachable. Ranges
+like `30000-30005` are rejected rather than expanded, and any malformed entry —
+in this or either standalone port — is an error instead of being skipped.
+
 ## Adding New Redis Commands
 
 1. Create the command file in the appropriate directory:
@@ -108,34 +138,8 @@ npm run test:all
 The package publishes two entry points: the curated root (`src/index.ts`) and
 the `/core` hand-wiring subpath (`src/internal.ts`). Both are public API.
 
-The full exported symbol list for both is pinned in
-`tests-package/export-surface.json` and checked by `npm run test:package`. Per
-symbol it records:
-
-- `kind` — `value` (has a runtime binding) or `type` (type-only). A downgrade
-  from one to the other is breaking and is reported.
-- `members` — own properties and methods of an exported interface, class,
-  object type alias or `const` namespace. Statics are prefixed `static:`.
-  Inherited members are not walked.
-- `variants` — the literal constituents of a union, so dropping `'noscript'`
-  from `CommandFlag` reads as a removal.
-
-Then:
-
-- **A removal fails the build**, naming the symbol, member or variant. If it is
-  intentional, add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md)
-  and refresh the baseline in the same commit.
-- **An addition also fails the build**, in a separate test that says so. It is
-  not a breaking change — just run the refresh so the next PR that deletes the
-  new symbol is caught.
-
-Refresh with:
-
-```bash
-npm run export-baseline
-```
-
-and commit the updated `tests-package/export-surface.json`.
+Removing or renaming anything exported from either is a breaking change. Note it
+under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) in the same PR.
 
 ## Releasing both npm packages
 

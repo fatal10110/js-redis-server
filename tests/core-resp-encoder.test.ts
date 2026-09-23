@@ -44,9 +44,16 @@ describe('RESP encoder core', () => {
       encodeRedisValue(RedisValue.double(Number.NaN)),
       Buffer.from('$3\r\nnan\r\n'),
     )
+    // `sdsmapchars(s, "\r\n", "  ", 2)` in real Redis is a 1:1 character map,
+    // so a `\r\n` run becomes two spaces rather than being collapsed to one
+    // (#388). Pinned against redis-server 7.0.15 and 8.0.6.
     assert.deepStrictEqual(
       encodeRedisValue(RedisValue.error('bad\r\nframe', 'ERR')),
-      Buffer.from('-ERR bad frame\r\n'),
+      Buffer.from('-ERR bad  frame\r\n'),
+    )
+    assert.deepStrictEqual(
+      encodeRedisValue(RedisValue.error('one\nline', 'ERR')),
+      Buffer.from('-ERR one line\r\n'),
     )
   })
 

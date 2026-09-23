@@ -2,13 +2,14 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  randomKey,
+  waitUntilGone,
+} from '../../utils'
 
 const testRunner = new TestRunner()
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -70,7 +71,11 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [1],
       )
 
-      await delay(40)
+      await waitUntilGone(
+        () => directClient!.hget(key, 'soon'),
+        "hash field 'soon' (5ms TTL)",
+        { timeoutMs: 1000 },
+      )
 
       assert.strictEqual(await directClient.hget(key, 'soon'), null)
       assert.deepStrictEqual(
@@ -112,7 +117,11 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [1],
       )
 
-      await delay(40)
+      await waitUntilGone(
+        () => directClient!.hget(key, 'gone'),
+        "hash field 'gone' (5ms TTL)",
+        { timeoutMs: 1000 },
+      )
 
       const [, scanEntries] = (await directClient.hscan(key, '0')) as [
         string,
@@ -238,7 +247,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.deepStrictEqual(
         await directClient.hpexpire(
           key,
-          '20',
+          '500',
           'FIELDS',
           '3',
           'replace',
@@ -255,7 +264,13 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         '2.5',
       )
 
-      await delay(50)
+      // Poll instead of sleeping past the TTL: HINCRBY kept 'counter' on its
+      // original 500ms clock, and a fixed sleep has to out-wait both that and
+      // the machine (#411).
+      await waitUntilGone(
+        () => directClient!.hget(key, 'counter'),
+        "hash field 'counter' (500ms TTL, preserved by HINCRBY)",
+      )
 
       assert.strictEqual(await directClient.hget(key, 'replace'), 'new')
       assert.strictEqual(await directClient.hget(key, 'counter'), null)

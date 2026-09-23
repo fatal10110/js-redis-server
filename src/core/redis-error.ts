@@ -1,11 +1,40 @@
+import type { CompatibilityProfile } from './compatibility'
+
 export class RedisCommandError extends Error {
+  /**
+   * The byte-exact reply body, set only when the error was built from a
+   * Buffer. `Error.message` is a `string`, so an error that echoes raw client
+   * bytes (an unknown subcommand, say) would lose them to U+FFFD on the way to
+   * the wire; this keeps the original alongside the lossy `message` used for
+   * logging and assertions. Read it through {@link errorReplyBody}.
+   */
+  readonly messageBytes?: Buffer
+
   constructor(
-    message: string,
+    message: string | Buffer,
     public readonly code = 'ERR',
   ) {
-    super(message)
+    super(typeof message === 'string' ? message : message.toString())
     this.name = code
+    if (typeof message !== 'string') {
+      this.messageBytes = message
+    }
   }
+}
+
+/**
+ * The reply body to put on the wire for a {@link RedisCommandError} — its raw
+ * bytes when it carries any, otherwise its message. Every conversion from a
+ * caught error to a reply goes through this (or {@link RedisResult.fromError},
+ * which wraps it); reading `error.message` directly drops the bytes.
+ */
+export function errorReplyBody(error: RedisCommandError): string | Buffer {
+  return error.messageBytes ?? error.message
+}
+
+/** {@link errorReplyBody} for the callers that need a Buffer either way. */
+export function errorReplyBytes(error: RedisCommandError): Buffer {
+  return error.messageBytes ?? Buffer.from(error.message)
 }
 
 export class WrongNumberOfArgumentsError extends RedisCommandError {
@@ -256,6 +285,16 @@ export class OffsetOutOfRangeError extends RedisCommandError {
   }
 }
 
+/**
+ * A command that grows a string value (APPEND/SETRANGE) would push it past
+ * `proto-max-bulk-len`. Redis refuses instead of allocating the value.
+ */
+export class StringExceedsMaxSizeError extends RedisCommandError {
+  constructor() {
+    super('string exceeds maximum allowed size (proto-max-bulk-len)')
+  }
+}
+
 /** SETBIT/GETBIT/BITFIELD offset that is negative, non-integer, or >= 2^32. */
 export class BitOffsetError extends RedisCommandError {
   constructor() {
@@ -347,18 +386,6 @@ export class RedisClusterDownError extends RedisCommandError {
   }
 }
 
-export class UnknownScriptSubcommandError extends RedisCommandError {
-  constructor(subcommand: string | Buffer) {
-    super(`unknown subcommand '${subcommand}'. Try SCRIPT HELP.`)
-  }
-}
-
-export class UnknownClusterSubcommandError extends RedisCommandError {
-  constructor(subcommand: string | Buffer) {
-    super(`unknown subcommand '${subcommand}'. Try CLUSTER HELP.`)
-  }
-}
-
 export class ScriptFlushOptionError extends RedisCommandError {
   constructor() {
     super('SCRIPT FLUSH only support SYNC|ASYNC option')
@@ -371,9 +398,18 @@ export class ScriptDebugModeError extends RedisCommandError {
   }
 }
 
+/**
+ * A script's `redis.call` named a command (or, from 7.0, a container
+ * subcommand) that command lookup cannot find. Valkey 8.0+ drops the product
+ * name; without a profile the Redis wording is used.
+ */
 export class ScriptUnknownCommandError extends RedisCommandError {
-  constructor() {
-    super('Unknown Redis command called from script')
+  constructor(profile?: CompatibilityProfile) {
+    super(
+      profile?.has('script.unknown-command-valkey-wording')
+        ? 'Unknown command called from script'
+        : 'Unknown Redis command called from script',
+    )
   }
 }
 
@@ -578,6 +614,15 @@ export class UnknownRedisCommandError extends RedisCommandError {
     )
   }
 }
+
+/**
+ * A container was given a subcommand it does not have (`CONFIG BOGUS`). The
+ * body is profile-specific and built only by `unknownSubcommandError` in
+ * src/core/subcommand-errors.ts; the class exists so the Lua runtime can tell a
+ * failed 7.0+ subcommand *lookup* in `CommandExecutor.plan()` apart from other
+ * planning errors, and answer it like an unknown command (#439).
+ */
+export class UnknownSubcommandError extends RedisCommandError {}
 
 function formatUnknownCommandName(commandName: string | Buffer): string {
   return typeof commandName === 'string'

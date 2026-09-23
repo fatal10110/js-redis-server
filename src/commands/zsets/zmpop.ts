@@ -13,7 +13,7 @@ import {
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { scoreValue } from '../helpers'
-import { deleteSortedSetIfEmpty, getSortedMembers } from './helpers'
+import { getSortedMembers } from './helpers'
 
 type ZsetMultiPopSide = 'min' | 'max'
 
@@ -154,12 +154,15 @@ export function tryZsetMultiPop(
     const toRemove = candidates.slice(0, count)
     if (toRemove.length === 0) continue
 
-    db.updateSortedSet(key, zset => {
-      for (const entry of toRemove) {
-        zset.deleteMember(entry.member)
-      }
-    })
-    deleteSortedSetIfEmpty(db, key)
+    // Published as the underlying zpopmin/zpopmax, as real Redis does (#446).
+    db.withOrigin(side === 'min' ? 'zpopmin' : 'zpopmax').updateSortedSet(
+      key,
+      zset => {
+        for (const entry of toRemove) {
+          zset.deleteMember(entry.member)
+        }
+      },
+    )
 
     return RedisResult.create(
       RedisValue.array([
@@ -233,7 +236,7 @@ async function blockingZsetMultiPop(
 export const zmpopCommand = defineCommand({
   name: 'zmpop',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: t.custom<ZsetMultiPopArgs>((input, index, ctx) => ({
+  schema: t.custom<ZsetMultiPopArgs>({ min: 3 }, (input, index, ctx) => ({
     value: parseZsetMultiPopArgs(input, index, ctx, { blocking: false }),
     nextIndex: input.length,
   })),
@@ -247,10 +250,13 @@ export const zmpopCommand = defineCommand({
 export const bzmpopCommand = defineCommand({
   name: 'bzmpop',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: t.custom<BlockingZsetMultiPopArgs>((input, index, ctx) => ({
-    value: parseZsetMultiPopArgs(input, index, ctx, { blocking: true }),
-    nextIndex: input.length,
-  })),
+  schema: t.custom<BlockingZsetMultiPopArgs>(
+    { min: 4 },
+    (input, index, ctx) => ({
+      value: parseZsetMultiPopArgs(input, index, ctx, { blocking: true }),
+      nextIndex: input.length,
+    }),
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {

@@ -8,6 +8,7 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
+import { listPopEvent } from './helpers'
 
 export function tryListPop(
   keys: readonly Buffer[],
@@ -18,15 +19,14 @@ export function tryListPop(
     const list = db.getList(key)
     if (!list || list.values.length === 0) continue
 
-    const result = db.updateList(key, list => {
-      const value = list.pop(side)
-      return { value, empty: list.length === 0 }
-    })
-    if (result.empty) db.delete(key)
+    // Published as the underlying lpop/rpop, as real Redis does (#446).
+    const value = db
+      .withOrigin(listPopEvent(side))
+      .updateList(key, list => list.pop(side))
     return RedisResult.create(
       RedisValue.array([
         RedisValue.bulkString(key),
-        RedisValue.bulkString(result.value),
+        RedisValue.bulkString(value),
       ]),
     )
   }
@@ -85,14 +85,17 @@ async function blockingListPop(
 
 export const blpopCommand = defineCommand({
   name: 'blpop',
-  schema: t.custom<{ keys: Buffer[]; timeout: number }>((input, index, ctx) => {
-    if (input.length - index < 2)
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    const timeout = Number(input[input.length - 1].toString())
-    if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
-    const keys = Array.from(input.slice(index, input.length - 1))
-    return { value: { keys, timeout }, nextIndex: input.length }
-  }),
+  schema: t.custom<{ keys: Buffer[]; timeout: number }>(
+    { min: 2, keyRange: { start: 0, step: 1, last: -2 } },
+    (input, index, ctx) => {
+      if (input.length - index < 2)
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const timeout = Number(input[input.length - 1].toString())
+      if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
+      const keys = Array.from(input.slice(index, input.length - 1))
+      return { value: { keys, timeout }, nextIndex: input.length }
+    },
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {
@@ -104,14 +107,17 @@ export const blpopCommand = defineCommand({
 
 export const brpopCommand = defineCommand({
   name: 'brpop',
-  schema: t.custom<{ keys: Buffer[]; timeout: number }>((input, index, ctx) => {
-    if (input.length - index < 2)
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    const timeout = Number(input[input.length - 1].toString())
-    if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
-    const keys = Array.from(input.slice(index, input.length - 1))
-    return { value: { keys, timeout }, nextIndex: input.length }
-  }),
+  schema: t.custom<{ keys: Buffer[]; timeout: number }>(
+    { min: 2, keyRange: { start: 0, step: 1, last: -2 } },
+    (input, index, ctx) => {
+      if (input.length - index < 2)
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      const timeout = Number(input[input.length - 1].toString())
+      if (isNaN(timeout) || timeout < 0) throw new RedisSyntaxError()
+      const keys = Array.from(input.slice(index, input.length - 1))
+      return { value: { keys, timeout }, nextIndex: input.length }
+    },
+  ),
   flags: ['write', 'noscript'],
   keys: args => args.keys,
   execute: (args, ctx) => {

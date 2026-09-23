@@ -1,8 +1,8 @@
 import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
 import type { RedisResult } from './redis-result'
-import type { ResponseStream } from './response-stream'
-import type { VersionGate } from './compatibility'
+import type { CompatibilityProfile, VersionGate } from './compatibility'
+import { asciiLowerCase } from './ascii-case'
 
 export type CommandFlag =
   | 'readonly'
@@ -67,13 +67,18 @@ export type CommandDocumentationArgument = {
   flags?: readonly string[]
 }
 
+/**
+ * `COMMAND INFO` / `COMMAND DOCS` metadata that cannot be derived from the
+ * rest of the definition (#370). Arity comes from `schema` and the legacy
+ * first/last/step key range from `keySpecs` (or, without them, from the
+ * schema's key positions) — declare `arity` only where the schema cannot
+ * express it, such as synthetic subcommand entries or a version-gated
+ * argument whose arity differs by compatibility profile.
+ */
 export type CommandIntrospection = {
   name?: string
-  arity: number
+  arity?: number | ((profile: CompatibilityProfile) => number)
   flags?: readonly string[]
-  firstKey?: number
-  lastKey?: number
-  keyStep?: number
   categories?: readonly string[]
   tips?: readonly string[]
   keySpecs?: readonly CommandKeySpec[]
@@ -81,10 +86,7 @@ export type CommandIntrospection = {
   docs?: CommandDocumentation
 }
 
-export type CommandExecutionResult =
-  | RedisResult
-  | Promise<RedisResult>
-  | ResponseStream
+export type CommandExecutionResult = RedisResult | Promise<RedisResult>
 
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string
@@ -130,6 +132,6 @@ export function defineCommand<TArgs>(
 ): CommandDefinition<TArgs> {
   return {
     ...definition,
-    name: definition.name.toLowerCase(),
+    name: asciiLowerCase(definition.name),
   }
 }

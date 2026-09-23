@@ -34,8 +34,7 @@ export function createAuthPolicy(): ExecutionPolicy {
         return
       }
 
-      const error = new NoAuthError()
-      return RedisResult.error(error.message, error.code)
+      return RedisResult.fromError(new NoAuthError())
     },
   }
 }

@@ -121,10 +121,3 @@ export function createRedisCluster(options: RedisClusterOptions): RedisCluster {
 
   return new RedisCluster(topology, handles, servers, replicationLinks)
 }
-
-/**
- * @deprecated Renamed to {@link createRedisCluster} for naming consistency with
- * `createRedisServer` / `createRedisMock`. This alias will be removed in a
- * future release.
- */
-export const buildRedisCluster = createRedisCluster

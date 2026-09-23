@@ -9,6 +9,18 @@ import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import { array, bulk } from '../helpers'
 
+// Keyspace-event names for a list pop / push on `side`. Real Redis names the
+// events of blocking, multi-key and move-style list commands (BLPOP, LMPOP,
+// LMOVE, ...) after the underlying operation, not after the command (#446), so
+// those commands mutate through `db.withOrigin(listPopEvent(side))`.
+export function listPopEvent(side: 'left' | 'right'): 'lpop' | 'rpop' {
+  return side === 'left' ? 'lpop' : 'rpop'
+}
+
+export function listPushEvent(side: 'left' | 'right'): 'lpush' | 'rpush' {
+  return side === 'left' ? 'lpush' : 'rpush'
+}
+
 export function resolveIndex(index: number, len: number): number {
   return index < 0 ? len + index : index
 }

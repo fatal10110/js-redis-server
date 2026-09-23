@@ -2,13 +2,14 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  randomKey,
+  waitUntilGone,
+} from '../../utils'
 
 const testRunner = new TestRunner()
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
 
 describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -43,7 +44,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [1],
       )
       assert.deepStrictEqual(
-        await directClient.hpexpire(key, '20', 'FIELDS', '1', 'soon'),
+        await directClient.hpexpire(key, '500', 'FIELDS', '1', 'soon'),
         [1],
       )
 
@@ -60,8 +61,8 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(seconds[0], -1)
       assert.strictEqual(typeof seconds[1], 'number')
       assert.ok(seconds[1] >= 0 && seconds[1] <= 5)
-      assert.strictEqual(typeof seconds[2], 'number')
-      assert.ok(seconds[2] >= 0 && seconds[2] <= 1)
+      // HTTL rounds up: any remaining time in (0, 1000ms] reports 1 (#432).
+      assert.strictEqual(seconds[2], 1)
       assert.strictEqual(seconds[3], -2)
 
       const milliseconds = await directClient.hpttl(
@@ -78,7 +79,7 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(typeof milliseconds[1], 'number')
       assert.ok(milliseconds[1] > 0 && milliseconds[1] <= 5000)
       assert.strictEqual(typeof milliseconds[2], 'number')
-      assert.ok(milliseconds[2] > 0 && milliseconds[2] <= 20)
+      assert.ok(milliseconds[2] > 0 && milliseconds[2] <= 500)
       assert.strictEqual(milliseconds[3], -2)
 
       assert.deepStrictEqual(
@@ -98,7 +99,13 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
         [-1, -1],
       )
 
-      await delay(60)
+      // Wait out 'soon' by polling rather than sleeping a fixed 600ms: the
+      // sleep only had to overshoot the TTL by 100ms to be correct, which a
+      // loaded machine does not guarantee (#411).
+      await waitUntilGone(
+        () => directClient!.hget(key, 'soon'),
+        "hash field 'soon' (500ms TTL)",
+      )
 
       assert.strictEqual(await directClient.hget(key, 'persistent'), 'value1')
       assert.strictEqual(await directClient.hget(key, 'volatile'), 'value2')
@@ -116,6 +123,42 @@ describe(`Hash Commands Integration (${testRunner.getBackendName()})`, () => {
       )
     } finally {
       await directClient?.del(key)
+      directClient?.disconnect()
+    }
+  })
+
+  test('HTTL rounds hash-field TTLs up to the next second, unlike key TTL', async () => {
+    const tag = `{hash-field-ttl-ceil:${randomKey()}}`
+    const hashKey = `${tag}:hash`
+    const stringKey = `${tag}:string`
+    let directClient: Redis | undefined
+
+    try {
+      assert.ok(redisClient)
+      directClient = await connectToSlotOwner(redisClient, hashKey)
+      await directClient.hset(hashKey, 'a', '1', 'b', '1')
+      assert.deepStrictEqual(
+        await directClient.hpexpire(hashKey, '1450', 'FIELDS', '1', 'a'),
+        [1],
+      )
+      assert.deepStrictEqual(
+        await directClient.hpexpire(hashKey, '2450', 'FIELDS', '1', 'b'),
+        [1],
+      )
+      await directClient.set(stringKey, 'v', 'PX', 1450)
+
+      // Hash-field TTL uses ceiling: 1450ms -> 2, 2450ms -> 3 (#432), where
+      // round-to-nearest would give 1 and 2. Holds as long as under 450ms
+      // elapse between the expire and the read.
+      assert.deepStrictEqual(
+        await directClient.httl(hashKey, 'FIELDS', '2', 'a', 'b'),
+        [2, 3],
+      )
+      // Key-level TTL keeps round-to-nearest: 1450ms -> 1 (ceiling would be
+      // 2). Holds as long as under 950ms elapse.
+      assert.strictEqual(await directClient.ttl(stringKey), 1)
+    } finally {
+      await directClient?.del(hashKey, stringKey)
       directClient?.disconnect()
     }
   })

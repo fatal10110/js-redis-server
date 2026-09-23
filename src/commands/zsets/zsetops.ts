@@ -263,7 +263,8 @@ function parseSetOp(
 }
 
 function setOpSchema(options: ParserOptions) {
-  return t.custom<SetOpArgs>((input, index, ctx) => ({
+  const layout = options.hasDest ? { min: 3, keys: [0] } : { min: 2 }
+  return t.custom<SetOpArgs>(layout, (input, index, ctx) => ({
     value: parseSetOp(input, index, ctx, options),
     nextIndex: input.length,
   }))
@@ -383,7 +384,7 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
 export const zintercardCommand = defineCommand({
   name: 'zintercard',
   since: { redis: '7.0.0', valkey: '7.2.0' },
-  schema: zintercardSchema,
+  schema: t.withLayout(zintercardSchema, { min: 2 }),
   flags: ['readonly'],
   keys: args => args.keys,
   execute: (args, ctx) => {

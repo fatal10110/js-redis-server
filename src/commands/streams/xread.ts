@@ -181,7 +181,7 @@ async function blockingXread(
 
 export const xreadCommand = defineCommand({
   name: 'xread',
-  schema: t.object({ args: createXreadSchema() }),
+  schema: t.object({ args: t.withLayout(createXreadSchema(), { min: 3 }) }),
   flags: ['readonly'],
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {

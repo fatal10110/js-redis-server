@@ -5,7 +5,6 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
@@ -33,7 +32,6 @@ describe(`HyperLogLog Commands Integration (node-redis, ${testRunner.getBackendN
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
     client = await connectToNodeRedisSlotOwner(redisClient, TAG)
   })
 

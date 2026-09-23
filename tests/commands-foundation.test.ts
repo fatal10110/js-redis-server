@@ -1,9 +1,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
 import {
+  ClientSession,
   connectionCommands,
-  InMemoryConnectionTransport,
-  isResponseStream,
   monitorCommand,
   RedisResult,
   RedisValue,
@@ -11,6 +10,7 @@ import {
 } from '../src/internal'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 import { commandFrame } from './shared-test-helpers'
+import { InMemoryTransport } from './in-memory-transport-test-helper'
 
 describe('new foundation commands', () => {
   test('supports PING, SELECT, SET, and GET through the built-in registry', async () => {
@@ -145,45 +145,63 @@ describe('new foundation commands', () => {
     session.close()
   })
 
-  test('MONITOR returns a stream and unsubscribes when closed', async () => {
+  test('MONITOR replies OK once and unsubscribes when the session closes', async () => {
     const { session, server } = createSession()
     const result = await session.execute('monitor', [])
 
-    assert.ok(isResponseStream(result))
+    assert.deepStrictEqual(result.value, RedisValue.simpleString('OK'))
+    assert.strictEqual(session.monitoring, true)
     assert.strictEqual(server.monitorFeed.subscriberCount, 1)
 
-    const iterator = result
-      .frames(new AbortController().signal)
-      [Symbol.asyncIterator]()
-    assert.deepStrictEqual(await iterator.next(), {
-      done: false,
-      value: RedisResult.ok(),
-    })
+    // Redis ignores a repeated MONITOR: no reply, no second subscription.
+    const again = await session.execute('monitor', [])
+    assert.strictEqual(again.options?.omitReply, true)
+    assert.strictEqual(server.monitorFeed.subscriberCount, 1)
 
-    result.close('test complete')
-    await result.closed
-    assert.deepStrictEqual(await iterator.next(), {
-      done: true,
-      value: undefined,
-    })
+    session.close()
+    assert.strictEqual(session.monitoring, false)
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
 
     assert.strictEqual(monitorCommand.name, 'monitor')
   })
 
-  test('RESET closes active MONITOR streams', async () => {
-    const { session, server } = createSession()
-    const result = await session.execute('monitor', [])
+  test('MONITOR holds feed lines back until its +OK is delivered', async () => {
+    const { session, server, executor } = createSession()
+    const actor = new ClientSession({ server, executor })
+    const reply = await session.execute('monitor', [])
 
-    assert.ok(isResponseStream(result))
+    // A command another client runs between MONITOR executing and its +OK
+    // reaching the wire must not become visible ahead of that +OK.
+    await actor.execute('ping', [Buffer.from('early')])
+    const reader = new AbortController()
+    const pushes = session.readPushes(reader.signal)[Symbol.asyncIterator]()
+    const first = pushes.next()
+    assert.strictEqual(await settlesBeforeNextTurn(first), false)
+
+    reply.options?.afterReply?.()
+    const line = await first
+    assert.strictEqual(line.done, false)
+    assert.match(
+      String((line.value as RedisResult).value.value),
+      /"ping" "early"$/,
+    )
+
+    reader.abort()
+    actor.close()
+    session.close()
+  })
+
+  test('RESET leaves MONITOR mode', async () => {
+    const { session, server } = createSession()
+    await session.execute('monitor', [])
     assert.strictEqual(server.monitorFeed.subscriberCount, 1)
 
     assert.deepStrictEqual(
       await session.execute('reset', []),
       RedisResult.create(RedisValue.simpleString('RESET')),
     )
-    await result.closed
 
+    assert.strictEqual(session.monitoring, false)
     assert.strictEqual(server.monitorFeed.subscriberCount, 0)
   })
 
@@ -368,7 +386,7 @@ describe('new foundation commands', () => {
 
   test('runs built-in commands through the RESP2 session adapter', async () => {
     const { session } = createSession()
-    const transport = new InMemoryConnectionTransport()
+    const transport = new InMemoryTransport()
     const adapter = new Resp2SessionAdapter({ transport, session })
     const running = adapter.run()
 
@@ -389,3 +407,14 @@ describe('new foundation commands', () => {
     )
   })
 })
+
+/** True if `promise` settles before a macrotask turn passes. */
+async function settlesBeforeNextTurn(promise: Promise<unknown>) {
+  let settled = false
+  void promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  )
+  await new Promise(resolve => setImmediate(resolve))
+  return settled
+}

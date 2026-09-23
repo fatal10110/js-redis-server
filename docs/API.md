@@ -58,8 +58,7 @@ await cluster.close()
 
 > Need control over _when_ the cluster starts listening? The lower-level
 > [`createRedisCluster()`](#createrediscluster) builder returns an un-started
-> `RedisCluster` you call `.listen()` on yourself. (`buildRedisCluster` is a
-> deprecated alias of it.)
+> `RedisCluster` you call `.listen()` on yourself.
 
 ## CLI
 
@@ -145,8 +144,11 @@ Current profile gates:
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
-| `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options | `redis-7.0+` | `valkey-8.0+` |
+| `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `ZRANK`/`ZREVRANK` `WITHSCORE` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.2+` | `valkey-8.0+` |
+| `XSETID` `ENTRIESADDED`/`MAXDELETEDID` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
+| `COMMAND GETKEYS`/`GETKEYSANDFLAGS` need an argument after the target command (arity -4; `COMMAND GETKEYS GET` is a `command\|getkeys` arity error) | `redis-7.0` only | never |
 | `GEOSEARCH`, `GEOSEARCHSTORE` | `redis-6.2+` | `valkey-8.0+` |
 | `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
@@ -154,7 +156,24 @@ Current profile gates:
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape | `redis-7.0+` | `valkey-8.0+` |
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
+| RESP multibulk element count bounded at `INT_MAX` (6.2 refuses more than `1024*1024` with `Protocol error: invalid multibulk length`) | `redis-7.0+` | `valkey-8.0+` |
+| Unknown-subcommand error wording for every container command (`unknown subcommand '<name>'. Try <CMD> HELP.` with the echoed name cut at 128 bytes, vs. 6.2's untruncated `Unknown subcommand or wrong number of arguments for '<name>'.`) | `redis-7.0+` | `valkey-8.0+` |
+| Container-subcommand resolution at command-lookup time, before anything else sees the command: `MULTI` refuses to queue an unknown subcommand and `EXEC` answers `EXECABORT`, `XGROUP`/`XINFO` never look their key up first, a script's `redis.call`/`redis.pcall` gets `Unknown Redis command called from script`, and `COMMAND GETKEYS`/`GETKEYSANDFLAGS` answer `Invalid command specified` and `ACL DRYRUN` `Command '<name>' not found` (6.2 rejects the subcommand only when it runs, and `XGROUP`/`XINFO` check the key first) | `redis-7.0+` | `valkey-8.0+` |
+| `XINFO HELP` / `XGROUP HELP` as keyless arity-2 subcommands (`xinfo\|help`/`xgroup\|help` arity error with an argument; 6.2 answers `XINFO HELP <anything>` and treats `XGROUP HELP <args>` as an unknown subcommand, key first) and the `XGROUP HELP` text documenting `ENTRIESREAD` | `redis-7.0+` | `valkey-8.0+` |
+| `Print this help.` as the last line of `XINFO HELP` / `XGROUP HELP` (6.2 / 7.0: `Prints this help.`; the other containers' HELP still says `Prints` on every profile) | `redis-7.2+` | `valkey-8.0+` |
+| `Unknown command called from script` (no `Redis`) for a script's unknown command or subcommand | never | `valkey-8.0+` |
+| `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`, which echoes the name as sent and has no detail suffix for `notify-keyspace-events`), and unknown-parameter wording (`Unknown option or number of arguments for CONFIG SET - '<name>'` vs. 6.2's `Unsupported CONFIG parameter: <name>`) | `redis-7.0+` | `valkey-8.0+` |
+| `CONFIG SET` with several parameter/value pairs, its `config\|set` arity / `syntax error` split, and `duplicate parameter` detection (6.2 accepts exactly one pair and answers any other shape with `Unknown subcommand or wrong number of arguments for 'SET'.`) | `redis-7.0+` | `valkey-8.0+` |
+| `n` (new-key) class in `notify-keyspace-events` (6.2 rejects it as an invalid flag character) | `redis-7.0+` | `valkey-8.0+` |
+| Script-abort error decoration (`<error> script: <sha>, on @user_script:<line>.`, keeping a failing `redis.call`'s own error code, vs. 6.2's `-ERR Error running script (call to f_<sha>): @user_script:<line>: <error>`) | `redis-7.0+` | `valkey-8.0+` |
+| `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |
+| `SORT`/`SORT_RO` cluster `BY`/`GET` patterns compared by slot (and the longer `...may be in different slots.` error wording) instead of refused outright | `redis-7.4+` | `valkey-8.0+` |
+| `SORT`/`SORT_RO` cluster `GET '#'` exempt from that slot comparison | `redis-7.4+` (7.4.2) | `valkey-9.0+` (8.0.2) |
+| GEO coordinate text (`GEOPOS`, `WITHCOORD`) spelled by `d2string()` (`13.361389338970184`) instead of `%.17Lf` trimmed (`13.36138933897018433`); a `,` double on RESP3 on every profile | `redis-8.0+` | unsupported (every Valkey keeps `%.17Lf`) |
+| Double reply text (`ZSCORE`, `ZINCRBY`, `ZMSCORE`, `WITHSCORES`, RESP3 `,` doubles, scores read by `redis.call`, `ZSCAN`) spelled by `d2string()` / `fpconv_dtoa` (`0.1`, `1.23e-5`, `4611686018427387904`) instead of 6.2 / 7.0's `%.17g` (`0.10000000000000001`, `1.2300000000000001e-05`, `4.6116860184273879e+18`) | `redis-7.2+` | `valkey-8.0+` |
+| Lua scripts resolve a `noscript` container's (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) subcommand before refusing it: `<container> HELP` runs, and an unknown subcommand fails lookup (see the container-subcommand row). 6.2 refuses every subcommand. (The mock has no `CONFIG HELP` yet, so that one call still errors.) | `redis-7.0+` | `valkey-8.0+` |
+| `QUIT` from a Lua script is refused as `noscript` (6.2 has no `QUIT` table entry: unknown command) | `redis-7.0+` | `valkey-8.0+` |
 
 ## Package Entry Points
 
@@ -256,8 +275,7 @@ Low-level builder that returns an **un-started** `RedisCluster` — call
 
 > **Prefer [`createRedisServer`](#createredisserver) with the `cluster` option**,
 > which builds and starts the cluster in one call. Use this builder only when you
-> need control over when `listen()` runs. (`buildRedisCluster` is a deprecated
-> alias of this function.)
+> need control over when `listen()` runs.
 
 ```typescript
 createRedisCluster(options: RedisClusterOptions): RedisCluster

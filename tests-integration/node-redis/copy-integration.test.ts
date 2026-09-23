@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClientType, RedisClusterType } from 'redis'
 import { TestRunner } from '../test-config'
-import { flushNodeRedisCluster, randomKey } from '../utils'
+import { randomKey } from '../utils'
 import { errorWithMessage } from '../../tests/shared-test-helpers'
 
 const testRunner = new TestRunner()
@@ -12,7 +12,6 @@ describe(`COPY command integration (node-redis, ${testRunner.getBackendName()})`
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

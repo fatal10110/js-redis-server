@@ -11,11 +11,23 @@ import { RawRedisConnection, respNumber, respText } from './raw-connection'
  */
 export async function expectReply(
   conn: RawRedisConnection,
-  args: string[],
-  expected: string,
+  args: (string | Buffer)[],
+  expected: string | Buffer,
 ): Promise<void> {
   conn.write(commandFrame(...args))
-  assert.strictEqual((await conn.readRawFrame()).toString(), expected)
+  const reply = await conn.readRawFrame()
+  if (typeof expected === 'string') {
+    assert.strictEqual(reply.toString(), expected)
+    return
+  }
+
+  // Byte comparison, and byte diffs on failure: a reply that echoes raw client
+  // bytes can differ from the expectation in ways `toString()` hides.
+  assert.deepStrictEqual(
+    [...reply],
+    [...expected],
+    `expected ${JSON.stringify(expected.toString('latin1'))}, got ${JSON.stringify(reply.toString('latin1'))}`,
+  )
 }
 
 /**

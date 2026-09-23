@@ -65,7 +65,7 @@ export const lsetCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     index: t.integer(),
-    value: t.key(),
+    value: t.bulk(),
   }),
   flags: ['write'],
   keys: args => [args.key],
@@ -88,7 +88,7 @@ export const lremCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     count: t.integer(),
-    element: t.key(),
+    element: t.bulk(),
   }),
   flags: ['write'],
   keys: args => [args.key],

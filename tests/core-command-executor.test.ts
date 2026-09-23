@@ -9,10 +9,9 @@ import {
   RedisValue,
   createDefaultParkHandler,
   defineCommand,
-  isResponseStream,
   t,
 } from '../src/internal'
-import type { RedisExecutionContext, ResponseStream } from '../src/internal'
+import type { RedisExecutionContext } from '../src/internal'
 
 function createContext(executor?: CommandExecutor): RedisExecutionContext {
   const server = new RedisServerState()
@@ -46,6 +45,42 @@ function createContext(executor?: CommandExecutor): RedisExecutionContext {
     signal: new AbortController().signal,
     park: createDefaultParkHandler(),
   }
+}
+
+/**
+ * A two-database server whose context exposes `db` as a live getter, plus a
+ * command that switches the selected database part-way through and only then
+ * writes — the shape of a `SELECT` queued inside MULTI (issue #94).
+ */
+function createSelectMidCommandFixture() {
+  const server = new RedisServerState({ databaseCount: 2 })
+  let selectedDatabase = 0
+
+  const registry = new CommandRegistry()
+  registry.register(
+    defineCommand({
+      name: 'select-then-write',
+      schema: t.object({}),
+      flags: ['write'],
+      keys: () => [],
+      execute: (_args, commandCtx) => {
+        selectedDatabase = 1
+        commandCtx.db.setString(Buffer.from('key'), Buffer.from('value'))
+        return RedisResult.ok()
+      },
+    }),
+  )
+
+  const executor = new CommandExecutor({ registry })
+  const ctx: RedisExecutionContext = {
+    ...createContext(executor),
+    get db() {
+      return server.getDatabase(selectedDatabase)
+    },
+    server,
+  }
+
+  return { executor, ctx, server }
 }
 
 describe('new command executor core', () => {
@@ -287,6 +322,112 @@ describe('new command executor core', () => {
     }
   })
 
+  test('keeps the live db getter when deriving the monitor context', async () => {
+    // A MONITOR subscriber makes the executor derive a per-command context to
+    // collect deferred events. That derivation must not snapshot `ctx.db`: a
+    // queued `SELECT N` runs mid-EXEC and every later command has to resolve
+    // the currently selected database at access time (issue #94).
+    const { executor, ctx, server } = createSelectMidCommandFixture()
+    server.monitorFeed.subscribe(() => {})
+
+    assert.deepStrictEqual(
+      await executor.executeRaw('select-then-write', [], ctx),
+      RedisResult.ok(),
+    )
+    assert.strictEqual(
+      server.getDatabase(0).getString(Buffer.from('key')),
+      null,
+    )
+    assert.deepStrictEqual(
+      server.getDatabase(1).getString(Buffer.from('key')),
+      Buffer.from('value'),
+    )
+  })
+
+  test('stamps mutation events with the originating command (#444)', async () => {
+    // Keyspace notifications name write events after the command that caused
+    // them. The name rides on the event itself, so it does not matter which
+    // database the command started on (a mid-command SELECT, #359) — and a
+    // mutation outside any command carries no name at all.
+    const { executor, ctx, server } = createSelectMidCommandFixture()
+    const commands: (string | undefined)[] = []
+    server.getDatabase(1).subscribe(event => commands.push(event.command))
+
+    await executor.executeRaw('select-then-write', [], ctx)
+    assert.deepStrictEqual(
+      executor.executePlanSync(executor.plan('select-then-write', []), ctx),
+      RedisResult.ok(),
+    )
+    server.getDatabase(1).setString(Buffer.from('outside'), Buffer.from('v'))
+
+    assert.deepStrictEqual(commands, [
+      'select-then-write',
+      'select-then-write',
+      undefined,
+    ])
+  })
+
+  test('keeps each command name across awaits, whatever order they resume in (#444)', async () => {
+    // Two commands suspend and resume first-in-first-out — not LIFO, which a
+    // save/restore tag on the database could not survive. Each write must
+    // still carry its own command's name, and a command running while they
+    // wait must not inherit either name.
+    const gates = new Map<string, () => void>()
+    const registry = new CommandRegistry()
+    for (const name of ['first-waiter', 'second-waiter']) {
+      registry.register(
+        defineCommand({
+          name,
+          schema: t.object({}),
+          flags: ['write'],
+          keys: () => [],
+          execute: async (_args, commandCtx) => {
+            await new Promise<void>(resolve => gates.set(name, resolve))
+            commandCtx.db.setString(Buffer.from(name), Buffer.from('v'))
+            return RedisResult.ok()
+          },
+        }),
+      )
+    }
+    registry.register(
+      defineCommand({
+        name: 'plain-write',
+        schema: t.object({}),
+        flags: ['write'],
+        keys: () => [],
+        execute: (_args, commandCtx) => {
+          commandCtx.db.setString(Buffer.from('plain'), Buffer.from('v'))
+          return RedisResult.ok()
+        },
+      }),
+    )
+    const executor = new CommandExecutor({ registry })
+    const ctx = createContext(executor)
+    const events: [string, string | undefined][] = []
+    ctx.db.subscribe(event => {
+      if (event.type === 'write') {
+        events.push([event.key.toString(), event.command])
+      }
+    })
+
+    const first = executor.executeRaw('first-waiter', [], ctx)
+    const second = executor.executeRaw('second-waiter', [], ctx)
+    await new Promise(resolve => setImmediate(resolve))
+    await executor.executeRaw('plain-write', [], ctx)
+    gates.get('first-waiter')!()
+    await first
+    gates.get('second-waiter')!()
+    await second
+    await executor.executeRaw('plain-write', [], ctx)
+
+    assert.deepStrictEqual(events, [
+      ['plain', 'plain-write'],
+      ['first-waiter', 'first-waiter'],
+      ['second-waiter', 'second-waiter'],
+      ['plain', 'plain-write'],
+    ])
+  })
+
   test('supports open command registration and explicit overrides', () => {
     const registry = new CommandRegistry()
     const first = defineCommand({
@@ -339,7 +480,7 @@ describe('new command executor core', () => {
         schema: t.object({}),
         flags: ['readonly'],
         keys: () => [],
-        execute: () => RedisResult.create(RedisValue.simpleString('PONG')),
+        execute: () => assert.fail('policy should short-circuit'),
       }),
     )
 
@@ -348,10 +489,8 @@ describe('new command executor core', () => {
       policies: [
         {
           name: 'observer',
-          afterExecute: (_plan, _ctx, result) =>
-            result.value.kind === 'simple-string'
-              ? RedisResult.create(RedisValue.simpleString('POLICY-PONG'))
-              : result,
+          beforeExecute: () =>
+            RedisResult.create(RedisValue.simpleString('POLICY-PONG')),
         },
       ],
     })
@@ -362,6 +501,40 @@ describe('new command executor core', () => {
         createContext(executor),
       ),
       RedisResult.create(RedisValue.simpleString('POLICY-PONG')),
+    )
+  })
+
+  test('rejects async policy hooks in sync execution', () => {
+    const registry = new CommandRegistry()
+    registry.register(
+      defineCommand({
+        name: 'ping',
+        schema: t.object({}),
+        flags: ['readonly'],
+        keys: () => [],
+        execute: () => assert.fail('policy should be rejected first'),
+      }),
+    )
+
+    const executor = new CommandExecutor({
+      registry,
+      policies: [
+        {
+          name: 'observer',
+          beforeExecute: async () => undefined,
+        },
+      ],
+    })
+
+    assert.deepStrictEqual(
+      executor.executePlanSync(
+        executor.plan('ping', []),
+        createContext(executor),
+      ),
+      RedisResult.error(
+        "Execution policy 'observer' beforeExecute hook cannot run asynchronously from scripts",
+        'ERR',
+      ),
     )
   })
 
@@ -426,80 +599,6 @@ describe('new command executor core', () => {
     await Promise.resolve()
     assert.strictEqual(started, false)
     assert.strictEqual(mutatedAfterError, false)
-  })
-
-  test('supports response streams and stream policy hooks', async () => {
-    const stream: ResponseStream = {
-      kind: 'response-stream',
-      closed: Promise.resolve(),
-      frames: async function* () {
-        yield RedisResult.create(RedisValue.push('message', []))
-      },
-      close: () => {},
-    }
-    const registry = new CommandRegistry()
-    registry.register(
-      defineCommand({
-        name: 'subscribe',
-        schema: t.object({
-          channel: t.bulk(),
-        }),
-        flags: ['pubsub'],
-        capabilities: { pushOnly: true },
-        keys: () => [],
-        execute: () => stream,
-      }),
-    )
-
-    let observed = false
-    const executor = new CommandExecutor({
-      registry,
-      policies: [
-        {
-          name: 'stream-observer',
-          onStream: (_plan, _ctx, currentStream) => {
-            observed = currentStream === stream
-          },
-        },
-      ],
-    })
-
-    const result = await executor.executeRaw(
-      'subscribe',
-      [Buffer.from('updates')],
-      createContext(),
-    )
-
-    assert.strictEqual(result, stream)
-    assert.strictEqual(observed, true)
-  })
-
-  test('does not await thenable response streams', async () => {
-    const stream: ResponseStream & { then: () => never } = {
-      kind: 'response-stream',
-      closed: Promise.resolve(),
-      frames: async function* () {
-        yield RedisResult.create(RedisValue.push('message', []))
-      },
-      close: () => {},
-      then: () => assert.fail('ResponseStream should not be awaited'),
-    }
-    const registry = new CommandRegistry()
-    registry.register(
-      defineCommand({
-        name: 'monitor',
-        schema: t.object({}),
-        flags: ['pubsub'],
-        capabilities: { pushOnly: true },
-        keys: () => [],
-        execute: () => stream,
-      }),
-    )
-
-    const executor = new CommandExecutor({ registry })
-    const result = await executor.executeRaw('monitor', [], createContext())
-
-    assert.strictEqual(isResponseStream(result), true)
   })
 
   test('parses bigint values and keeps safe integer parser strict', () => {

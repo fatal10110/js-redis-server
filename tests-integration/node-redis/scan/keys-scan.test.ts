@@ -7,7 +7,6 @@ import {
   bufferClient,
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
@@ -21,7 +20,6 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {
@@ -151,15 +149,20 @@ describe(`Scan Commands Integration (node-redis, ${testRunner.getBackendName()})
         '2',
       ])
 
+      // A full cursor traversal must yield every matching key and nothing
+      // else. `values` stays exact because MATCH filters.
       assert.deepStrictEqual(result.values, expected)
 
-      // Multi-step traversal across COUNT batches. We can't assert an exact
-      // page partition or empty-page positions: top-level SCAN sweeps the
-      // whole node keyspace, so keys from other tests sharing the node (the
-      // suite runs files concurrently) consume COUNT budget and shift which
-      // page each hit lands on. `values` stays exact because MATCH filters.
-      // Lower bound holds on both backends — extra keys only raise iterations.
-      assert.ok(result.iterations > Math.ceil(expected.length / 2))
+      // ...and it must actually have been a traversal. Without this, a backend
+      // that ignored the cursor and returned everything in one round-trip
+      // would pass. The bound is deliberately independent of the keyspace
+      // size: the old `iterations > Math.ceil(expected.length / 2)` needed the
+      // node to hold a known number of keys, which on a shared backend it
+      // never does (#267, #395). `> 1` only needs SCAN to paginate at all.
+      assert.ok(
+        result.iterations > 1,
+        `expected a multi-step traversal, got ${result.iterations} iteration(s)`,
+      )
     } finally {
       await directClient.del(keys)
       directClient.destroy()
@@ -502,6 +505,19 @@ async function collectTopLevelScan(
   return result.values.sort()
 }
 
+/**
+ * Iteration cap for a top-level SCAN loop. Top-level SCAN walks the node's
+ * whole keyspace, not only the keys that match, and the real backend is never
+ * flushed, so the page count grows with whatever other suites and earlier runs
+ * left on that node (#453). A fixed cap would then fail for reasons unrelated
+ * to the command under test. Scale it with DBSIZE instead: hash-table buckets
+ * can outnumber keys and COUNT can be as low as 1, hence the generous factor.
+ * The cap still catches a cursor that never returns to 0.
+ */
+async function topLevelScanCap(client: RedisClientType): Promise<number> {
+  return 1000 + 16 * Number(await client.dbSize())
+}
+
 async function collectTopLevelScanWithIterations(
   client: RedisClientType,
   options: Array<string | Buffer>,
@@ -510,6 +526,7 @@ async function collectTopLevelScanWithIterations(
   const pages: string[][] = []
   let cursor = '0'
   let iterations = 0
+  const cap = await topLevelScanCap(client)
 
   do {
     const [nextCursor, items] = (await client.sendCommand([
@@ -521,7 +538,7 @@ async function collectTopLevelScanWithIterations(
     pages.push(items)
     cursor = nextCursor
     iterations++
-    assert.ok(iterations < 1000)
+    assert.ok(iterations < cap)
   } while (cursor !== '0')
 
   return { values: values.sort(), iterations, pages }
@@ -534,6 +551,7 @@ async function collectTopLevelScanBuffers(
   const values: Buffer[] = []
   let cursor = Buffer.from('0')
   let iterations = 0
+  const cap = await topLevelScanCap(client)
 
   do {
     const [nextCursor, items] = (await bufferClient(client).sendCommand([
@@ -544,7 +562,7 @@ async function collectTopLevelScanBuffers(
     values.push(...items)
     cursor = nextCursor
     iterations++
-    assert.ok(iterations < 1000)
+    assert.ok(iterations < cap)
   } while (cursor.toString() !== '0')
 
   return values

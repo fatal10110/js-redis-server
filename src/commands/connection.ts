@@ -1,3 +1,4 @@
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t } from '../core/command-schema'
 import type {
@@ -11,6 +12,7 @@ import {
   NoProtoError,
   RedisCommandError,
   RedisSyntaxError,
+  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
   WrongPassError,
 } from '../core/redis-error'
@@ -23,8 +25,9 @@ import {
   ok,
   parseIntegerToken,
   simpleString,
+  unknownSubcommandError,
 } from './helpers'
-import { commandSubcommandInfo } from './introspection'
+import { commandDocs, commandSubcommandInfo } from './introspection'
 
 const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
@@ -73,12 +76,8 @@ function setClientName(session: RedisClientSession, name: Buffer): void {
   clientNames.set(session, name)
 }
 
-function isClusterMode(ctx: RedisExecutionContext): boolean {
-  return ctx.server.clusterTopology.nodes.length > 0
-}
-
 function redisMode(ctx: RedisExecutionContext): string {
-  return isClusterMode(ctx) ? 'cluster' : 'standalone'
+  return ctx.server.clusterEnabled ? 'cluster' : 'standalone'
 }
 
 function value(value: string): RedisValue {
@@ -103,7 +102,7 @@ function buildInfo(
     sections.length === 0
       ? ['default']
       : sections.map(section => section.toLowerCase())
-  const clustered = isClusterMode(ctx)
+  const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
     'clients',
@@ -496,10 +495,6 @@ function redactedMonitorArg(): Buffer {
   return Buffer.from('(redacted)')
 }
 
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
-}
-
 export const pingCommand = defineCommand({
   name: 'ping',
   schema: t.object({
@@ -524,10 +519,32 @@ export const pingCommand = defineCommand({
   },
 })
 
+// Not flagged `subscribed`: RESP2 subscribed mode rejects ECHO in real Redis
+// (only RESP3 allows it there), and the subscribed-mode policy keys off that flag.
+export const echoCommand = defineCommand({
+  name: 'echo',
+  schema: t.object({
+    message: t.bulk(),
+  }),
+  flags: ['readonly', 'fast'],
+  introspection: {
+    flags: ['loading', 'stale', 'fast'],
+    categories: ['@fast', '@connection'],
+    docs: commandDocs('Returns the given string.', 'connection', [
+      { name: 'message', type: 'string' },
+    ]),
+  },
+  keys: () => [],
+  execute: args => bulk(args.message),
+})
+
 export const quitCommand = defineCommand({
   name: 'quit',
-  schema: t.object({}),
-  flags: ['readonly', 'fast', 'subscribed'],
+  // Real Redis ignores anything after QUIT (arity -1).
+  schema: t.object({ ignored: t.variadic(t.bulk()) }),
+  // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
+  // entry at all, so its script sees an unknown command instead).
+  flags: ['readonly', 'fast', 'subscribed', 'noscript'],
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
@@ -569,23 +586,22 @@ export const infoCommand = defineCommand({
 export const clientCommand = defineCommand({
   name: 'client',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
-  flags: ['readonly', 'admin'],
+  // noscript: real Redis refuses CLIENT from scripts on every version — every
+  // subcommand but HELP on 7.0+ (see lua-runtime's isRefusedFromScript).
+  flags: ['readonly', 'admin', 'noscript'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@slow', '@connection'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('client|id', 2),
       commandSubcommandInfo('client|info', 2),
       commandSubcommandInfo('client|kill', -3),
-      commandSubcommandInfo('client|list', 2),
+      commandSubcommandInfo('client|list', -2),
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
       commandSubcommandInfo('client|no-evict', 3),
@@ -595,7 +611,7 @@ export const clientCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'setname') {
       expectArgCount('client|setname', args.args, 1)
@@ -610,7 +626,11 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'setinfo') {
       if (!ctx.server.profile.has('client.setinfo')) {
-        throw clientSetInfoUnavailableError(ctx, args.subcommand)
+        throw unknownSubcommandError(
+          'CLIENT',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
 
       expectArgCount('client|setinfo', args.args, 2)
@@ -625,7 +645,11 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'no-evict') {
       if (!ctx.server.profile.has('client.no-evict')) {
-        throw clientUnavailableSubcommandError(args.subcommand)
+        throw unknownSubcommandError(
+          'CLIENT',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
 
       expectArgCount('client|no-evict', args.args, 1)
@@ -707,32 +731,9 @@ export const clientCommand = defineCommand({
       return array(lines)
     }
 
-    throw new RedisCommandError(
-      `unknown subcommand '${args.subcommand}'. Try CLIENT HELP.`,
-    )
+    throw unknownSubcommandError('CLIENT', args.subcommand, ctx.server.profile)
   },
 })
-
-function clientSetInfoUnavailableError(
-  ctx: RedisExecutionContext,
-  subcommand: string,
-): RedisCommandError {
-  if (!ctx.server.profile.has('client.setinfo.unknown-subcommand-error')) {
-    return clientUnavailableSubcommandError(subcommand)
-  }
-
-  return new RedisCommandError(
-    `unknown subcommand '${subcommand}'. Try CLIENT HELP.`,
-  )
-}
-
-function clientUnavailableSubcommandError(
-  subcommand: string,
-): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try CLIENT HELP.`,
-  )
-}
 
 /**
  * Parse HELLO's protocol-version token. Unlike a generic `t.integer()` field,
@@ -825,7 +826,7 @@ function serverIdentityLines(ctx: RedisExecutionContext): string[] {
 export const authCommand = defineCommand({
   name: 'auth',
   schema: t.object({
-    args: t.variadic(t.bulk()),
+    args: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['noscript'],
   monitor: {
@@ -833,7 +834,8 @@ export const authCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    if (args.args.length !== 1 && args.args.length !== 2) {
+    // The schema guarantees at least one argument.
+    if (args.args.length > 2) {
       throw new WrongNumberOfArgumentsError('auth')
     }
 
@@ -860,14 +862,15 @@ export const resetCommand = defineCommand({
   // EXEC/DISCARD/WATCH — it aborts the in-flight transaction via
   // discardTransaction() instead of being queued until EXEC (matches real
   // Redis, which excludes RESET from queueMultiCommand).
-  flags: ['admin', 'subscribed', 'transaction'],
+  // noscript: real Redis refuses RESET from a script on every version.
+  flags: ['admin', 'subscribed', 'transaction', 'noscript'],
   keys: () => [],
   execute: (_args, ctx) => {
     clientNames.delete(ctx.session)
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
     noEvictClients.delete(ctx.session)
-    ctx.session.resetResponseStreams()
+    ctx.session.resetPushProducers()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
     ctx.session.unwatch()
@@ -906,18 +909,15 @@ export const lastsaveCommand = defineCommand({
 export const aclCommand = defineCommand({
   name: 'acl',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('acl|whoami', 2, {
         categories: ['@admin', '@slow', '@dangerous'],
@@ -932,7 +932,7 @@ export const aclCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'whoami') {
       expectArgCount('acl|whoami', args.args, 0)
@@ -941,7 +941,7 @@ export const aclCommand = defineCommand({
 
     if (subcommand === 'dryrun') {
       if (!ctx.server.profile.has('acl.dryrun')) {
-        throw unavailableAclSubcommand(args.subcommand)
+        throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
       }
 
       if (args.args.length < 2) {
@@ -957,7 +957,18 @@ export const aclCommand = defineCommand({
       if (!ctx.executor.getCommandDefinition(command.toString())) {
         throw new RedisCommandError(`Command '${command.toString()}' not found`)
       }
-      ctx.executor.plan(command, args.args.slice(2))
+      try {
+        ctx.executor.plan(command, args.args.slice(2))
+      } catch (err) {
+        // A 7.0+ lookup resolves `command|subcommand` as one name, so an
+        // unknown subcommand is an unknown command here too (acl.c).
+        if (err instanceof UnknownSubcommandError) {
+          throw new RedisCommandError(
+            `Command '${command.toString()}' not found`,
+          )
+        }
+        throw err
+      }
       return ok()
     }
 
@@ -978,25 +989,22 @@ export const aclCommand = defineCommand({
       return array(lines)
     }
 
-    throw unknownAclSubcommand(args.subcommand)
+    throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
   },
 })
 
 export const slowlogCommand = defineCommand({
   name: 'slowlog',
   schema: t.object({
-    subcommand: t.string(),
+    // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+    // name the client sent, and a UTF-8 decode here would lose its bytes.
+    subcommand: t.bulk(),
     args: t.variadic(t.bulk()),
   }),
   flags: ['readonly', 'admin'],
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('slowlog|get', -2, {
         categories: ['@admin', '@slow', '@dangerous'],
@@ -1013,8 +1021,8 @@ export const slowlogCommand = defineCommand({
     ],
   },
   keys: () => [],
-  execute: args => {
-    const subcommand = args.subcommand.toLowerCase()
+  execute: (args, ctx) => {
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
       if (args.args.length > 1) {
@@ -1058,9 +1066,7 @@ export const slowlogCommand = defineCommand({
       ])
     }
 
-    throw new RedisCommandError(
-      `unknown subcommand '${args.subcommand}'. Try SLOWLOG HELP.`,
-    )
+    throw unknownSubcommandError('SLOWLOG', args.subcommand, ctx.server.profile)
   },
 })
 
@@ -1071,13 +1077,8 @@ export const shutdownCommand = defineCommand({
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    arity: -1,
     flags: ['admin', 'noscript', 'loading', 'stale', 'no_multi', 'allow_busy'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous', '@connection'],
-    keySpecs: [],
   },
   keys: () => [],
   execute: (args, ctx) => {
@@ -1092,18 +1093,6 @@ export const shutdownCommand = defineCommand({
     })
   },
 })
-
-function unknownAclSubcommand(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `unknown subcommand '${subcommand}'. Try ACL HELP.`,
-  )
-}
-
-function unavailableAclSubcommand(subcommand: string): RedisCommandError {
-  return new RedisCommandError(
-    `Unknown subcommand or wrong number of arguments for '${subcommand}'. Try ACL HELP.`,
-  )
-}
 
 function parseShutdownOptions(
   args: readonly Buffer[],
@@ -1137,6 +1126,7 @@ function parseShutdownOptions(
 
 export const connectionCommands = [
   pingCommand,
+  echoCommand,
   quitCommand,
   selectCommand,
   infoCommand,

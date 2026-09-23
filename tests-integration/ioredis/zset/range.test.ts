@@ -5,6 +5,10 @@ import { TestRunner } from '../../test-config'
 import { errorWithMessage, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
+// Unique per run: the real-backend suites share one Redis that is never
+// flushed between files or between runs, so fixed literal key names collided
+// with each other and with their own previous run (#420).
+const RUN = randomKey()
 
 describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -18,14 +22,29 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('ZRANGE command', async () => {
-    await redisClient?.zadd('zset3', 1, 'one', 2, 'two', 3, 'three', 4, 'four')
+    await redisClient?.zadd(
+      `zset3:${RUN}`,
+      1,
+      'one',
+      2,
+      'two',
+      3,
+      'three',
+      4,
+      'four',
+    )
 
     // Get range without scores
-    const range1 = await redisClient?.zrange('zset3', 0, 2)
+    const range1 = await redisClient?.zrange(`zset3:${RUN}`, 0, 2)
     assert.deepStrictEqual(range1, ['one', 'two', 'three'])
 
     // Get range with scores
-    const range2 = await redisClient?.zrange('zset3', 0, -1, 'WITHSCORES')
+    const range2 = await redisClient?.zrange(
+      `zset3:${RUN}`,
+      0,
+      -1,
+      'WITHSCORES',
+    )
     assert.deepStrictEqual(range2, [
       'one',
       '1',
@@ -38,20 +57,20 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
     ])
 
     // Negative indices
-    const range3 = await redisClient?.zrange('zset3', -2, -1)
+    const range3 = await redisClient?.zrange(`zset3:${RUN}`, -2, -1)
     assert.deepStrictEqual(range3, ['three', 'four'])
   })
 
   test('ZREVRANGE command', async () => {
-    await redisClient?.zadd('zset4', 1, 'one', 2, 'two', 3, 'three')
+    await redisClient?.zadd(`zset4:${RUN}`, 1, 'one', 2, 'two', 3, 'three')
 
     // Reverse range
-    const revrange = await redisClient?.zrevrange('zset4', 0, -1)
+    const revrange = await redisClient?.zrevrange(`zset4:${RUN}`, 0, -1)
     assert.deepStrictEqual(revrange, ['three', 'two', 'one'])
 
     // Reverse range with scores
     const revrangeWithScores = await redisClient?.zrevrange(
-      'zset4',
+      `zset4:${RUN}`,
       0,
       1,
       'WITHSCORES',
@@ -60,23 +79,23 @@ describe(`Sorted Set Commands Integration (${testRunner.getBackendName()})`, () 
   })
 
   test('ZRANK and ZREVRANK commands', async () => {
-    await redisClient?.zadd('zset5', 1, 'one', 2, 'two', 3, 'three')
+    await redisClient?.zadd(`zset5:${RUN}`, 1, 'one', 2, 'two', 3, 'three')
 
     // ZRANK (0-based, lowest score first)
-    const rank1 = await redisClient?.zrank('zset5', 'one')
+    const rank1 = await redisClient?.zrank(`zset5:${RUN}`, 'one')
     assert.strictEqual(rank1, 0)
 
-    const rank2 = await redisClient?.zrank('zset5', 'three')
+    const rank2 = await redisClient?.zrank(`zset5:${RUN}`, 'three')
     assert.strictEqual(rank2, 2)
 
-    const rankNone = await redisClient?.zrank('zset5', 'nonexistent')
+    const rankNone = await redisClient?.zrank(`zset5:${RUN}`, 'nonexistent')
     assert.strictEqual(rankNone, null)
 
     // ZREVRANK (0-based, highest score first)
-    const revrank1 = await redisClient?.zrevrank('zset5', 'three')
+    const revrank1 = await redisClient?.zrevrank(`zset5:${RUN}`, 'three')
     assert.strictEqual(revrank1, 0)
 
-    const revrank2 = await redisClient?.zrevrank('zset5', 'one')
+    const revrank2 = await redisClient?.zrevrank(`zset5:${RUN}`, 'one')
     assert.strictEqual(revrank2, 2)
   })
 

@@ -1,3 +1,4 @@
+import { asciiLowerCase, asciiUpperCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
 import { parseCommandArgs } from './command-schema'
@@ -10,24 +11,15 @@ import {
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
 import { RedisResult } from './redis-result'
-import { isResponseStream, ResponseStream } from './response-stream'
+import type { RedisDatabase } from '../state/database'
 import type { RedisMonitorCommandEvent } from '../state/monitor-feed'
+import { monitorTimestampMicros } from './clock'
 import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
 } from './compatibility'
-
-/**
- * The result of running a command: either a finished {@link RedisResult} or a
- * long-lived {@link ResponseStream} (e.g. SUBSCRIBE / MONITOR) whose frames the
- * transport drains over time.
- */
-export type ExecutorResult = RedisResult | ResponseStream
-
-export type RawExecutionResult = {
-  result: ExecutorResult
-  plan?: CommandPlan
-}
+import { containerSubcommandExists } from './compatibility/subcommand-gates'
+import { unknownSubcommandError } from './subcommand-errors'
 
 export type CommandExecutorOptions = {
   registry: CommandRegistry
@@ -42,16 +34,16 @@ export type CommandExecutorOptions = {
  *  1. Resolve a raw command name to a {@link CommandDefinition} (case-insensitive).
  *  2. Parse raw argument buffers into typed args and extract routing keys,
  *     producing a {@link CommandPlan}.
- *  3. Run the configured {@link ExecutionPolicy} chain around the command's own
- *     `execute`, giving policies (transaction, cluster, ...) a chance to
- *     short-circuit, rewrite, or wrap the result.
+ *  3. Run the configured {@link ExecutionPolicy} chain before the command's own
+ *     `execute`, giving policies (auth, cluster, transaction, ...) a chance to
+ *     short-circuit it — queue, redirect, or reject — with their own result.
  *
  * Two execution paths exist on purpose:
  *  - {@link executePlan} / {@link executeRaw} — async, used for real network
- *    clients; may return a {@link ResponseStream} and may await async commands.
+ *    clients; may await async commands.
  *  - {@link executePlanSync} — synchronous mirror used by the Lua runtime, where
- *    `redis.call` must complete in a single tick. Streams and promises are
- *    rejected rather than awaited.
+ *    `redis.call` must complete in a single tick. Promises are rejected rather
+ *    than awaited.
  *
  * The executor is stateless per-call: all mutable state lives on the
  * {@link RedisExecutionContext} (and the session it carries).
@@ -78,14 +70,12 @@ export class CommandExecutor {
   /**
    * Resolve a raw command + args into a {@link CommandPlan} without executing it.
    * The name is handed to the registry unfolded; `registry.get` does the
-   * case-insensitive match.
-   *
-   * Note that the decode + `String.toLowerCase()` this ends up doing is a
-   * *Unicode* fold, while real Redis folds ASCII only — so e.g. U+212A KELVIN
-   * SIGN + "eys" dispatches KEYS here and is rejected by Redis. Pre-existing
-   * (the old `normalizeCommandName` folded the same way); tracked in #382.
+   * case-insensitive match, folding ASCII only as real Redis does — so e.g.
+   * U+212A KELVIN SIGN + "eys" is an unknown command, not KEYS (#382).
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
+   * @throws {UnknownSubcommandError} if a container's subcommand fails lookup
+   *   (see {@link lookupSubcommand}).
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
     const definition = this.registry.get(rawCommand.toString())
@@ -94,7 +84,48 @@ export class CommandExecutor {
       throw new UnknownRedisCommandError(rawCommand, rawArgs)
     }
 
+    this.lookupSubcommand(definition, rawArgs)
     return this.createPlan(definition, rawCommand, rawArgs)
+  }
+
+  /**
+   * Redis 7.0 put container subcommands (`config|get`, `xgroup|create`, ...)
+   * in the command table, so from 7.0 command lookup resolves the subcommand
+   * too and an unknown one fails right there — ahead of arity, the schema,
+   * routing keys and every policy. Doing it here, the one place every command
+   * is planned, is what makes MULTI refuse to queue it (#435), keeps XGROUP /
+   * XINFO from looking their key up first (#436) and gives a script's
+   * `redis.call` the unknown-command error (#439).
+   *
+   * 6.2 has no such lookup; there each container rejects the subcommand when
+   * it runs. The table is the *real* one (`subcommand-gates.ts`), so a real
+   * subcommand this server does not implement passes and is rejected by its
+   * container at execute time, as before.
+   */
+  private lookupSubcommand(
+    definition: CommandDefinition<unknown>,
+    rawArgs: readonly Buffer[],
+  ): void {
+    if (
+      rawArgs.length === 0 ||
+      !this.profile.has('error.unknown-subcommand-dispatch-timing')
+    ) {
+      return
+    }
+
+    const subcommand = rawArgs[0]
+    if (
+      containerSubcommandExists(definition.name, subcommand, this.profile) !==
+      false
+    ) {
+      return
+    }
+
+    throw unknownSubcommandError(
+      asciiUpperCase(definition.name),
+      subcommand,
+      this.profile,
+    )
   }
 
   /**
@@ -111,23 +142,12 @@ export class CommandExecutor {
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
     ctx: RedisExecutionContext,
-  ): Promise<ExecutorResult> {
-    return (await this.executeRawWithPlan(rawCommand, rawArgs, ctx)).result
-  }
-
-  async executeRawWithPlan(
-    rawCommand: Buffer | string,
-    rawArgs: readonly Buffer[],
-    ctx: RedisExecutionContext,
-  ): Promise<RawExecutionResult> {
+  ): Promise<RedisResult> {
     try {
-      const plan = this.plan(rawCommand, rawArgs)
-      return { plan, result: await this.executePlan(plan, ctx) }
+      return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
-        return {
-          result: this.rawCommandErrorResult(err, rawCommand, ctx),
-        }
+        return this.rawCommandErrorResult(err, rawCommand, ctx)
       }
 
       throw err
@@ -146,7 +166,7 @@ export class CommandExecutor {
     if (
       err instanceof WrongNumberOfArgumentsError &&
       ctx.session.mode === 'transaction' &&
-      rawCommand.toString().toLowerCase() === 'exec'
+      asciiLowerCase(rawCommand.toString()) === 'exec'
     ) {
       ctx.session.discardTransaction()
       const abortError = new ExecCommandAbortError(err.message)
@@ -154,7 +174,7 @@ export class CommandExecutor {
     }
 
     ctx.session.markTransactionDirty()
-    return RedisResult.error(err.message, err.code)
+    return RedisResult.fromError(err)
   }
 
   /**
@@ -165,10 +185,7 @@ export class CommandExecutor {
    *     short-circuits execution (e.g. the transaction policy queues the command
    *     and returns "+QUEUED"; the cluster policy returns a MOVED/CROSSSLOT
    *     error). A short-circuit error during MULTI also dirties the transaction.
-   *  2. The command's own `execute`.
-   *  3. If a {@link ResponseStream} is produced, run it through every policy's
-   *     `onStream` hook; otherwise await the value and run it through every
-   *     `afterExecute` hook (each may replace the result).
+   *  2. The command's own `execute`, awaited.
    *
    * Execution-time {@link RedisCommandError}s become RESP error replies (and
    * dirty an open transaction when appropriate). Non-Redis errors propagate.
@@ -176,7 +193,7 @@ export class CommandExecutor {
   async executePlan(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
-  ): Promise<ExecutorResult> {
+  ): Promise<RedisResult> {
     const monitorCtx = createMonitorDeferredContext(ctx)
     const result = await this.executePlanInternal(plan, monitorCtx)
     publishMonitorEvent(plan, monitorCtx, result)
@@ -187,60 +204,21 @@ export class CommandExecutor {
   private async executePlanInternal(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
-  ): Promise<ExecutorResult> {
+  ): Promise<RedisResult> {
     try {
       for (const policy of this.policies) {
         const policyResult = await policy.beforeExecute?.(plan, ctx)
         if (policyResult) {
-          if (isTransactionQueueError(plan, ctx, policyResult)) {
-            ctx.session.markTransactionDirty()
-          }
-
-          return policyResult
+          return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
       }
 
-      // Tag the database with the active command so keyspace notifications can
-      // name write events after the originating command. Saved/restored so
-      // nested (Lua redis.call) and parked/interleaved commands stay correct.
-      const prevNotifyCommand = ctx.db.activeNotifyCommand
-      ctx.db.activeNotifyCommand = plan.definition.name
-      try {
-        const rawResult = plan.definition.execute(plan.args, ctx)
-
-        if (isResponseStream(rawResult)) {
-          let finalStream = ensureNonThenableStream(rawResult)
-          for (const policy of this.policies) {
-            finalStream =
-              (await policy.onStream?.(plan, ctx, finalStream)) ?? finalStream
-            finalStream = ensureNonThenableStream(finalStream)
-          }
-
-          return finalStream
-        }
-
-        const result = await rawResult
-
-        let finalResult = result
-        for (const policy of this.policies) {
-          finalResult =
-            (await policy.afterExecute?.(plan, ctx, finalResult)) ?? finalResult
-        }
-
-        return finalResult
-      } finally {
-        ctx.db.activeNotifyCommand = prevNotifyCommand
-      }
+      return await plan.definition.execute(
+        plan.args,
+        withMutationOrigin(plan, ctx),
+      )
     } catch (err) {
-      if (err instanceof RedisCommandError) {
-        if (shouldDirtyTransaction(plan, ctx)) {
-          ctx.session.markTransactionDirty()
-        }
-
-        return RedisResult.error(err.message, err.code)
-      }
-
-      throw err
+      return executionErrorResult(plan, ctx, err)
     }
   }
 
@@ -248,12 +226,11 @@ export class CommandExecutor {
    * Synchronous counterpart to {@link executePlan}, used by the Lua runtime for
    * `redis.call` / `redis.pcall`. Lua expects each nested command to resolve
    * immediately, so anything that would require awaiting — a command that
-   * returns a promise, a {@link ResponseStream}, or an async policy hook — is
+   * returns a promise, or an async policy hook — is
    * rejected with a {@link RedisCommandError} instead of being awaited. Async
    * command definitions are rejected before invocation so they cannot leave
    * orphaned work running after the script error (see
-   * {@link assertSyncCommandDefinition}, {@link assertSyncCommandResult}, and
-   * {@link assertSyncPolicyResult}).
+   * {@link assertSyncCommandDefinition} and {@link assertSyncCommandResult}).
    *
    * The policy chain and transaction-dirty handling otherwise mirror the async
    * path exactly.
@@ -272,52 +249,25 @@ export class CommandExecutor {
   ): RedisResult {
     try {
       for (const policy of this.policies) {
-        const policyResult = assertSyncPolicyResult(
-          policy.name,
-          'beforeExecute',
-          policy.beforeExecute?.(plan, ctx),
-        )
+        const policyResult = policy.beforeExecute?.(plan, ctx)
+        if (isThenable(policyResult)) {
+          throw new RedisCommandError(
+            `Execution policy '${policy.name}' beforeExecute hook cannot run asynchronously from scripts`,
+          )
+        }
         if (policyResult) {
-          if (isTransactionQueueError(plan, ctx, policyResult)) {
-            ctx.session.markTransactionDirty()
-          }
-
-          return policyResult
+          return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
       }
 
       assertSyncCommandDefinition(plan)
 
-      const prevNotifyCommand = ctx.db.activeNotifyCommand
-      ctx.db.activeNotifyCommand = plan.definition.name
-      try {
-        const rawResult = plan.definition.execute(plan.args, ctx)
-        const result = assertSyncCommandResult(plan, rawResult)
-
-        let finalResult = result
-        for (const policy of this.policies) {
-          finalResult =
-            assertSyncPolicyResult(
-              policy.name,
-              'afterExecute',
-              policy.afterExecute?.(plan, ctx, finalResult),
-            ) ?? finalResult
-        }
-
-        return finalResult
-      } finally {
-        ctx.db.activeNotifyCommand = prevNotifyCommand
-      }
+      return assertSyncCommandResult(
+        plan,
+        plan.definition.execute(plan.args, withMutationOrigin(plan, ctx)),
+      )
     } catch (err) {
-      if (err instanceof RedisCommandError) {
-        if (shouldDirtyTransaction(plan, ctx)) {
-          ctx.session.markTransactionDirty()
-        }
-
-        return RedisResult.error(err.message, err.code)
-      }
-
-      throw err
+      return executionErrorResult(plan, ctx, err)
     }
   }
 
@@ -353,14 +303,14 @@ export class CommandExecutor {
 function publishMonitorEvent(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-  result: ExecutorResult,
+  result: RedisResult,
 ): void {
   if (!shouldPublishMonitorEvent(plan, ctx, result)) {
     return
   }
 
   const event: RedisMonitorCommandEvent = {
-    timestampMs: Date.now(),
+    timestampMicros: monitorTimestampMicros(),
     database: ctx.session.selectedDatabase,
     clientId: ctx.session.id,
     clientAddress: ctx.monitor?.clientAddress ?? ctx.session.clientAddress,
@@ -387,24 +337,25 @@ function createMonitorDeferredContext(
     return ctx
   }
 
-  return {
-    get db() {
-      return ctx.db
-    },
-    server: ctx.server,
-    session: ctx.session,
-    executor: ctx.executor,
-    ...(ctx.transactionReplay
-      ? { transactionReplay: ctx.transactionReplay }
-      : {}),
-    ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
+  // Override `monitor` on a prototype link rather than copying the context:
+  // `db` is a *live getter* on the session context (a queued `SELECT N` runs
+  // mid-EXEC and every later command must resolve the currently selected
+  // database — issue #94), and a spread would freeze it to the database that
+  // was selected when this context was built.
+  //
+  // INVARIANT: the returned context must never be spread (`{...ctx}`) or
+  // key-enumerated (`Object.keys`/`assign`/JSON). Every field except `monitor`
+  // lives on the prototype, so enumerating own properties yields `{ monitor }`
+  // and silently loses the rest. Nothing in `src/` does this today; read
+  // through the context instead of copying it.
+  return Object.create(ctx, {
     monitor: {
-      ...ctx.monitor,
-      deferredEvents: [],
+      value: { ...ctx.monitor, deferredEvents: [] },
+      enumerable: true,
+      writable: true,
+      configurable: true,
     },
-    signal: ctx.signal,
-    park: ctx.park,
-  }
+  }) as RedisExecutionContext
 }
 
 function flushDeferredMonitorEvents(ctx: RedisExecutionContext): void {
@@ -423,7 +374,7 @@ function flushDeferredMonitorEvents(ctx: RedisExecutionContext): void {
 function shouldPublishMonitorEvent(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-  result: ExecutorResult,
+  result: RedisResult,
 ): boolean {
   if (ctx.monitor?.disabled) {
     return false
@@ -435,10 +386,6 @@ function shouldPublishMonitorEvent(
 
   if (plan.definition.monitor?.skip) {
     return false
-  }
-
-  if (!(result instanceof RedisResult)) {
-    return true
   }
 
   if (isQueuedTransactionCommand(plan, ctx, result)) {
@@ -483,44 +430,89 @@ const CLUSTER_PRE_EXECUTION_ERROR_CODES = new Set([
 ])
 
 /**
- * A policy's `onStream` hook may return an object that is both a
- * {@link ResponseStream} and thenable (e.g. an async wrapper). Callers `await`
- * the executor result, and awaiting a thenable stream would unwrap it into its
- * resolved value, breaking streaming. This re-wraps such a stream in a plain,
- * non-thenable object so it survives the surrounding `await` untouched.
+ * A policy that short-circuits with an error while a command is being queued in
+ * MULTI dirties the transaction, so the later EXEC aborts.
  */
-function ensureNonThenableStream(stream: ResponseStream): ResponseStream {
-  if (!('then' in stream)) {
-    return stream
+function applyPolicyShortCircuit(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  result: RedisResult,
+): RedisResult {
+  if (isTransactionQueueError(plan, ctx, result)) {
+    ctx.session.markTransactionDirty()
   }
 
-  return {
-    kind: 'response-stream',
-    get closed() {
-      return stream.closed
+  return result
+}
+
+/**
+ * Derive the context a command executes with: `ctx.db` becomes a view of the
+ * selected database whose mutations carry the command's name (see
+ * `RedisDatabase.withOrigin`), which keyspace notifications name write events
+ * after. The name is bound to this command's handle, so it survives the
+ * command parking and resuming in any order, and cannot leak onto another
+ * command's writes (#444). A nested command (Lua `redis.call`, EXEC's queue)
+ * derives its own view from this one, shadowing the name.
+ *
+ * Like {@link createMonitorDeferredContext}, this overrides `db` on a
+ * prototype link rather than copying the context, and keeps it a *live*
+ * getter: a SELECT mid-command (or mid-EXEC) must be seen by every later
+ * access (#94). The view is cached per underlying database so `ctx.db` keeps a
+ * stable identity within one command.
+ */
+function withMutationOrigin(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+): RedisExecutionContext {
+  const command = plan.definition.name
+  let base: RedisDatabase | undefined
+  let view: RedisDatabase | undefined
+  return Object.create(ctx, {
+    db: {
+      get(): RedisDatabase {
+        const db = ctx.db
+        if (db !== base || !view) {
+          base = db
+          view = db.withOrigin(command)
+        }
+        return view
+      },
+      enumerable: true,
+      configurable: true,
     },
-    frames: signal => stream.frames(signal),
-    close: reason => stream.close(reason),
+  }) as RedisExecutionContext
+}
+
+/**
+ * Map an execution-time {@link RedisCommandError} to a RESP error reply,
+ * dirtying an open transaction when appropriate. Anything else is a real bug
+ * and propagates.
+ */
+function executionErrorResult(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  err: unknown,
+): RedisResult {
+  if (!(err instanceof RedisCommandError)) {
+    throw err
   }
+
+  if (shouldDirtyTransaction(plan, ctx)) {
+    ctx.session.markTransactionDirty()
+  }
+
+  return RedisResult.fromError(err)
 }
 
 /**
  * Guard for the synchronous (Lua) path: a command's result must be a ready
- * {@link RedisResult}. Streaming commands and async commands are not callable
- * from scripts, so a stream is closed and both cases are surfaced as a
- * script-facing {@link RedisCommandError}.
+ * {@link RedisResult}. Async commands are not callable from scripts, so a
+ * promise is surfaced as a script-facing {@link RedisCommandError}.
  */
 function assertSyncCommandResult(
   plan: CommandPlan,
   result: ReturnType<CommandDefinition['execute']>,
 ): RedisResult {
-  if (isResponseStream(result)) {
-    result.close('Lua redis.call cannot run streaming commands')
-    throw new RedisCommandError(
-      `${plan.definition.name.toUpperCase()} is not allowed from scripts`,
-    )
-  }
-
   if (isThenable(result)) {
     throw new RedisCommandError(
       `${plan.definition.name.toUpperCase()} cannot run asynchronously from scripts`,
@@ -538,25 +530,6 @@ function assertSyncCommandDefinition(plan: CommandPlan): void {
   throw new RedisCommandError(
     `${plan.definition.name.toUpperCase()} cannot run asynchronously from scripts`,
   )
-}
-
-/**
- * Same idea as {@link assertSyncCommandResult} but for policy hooks: an async
- * hook result cannot be awaited on the Lua path, so it is rejected with a
- * descriptive {@link RedisCommandError} naming the offending policy and hook.
- */
-function assertSyncPolicyResult<TValue>(
-  policyName: string,
-  hookName: string,
-  value: TValue | Promise<TValue>,
-): TValue {
-  if (isThenable(value)) {
-    throw new RedisCommandError(
-      `Execution policy '${policyName}' ${hookName} hook cannot run asynchronously from scripts`,
-    )
-  }
-
-  return value
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {

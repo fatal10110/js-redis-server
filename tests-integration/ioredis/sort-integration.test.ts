@@ -139,6 +139,150 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('SORT with a constant BY reads a zset in rank order', async () => {
+    await withOps(async (c, k) => {
+      // sortCommand()'s dontsort path walks the skiplist, so the reply is in
+      // rank order. Rank order (c, a, b) differs from both insertion order and
+      // ALPHA order (both a, b, c), so this cannot pass by accident.
+      await c.zadd(k('z'), '2', 'a', '3', 'b', '1', 'c')
+      await c.mset(k('w_a'), 'A', k('w_b'), 'B', k('w_c'), 'C')
+
+      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), ['c', 'a', 'b'])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort'), [
+        'c',
+        'a',
+        'b',
+      ])
+      assert.deepStrictEqual(await c.sort_ro(k('z'), 'BY', 'nosort'), [
+        'c',
+        'a',
+        'b',
+      ])
+      // Any BY pattern without a '*' is constant, so it takes the same path.
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', k('konstant')), [
+        'c',
+        'a',
+        'b',
+      ])
+
+      // LIMIT, GET and STORE all consume that same source ordering.
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'LIMIT', '1', '5'),
+        ['a', 'b'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'GET', k('w_*')),
+        ['C', 'A', 'B'],
+      )
+      assert.strictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'STORE', k('zd')),
+        3,
+      )
+      assert.deepStrictEqual(await c.lrange(k('zd'), '0', '-1'), [
+        'c',
+        'a',
+        'b',
+      ])
+
+      // A zset is already ordered, so it is never force-sorted ALPHA the way
+      // an unordered set is inside a script — ALPHA would say a, b, c here.
+      assert.deepStrictEqual(
+        await c.eval(
+          "return redis.call('SORT', KEYS[1], 'BY', 'nosort')",
+          1,
+          k('z'),
+        ),
+        ['c', 'a', 'b'],
+      )
+    })
+  })
+
+  test('SORT with a constant BY keeps a zset rank tie-break by raw bytes', async () => {
+    await withOps(async (c, k) => {
+      // Equal scores rank by memcmp, so the uppercase members sort first —
+      // the same order ZRANGE reports, and not the insertion order.
+      await c.zadd(k('z'), '1', 'b', '1', 'a', '1', 'c', '1', 'A', '1', 'B')
+
+      assert.deepStrictEqual(await c.zrange(k('z'), '0', '-1'), [
+        'A',
+        'B',
+        'a',
+        'b',
+        'c',
+      ])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort'), [
+        'A',
+        'B',
+        'a',
+        'b',
+        'c',
+      ])
+    })
+  })
+
+  test('SORT with a constant BY reads the source backwards for DESC', async () => {
+    await withOps(async (c, k) => {
+      // dontsort does not mean "ignore DESC": sortCommand() walks both the
+      // list and the skiplist from the tail toward the head instead, with
+      // LIMIT applied to that reversed walk. A set has no such branch, so
+      // DESC is genuinely a no-op there.
+      await c.rpush(k('l'), 'a', 'c', 'b')
+      await c.zadd(k('z'), '2', 'a', '3', 'b', '1', 'c')
+      await c.sadd(k('s'), 'a', 'c', 'b')
+
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', 'nosort', 'DESC'), [
+        'b',
+        'c',
+        'a',
+      ])
+      assert.deepStrictEqual(await c.sort(k('z'), 'BY', 'nosort', 'DESC'), [
+        'b',
+        'a',
+        'c',
+      ])
+      assert.deepStrictEqual(await c.sort_ro(k('z'), 'BY', 'nosort', 'DESC'), [
+        'b',
+        'a',
+        'c',
+      ])
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'DESC', 'LIMIT', '0', '2'),
+        ['b', 'a'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('z'), 'BY', 'nosort', 'DESC', 'LIMIT', '1', '5'),
+        ['a', 'c'],
+      )
+
+      // A set is unordered, so DESC changes nothing about its plain reply.
+      assert.deepStrictEqual(
+        await c.sort(k('s'), 'BY', 'nosort', 'DESC'),
+        await c.sort(k('s'), 'BY', 'nosort'),
+      )
+
+      // STORE consumes the reversed order for a list and a zset, while a set
+      // is still force-sorted ALPHA first and only then reversed.
+      await c.sort(k('l'), 'BY', 'nosort', 'DESC', 'STORE', k('ld'))
+      assert.deepStrictEqual(await c.lrange(k('ld'), '0', '-1'), [
+        'b',
+        'c',
+        'a',
+      ])
+      await c.sort(k('z'), 'BY', 'nosort', 'DESC', 'STORE', k('zd'))
+      assert.deepStrictEqual(await c.lrange(k('zd'), '0', '-1'), [
+        'b',
+        'a',
+        'c',
+      ])
+      await c.sort(k('s'), 'BY', 'nosort', 'DESC', 'STORE', k('sd'))
+      assert.deepStrictEqual(await c.lrange(k('sd'), '0', '-1'), [
+        'c',
+        'b',
+        'a',
+      ])
+    })
+  })
+
   // -------------------------------------------------------------------- STORE
 
   test('SORT STORE writes the result as a list and returns its length', async () => {
@@ -220,6 +364,209 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
     })
   })
 
+  test('SORT breaks equal numeric weights lexicographically', async () => {
+    await withOps(async (c, k) => {
+      // Every weight key is missing, so all elements score 0 and sortCompare()
+      // falls through to comparing the elements themselves.
+      await c.rpush(k('l'), '3', '1', '2')
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', k('missing:*')), [
+        '1',
+        '2',
+        '3',
+      ])
+      await c.set(k('same:1'), '7')
+      await c.set(k('same:2'), '7')
+      await c.set(k('same:3'), '7')
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', k('same:*')), [
+        '1',
+        '2',
+        '3',
+      ])
+    })
+  })
+
+  test('SORT ALPHA BY missing weights keeps the source order', async () => {
+    await withOps(async (c, k) => {
+      // ALPHA with a BY whose weights are all absent genuinely compares equal
+      // in sortCompare(), so this one is *not* re-ordered.
+      await c.rpush(k('l'), 'c', 'a', 'b')
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', k('missing:*'), 'ALPHA'),
+        ['c', 'a', 'b'],
+      )
+    })
+  })
+
+  test('SORT GET with a constant pattern yields nil for every element', async () => {
+    await withOps(async (c, k) => {
+      // lookupKeyByPattern() bails out when the pattern has no '*', so the
+      // constant key is never read even though it exists.
+      await c.rpush(k('l'), '3', '1', '2')
+      await c.set(k('const'), 'HELLO')
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', 'nosort', 'GET', k('const')),
+        [null, null, null],
+      )
+    })
+  })
+
+  test('SORT treats a non-string weight or GET key as missing', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), '3', '1', '2')
+      await c.rpush(k('w:1'), 'not-a-string')
+      await c.set(k('w:2'), '5')
+      await c.set(k('w:3'), '1')
+
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', k('w:*')), [
+        '1',
+        '3',
+        '2',
+      ])
+      assert.deepStrictEqual(await c.sort(k('l'), 'GET', k('w:*')), [
+        null,
+        '5',
+        '1',
+      ])
+    })
+  })
+
+  test('SORT force-sorts a set with a constant BY when the order must be reproducible', async () => {
+    await withOps(async (c, k) => {
+      await c.sadd(k('s'), 'c', 'a', 'b')
+
+      // Plain reply: the set's own order is kept.
+      assert.deepStrictEqual(
+        (await c.sort(k('s'), 'BY', 'nosort')).slice().sort(),
+        ['a', 'b', 'c'],
+      )
+
+      // STORE and scripts must be reproducible, so ALPHA is forced.
+      assert.strictEqual(
+        await c.sort(k('s'), 'BY', 'nosort', 'STORE', k('d')),
+        3,
+      )
+      assert.deepStrictEqual(await c.lrange(k('d'), '0', '-1'), ['a', 'b', 'c'])
+      assert.deepStrictEqual(
+        await c.eval(
+          "return redis.call('SORT', KEYS[1], 'BY', 'nosort')",
+          1,
+          k('s'),
+        ),
+        ['a', 'b', 'c'],
+      )
+
+      // A list already has a defined order, so it is not force-sorted.
+      await c.rpush(k('ll'), 'c', 'a', 'b')
+      await c.sort(k('ll'), 'BY', 'nosort', 'STORE', k('ld'))
+      assert.deepStrictEqual(await c.lrange(k('ld'), '0', '-1'), [
+        'c',
+        'a',
+        'b',
+      ])
+    })
+  })
+
+  test('SORT reports only its source key and STORE destination as keys', async () => {
+    assert.ok(redisClient)
+    const tag = `{sort:${randomKey()}}`
+    assert.deepStrictEqual(
+      await redisClient.command(
+        'GETKEYS',
+        'SORT',
+        `${tag}:l`,
+        'BY',
+        `${tag}:w_*`,
+        'GET',
+        `${tag}:p_*`,
+      ),
+      [`${tag}:l`],
+    )
+    assert.deepStrictEqual(
+      await redisClient.command(
+        'GETKEYS',
+        'SORT',
+        `${tag}:l`,
+        'BY',
+        `${tag}:w_*`,
+        'STORE',
+        `${tag}:dst`,
+      ),
+      [`${tag}:l`, `${tag}:dst`],
+    )
+  })
+
+  test('SORT finds STORE the way sortGetKeys() does', async () => {
+    await withOps(async (c, k) => {
+      const getKeys = (...args: string[]) => c.command('GETKEYS', ...args)
+      // A STORE in value position is skipped along with GET's pattern...
+      assert.deepStrictEqual(await getKeys('SORT', k('l'), 'GET', 'STORE'), [
+        k('l'),
+      ])
+      // ...LIMIT's two arguments are skipped, and the last STORE wins.
+      assert.deepStrictEqual(
+        await getKeys('SORT', k('l'), 'LIMIT', '0', '1', 'STORE', k('d')),
+        [k('l'), k('d')],
+      )
+      assert.deepStrictEqual(
+        await getKeys('SORT', k('l'), 'STORE', k('a'), 'STORE', k('b')),
+        [k('l'), k('b')],
+      )
+      // SORT_RO reports its source key only.
+      assert.deepStrictEqual(
+        await getKeys('SORT_RO', k('l'), 'STORE', k('d')),
+        [k('l')],
+      )
+    })
+  })
+
+  test('SORT BY nosort skips sorting in cluster mode', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), '3', '1', '2')
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', 'nosort'), [
+        '3',
+        '1',
+        '2',
+      ])
+      assert.deepStrictEqual(await c.sort_ro(k('l'), 'BY', 'nosort'), [
+        '3',
+        '1',
+        '2',
+      ])
+    })
+  })
+
+  test('SORT BY a constant pattern skips sorting whatever slot it hashes to', async () => {
+    await withOps(async (c, k) => {
+      // No '*' means the pattern is constant: every element gets the same
+      // weight, so real Redis never looks the key up and never sorts — the
+      // cluster slot of the constant is therefore irrelevant.
+      await c.rpush(k('l'), '3', '1', '2')
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', `{sort-other:${randomKey()}}:weight`),
+        ['3', '1', '2'],
+      )
+    })
+  })
+
+  test('SORT BY a glob hash-tagged to an untagged source key is allowed', async () => {
+    assert.ok(redisClient)
+    // The source key carries no hash tag of its own, so the BY pattern's tag
+    // has to be compared by *slot* against the key, not by tag bytes.
+    const key = `sort-untagged:${randomKey()}`
+    const directClient = await connectToSlotOwner(redisClient, key)
+    try {
+      await directClient.rpush(key, '2', '1')
+      await directClient.set(`{${key}}:weight:1`, '20')
+      await directClient.set(`{${key}}:weight:2`, '10')
+      assert.deepStrictEqual(
+        await directClient.sort(key, 'BY', `{${key}}:weight:*`),
+        ['2', '1'],
+      )
+    } finally {
+      directClient.disconnect()
+    }
+  })
+
   test('SORT rejects BY or GET patterns that hash to a different slot', async () => {
     await withOps(async (c, k) => {
       const otherTag = `{sort-other:${randomKey()}}`
@@ -239,6 +586,191 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
           'ERR GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.',
         ),
       )
+    })
+  })
+
+  // A glob with a '*' before any hash tag can match keys in every slot, so it
+  // is refused whatever slot the sort key lives in (#417).
+  const BY_DENIED =
+    'ERR BY option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+  const GET_DENIED =
+    'ERR GET option of SORT denied in Cluster mode when keys formed by the pattern may be in different slots.'
+
+  test('SORT reports the first denied BY/GET option in argument order', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), '3', '1', '2')
+      await assert.rejects(
+        () => c.sort(k('l'), 'GET', 'n_*', 'BY', 'w_*'),
+        errorWithMessage(GET_DENIED),
+      )
+      await assert.rejects(
+        () => c.sort(k('l'), 'BY', 'w_*', 'GET', 'n_*'),
+        errorWithMessage(BY_DENIED),
+      )
+      // A denied glob BY is reported even when a constant BY precedes it.
+      await assert.rejects(
+        () => c.sort(k('l'), 'BY', 'nosort', 'BY', 'w_*'),
+        errorWithMessage(BY_DENIED),
+      )
+    })
+  })
+
+  test('SORT reaches a denied pattern before a later option fails to parse', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), '3', '1', '2')
+      await assert.rejects(
+        () => c.sort(k('l'), 'BY', 'w_*', 'BADARG'),
+        errorWithMessage(BY_DENIED),
+      )
+      await assert.rejects(
+        () => c.sort(k('l'), 'BY', 'w_*', 'LIMIT', 'x', '1'),
+        errorWithMessage(BY_DENIED),
+      )
+      // ...but an error that precedes the pattern still wins.
+      await assert.rejects(
+        () => c.sort(k('l'), 'BADARG', 'BY', 'w_*'),
+        errorWithMessage('ERR syntax error'),
+      )
+      await assert.rejects(
+        () => c.sort(k('l'), 'LIMIT', 'x', '1', 'BY', 'w_*'),
+        errorWithMessage('ERR value is not an integer or out of range'),
+      )
+    })
+  })
+
+  test('SORT errors inside MULTI are queued and surface in EXEC', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), '3', '1', '2')
+      const replies = await c
+        .multi()
+        .sort(k('l'), 'BY', 'w_*')
+        .sort(k('l'), 'GET', 'n_*')
+        .sort(k('l'), 'BADARG')
+        .sort(k('l'), 'LIMIT', '0')
+        .sort(k('l'))
+        .exec()
+
+      assert.ok(replies)
+      assert.deepStrictEqual(
+        replies.map(([err]) => err?.message ?? null),
+        [BY_DENIED, GET_DENIED, 'ERR syntax error', 'ERR syntax error', null],
+      )
+      assert.deepStrictEqual(replies[4]?.[1], ['1', '2', '3'])
+    })
+  })
+
+  test('SORT treats option names in value position as values', async () => {
+    assert.ok(redisClient)
+    // GET's pattern is the literal `BY` and BY's pattern the literal `GET`:
+    // both are constant, so every element projects to nil. Tagging the key
+    // `{BY}` puts it in the slot of the `BY` pattern, which is what lets the
+    // constant GET pass the cluster slot comparison.
+    const key = `{BY}:sort:${randomKey()}`
+    const directClient = await connectToSlotOwner(redisClient, key)
+    try {
+      await directClient.rpush(key, '3', '1', '2')
+      assert.deepStrictEqual(
+        await directClient.sort(key, 'GET', 'BY', 'BY', 'GET'),
+        [null, null, null],
+      )
+    } finally {
+      await directClient.del(key)
+      directClient.disconnect()
+    }
+  })
+
+  // ------------------------------------------------------ tie order (#443)
+
+  test('SORT ALPHA DESC keeps tied elements in load order', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), 'c', 'a', 'b', 'e', 'd')
+      // Every weight is missing, so every element ties: sortCompare() negates
+      // the comparison for DESC, and a tie negated is still a tie.
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', k('missing_*'), 'ALPHA', 'DESC'),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+
+      await c.mset(k('w_a'), '1', k('w_b'), '1', k('w_c'), '2')
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', k('w_*'), 'ALPHA', 'DESC'),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+    })
+  })
+
+  test('SORT ALPHA BY orders a missing weight before an empty one', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), 'c', 'a', 'b', 'e', 'd')
+      await c.mset(k('w_a'), '1', k('w_b'), '1', k('w_c'), '2', k('w_e'), '')
+      assert.deepStrictEqual(await c.sort(k('l'), 'BY', k('w_*'), 'ALPHA'), [
+        'd',
+        'e',
+        'a',
+        'b',
+        'c',
+      ])
+    })
+  })
+
+  test('SORT with several BY options: a constant one disables sorting, the last glob weighs', async () => {
+    await withOps(async (c, k) => {
+      await c.rpush(k('l'), 'c', 'a', 'b', 'e', 'd')
+      await c.mset(k('w_a'), '1', k('w_b'), '1', k('w_c'), '2')
+
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', 'nosort', 'BY', k('w_*')),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', k('w_*'), 'BY', 'nosort'),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', 'nosort', 'BY', k('w_*'), 'DESC'),
+        ['d', 'e', 'b', 'a', 'c'],
+      )
+      // Only the last glob is looked up: every `missing_*` weight is absent.
+      assert.deepStrictEqual(
+        await c.sort(k('l'), 'BY', k('w_*'), 'BY', k('missing_*'), 'ALPHA'),
+        ['c', 'a', 'b', 'e', 'd'],
+      )
+    })
+  })
+
+  test('SORT reads an integer-only set in ascending numeric order', async () => {
+    await withOps(async (c, k) => {
+      // An intset is stored sorted, so that is the order SORT loads it in.
+      await c.sadd(k('si'), '10', '-5', '2', '7')
+      const ascending = ['-5', '2', '7', '10']
+      assert.deepStrictEqual(await c.sort(k('si'), 'BY', 'nosort'), ascending)
+      assert.deepStrictEqual(
+        await c.sort(k('si'), 'BY', 'nosort', 'DESC'),
+        ascending,
+      )
+      assert.deepStrictEqual(
+        await c.sort(k('si'), 'BY', k('missing_*'), 'ALPHA', 'DESC'),
+        ascending,
+      )
+
+      // A member that is not a canonical 64-bit integer keeps the set out of
+      // the intset encoding, and a small listpack set keeps insertion order.
+      await c.sadd(k('sm'), '10', 'x', '2')
+      assert.deepStrictEqual(await c.sort(k('sm'), 'BY', 'nosort'), [
+        '10',
+        'x',
+        '2',
+      ])
+      await c.sadd(k('s0'), '010', '2')
+      assert.deepStrictEqual(await c.sort(k('s0'), 'BY', 'nosort'), [
+        '010',
+        '2',
+      ])
+      await c.sadd(k('s1'), '9223372036854775808', '2')
+      assert.deepStrictEqual(await c.sort(k('s1'), 'BY', 'nosort'), [
+        '9223372036854775808',
+        '2',
+      ])
     })
   })
 

@@ -25,6 +25,7 @@ type GeoRadiusArgs = GeoRadiusFlags & {
 
 function createGeoRadiusSchema(allowStore: boolean) {
   return t.custom<GeoRadiusArgs>(
+    { min: 5, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       const lonTok = input[index + 1]
@@ -88,6 +89,7 @@ function executeGeoRadius(args: GeoRadiusArgs, ctx: RedisExecutionContext) {
       withHash: args.withHash,
     },
     args.by.unit,
+    ctx.server.profile,
   )
 }
 

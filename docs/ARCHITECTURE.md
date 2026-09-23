@@ -41,10 +41,10 @@ flowchart LR
     C -- "command, args" --> D
     D -- "executeRaw(cmd, args, ctx)" --> F
     F -. "plan(): lookup + parse + keys" .-> G
-    F -. "beforeExecute / afterExecute / onStream" .-> H
+    F -. "beforeExecute" .-> H
     F -- "execute(args, ctx)" --> I
     I <--> J
-    I -- "RedisResult / ResponseStream" --> F
+    I -- "RedisResult" --> F
     F -- result --> D
     D -- "encode (RESP2 or RESP3)" --> C
     C --> B
@@ -56,8 +56,8 @@ gets decoded into `(command, args)` by the
 [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts), and is handed
 to the connection's [`ClientSession`](../src/core/client-session.ts). The
 session asks the [`CommandExecutor`](../src/core/command-executor.ts) to look
-up and run it; the executor returns a `RedisResult` (or a `ResponseStream` for
-streaming replies), which the session adapter encodes back to wire bytes using
+up and run it; the executor returns a `RedisResult`, which the session adapter
+encodes back to wire bytes using
 the protocol version (`RESP2`/`RESP3`) negotiated for that connection. A
 `RedisResult` can also carry pre-encoded bytes for protocol-sensitive composite
 replies such as `EXEC` crossing an in-transaction `HELLO`. While executing a
@@ -79,8 +79,7 @@ command-specific argument knowledge.
 ```mermaid
 graph TD
     subgraph "Transport layer"
-        ST[SocketConnectionTransport]
-        IT["InMemoryConnectionTransport<br/>(tests / embedding)"]
+        ST["SocketConnectionTransport<br/>(net.Socket or duplexPair)"]
         SA[Resp2SessionAdapter]
         DEC[Resp2CommandDecoder]
         ENC["resp-encoder<br/>encodeResp2 / encodeResp3"]
@@ -88,7 +87,6 @@ graph TD
 
     subgraph "Session layer"
         CS[ClientSession]
-        TQ[SerialTurnQueue]
     end
 
     subgraph "Execution layer"
@@ -105,6 +103,7 @@ graph TD
 
     subgraph "State layer — src/state/*"
         SS[RedisServerState]
+        TQ["SerialTurnQueue<br/>(one per server)"]
         RD["RedisDatabase ×N<br/>(owns the keyspace map)"]
         MB[RedisMutationBus]
         CT[RedisClusterTopology]
@@ -113,7 +112,7 @@ graph TD
         MF[RedisMonitorFeed]
     end
 
-    ST & IT --> SA
+    ST --> SA
     SA --> DEC
     SA --> ENC
     SA --> CS
@@ -124,6 +123,7 @@ graph TD
     CE --> CP
     CE --> CMD
     CMD --> RD
+    SS --> TQ
     SS --> RD
     SS --> CT
     SS --> SCC
@@ -134,15 +134,17 @@ graph TD
 
 | Layer         | Responsibility                                                                                                     | Key types                                                                                                                                                                                                                                                                                                                          |
 | :------------ | :----------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`InMemoryConnectionTransport`](../src/core/transports/in-memory-connection-transport.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
+| **Transport** | Frames bytes on/off the wire; decouples the core from `net.Socket`                                                 | [`ConnectionTransport`](../src/core/transports/connection-transport.ts), [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts), [`createVirtualConnection`](../src/core/transports/virtual-connection.ts), [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts) |
 | **Session**   | Per-connection state: selected DB, RESP version, transaction queue, `WATCH`ed keys, abort signal, turn acquisition | [`ClientSession`](../src/core/client-session.ts)                                                                                                                                                                                                                                                                                   |
 | **Execution** | Looks up commands, parses args, extracts keys, and runs composable policies around `execute`                       | [`CommandExecutor`](../src/core/command-executor.ts), [`CommandRegistry`](../src/core/command-registry.ts), [`ExecutionPolicy`](../src/core/execution-policies/index.ts)                                                                                                                                                           |
-| **Command**   | Pure `(args, ctx) → RedisResult \| ResponseStream` implementations grouped by data type                            | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
+| **Command**   | Pure `(args, ctx) → RedisResult` implementations grouped by data type                                              | [`src/commands/`](../src/commands/)                                                                                                                                                                                                                                                                                                |
 | **State**     | In-memory keyspace, mutation events, cluster topology, script cache, connected clients, pub/sub, monitor feed      | [`RedisServerState`](../src/state/server-state.ts), [`RedisDatabase`](../src/state/database.ts)                                                                                                                                                                                                                                    |
 
-Commands never touch the transport — they return a `RedisResult` (or a
-`ResponseStream` for push-style replies) and let the executor/session/adapter
-chain handle delivery. That is what lets the _exact same_ command run
+Commands never touch the transport — they return a `RedisResult` and let the
+executor/session/adapter chain handle delivery. Server-initiated frames (pub/sub
+messages, `MONITOR` lines) go through the session's push queue, which the
+adapter writes between replies; a multi-channel `SUBSCRIBE` is one reply
+pre-encoded with every confirmation frame. That is what lets the _exact same_ command run
 standalone, inside a cluster node, inside `MULTI`/`EXEC`, and inside a Lua
 script without rewrites.
 
@@ -171,11 +173,9 @@ sequenceDiagram
         CE->>Cmd: execute(args, ctx)
         Cmd->>DB: read / write keyspace
         DB-->>Cmd: RedisDataValue
-        Cmd-->>CE: RedisResult or ResponseStream
-        CE->>EP: afterExecute / onStream
-        EP-->>CE: (possibly rewritten) result
+        Cmd-->>CE: RedisResult
     end
-    CE-->>CS: RedisResult or ResponseStream
+    CE-->>CS: RedisResult
     CS-->>SA: result
     SA->>SA: write pre-encoded result, or encode via session.protocolVersion
     SA-->>Cl: encoded reply
@@ -185,28 +185,31 @@ sequenceDiagram
 `CommandDefinition` from the registry, parses raw `Buffer` args through the
 command's [schema](../src/core/command-schema.ts) (single source of truth for
 arity/syntax), and extracts routing keys via `definition.keys(args)` — the
-result is a `CommandPlan` that policies and the executor share.
+result is a `CommandPlan` that policies and the executor share. On Redis
+7.0+/Valkey profiles, `plan()` also resolves a container command's first
+argument against the real subcommand tables right after the registry lookup,
+before parsing (see
+[`subcommand-gates.ts`](../src/core/compatibility/subcommand-gates.ts)),
+throwing `UnknownSubcommandError` for a name the profile doesn't have.
 
 Two execution paths share this same plan:
 
 - [`executePlan`](../src/core/command-executor.ts#L65) — the normal async path
-  used for client-issued commands and `MULTI`/`EXEC` playback. Supports
-  streaming results (`ResponseStream`) and `afterExecute`/`onStream` rewriting.
+  used for client-issued commands and `MULTI`/`EXEC` playback. Supports async
+  commands.
 - [`executePlanSync`](../src/core/command-executor.ts#L116) — a synchronous path
   used exclusively by the Lua runtime for `redis.call`/`redis.pcall`. It runs
   the **same** policies and registry, and rejects any command or policy hook
-  that tries to go async or stream — so a script can never bypass cluster
+  that tries to go async — so a script can never bypass cluster
   routing or transaction rules.
 
 ## Execution policies
 
-An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L9) wraps every
-command with three optional hooks:
+An [`ExecutionPolicy`](../src/core/execution-policies/index.ts#L7) guards every
+command with a single optional hook:
 
 ```ts
 beforeExecute(plan, ctx) // can short-circuit with a RedisResult (queue, redirect, reject)
-afterExecute(plan, ctx, result) // can rewrite the result
-onStream(plan, ctx, stream) // can wrap/replace a streaming result
 ```
 
 [`createRedisCommandExecutor`](../src/commands/index.ts#L41) always prepends
@@ -308,10 +311,10 @@ flowchart LR
 
     RD0 --> ME["Map&lt;keyId, KeyspaceEntry&gt;<br/>{ key, value, expiresAt? }"]
     ME --> DT["RedisDataValue<br/>string · hash · list · set · zset · stream"]
-    RD0 -- "emit on write/delete/expire/<br/>persist/evict/flush" --> MB[RedisMutationBus]
+    RD0 -- "emit on write/delete/expire/<br/>persist/evict/flush/notify" --> MB[RedisMutationBus]
 
-    MB -- "global listeners" --> KN["KeyspaceNotifier<br/>→ PubSubBroker (keyspace/keyevent)"]
-    MB -- "per-key listeners" --> WL["ClientSession WATCH<br/>→ marks session dirty"]
+    MB -- "global listeners (all events)" --> KN["KeyspaceNotifier<br/>→ PubSubBroker (keyspace/keyevent)"]
+    MB -- "per-key listeners (never notify)" --> WL["ClientSession WATCH<br/>→ marks session dirty"]
 ```
 
 [`RedisServerState`](../src/state/server-state.ts#L13) owns one or more
@@ -333,26 +336,47 @@ types (`KeyspaceEntry`, `SetOptions`, `ExpirationState`,
 [`RedisDataValue`](../src/state/data-types.ts)s (`string`, `hash`, `list`,
 `set`, `zset`, `stream`). Hash values store byte-safe field entries and can
 attach an `expiresAt` timestamp to individual fields for the hash-field TTL
-commands; tracked hash helpers lazily delete expired fields on hash reads and
-writes, and the keyspace removes the hash key when the last live field
-disappears. Stream values store ordered entries plus consumer groups, per-group
-pending-entry lists, and consumer idle metadata. Key expiration is handled by
+commands. Expired fields are dropped as a mutation of their own, published as
+`hexpired` (then `del` if the hash empties) — never under the name of the
+command that touched the key: by the active sweep, which scans a hash only
+once the lower bound `RedisDatabase` keeps on its earliest field deadline is
+due (so an ordinary hash write costs O(1)), and lazily by `updateHash` for a
+field that expired since the last tick. The keyspace
+removes the hash key when the last live field disappears. Stream values store ordered entries plus consumer groups, per-group
+pending-entry lists, and consumer idle metadata. Key (and hash-field) expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
-background active-expiry pass across its databases, under each database's
-`SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
+background active-expiry pass that sweeps every database under one turn of
+the server's `SerialTurnQueue`; cluster replicas disable their own active sweep and rely on
 the master's replicated deletion. `getLiveEntry` still calls
 [`evictIfExpired`](../src/state/database.ts) on reads that encounter an
 expired key before the next sweep. Either path deletes the entry and emits an
 `evict` mutation event so `WATCH` observes expiry exactly like a real delete.
-Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`)
-flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L68),
-which clones values before fan-out so subscribers can never mutate shared state.
-The [`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this
+Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`/`notify`)
+flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L102),
+which gives each subscriber its own copy of the event — a `write`'s value is
+cloned on the subscriber's first read of it (most never read it; each write
+also carries `valueType`), so subscribers can never mutate shared state and an
+unread value costs nothing.
+`notify` is the odd one out: it is the keyspace-notification signal on its own
+(real Redis' `notifyKeyspaceEvent` without `signalModifiedKey`), so the bus
+delivers it only to global listeners, never to the per-key listeners `WATCH`
+and blocked clients use (#379). The
+[`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this
 bus and republishes mutations as Redis keyspace/keyevent notifications through
 the `RedisPubSubBroker` when `notify-keyspace-events` is enabled. Lifecycle
 events (`del`/`expire`/`persist`/`expired`) come straight from the mutation
-type; write event names (`set`/`lpush`/…) come from the active command, which
-the `CommandExecutor` records on the `RedisDatabase` around `execute`.
+type; write event names (`set`/`lpush`/…) come from `event.command`, stamped
+by the `CommandExecutor`, which hands each command a `ctx.db` view
+(`RedisDatabase.withOrigin`) that tags every event it emits with that
+command's name (#444) — a prototype-linked view rather than a mutable flag on
+the database, so a parked command (`BLPOP`) can't leak its name onto another
+command's writes when it resumes. A command whose event real Redis names after
+the underlying operation rather than the command mutates through its own
+`withOrigin` view at the call site: blocking / multi-key / move-style pops use
+`lpop`/`rpop`/`zpopmin`/`zpopmax` (and `lpush`/`rpush`, `srem`/`sadd` on the
+other key of a move), XGROUP subcommands `xgroup-<subcommand>`, the 8.x
+hash-field commands `hdel`/`hexpire`/`hpersist`, and `SORT ... STORE`
+`sortstore`.
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and
@@ -366,20 +390,24 @@ consumer-group, pending-entry, and last-id mutations (`XREADGROUP`, `XCLAIM`,
 `XAUTOCLAIM`, `XGROUP SETID`, `XSETID`, `XACK`, `XGROUP
 CREATE`/`DESTROY`/`CREATECONSUMER`/`DELCONSUMER`) deliberately leave a `WATCH` on
 the stream key intact — matching real Redis, where only entry-set changes
-(`XADD`/`XDEL`/…) touch it. The one exception is `XGROUP CREATE ... MKSTREAM`
-when it creates the key: those helpers commit through `markCommitted()`, which
-persists the value but only dirties `WATCH` when the key is brand-new (coming
-into existence is itself a write).
+(`XADD`/`XDEL`/…) touch it. All of those except `XACK`/`XREADGROUP`/`XCLAIM`/`XAUTOCLAIM`
+commit through `markCommitted()`, which persists the value, dirties `WATCH`
+only when the key is brand-new (coming into existence is itself a write), and
+otherwise emits a `notify` so the change is still announced as a keyspace
+notification — matching real Redis, which fires `notifyKeyspaceEvent` for
+these without calling `signalModifiedKey`. When `XREADGROUP`/`XCLAIM`/
+`XAUTOCLAIM` name a consumer that does not exist yet, they first create it the
+same way, as its own `xgroup-createconsumer` notification.
 
 ## Concurrency model
 
-Each `RedisDatabase` owns a [`SerialTurnQueue`](../src/core/turn-queue.ts#L12).
-Every `session.execute()` call waits for a turn before reaching the executor
-and releases it in a `finally` block — so, within one database, commands run to
-completion one at a time, mirroring single-threaded Redis semantics. (Sessions
-on _different_ databases run independently; the mock intentionally allows
-cross-database parallelism that real Redis does not have — don't rely on
-cross-DB ordering in tests.)
+Each `RedisServerState` owns one [`SerialTurnQueue`](../src/core/turn-queue.ts#L12)
+shared by all of its databases. Every `session.execute()` call waits for a turn
+before reaching the executor and releases it in a `finally` block — so commands
+run to completion one at a time across every database, mirroring
+single-threaded Redis. A queued `SELECT` inside `MULTI`/`EXEC` therefore needs
+no turn handoff: the EXEC already holds the only turn. Each cluster node has its
+own `RedisServerState`, so nodes still run independently of one another.
 
 The turn handle also exposes `suspend(waitFor)`, and `RedisExecutionContext`
 carries a `park` handler
@@ -393,16 +421,27 @@ contract without special session or queue code.
 ## Protocol & transports (RESP2 / RESP3)
 
 [`ConnectionTransport`](../src/core/transports/connection-transport.ts) is a
-minimal duplex-byte-stream interface (`read`/`write`/`close`/`signal`/`on`)
-with two implementations: [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts)
-for real TCP connections, and [`InMemoryConnectionTransport`](../src/core/transports/in-memory-connection-transport.ts)
-for tests and programmatic embedding (feed bytes in, inspect bytes out — no
-socket required). [`Resp2Server`](../src/core/transports/resp2/server.ts)
+minimal duplex-byte-stream interface (`read`/`write`/`close`/`signal`) with a
+single implementation: [`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts),
+which wraps any `Duplex`. That is a real `net.Socket` for TCP connections, and
+one end of a [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions)
+for the socketless path ([`createVirtualConnection`](../src/core/transports/virtual-connection.ts)) —
+so tests and programmatic embedding exercise the same framing and teardown code
+as the wire. [`Resp2Server`](../src/core/transports/resp2/server.ts)
 wires a transport to a fresh `ClientSession` per connection through a
 [`Resp2SessionAdapter`](../src/core/transports/resp2/session-adapter.ts), which
 owns a [`Resp2CommandDecoder`](../src/core/transports/resp2/decoder.ts)
 (handles both RESP multibulk arrays and inline commands, including quoted/escaped
-inline arguments) for the request side.
+inline arguments) for the request side. The adapter pulls one frame at a time
+(`push(chunk)` then `next()`) so each command has run before the next is
+parsed — which is what lets the decoder enforce the *live*
+`proto-max-bulk-len` on every bulk header, refusing an oversized argument with
+`Protocol error: invalid bulk length` and closing the connection before any
+command handler sees it, exactly as Redis does. The adapter also hands the
+decoder the server's compatibility profile, which picks the multibulk
+element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+). Like Redis, the
+decoder refuses an inline request once more than 64KB is buffered with no
+newline.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
@@ -415,7 +454,12 @@ RESP3 — `RedisValue.map`/`mapPairs`/`set`/`double`/`boolean`/`bigNumber`/`push
 then encode as their native RESP3 types (`%`, `%`, `~`, `,`, `#`, `(`, `>`)
 instead of being downgraded to arrays/bulk-strings. `map` downgrades to a flat
 RESP2 key/value array, while `mapPairs` downgrades to a RESP2 array of
-`[key, value]` pairs for commands like `XREAD`. See the
+`[key, value]` pairs for commands like `XREAD`. A `double`'s text depends on
+the server's compatibility profile — `%.17g` on Redis 6.2 / 7.0, `d2string()`
+(exact integers, else a port of Redis's Grisu2 `fpconv_dtoa`) on 7.2+ and
+Valkey — so the encoder takes the profile alongside the RESP version, and the
+socketless decoders and the Lua bridge share the same
+[`formatRedisDouble`](../src/core/double-format.ts). See the
 [testing guide's "Connecting your client" section](TESTING.md#connecting-your-client)
 for the client-facing view of this negotiation.
 
@@ -464,7 +508,8 @@ holding a [`ClientSession`](../src/core/client-session.ts) and calling
 `session.execute` directly, bypassing both the TCP loopback and RESP
 encode/decode. Replies are decoded from `RedisValue` into native JS (integers
 narrowed to `number` when safe; `-ERR` surfaced as `RedisCommandError`).
-Streaming commands are rejected. It owns its own `RedisServerState` + executor
+Push-mode commands (`SUBSCRIBE`, `MONITOR`) return their immediate reply;
+later frames come from `client.pushes()`. It owns its own `RedisServerState` + executor
 (built internally from `databaseCount`/`seed`), so `client.close()` tears them
 down. To drive an existing mock's keyspace instead, construct
 `InMemoryRedisClient` directly with that mock's `state` and a
@@ -476,8 +521,8 @@ each entry maps to a `RedisDataValue` via the existing tracked
 `ttlMs` applied as an expiration and `db` selecting the logical database. In
 cluster mode it resolves each key's slot owner via the topology and writes into
 that master, letting the normal replication links propagate to replicas. Writes
-acquire the per-database `SerialTurnQueue` turn, so seeding never interleaves
-with an in-flight command.
+acquire the server's `SerialTurnQueue` turn, so seeding never interleaves with
+an in-flight command.
 
 ## Lua scripting
 
@@ -495,8 +540,10 @@ to scripts via a host callback
 
 1. builds a `CommandPlan` with `ctx.executor.plan(name, args)` — the _exact_
    same lookup/parse/key-extraction the normal path uses,
-2. rejects commands flagged `noscript` with the standard Redis script error,
-   and
+2. rejects commands flagged `noscript` with the standard Redis script error
+   (on 7.0+ profiles a `noscript` container's subcommand is looked up
+   first, mirroring Redis's per-subcommand flags: `HELP` is exempt and an
+   unknown subcommand gets the unknown-command error), and
 3. runs the plan through [`executePlanSync`](../src/core/command-executor.ts#L116)
    — the same registry and policies as a client-issued command, so cluster
    slot validation and transaction-flag rules apply _inside_ scripts too, and
@@ -514,6 +561,11 @@ in the server-wide [`RedisScriptCache`](../src/state/script-cache.ts).
    `keys(args)`, and `execute(args, ctx)` — in the matching
    [`src/commands/<type>.ts`](../src/commands/) file, using
    [`defineCommand`](../src/core/command-definition.ts#L88).
+   `COMMAND INFO`'s arity and legacy first/last/step key range are derived
+   from `schema` rather than hand-written, so `t.key()` must mark only actual
+   key arguments (use `t.bulk()` for members/fields/values), and a
+   hand-written `t.custom()` parser needs a `layout` (or `t.withLayout()`) to
+   report correctly.
 2. Register it in [`src/commands/index.ts`](../src/commands/index.ts) (and
    re-export it if other modules need direct access).
 3. Add unit tests under [`tests/`](../tests/) using the project's
