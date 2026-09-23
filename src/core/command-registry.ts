@@ -1,10 +1,13 @@
 import type { CommandDefinition } from './command-definition'
+import { asciiLowerCase } from './ascii-case'
 
 export class CommandRegistry {
   private readonly commands = new Map<string, CommandDefinition<unknown>>()
 
   /**
-   * Registers a definition under its lowercased name.
+   * Registers a definition under its lowercased name. Folding is ASCII-only
+   * ({@link asciiLowerCase}), matching real Redis: `get` finds `GET`/`Get`, but
+   * a non-ASCII character never folds onto an ASCII letter (#382).
    *
    * The definition object is stored **by reference**, never copied: a
    * `CommandDefinition` is an interface, so it may legally be a class instance
@@ -27,7 +30,7 @@ export class CommandRegistry {
     definition: CommandDefinition<TArgs>,
     options?: { override?: boolean },
   ): void {
-    const name = definition.name.toLowerCase()
+    const name = asciiLowerCase(definition.name)
     if (!options?.override && this.commands.has(name)) {
       throw new Error(`Command '${name}' is already registered`)
     }
@@ -45,7 +48,7 @@ export class CommandRegistry {
   }
 
   get(name: string): CommandDefinition<unknown> | undefined {
-    return this.commands.get(name.toLowerCase())
+    return this.commands.get(asciiLowerCase(name))
   }
 
   getAll(): CommandDefinition<unknown>[] {

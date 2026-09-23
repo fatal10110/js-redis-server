@@ -1,3 +1,4 @@
+import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t } from '../core/command-schema'
 import type {
@@ -493,10 +494,6 @@ function redactedMonitorArg(): Buffer {
   return Buffer.from('(redacted)')
 }
 
-function equalsAscii(value: Buffer, expected: string): boolean {
-  return value.toString().toLowerCase() === expected
-}
-
 export const pingCommand = defineCommand({
   name: 'ping',
   schema: t.object({
@@ -622,7 +619,7 @@ export const clientCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'setname') {
       expectArgCount('client|setname', args.args, 1)
@@ -947,7 +944,7 @@ export const aclCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'whoami') {
       expectArgCount('acl|whoami', args.args, 0)
@@ -1031,7 +1028,7 @@ export const slowlogCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    const subcommand = args.subcommand.toString().toLowerCase()
+    const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
       if (args.args.length > 1) {
