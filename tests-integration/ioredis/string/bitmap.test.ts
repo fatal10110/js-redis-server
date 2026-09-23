@@ -79,11 +79,19 @@ describe(`Bitmap Commands Integration (${testRunner.getBackendName()})`, () => {
       errorWithMessage("ERR wrong number of arguments for 'getbit' command"),
     )
 
-    // The max valid offset is 2^32 - 1.
-    assert.strictEqual(
-      await client.call('SETBIT', `${ns()}:max`, '4294967295', '1'),
-      0,
-    )
+    // The max valid offset is 2^32 - 1. Setting it allocates a 512MB string on
+    // the master and again on its replica, so delete it straight away: the real
+    // cluster is not flushed between suites or runs, and leftover copies
+    // exhaust the container's memory and get cluster nodes OOM-killed (#453).
+    const maxKey = `${ns()}:max`
+    try {
+      assert.strictEqual(
+        await client.call('SETBIT', maxKey, '4294967295', '1'),
+        0,
+      )
+    } finally {
+      await client.del(maxKey)
+    }
   })
 
   test('BITCOUNT counts set bits with byte and bit ranges', async () => {

@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { flushNodeRedisCluster, randomKey } from '../../utils'
+import { randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -15,7 +15,6 @@ describe(`Sorted Set Byte-Order Tie-Breaking Integration (node-redis, ${testRunn
 
   before(async () => {
     redisClient = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(redisClient)
   })
 
   after(async () => {

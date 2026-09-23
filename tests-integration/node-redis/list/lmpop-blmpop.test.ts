@@ -5,7 +5,6 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
-  flushNodeRedisCluster,
   randomKey,
 } from '../../utils'
 
@@ -22,7 +21,6 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
   before(async () => {
     client1 = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
     client2 = (await testRunner.setupNodeRedisCluster()) as RedisClusterType
-    await flushNodeRedisCluster(client1)
   })
 
   after(async () => {
