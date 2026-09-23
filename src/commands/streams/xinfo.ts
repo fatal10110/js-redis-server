@@ -2,7 +2,6 @@ import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   NoSuchKeyError,
-  RedisSyntaxError,
   WrongNumberOfArgumentsError,
 } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
@@ -12,7 +11,11 @@ import type {
   RedisStreamConsumerGroup,
   RedisStreamData,
 } from '../../state/data-types'
-import { array, unknownSubcommandError } from '../helpers'
+import {
+  array,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from '../helpers'
 import {
   consumerPendingCount,
   pendingEntriesSorted,
@@ -41,17 +44,23 @@ function createXinfoSchema() {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
       const subcommand = rawSubcommand.toString().toUpperCase()
+      // A parser only knows the container (`ctx.commandName`), so arity errors
+      // for a dispatched subcommand spell out `xinfo|<sub>` themselves, as real
+      // Redis 7.0+ does (#438). An option list the subcommand cannot use is
+      // real Redis' `addReplySubcommandSyntaxError`, not an arity error.
+      const syntaxError = () =>
+        subcommandSyntaxError('XINFO', rawSubcommand, ctx.profile)
 
       if (subcommand === 'STREAM') {
         const key = input[index + 1]
-        if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
+        if (!key) throw new WrongNumberOfArgumentsError('xinfo|stream')
         let cursor = index + 2
         let full = false
         let count: number | null = null
 
         if (cursor < input.length) {
           if (input[cursor].toString().toUpperCase() !== 'FULL') {
-            throw new RedisSyntaxError()
+            throw syntaxError()
           }
           full = true
           cursor++
@@ -59,16 +68,16 @@ function createXinfoSchema() {
 
         if (cursor < input.length) {
           if (input[cursor].toString().toUpperCase() !== 'COUNT') {
-            throw new RedisSyntaxError()
+            throw syntaxError()
           }
           const rawCount = input[cursor + 1]
-          if (!rawCount) throw new WrongNumberOfArgumentsError(ctx.commandName)
+          if (!rawCount) throw syntaxError()
           count = parseNonNegativeInteger(rawCount)
           cursor += 2
         }
 
         if (cursor !== input.length) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw syntaxError()
         }
 
         return {
@@ -80,7 +89,7 @@ function createXinfoSchema() {
       if (subcommand === 'GROUPS') {
         const key = input[index + 1]
         if (!key || input.length !== index + 2) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError('xinfo|groups')
         }
         return {
           value: { subcommand: 'groups', key },
@@ -92,7 +101,7 @@ function createXinfoSchema() {
         const key = input[index + 1]
         const group = input[index + 2]
         if (!key || !group || input.length !== index + 3) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw new WrongNumberOfArgumentsError('xinfo|consumers')
         }
         return {
           value: { subcommand: 'consumers', key, group },
