@@ -16,12 +16,14 @@ import {
 import {
   RedisCommandError,
   RedisSyntaxError,
+  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from '../core/redis-error'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { CompatibilityProfile, FeatureId } from '../core/compatibility'
+import { containerSubcommandExists } from '../core/compatibility/subcommand-gates'
 import { unknownSubcommandError } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
@@ -309,10 +311,22 @@ function planCommandKeys(
     throw new RedisCommandError('Invalid command specified')
   }
 
+  // Real Redis checks that the command has keys before it checks arity. For
+  // a 7.0+ container that is per subcommand, and no container's HELP has any.
+  if (isContainerHelp(targetName, args.args[1], ctx.server.profile)) {
+    throw new RedisCommandError('The command has no key arguments')
+  }
+
   let keys: readonly Buffer[]
   try {
     keys = ctx.executor.plan(targetName, args.args.slice(1)).keys
   } catch (err) {
+    // From 7.0 the subcommand is part of command lookup, so an unknown one is
+    // an unknown command here too (6.2 never throws this at plan time).
+    if (err instanceof UnknownSubcommandError) {
+      throw new RedisCommandError('Invalid command specified')
+    }
+
     if (err instanceof WrongNumberOfArgumentsError) {
       throw new RedisCommandError(
         'Invalid number of arguments specified for command',
@@ -331,6 +345,19 @@ function planCommandKeys(
   }
 
   return { definition, keys }
+}
+
+function isContainerHelp(
+  container: string,
+  subcommand: Buffer | undefined,
+  profile: CompatibilityProfile,
+): boolean {
+  return (
+    subcommand !== undefined &&
+    profile.has('error.unknown-subcommand-dispatch-timing') &&
+    asciiLowerCase(subcommand.toString()) === 'help' &&
+    containerSubcommandExists(container, subcommand, profile) === true
+  )
 }
 
 function allRootCommandInfos(ctx: RedisExecutionContext): CommandInfo[] {

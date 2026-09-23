@@ -14,6 +14,7 @@ import type {
 } from '../../state/data-types'
 import {
   array,
+  helpReply,
   subcommandSyntaxError,
   unknownSubcommandError,
 } from '../helpers'
@@ -36,6 +37,18 @@ type XinfoArgs =
   | { subcommand: 'stream'; key: Buffer; full: boolean; count: number | null }
   | { subcommand: 'groups'; key: Buffer }
   | { subcommand: 'consumers'; key: Buffer; group: Buffer }
+  | { subcommand: 'help'; key: Buffer | undefined }
+  | { subcommand: 'unknown'; name: Buffer; key: Buffer | undefined }
+
+const XINFO_HELP = [
+  'XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+  'CONSUMERS <key> <groupname>',
+  '    Show consumers of <groupname>.',
+  'GROUPS <key>',
+  '    Show the stream consumer groups.',
+  'STREAM <key> [FULL [COUNT <count>]',
+  '    Show information about the stream.',
+]
 
 function isToken(arg: Buffer, token: string): boolean {
   return arg.toString().toUpperCase() === token
@@ -102,7 +115,35 @@ function createXinfoSchema() {
         }
       }
 
-      throw unknownSubcommandError('XINFO', rawSubcommand, ctx.profile)
+      // 7.0+ resolves `xinfo|help` in the command table: no key, arity 2.
+      // 6.2 answers HELP before it counts arguments or looks a key up, but
+      // its key spec still names the third argument, so it keeps routing on
+      // it (and COMMAND GETKEYS reports it).
+      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
+      if (subcommand === 'HELP') {
+        if (lookup && input.length !== index + 1) {
+          throw new WrongNumberOfArgumentsError('xinfo|help')
+        }
+        return {
+          value: {
+            subcommand: 'help',
+            key: lookup ? undefined : input[index + 1],
+          },
+          nextIndex: input.length,
+        }
+      }
+
+      // Not rejected here: on 7.0+ profiles command lookup has already turned
+      // an unknown name away (`CommandExecutor.plan()`), so only 6.2 gets
+      // here — and it rejects the name when XINFO runs, after the key (#436).
+      return {
+        value: {
+          subcommand: 'unknown',
+          name: rawSubcommand,
+          key: lookup ? undefined : input[index + 1],
+        },
+        nextIndex: input.length,
+      }
     },
   )
 }
@@ -111,9 +152,22 @@ export const xinfoCommand = defineCommand({
   name: 'xinfo',
   schema: t.object({ args: createXinfoSchema() }),
   flags: ['readonly'],
-  keys: args => [args.args.key],
+  keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args
+    if (command.subcommand === 'help') {
+      return helpReply(XINFO_HELP, ctx.server.profile)
+    }
+
+    if (command.subcommand === 'unknown') {
+      // Real 6.2 looks the key up (getStream: WRONGTYPE) before it looks at
+      // the subcommand.
+      if (command.key && !ctx.db.getStream(command.key)) {
+        throw new NoSuchKeyError()
+      }
+      throw unknownSubcommandError('XINFO', command.name, ctx.server.profile)
+    }
+
     const stream = ctx.db.getStream(command.key)
     if (!stream) throw new NoSuchKeyError()
 
