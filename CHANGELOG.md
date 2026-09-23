@@ -294,8 +294,9 @@ so the PR body is not a durable home for a breaking-change note.
 - **BREAKING** The deprecated `buildRedisCluster` alias is gone from both the
   root entry point and `/core` ([#365]). It was `createRedisCluster` under its
   pre-rename name; import `createRedisCluster` instead — same function, same
-  un-started `RedisCluster`. Under ESM a leftover named import now fails at
-  load time; under CJS `require(...).buildRedisCluster` is `undefined`.
+  un-started `RedisCluster`. TypeScript reports it at compile time; under ESM a
+  leftover named import now fails at load time; under CJS
+  `require(...).buildRedisCluster` is `undefined`.
 
 ### Changed
 

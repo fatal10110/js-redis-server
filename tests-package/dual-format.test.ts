@@ -62,6 +62,8 @@ function assertCore(core: Record<string, unknown>): void {
   assert.strictEqual(typeof core.createRedisCommandExecutor, 'function')
   // Facade lives at the root, not in the internals subpath.
   assert.strictEqual(core.createRedisMock, undefined)
+  // The deprecated alias was removed from `/core` too (#365).
+  assert.strictEqual('buildRedisCluster' in core, false)
 }
 
 describe('package CJS entry (require)', () => {
