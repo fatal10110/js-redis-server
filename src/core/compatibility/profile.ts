@@ -34,6 +34,7 @@ export type FeatureId =
   | 'sort.cluster-get-hash'
   | 'script.per-subcommand-noscript'
   | 'command.quit-table-entry'
+  | 'script.abort-error-suffix'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

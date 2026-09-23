@@ -94,4 +94,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // connection loop, so a 6.2 script calling QUIT fails command lookup
   // (unknown command) instead of hitting its 7.0+ `noscript` refusal.
   'command.quit-table-entry': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 moved the script-abort decoration from a prefix,
+  // `Error running script (call to f_<sha>): @user_script:<line>: <error>`, to
+  // a suffix, `<error> script: <sha>, on @user_script:<line>.`, and started
+  // keeping a failing redis.call's own error code (`-WRONGTYPE ...`) instead of
+  // folding it into an `-ERR` body. Verified against redis-server 6.2.24,
+  // 7.0.15 and 8.0; Valkey 7.2 and 8.0 answer the 7.0 form.
+  'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
 }
