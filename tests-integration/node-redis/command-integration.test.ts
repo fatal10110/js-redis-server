@@ -64,6 +64,22 @@ describe(`COMMAND integration (node-redis, ${testRunner.getBackendName()})`, () 
     assert.strictEqual(reply[2], null)
   })
 
+  test('COMMAND INFO ECHO reports arity, flags and categories like Redis', async () => {
+    const [info] = (await command(['COMMAND', 'INFO', 'ECHO'])) as [
+      CommandInfoReply,
+    ]
+
+    assert.deepStrictEqual(info.slice(0, 7), [
+      'echo',
+      2,
+      ['loading', 'stale', 'fast'],
+      0,
+      0,
+      0,
+      ['@fast', '@connection'],
+    ])
+  })
+
   test('COMMAND LIST returns names and supports Redis FILTERBY variants', async () => {
     const names = (await command(['COMMAND', 'LIST'])) as string[]
     assert.ok(names.includes('get'))
