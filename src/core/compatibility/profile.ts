@@ -29,6 +29,7 @@ export type FeatureId =
   | 'cluster.multi-db'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
+  | 'script.abort-error-suffix'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

@@ -32,13 +32,41 @@ export class RedisLuaRuntime {
     readOnly: false,
   }
   private readonly engine: LuaEngine
+  // The last error a `redis.call` handed back to the engine during the current
+  // eval. A failing redis.call raises it, so when the script aborts with this
+  // exact error the abort came from redis.call rather than from Lua itself —
+  // a distinction the engine's reply does not carry, but the pre-7.0 abort
+  // decoration depends on (see renderScriptError).
+  private lastRedisCallError: { err: Buffer; code?: Buffer } | null = null
 
   constructor(module: LuaWasmModule) {
     this.engine = module.create({
-      redisCall: args => this.runRedisCommand(args),
+      redisCall: args => this.recordRedisCallError(this.runRedisCommand(args)),
       redisPcall: args => this.runRedisCommand(args),
       log: () => {},
     })
+  }
+
+  /**
+   * Whether `reply`, the result of the last `eval`, is a script abort raised by
+   * a failing `redis.call` (as opposed to a Lua runtime or engine error).
+   */
+  raisedByRedisCall(reply: ReplyValue): boolean {
+    const callError = this.lastRedisCallError
+    if (!callError || !isErrorReply(reply) || !reply.meta) {
+      return false
+    }
+    return (
+      reply.err.equals(callError.err) &&
+      (reply.code?.toString() ?? '') === (callError.code?.toString() ?? '')
+    )
+  }
+
+  private recordRedisCallError(reply: ReplyValue): ReplyValue {
+    if (isErrorReply(reply)) {
+      this.lastRedisCallError = { err: reply.err, code: reply.code }
+    }
+    return reply
   }
 
   eval(
@@ -54,6 +82,7 @@ export class RedisLuaRuntime {
 
     this.hostState.ctx = ctx
     this.hostState.readOnly = options?.readOnly ?? false
+    this.lastRedisCallError = null
 
     try {
       return this.engine.evalWithArgs(script, [...keys], [...args])
@@ -257,8 +286,10 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
  * Renders a script-aborting error into its final Redis wire message. The engine
  * classifies these errors and attaches metadata — `{ line, sha }` always, plus a
  * machine `kind`/`name` for the errors it originates itself — but composes no
- * user-facing prose, so the host owns the wording and the
- * `... script: <sha>, on @user_script:<line>.` decoration.
+ * user-facing prose, so the host owns the wording and the decoration:
+ * `<error> script: <sha>, on @user_script:<line>.` from Redis 7.0 / Valkey 7.2,
+ * `Error running script (call to f_<sha>): @user_script:<line>: <error>` before
+ * that (`script.abort-error-suffix`).
  *
  * Errors carrying their own message (Lua runtime errors, propagated command
  * errors, and global writes — which Lua's native readonly table rejects with
@@ -266,14 +297,16 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
  * without metadata (returned error tables, redis.error_reply, host-side limit
  * errors) are emitted verbatim, matching real Redis.
  */
-export function renderScriptError(value: ReplyValue): ReplyValue {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    Buffer.isBuffer(value) ||
-    !('err' in value)
-  ) {
+export function renderScriptError(
+  value: ReplyValue,
+  options: {
+    /** Picks the decoration; without one, the 7.0+ suffix form is used. */
+    profile?: CompatibilityProfile
+    /** The abort is a failing redis.call's error (RedisLuaRuntime.raisedByRedisCall). */
+    raisedByRedisCall?: boolean
+  } = {},
+): ReplyValue {
+  if (!isErrorReply(value)) {
     return value
   }
   const meta = value.meta
@@ -302,6 +335,18 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
       body = value.err
   }
 
+  if (options.profile && !options.profile.has('script.abort-error-suffix')) {
+    return {
+      err: Buffer.concat([
+        Buffer.from(
+          `Error running script (call to f_${sha}): @user_script:${line}: `,
+        ),
+        legacyScriptErrorBody(body, value.code, options.raisedByRedisCall),
+      ]),
+      code: Buffer.from('ERR'),
+    }
+  }
+
   return {
     err: Buffer.concat([
       body,
@@ -309,6 +354,36 @@ export function renderScriptError(value: ReplyValue): ReplyValue {
     ]),
     code: value.code,
   }
+}
+
+/**
+ * The pre-7.0 abort body is the raw Lua error string: a failing redis.call
+ * raises its whole `<CODE> <message>` reply, so the code is folded back in
+ * (the reply itself is always `-ERR`). A Lua runtime error keeps its text as
+ * is; the engine reports those under a default `ERR` code, so only a code it
+ * split off the message itself (`error('WRONGTYPE x', 0)`) is restored.
+ */
+function legacyScriptErrorBody(
+  body: Buffer,
+  code: Buffer | undefined,
+  raisedByRedisCall = false,
+): Buffer {
+  if (!code || (!raisedByRedisCall && code.toString() === 'ERR')) {
+    return body
+  }
+  return Buffer.concat([code, Buffer.from(' '), body])
+}
+
+function isErrorReply(
+  value: ReplyValue,
+): value is Extract<ReplyValue, { err: Buffer }> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !Buffer.isBuffer(value) &&
+    'err' in value
+  )
 }
 
 function redisValueToLuaReply(value: RedisValue): ReplyValue {

@@ -67,4 +67,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // accept; valkey 8.0.0/8.0.1 refuse and 8.0.2+ accept. Before that it is
   // hashed like any other pattern and therefore denied.
   'sort.cluster-get-hash': { redis: '7.4.2', valkey: '8.0.2' },
+  // Redis 7.0 moved the script-abort decoration from a prefix,
+  // `Error running script (call to f_<sha>): @user_script:<line>: <error>`, to
+  // a suffix, `<error> script: <sha>, on @user_script:<line>.`, and started
+  // keeping a failing redis.call's own error code (`-WRONGTYPE ...`) instead of
+  // folding it into an `-ERR` body. Verified against redis-server 6.2.24,
+  // 7.0.15 and 8.0; Valkey 7.2 and 8.0 answer the 7.0 form.
+  'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
 }

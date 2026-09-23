@@ -336,6 +336,14 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- On the `redis-6.2` profile a script that aborts — a failing `redis.call`, or
+  a Lua runtime error — now carries Redis 6.2's decoration,
+  `-ERR Error running script (call to f_<sha>): @user_script:<line>: <error>`,
+  instead of the 7.0 suffix `<error> script: <sha>, on @user_script:<line>.`
+  ([#442]). As in 6.2 the reply is always `-ERR`: a failing command's own code
+  (`WRONGTYPE ...`) is folded into the body, and a runtime error shows its
+  position twice. Gated as `script.abort-error-suffix` (Redis 7.0 / Valkey 7.2).
+
 - `proto-max-bulk-len` is now enforced where Redis primarily enforces it: in the
   protocol reader, for every command ([#431], [#415]). A bulk argument longer
   than the limit is refused from its header, before the payload is read and
@@ -458,6 +466,7 @@ requests they contain.
 
 [#430]: https://github.com/fatal10110/js-redis-server/pull/430
 [#437]: https://github.com/fatal10110/js-redis-server/issues/437
+[#442]: https://github.com/fatal10110/js-redis-server/issues/442
 
 [#415]: https://github.com/fatal10110/js-redis-server/issues/415
 [#431]: https://github.com/fatal10110/js-redis-server/pull/431

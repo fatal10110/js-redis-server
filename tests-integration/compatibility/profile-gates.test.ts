@@ -1,8 +1,14 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
+import { createHash } from 'node:crypto'
 
 import { TestRunner } from '../test-config'
-import { activeProfile, commandFrame, type ProfileName } from '../utils'
+import {
+  activeProfile,
+  commandFrame,
+  randomKey,
+  type ProfileName,
+} from '../utils'
 import {
   RawRedisConnection,
   respMapGet,
@@ -466,40 +472,141 @@ describe(
     )
 
     // The same error through a failing `redis.call`, which additionally takes
-    // the script-abort decoration. Real 6.2.24 answers
-    //   -ERR Error running script (call to f_<sha>): @user_script:1: ERR Unknown
-    //    subcommand or wrong number of arguments for '\xff\xfe\xfd'. Try PUBSUB HELP.
-    // This server wraps it in the 7.0 decoration on every profile — a separate
-    // divergence (#442) — so only the body segment real 6.2 also carries is
-    // asserted: it must contain the three raw bytes, not three U+FFFD.
+    // the pre-7.0 script-abort decoration (#442): a prefix naming the script's
+    // `f_<sha>` function, with the command's error code folded into the body.
+    // Byte for byte against real 6.2.24.
     test(
       'a nested unknown subcommand keeps raw bytes through redis.call',
       {
         skip: supportsUnknownSubcommandWording() && 'redis-6.2 only, see above',
       },
       async () => {
+        const script = "return redis.call('PUBSUB', ARGV[1])"
         const subcommand = Buffer.from([0xff, 0xfe, 0xfd])
-        connection.write(
-          commandFrame(
-            'EVAL',
-            "return redis.call('PUBSUB', ARGV[1])",
-            '0',
-            subcommand,
-          ),
-        )
+        connection.write(commandFrame('EVAL', script, '0', subcommand))
         const reply = await connection.readRawFrame()
 
-        const body = Buffer.concat([
-          Buffer.from("Unknown subcommand or wrong number of arguments for '"),
-          subcommand,
-          Buffer.from("'. Try PUBSUB HELP."),
-        ])
-        assert.ok(
-          reply.includes(body),
-          `expected the raw bytes in ${JSON.stringify(reply.toString('latin1'))}`,
+        // latin1 maps each byte to one code unit, so this is a byte-exact
+        // comparison with a readable diff.
+        assert.strictEqual(
+          reply.toString('latin1'),
+          Buffer.concat([
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ERR Unknown subcommand or wrong number of arguments for '`,
+            ),
+            subcommand,
+            Buffer.from("'. Try PUBSUB HELP.\r\n"),
+          ]).toString('latin1'),
         )
       },
     )
+
+    // Redis 7.0 (Valkey 7.2) moved the script-abort decoration from a prefix,
+    // `Error running script (call to f_<sha>): @user_script:<line>: <error>`,
+    // to a suffix, `<error> script: <sha>, on @user_script:<line>.`. Under the
+    // prefix form the whole reply is `-ERR`, a failing command's own code
+    // (`WRONGTYPE`) becomes part of the body, and a Lua runtime error shows the
+    // position twice. Every frame below is byte for byte against real 6.2.24,
+    // 7.0.15, 8.0 and Valkey 7.2 / 8.0.
+    test('script abort errors take the profile decoration', async () => {
+      const key = `compat:${profile}:script-abort:${randomKey()}`
+      const cases: Array<{
+        args: Array<string | Buffer>
+        legacy: (sha: string) => Buffer
+        current: (sha: string) => Buffer
+      }> = [
+        {
+          // Lua runtime error carrying raw client bytes.
+          args: ['error(ARGV[1])', '0', Buffer.from([0x78, 0xff])],
+          legacy: sha =>
+            Buffer.concat([
+              Buffer.from(
+                `-ERR Error running script (call to f_${sha}): @user_script:1: user_script:1: x`,
+              ),
+              Buffer.from([0xff, 0x0d, 0x0a]),
+            ]),
+          current: sha =>
+            Buffer.concat([
+              Buffer.from('-ERR user_script:1: x'),
+              Buffer.from([0xff]),
+              Buffer.from(` script: ${sha}, on @user_script:1.\r\n`),
+            ]),
+        },
+        {
+          // A failing redis.call keeps its own error code on 7.0+ only.
+          args: [
+            "redis.call('SET', KEYS[1], 'v')\nreturn redis.call('LPUSH', KEYS[1], 'v')",
+            '1',
+            key,
+          ],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-WRONGTYPE Operation against a key holding the wrong kind of value script: ${sha}, on @user_script:2.\r\n`,
+            ),
+        },
+        {
+          // A redis.call error caught by pcall and re-raised is a runtime
+          // error: Lua prefixes the position, and no code is folded in.
+          args: [
+            "local ok, e = pcall(redis.call, 'LPUSH', KEYS[1], 'v')\nerror(e)",
+            '1',
+            key,
+          ],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:2: user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-ERR user_script:2: WRONGTYPE Operation against a key holding the wrong kind of value script: ${sha}, on @user_script:2.\r\n`,
+            ),
+        },
+        {
+          args: ["local function f()\n  error('deep')\nend\nf()", '0'],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:2: user_script:2: deep\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-ERR user_script:2: deep script: ${sha}, on @user_script:2.\r\n`,
+            ),
+        },
+        {
+          args: ['return a', '0'],
+          legacy: sha =>
+            Buffer.from(
+              `-ERR Error running script (call to f_${sha}): @user_script:1: user_script:1: Script attempted to access nonexistent global variable 'a'\r\n`,
+            ),
+          current: sha =>
+            Buffer.from(
+              `-ERR user_script:1: Script attempted to access nonexistent global variable 'a' script: ${sha}, on @user_script:1.\r\n`,
+            ),
+        },
+      ]
+
+      try {
+        for (const { args, legacy, current } of cases) {
+          const script = String(args[0])
+          connection.write(commandFrame('EVAL', ...args))
+          const reply = await connection.readRawFrame()
+          const expected = supportsSuffixScriptErrorDecoration()
+            ? current(sha1(script))
+            : legacy(sha1(script))
+          assert.strictEqual(
+            reply.toString('latin1'),
+            expected.toString('latin1'),
+            script,
+          )
+        }
+      } finally {
+        await send('DEL', key)
+      }
+    })
 
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
@@ -783,6 +890,14 @@ function supportsCommandDocs(): boolean {
 
 function supportsUnknownSubcommandWording(): boolean {
   return profile !== 'redis-6.2'
+}
+
+function supportsSuffixScriptErrorDecoration(): boolean {
+  return profile !== 'redis-6.2'
+}
+
+function sha1(script: string): string {
+  return createHash('sha1').update(script).digest('hex')
 }
 
 function supportsClientSetinfo(): boolean {
