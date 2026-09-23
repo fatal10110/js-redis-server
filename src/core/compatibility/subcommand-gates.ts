@@ -10,6 +10,9 @@ const ALWAYS: VersionGate = { redis: '7.0.0', valkey: '7.2.0' }
 const REDIS_72: VersionGate = { redis: '7.2.0', valkey: '7.2.0' }
 const VALKEY_80: VersionGate = { valkey: '8.0.0' }
 const VALKEY_90: VersionGate = { valkey: '9.0.0' }
+// Newer than every preset, so these only matter for a custom
+// `{ flavor, version }` spec. Taken from the upstream command tables.
+const REDIS_84: VersionGate = { redis: '8.4.0' }
 
 /**
  * The real command-table subcommands of every container this server
@@ -21,9 +24,10 @@ const VALKEY_90: VersionGate = { valkey: '9.0.0' }
  * name absent from the real table fails lookup as an unknown subcommand.
  *
  * Captured from redis 7.0.15, 7.2.16, 7.4.11, 8.0.6 and valkey 7.2.14,
- * 8.0.11, 9.0.6. Redis 6.2 has no subcommand entries at all, so these gates
- * are only consulted on profiles with `error.unknown-subcommand-dispatch-timing`
- * (see `CommandExecutor.plan()`) or `script.per-subcommand-noscript`.
+ * 8.0.11, 8.1.0, 9.0.6; the redis 8.2 / 8.4 entries come from upstream.
+ * Redis 6.2 has no subcommand entries at all, so these gates are only
+ * consulted on profiles with `error.unknown-subcommand-dispatch-timing` (see
+ * `CommandExecutor.plan()`) or `script.per-subcommand-noscript`.
  */
 const CONTAINER_SUBCOMMANDS: Record<string, Record<string, VersionGate>> = {
   acl: {
@@ -48,7 +52,7 @@ const CONTAINER_SUBCOMMANDS: Record<string, Record<string, VersionGate>> = {
     getredir: ALWAYS,
     help: ALWAYS,
     id: ALWAYS,
-    'import-source': VALKEY_90,
+    'import-source': { valkey: '8.1.0' },
     info: ALWAYS,
     kill: ALWAYS,
     list: ALWAYS,
@@ -83,6 +87,7 @@ const CONTAINER_SUBCOMMANDS: Record<string, Record<string, VersionGate>> = {
     keyslot: ALWAYS,
     links: ALWAYS,
     meet: ALWAYS,
+    migration: REDIS_84,
     migrateslots: VALKEY_90,
     myid: ALWAYS,
     myshardid: REDIS_72,
@@ -95,9 +100,9 @@ const CONTAINER_SUBCOMMANDS: Record<string, Record<string, VersionGate>> = {
     setslot: ALWAYS,
     shards: ALWAYS,
     slaves: ALWAYS,
-    'slot-stats': VALKEY_80,
+    'slot-stats': { redis: '8.2.0', valkey: '8.0.0' },
     slots: ALWAYS,
-    syncslots: VALKEY_90,
+    syncslots: { redis: '8.4.0', valkey: '9.0.0' },
   },
   command: {
     count: ALWAYS,

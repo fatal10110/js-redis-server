@@ -19,7 +19,6 @@ import { configCommands } from './config'
 import { connectionCommands } from './connection'
 import { geoCommands } from './geo'
 import { hashesCommands } from './hashes'
-import { unknownSubcommandError } from './helpers'
 import { hyperloglogCommands } from './hyperloglog'
 import { keysCommands } from './keys'
 import { listsCommands } from './lists'
@@ -75,7 +74,6 @@ export function createRedisCommandExecutor(options?: {
   return new CommandExecutor({
     registry: createRedisCommandRegistry(options?.extraCommands, profile),
     profile,
-    unknownSubcommand: unknownSubcommandError,
     policies: [
       createAuthPolicy(),
       createSubscribedModePolicy(),

@@ -46,6 +46,57 @@ const WRONGTYPE =
 const XGROUP_MISSING_KEY =
   '-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.\r\n'
 
+/** A HELP reply: status lines plus the footer, `Print` from Redis 7.2. */
+function helpReply(lines: string[]): string {
+  const footer =
+    profile === 'redis-6.2' || profile === 'redis-7.0'
+      ? '    Prints this help.'
+      : '    Print this help.'
+  const all = [...lines, 'HELP', footer]
+  return `*${all.length}\r\n${all.map(line => `+${line}\r\n`).join('')}`
+}
+
+const XINFO_HELP = helpReply([
+  'XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+  'CONSUMERS <key> <groupname>',
+  '    Show consumers of <groupname>.',
+  'GROUPS <key>',
+  '    Show the stream consumer groups.',
+  'STREAM <key> [FULL [COUNT <count>]',
+  '    Show information about the stream.',
+])
+
+// 6.2's DESTROY line really runs its description onto the same line.
+const XGROUP_HELP = helpReply([
+  'XGROUP <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+  'CREATE <key> <groupname> <id|$> [option]',
+  '    Create a new consumer group. Options are:',
+  '    * MKSTREAM',
+  '      Create the empty stream if it does not exist.',
+  ...(resolvedAtLookup
+    ? [
+        '    * ENTRIESREAD entries_read',
+        "      Set the group's entries_read counter (internal use).",
+      ]
+    : []),
+  'CREATECONSUMER <key> <groupname> <consumer>',
+  '    Create a new consumer in the specified group.',
+  'DELCONSUMER <key> <groupname> <consumer>',
+  '    Remove the specified consumer.',
+  ...(resolvedAtLookup
+    ? [
+        'DESTROY <key> <groupname>',
+        '    Remove the specified group.',
+        'SETID <key> <groupname> <id|$> [ENTRIESREAD entries_read]',
+        '    Set the current group ID and entries_read counter.',
+      ]
+    : [
+        'DESTROY <key> <groupname>    Remove the specified group.',
+        'SETID <key> <groupname> <id|$>',
+        '    Set the current group ID.',
+      ]),
+])
+
 function sha1(script: string): string {
   return createHash('sha1').update(script).digest('hex')
 }
@@ -209,21 +260,21 @@ describe(`unknown container subcommand dispatch timing (${testRunner.getBackendN
   // through the command table, so an unknown subcommand fails lookup exactly
   // like an unknown command and never reaches the container (#439).
   describe('scripts (#439)', () => {
+    /** Real Redis 7.0+ and Valkey 7.2; Valkey 8.0+ drops the product name. */
+    const UNKNOWN_FROM_SCRIPT = profile.startsWith('valkey-')
+      ? 'ERR Unknown command called from script'
+      : 'ERR Unknown Redis command called from script'
+
     /**
      * What this server answers a script calling a command that does not exist.
-     * Real Redis 7.0+ words it `Unknown Redis command called from script`.
-     * Valkey 8.0+ drops the `Redis`, and 6.2 renders its scripting-layer
-     * rejections as `@user_script: 1: ... from Lua script`; neither is
-     * modelled yet, so those profiles are compared against this reply rather
-     * than a literal.
+     * 6.2 renders its scripting-layer rejections as `@user_script: 1: ... from
+     * Lua script`, which is not modelled yet, so that profile is compared
+     * against this reply rather than a literal.
      */
     async function unknownCommandFromScript(): Promise<string> {
       const reply = await send('EVAL', "return redis.pcall('NOPE')", '0')
-      if (resolvedAtLookup && profile.startsWith('redis-')) {
-        assert.strictEqual(
-          reply,
-          '-ERR Unknown Redis command called from script\r\n',
-        )
+      if (resolvedAtLookup) {
+        assert.strictEqual(reply, `-${UNKNOWN_FROM_SCRIPT}\r\n`)
       }
       return reply
     }
@@ -268,19 +319,15 @@ describe(`unknown container subcommand dispatch timing (${testRunner.getBackendN
       )
     })
 
-    test(
-      'redis.call with an unknown subcommand aborts the script',
-      { skip: !profile.startsWith('redis-') && 'Valkey wording not modelled' },
-      async () => {
-        const script = "return redis.call('PUBSUB','BOGUS')"
-        assert.strictEqual(
-          await send('EVAL', script, '0'),
-          resolvedAtLookup
-            ? `-ERR Unknown Redis command called from script script: ${sha1(script)}, on @user_script:1.\r\n`
-            : `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ${unknownSubcommand('PUBSUB').slice(1)}`,
-        )
-      },
-    )
+    test('redis.call with an unknown subcommand aborts the script', async () => {
+      const script = "return redis.call('PUBSUB','BOGUS')"
+      assert.strictEqual(
+        await send('EVAL', script, '0'),
+        resolvedAtLookup
+          ? `-${UNKNOWN_FROM_SCRIPT} script: ${sha1(script)}, on @user_script:1.\r\n`
+          : `-ERR Error running script (call to f_${sha1(script)}): @user_script:1: ${unknownSubcommand('PUBSUB').slice(1)}`,
+      )
+    })
 
     // A known subcommand passes lookup, so the container's own
     // `addReplySubcommandSyntaxError` still comes back on every profile.
@@ -294,5 +341,118 @@ describe(`unknown container subcommand dispatch timing (${testRunner.getBackendN
         `-ERR ${resolvedAtLookup ? 'u' : 'U'}nknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.\r\n`,
       )
     })
+  })
+
+  // HELP is in the real 7.0+ table, so it passes lookup: there it is a
+  // keyless subcommand of arity 2. 6.2 answers XINFO HELP whatever follows it
+  // and treats XGROUP HELP with arguments like an unknown subcommand.
+  describe('XINFO / XGROUP HELP', () => {
+    test('XINFO HELP', async () => {
+      const cases: [string[], string][] = [
+        [['XINFO', 'HELP'], XINFO_HELP],
+        [['XINFO', 'help'], XINFO_HELP],
+        [['XINFO', 'HELP', missing], XINFO_HELP],
+        [['XINFO', 'HELP', string], XINFO_HELP],
+        [['XINFO', 'HELP', stream], XINFO_HELP],
+      ]
+
+      for (const [args, legacy] of cases) {
+        assert.strictEqual(
+          await send(...args),
+          resolvedAtLookup && args.length > 2
+            ? "-ERR wrong number of arguments for 'xinfo|help' command\r\n"
+            : legacy,
+          args.join(' '),
+        )
+      }
+    })
+
+    test('XGROUP HELP', async () => {
+      const cases: [string[], string][] = [
+        [['XGROUP', 'HELP'], XGROUP_HELP],
+        [['XGROUP', 'HELP', missing], unknownSubcommand('XGROUP', 'HELP')],
+        [['XGROUP', 'HELP', missing, 'g'], XGROUP_MISSING_KEY],
+        [['XGROUP', 'HELP', string, 'g'], WRONGTYPE],
+        [['XGROUP', 'HELP', stream, 'g'], unknownSubcommand('XGROUP', 'HELP')],
+      ]
+
+      for (const [args, legacy] of cases) {
+        assert.strictEqual(
+          await send(...args),
+          resolvedAtLookup && args.length > 2
+            ? "-ERR wrong number of arguments for 'xgroup|help' command\r\n"
+            : legacy,
+          args.join(' '),
+        )
+      }
+    })
+
+    test('HELP queues in MULTI on every profile', async () => {
+      assert.strictEqual(await send('MULTI'), '+OK\r\n')
+      assert.strictEqual(await send('XINFO', 'HELP'), '+QUEUED\r\n')
+      assert.strictEqual(await send('EXEC'), `*1\r\n${XINFO_HELP}`)
+    })
+  })
+
+  // COMMAND GETKEYS and ACL DRYRUN resolve their target through the same
+  // lookup, so from 7.0 an unknown subcommand is an unknown command there too.
+  describe('commands that look another command up', () => {
+    test('COMMAND GETKEYS', async () => {
+      const INVALID = '-ERR Invalid command specified\r\n'
+      const NO_KEYS = '-ERR The command has no key arguments\r\n'
+      const oneKey = (key: string): string =>
+        `*1\r\n$${key.length}\r\n${key}\r\n`
+      const cases: [string[], string, string][] = [
+        [['CONFIG', 'BOGUS'], INVALID, NO_KEYS],
+        [['XINFO', 'BOGUS', 'k'], INVALID, oneKey('k')],
+        [['XGROUP', 'BOGUS', 'k', 'g'], INVALID, oneKey('k')],
+        [['XINFO', 'HELP', 'k'], NO_KEYS, oneKey('k')],
+        [['XGROUP', 'HELP', 'k', 'g'], NO_KEYS, oneKey('k')],
+      ]
+
+      for (const [args, current, legacy] of cases) {
+        assert.strictEqual(
+          await send('COMMAND', 'GETKEYS', ...args),
+          resolvedAtLookup ? current : legacy,
+          `COMMAND GETKEYS ${args.join(' ')}`,
+        )
+      }
+    })
+
+    test(
+      'COMMAND GETKEYSANDFLAGS',
+      { skip: !resolvedAtLookup && 'no GETKEYSANDFLAGS before 7.0' },
+      async () => {
+        for (const args of [
+          ['CONFIG', 'BOGUS'],
+          ['XINFO', 'BOGUS', 'k'],
+        ]) {
+          assert.strictEqual(
+            await send('COMMAND', 'GETKEYSANDFLAGS', ...args),
+            '-ERR Invalid command specified\r\n',
+            args.join(' '),
+          )
+        }
+      },
+    )
+
+    test(
+      'ACL DRYRUN',
+      { skip: !resolvedAtLookup && 'no ACL DRYRUN before 7.0' },
+      async () => {
+        const cases: [string[], string][] = [
+          [['CONFIG', 'BOGUS'], 'CONFIG'],
+          [['config', 'bogus'], 'config'],
+          [['XINFO', 'BOGUS', 'k'], 'XINFO'],
+        ]
+        for (const [args, echoed] of cases) {
+          assert.strictEqual(
+            await send('ACL', 'DRYRUN', 'default', ...args),
+            `-ERR Command '${echoed}' not found\r\n`,
+            args.join(' '),
+          )
+        }
+      },
+    )
   })
 })

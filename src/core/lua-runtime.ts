@@ -147,7 +147,9 @@ export class RedisLuaRuntime {
         err instanceof UnknownRedisCommandError ||
         err instanceof UnknownSubcommandError
       ) {
-        return scriptRejection(new ScriptUnknownCommandError())
+        return scriptRejection(
+          new ScriptUnknownCommandError(ctx.server.profile),
+        )
       }
 
       if (err instanceof WrongNumberOfArgumentsError) {
@@ -195,9 +197,6 @@ export class RedisLuaRuntime {
  * (against the *real* table, so a real subcommand this server lacks, like
  * `CLIENT PAUSE`, still gets here and is refused), and no container's HELP
  * carries the flag, so `<container> HELP` runs.
- *
- * Valkey words the lookup failure `Unknown command called from script`, which
- * {@link ScriptUnknownCommandError} does not model yet.
  */
 function noscriptRefusal(
   plan: CommandPlan,
@@ -214,7 +213,7 @@ function noscriptRefusal(
       definition.name === 'quit' &&
       !profile.has('command.quit-table-entry')
     ) {
-      return new ScriptUnknownCommandError()
+      return new ScriptUnknownCommandError(profile)
     }
     return new ScriptNotAllowedCommandError()
   }

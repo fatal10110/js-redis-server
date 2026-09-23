@@ -7,7 +7,6 @@ import {
   ExecCommandAbortError,
   RedisCommandError,
   UnknownRedisCommandError,
-  type UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
@@ -19,23 +18,12 @@ import {
   type CompatibilityProfile,
 } from './compatibility'
 import { containerSubcommandExists } from './compatibility/subcommand-gates'
+import { unknownSubcommandError } from './subcommand-errors'
 
 export type CommandExecutorOptions = {
   registry: CommandRegistry
   policies?: readonly ExecutionPolicy[]
   profile?: CompatibilityProfile
-  /**
-   * Builds the reply for a container subcommand that fails command lookup —
-   * `unknownSubcommandError` from src/commands/helpers.ts, which the
-   * containers also use, so the plan-time and execute-time replies are the
-   * same bytes. Without it {@link CommandExecutor.plan} skips the lookup and
-   * every container resolves its own subcommand when it runs.
-   */
-  unknownSubcommand?: (
-    container: string,
-    subcommand: Buffer,
-    profile: CompatibilityProfile,
-  ) => UnknownSubcommandError
 }
 
 /**
@@ -62,13 +50,11 @@ export type CommandExecutorOptions = {
 export class CommandExecutor {
   private readonly registry: CommandRegistry
   private readonly policies: readonly ExecutionPolicy[]
-  private readonly unknownSubcommand: CommandExecutorOptions['unknownSubcommand']
   readonly profile: CompatibilityProfile
 
   constructor(options: CommandExecutorOptions) {
     this.registry = options.registry
     this.policies = options.policies ?? []
-    this.unknownSubcommand = options.unknownSubcommand
     this.profile = options.profile ?? resolveCompatibilityProfile()
   }
 
@@ -120,7 +106,6 @@ export class CommandExecutor {
     rawArgs: readonly Buffer[],
   ): void {
     if (
-      !this.unknownSubcommand ||
       rawArgs.length === 0 ||
       !this.profile.has('error.unknown-subcommand-dispatch-timing')
     ) {
@@ -135,7 +120,7 @@ export class CommandExecutor {
       return
     }
 
-    throw this.unknownSubcommand(
+    throw unknownSubcommandError(
       asciiUpperCase(definition.name),
       subcommand,
       this.profile,
