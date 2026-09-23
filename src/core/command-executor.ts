@@ -2,13 +2,13 @@ import { asciiLowerCase, asciiUpperCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
 import { failsTableArity, lookupTableArity } from './command-arity'
-import { parseCommandArgs, schemaKeyRange } from './command-schema'
+import { parseCommandArgs } from './command-schema'
+import { rawCommandKeys } from './key-specs'
 import type { ExecutionPolicy } from './execution-policies'
 import {
   ExecCommandAbortError,
   RedisCommandError,
   UnknownRedisCommandError,
-  UnknownSubcommandError,
   WrongNumberOfArgumentsError,
 } from './redis-error'
 import type { RedisExecutionContext } from './redis-context'
@@ -80,6 +80,21 @@ export class CommandExecutor {
    *   (see {@link lookupSubcommand}).
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
+    return this.createPlan(
+      this.lookup(rawCommand, rawArgs),
+      rawCommand,
+      rawArgs,
+    )
+  }
+
+  /**
+   * Command lookup: the definition, and from 7.0 the container subcommand
+   * (see {@link lookupSubcommand}).
+   */
+  private lookup(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+  ): CommandDefinition<unknown> {
     const definition = this.registry.get(rawCommand.toString())
 
     if (!definition) {
@@ -87,7 +102,7 @@ export class CommandExecutor {
     }
 
     this.lookupSubcommand(definition, rawArgs)
-    return this.createPlan(definition, rawCommand, rawArgs)
+    return definition
   }
 
   /**
@@ -135,14 +150,10 @@ export class CommandExecutor {
    * network client.
    *
    * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Inside MULTI, real Redis
-   * refuses a command at queue time only when `processCommand` does: an
-   * unknown command or subcommand, or a count the command table's arity
-   * rejects. Those mark the transaction dirty, so a later EXEC aborts. Any
-   * other planning error comes from the command's own argument checks, which
-   * Redis runs at EXEC time, so the command is queued and its error fills its
-   * slot in EXEC's reply (see {@link deferredErrorPlan}).
-   * Execution-time errors are handled inside {@link executePlan}.
+   * caught here and converted into a RESP error reply. Inside MULTI a command
+   * is planned the way Redis's `processCommand` queues it (see
+   * {@link planForQueue}). Execution-time errors are handled inside
+   * {@link executePlan}.
    */
   async executeRaw(
     rawCommand: Buffer | string,
@@ -150,25 +161,10 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
-      let plan: CommandPlan
-      try {
-        plan = this.plan(rawCommand, rawArgs)
-      } catch (err) {
-        const deferred =
-          err instanceof RedisCommandError
-            ? this.deferredErrorPlan(err, rawCommand, rawArgs, ctx)
-            : null
-        if (!deferred) {
-          throw err
-        }
-        plan = deferred
-      }
-
-      const arityError = this.queueTimeArityError(plan, rawArgs, ctx)
-      if (arityError) {
-        return this.rawCommandErrorResult(arityError, rawCommand, ctx)
-      }
-
+      const plan =
+        ctx.session.mode === 'transaction'
+          ? this.planForQueue(rawCommand, rawArgs)
+          : this.plan(rawCommand, rawArgs)
       return await this.executePlan(plan, ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
@@ -180,70 +176,49 @@ export class CommandExecutor {
   }
 
   /**
-   * Inside MULTI, the command-table arity check a parsed command must still
-   * pass before it is queued: a lenient schema (a container that checks its
-   * subcommand's arguments when it runs) parses a count that lookup rejects.
-   * From 7.0 that is the `container|subcommand` entry's arity.
+   * Plan a command sent inside MULTI. Real Redis refuses one at queue time
+   * only when `processCommand` does: an unknown command or (7.0+) subcommand,
+   * or an argument count the command table's arity rejects — from 7.0 the
+   * `container|subcommand` entry's. Those throw here, and the caller dirties
+   * the transaction so EXEC aborts.
+   *
+   * Any other error the parser raises is the command's own argument check,
+   * which Redis runs when EXEC calls the command. The command is queued as a
+   * plan carrying that error as `deferredError`, raised after the policy
+   * chain, so the error fills its slot in EXEC's reply. Such a plan's `args`
+   * are unusable; its routing keys come from the command's key specs over the
+   * raw arguments ({@link rawCommandKeys}), as Redis routes a queued command
+   * without running its parser. The transaction commands themselves (EXEC,
+   * DISCARD, ...) run at once, so their parse errors are answered now.
    */
-  private queueTimeArityError(
-    plan: CommandPlan,
-    rawArgs: readonly Buffer[],
-    ctx: RedisExecutionContext,
-  ): WrongNumberOfArgumentsError | null {
-    if (ctx.session.mode !== 'transaction') {
-      return null
-    }
-
-    const lookup = lookupTableArity(plan.definition, rawArgs, this.profile)
-    return failsTableArity(lookup.arity, rawArgs.length + 1)
-      ? new WrongNumberOfArgumentsError(lookup.name)
-      : null
-  }
-
-  /**
-   * A plan that queues a command whose own argument checks failed, and raises
-   * that error when EXEC runs it — or `null` when the error must be answered
-   * now: outside MULTI, for a lookup failure, for a count the command table
-   * rejects, and for the commands MULTI runs immediately (EXEC, DISCARD, ...).
-   * Its routing keys come from the command's legacy key range over the raw
-   * arguments, the way Redis finds a queued command's keys without running its
-   * parser, so cluster routing still sees them at queue time.
-   */
-  private deferredErrorPlan(
-    err: RedisCommandError,
+  private planForQueue(
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
-    ctx: RedisExecutionContext,
-  ): CommandPlan | null {
-    if (
-      ctx.session.mode !== 'transaction' ||
-      err instanceof UnknownRedisCommandError ||
-      err instanceof UnknownSubcommandError
-    ) {
-      return null
+  ): CommandPlan {
+    const definition = this.lookup(rawCommand, rawArgs)
+    const table = lookupTableArity(definition, rawArgs, this.profile)
+    if (failsTableArity(table.arity, rawArgs.length + 1)) {
+      throw new WrongNumberOfArgumentsError(table.name)
     }
 
-    const definition = this.registry.get(rawCommand.toString())
-    if (!definition || definition.flags.includes('transaction')) {
-      return null
-    }
+    try {
+      return this.createPlan(definition, rawCommand, rawArgs)
+    } catch (err) {
+      if (
+        !(err instanceof RedisCommandError) ||
+        definition.flags.includes('transaction')
+      ) {
+        throw err
+      }
 
-    const lookup = lookupTableArity(definition, rawArgs, this.profile)
-    if (failsTableArity(lookup.arity, rawArgs.length + 1)) {
-      return null
-    }
-
-    return {
-      definition: {
-        ...definition,
-        execute: () => {
-          throw err
-        },
-      },
-      args: undefined,
-      keys: legacyRangeKeys(definition, rawArgs),
-      rawCommand: Buffer.from(rawCommand),
-      rawArgs: rawArgs.map(arg => Buffer.from(arg)),
+      return {
+        definition,
+        args: undefined,
+        keys: rawCommandKeys(definition, rawCommand, rawArgs),
+        rawCommand: Buffer.from(rawCommand),
+        rawArgs: rawArgs.map(arg => Buffer.from(arg)),
+        deferredError: err,
+      }
     }
   }
 
@@ -306,6 +281,10 @@ export class CommandExecutor {
         }
       }
 
+      if (plan.deferredError) {
+        throw plan.deferredError
+      }
+
       return await plan.definition.execute(
         plan.args,
         withMutationOrigin(plan, ctx),
@@ -353,6 +332,10 @@ export class CommandExecutor {
         }
       }
 
+      if (plan.deferredError) {
+        throw plan.deferredError
+      }
+
       assertSyncCommandDefinition(plan)
 
       return assertSyncCommandResult(
@@ -391,29 +374,6 @@ export class CommandExecutor {
       rawArgs: rawArgs.map(arg => Buffer.from(arg)),
     }
   }
-}
-
-/**
- * The keys a command's legacy first/last/step range picks out of `rawArgs`,
- * counted from the command name at index 0 (so `MSET a b c` gives `a`, `c`).
- * Used only for a command whose parser failed, which has no parsed keys.
- */
-function legacyRangeKeys(
-  definition: CommandDefinition<unknown>,
-  rawArgs: readonly Buffer[],
-): Buffer[] {
-  const { firstKey, lastKey, keyStep } = schemaKeyRange(definition.schema)
-  if (firstKey <= 0 || keyStep <= 0) {
-    return []
-  }
-
-  const argc = rawArgs.length + 1
-  const last = lastKey < 0 ? argc + lastKey : lastKey
-  const keys: Buffer[] = []
-  for (let i = firstKey; i <= last && i < argc; i += keyStep) {
-    keys.push(Buffer.from(rawArgs[i - 1]))
-  }
-  return keys
 }
 
 function publishMonitorEvent(

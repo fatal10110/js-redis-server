@@ -16,7 +16,7 @@ import {
   type RedisFunctionLibrary,
 } from '../state'
 import { array, bulk, ok, unknownSubcommandError } from './helpers'
-import { commandSubcommandInfo } from './introspection'
+import { commandSubcommandInfo, commandKeynumKeySpec } from './introspection'
 
 type ScriptArgs = {
   subcommand: Buffer
@@ -122,6 +122,12 @@ export const evalCommand = defineCommand<EvalArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RW', 'access', 'update'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RW and UPDATE',
+      }),
+    ],
     flags: DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -144,6 +150,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'update'])],
     flags: DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -166,6 +173,12 @@ export const evalRoCommand = defineCommand<EvalArgs>({
   schema: evalCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RO', 'access'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RO and ACCESS',
+      }),
+    ],
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -184,6 +197,7 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   schema: evalshaCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [commandKeynumKeySpec(2, ['RO', 'access'])],
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -284,6 +298,12 @@ export const fcallCommand = defineCommand<FcallArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RW', 'access', 'update'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RW and UPDATE',
+      }),
+    ],
     flags: DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -298,6 +318,12 @@ export const fcallRoCommand = defineCommand<FcallArgs>({
   schema: fcallCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RO', 'access'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RO and ACCESS',
+      }),
+    ],
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },

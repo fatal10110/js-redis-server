@@ -1,5 +1,9 @@
 import { asciiUpperCase } from '../../core/ascii-case'
-import { defineCommand } from '../../core/command-definition'
+import {
+  defineCommand,
+  type CommandIntrospection,
+} from '../../core/command-definition'
+import { commandSubcommandInfo, streamSubcommandInfo } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
@@ -216,10 +220,37 @@ function createXgroupSchema() {
   )
 }
 
+// The real subcommand entries (#518): lookup checks a call against their
+// arity, and COMMAND INFO lists them.
+const xgroupIntrospection: CommandIntrospection = {
+  flags: [],
+  subcommands: [
+    commandSubcommandInfo('xgroup|help', 2, {
+      categories: ['@stream', '@slow'],
+    }),
+    streamSubcommandInfo('xgroup|destroy', 4, ['write'], ['RW', 'delete']),
+    streamSubcommandInfo('xgroup|setid', -5, ['write'], ['RW', 'update']),
+    streamSubcommandInfo(
+      'xgroup|createconsumer',
+      5,
+      ['write', 'denyoom'],
+      ['RW', 'insert'],
+    ),
+    streamSubcommandInfo('xgroup|delconsumer', 5, ['write'], ['RW', 'delete']),
+    streamSubcommandInfo(
+      'xgroup|create',
+      -5,
+      ['write', 'denyoom'],
+      ['RW', 'insert'],
+    ),
+  ],
+}
+
 export const xgroupCommand = defineCommand({
   name: 'xgroup',
   schema: t.object({ args: createXgroupSchema() }),
   flags: ['write'],
+  introspection: xgroupIntrospection,
   keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args

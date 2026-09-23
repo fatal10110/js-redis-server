@@ -562,8 +562,9 @@ so the PR body is not a durable home for a breaking-change note.
   accepts but the command refuses (`HSET h f v x`, an odd `MSET`) returns the
   command's own error, `ERR` code included, on every profile ([#492]). On
   `redis-6.2` that error reads `wrong number of arguments for MSET` for
-  `MSET` / `MSETNX` and `wrong number of arguments for XADD` for `XADD` (new
-  gate `error.odd-pairs-arity-wording`).
+  `MSET` / `MSETNX` and `wrong number of arguments for XADD` for `XADD` with
+  an odd or empty field/value tail (`XADD s MAXLEN 10 *`) (new gate
+  `error.odd-pairs-arity-wording`).
 
 - A script call whose argument count the command table rejects answers the
   scripting layer's arity error on Redis 7.0+ and Valkey too: `Wrong number of
@@ -579,9 +580,47 @@ so the PR body is not a durable home for a breaking-change note.
   `HSET h f v x`, `SET k v BOGUS`, `INCRBY k x`, ...) and reports the error in
   that command's slot of EXEC's reply, as Redis does; the rest of the
   transaction runs. Only an unknown command or subcommand, or an argument
-  count the command table rejects (from 7.0, a subcommand's own entry such as
-  `config|get`), is still refused at queue time and aborts EXEC with
-  `-EXECABORT`. Previously every parse error aborted the transaction.
+  count the command table rejects, is still refused at queue time and aborts
+  EXEC with `-EXECABORT`. From 7.0 that count is checked against the
+  subcommand's own entry for every container (`config|get`, `xinfo|stream`,
+  `xgroup|create`, and real subcommands this server does not implement, such
+  as `client|pause`). Previously every parse error aborted the transaction.
+  What clients see changes accordingly:
+
+  ```
+  MULTI; SET a 1; MSET b v c; EXEC
+    ioredis     multi().exec() used to reject with EXECABORT; it now resolves
+                [[null, 'OK'], [SimpleError("ERR wrong number of arguments
+                for 'mset' command"), null]]
+    node-redis  multi().exec() used to reject with EXECABORT; it now rejects
+                with MultiErrorReply, errorIndexes [1], .replies holding the
+                OK and the error
+  ```
+
+  In a cluster such a command is routed by the keys its key specs find in the
+  raw arguments, as Redis does without running the command's parser: a
+  numkeys past the end of the command (`ZUNIONSTORE a 5 b`) leaves it
+  keyless, while `ZUNIONSTORE b 1 s BOGUS` is a `CROSSSLOT` and
+  `XREAD COUNT x STREAMS a 0` a `MOVED` at queue time. `SELECT 1` inside a
+  cluster MULTI is queued too, and its `SELECT is not allowed in cluster
+  mode` fills its EXEC slot; `SELECT x` answers `value is not an integer or
+  out of range` there instead of dropping the connection.
+
+  `COMMAND INFO` now reports Redis's key specs for the movable-key commands
+  (numkeys: `ZUNIONSTORE`/`ZINTERSTORE`/`ZDIFFSTORE`, `ZUNION`/`ZINTER`/
+  `ZDIFF`/`ZINTERCARD`, `SINTERCARD`, `LMPOP`/`BLMPOP`/`ZMPOP`/`BZMPOP`,
+  `EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO`/`FCALL`/`FCALL_RO`; keyword:
+  `XREAD`/`XREADGROUP` `STREAMS`, `GEORADIUS`/`GEORADIUSBYMEMBER`
+  `STORE`/`STOREDIST`) and the `XINFO` / `XGROUP` subcommand entries.
+
+- **`/core`** (additive) `CommandPlan` gained an optional `deferredError`: a
+  command queued inside MULTI whose own argument parsing failed carries the
+  error its EXEC slot answers, raised after the policy chain. Its `args` is
+  `undefined` whatever `TArgs` says, so a custom `ExecutionPolicy` that reads
+  `plan.args` must skip a plan with `deferredError` set; `keys` come from the
+  command's key specs over `rawArgs`. `CommandKeySpec` gained optional
+  `beginSearchKeyword` and `findKeysKeynum` for Redis's keyword begin-search
+  and keynum find-keys forms.
 
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print

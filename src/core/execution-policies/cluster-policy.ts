@@ -41,10 +41,18 @@ export function createClusterPolicy(
         )
       }
 
-      if (capabilities?.clusterMode === 'singleDb') {
-        // Cluster mode has a single logical database (0). DB 0 is a no-op and
-        // accepted; any non-zero index is rejected like real Redis unless the
-        // selected profile models Valkey's cluster multi-DB support.
+      // Cluster mode has a single logical database (0). DB 0 is a no-op and
+      // accepted; any non-zero index is rejected like real Redis unless the
+      // selected profile models Valkey's cluster multi-DB support. It is the
+      // command's own check, so inside MULTI the command is queued and the
+      // check runs when EXEC replays it (the session is no longer in
+      // 'transaction' mode then); a queued plan whose parse failed has no
+      // `args` at all and answers its own error at EXEC.
+      if (
+        capabilities?.clusterMode === 'singleDb' &&
+        !plan.deferredError &&
+        ctx.session.mode !== 'transaction'
+      ) {
         const index = (plan.args as { database: number }).database
         if (index !== 0 && !ctx.server.profile.has('cluster.multi-db')) {
           throw new RedisCommandError(

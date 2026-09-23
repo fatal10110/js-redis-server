@@ -260,8 +260,11 @@ and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at
 queue time, not at `EXEC` time. Only what Redis refuses at queue time dirties
 the transaction there (an unknown command or subcommand, or a count the command
 table's arity rejects); a command whose own argument check fails is queued as
-a plan that raises that error when `EXEC` runs it
-(`CommandExecutor.executeRaw`). `EXEC` drains the queue and replays each plan
+a plan carrying the error as `deferredError`, which `executePlan` raises after
+the policy chain when `EXEC` runs it; its cluster routing keys come from the
+command's key specs over the raw arguments, as Redis routes a queued command
+without running its parser (`CommandExecutor.planForQueue`,
+[`key-specs.ts`](../src/core/key-specs.ts)). `EXEC` drains the queue and replays each plan
 through [`ClientSession.executeTransaction`](../src/core/client-session.ts#L156),
 which reuses the normal `executePlan` path per command. When a queued `HELLO`
 changes the session RESP version, `executeTransaction` captures each element's

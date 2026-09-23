@@ -463,7 +463,18 @@ function commandKeyRange(
     : { firstKey: 0, lastKey: 0, keyStep: 0 }
 }
 
-export function keySpecsKeyRange(specs: readonly CommandKeySpec[]): KeyRange {
+export function keySpecsKeyRange(
+  allSpecs: readonly CommandKeySpec[],
+): KeyRange {
+  // Like Redis's populateCommandLegacyRangeSpec, only index + range specs feed
+  // the legacy triple; a keyword or keynum spec makes the keys movable.
+  const specs = allSpecs.filter(
+    spec => !spec.beginSearchKeyword && !spec.findKeysKeynum,
+  )
+  if (specs.length === 0) {
+    return { firstKey: 0, lastKey: 0, keyStep: 0 }
+  }
+
   if (specs.length === 1) {
     const [spec] = specs
     return {
@@ -553,33 +564,65 @@ function formatKeySpec(spec: CommandKeySpec): RedisValue {
     items.push(bulkString('notes'), bulkString(spec.notes))
   }
 
+  const keyword = spec.beginSearchKeyword
+  const keynum = spec.findKeysKeynum
   items.push(
     bulkString('flags'),
     RedisValue.array(spec.flags.map(bulkString)),
     bulkString('begin_search'),
-    RedisValue.array([
-      bulkString('type'),
-      bulkString('index'),
-      bulkString('spec'),
-      RedisValue.array([
-        bulkString('index'),
-        RedisValue.integer(spec.beginSearchIndex),
-      ]),
-    ]),
+    RedisValue.array(
+      keyword
+        ? [
+            bulkString('type'),
+            bulkString('keyword'),
+            bulkString('spec'),
+            RedisValue.array([
+              bulkString('keyword'),
+              bulkString(keyword.keyword),
+              bulkString('startfrom'),
+              RedisValue.integer(keyword.startFrom),
+            ]),
+          ]
+        : [
+            bulkString('type'),
+            bulkString('index'),
+            bulkString('spec'),
+            RedisValue.array([
+              bulkString('index'),
+              RedisValue.integer(spec.beginSearchIndex),
+            ]),
+          ],
+    ),
     bulkString('find_keys'),
-    RedisValue.array([
-      bulkString('type'),
-      bulkString('range'),
-      bulkString('spec'),
-      RedisValue.array([
-        bulkString('lastkey'),
-        RedisValue.integer(spec.lastKey),
-        bulkString('keystep'),
-        RedisValue.integer(spec.keyStep),
-        bulkString('limit'),
-        RedisValue.integer(spec.limit ?? 0),
-      ]),
-    ]),
+    RedisValue.array(
+      keynum
+        ? [
+            bulkString('type'),
+            bulkString('keynum'),
+            bulkString('spec'),
+            RedisValue.array([
+              bulkString('keynumidx'),
+              RedisValue.integer(keynum.keyNumIdx),
+              bulkString('firstkey'),
+              RedisValue.integer(keynum.firstKey),
+              bulkString('keystep'),
+              RedisValue.integer(keynum.keyStep),
+            ]),
+          ]
+        : [
+            bulkString('type'),
+            bulkString('range'),
+            bulkString('spec'),
+            RedisValue.array([
+              bulkString('lastkey'),
+              RedisValue.integer(spec.lastKey),
+              bulkString('keystep'),
+              RedisValue.integer(spec.keyStep),
+              bulkString('limit'),
+              RedisValue.integer(spec.limit ?? 0),
+            ]),
+          ],
+    ),
   )
 
   return RedisValue.array(items)

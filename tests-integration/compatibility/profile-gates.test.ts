@@ -953,6 +953,13 @@ describe(
           ? '-ERR wrong number of arguments for XADD\r\n'
           : "-ERR wrong number of arguments for 'xadd' command\r\n",
       )
+      // No field/value pairs at all is the same check (#518).
+      assert.strictEqual(
+        await send('XADD', 'x', 'MAXLEN', '5', '*'),
+        legacy
+          ? '-ERR wrong number of arguments for XADD\r\n'
+          : "-ERR wrong number of arguments for 'xadd' command\r\n",
+      )
     })
 
     // From 7.0 the scripting layer's own errors carry no position and keep
@@ -990,6 +997,9 @@ describe(
           ["redis.pcall('config', 'get')", WRONG_ARITY],
           ["redis.pcall('client', 'setname')", WRONG_ARITY],
           ["redis.pcall('xadd', 'x', '*', 'f')", WRONG_ARITY],
+          // XINFO / XGROUP subcommands have their own table entries (#518).
+          ["redis.pcall('xinfo', 'stream')", WRONG_ARITY],
+          ["redis.pcall('xgroup', 'create', 'k', 'g')", WRONG_ARITY],
           ['redis.pcall()', NO_COMMAND],
           ["redis.pcall('subscribe', 'c')", NOT_ALLOWED],
         ]

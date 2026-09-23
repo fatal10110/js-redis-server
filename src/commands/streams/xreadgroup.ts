@@ -1,4 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
+import { commandKeywordKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
@@ -166,6 +167,16 @@ export const xreadgroupCommand = defineCommand({
     args: t.withLayout(createXreadGroupSchema(), { min: 6 }),
   }),
   flags: ['write', 'blocking'],
+  introspection: {
+    keySpecs: [
+      commandKeywordKeySpec(
+        'STREAMS',
+        4,
+        { lastKey: -1, keyStep: 1, limit: 2 },
+        ['RO', 'access'],
+      ),
+    ],
+  },
   capabilities: { blocking: true },
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {

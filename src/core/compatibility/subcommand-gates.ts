@@ -195,3 +195,196 @@ export function containerSubcommandExists(
     : undefined
   return gate !== undefined && gateSatisfied(gate, profile)
 }
+
+/**
+ * Each real `container|subcommand` entry's command-table arity (command name
+ * and subcommand included, negated for a minimum), as `COMMAND INFO` reports
+ * it. Command lookup checks a call against this before the container runs, so
+ * inside MULTI a count it rejects is refused at queue time, and from a script
+ * it is the scripting layer's arity error. Captured from redis-server 8.0.6,
+ * with the Valkey-only entries from valkey-server 9.0.6; the version
+ * differences are in {@link containerSubcommandArity}.
+ */
+const SUBCOMMAND_ARITY: Record<string, Record<string, number>> = {
+  acl: {
+    cat: -2,
+    deluser: -3,
+    dryrun: -4,
+    genpass: -2,
+    getuser: 3,
+    help: 2,
+    list: 2,
+    load: 2,
+    log: -2,
+    save: 2,
+    setuser: -3,
+    users: 2,
+    whoami: 2,
+  },
+  client: {
+    caching: 3,
+    capa: -3,
+    getname: 2,
+    getredir: 2,
+    help: 2,
+    id: 2,
+    'import-source': 3,
+    info: 2,
+    kill: -3,
+    list: -2,
+    'no-evict': 3,
+    'no-touch': 3,
+    pause: -3,
+    reply: 3,
+    setinfo: 4,
+    setname: 3,
+    tracking: -3,
+    trackinginfo: 2,
+    unblock: -3,
+    unpause: 2,
+  },
+  cluster: {
+    addslots: -3,
+    addslotsrange: -4,
+    bumpepoch: 2,
+    cancelslotmigrations: 2,
+    'count-failure-reports': 3,
+    countkeysinslot: 3,
+    delslots: -3,
+    delslotsrange: -4,
+    failover: -2,
+    flushslot: -3,
+    flushslots: 2,
+    forget: 3,
+    getkeysinslot: 4,
+    getslotmigrations: 2,
+    help: 2,
+    info: 2,
+    keyslot: 3,
+    links: 2,
+    meet: -4,
+    migrateslots: -4,
+    myid: 2,
+    myshardid: 2,
+    nodes: 2,
+    replicas: 3,
+    replicate: 3,
+    reset: -2,
+    saveconfig: 2,
+    'set-config-epoch': 3,
+    setslot: -4,
+    shards: 2,
+    slaves: 3,
+    'slot-stats': -4,
+    slots: 2,
+    syncslots: -3,
+  },
+  command: {
+    count: 2,
+    docs: -2,
+    getkeys: -3,
+    getkeysandflags: -3,
+    help: 2,
+    info: -2,
+    list: -2,
+  },
+  config: {
+    get: -3,
+    help: 2,
+    resetstat: 2,
+    rewrite: 2,
+    set: -4,
+  },
+  function: {
+    delete: 3,
+    dump: 2,
+    flush: -2,
+    help: 2,
+    kill: 2,
+    list: -2,
+    load: -3,
+    restore: -3,
+    stats: 2,
+  },
+  pubsub: {
+    channels: -2,
+    help: 2,
+    numpat: 2,
+    numsub: -2,
+    shardchannels: -2,
+    shardnumsub: -2,
+  },
+  script: {
+    debug: 3,
+    exists: -3,
+    flush: -2,
+    help: 2,
+    kill: 2,
+    load: 3,
+    show: 3,
+  },
+  slowlog: {
+    get: -2,
+    help: 2,
+    len: 2,
+    reset: 2,
+  },
+  xgroup: {
+    create: -5,
+    createconsumer: 5,
+    delconsumer: 5,
+    destroy: 4,
+    help: 2,
+    setid: -5,
+  },
+  xinfo: {
+    consumers: 4,
+    groups: 3,
+    help: 2,
+    stream: -3,
+  },
+}
+
+/**
+ * The command-table arity of `container|subcommand` at `profile`, or
+ * `undefined` when the table has no such entry (lookup then checks the
+ * container's own arity). Only meaningful on profiles with per-subcommand
+ * table entries (Redis 7.0+ / Valkey 7.2+).
+ */
+export function containerSubcommandArity(
+  container: string,
+  subcommand: Buffer | string,
+  profile: CompatibilityProfile,
+): number | undefined {
+  if (containerSubcommandExists(container, subcommand, profile) !== true) {
+    return undefined
+  }
+
+  const containerName = asciiLowerCase(container)
+  const name = asciiLowerCase(
+    Buffer.isBuffer(subcommand) ? subcommand.toString('latin1') : subcommand,
+  )
+  // Redis 7.0 alone required a target command plus an argument (7.0.15:
+  // -4); 7.2 relaxed it back to -3. Valkey 9.0 made CLUSTER REPLICATE take
+  // an optional argument (-3).
+  if (
+    containerName === 'command' &&
+    (name === 'getkeys' || name === 'getkeysandflags') &&
+    !profile.has('command.getkeys-single-arg')
+  ) {
+    return -4
+  }
+  if (
+    containerName === 'cluster' &&
+    name === 'replicate' &&
+    profile.flavor === 'valkey' &&
+    gateSatisfied({ valkey: '9.0.0' }, profile)
+  ) {
+    return -3
+  }
+
+  const arities = SUBCOMMAND_ARITY[containerName]
+  return arities && Object.prototype.hasOwnProperty.call(arities, name)
+    ? arities[name]
+    : undefined
+}

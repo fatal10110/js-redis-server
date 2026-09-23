@@ -5,6 +5,7 @@ import type {
 } from './command-definition'
 import { schemaArity, type CommandSchema } from './command-schema'
 import type { CompatibilityProfile } from './compatibility'
+import { containerSubcommandArity } from './compatibility/subcommand-gates'
 
 /**
  * A command's command-table arity, as `COMMAND INFO` reports it: the token
@@ -32,8 +33,10 @@ export function commandTableArity(
 /**
  * The command-table entry a call is looked up as, and its arity. From 7.0
  * (the `error.unknown-subcommand-dispatch-timing` gate) lookup resolves a
- * container's `container|subcommand` entry, so the subcommand's own arity
- * applies; 6.2 has only the container's. `rawArgs` excludes the command name.
+ * container's `container|subcommand` entry against the *real* command table
+ * (`containerSubcommandArity`), so the subcommand's own arity applies even to
+ * a subcommand this server does not implement; 6.2 has only the container's.
+ * `rawArgs` excludes the command name.
  */
 export function lookupTableArity(
   definition: CommandDefinition<unknown>,
@@ -48,20 +51,20 @@ export function lookupTableArity(
       definition.schema,
     ),
   }
-  const subcommands = definition.introspection?.subcommands
   if (
-    !subcommands ||
     rawArgs.length === 0 ||
     !profile.has('error.unknown-subcommand-dispatch-timing')
   ) {
     return own
   }
 
-  const name = `${definition.name}|${asciiLowerCase(rawArgs[0].toString())}`
-  const subcommand = subcommands.find(entry => entry.name === name)
-  return subcommand
-    ? { name, arity: commandTableArity(subcommand, profile) }
-    : own
+  const arity = containerSubcommandArity(definition.name, rawArgs[0], profile)
+  return arity === undefined
+    ? own
+    : {
+        name: `${definition.name}|${asciiLowerCase(rawArgs[0].toString('latin1'))}`,
+        arity,
+      }
 }
 
 /**

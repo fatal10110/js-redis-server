@@ -1,5 +1,6 @@
 import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
+import type { RedisCommandError } from './redis-error'
 import type { RedisResult } from './redis-result'
 import type { CompatibilityProfile, VersionGate } from './compatibility'
 import { asciiLowerCase } from './ascii-case'
@@ -42,12 +43,24 @@ export type CommandMonitorMetadata = {
   redactArgs?: (rawArgs: readonly Buffer[]) => readonly Buffer[]
 }
 
+/**
+ * A Redis key spec (`COMMAND INFO` / `COMMAND DOCS`). `begin_search` is the
+ * index `beginSearchIndex`, or with `beginSearchKeyword` the argument after a
+ * keyword searched for from `startFrom` (backwards from the end when
+ * negative). `find_keys` is the range `lastKey` / `keyStep` / `limit`, or with
+ * `findKeysKeynum` a count read from the argument `keyNumIdx` after the
+ * begin position, the keys starting `firstKey` after it. Besides COMMAND INFO,
+ * specs are how a queued command whose own parser failed is routed in a
+ * cluster (see `keysFromKeySpecs`).
+ */
 export type CommandKeySpec = {
   flags: readonly string[]
   beginSearchIndex: number
+  beginSearchKeyword?: { keyword: string; startFrom: number }
   lastKey: number
   keyStep: number
   limit?: number
+  findKeysKeynum?: { keyNumIdx: number; firstKey: number; keyStep: number }
   notes?: string
 }
 
@@ -106,6 +119,14 @@ export type CommandPlan<TArgs = unknown> = {
   keys: readonly Buffer[]
   rawCommand: Buffer
   rawArgs: readonly Buffer[]
+  /**
+   * Set on a command queued inside MULTI whose own argument parsing failed:
+   * the error its EXEC slot answers, raised after the policy chain instead of
+   * running the command. `args` is then `undefined` (whatever `TArgs` says),
+   * so a policy that reads `args` must skip such a plan; `keys` come from
+   * the command's key specs over `rawArgs`.
+   */
+  deferredError?: RedisCommandError
 }
 
 /**

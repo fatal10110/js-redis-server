@@ -1,5 +1,9 @@
 import { asciiUpperCase } from '../../core/ascii-case'
-import { defineCommand } from '../../core/command-definition'
+import {
+  defineCommand,
+  type CommandIntrospection,
+} from '../../core/command-definition'
+import { commandSubcommandInfo, streamSubcommandInfo } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
@@ -145,10 +149,25 @@ function createXinfoSchema() {
   )
 }
 
+// The real subcommand entries (#518): lookup checks a call against their
+// arity, and COMMAND INFO lists them.
+const xinfoIntrospection: CommandIntrospection = {
+  flags: [],
+  subcommands: [
+    commandSubcommandInfo('xinfo|help', 2, {
+      categories: ['@stream', '@slow'],
+    }),
+    streamSubcommandInfo('xinfo|stream', -3, ['readonly'], ['RO', 'access']),
+    streamSubcommandInfo('xinfo|groups', 3, ['readonly'], ['RO', 'access']),
+    streamSubcommandInfo('xinfo|consumers', 4, ['readonly'], ['RO', 'access']),
+  ],
+}
+
 export const xinfoCommand = defineCommand({
   name: 'xinfo',
   schema: t.object({ args: createXinfoSchema() }),
   flags: ['readonly'],
+  introspection: xinfoIntrospection,
   keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args

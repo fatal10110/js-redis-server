@@ -1,4 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
+import { commandKeySpec, commandKeywordKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
@@ -97,6 +98,19 @@ export const georadiusCommand = defineCommand({
   name: 'georadius',
   schema: createGeoRadiusSchema(true),
   flags: ['write', 'denyoom'],
+  introspection: {
+    keySpecs: [
+      commandKeySpec(1, 0, 1, ['RO', 'access']),
+      commandKeywordKeySpec('STORE', 6, { lastKey: 0, keyStep: 1 }, [
+        'OW',
+        'update',
+      ]),
+      commandKeywordKeySpec('STOREDIST', 6, { lastKey: 0, keyStep: 1 }, [
+        'OW',
+        'update',
+      ]),
+    ],
+  },
   keys: args =>
     (args.store ?? args.storeDist)
       ? [args.key, (args.store ?? args.storeDist)!]
