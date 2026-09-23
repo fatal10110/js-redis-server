@@ -21,7 +21,7 @@ import {
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
-import type { FeatureId } from '../core/compatibility'
+import type { CompatibilityProfile, FeatureId } from '../core/compatibility'
 import { unknownSubcommandError } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
@@ -54,6 +54,20 @@ const SUBCOMMAND_FEATURES: Record<string, FeatureId> = {
   'pubsub|shardnumsub': 'pubsub.sharded',
 }
 
+// Tokens GETKEYS / GETKEYSANDFLAGS need after the subcommand. Only 7.0 wants
+// the target command plus at least one argument (its new per-subcommand arity
+// was -4); 6.2 checks just for a target and 7.2+ relaxed the arity to -3.
+function minGetKeysArgs(profile: CompatibilityProfile): number {
+  const redis70 =
+    profile.has('command.getkeysandflags') &&
+    !profile.has('command.getkeys-single-arg')
+  return redis70 ? 2 : 1
+}
+
+function getKeysArity(profile: CompatibilityProfile): number {
+  return -(minGetKeysArgs(profile) + 2)
+}
+
 const commandIntrospection: CommandIntrospection = {
   flags: ['loading', 'stale'],
   categories: ['@slow', '@connection'],
@@ -62,8 +76,8 @@ const commandIntrospection: CommandIntrospection = {
     commandSubcommandInfo('command|docs', -2, {
       tips: ['nondeterministic_output_order'],
     }),
-    commandSubcommandInfo('command|getkeys', -3),
-    commandSubcommandInfo('command|getkeysandflags', -3),
+    commandSubcommandInfo('command|getkeys', getKeysArity),
+    commandSubcommandInfo('command|getkeysandflags', getKeysArity),
     commandSubcommandInfo('command|info', -2, {
       tips: ['nondeterministic_output_order'],
     }),
@@ -285,7 +299,7 @@ function planCommandKeys(
   definition: CommandDefinition<unknown>
   keys: readonly Buffer[]
 } {
-  if (args.args.length < 1) {
+  if (args.args.length < minGetKeysArgs(ctx.server.profile)) {
     throw new WrongNumberOfArgumentsError(commandName)
   }
 
@@ -299,6 +313,12 @@ function planCommandKeys(
   try {
     keys = ctx.executor.plan(targetName, args.args.slice(1)).keys
   } catch (err) {
+    if (err instanceof WrongNumberOfArgumentsError) {
+      throw new RedisCommandError(
+        'Invalid number of arguments specified for command',
+      )
+    }
+
     if (err instanceof RedisCommandError) {
       throw new WrongNumberOfArgumentsError(commandName)
     }

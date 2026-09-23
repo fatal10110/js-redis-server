@@ -1,6 +1,11 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert'
-import { schemaArity, schemaKeyRange, t } from '../../src/core/command-schema'
+import {
+  schemaArity,
+  schemaKeyRange,
+  schemaLayout,
+  t,
+} from '../../src/core/command-schema'
 import { keySpecsKeyRange } from '../../src/commands/command'
 import { createRedisCommandExecutor } from '../../src/internal'
 
@@ -128,5 +133,124 @@ describe('schema layout (#370)', () => {
     }
 
     assert.ok(checked > 0)
+  })
+})
+
+describe('schema layout composition (#370 review)', () => {
+  const parse = () => ({ value: null, nextIndex: 0 })
+  const range = (schema: Parameters<typeof schemaKeyRange>[0]) => {
+    const { firstKey, lastKey, keyStep } = schemaKeyRange(schema)
+    return [firstKey, lastKey, keyStep]
+  }
+  const trailingKeys = () =>
+    t.custom({ min: 1, keyRange: { start: 0, step: 1, last: -1 } }, parse)
+
+  test('a hand-built { parse } schema is opaque, not a crash', () => {
+    const handBuilt = { parse }
+    assert.strictEqual(schemaArity(handBuilt), -1)
+    assert.deepStrictEqual(range(handBuilt), [0, 0, 0])
+    assert.deepStrictEqual(schemaLayout(handBuilt), {
+      min: 0,
+      max: Infinity,
+      keys: [],
+    })
+
+    // The combinators accept it and treat it as any number of tokens.
+    const object = t.object({ key: t.key(), rest: handBuilt })
+    assert.strictEqual(schemaArity(object), -2)
+    assert.deepStrictEqual(range(object), [1, 1, 1])
+    assert.strictEqual(schemaArity(t.optional(handBuilt)), -1)
+    assert.strictEqual(schemaArity(t.variadic(handBuilt)), -1)
+    assert.strictEqual(schemaArity(t.union([handBuilt, t.key()])), -1)
+    assert.strictEqual(schemaArity(t.withLayout(handBuilt, { min: 2 })), -3)
+  })
+
+  test('a key range holds only while nothing can follow it', () => {
+    assert.deepStrictEqual(
+      range(t.object({ key: t.key(), rest: trailingKeys() })),
+      [1, -1, 1],
+    )
+    // An empty object after the range takes no tokens, so the range survives.
+    assert.deepStrictEqual(
+      range(t.object({ keys: trailingKeys(), none: t.object({}) })),
+      [1, -1, 1],
+    )
+    // Any field that may take a token after it shifts `last`: the range goes.
+    assert.deepStrictEqual(
+      range(t.object({ keys: trailingKeys(), timeout: t.integer() })),
+      [0, 0, 0],
+    )
+    assert.deepStrictEqual(
+      range(
+        t.object({ keys: trailingKeys(), flag: t.optional(t.keyword('X')) }),
+      ),
+      [0, 0, 0],
+    )
+    // A repeated item that carries its own range cannot repeat as one.
+    assert.deepStrictEqual(range(t.variadic(trailingKeys())), [0, 0, 0])
+  })
+
+  test('union keeps what every branch shares', () => {
+    const union = t.union([
+      t.object({ key: t.key(), a: t.bulk() }),
+      t.object({ key: t.key(), a: t.bulk(), b: t.key(), c: t.bulk() }),
+    ])
+    assert.deepStrictEqual(schemaLayout(union), {
+      min: 2,
+      max: 4,
+      keys: [0],
+      keyRange: undefined,
+    })
+
+    const ranges = t.union([
+      t.variadic(t.key(), { min: 1 }),
+      t.variadic(t.key(), { min: 2 }),
+    ])
+    assert.deepStrictEqual(range(ranges), [1, -1, 1])
+    assert.strictEqual(schemaArity(ranges), -2)
+
+    const differentRanges = t.union([
+      t.variadic(t.key()),
+      t.variadic(t.object({ key: t.key(), value: t.bulk() })),
+    ])
+    assert.deepStrictEqual(range(differentRanges), [0, 0, 0])
+    assert.deepStrictEqual(schemaLayout(t.union([])), {
+      min: 0,
+      max: 0,
+      keys: [],
+    })
+  })
+
+  test('withLayout overrides only what it declares', () => {
+    const base = t.custom({ min: 1, keys: [0] }, parse)
+    const layout = schemaLayout(t.withLayout(base, { min: 3, max: 3 }))
+    assert.deepStrictEqual(
+      [layout.min, layout.max, layout.keys, layout.keyRange],
+      [3, 3, [0], undefined],
+    )
+    // The original schema is untouched.
+    assert.strictEqual(schemaArity(base), -2)
+  })
+
+  test('a declared layout is validated', () => {
+    const invalid = (layout: Parameters<typeof t.custom>[0]) =>
+      assert.throws(
+        () => t.custom(layout as never, parse),
+        /Invalid schema layout/,
+        JSON.stringify(layout),
+      )
+
+    invalid({ min: 2, keys: [1, 0] })
+    invalid({ min: 2, keys: [0, 0] })
+    invalid({ min: 1, keys: [1] })
+    invalid({ min: 3, max: 2 })
+    invalid({ min: -1 })
+    invalid({ keyRange: { start: 0, step: 0, last: -1 } })
+    invalid({ keyRange: { start: 0, step: 1, last: 0 } })
+    assert.throws(
+      () => t.withLayout(t.key(), { min: 0 }),
+      /Invalid schema layout/,
+    )
+    assert.doesNotThrow(() => t.custom({ min: 2, keys: [0, 1] }, parse))
   })
 })

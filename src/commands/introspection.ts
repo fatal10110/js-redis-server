@@ -51,7 +51,7 @@ export function commandKeyArgument(
 
 export function commandSubcommandInfo(
   name: string,
-  arity: number,
+  arity: CommandIntrospection['arity'],
   options?: {
     flags?: readonly string[]
     categories?: readonly string[]

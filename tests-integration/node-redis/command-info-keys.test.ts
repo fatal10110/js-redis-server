@@ -4,8 +4,8 @@ import { RedisClientType } from 'redis'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 
-// The mock-vs-real sweep over every command and the per-profile EXPIRE arity
-// check live in the ioredis twin: they compare servers, not client behavior.
+// The mock-vs-real sweep over every command and the per-profile arity checks
+// live in the ioredis twin: they compare servers, not client behavior.
 const testRunner = new TestRunner()
 
 // `[arity, first key, last key, key step]` as real Redis 8.0 reports them.

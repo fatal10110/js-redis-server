@@ -36,7 +36,15 @@ const EXPECTED: Record<string, KeyLayout> = {
   ping: [-1, 0, 0, 0],
 }
 
-type CommandInfoReply = [string, number, string[], number, number, number]
+type CommandInfoReply = [
+  string,
+  number,
+  string[],
+  number,
+  number,
+  number,
+  ...unknown[],
+]
 
 function layoutOf(info: CommandInfoReply): KeyLayout {
   return [info[1], info[3], info[4], info[5]]
@@ -106,11 +114,13 @@ describe(`COMMAND INFO arity and key positions (${testRunner.getBackendName()})`
   })
 
   test(
-    'every mock command matches real Redis',
+    'every mock command and subcommand matches real Redis',
     { skip: testRunner.backend !== 'real' },
     async () => {
       // Sweep: the in-process mock at the default profile (redis-8.0) against
-      // the real server, over every command both of them know.
+      // the real server, over every command both of them know — top-level
+      // entries (`COMMAND INFO client|list` included) and the subcommand
+      // entries nested inside each container's reply.
       const mock = await startMock()
       try {
         const names = (await mock.client.command('LIST')) as string[]
@@ -124,63 +134,141 @@ describe(`COMMAND INFO arity and key positions (${testRunner.getBackendName()})`
         )) as (CommandInfoReply | null)[]
 
         const mismatches: string[] = []
+        const compare = (
+          name: string,
+          mockInfo: CommandInfoReply,
+          realInfo: CommandInfoReply,
+        ) => {
+          const mockLayout = layoutOf(mockInfo)
+          const realLayout = layoutOf(realInfo)
+          if (mockLayout.join() !== realLayout.join()) {
+            mismatches.push(`${name}: mock ${mockLayout} real ${realLayout}`)
+          }
+        }
+
+        let nestedCompared = 0
         for (const [i, name] of names.entries()) {
           const real = realInfos[i]
           if (!real) {
             continue
           }
 
-          const mockLayout = layoutOf(mockInfos[i])
-          const realLayout = layoutOf(real)
-          if (mockLayout.join() !== realLayout.join()) {
-            mismatches.push(`${name}: mock ${mockLayout} real ${realLayout}`)
+          compare(name, mockInfos[i], real)
+          const realSubcommands = new Map(
+            (real[9] as CommandInfoReply[]).map(sub => [sub[0], sub]),
+          )
+          for (const sub of mockInfos[i][9] as CommandInfoReply[]) {
+            const realSub = realSubcommands.get(sub[0])
+            if (realSub) {
+              nestedCompared++
+              compare(`${sub[0]} (nested)`, sub, realSub)
+            }
           }
         }
 
         assert.deepStrictEqual(mismatches, [])
+        assert.ok(nestedCompared > 0, 'no nested subcommand was compared')
       } finally {
         await mock.close()
       }
     },
   )
 
-  test(
-    'EXPIRE family reports the fixed pre-7.0 arity on older profiles',
-    { skip: testRunner.backend === 'real' },
-    async () => {
-      const names = ['expire', 'pexpire', 'expireat', 'pexpireat']
-      for (const [profile, arity] of [
-        ['redis-6.2', 3],
-        ['redis-7.0', -3],
-      ] as const) {
+  // Arities that differ by version, as real 6.2.14 / 7.0.15 / 7.2.4 report
+  // them. Each parser enforces the arity its profile reports.
+  const GATED_ARITY: Record<
+    string,
+    Partial<Record<CompatibilitySpec & string, number>>
+  > = {
+    expire: { 'redis-6.2': 3, 'redis-7.0': -3, 'redis-7.2': -3 },
+    pexpire: { 'redis-6.2': 3, 'redis-7.0': -3, 'redis-7.2': -3 },
+    expireat: { 'redis-6.2': 3, 'redis-7.0': -3, 'redis-7.2': -3 },
+    pexpireat: { 'redis-6.2': 3, 'redis-7.0': -3, 'redis-7.2': -3 },
+    zrank: { 'redis-6.2': 3, 'redis-7.0': 3, 'redis-7.2': -3 },
+    zrevrank: { 'redis-6.2': 3, 'redis-7.0': 3, 'redis-7.2': -3 },
+    xsetid: { 'redis-6.2': 3, 'redis-7.0': -3, 'redis-7.2': -3 },
+    'command|getkeys': { 'redis-7.0': -4, 'redis-7.2': -3 },
+    'command|getkeysandflags': { 'redis-7.0': -4, 'redis-7.2': -3 },
+  }
+
+  for (const profile of ['redis-6.2', 'redis-7.0', 'redis-7.2'] as const) {
+    test(
+      `version-gated arities and their parsers on ${profile}`,
+      { skip: testRunner.backend === 'real' },
+      async () => {
         const mock = await startMock(profile)
         try {
+          const names = Object.keys(GATED_ARITY).filter(
+            name => GATED_ARITY[name][profile] !== undefined,
+          )
           const infos = (await mock.client.command(
             'INFO',
             ...names,
           )) as CommandInfoReply[]
           for (const [i, name] of names.entries()) {
-            assert.deepStrictEqual(
-              layoutOf(infos[i]),
-              [arity, 1, 1, 1],
-              `${name} on ${profile}`,
+            assert.strictEqual(
+              infos[i][1],
+              GATED_ARITY[name][profile],
+              `${name} arity on ${profile}`,
             )
           }
 
-          // The reported arity is the one the parser enforces.
-          const reply =
-            arity === 3
-              ? /wrong number of arguments for 'expire' command/
-              : /^1$/
+          const reply = (promise: Promise<unknown>) =>
+            promise.then(
+              value => JSON.stringify(value),
+              (err: Error) => err.message,
+            )
+          const arityError = (command: string) =>
+            `ERR wrong number of arguments for '${command}' command`
+          const redis62 = profile === 'redis-6.2'
+          const redis72 = profile === 'redis-7.2'
+
           await mock.client.set('k', 'v')
-          const result = await mock.client
-            .expire('k', 10, 'NX')
-            .then(String, (err: Error) => err.message)
-          assert.match(result, reply, profile)
+          assert.strictEqual(
+            await reply(mock.client.call('EXPIRE', 'k', '10', 'foo')),
+            redis62 ? arityError('expire') : 'ERR Unsupported option foo',
+          )
+          assert.strictEqual(
+            await reply(mock.client.expire('k', 10, 'NX')),
+            redis62 ? arityError('expire') : '1',
+          )
+
+          await mock.client.zadd('z', 1, 'm')
+          for (const command of ['ZRANK', 'ZREVRANK']) {
+            assert.strictEqual(
+              await reply(mock.client.call(command, 'z', 'm', 'WITHSCORE')),
+              redis72 ? '[0,"1"]' : arityError(command.toLowerCase()),
+            )
+          }
+
+          await mock.client.xadd('s', '1-1', 'f', 'v')
+          assert.strictEqual(
+            await reply(
+              mock.client.call('XSETID', 's', '2-0', 'ENTRIESADDED', '5'),
+            ),
+            redis62 ? arityError('xsetid') : '"OK"',
+          )
+
+          if (!redis62) {
+            assert.strictEqual(
+              await reply(mock.client.command('GETKEYS', 'GET')),
+              redis72
+                ? 'ERR Invalid number of arguments specified for command'
+                : arityError('command|getkeys'),
+            )
+            assert.strictEqual(
+              await reply(mock.client.command('GETKEYS', 'GET', 'a', 'b')),
+              'ERR Invalid number of arguments specified for command',
+            )
+            assert.strictEqual(
+              await reply(mock.client.command('GETKEYS', 'GET', 'k')),
+              '["k"]',
+            )
+          }
         } finally {
           await mock.close()
         }
-      }
-    },
-  )
+      },
+    )
+  }
 })

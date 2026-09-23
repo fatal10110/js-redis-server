@@ -232,19 +232,15 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   const options: ExpireOptions = {}
   let cursor = index
 
+  // Before 7.0 the family takes exactly `key time`: any extra token, option
+  // or not, is an arity error.
+  if (cursor < input.length && !ctx.profile.has('expire.conditions')) {
+    throw new WrongNumberOfArgumentsError(ctx.commandName)
+  }
+
   while (cursor < input.length) {
     const token = input[cursor]!.toString()
     const option = token.toUpperCase()
-
-    if (
-      (option === 'NX' ||
-        option === 'XX' ||
-        option === 'GT' ||
-        option === 'LT') &&
-      !ctx.profile.has('expire.conditions')
-    ) {
-      return { value: options, nextIndex: cursor }
-    }
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
@@ -294,8 +290,8 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   return { value: options, nextIndex: cursor }
 })
 
-// The NX/XX/GT/LT options arrived in 7.0. Before that the parser above stops
-// at the fixed `key time` pair, and Redis reported the family's arity as 3.
+// The NX/XX/GT/LT options arrived in 7.0. Before that the parser above
+// refuses anything past `key time`, and Redis reported the family's arity as 3.
 const expireIntrospection: CommandIntrospection = {
   arity: profile => (profile.has('expire.conditions') ? -3 : 3),
 }

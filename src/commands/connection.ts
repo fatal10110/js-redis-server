@@ -833,7 +833,8 @@ export const authCommand = defineCommand({
   },
   keys: () => [],
   execute: (args, ctx) => {
-    if (args.args.length !== 1 && args.args.length !== 2) {
+    // The schema guarantees at least one argument.
+    if (args.args.length > 2) {
       throw new WrongNumberOfArgumentsError('auth')
     }
 

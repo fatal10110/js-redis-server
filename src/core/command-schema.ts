@@ -52,7 +52,12 @@ export interface CommandSchema<TValue> {
     index: number,
     ctx: ParseContext,
   ): ParseNodeResult<TValue>
-  readonly layout: SchemaLayout
+  /**
+   * Every `t` builder sets this. A schema written by hand as `{ parse }` has
+   * none and counts as opaque: any number of tokens, no known key positions
+   * (`COMMAND INFO` arity -1, key range 0 0 0).
+   */
+  readonly layout?: SchemaLayout
 }
 
 export type InferSchema<TSchema> =
@@ -138,6 +143,7 @@ export function parseFiniteFloatToken(raw: string): number | undefined {
 
 const TOKEN_LAYOUT: SchemaLayout = { min: 1, max: 1, keys: [] }
 const KEY_LAYOUT: SchemaLayout = { min: 1, max: 1, keys: [0] }
+const OPAQUE_LAYOUT: SchemaLayout = { min: 0, max: Infinity, keys: [] }
 
 function makeSchema<TValue>(
   parse: CommandSchema<TValue>['parse'],
@@ -146,12 +152,17 @@ function makeSchema<TValue>(
   return { parse, layout }
 }
 
+/** `schema`'s layout, or the opaque default for a hand-built `{ parse }`. */
+export function schemaLayout(schema: CommandSchema<unknown>): SchemaLayout {
+  return schema.layout ?? OPAQUE_LAYOUT
+}
+
 /**
  * `COMMAND INFO` arity of a command whose arguments follow `schema`: the
  * token count including the command name, negated when it is only a minimum.
  */
 export function schemaArity(schema: CommandSchema<unknown>): number {
-  const { min, max } = schema.layout
+  const { min, max } = schemaLayout(schema)
   return min === max ? min + 1 : -(min + 1)
 }
 
@@ -166,7 +177,7 @@ export function schemaKeyRange(schema: CommandSchema<unknown>): {
   lastKey: number
   keyStep: number
 } {
-  const { keys, keyRange } = schema.layout
+  const { keys, keyRange } = schemaLayout(schema)
   if (keys.length > 0) {
     let last = keys[0]
     while (keys.includes(last + 1)) {
@@ -214,12 +225,46 @@ function custom<TValue>(
     throw new TypeError('t.custom needs a parse function')
   }
 
-  return makeSchema(parse, {
-    min: layout.min ?? 0,
-    max: layout.max ?? Infinity,
-    keys: layout.keys ?? [],
-    keyRange: layout.keyRange,
-  })
+  return makeSchema(parse, declaredLayout(OPAQUE_LAYOUT, layout))
+}
+
+/**
+ * `base` with `declared` laid over it, rejected unless it is coherent: key
+ * offsets ascending, unique and within the guaranteed `min` tokens, and a key
+ * range that starts at or after 0, steps forward and ends relative to the end.
+ */
+function declaredLayout(
+  base: SchemaLayout,
+  declared: Partial<SchemaLayout>,
+): SchemaLayout {
+  const layout = { ...base, ...declared }
+  const { min, max, keys, keyRange } = layout
+  const fail = (reason: string): never => {
+    throw new TypeError(`Invalid schema layout: ${reason}`)
+  }
+
+  if (!Number.isInteger(min) || min < 0 || max < min) {
+    fail(`min ${min} / max ${max}`)
+  }
+
+  for (const [i, offset] of keys.entries()) {
+    if (!Number.isInteger(offset) || offset < 0 || offset >= min) {
+      fail(`key offset ${offset} is outside the ${min} guaranteed tokens`)
+    }
+
+    if (i > 0 && offset <= keys[i - 1]) {
+      fail('key offsets must be ascending and unique')
+    }
+  }
+
+  if (
+    keyRange &&
+    (keyRange.start < 0 || keyRange.step < 1 || keyRange.last >= 0)
+  ) {
+    fail(`key range ${JSON.stringify(keyRange)}`)
+  }
+
+  return layout
 }
 
 export const t = {
@@ -230,7 +275,10 @@ export const t = {
     schema: CommandSchema<TValue>,
     layout: Partial<SchemaLayout>,
   ): CommandSchema<TValue> {
-    return makeSchema(schema.parse, { ...schema.layout, ...layout })
+    return makeSchema(
+      schema.parse,
+      declaredLayout(schemaLayout(schema), layout),
+    )
   },
 
   key(): CommandSchema<Buffer> {
@@ -338,9 +386,9 @@ export const t = {
 
           throw err
         }
-        // A key that may be absent is outside Redis's legacy key range.
       },
-      { min: 0, max: schema.layout.max, keys: [] },
+      // A key that may be absent is outside Redis's legacy key range.
+      { min: 0, max: schemaLayout(schema).max, keys: [] },
     )
   },
 
@@ -367,7 +415,7 @@ export const t = {
 
         return { value: values, nextIndex: cursor }
       },
-      variadicLayout(schema.layout, options?.min ?? 0),
+      variadicLayout(schemaLayout(schema), options?.min ?? 0),
     )
   },
 
@@ -390,7 +438,7 @@ export const t = {
 
         return { value: value as InferShape<TShape>, nextIndex: cursor }
       },
-      objectLayout(Object.values(shape).map(field => field.layout)),
+      objectLayout(Object.values(shape).map(schemaLayout)),
     )
   },
 
@@ -421,14 +469,15 @@ export const t = {
 
         throw new SchemaMismatchError()
       },
-      unionLayout(schemas.map(schema => schema.layout)),
+      unionLayout(schemas.map(schemaLayout)),
     )
   },
 }
 
 function variadicLayout(item: SchemaLayout, minItems: number): SchemaLayout {
   const layout = { min: item.min * minItems, max: Infinity, keys: [] }
-  if (item.min !== item.max || item.keys.length === 0) {
+  // An item with its own open-ended key range cannot repeat as one range.
+  if (item.min !== item.max || item.keys.length === 0 || item.keyRange) {
     return layout
   }
 
@@ -457,9 +506,16 @@ function objectLayout(fields: readonly SchemaLayout[]): SchemaLayout {
   let fixed = true
 
   for (const field of fields) {
+    // A range's `last` counts back from the end of the command, so any token
+    // a later field may take would shift it: the range no longer holds.
+    if (keyRange && field.max > 0) {
+      keyRange = undefined
+      fixed = false
+    }
+
     if (fixed) {
       keys.push(...field.keys.map(offset => min + offset))
-      if (field.keyRange && !keyRange) {
+      if (field.keyRange) {
         keyRange = { ...field.keyRange, start: min + field.keyRange.start }
       }
     }

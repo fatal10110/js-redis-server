@@ -36,6 +36,11 @@ function createXsetidSchema() {
       }
 
       let cursor = index + 2
+      // ENTRIESADDED / MAXDELETEDID are 7.0+: 6.2 takes exactly `key id`.
+      if (cursor < input.length && !ctx.profile.has('xsetid.entries-added')) {
+        throw new WrongNumberOfArgumentsError(ctx.commandName)
+      }
+
       let entriesAdded: number | null = null
       let maxDeletedId: StreamId | null = null
       while (cursor < input.length) {
@@ -76,6 +81,9 @@ export const xsetidCommand = defineCommand({
   name: 'xsetid',
   schema: t.object({ args: createXsetidSchema() }),
   flags: ['write', 'fast'],
+  introspection: {
+    arity: profile => (profile.has('xsetid.entries-added') ? -3 : 3),
+  },
   keys: args => [args.args.key],
   execute: (args, ctx) => {
     const command = args.args

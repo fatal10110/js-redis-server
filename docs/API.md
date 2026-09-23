@@ -144,8 +144,11 @@ Current profile gates:
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
-| `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options | `redis-7.0+` | `valkey-8.0+` |
+| `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `ZRANK`/`ZREVRANK` `WITHSCORE` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.2+` | `valkey-8.0+` |
+| `XSETID` `ENTRIESADDED`/`MAXDELETEDID` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
+| `COMMAND GETKEYS`/`GETKEYSANDFLAGS` need an argument after the target command (arity -4; `COMMAND GETKEYS GET` is a `command\|getkeys` arity error) | `redis-7.0` only | never |
 | `GEOSEARCH`, `GEOSEARCHSTORE` | `redis-6.2+` | `valkey-8.0+` |
 | `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
