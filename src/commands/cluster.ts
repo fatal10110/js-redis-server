@@ -35,13 +35,8 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
       skip: true,
     },
     introspection: {
-      arity: -2,
       flags: ['admin'],
-      firstKey: 0,
-      lastKey: 0,
-      keyStep: 0,
       categories: ['@admin', '@slow', '@dangerous'],
-      keySpecs: [],
       subcommands: [
         commandSubcommandInfo('cluster|info', 2, {
           categories: ['@admin', '@slow', '@dangerous'],

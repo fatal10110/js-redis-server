@@ -115,4 +115,17 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // folding it into an `-ERR` body. Verified against redis-server 6.2.24,
   // 7.0.15 and 8.0; Valkey 7.2 and 8.0 answer the 7.0 form.
   'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
+  // COMMAND GETKEYS / GETKEYSANDFLAGS took arity -4 in 7.0 (a command and at
+  // least one argument: `COMMAND GETKEYS GET` is a `command|getkeys` arity
+  // error); 7.2 relaxed it to -3 and answers a short target with `Invalid
+  // number of arguments specified for command`, as 6.2 did. Only profiles
+  // with `command.getkeysandflags` and without this gate (7.0) are strict.
+  // Verified against 6.2.14, 7.0.15 and 7.2.4.
+  'command.getkeys-single-arg': { redis: '7.2.0', valkey: '7.2.0' },
+  // ZRANK / ZREVRANK WITHSCORE arrived in 7.2; before that both commands have
+  // arity 3 and a trailing WITHSCORE is an arity error (6.2.14, 7.0.15).
+  'zrank.withscore': { redis: '7.2.0', valkey: '7.2.0' },
+  // XSETID ENTRIESADDED / MAXDELETEDID arrived in 7.0; 6.2 has arity 3 and
+  // answers any extra token with an arity error (6.2.14).
+  'xsetid.entries-added': { redis: '7.0.0', valkey: '7.2.0' },
 }

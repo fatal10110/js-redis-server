@@ -93,7 +93,7 @@ function parseSintercardLimit(token: Buffer): number {
 const sintercardSchema = t.custom<{
   keys: Buffer[]
   limit: number
-}>((input, _index, ctx) => {
+}>({ min: 2 }, (input, _index, ctx) => {
   if (input.length < 2) {
     throw new WrongNumberOfArgumentsError(ctx.commandName)
   }
@@ -137,7 +137,7 @@ const sintercardSchema = t.custom<{
 
 export const saddCommand = defineCommand({
   name: 'sadd',
-  schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), members: t.variadic(t.bulk(), { min: 1 }) }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -158,7 +158,7 @@ export const saddCommand = defineCommand({
 
 export const sremCommand = defineCommand({
   name: 'srem',
-  schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), members: t.variadic(t.bulk(), { min: 1 }) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -215,7 +215,7 @@ export const smembersCommand = defineCommand({
 
 export const sismemberCommand = defineCommand({
   name: 'sismember',
-  schema: t.object({ key: t.key(), member: t.key() }),
+  schema: t.object({ key: t.key(), member: t.bulk() }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -232,7 +232,7 @@ export const sismemberCommand = defineCommand({
 export const smismemberCommand = defineCommand({
   name: 'smismember',
   since: { redis: '6.2.0', valkey: '7.2.0' },
-  schema: t.object({ key: t.key(), members: t.variadic(t.key(), { min: 1 }) }),
+  schema: t.object({ key: t.key(), members: t.variadic(t.bulk(), { min: 1 }) }),
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -437,7 +437,7 @@ export const sunionCommand = defineCommand({
 
 export const smoveCommand = defineCommand({
   name: 'smove',
-  schema: t.object({ source: t.key(), destination: t.key(), member: t.key() }),
+  schema: t.object({ source: t.key(), destination: t.key(), member: t.bulk() }),
   flags: ['write', 'fast'],
   keys: args => [args.source, args.destination],
   execute: (args, ctx) => {

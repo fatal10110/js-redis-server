@@ -37,6 +37,9 @@ export type FeatureId =
   | 'script.per-subcommand-noscript'
   | 'command.quit-table-entry'
   | 'script.abort-error-suffix'
+  | 'command.getkeys-single-arg'
+  | 'zrank.withscore'
+  | 'xsetid.entries-added'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

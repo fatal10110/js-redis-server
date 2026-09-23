@@ -26,6 +26,34 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING (`/core`)** `CommandIntrospection.firstKey`, `.lastKey` and
+  `.keyStep` were removed, and `.arity` became optional ([#370]). `COMMAND` /
+  `COMMAND INFO` now derive all three key positions from the definition: from
+  `introspection.keySpecs` when present (folded the way Redis's
+  `populateCommandLegacyRangeSpec` does), otherwise from the key positions
+  of `schema`. Arity is derived from `schema` too. A definition that set the
+  removed fields now fails to type-check. Delete them and let them be derived:
+
+  ```
+  introspection: { arity: -2, firstKey: 1, lastKey: -1, keyStep: 1, ... }
+    -> introspection: { ... }        // schema: t.variadic(t.key(), { min: 1 })
+  ```
+
+  `arity` stays available as an override (a number, or
+  `(profile) => number` when it differs by compatibility profile), for a
+  schema that cannot express it. Two related things changed on `t` and
+  `CommandSchema`, both additive:
+
+  - `CommandSchema` gained an optional `layout` (token counts and key
+    offsets), set by every `t` builder. `t.key()` now marks a key position,
+    so use it only for key arguments and `t.bulk()` for members, fields and
+    values. A hand-written `t.custom(parse)` counts as any number of tokens
+    with no keys; declare its layout with `t.custom(layout, parse)` or
+    `t.withLayout(schema, layout)` for accurate `COMMAND INFO` output.
+  - A schema built by hand as `{ parse }` (no `layout`) keeps working, and so
+    does a definition registered through `extraCommands` with one. It is
+    reported with arity -1 and no key range.
+
 - **BREAKING (`/core`)** The three hand-rolled in-memory transports were
   replaced by [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions),
   which raises the minimum Node version to **22.6** (`engines.node: ">=22.6"`)
@@ -400,6 +428,16 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- `COMMAND` / `COMMAND INFO` report each command's real arity and
+  first/last/step key positions ([#370]); most commands used to answer arity
+  -1 and `0 0 0`. The version-dependent ones follow the profile: `EXPIRE`
+  family and `XSETID` are arity 3 before 7.0, `ZRANK`/`ZREVRANK` 3 before
+  7.2, `COMMAND GETKEYS`/`GETKEYSANDFLAGS` -4 on 7.0. The parsers enforce the
+  same arity, so `ZRANK ... WITHSCORE` before 7.2, `XSETID` options on 6.2
+  and any extra `EXPIRE` token on 6.2 are `wrong number of arguments`.
+  `GEOPOS`/`GEOHASH` accept a key with no members and `QUIT` ignores extra
+  arguments, as in Redis.
+
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print
   `d2string()`: every digit of an integer within ±2^62, otherwise Redis's
@@ -628,5 +666,6 @@ requests they contain.
 [#455]: https://github.com/fatal10110/js-redis-server/issues/455
 [#371]: https://github.com/fatal10110/js-redis-server/issues/371
 [#416]: https://github.com/fatal10110/js-redis-server/issues/416
+[#370]: https://github.com/fatal10110/js-redis-server/issues/370
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

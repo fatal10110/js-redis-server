@@ -85,7 +85,7 @@ export function parseLexLimitInt(token: Buffer): number {
 // ZRANGEBYLEX key min max [LIMIT offset count]
 // ZREVRANGEBYLEX key max min [LIMIT offset count] — caller maps first/second.
 export function createLexRangeSchema() {
-  return t.custom<LexRangeArgs>((input, index, ctx) => {
+  return t.custom<LexRangeArgs>({ min: 3, keys: [0] }, (input, index, ctx) => {
     const key = input[index]
     const first = input[index + 1]
     const second = input[index + 2]

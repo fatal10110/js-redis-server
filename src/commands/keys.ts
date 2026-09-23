@@ -1,4 +1,7 @@
-import { defineCommand } from '../core/command-definition'
+import {
+  defineCommand,
+  type CommandIntrospection,
+} from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
   DbIndexOutOfRangeError,
@@ -229,19 +232,15 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   const options: ExpireOptions = {}
   let cursor = index
 
+  // Before 7.0 the family takes exactly `key time`: any extra token, option
+  // or not, is an arity error.
+  if (cursor < input.length && !ctx.profile.has('expire.conditions')) {
+    throw new WrongNumberOfArgumentsError(ctx.commandName)
+  }
+
   while (cursor < input.length) {
     const token = input[cursor]!.toString()
     const option = token.toUpperCase()
-
-    if (
-      (option === 'NX' ||
-        option === 'XX' ||
-        option === 'GT' ||
-        option === 'LT') &&
-      !ctx.profile.has('expire.conditions')
-    ) {
-      return { value: options, nextIndex: cursor }
-    }
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
@@ -291,6 +290,12 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
   return { value: options, nextIndex: cursor }
 })
 
+// The NX/XX/GT/LT options arrived in 7.0. Before that the parser above
+// refuses anything past `key time`, and Redis reported the family's arity as 3.
+const expireIntrospection: CommandIntrospection = {
+  arity: profile => (profile.has('expire.conditions') ? -3 : 3),
+}
+
 export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
@@ -298,6 +303,7 @@ export const expireCommand = defineCommand({
     seconds: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
@@ -311,6 +317,7 @@ export const pexpireCommand = defineCommand({
     milliseconds: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
@@ -380,6 +387,7 @@ export const expireatCommand = defineCommand({
     timestamp: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -394,6 +402,7 @@ export const pexpireatCommand = defineCommand({
     timestamp: t.integer(),
     options: expireOptionsSchema,
   }),
+  introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -616,7 +625,7 @@ type SortOptions = {
 }
 
 function sortSchema() {
-  return t.custom<SortArgs>((input, index, ctx) => {
+  return t.custom<SortArgs>({ min: 1, keys: [0] }, (input, index, ctx) => {
     const key = input[index]
     if (!key) throw new WrongNumberOfArgumentsError(ctx.commandName)
     return {

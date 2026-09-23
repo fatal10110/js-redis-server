@@ -15,13 +15,8 @@ export const monitorCommand = defineCommand({
     skip: true,
   },
   introspection: {
-    arity: 1,
     flags: ['admin', 'noscript', 'loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     docs: commandDocs(
       'Listen for all requests received by the server in real time',
       'server',

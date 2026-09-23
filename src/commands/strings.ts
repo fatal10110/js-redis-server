@@ -81,11 +81,7 @@ export const getCommand = defineCommand({
   }),
   flags: ['readonly', 'fast'],
   introspection: {
-    arity: 2,
     flags: ['readonly', 'fast'],
-    firstKey: 1,
-    lastKey: 1,
-    keyStep: 1,
     categories: ['@read', '@string', '@fast'],
     keySpecs: [commandKeySpec(1, 0, 1, ['RO', 'access'])],
     docs: commandDocs('Returns the string value of a key.', 'string', [
@@ -101,11 +97,7 @@ export const setCommand = defineCommand({
   schema: createSetSchema(),
   flags: ['write', 'denyoom'],
   introspection: {
-    arity: -3,
     flags: ['write', 'denyoom'],
-    firstKey: 1,
-    lastKey: 1,
-    keyStep: 1,
     categories: ['@write', '@string', '@slow'],
     keySpecs: [
       commandKeySpec(1, 0, 1, ['RW', 'access', 'update', 'variable_flags'], {
@@ -158,11 +150,7 @@ export const mgetCommand = defineCommand({
   }),
   flags: ['readonly'],
   introspection: {
-    arity: -2,
     flags: ['readonly', 'fast'],
-    firstKey: 1,
-    lastKey: -1,
-    keyStep: 1,
     categories: ['@read', '@string', '@fast'],
     tips: ['request_policy:multi_shard'],
     keySpecs: [commandKeySpec(1, -1, 1, ['RO', 'access'])],
@@ -185,7 +173,7 @@ export const mgetCommand = defineCommand({
 
 export const appendCommand = defineCommand({
   name: 'append',
-  schema: t.object({ key: t.key(), value: t.key() }),
+  schema: t.object({ key: t.key(), value: t.bulk() }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -264,7 +252,7 @@ export const decrbyCommand = defineCommand({
 
 export const incrbyfloatCommand = defineCommand({
   name: 'incrbyfloat',
-  schema: t.object({ key: t.key(), amount: t.key() }),
+  schema: t.object({ key: t.key(), amount: t.bulk() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -311,7 +299,7 @@ function parseIncrByFloatValue(raw: string): number {
 
 export const getsetCommand = defineCommand({
   name: 'getset',
-  schema: t.object({ key: t.key(), value: t.key() }),
+  schema: t.object({ key: t.key(), value: t.bulk() }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -339,7 +327,7 @@ export const getdelCommand = defineCommand({
 
 export const setnxCommand = defineCommand({
   name: 'setnx',
-  schema: t.object({ key: t.key(), value: t.key() }),
+  schema: t.object({ key: t.key(), value: t.bulk() }),
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -356,7 +344,7 @@ export const setexCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     seconds: t.integer(),
-    value: t.key(),
+    value: t.bulk(),
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
@@ -376,7 +364,7 @@ export const psetexCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     milliseconds: t.integer(),
-    value: t.key(),
+    value: t.bulk(),
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
@@ -469,7 +457,7 @@ export const setrangeCommand = defineCommand({
   schema: t.object({
     key: t.key(),
     offset: createSetrangeOffsetSchema(),
-    value: t.key(),
+    value: t.bulk(),
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
@@ -549,6 +537,7 @@ export const stringsCommands = [
 
 function createSetSchema(): CommandSchema<SetArgs> {
   return t.custom(
+    { min: 2, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       const value = input[index + 1]
@@ -684,6 +673,7 @@ function incrementBy(
 
 function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
   return t.custom(
+    { min: 2, keyRange: { start: 0, step: 2, last: -1 } },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const pairs: KeyValuePair[] = []
       let cursor = index
@@ -714,7 +704,7 @@ function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
 // SETRANGE reads its offset as an int64: values above 2^53 are legal input that
 // Redis then rejects with the proto-max-bulk-len error, not a parse error.
 function createSetrangeOffsetSchema(): CommandSchema<bigint> {
-  return t.custom((input, index, ctx) => {
+  return t.custom({ min: 1, max: 1 }, (input, index, ctx) => {
     const token = input[index]
     if (!token) {
       throwWrongArity(ctx.commandName)
@@ -769,6 +759,7 @@ function allocateStringBuffer(size: number): Buffer {
 
 function createGetexSchema(): CommandSchema<GetexArgs> {
   return t.custom(
+    { min: 1, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key) {

@@ -56,6 +56,7 @@ type XgroupArgs =
 
 function createXgroupSchema() {
   return t.custom<XgroupArgs>(
+    { min: 1 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const rawSubcommand = input[index]
       if (!rawSubcommand) {

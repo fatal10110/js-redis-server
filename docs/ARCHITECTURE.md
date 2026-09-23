@@ -530,6 +530,11 @@ in the server-wide [`RedisScriptCache`](../src/state/script-cache.ts).
    `keys(args)`, and `execute(args, ctx)` — in the matching
    [`src/commands/<type>.ts`](../src/commands/) file, using
    [`defineCommand`](../src/core/command-definition.ts#L88).
+   `COMMAND INFO`'s arity and legacy first/last/step key range are derived
+   from `schema` rather than hand-written, so `t.key()` must mark only actual
+   key arguments (use `t.bulk()` for members/fields/values), and a
+   hand-written `t.custom()` parser needs a `layout` (or `t.withLayout()`) to
+   report correctly.
 2. Register it in [`src/commands/index.ts`](../src/commands/index.ts) (and
    re-export it if other modules need direct access).
 3. Add unit tests under [`tests/`](../tests/) using the project's

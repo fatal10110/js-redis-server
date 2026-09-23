@@ -69,10 +69,12 @@ async function blockingListMove(
   }
 }
 
+const BLMOVE_LAYOUT = { min: 5, max: 5, keys: [0, 1] }
+
 export const blmoveCommand = defineCommand({
   name: 'blmove',
   since: { redis: '6.2.0', valkey: '7.2.0' },
-  schema: t.custom<BlmoveArgs>((input, index, ctx) => {
+  schema: t.custom<BlmoveArgs>(BLMOVE_LAYOUT, (input, index, ctx) => {
     const source = input[index]
     const destination = input[index + 1]
     if (!source || !destination)

@@ -34,6 +34,7 @@ type ZaddArgs = {
 
 function createZaddSchema() {
   return t.custom<ZaddArgs>(
+    { min: 3, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
       if (!key) {

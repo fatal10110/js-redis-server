@@ -6,7 +6,7 @@ import { assertValidResultingScore, parseFloatArg } from './helpers'
 
 export const zincrbyCommand = defineCommand({
   name: 'zincrby',
-  schema: t.object({ key: t.key(), increment: t.string(), member: t.key() }),
+  schema: t.object({ key: t.key(), increment: t.string(), member: t.bulk() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {

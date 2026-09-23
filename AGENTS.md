@@ -256,6 +256,7 @@ A client integration test exists to prove the **client behaves identically again
 ## Adding New Commands
 
 1. Implement a `CommandDefinition` — `name`, `schema` (via `t` from [src/core/command-schema.ts](src/core/command-schema.ts)), `flags`, `keys(args)`, and `execute(args, ctx)` — using `defineCommand` ([src/core/command-definition.ts](src/core/command-definition.ts)) in the matching [src/commands/<type>.ts](src/commands/) file
+   - `COMMAND`/`COMMAND INFO` arity and legacy key positions are derived from `schema`, not hand-written: use `t.key()` only for actual key arguments (never for members/fields/values — use `t.bulk()` there), and give a hand-written `t.custom()` parser a `layout` (or attach one with `t.withLayout()`) so its arity/key reporting is accurate
 2. Register it in [src/commands/index.ts](src/commands/index.ts) (and re-export it if other modules need direct access)
 3. Add unit tests in [tests/](tests/); add integration coverage under [tests-integration/](tests-integration/) if it has client-visible wire behavior worth checking against a real client
 4. Set `flags` correctly — `'readonly'` marks it safe for replicas, `'noscript'` excludes it from Lua, `'transaction'` controls MULTI/EXEC eligibility

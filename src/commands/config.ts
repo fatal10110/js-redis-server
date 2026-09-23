@@ -424,13 +424,8 @@ export const configCommand = defineCommand({
     skip: true,
   },
   introspection: {
-    arity: -2,
     flags: [],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
     categories: ['@admin', '@slow', '@dangerous'],
-    keySpecs: [],
     subcommands: [
       commandSubcommandInfo('config|get', -3),
       commandSubcommandInfo('config|set', -4),
