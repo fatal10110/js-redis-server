@@ -7,6 +7,15 @@ type TurnResolver = () => void
 
 export class SerialTurnQueue {
   private readonly queue: TurnResolver[] = []
+  /**
+   * Turns re-requested by suspended (parked) commands whose wait settled. They
+   * run ahead of `queue` so a woken blocking command re-checks its key before
+   * any command that arrived after it — but among themselves they stay FIFO:
+   * waiters woken by the same write resume in the order they were woken
+   * (= the order they blocked), matching real Redis' fair service of blocked
+   * clients. A single `unshift` onto `queue` would reverse that order.
+   */
+  private readonly resumed: TurnResolver[] = []
   private locked = false
 
   waitTurn(): Promise<RedisTurnHandle> {
@@ -44,7 +53,7 @@ export class SerialTurnQueue {
       }
 
       if (priority) {
-        this.queue.unshift(grantTurn)
+        this.resumed.push(grantTurn)
       } else {
         this.queue.push(grantTurn)
       }
@@ -56,7 +65,7 @@ export class SerialTurnQueue {
   private scheduleNext(): void {
     if (this.locked) return
 
-    const next = this.queue.shift()
+    const next = this.resumed.shift() ?? this.queue.shift()
     next?.()
   }
 }
