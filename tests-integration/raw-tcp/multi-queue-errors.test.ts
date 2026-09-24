@@ -7,6 +7,7 @@ import {
   expectReply,
   expectReplyPrefix,
   rawSlotOwner,
+  send,
 } from './helpers'
 
 /**
@@ -212,6 +213,97 @@ describe(`Raw TCP MULTI queue-time errors (${testRunner.getBackendName()}, ${act
   })
 })
 
+// Queue time vs EXEC time, at RESP2 and RESP3 (the error bytes and EXEC's
+// array are the same in both). A queue-time refusal (unknown command or
+// subcommand, table arity) aborts EXEC; a deferred parse error fills its own
+// slot while the rest of the transaction runs. Rows hold on real Redis 8.0;
+// other profiles' wording is pinned in the compatibility suite and above.
+describe(`Raw TCP MULTI error matrix (${testRunner.getBackendName()}, ${activeProfile})`, () => {
+  let port: number
+  const connections: RawRedisConnection[] = []
+
+  before(async () => {
+    port = await testRunner.setupRawStandalone()
+  })
+
+  after(async () => {
+    for (const connection of connections) {
+      connection.close()
+    }
+    connections.length = 0
+    await testRunner.cleanup()
+  })
+
+  const refused: Array<[string[], string]> = [
+    [
+      ['NOSUCHCMD', 'a'],
+      "-ERR unknown command 'NOSUCHCMD', with args beginning with: 'a' \r\n",
+    ],
+    [
+      ['CLIENT', 'BOGUS'],
+      "-ERR unknown subcommand 'BOGUS'. Try CLIENT HELP.\r\n",
+    ],
+    [['GET'], arity('get')],
+    [['CLIENT', 'REPLY'], arity('client|reply')],
+    [['XINFO', 'STREAM'], arity('xinfo|stream')],
+    [['XREAD', 'COUNT'], arity('xread')],
+  ]
+  const deferred: Array<[(tag: string) => string[], string]> = [
+    [tag => ['MSET', `${tag}:a`, 'b', `${tag}:c`], arity('mset')],
+    [tag => ['HSET', `${tag}:h`, 'f', 'v', 'x'], arity('hset')],
+    [tag => ['SET', `${tag}:s`, 'v', 'BOGUS'], '-ERR syntax error\r\n'],
+    [
+      tag => ['INCRBY', `${tag}:n`, 'x'],
+      '-ERR value is not an integer or out of range\r\n',
+    ],
+    [
+      tag => ['XREAD', 'COUNT', 'x', 'STREAMS', `${tag}:x`, '0'],
+      '-ERR value is not an integer or out of range\r\n',
+    ],
+    [
+      tag => ['XREAD', 'STREAMS', `${tag}:x`, `${tag}:y`, '0'],
+      "-ERR Unbalanced 'xread' list of streams: for each stream key an ID, '+', or '$' must be specified.\r\n",
+    ],
+    [
+      tag => ['ZUNIONSTORE', `${tag}:d`, '1', `${tag}:a`, 'BOGUS'],
+      '-ERR syntax error\r\n',
+    ],
+    [
+      tag => ['EVAL', 'return 1', '2', `${tag}:a`],
+      "-ERR Number of keys can't be greater than number of args\r\n",
+    ],
+  ]
+
+  for (const protocol of ['2', '3']) {
+    test(
+      `RESP${protocol}: queue-time refusals abort, parse errors fill their slot`,
+      { skip: activeProfile !== 'redis-8.0' && 'rows are Redis 8.0 wording' },
+      async () => {
+        const conn = await RawRedisConnection.connect('127.0.0.1', port)
+        connections.push(conn)
+        await send(conn, ['HELLO', protocol])
+        const tag = `{multi-m:${randomKey()}}`
+        const marker = `${tag}:marker`
+
+        for (const [command, error] of refused) {
+          await expectReply(conn, ['MULTI'], '+OK\r\n')
+          await expectReply(conn, ['SET', marker, '1'], QUEUED)
+          await expectReply(conn, command, error)
+          await expectReply(conn, ['EXEC'], EXECABORT)
+          await expectReply(conn, ['EXISTS', marker], ':0\r\n')
+        }
+        for (const [command, error] of deferred) {
+          await expectReply(conn, ['MULTI'], '+OK\r\n')
+          await expectReply(conn, ['SET', marker, '1'], QUEUED)
+          await expectReply(conn, command(tag), QUEUED)
+          await expectReply(conn, ['EXEC'], `*2\r\n+OK\r\n${error}`)
+          await expectReply(conn, ['DEL', marker], ':1\r\n')
+        }
+      },
+    )
+  }
+})
+
 describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendName()}, ${activeProfile})`, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
@@ -245,37 +337,171 @@ describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendN
     return { conn, local, otherSlot, remote }
   }
 
-  async function queueOne(
-    conn: RawRedisConnection,
-    command: string[],
-    queued: string,
-    exec: string,
-  ): Promise<void> {
-    await expectReply(conn, ['MULTI'], '+OK\r\n')
-    await expectReply(conn, command, queued)
-    await expectReply(conn, ['EXEC'], exec)
+  // Where a queued command whose own parser fails is routed: Redis's
+  // getKeysFromCommand over the raw arguments (the getkeys proc, else the
+  // legacy key range), never the parser. MOVED / CROSSSLOT refuse it at queue
+  // time and abort EXEC; a command left keyless, or whose keys are local, is
+  // queued and its own error fills its EXEC slot. SELECT and MOVE check the
+  // cluster when they run, so they are queued too; a Valkey 9 cluster has
+  // databases, so there they run and answer their own errors.
+  type RouteRow = {
+    command: (keys: {
+      local: string
+      otherSlot: string
+      remote: string
+    }) => string[]
+    queued: 'QUEUED' | 'MOVED' | 'CROSSSLOT'
+    exec?: string
+    execPrefix?: string
   }
+  const valkey9 = activeProfile === 'valkey-9.0'
+  const notInteger = '-ERR value is not an integer or out of range\r\n'
+  const syntax = '-ERR syntax error\r\n'
+  const routeRows: RouteRow[] = [
+    // numkeys past the end of the command: keyless, whatever the other keys.
+    {
+      command: k => ['ZUNIONSTORE', k.remote, '5', k.local],
+      queued: 'QUEUED',
+      exec: syntax,
+    },
+    {
+      command: k => ['EVAL', 'return 1', '2', k.local],
+      queued: 'QUEUED',
+      exec: "-ERR Number of keys can't be greater than number of args\r\n",
+    },
+    // numkeys read like atoi.
+    {
+      command: k => ['ZUNIONSTORE', k.local, '2abc', k.local, k.otherSlot],
+      queued: 'CROSSSLOT',
+    },
+    { command: k => ['EVAL', 'return 1', '1x', k.remote], queued: 'MOVED' },
+    {
+      command: k => ['ZUNIONSTORE', k.local, '1', k.otherSlot, 'BOGUS'],
+      queued: 'CROSSSLOT',
+    },
+    { command: k => ['ZUNION', '1', k.remote, 'BOGUS'], queued: 'MOVED' },
+    {
+      command: k => ['ZUNION', '2', k.local, k.otherSlot, 'BOGUS'],
+      queued: 'CROSSSLOT',
+    },
+    {
+      command: k => ['ZUNIONSTORE', k.local, '1', k.local, 'BOGUS'],
+      queued: 'QUEUED',
+      exec: syntax,
+    },
+    // XREAD / XREADGROUP: the proc keys a well-formed STREAMS tail only.
+    {
+      command: k => ['XREAD', 'COUNT', 'x', 'STREAMS', k.remote, '0'],
+      queued: 'MOVED',
+    },
+    {
+      command: k => ['XREAD', 'COUNT', 'x', 'STREAMS', k.local, '0'],
+      queued: 'QUEUED',
+      exec: notInteger,
+    },
+    {
+      command: k => ['XREAD', 'STREAMS', k.remote, 'b', '0'],
+      queued: 'QUEUED',
+      execPrefix: '-ERR Unbalanced ',
+    },
+    {
+      command: k => [
+        'XREADGROUP',
+        'GROUP',
+        'g',
+        'c',
+        'STREAMS',
+        k.remote,
+        'b',
+        '0',
+      ],
+      queued: 'QUEUED',
+      execPrefix: '-ERR Unbalanced ',
+    },
+    {
+      command: k => ['XREAD', 'BOGUS', 'STREAMS', k.remote, '0'],
+      queued: 'QUEUED',
+      exec: syntax,
+    },
+    {
+      command: k => [
+        'XREADGROUP',
+        'GROUP',
+        'g',
+        'c',
+        'BOGUS',
+        'STREAMS',
+        k.remote,
+        '0',
+      ],
+      queued: 'QUEUED',
+      exec: syntax,
+    },
+    // A container subcommand: its own entry's key range (6.2: the container's).
+    { command: k => ['XINFO', 'STREAM', k.remote, 'x'], queued: 'MOVED' },
+    // GEORADIUS's proc adds the STORE destination.
+    {
+      command: k => [
+        'GEORADIUS',
+        k.local,
+        '0',
+        '0',
+        '1',
+        'km',
+        'STORE',
+        k.otherSlot,
+        'BOGUS',
+      ],
+      queued: 'CROSSSLOT',
+    },
+    { command: k => ['MSET', k.local, 'v', k.otherSlot], queued: 'CROSSSLOT' },
+    // Checked when they run.
+    { command: () => ['SELECT', 'x'], queued: 'QUEUED', exec: notInteger },
+    {
+      command: k => ['MOVE', k.local, '1'],
+      queued: 'QUEUED',
+      exec: valkey9
+        ? '-ERR DB index is out of range\r\n'
+        : '-ERR MOVE is not allowed in cluster mode\r\n',
+    },
+    {
+      command: k => ['MOVE', k.local, 'x'],
+      queued: 'QUEUED',
+      exec: valkey9
+        ? notInteger
+        : '-ERR MOVE is not allowed in cluster mode\r\n',
+    },
+  ]
 
-  async function movedThenAbort(
-    conn: RawRedisConnection,
-    command: string[],
-  ): Promise<void> {
-    await expectReply(conn, ['MULTI'], '+OK\r\n')
-    await expectReplyPrefix(conn, command, '-MOVED ')
-    await expectReply(conn, ['EXEC'], EXECABORT)
-  }
+  test('commands whose parser fails are routed by their raw keys', async () => {
+    const { conn, ...keys } = await setup()
+    for (const row of routeRows) {
+      const command = row.command(keys)
+      await expectReply(conn, ['MULTI'], '+OK\r\n')
+      if (row.queued === 'MOVED') {
+        await expectReplyPrefix(conn, command, '-MOVED ')
+      } else if (row.queued === 'CROSSSLOT') {
+        await expectReply(
+          conn,
+          command,
+          "-CROSSSLOT Keys in request don't hash to the same slot\r\n",
+        )
+      } else {
+        await expectReply(conn, command, QUEUED)
+      }
+      if (row.queued !== 'QUEUED') {
+        await expectReply(conn, ['EXEC'], EXECABORT)
+      } else if (row.execPrefix) {
+        await expectReplyPrefix(conn, ['EXEC'], `*1\r\n${row.execPrefix}`)
+      } else {
+        await expectReply(conn, ['EXEC'], `*1\r\n${row.exec}`)
+      }
+    }
+  })
 
-  // A Valkey 9 cluster accepts SELECT, and a single-database one (the
-  // default, like this one) answers its own range error.
+  // SELECT 1 is queued, and the rest of the transaction still runs.
   test('SELECT is queued and answers at EXEC', async () => {
     const { conn, local } = await setup()
-
-    await queueOne(
-      conn,
-      ['SELECT', 'x'],
-      QUEUED,
-      '*1\r\n-ERR value is not an integer or out of range\r\n',
-    )
 
     await expectReply(conn, ['MULTI'], '+OK\r\n')
     await expectReply(conn, ['SELECT', '1'], QUEUED)
@@ -283,122 +509,20 @@ describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendN
     await expectReply(
       conn,
       ['EXEC'],
-      activeProfile === 'valkey-9.0'
+      valkey9
         ? '*2\r\n-ERR DB index is out of range\r\n+OK\r\n'
         : '*2\r\n-ERR SELECT is not allowed in cluster mode\r\n+OK\r\n',
     )
     await expectReply(conn, ['DEL', local], ':1\r\n')
   })
 
-  test('a numkeys past the end of the command leaves it keyless', async () => {
+  // Shard channels are routed by slot through their `not_key` spec, even
+  // though COMMAND GETKEYS says they have no key arguments.
+  test('SPUBLISH is routed by its shard channel', async () => {
     const { conn, local, remote } = await setup()
 
-    // The destination alone would be MOVED; the invalid numkeys spec makes
-    // the whole command keyless, so it is queued here.
-    await queueOne(
-      conn,
-      ['ZUNIONSTORE', remote, '5', local],
-      QUEUED,
-      '*1\r\n-ERR syntax error\r\n',
-    )
-    await queueOne(
-      conn,
-      ['EVAL', 'return 1', '2', local],
-      QUEUED,
-      "*1\r\n-ERR Number of keys can't be greater than number of args\r\n",
-    )
-  })
-
-  test('numkeys, STREAMS and STORE keys are routed like Redis', async () => {
-    const { conn, local, otherSlot, remote } = await setup()
-    const crossSlot =
-      "-CROSSSLOT Keys in request don't hash to the same slot\r\n"
-
-    await queueOne(
-      conn,
-      ['ZUNIONSTORE', local, '1', otherSlot, 'BOGUS'],
-      crossSlot,
-      EXECABORT,
-    )
-    await movedThenAbort(conn, ['ZUNION', '1', remote, 'BOGUS'])
-    await queueOne(
-      conn,
-      ['ZUNION', '2', local, otherSlot, 'BOGUS'],
-      crossSlot,
-      EXECABORT,
-    )
-    await movedThenAbort(conn, ['XREAD', 'COUNT', 'x', 'STREAMS', remote, '0'])
-    await queueOne(
-      conn,
-      ['GEORADIUS', local, '0', '0', '1', 'km', 'STORE', otherSlot, 'BOGUS'],
-      crossSlot,
-      EXECABORT,
-    )
-    await queueOne(conn, ['MSET', local, 'v', otherSlot], crossSlot, EXECABORT)
-
-    // Local keys: queued, and the command's own error fills its EXEC slot.
-    await queueOne(
-      conn,
-      ['XREAD', 'COUNT', 'x', 'STREAMS', local, '0'],
-      QUEUED,
-      '*1\r\n-ERR value is not an integer or out of range\r\n',
-    )
-    await queueOne(
-      conn,
-      ['ZUNIONSTORE', local, '1', local, 'BOGUS'],
-      QUEUED,
-      '*1\r\n-ERR syntax error\r\n',
-    )
-  })
-
-  // Redis routes by getKeysFromCommand: XREAD's getkeys proc gives no keys
-  // for an odd tail or an unknown option before STREAMS, even when a key spec
-  // would have found one, so these are queued on any node.
-  test('XREAD / XREADGROUP parse failures the proc cannot key are queued', async () => {
-    const { conn, remote } = await setup()
-    const unbalanced = '*1\r\n-ERR Unbalanced '
-
-    for (const command of [
-      ['XREAD', 'STREAMS', remote, 'b', '0'],
-      ['XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', remote, 'b', '0'],
-    ]) {
-      await expectReply(conn, ['MULTI'], '+OK\r\n')
-      await expectReply(conn, command, QUEUED)
-      await expectReplyPrefix(conn, ['EXEC'], unbalanced)
-    }
-    await queueOne(
-      conn,
-      ['XREAD', 'BOGUS', 'STREAMS', remote, '0'],
-      QUEUED,
-      '*1\r\n-ERR syntax error\r\n',
-    )
-    await queueOne(
-      conn,
-      ['XREADGROUP', 'GROUP', 'g', 'c', 'BOGUS', 'STREAMS', remote, '0'],
-      QUEUED,
-      '*1\r\n-ERR syntax error\r\n',
-    )
-  })
-
-  // The getkeys procs read numkeys with atoi, so `2abc` is 2 and `1x` is 1.
-  test('numkeys procs read the count like atoi', async () => {
-    const { conn, local, otherSlot, remote } = await setup()
-
-    await queueOne(
-      conn,
-      ['ZUNIONSTORE', local, '2abc', local, otherSlot],
-      "-CROSSSLOT Keys in request don't hash to the same slot\r\n",
-      EXECABORT,
-    )
-    await movedThenAbort(conn, ['EVAL', 'return 1', '1x', remote])
-  })
-
-  // A container subcommand is routed by its own entry's key range (from 7.0
-  // `xinfo|stream`, on 6.2 the container's 2,2,1), so its key is found.
-  test('a queued XINFO subcommand is routed by its key', async () => {
-    const { conn, remote } = await setup()
-
-    await movedThenAbort(conn, ['XINFO', 'STREAM', remote, 'x'])
+    await expectReply(conn, ['SPUBLISH', local, 'm'], ':0\r\n')
+    await expectReplyPrefix(conn, ['SPUBLISH', remote, 'm'], '-MOVED ')
   })
 
   // A valid GEORADIUS is routed by its source and the last STORE /
@@ -422,31 +546,6 @@ describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendN
         destination,
       ],
       ':0\r\n',
-    )
-  })
-
-  // MOVE checks the cluster when it runs, so inside MULTI it is queued and
-  // answers at EXEC. A Valkey 9 cluster has databases: MOVE runs there, and a
-  // single-database cluster answers its own range error.
-  test('MOVE is queued and answers at EXEC', async () => {
-    const { conn, local } = await setup()
-    const valkey9 = activeProfile === 'valkey-9.0'
-
-    await queueOne(
-      conn,
-      ['MOVE', local, '1'],
-      QUEUED,
-      valkey9
-        ? '*1\r\n-ERR DB index is out of range\r\n'
-        : '*1\r\n-ERR MOVE is not allowed in cluster mode\r\n',
-    )
-    await queueOne(
-      conn,
-      ['MOVE', local, 'x'],
-      QUEUED,
-      valkey9
-        ? '*1\r\n-ERR value is not an integer or out of range\r\n'
-        : '*1\r\n-ERR MOVE is not allowed in cluster mode\r\n',
     )
   })
 })

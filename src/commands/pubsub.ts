@@ -12,7 +12,12 @@ import {
   subcommandSyntaxError,
   unknownSubcommandError,
 } from './helpers'
-import { commandSubcommandInfo } from './introspection'
+import { commandKeySpec, commandSubcommandInfo } from './introspection'
+
+// Redis gives the shard pub/sub commands a key spec for their channels, so
+// they route by slot, but marks it `not_key`: COMMAND GETKEYS says they have
+// no key arguments.
+const shardChannels = commandKeySpec(1, -1, 1, ['not_key'])
 
 type PubSubArgs = {
   subcommand: Buffer
@@ -59,6 +64,7 @@ export const ssubscribeCommand = defineCommand({
   introspection: {
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
     categories: ['@pubsub', '@slow'],
+    keySpecs: [shardChannels],
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
@@ -75,6 +81,7 @@ export const sunsubscribeCommand = defineCommand({
   introspection: {
     flags: ['pubsub', 'noscript', 'loading', 'stale'],
     categories: ['@pubsub', '@slow'],
+    keySpecs: [shardChannels],
   },
   keys: args => args.channels,
   execute: (args, ctx) =>
@@ -156,6 +163,7 @@ export const spublishCommand = defineCommand({
   introspection: {
     flags: ['pubsub', 'loading', 'stale', 'fast'],
     categories: ['@pubsub', '@fast'],
+    keySpecs: [commandKeySpec(1, 0, 1, ['not_key'])],
   },
   keys: args => [args.channel],
   execute: (args, ctx) =>

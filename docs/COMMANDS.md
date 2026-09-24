@@ -98,8 +98,8 @@ is rejected from Lua.
 - [x] `COMMAND LIST [FILTERBY PATTERN pattern|MODULE module]` - Return command names
 - [x] `COMMAND INFO [command-name ...]` - Return command metadata
 - [x] `COMMAND DOCS [command-name ...]` - Return command documentation (RESP3 maps / RESP2 flat arrays)
-- [x] `COMMAND GETKEYS command [arg ...]` - Extract keys through the command definition
-- [x] `COMMAND GETKEYSANDFLAGS command [arg ...]` - Extract keys with access flags
+- [x] `COMMAND GETKEYS command [arg ...]` - Extract keys as Redis does, without running the command: from its key specs (7.0+), else its getkeys procedure (`rawKeys`), else its key range; a command that declares none of these (for example one added with `extraCommands`) answers the keys its `keys(args)` returns, and has no key arguments when there are none
+- [x] `COMMAND GETKEYSANDFLAGS command [arg ...]` - Extract keys with access flags (from the key spec or getkeys procedure that found each key; RESP3 sets)
 - [x] `COMMAND HELP` - Return command help
 
 `COMMAND` is generated from registered command definitions and their

@@ -20,7 +20,8 @@ export type { KeyWithFlags }
  * The keys a command's key specs pick out of `argv` (the command name at
  * index 0), each with its spec's flags, following Redis's
  * `getKeysUsingKeySpecs` without partial results: a spec whose keyword is
- * absent adds nothing, and a spec that cannot be applied (a numkeys that is
+ * absent adds nothing, nor does a `not_key` one (a shard channel), and a
+ * spec that cannot be applied (a numkeys that is
  * not a non-negative integer, keys running past the end of the command, a
  * step below 1) makes the whole lookup fail with `null`. This is how
  * `COMMAND GETKEYSANDFLAGS` attributes flags to keys.
@@ -32,6 +33,9 @@ export function keysFromKeySpecs(
   const argc = argv.length
   const keys: KeyWithFlags[] = []
   for (const spec of specs) {
+    if (spec.flags.includes('not_key')) {
+      continue
+    }
     const first = beginSearch(spec, argv)
     if (first === null) {
       continue

@@ -334,6 +334,7 @@ function commandKeys(
     throw errors.invalidCommandSpecified()
   }
 
+  const argv = [Buffer.from(definition.name), ...rawArgs]
   const subcommand = lookupSubcommandEntry(definition, rawArgs, profile)
   const entry = introspectionFor(
     subcommand ? subcommand.introspection : definition.introspection,
@@ -345,8 +346,26 @@ function commandKeys(
     entry,
     subcommand ? undefined : definition.schema,
   )
-  if (!proc && specs.length === 0 && range.firstKey === 0) {
+  // Redis's doesCommandHaveKeys: a getkeys proc, or a key spec that is not
+  // `not_key` (SPUBLISH / SSUBSCRIBE / SUNSUBSCRIBE have only `not_key` ones).
+  if (
+    !proc &&
+    specs.length > 0 &&
+    specs.every(spec => spec.flags.includes('not_key'))
+  ) {
     throw errors.commandHasNoKeyArguments()
+  }
+  // Nothing declares where the keys are: a keyless command, or one (typically
+  // added with `extraCommands`) whose keys come only from `keys(args)`. Its
+  // parsed keys answer, and none - or a call that does not parse - means it
+  // has no key arguments, which is what Redis answers for a keyless command
+  // before checking its arity.
+  if (!proc && specs.length === 0 && range.firstKey === 0) {
+    const keys = parsedKeys(definition, rawArgs, ctx, range, argv)
+    if (keys.length === 0) {
+      throw errors.commandHasNoKeyArguments()
+    }
+    return keys
   }
 
   const arity =
@@ -358,7 +377,6 @@ function commandKeys(
     )
   }
 
-  const argv = [Buffer.from(definition.name), ...rawArgs]
   const keySpecEra = profile.has('command.getkeysandflags')
   let keys: readonly KeyWithFlags[] | null = null
   if (

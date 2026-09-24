@@ -122,6 +122,13 @@ export function introspectionFor(
 
 export type CommandExecutionResult = RedisResult | Promise<RedisResult>
 
+/**
+ * A key a command names, with its access flags (`RO`, `OW`, `access`,
+ * `update`, ...) as `COMMAND GETKEYSANDFLAGS` reports them: from the key spec
+ * that found it, or from the command's getkeys procedure.
+ */
+export type KeyWithFlags = { key: Buffer; flags: readonly string[] }
+
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string
   readonly since?: VersionGate
@@ -158,13 +165,6 @@ type CommandPlanBase<TArgs> = {
  * command's getkeys proc or legacy key range over `rawArgs`. A policy that
  * reads `args` narrows on `deferredError` first.
  */
-/**
- * A key a command names, with its access flags (`RO`, `OW`, `access`,
- * `update`, ...) as `COMMAND GETKEYSANDFLAGS` reports them: from the key spec
- * that found it, or from the command's getkeys procedure.
- */
-export type KeyWithFlags = { key: Buffer; flags: readonly string[] }
-
 export type CommandPlan<TArgs = unknown> =
   | (CommandPlanBase<TArgs> & { args: TArgs; deferredError?: undefined })
   | (CommandPlanBase<TArgs> & {

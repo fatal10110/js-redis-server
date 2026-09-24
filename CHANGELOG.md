@@ -524,8 +524,10 @@ so the PR body is not a durable home for a breaking-change note.
   parsing failed has `args: undefined` and a `deferredError`, the error its
   EXEC slot answers, raised after the policy chain. A custom
   `ExecutionPolicy` that reads `plan.args` must check `plan.deferredError`
-  first, and TypeScript now makes it; that plan's `keys` are the ones Redis
-  would route by. `CommandCapabilities.clusterMode` gained a third value,
+  first. With a typed `CommandPlan<TArgs>` TypeScript narrows `args` on that
+  check, but a policy that casts the untyped plan's args (`(plan.args as
+  Foo).x`) still compiles without it and fails at runtime. That plan's `keys`
+  are the ones Redis would route by. `CommandCapabilities.clusterMode` gained a third value,
   `'multiDbOnly'` (MOVE: refused in a cluster unless it has databases, as a
   Valkey 9 cluster does), so an exhaustive `switch` over it stops
   type-checking; `'forbidden'` still means refused outright.
@@ -688,7 +690,13 @@ so the PR body is not a durable home for a breaking-change note.
   `OW update`, `SET k v GET`: `RW access update`; none for a numkeys
   command); each key's flags are a RESP3 set. On Valkey, whose `GEORADIUS`
   `STORE` / `STOREDIST` specs are `variable_flags`, only the last
-  destination is reported, as its procedure finds it.
+  destination is reported, as its procedure finds it. `SPUBLISH`,
+  `SSUBSCRIBE` and `SUNSUBSCRIBE` declare Redis's `not_key` channel spec, so
+  they answer `The command has no key arguments` (`GETKEYS SPUBLISH ch msg`
+  used to return `ch`). A command whose keys come only from its `keys(args)`
+  (one added with `extraCommands`, with no key specs, getkeys procedure or
+  key positions in its schema) is answered from its parsed keys, and has no
+  key arguments when there are none or the call does not parse.
 
 - `GEORADIUS` / `GEORADIUSBYMEMBER` with several `STORE` / `STOREDIST`
   options store into the last one, as that kind, and a cluster routes the
