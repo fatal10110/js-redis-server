@@ -1,7 +1,8 @@
 import { after, before, describe, test } from 'node:test'
+import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { activeProfile } from '../utils'
-import { RawRedisConnection } from './raw-connection'
+import { activeProfile, commandFrame } from '../utils'
+import { RawRedisConnection, type RespWireValue } from './raw-connection'
 import { expectReply, send } from './helpers'
 
 /**
@@ -161,6 +162,55 @@ describe(
       await send(connection, ['HELLO', protocol])
       return connection
     }
+
+    // The shard pub/sub commands' only key spec is `not_key`: it gives the
+    // slot to route by, but COMMAND GETKEYS finds no key arguments. Flags
+    // and categories are left out (simple strings on real Redis).
+    test('COMMAND INFO: shard-channel key specs are not_key', async () => {
+      const conn = await connect('2')
+      const text = (value: RespWireValue): unknown =>
+        Buffer.isBuffer(value)
+          ? value.toString()
+          : Array.isArray(value)
+            ? value.map(text)
+            : value
+      const spec = (lastkey: number) => [
+        'flags',
+        ['not_key'],
+        'begin_search',
+        ['type', 'index', 'spec', ['index', 1]],
+        'find_keys',
+        [
+          'type',
+          'range',
+          'spec',
+          ['lastkey', lastkey, 'keystep', 1, 'limit', 0],
+        ],
+      ]
+      conn.write(
+        commandFrame(
+          'COMMAND',
+          'INFO',
+          'spublish',
+          'ssubscribe',
+          'sunsubscribe',
+        ),
+      )
+      const reply = text(await conn.readFrame()) as unknown[][]
+      assert.deepStrictEqual(
+        reply.map(entry => [
+          entry[0],
+          entry[1],
+          ...entry.slice(3, 6),
+          entry[8],
+        ]),
+        [
+          ['spublish', 3, 1, 1, 1, [spec(0)]],
+          ['ssubscribe', -2, 1, -1, 1, [spec(-1)]],
+          ['sunsubscribe', -1, 1, -1, 1, [spec(-1)]],
+        ],
+      )
+    })
 
     test('COMMAND GETKEYS', async () => {
       const conn = await connect('2')
