@@ -920,6 +920,12 @@ describe(
             ? 'ERR wrong number of arguments for MSET'
             : "ERR wrong number of arguments for 'mset' command",
         ],
+        [
+          "redis.call('xadd', 'x', '*', 'f', 'v', 'x')",
+          legacy
+            ? 'ERR wrong number of arguments for XADD'
+            : "ERR wrong number of arguments for 'xadd' command",
+        ],
       ]
       for (const [call, error] of cases) {
         const pcall = `return ${call.replace('redis.call', 'redis.pcall')}`
@@ -941,7 +947,204 @@ describe(
           ? '-ERR wrong number of arguments for MSET\r\n'
           : "-ERR wrong number of arguments for 'msetnx' command\r\n",
       )
+      assert.strictEqual(
+        await send('XADD', 'x', 'MAXLEN', '5', '*', 'f', 'v', 'x'),
+        legacy
+          ? '-ERR wrong number of arguments for XADD\r\n'
+          : "-ERR wrong number of arguments for 'xadd' command\r\n",
+      )
+      // No field/value pairs at all is the same check (#518).
+      assert.strictEqual(
+        await send('XADD', 'x', 'MAXLEN', '5', '*'),
+        legacy
+          ? '-ERR wrong number of arguments for XADD\r\n'
+          : "-ERR wrong number of arguments for 'xadd' command\r\n",
+      )
     })
+
+    // From 7.0 the scripting layer's own errors carry no position and keep
+    // `ERR`; Valkey 8.0 drops the product name from them, and Valkey 9.0
+    // names itself in the noscript refusal. A count the command table rejects
+    // (GET with no key, `config|get` with no pattern on 7.0+, where lookup
+    // resolves the subcommand) is the scripting layer's arity error. Byte for
+    // byte against real redis-server 7.0.15 / 8.0.6 and Valkey 8.0.11 / 9.0.6
+    // (#492). 6.2's forms are pinned above.
+    test(
+      'script-level rejections use the profile wording from 7.0',
+      {
+        skip:
+          !supportsSuffixScriptErrorDecoration() && '7.0+ only, 6.2 is above',
+      },
+      async () => {
+        const valkey = profile.startsWith('valkey-')
+        const WRONG_ARITY = valkey
+          ? 'ERR Wrong number of args calling command from script'
+          : 'ERR Wrong number of args calling Redis command from script'
+        const NO_COMMAND = valkey
+          ? 'ERR Please specify at least one argument for this call'
+          : 'ERR Please specify at least one argument for this redis lib call'
+        const ARGUMENT_TYPE = valkey
+          ? 'ERR Command arguments must be strings or integers'
+          : 'ERR Lua redis lib command arguments must be strings or integers'
+        const NOT_ALLOWED =
+          profile === 'valkey-9.0'
+            ? 'ERR This Valkey command is not allowed from script'
+            : 'ERR This Redis command is not allowed from script'
+
+        const cases: Array<[string, string]> = [
+          ["redis.pcall('get')", WRONG_ARITY],
+          ["redis.pcall('get', 'k', 'x')", WRONG_ARITY],
+          ["redis.pcall('config', 'get')", WRONG_ARITY],
+          ["redis.pcall('client', 'setname')", WRONG_ARITY],
+          ["redis.pcall('xadd', 'x', '*', 'f')", WRONG_ARITY],
+          // XINFO / XGROUP subcommands have their own table entries (#518).
+          ["redis.pcall('xinfo', 'stream')", WRONG_ARITY],
+          ["redis.pcall('xgroup', 'create', 'k', 'g')", WRONG_ARITY],
+          ['redis.pcall()', NO_COMMAND],
+          ["redis.pcall('subscribe', 'c')", NOT_ALLOWED],
+        ]
+        for (const [call, error] of cases) {
+          assert.strictEqual(
+            await send('EVAL', `return ${call}`, '0'),
+            `-${error}\r\n`,
+            call,
+          )
+
+          const script = `return ${call.replace('redis.pcall', 'redis.call')}`
+          assert.strictEqual(
+            await send('EVAL', script, '0'),
+            `-${error} script: ${sha1(script)}, on @user_script:1.\r\n`,
+            script,
+          )
+        }
+
+        // The argument-type check is the engine's own, and it raises even under
+        // redis.pcall (fatal10110/lua-redis-wasm#28, #503), so only the aborting
+        // redis.call form is pinned.
+        const script = "return redis.call('set', 'k', {})"
+        assert.strictEqual(
+          await send('EVAL', script, '0'),
+          `-${ARGUMENT_TYPE} script: ${sha1(script)}, on @user_script:1.\r\n`,
+        )
+      },
+    )
+
+    // COMMAND INFO for the stream containers, as real servers report it (#518):
+    // 6.2 has one entry per container, with flags, categories and the 2,2,1
+    // range of the key after the subcommand, and no subcommand entries; from
+    // 7.0 the container is bare and its subcommands carry the details.
+    // Checked against redis-server 6.2.24, 7.0.15, 7.2, 8.0.6 and valkey 8.0 /
+    // 9.0.
+    test('COMMAND INFO / DOCS / COUNT for the stream containers', async () => {
+      const legacy = profile === 'redis-6.2'
+      const info = async (name: string) => {
+        connection.write(commandFrame('COMMAND', 'INFO', name))
+        const reply = normalizeFrame(await connection.readFrame())
+        assert.ok(Array.isArray(reply) && Array.isArray(reply[0]), name)
+        return reply[0] as RespWireValue[]
+      }
+
+      const xinfo = await info('xinfo')
+      const xgroup = await info('xgroup')
+      if (legacy) {
+        assert.deepStrictEqual(xinfo.slice(1, 7), [
+          -2,
+          ['readonly', 'random'],
+          2,
+          2,
+          1,
+          ['@read', '@stream', '@slow'],
+        ])
+        assert.deepStrictEqual(xgroup.slice(1, 7), [
+          -2,
+          ['write', 'denyoom'],
+          2,
+          2,
+          1,
+          ['@write', '@stream', '@slow'],
+        ])
+        // 6.2 entries stop at the ACL categories: no tips, key specs or
+        // subcommands.
+        assert.strictEqual(xinfo.length, 7)
+        connection.write(commandFrame('COMMAND', 'INFO', 'xinfo|stream'))
+        assert.deepStrictEqual(normalizeFrame(await connection.readFrame()), [
+          null,
+        ])
+        return
+      }
+
+      assert.strictEqual(xinfo.length, 10)
+      assert.deepStrictEqual(xinfo.slice(1, 7), [-2, [], 0, 0, 0, ['@slow']])
+      const subcommands = (xinfo[9] as RespWireValue[][]).map(entry => [
+        entry[0],
+        entry[1],
+        entry[3],
+        entry[4],
+        entry[5],
+        entry[7],
+      ])
+      assert.deepStrictEqual(
+        subcommands.sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+        [
+          ['xinfo|consumers', 4, 2, 2, 1, ['nondeterministic_output']],
+          ['xinfo|groups', 3, 2, 2, 1, []],
+          ['xinfo|help', 2, 0, 0, 0, []],
+          ['xinfo|stream', -3, 2, 2, 1, []],
+        ],
+      )
+      assert.deepStrictEqual(xgroup.slice(1, 7), [-2, [], 0, 0, 0, ['@slow']])
+
+      // COUNT counts command-table entries, not their subcommands.
+      connection.write(commandFrame('COMMAND', 'COUNT'))
+      const count = normalizeFrame(await connection.readFrame())
+      connection.write(commandFrame('COMMAND', 'LIST'))
+      const names = normalizeFrame(await connection.readFrame())
+      assert.ok(Array.isArray(names))
+      assert.strictEqual(
+        count,
+        names.filter(name => !String(name).includes('|')).length,
+      )
+
+      const wording72 = profile !== 'redis-7.0'
+      connection.write(commandFrame('COMMAND', 'DOCS', 'xinfo'))
+      const docs = normalizeFrame(await connection.readFrame())
+      assert.ok(Array.isArray(docs) && Array.isArray(docs[1]))
+      const fields = flatToRecord(docs[1] as RespWireValue[])
+      assert.deepStrictEqual(
+        [fields.summary, fields.since, fields.group, fields.complexity],
+        [
+          wording72
+            ? 'A container for stream introspection commands.'
+            : 'A container for stream introspection commands',
+          '5.0.0',
+          'stream',
+          'Depends on subcommand.',
+        ],
+      )
+    })
+
+    // Valkey 8.0 marks GEORADIUS's STORE / STOREDIST key specs variable_flags
+    // (valkey 8.0.11 / 9.0.6; Redis and Valkey 7.2 do not). Only the key
+    // specs' flags are compared.
+    test(
+      'GEORADIUS STORE key spec flags follow the flavor',
+      {
+        skip: profile === 'redis-6.2' && 'key specs are 7.0+',
+      },
+      async () => {
+        connection.write(commandFrame('COMMAND', 'INFO', 'georadius'))
+        const reply = normalizeFrame(await connection.readFrame())
+        assert.ok(Array.isArray(reply) && Array.isArray(reply[0]))
+        const specs = (reply[0] as RespWireValue[])[8] as RespWireValue[][]
+        const destination = supportsValkeyGeoVariableFlags()
+          ? ['OW', 'update', 'variable_flags']
+          : ['OW', 'update']
+        assert.deepStrictEqual(
+          specs.map(spec => flatToRecord(spec).flags),
+          [['RO', 'access'], destination, destination],
+        )
+      },
+    )
 
     test('writing a global is rejected by the readonly table', async () => {
       // The Lua engine blocks global writes via Lua's native readonly table, so
@@ -1323,6 +1526,10 @@ function supportsCommandDocs(): boolean {
 
 function supportsUnknownSubcommandWording(): boolean {
   return profile !== 'redis-6.2'
+}
+
+function supportsValkeyGeoVariableFlags(): boolean {
+  return profile === 'valkey-8.0' || profile === 'valkey-9.0'
 }
 
 function supportsSuffixScriptErrorDecoration(): boolean {

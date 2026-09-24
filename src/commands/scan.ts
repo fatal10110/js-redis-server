@@ -267,12 +267,12 @@ function parseCursor(raw: Buffer): bigint {
   // Redis parses the cursor as an unsigned 64-bit integer (strict_strtoull):
   // a leading sign or a value past UINT64_MAX is rejected as `invalid cursor`.
   if (!/^\d+$/.test(value)) {
-    throw new RedisCommandError('invalid cursor')
+    throw errors.invalidCursor()
   }
 
   const parsed = BigInt(value)
   if (parsed > 0xffffffffffffffffn) {
-    throw new RedisCommandError('invalid cursor')
+    throw errors.invalidCursor()
   }
 
   return parsed

@@ -519,7 +519,27 @@ so the PR body is not a durable home for a breaking-change note.
     later mutation, it shows the later state. `{ ...event }` inside the listener
     takes such a snapshot.
 
+- **BREAKING (`/core`)** `CommandPlan` is now a discriminated union: a
+  normal plan has `args`, and a command queued inside MULTI whose own argument
+  parsing failed has `args: undefined` and a `deferredError`, the error its
+  EXEC slot answers, raised after the policy chain. A custom
+  `ExecutionPolicy` that reads `plan.args` must check `plan.deferredError`
+  first. With a typed `CommandPlan<TArgs>` TypeScript narrows `args` on that
+  check, but a policy that casts the untyped plan's args (`(plan.args as
+  Foo).x`) still compiles without it and fails at runtime. That plan's `keys`
+  are the ones Redis would route by. `CommandCapabilities.clusterMode` gained a third value,
+  `'multiDbOnly'` (MOVE: refused in a cluster unless it has databases, as a
+  Valkey 9 cluster does), so an exhaustive `switch` over it stops
+  type-checking; `'forbidden'` still means refused outright.
+
 ### Added
+
+- **`/core`** A `CommandDefinition` can declare `rawKeys(argv)`, its getkeys
+  procedure: the keys it finds in the raw arguments, each with its flags
+  (`KeyWithFlags`, now exported), for commands whose keys the key specs or
+  the legacy key range cannot express. It routes a queued command whose
+  parser failed and answers `COMMAND GETKEYS` / `GETKEYSANDFLAGS` when the
+  key specs cannot.
 
 - `PubSubKind` (`'channel' | 'shard' | 'pattern'`) is exported from `/core`,
   because it appears in the signature of the published `RedisClientSession`
@@ -561,8 +581,130 @@ so the PR body is not a durable home for a breaking-change note.
   before the noscript / read-only checks, as in Redis. A count the table
   accepts but the command refuses (`HSET h f v x`, an odd `MSET`) returns the
   command's own error, `ERR` code included, on every profile ([#492]). On
-  `redis-6.2` that error for `MSET` / `MSETNX` reads `wrong number of
-  arguments for MSET` (new gate `error.mset-odd-pairs-wording`).
+  `redis-6.2` that error reads `wrong number of arguments for MSET` for
+  `MSET` / `MSETNX` and `wrong number of arguments for XADD` for `XADD` with
+  an odd or empty field/value tail (`XADD s MAXLEN 10 *`) (new gate
+  `error.odd-pairs-arity-wording`).
+
+- A script call whose argument count the command table rejects answers the
+  scripting layer's arity error on Redis 7.0+ and Valkey too: `Wrong number of
+  args calling Redis command from script`, without `Redis` on Valkey 8.0+
+  ([#492]). It used to pass the command's own `wrong number of arguments for
+  '<cmd>' command` through. Valkey 8.0+ also words the other script-level
+  errors its own way (`Please specify at least one argument for this call`,
+  `Command arguments must be strings or integers`), and Valkey 9.0 refuses a
+  `noscript` command with `This Valkey command is not allowed from script`
+  (new gate `script.not-allowed-valkey-wording`).
+
+- MULTI queues a command whose own argument checks fail (`MSET a b c`,
+  `HSET h f v x`, `SET k v BOGUS`, `INCRBY k x`, ...) and reports the error in
+  that command's slot of EXEC's reply, as Redis does; the rest of the
+  transaction runs. Only an unknown command or subcommand, or an argument
+  count the command table rejects, is still refused at queue time and aborts
+  EXEC with `-EXECABORT`. Previously every parse error aborted the
+  transaction.
+
+  The command-table arity is checked at lookup for every caller (a client,
+  MULTI, a script), as Redis's `processCommand` does, against the entry lookup
+  resolves to: from 7.0 the subcommand's own entry for every container
+  (`CLIENT REPLY` is `wrong number of arguments for 'client|reply' command`,
+  `FUNCTION DUMP x` is `... for 'function|dump' command`; also real
+  subcommands this server does not implement, such as `client|pause`),
+  otherwise the command's own (`XREAD COUNT` is `wrong number of arguments for
+  'xread' command` before XREAD's option parser runs). 6.2 has no subcommand
+  entries, so there the check is always against the command's own entry; it
+  now runs at lookup on 6.2 too, with the same replies as before.
+
+  What clients see changes accordingly:
+
+  ```
+  MULTI; SET a 1; MSET b v c; EXEC
+    ioredis     multi().exec() used to reject with EXECABORT; it now resolves
+                [[null, 'OK'], [SimpleError("ERR wrong number of arguments
+                for 'mset' command"), null]]
+    node-redis  multi().exec() used to reject with EXECABORT; it now rejects
+                with MultiErrorReply, errorIndexes [1], .replies holding the
+                OK and the error
+  ```
+
+  In a cluster such a command is routed by the keys Redis's
+  `getKeysFromCommand` finds in the raw arguments, without running the
+  command's parser: the command's getkeys procedure where Redis has one
+  (numkeys commands read the count like `atoi`, so `ZUNIONSTORE d 2abc a b` is
+  a `CROSSSLOT` and `EVAL s 1x a` a `MOVED`; `XREAD`/`XREADGROUP` find no keys
+  for an odd tail or an unknown option, so `XREAD STREAMS a b 0` and
+  `XREAD BOGUS STREAMS a 0` are queued on any node and answer their
+  `Unbalanced ...` / `syntax error` at EXEC; `GEORADIUS*` add the `STORE`
+  destination), otherwise the legacy first/last/step key range of the entry
+  lookup resolved (from 7.0 `xinfo|stream`, so `XINFO STREAM a x` is a
+  `MOVED`; on 6.2 the container's own 2,2,1). A numkeys past the end of the
+  command (`ZUNIONSTORE a 5 b`) leaves it keyless. `SELECT 1` inside a
+  cluster MULTI is queued too, and its `SELECT is not allowed in cluster
+  mode` fills its EXEC slot; `SELECT x` answers `value is not an integer or
+  out of range` there instead of dropping the connection. `MOVE` is queued
+  the same way and answers `MOVE is not allowed in cluster mode` at EXEC.
+
+  `XREAD` / `XREADGROUP` parse their options as Redis does: `syntax error`
+  for an unknown option, `value is not an integer or out of range` for a bad
+  `COUNT`, the `timeout` errors for a bad `BLOCK`, the `NOACK` error from
+  `XREAD`, and the `Unbalanced ...` wording of the emulated version (new gates
+  `stream.xread-unbalanced-wording`, and `stream.xread-unbalanced-plus-wording`
+  for the `'+'` XREAD's error lists from Redis 8.0.0; 7.4 accepts `+` but
+  does not list it).
+
+  `COMMAND INFO` now reports Redis's key specs for the movable-key commands
+  (numkeys: `ZUNIONSTORE`/`ZINTERSTORE`/`ZDIFFSTORE`, `ZUNION`/`ZINTER`/
+  `ZDIFF`/`ZINTERCARD`, `SINTERCARD`, `LMPOP`/`BLMPOP`/`ZMPOP`/`BZMPOP`,
+  `EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO`/`FCALL`/`FCALL_RO`; keyword:
+  `XREAD`/`XREADGROUP` `STREAMS`, `GEORADIUS`/`GEORADIUSBYMEMBER`
+  `STORE`/`STOREDIST`, whose destination specs carry `variable_flags` on
+  Valkey 8.0+, new gate `geo.store-keyspec-variable-flags`). From 7.0 the
+  `XINFO` / `XGROUP` containers are bare entries whose subcommand entries
+  (`xinfo|consumers` with its `nondeterministic_output` tip) carry the
+  details; on 6.2 they keep their single entry (`XINFO`: `readonly`,
+  `random`, keys 2,2,1, `@read @stream @slow`; `XGROUP`: `write`, `denyoom`)
+  and no container lists subcommand entries. `COMMAND COUNT` counts
+  command-table entries, not subcommands. `COMMAND DOCS` summaries for the
+  stream containers follow the version's wording (7.2+ ends them with a
+  period, new gate `docs.summary-7.2-wording`). On `redis-6.2` each
+  `COMMAND INFO` entry has 6.2's 7 fields, ending with the ACL categories,
+  instead of also carrying tips, key specs and subcommands (new gate
+  `command.info-extended-fields`).
+
+- `COMMAND GETKEYS` / `GETKEYSANDFLAGS` find keys the way Redis does,
+  without running the command: they look it up (from 7.0 an unknown
+  subcommand is `Invalid command specified`), then answer `The command has no
+  key arguments` for an entry without keys before checking its arity
+  (`COMMAND GETKEYS CLIENT REPLY`, `CONFIG GET`, `CLIENT KILL`; from 7.0 per
+  subcommand, so `XINFO HELP` too), then `Invalid number of arguments
+  specified for command` for a count the entry's table arity rejects. From
+  7.0 the key specs find the keys, and the command's getkeys procedure when a
+  spec cannot be applied or is `variable_flags` (`XREAD STREAMS a b 0` is
+  `a`, `ZUNIONSTORE d 2abc a b` is `a b d`, `EVAL s 2 a` an empty list); 6.2
+  asks the getkeys procedure or the legacy key range, and answers `Invalid
+  arguments specified for command` when they find nothing.
+  `GETKEYSANDFLAGS` reports each key with the flags of the key spec that
+  found it (`ZUNIONSTORE d 2 a b`: `d` `OW update`, `a`/`b` `RO access`),
+  of a container subcommand's own entry (`XGROUP CREATE`: `RW insert`,
+  `XGROUP DESTROY`: `RW delete`), or of the getkeys procedure (`SET k v`:
+  `OW update`, `SET k v GET`: `RW access update`; none for a numkeys
+  command); each key's flags are a RESP3 set. On Valkey, whose `GEORADIUS`
+  `STORE` / `STOREDIST` specs are `variable_flags`, only the last
+  destination is reported, as its procedure finds it. `SPUBLISH`,
+  `SSUBSCRIBE` and `SUNSUBSCRIBE` declare Redis's `not_key` channel spec, so
+  they answer `The command has no key arguments` (`GETKEYS SPUBLISH ch msg`
+  used to return `ch`). A command whose keys come only from its `keys(args)`
+  (one added with `extraCommands`, with no key specs, getkeys procedure or
+  key positions in its schema) is answered from its parsed keys, and has no
+  key arguments when there are none or the call does not parse.
+
+- `GEORADIUS` / `GEORADIUSBYMEMBER` with several `STORE` / `STOREDIST`
+  options store into the last one, as that kind, and a cluster routes the
+  command by that destination, as Redis does; the first one used to win.
+
+- In a Valkey 9 cluster, which has databases, `MOVE` runs (a single-database
+  node answers `DB index is out of range`) instead of being refused with
+  `MOVE is not allowed in cluster mode`.
 
 - Double replies are spelled the way the emulated version spells them ([#451]).
   Redis 6.2 / 7.0 print `%.17g`; Redis 7.2+ and every Valkey print

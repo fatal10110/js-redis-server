@@ -156,17 +156,13 @@ function createHashFieldsSchema() {
 
       const fieldsToken = input[index + 1]
       if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
-        throw new RedisCommandError(
-          'Mandatory argument FIELDS is missing or not at the right position',
-        )
+        throw errors.fieldsArgumentMissing()
       }
 
       const fieldCount = parsePositiveFieldCount(input[index + 2])
       const fields = input.slice(index + 3)
       if (fieldCount !== BigInt(fields.length)) {
-        throw new RedisCommandError(
-          'The `numfields` parameter must match the number of arguments',
-        )
+        throw errors.numFieldsMismatch()
       }
 
       return {
@@ -194,9 +190,7 @@ function createHgetexSchema() {
 
       const fieldsToken = input[nextIndex]
       if (!fieldsToken || fieldsToken.toString().toUpperCase() !== 'FIELDS') {
-        throw new RedisCommandError(
-          'Mandatory argument FIELDS is missing or not at the right position',
-        )
+        throw errors.fieldsArgumentMissing()
       }
 
       const fieldCountToken = input[nextIndex + 1]
@@ -207,9 +201,7 @@ function createHgetexSchema() {
       const fieldCount = parsePositiveFieldCount(fieldCountToken)
       const fields = input.slice(nextIndex + 2)
       if (fieldCount !== BigInt(fields.length)) {
-        throw new RedisCommandError(
-          'The `numfields` parameter must match the number of arguments',
-        )
+        throw errors.numFieldsMismatch()
       }
 
       return { value: { key, expiration, fields }, nextIndex: input.length }
@@ -283,9 +275,7 @@ function createHsetexSchema() {
 
         if (token === 'KEEPTTL') {
           if (expirationSet) {
-            throw new RedisCommandError(
-              'Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified',
-            )
+            throw errors.hashFieldExpireOptionConflict()
           }
           expiration = { kind: 'keepttl' }
           expirationSet = true
@@ -296,9 +286,7 @@ function createHsetexSchema() {
         const mode = hgetexExpireMode(token)
         if (mode) {
           if (expirationSet) {
-            throw new RedisCommandError(
-              'Only one of EX, PX, EXAT, PXAT or KEEPTTL arguments can be specified',
-            )
+            throw errors.hashFieldExpireOptionConflict()
           }
           const timeToken = input[cursor + 1]
           if (!timeToken) {
@@ -354,12 +342,12 @@ function createHsetexSchema() {
 function parseHsetexFieldCount(token: Buffer): bigint {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new RedisCommandError('invalid number of fields')
+    throw errors.invalidNumberOfFields()
   }
 
   const value = BigInt(raw)
   if (value < 1n || value > LONG_MAX) {
-    throw new RedisCommandError('invalid number of fields')
+    throw errors.invalidNumberOfFields()
   }
 
   return value
@@ -529,9 +517,7 @@ function parseHashExpireArgs(
     throw new WrongNumberOfArgumentsError(commandName)
   }
   if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
-    throw new RedisCommandError(
-      'Mandatory argument FIELDS is missing or not at the right position',
-    )
+    throw errors.fieldsArgumentMissing()
   }
 
   const fieldCountToken = rawArgs[cursor + 1]
@@ -542,9 +528,7 @@ function parseHashExpireArgs(
   const fieldCount = parseHashExpireFieldCount(fieldCountToken)
   const fields = rawArgs.slice(cursor + 2)
   if (fieldCount !== BigInt(fields.length)) {
-    throw new RedisCommandError(
-      'The `numfields` parameter must match the number of arguments',
-    )
+    throw errors.numFieldsMismatch()
   }
 
   return { time, option, fields }
@@ -553,12 +537,12 @@ function parseHashExpireArgs(
 function parsePositiveFieldCount(token: Buffer): bigint {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new RedisCommandError('Number of fields must be a positive integer')
+    throw errors.numFieldsNotPositive()
   }
 
   const value = BigInt(raw)
   if (value < 1n || value > LONG_MAX) {
-    throw new RedisCommandError('Number of fields must be a positive integer')
+    throw errors.numFieldsNotPositive()
   }
 
   return value
@@ -581,16 +565,12 @@ function parseHashExpireTime(token: Buffer): bigint {
 function parseHashExpireFieldCount(token: Buffer): bigint {
   const raw = token.toString()
   if (!isIntegerToken(raw)) {
-    throw new RedisCommandError(
-      'Parameter `numFields` should be greater than 0',
-    )
+    throw errors.numFieldsParamNotPositive()
   }
 
   const value = BigInt(raw)
   if (value < 1n || value > LONG_MAX) {
-    throw new RedisCommandError(
-      'Parameter `numFields` should be greater than 0',
-    )
+    throw errors.numFieldsParamNotPositive()
   }
 
   return value

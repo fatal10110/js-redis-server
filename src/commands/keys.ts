@@ -15,6 +15,7 @@ import {
   isSelfSortPattern,
   sortPatternWildcardIndex,
 } from '../core/sort-patterns'
+import { sortGetKeys } from '../core/key-specs'
 import { assertSortPatternAllowed } from '../core/sort-cluster-guard'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
@@ -461,7 +462,7 @@ export const moveCommand = defineCommand({
   name: 'move',
   schema: t.object({ key: t.key(), database: t.integer() }),
   flags: ['write'],
-  capabilities: { clusterMode: 'forbidden' },
+  capabilities: { clusterMode: 'multiDbOnly' },
   keys: args => [args.key],
   execute: (args, ctx) => {
     const targetDb = ctx.server.databases[args.database]
@@ -1010,6 +1011,7 @@ function sortRoutingKeys(args: SortArgs): Buffer[] {
 
 export const sortCommand = defineCommand({
   name: 'sort',
+  rawKeys: sortGetKeys,
   schema: sortSchema(),
   flags: ['write', 'denyoom'],
   keys: sortRoutingKeys,

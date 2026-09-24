@@ -65,19 +65,27 @@ function createStreamFieldsSchema() {
   return t.custom<FieldList>(
     { min: 2 },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
+      // Past XADD's table arity (-5), a missing or odd field/value tail is
+      // XADD's own check, which 6.2 words `wrong number of arguments for
+      // XADD` (`XADD s MAXLEN 10 *`, `XADD s * f v x`).
+      const pairsError = () =>
+        input.length + 1 >= 5 &&
+        !ctx.profile.has('error.odd-pairs-arity-wording')
+          ? errors.legacyOddPairs('XADD')
+          : new WrongNumberOfArgumentsError(ctx.commandName)
       const fields: FieldList = []
       let cursor = index
       while (cursor < input.length) {
         const field = input[cursor]
         const value = input[cursor + 1]
         if (value === undefined) {
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
+          throw pairsError()
         }
         fields.push(field, value)
         cursor += 2
       }
       if (fields.length === 0) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
+        throw pairsError()
       }
       return { value: fields, nextIndex: cursor }
     },

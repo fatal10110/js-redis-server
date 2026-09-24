@@ -88,7 +88,20 @@ export async function connectToRawSlotOwner(
   ports: number[],
   key: string,
 ): Promise<RawRedisConnection> {
-  assert.ok(ports.length > 0, 'connectToRawSlotOwner: no cluster ports')
+  const { host, port } = await rawSlotOwner(ports, key)
+  return RawRedisConnection.connect(host, port)
+}
+
+/**
+ * The address of the master that owns `key`'s slot, from `CLUSTER SLOTS`
+ * against the first node. Lets a test pick a key another node owns (to expect
+ * a MOVED) without a cluster client.
+ */
+export async function rawSlotOwner(
+  ports: number[],
+  key: string,
+): Promise<{ host: string; port: number }> {
+  assert.ok(ports.length > 0, 'rawSlotOwner: no cluster ports')
   const slot = clusterKeySlot(key)
 
   const probe = await RawRedisConnection.connect('127.0.0.1', ports[0])
@@ -121,5 +134,5 @@ export async function connectToRawSlotOwner(
   if (port === undefined) {
     throw new Error(`No raw cluster slot owner found for slot ${slot}`)
   }
-  return RawRedisConnection.connect(host ?? '127.0.0.1', port)
+  return { host: host ?? '127.0.0.1', port }
 }

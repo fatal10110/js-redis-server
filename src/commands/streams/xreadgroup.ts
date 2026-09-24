@@ -1,15 +1,17 @@
 import { defineCommand } from '../../core/command-definition'
+import { xreadGetKeys } from '../../core/key-specs'
+import { commandKeywordKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
-import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
 import { bulk } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
-import { parseExactId, parseNonNegativeInteger } from './ids'
+import { parseExactId } from './ids'
 import { bulkString, deletedEntryToReply, entryToReply } from './replies'
 import { blockOnKeys } from '../blocking'
+import { parseXreadOptions } from './xread-options'
 
 type XreadGroupStream = { key: Buffer; id: StreamId | '>' }
 
@@ -22,62 +24,13 @@ function createXreadGroupSchema() {
     noack: boolean
     streams: XreadGroupStream[]
   }>((input: readonly Buffer[], index: number, ctx: ParseContext) => {
-    if (input[index]?.toString().toUpperCase() !== 'GROUP') {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-
-    const group = input[index + 1]
-    const consumer = input[index + 2]
-    if (!group || !consumer) {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-
-    let cursor = index + 3
-    let count: number | null = null
-    let blockMs: number | null = null
-    let noack = false
-
-    while (cursor < input.length) {
-      const token = input[cursor].toString().toUpperCase()
-      if (token === 'COUNT') {
-        const raw = input[cursor + 1]
-        if (!raw) throw new WrongNumberOfArgumentsError(ctx.commandName)
-        count = parseNonNegativeInteger(raw)
-        cursor += 2
-        continue
-      }
-
-      if (token === 'BLOCK') {
-        const raw = input[cursor + 1]
-        if (!raw) throw new WrongNumberOfArgumentsError(ctx.commandName)
-        blockMs = parseNonNegativeInteger(raw)
-        cursor += 2
-        continue
-      }
-
-      if (token === 'NOACK') {
-        noack = true
-        cursor++
-        continue
-      }
-
-      break
-    }
-
-    if (
-      cursor >= input.length ||
-      input[cursor].toString().toUpperCase() !== 'STREAMS'
-    ) {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-    cursor++
-
-    const remaining = input.length - cursor
-    if (remaining === 0 || remaining % 2 !== 0) {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-
-    const half = remaining / 2
+    const options = parseXreadOptions(input, index, ctx, true)
+    const { count, blockMs, noack } = options
+    // parseXreadOptions guarantees GROUP for XREADGROUP.
+    const group = options.group as Buffer
+    const consumer = options.consumer as Buffer
+    const cursor = options.streamsStart
+    const half = options.streamCount
     const streams: XreadGroupStream[] = []
     for (let i = 0; i < half; i++) {
       const key = input[cursor + i]
@@ -162,10 +115,21 @@ async function blockingXreadGroup(
 
 export const xreadgroupCommand = defineCommand({
   name: 'xreadgroup',
+  rawKeys: xreadGetKeys,
   schema: t.object({
     args: t.withLayout(createXreadGroupSchema(), { min: 6 }),
   }),
   flags: ['write', 'blocking'],
+  introspection: {
+    keySpecs: [
+      commandKeywordKeySpec(
+        'STREAMS',
+        4,
+        { lastKey: -1, keyStep: 1, limit: 2 },
+        ['RO', 'access'],
+      ),
+    ],
+  },
   capabilities: { blocking: true },
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {

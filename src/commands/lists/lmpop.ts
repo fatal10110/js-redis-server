@@ -1,4 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
+import { numkeysGetKeys } from '../../core/key-specs'
+import { commandKeynumKeySpec } from '../introspection'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
@@ -157,12 +159,16 @@ async function blockingListMultiPop(
 
 export const lmpopCommand = defineCommand({
   name: 'lmpop',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<ListMultiPopArgs>({ min: 3 }, (input, index, ctx) => ({
     value: parseListMultiPopArgs(input, index, ctx, { blocking: false }),
     nextIndex: input.length,
   })),
   flags: ['write'],
+  introspection: {
+    keySpecs: [commandKeynumKeySpec(1, ['RW', 'access', 'delete'])],
+  },
   keys: args => args.keys,
   execute: (args, ctx) =>
     tryListMultiPop(args.keys, args.side, args.count, ctx.db) ??
@@ -171,6 +177,7 @@ export const lmpopCommand = defineCommand({
 
 export const blmpopCommand = defineCommand({
   name: 'blmpop',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<BlockingListMultiPopArgs>(
     { min: 4 },
@@ -180,6 +187,9 @@ export const blmpopCommand = defineCommand({
     }),
   ),
   flags: ['write', 'noscript'],
+  introspection: {
+    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'delete'])],
+  },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const immediate = tryListMultiPop(args.keys, args.side, args.count, ctx.db)

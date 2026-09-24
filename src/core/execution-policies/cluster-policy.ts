@@ -35,18 +35,36 @@ export function createClusterPolicy(
 
       const capabilities = plan.definition.capabilities
 
-      if (capabilities?.clusterMode === 'forbidden') {
+      // Both checks below are the command's own, so inside MULTI the command
+      // is queued and the check runs when EXEC replays it (the session is no
+      // longer in 'transaction' mode then): `MULTI; MOVE k 1; EXEC` answers
+      // `MOVE is not allowed in cluster mode` in its EXEC slot. A Valkey 9
+      // cluster has databases, so there the command runs and its own
+      // `DB index is out of range` answers instead.
+      const queueing = ctx.session.mode === 'transaction'
+      const multiDb = ctx.server.profile.has('cluster.multi-db')
+
+      const forbidden =
+        capabilities?.clusterMode === 'forbidden' ||
+        (capabilities?.clusterMode === 'multiDbOnly' && !multiDb)
+      if (forbidden && !queueing) {
         throw new RedisCommandError(
           `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
         )
       }
 
-      if (capabilities?.clusterMode === 'singleDb') {
-        // Cluster mode has a single logical database (0). DB 0 is a no-op and
-        // accepted; any non-zero index is rejected like real Redis unless the
-        // selected profile models Valkey's cluster multi-DB support.
+      // Cluster mode has a single logical database (0). DB 0 is a no-op and
+      // accepted; any non-zero index is rejected like real Redis unless the
+      // selected profile models Valkey's cluster multi-DB support. A queued
+      // plan whose parse failed has no `args` and answers its own error.
+      if (
+        capabilities?.clusterMode === 'singleDb' &&
+        !queueing &&
+        !multiDb &&
+        !plan.deferredError
+      ) {
         const index = (plan.args as { database: number }).database
-        if (index !== 0 && !ctx.server.profile.has('cluster.multi-db')) {
+        if (index !== 0) {
           throw new RedisCommandError(
             `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
           )

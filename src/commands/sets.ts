@@ -1,4 +1,6 @@
 import { defineCommand } from '../core/command-definition'
+import { numkeysGetKeys } from '../core/key-specs'
+import { commandKeynumKeySpec } from './introspection'
 import { t } from '../core/command-schema'
 import { integer, bulk, array } from './helpers'
 import { RedisValue } from '../core/redis-value'
@@ -391,9 +393,11 @@ export const sinterCommand = defineCommand({
 
 export const sintercardCommand = defineCommand({
   name: 'sintercard',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: sintercardSchema,
   flags: ['readonly'],
+  introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const sets = args.keys.map(k => getSetMembers(ctx.db, k))

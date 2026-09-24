@@ -1,4 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
+import { numkeysGetKeys } from '../../core/key-specs'
+import { commandKeynumKeySpec } from '../introspection'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
@@ -190,12 +192,16 @@ async function blockingZsetMultiPop(
 
 export const zmpopCommand = defineCommand({
   name: 'zmpop',
+  rawKeys: numkeysGetKeys(0, 1, 2),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<ZsetMultiPopArgs>({ min: 3 }, (input, index, ctx) => ({
     value: parseZsetMultiPopArgs(input, index, ctx, { blocking: false }),
     nextIndex: input.length,
   })),
   flags: ['write'],
+  introspection: {
+    keySpecs: [commandKeynumKeySpec(1, ['RW', 'access', 'delete'])],
+  },
   keys: args => args.keys,
   execute: (args, ctx) =>
     tryZsetMultiPop(args.keys, args.side, args.count, ctx.db) ??
@@ -204,6 +210,7 @@ export const zmpopCommand = defineCommand({
 
 export const bzmpopCommand = defineCommand({
   name: 'bzmpop',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.custom<BlockingZsetMultiPopArgs>(
     { min: 4 },
@@ -213,6 +220,9 @@ export const bzmpopCommand = defineCommand({
     }),
   ),
   flags: ['write', 'noscript'],
+  introspection: {
+    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'delete'])],
+  },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const immediate = tryZsetMultiPop(args.keys, args.side, args.count, ctx.db)

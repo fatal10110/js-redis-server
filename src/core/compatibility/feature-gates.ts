@@ -6,6 +6,9 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'set.nx-get': { redis: '7.0.0', valkey: '7.2.0' },
   'set.exat-pxat': { redis: '6.2.0', valkey: '7.2.0' },
   'command.docs': { redis: '7.0.0', valkey: '7.2.0' },
+  // COMMAND INFO entries grew tips, key specs and subcommands in 7.0; 6.2's
+  // have 7 fields, ending with the ACL categories (redis-server 6.2.24).
+  'command.info-extended-fields': { redis: '7.0.0', valkey: '7.2.0' },
   'command.getkeysandflags': { redis: '7.0.0', valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
@@ -81,13 +84,32 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 6.2 echoes fewer args (30 one-to-two-digit args: a0..a19 on 6.2, a0..a22
   // on 7.0+). Verified against redis-server 6.2.24, 7.0, 7.2, 8.0.6 and
   // Valkey 7.2 / 8.0, which answer the 7.0 form (#384).
+  // COMMAND DOCS summaries were rewritten for Redis 7.2 / Valkey 7.2 (`Get
+  // information about a stream` became `Returns information about a
+  // stream.`). Only the XINFO / XGROUP entries read it so far. Verified
+  // against redis-server 7.0.15, 7.2, 8.0.6 and Valkey 8.0 / 9.0.
+  'docs.summary-7.2-wording': { redis: '7.2.0', valkey: '7.2.0' },
+  // Valkey 8.0 marks GEORADIUS / GEORADIUSBYMEMBER's STORE and STOREDIST key
+  // specs `variable_flags`; Redis (through 8.0.6) and Valkey 7.2 do not.
+  // Verified against valkey-server 7.2, 8.0.11 and 9.0.6.
+  'geo.store-keyspec-variable-flags': { valkey: '8.0.0' },
+  // XREAD / XREADGROUP's odd STREAMS tail: 6.2 and 7.0 say `Unbalanced XREAD
+  // list of streams ... an ID or '$'` for both; 7.2 names the command and
+  // gives XREADGROUP its `'>'`. Verified against redis-server 6.2.24, 7.0.15,
+  // 7.2, 8.0.6 and valkey 8.0 / 9.0.
+  'stream.xread-unbalanced-wording': { redis: '7.2.0', valkey: '7.2.0' },
+  // XREAD's Unbalanced error lists `'+'` from Redis 8.0.0, although `XREAD
+  // ... +` itself is 7.4 (`xread.plus-id`): 7.4.0 - 7.4.11 still say `an ID
+  // or '$'`. Verified against redis-server 7.4.0, 7.4.11, 8.0.0 and 8.0.6.
+  'stream.xread-unbalanced-plus-wording': { redis: '8.0.0' },
   'error.unknown-command-wording': { redis: '7.0.0', valkey: '7.2.0' },
-  // MSET / MSETNX with an odd count of 3+ tokens (the command table accepts
-  // it, the command itself refuses it): 6.2 answers `wrong number of
-  // arguments for MSET` for both, 7.0 moved to the standard arity wording
-  // (`... for 'mset' command`, `... for 'msetnx' command`). Verified against
-  // redis-server 6.2.24 and 7.0 (#492).
-  'error.mset-odd-pairs-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // An odd field/value tail the command table accepts but the command itself
+  // refuses: 6.2 answers `wrong number of arguments for MSET` (MSET and
+  // MSETNX alike) and `wrong number of arguments for XADD`; 7.0 moved both to
+  // the standard arity wording (`... for 'mset' command`, `... for 'xadd'
+  // command`). Verified against redis-server 6.2.24, 7.0.15 and 8.0.6, and
+  // Valkey 8.0 / 9.0 (#492).
+  'error.odd-pairs-arity-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
@@ -146,11 +168,19 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis.call()`), so this gate also picks that wording (see
   // `scriptRejection` in src/core/lua-runtime.ts).
   'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
-  // Valkey 8.0 dropped the product name from the script lookup failure:
-  // `Unknown command called from script` where Redis (and Valkey 7.2) say
-  // `Unknown Redis command called from script`. Verified against Valkey 7.2,
-  // 8.0, 8.1 and 9.0.
+  // Valkey 8.0 dropped the product name from the scripting layer's own
+  // errors, where Redis (and Valkey 7.2) keep it:
+  //   Unknown command called from script              (Unknown Redis command ...)
+  //   Wrong number of args calling command from script (... calling Redis command ...)
+  //   Please specify at least one argument for this call (... this redis lib call)
+  //   Command arguments must be strings or integers    (Lua redis lib command ...)
+  // Verified against Valkey 7.2, 8.0.11, 8.1 and 9.0.6 and Redis 7.0.15 /
+  // 8.0.6 (#492).
   'script.unknown-command-valkey-wording': { valkey: '8.0.0' },
+  // Valkey 9.0 names itself in the noscript refusal: `This Valkey command is
+  // not allowed from script`; Redis and Valkey 7.2 through 8.1 say `This Redis
+  // command ...`. Verified against Valkey 8.0.11, 8.1.10 and 9.0.6.
+  'script.not-allowed-valkey-wording': { valkey: '9.0.0' },
   // COMMAND GETKEYS / GETKEYSANDFLAGS took arity -4 in 7.0 (a command and at
   // least one argument: `COMMAND GETKEYS GET` is a `command|getkeys` arity
   // error); 7.2 relaxed it to -3 and answers a short target with `Invalid

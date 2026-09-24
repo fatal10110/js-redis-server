@@ -1,6 +1,7 @@
 import { defineCommand } from '../../core/command-definition'
+import { xreadGetKeys } from '../../core/key-specs'
+import { commandKeywordKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
-import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
@@ -9,6 +10,7 @@ import { bulk } from '../helpers'
 import { compareStreamId, MIN_ID, parseExactId } from './ids'
 import { entryToReply } from './replies'
 import { blockOnKeys } from '../blocking'
+import { parseXreadOptions } from './xread-options'
 
 // XREAD [COUNT count] STREAMS key [key ...] id [id ...]
 // `$` means "start after the stream's current last id"; `+` means "return the stream's latest entry".
@@ -20,52 +22,10 @@ function createXreadSchema() {
     blockMs: number | null
     streams: XreadStream[]
   }>((input: readonly Buffer[], index: number, ctx: ParseContext) => {
-    let cursor = index
-    let count: number | null = null
-    let blockMs: number | null = null
-
-    // Optional COUNT <n> and BLOCK <ms> in any order
-    while (cursor < input.length) {
-      const token = input[cursor].toString().toUpperCase()
-      if (token === 'COUNT') {
-        cursor++
-        const raw = input[cursor]?.toString()
-        if (raw === undefined)
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
-        const n = Number(raw)
-        if (!Number.isInteger(n) || n < 0) throw errors.syntax()
-        count = n
-        cursor++
-      } else if (token === 'BLOCK') {
-        cursor++
-        const raw = input[cursor]?.toString()
-        if (raw === undefined)
-          throw new WrongNumberOfArgumentsError(ctx.commandName)
-        const ms = Number(raw)
-        if (!Number.isInteger(ms) || ms < 0) throw errors.syntax()
-        blockMs = ms
-        cursor++
-      } else {
-        break
-      }
-    }
-
-    // Required STREAMS keyword
-    if (
-      cursor >= input.length ||
-      input[cursor].toString().toUpperCase() !== 'STREAMS'
-    ) {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-    cursor++
-
-    // Remaining tokens: first half = keys, second half = ids
-    const remaining = input.length - cursor
-    if (remaining === 0 || remaining % 2 !== 0) {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-
-    const half = remaining / 2
+    const options = parseXreadOptions(input, index, ctx, false)
+    const { count, blockMs } = options
+    const cursor = options.streamsStart
+    const half = options.streamCount
     const streams: XreadStream[] = []
     for (let i = 0; i < half; i++) {
       const key = input[cursor + i]
@@ -144,8 +104,19 @@ async function blockingXread(
 
 export const xreadCommand = defineCommand({
   name: 'xread',
+  rawKeys: xreadGetKeys,
   schema: t.object({ args: t.withLayout(createXreadSchema(), { min: 3 }) }),
   flags: ['readonly'],
+  introspection: {
+    keySpecs: [
+      commandKeywordKeySpec(
+        'STREAMS',
+        1,
+        { lastKey: -1, keyStep: 1, limit: 2 },
+        ['RO', 'access'],
+      ),
+    ],
+  },
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {
     const { count, blockMs, streams } = args.args

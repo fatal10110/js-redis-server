@@ -1,7 +1,9 @@
 import { asciiLowerCase, asciiUpperCase } from './ascii-case'
 import { CommandDefinition, CommandPlan } from './command-definition'
 import { CommandRegistry } from './command-registry'
+import { failsTableArity, lookupTableArity } from './command-arity'
 import { parseCommandArgs } from './command-schema'
+import { rawCommandKeys } from './key-specs'
 import type { ExecutionPolicy } from './execution-policies'
 import {
   ExecCommandAbortError,
@@ -78,6 +80,26 @@ export class CommandExecutor {
    *   (see {@link lookupSubcommand}).
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
+    return this.createPlan(
+      this.lookup(rawCommand, rawArgs),
+      rawCommand,
+      rawArgs,
+    )
+  }
+
+  /**
+   * Command lookup, as Redis's `processCommand` does it for every caller (a
+   * client, MULTI, a script, COMMAND GETKEYS): the definition, from 7.0 the
+   * container subcommand (see {@link lookupSubcommand}), then the
+   * command-table arity of the entry lookup resolved to — the
+   * `container|subcommand` entry when there is one (`CLIENT REPLY` is `wrong
+   * number of arguments for 'client|reply' command` before CLIENT sees it),
+   * otherwise the command's own (`XREAD COUNT` never reaches XREAD's parser).
+   */
+  private lookup(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+  ): CommandDefinition<unknown> {
     const definition = this.registry.get(rawCommand.toString())
 
     if (!definition) {
@@ -85,7 +107,11 @@ export class CommandExecutor {
     }
 
     this.lookupSubcommand(definition, rawArgs)
-    return this.createPlan(definition, rawCommand, rawArgs)
+    const table = lookupTableArity(definition, rawArgs, this.profile)
+    if (failsTableArity(table.arity, rawArgs.length + 1)) {
+      throw new WrongNumberOfArgumentsError(table.name)
+    }
+    return definition
   }
 
   /**
@@ -133,10 +159,10 @@ export class CommandExecutor {
    * network client.
    *
    * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Such a failure also marks
-   * any open MULTI transaction dirty so a later EXEC is aborted, matching Redis:
-   * a command that cannot even be parsed must not silently vanish from the queue.
-   * Execution-time errors are handled inside {@link executePlan}.
+   * caught here and converted into a RESP error reply. Inside MULTI a command
+   * is planned the way Redis's `processCommand` queues it (see
+   * {@link planForQueue}). Execution-time errors are handled inside
+   * {@link executePlan}.
    */
   async executeRaw(
     rawCommand: Buffer | string,
@@ -144,13 +170,60 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
-      return await this.executePlan(this.plan(rawCommand, rawArgs), ctx)
+      const plan =
+        ctx.session.mode === 'transaction'
+          ? this.planForQueue(rawCommand, rawArgs)
+          : this.plan(rawCommand, rawArgs)
+      return await this.executePlan(plan, ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
         return this.rawCommandErrorResult(err, rawCommand, ctx)
       }
 
       throw err
+    }
+  }
+
+  /**
+   * Plan a command sent inside MULTI. Real Redis refuses one at queue time
+   * only when `processCommand` does: an unknown command or (7.0+) subcommand,
+   * or an argument count the command table's arity rejects — from 7.0 the
+   * `container|subcommand` entry's. Those throw here, and the caller dirties
+   * the transaction so EXEC aborts.
+   *
+   * Any other error the parser raises is the command's own argument check,
+   * which Redis runs when EXEC calls the command. The command is queued as a
+   * plan carrying that error as `deferredError`, raised after the policy
+   * chain, so the error fills its slot in EXEC's reply. Such a plan's `args`
+   * are unusable; its routing keys come from the command's key specs over the
+   * raw arguments ({@link rawCommandKeys}), as Redis routes a queued command
+   * without running its parser. The transaction commands themselves (EXEC,
+   * DISCARD, ...) run at once, so their parse errors are answered now.
+   */
+  private planForQueue(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+  ): CommandPlan {
+    const definition = this.lookup(rawCommand, rawArgs)
+
+    try {
+      return this.createPlan(definition, rawCommand, rawArgs)
+    } catch (err) {
+      if (
+        !(err instanceof RedisCommandError) ||
+        definition.flags.includes('transaction')
+      ) {
+        throw err
+      }
+
+      return {
+        definition,
+        args: undefined,
+        keys: rawCommandKeys(definition, rawCommand, rawArgs, this.profile),
+        rawCommand: Buffer.from(rawCommand),
+        rawArgs: rawArgs.map(arg => Buffer.from(arg)),
+        deferredError: err,
+      }
     }
   }
 
@@ -213,6 +286,10 @@ export class CommandExecutor {
         }
       }
 
+      if (plan.deferredError) {
+        throw plan.deferredError
+      }
+
       return await plan.definition.execute(
         plan.args,
         withMutationOrigin(plan, ctx),
@@ -258,6 +335,10 @@ export class CommandExecutor {
         if (policyResult) {
           return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
+      }
+
+      if (plan.deferredError) {
+        throw plan.deferredError
       }
 
       assertSyncCommandDefinition(plan)

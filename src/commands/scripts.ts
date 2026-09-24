@@ -1,4 +1,5 @@
 import { asciiLowerCase } from '../core/ascii-case'
+import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import {
@@ -16,7 +17,7 @@ import {
   type RedisFunctionLibrary,
 } from '../state'
 import { array, bulk, ok, unknownSubcommandError } from './helpers'
-import { commandSubcommandInfo } from './introspection'
+import { commandSubcommandInfo, commandKeynumKeySpec } from './introspection'
 
 type ScriptArgs = {
   subcommand: Buffer
@@ -115,6 +116,7 @@ export const scriptCommand = defineCommand({
 
 export const evalCommand = defineCommand<EvalArgs>({
   name: 'eval',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   schema: t.object({
     script: t.bulk(),
     numKeys: t.integer({ min: 0 }),
@@ -122,6 +124,12 @@ export const evalCommand = defineCommand<EvalArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RW', 'access', 'update'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RW and UPDATE',
+      }),
+    ],
     flags: DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -137,6 +145,7 @@ export const evalCommand = defineCommand<EvalArgs>({
 
 export const evalshaCommand = defineCommand<EvalShaArgs>({
   name: 'evalsha',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   schema: t.object({
     sha: t.string(),
     numKeys: t.integer({ min: 0 }),
@@ -144,6 +153,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'update'])],
     flags: DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -162,10 +172,17 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
 
 export const evalRoCommand = defineCommand<EvalArgs>({
   name: 'eval_ro',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: evalCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RO', 'access'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RO and ACCESS',
+      }),
+    ],
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -180,10 +197,12 @@ export const evalRoCommand = defineCommand<EvalArgs>({
 
 export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   name: 'evalsha_ro',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: evalshaCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [commandKeynumKeySpec(2, ['RO', 'access'])],
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -276,6 +295,7 @@ export const functionCommand = defineCommand<FunctionArgs>({
 
 export const fcallCommand = defineCommand<FcallArgs>({
   name: 'fcall',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     functionName: t.string(),
@@ -284,6 +304,12 @@ export const fcallCommand = defineCommand<FcallArgs>({
   }),
   flags: ['write', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RW', 'access', 'update'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RW and UPDATE',
+      }),
+    ],
     flags: DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },
@@ -294,10 +320,17 @@ export const fcallCommand = defineCommand<FcallArgs>({
 
 export const fcallRoCommand = defineCommand<FcallArgs>({
   name: 'fcall_ro',
+  rawKeys: numkeysGetKeys(0, 2, 3),
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: fcallCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
   introspection: {
+    keySpecs: [
+      commandKeynumKeySpec(2, ['RO', 'access'], {
+        notes:
+          'We cannot tell how the keys will be used so we assume the worst, RO and ACCESS',
+      }),
+    ],
     flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
     categories: ['@slow', '@scripting'],
   },

@@ -1,4 +1,5 @@
 import { defineCommand } from '../core/command-definition'
+import { setGetKeys } from '../core/key-specs'
 import {
   parseFiniteFloatToken,
   t,
@@ -88,6 +89,7 @@ export const getCommand = defineCommand({
 
 export const setCommand = defineCommand({
   name: 'set',
+  rawKeys: setGetKeys,
   schema: createSetSchema(),
   flags: ['write', 'denyoom'],
   introspection: {
@@ -685,9 +687,9 @@ function createKeyValuePairsSchema(): CommandSchema<KeyValuePair[]> {
           // MSETNX too.
           if (
             input.length - index >= 2 &&
-            !ctx.profile.has('error.mset-odd-pairs-wording')
+            !ctx.profile.has('error.odd-pairs-arity-wording')
           ) {
-            throw errors.legacyMsetOddPairs()
+            throw errors.legacyOddPairs('MSET')
           }
           throwWrongArity(ctx.commandName)
         }

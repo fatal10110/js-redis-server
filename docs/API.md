@@ -139,10 +139,15 @@ Current profile gates:
 | Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HEXPIRETIME`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPEXPIRETIME`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
 | `HSCAN ... NOVALUES` | `redis-7.4+` | `valkey-9.0+` |
 | `XREAD ... +` latest-entry stream ID | `redis-7.4+` | unsupported |
+| `XREAD` / `XREADGROUP` `Unbalanced '<cmd>' list of streams` wording per command (6.2 / 7.0: `Unbalanced XREAD list of streams` for both) | `redis-7.2+` | `valkey-8.0+` |
+| `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |
+| `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
+| `variable_flags` on the `GEORADIUS` / `GEORADIUSBYMEMBER` `STORE` / `STOREDIST` key specs | never | `valkey-8.0+` |
 | `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
+| `COMMAND INFO` entries with tips, key specs and subcommands (10 fields; 6.2 has 7, ending with the ACL categories) | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
@@ -161,12 +166,13 @@ Current profile gates:
 | Container-subcommand resolution at command-lookup time, before anything else sees the command: `MULTI` refuses to queue an unknown subcommand and `EXEC` answers `EXECABORT`, `XGROUP`/`XINFO` never look their key up first, a script's `redis.call`/`redis.pcall` gets `Unknown Redis command called from script`, and `COMMAND GETKEYS`/`GETKEYSANDFLAGS` answer `Invalid command specified` and `ACL DRYRUN` `Command '<name>' not found` (6.2 rejects the subcommand only when it runs, and `XGROUP`/`XINFO` check the key first) | `redis-7.0+` | `valkey-8.0+` |
 | `XINFO HELP` / `XGROUP HELP` as keyless arity-2 subcommands (`xinfo\|help`/`xgroup\|help` arity error with an argument; 6.2 answers `XINFO HELP <anything>` and treats `XGROUP HELP <args>` as an unknown subcommand, key first) and the `XGROUP HELP` text documenting `ENTRIESREAD` | `redis-7.0+` | `valkey-8.0+` |
 | `Print this help.` as the last line of `XINFO HELP` / `XGROUP HELP` (6.2 / 7.0: `Prints this help.`; the other containers' HELP still says `Prints` on every profile) | `redis-7.2+` | `valkey-8.0+` |
-| `Unknown command called from script` (no `Redis`) for a script's unknown command or subcommand | never | `valkey-8.0+` |
+| Valkey's wording for the scripting layer's own errors, without `Redis`: `Unknown command called from script`, `Wrong number of args calling command from script`, `Please specify at least one argument for this call`, `Command arguments must be strings or integers` | never | `valkey-8.0+` |
+| `This Valkey command is not allowed from script` for a `noscript` command called from a script | never | `valkey-9.0+` |
 | `CONFIG SET` failure wording (`CONFIG SET failed (possibly related to argument '<name>')` vs. 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'`, which echoes the name as sent and has no detail suffix for `notify-keyspace-events`), and unknown-parameter wording (`Unknown option or number of arguments for CONFIG SET - '<name>'` vs. 6.2's `Unsupported CONFIG parameter: <name>`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` with several parameter/value pairs, its `config\|set` arity / `syntax error` split, and `duplicate parameter` detection (6.2 accepts exactly one pair and answers any other shape with `Unknown subcommand or wrong number of arguments for 'SET'.`) | `redis-7.0+` | `valkey-8.0+` |
 | `n` (new-key) class in `notify-keyspace-events` (6.2 rejects it as an invalid flag character) | `redis-7.0+` | `valkey-8.0+` |
 | Unknown-command error wording (`unknown command '<name>', with args beginning with: '<arg>' ...` with the name cut at 128 bytes, vs. 6.2's backtick-quoted, `, `-separated form with the whole name; both echo args against a 128-byte budget, so 6.2 echoes fewer) | `redis-7.0+` | `valkey-8.0+` |
-| `MSET` / `MSETNX` odd-count error in the standard arity wording (`wrong number of arguments for 'mset' command`, vs. 6.2's `wrong number of arguments for MSET` for both) | `redis-7.0+` | `valkey-8.0+` |
+| `MSET` / `MSETNX` / `XADD` odd field/value-count error in the standard arity wording (`wrong number of arguments for 'mset' command`, vs. 6.2's `wrong number of arguments for MSET` for both MSET forms and `... for XADD`) | `redis-7.0+` | `valkey-8.0+` |
 | Script-abort error decoration (`<error> script: <sha>, on @user_script:<line>.`, keeping a failing `redis.call`'s own error code, vs. 6.2's `-ERR Error running script (call to f_<sha>): @user_script:<line>: <error>`). The same gate picks the wording of script-level rejections (unknown / not-allowed command, wrong arity, no command): 6.2's `... from Lua script` forms carry no error code and, from `redis.call`, an inner `@user_script: <line>: ` position (not yet from `redis.pcall`: the engine does not pass the calling line to the host) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |
 | Cluster `SELECT` for non-zero databases | unsupported | `valkey-9.0` |

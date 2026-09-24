@@ -223,7 +223,9 @@ export function parseGeoRadiusFlags(
     if (allowStore && token === 'STORE') {
       const dest = input[cursor + 1]
       if (!dest) throw errors.syntax()
+      // The last STORE / STOREDIST wins, key and kind, as in Redis.
       store = dest
+      storeDist = undefined
       cursor += 2
       continue
     }
@@ -231,6 +233,7 @@ export function parseGeoRadiusFlags(
       const dest = input[cursor + 1]
       if (!dest) throw errors.syntax()
       storeDist = dest
+      store = undefined
       cursor += 2
       continue
     }

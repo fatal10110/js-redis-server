@@ -1,5 +1,6 @@
 import type { CommandSchema } from './command-schema'
 import type { RedisExecutionContext } from './redis-context'
+import type { RedisCommandError } from './redis-error'
 import type { RedisResult } from './redis-result'
 import type { CompatibilityProfile, VersionGate } from './compatibility'
 import { asciiLowerCase } from './ascii-case'
@@ -24,11 +25,15 @@ export type CommandCapabilities = {
   movableKeys?: boolean
   scriptKeys?: boolean
   /**
-   * How the command behaves under cluster mode. `'forbidden'` is always
-   * rejected; `'singleDb'` is rejected only when it targets a non-zero
-   * database. Consumed by `ClusterPolicy` instead of matching command names.
+   * How the command behaves under cluster mode. `'forbidden'` is rejected
+   * outright; `'multiDbOnly'` (MOVE) is rejected unless the profile models
+   * Valkey 9's cluster databases (`cluster.multi-db`), and `'singleDb'`
+   * (SELECT) only when it targets a non-zero database, with the same
+   * exemption. Each is checked when the command runs, so inside MULTI it is
+   * queued and answers at EXEC. Consumed by `ClusterPolicy` instead of
+   * matching command names.
    */
-  clusterMode?: 'forbidden' | 'singleDb'
+  clusterMode?: 'forbidden' | 'multiDbOnly' | 'singleDb'
   /**
    * Marks the command as a transaction boundary. `'begin'` opens a transaction
    * (MULTI); `'end'` closes one (EXEC/DISCARD). `ClusterPolicy` uses this to
@@ -42,12 +47,24 @@ export type CommandMonitorMetadata = {
   redactArgs?: (rawArgs: readonly Buffer[]) => readonly Buffer[]
 }
 
+/**
+ * A Redis key spec (`COMMAND INFO` / `COMMAND DOCS`). `begin_search` is the
+ * index `beginSearchIndex`, or with `beginSearchKeyword` the argument after a
+ * keyword searched for from `startFrom` (backwards from the end when
+ * negative). `find_keys` is the range `lastKey` / `keyStep` / `limit`, or with
+ * `findKeysKeynum` a count read from the argument `keyNumIdx` after the
+ * begin position, the keys starting `firstKey` after it. Besides COMMAND INFO,
+ * specs are how a queued command whose own parser failed is routed in a
+ * cluster (see `keysFromKeySpecs`).
+ */
 export type CommandKeySpec = {
   flags: readonly string[]
   beginSearchIndex: number
+  beginSearchKeyword?: { keyword: string; startFrom: number }
   lastKey: number
   keyStep: number
   limit?: number
+  findKeysKeynum?: { keyNumIdx: number; firstKey: number; keyStep: number }
   notes?: string
 }
 
@@ -84,9 +101,33 @@ export type CommandIntrospection = {
   keySpecs?: readonly CommandKeySpec[]
   subcommands?: readonly CommandIntrospection[]
   docs?: CommandDocumentation
+  /**
+   * The fields that differ on some profiles, merged over the rest when it
+   * returns them (see `introspectionFor`): XINFO's 6.2 entry, say, or the
+   * `variable_flags` Valkey puts on GEORADIUS's STORE key specs.
+   */
+  forProfile?: (
+    profile: CompatibilityProfile,
+  ) => Omit<CommandIntrospection, 'forProfile' | 'name'> | undefined
+}
+
+/** `introspection` as `profile` reports it: `forProfile` merged over it. */
+export function introspectionFor(
+  introspection: CommandIntrospection | undefined,
+  profile: CompatibilityProfile,
+): CommandIntrospection | undefined {
+  const override = introspection?.forProfile?.(profile)
+  return override ? { ...introspection, ...override } : introspection
 }
 
 export type CommandExecutionResult = RedisResult | Promise<RedisResult>
+
+/**
+ * A key a command names, with its access flags (`RO`, `OW`, `access`,
+ * `update`, ...) as `COMMAND GETKEYSANDFLAGS` reports them: from the key spec
+ * that found it, or from the command's getkeys procedure.
+ */
+export type KeyWithFlags = { key: Buffer; flags: readonly string[] }
 
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string
@@ -97,16 +138,39 @@ export interface CommandDefinition<TArgs = unknown> {
   readonly monitor?: CommandMonitorMetadata
   readonly introspection?: CommandIntrospection
   keys(args: TArgs): readonly Buffer[]
+  /**
+   * Redis's getkeys proc: the keys in a raw `argv` (command name at index 0)
+   * without parsing it, each with the flags the proc gives it (none, for
+   * most). Consulted to route a command queued inside MULTI whose own parser
+   * failed (without one, the legacy first/last/step range `COMMAND INFO`
+   * reports is used, as Redis does), and by `COMMAND GETKEYS` /
+   * `GETKEYSANDFLAGS` when the key specs cannot answer.
+   */
+  rawKeys?(argv: readonly Buffer[]): readonly KeyWithFlags[]
   execute(args: TArgs, ctx: RedisExecutionContext): CommandExecutionResult
 }
 
-export type CommandPlan<TArgs = unknown> = {
+type CommandPlanBase<TArgs> = {
   definition: CommandDefinition<TArgs>
-  args: TArgs
   keys: readonly Buffer[]
   rawCommand: Buffer
   rawArgs: readonly Buffer[]
 }
+
+/**
+ * A resolved command, ready to run: its definition, parsed `args` and routing
+ * `keys`. A command queued inside MULTI whose own argument parsing failed is
+ * the second form: no `args`, and `deferredError` set to the error its EXEC
+ * slot answers, raised after the policy chain; its `keys` come from the
+ * command's getkeys proc or legacy key range over `rawArgs`. A policy that
+ * reads `args` narrows on `deferredError` first.
+ */
+export type CommandPlan<TArgs = unknown> =
+  | (CommandPlanBase<TArgs> & { args: TArgs; deferredError?: undefined })
+  | (CommandPlanBase<TArgs> & {
+      args?: undefined
+      deferredError: RedisCommandError
+    })
 
 /**
  * Builds a command definition, pinning `TArgs` from the schema so `keys` and
