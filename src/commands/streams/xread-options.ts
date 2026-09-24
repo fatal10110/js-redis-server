@@ -108,7 +108,8 @@ function parseBlockTimeout(raw: Buffer): number {
 
 /**
  * Redis 6.2 / 7.0 name XREAD for both commands; 7.2 names the command and
- * gives XREADGROUP its `>`; Redis 7.4 adds XREAD's `+` (`xread.plus-id`).
+ * gives XREADGROUP its `>`; Redis 8.0 adds XREAD's `+` to the list (7.4
+ * accepts `+` but does not mention it).
  */
 function unbalancedStreams(
   ctx: ParseContext,
@@ -125,7 +126,7 @@ function unbalancedStreams(
     )
   }
   return new RedisCommandError(
-    ctx.profile.has('xread.plus-id')
+    ctx.profile.has('stream.xread-unbalanced-plus-wording')
       ? "Unbalanced 'xread' list of streams: for each stream key an ID, '+', or '$' must be specified."
       : "Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified.",
   )

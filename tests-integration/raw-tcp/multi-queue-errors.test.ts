@@ -401,6 +401,30 @@ describe(`Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendN
     await movedThenAbort(conn, ['XINFO', 'STREAM', remote, 'x'])
   })
 
+  // A valid GEORADIUS is routed by its source and the last STORE /
+  // STOREDIST destination, which is where it writes.
+  test('GEORADIUS routes by the last STORE / STOREDIST', async () => {
+    const { conn, local, otherSlot } = await setup()
+    const destination = local.replace(/:k$/, ':d')
+
+    await expectReply(
+      conn,
+      [
+        'GEORADIUS',
+        local,
+        '0',
+        '0',
+        '1',
+        'km',
+        'STORE',
+        otherSlot,
+        'STOREDIST',
+        destination,
+      ],
+      ':0\r\n',
+    )
+  })
+
   // MOVE checks the cluster when it runs, so inside MULTI it is queued and
   // answers at EXEC. A Valkey 9 cluster has databases: MOVE runs there, and a
   // single-database cluster answers its own range error.

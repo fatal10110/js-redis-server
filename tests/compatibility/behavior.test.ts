@@ -133,24 +133,33 @@ describe('compatibility behavior gates', () => {
   })
 
   test('COMMAND introspection hides gated subcommands', async () => {
-    const redis62 = createSession('redis-6.2')
-    const redis62Info = (await redis62.execute(
-      'command',
-      buf('info', 'command'),
-    )) as RedisResult
-    // Redis 6.2's command table has no subcommand entries at all (6.2.24:
-    // COMMAND INFO command is a 7-field reply with no subcommand list).
-    assert.deepStrictEqual(commandSubcommandNames(redis62Info), [])
+    const clientSubcommands = async (profile: CompatibilitySpec) =>
+      commandSubcommandNames(
+        (await createSession(profile).execute(
+          'command',
+          buf('info', 'client'),
+        )) as RedisResult,
+      )
 
-    const redis70 = createSession('redis-7.0')
-    const redis70Info = (await redis70.execute(
+    // CLIENT SETINFO is 7.2: listed there, hidden on 7.0.
+    assert.ok(
+      !(await clientSubcommands('redis-7.0')).includes('client|setinfo'),
+    )
+    assert.ok((await clientSubcommands('redis-7.2')).includes('client|setinfo'))
+    assert.ok(
+      (await clientSubcommands('redis-7.0')).includes('client|no-evict'),
+    )
+
+    // Redis 6.2's command table has no subcommand entries at all (6.2.24:
+    // COMMAND INFO command is a 7-field reply, ending with the categories).
+    const redis62Info = (await createSession('redis-6.2').execute(
       'command',
       buf('info', 'command'),
     )) as RedisResult
-    assert.ok(commandSubcommandNames(redis70Info).includes('command|docs'))
-    assert.ok(
-      commandSubcommandNames(redis70Info).includes('command|getkeysandflags'),
-    )
+    assert.strictEqual(redis62Info.value.kind, 'array')
+    const [entry] = redis62Info.value.items
+    assert.strictEqual(entry.kind, 'array')
+    assert.strictEqual(entry.items.length, 7)
   })
 
   test('PUBSUB sharded subcommands follow their feature gate', async () => {

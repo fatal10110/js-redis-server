@@ -462,7 +462,7 @@ export const moveCommand = defineCommand({
   name: 'move',
   schema: t.object({ key: t.key(), database: t.integer() }),
   flags: ['write'],
-  capabilities: { clusterMode: 'forbidden' },
+  capabilities: { clusterMode: 'multiDbOnly' },
   keys: args => [args.key],
   execute: (args, ctx) => {
     const targetDb = ctx.server.databases[args.database]

@@ -44,7 +44,10 @@ export function createClusterPolicy(
       const queueing = ctx.session.mode === 'transaction'
       const multiDb = ctx.server.profile.has('cluster.multi-db')
 
-      if (capabilities?.clusterMode === 'forbidden' && !queueing && !multiDb) {
+      const forbidden =
+        capabilities?.clusterMode === 'forbidden' ||
+        (capabilities?.clusterMode === 'multiDbOnly' && !multiDb)
+      if (forbidden && !queueing) {
         throw new RedisCommandError(
           `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
         )

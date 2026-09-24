@@ -5,6 +5,7 @@ import {
   type CommandDefinition,
   type CommandIntrospection,
   type CommandKeySpec,
+  type KeyWithFlags,
 } from './command-definition'
 import {
   isIntegerToken,
@@ -13,8 +14,7 @@ import {
 } from './command-schema'
 import type { CompatibilityProfile } from './compatibility'
 
-/** A key with the flags of the key spec that found it. */
-export type KeyWithFlags = { key: Buffer; flags: readonly string[] }
+export type { KeyWithFlags }
 
 /**
  * The keys a command's key specs pick out of `argv` (the command name at
@@ -71,7 +71,7 @@ export function rawCommandKeys(
 ): Buffer[] {
   const argv = [Buffer.from(rawCommand), ...rawArgs]
   if (definition.rawKeys) {
-    return [...definition.rawKeys(argv)]
+    return definition.rawKeys(argv).map(({ key }) => key)
   }
 
   const subcommand = lookupSubcommandEntry(definition, rawArgs, profile)
@@ -157,7 +157,7 @@ function absoluteLastKey(spec: CommandKeySpec): number {
  * picks out of `argv`. A range that runs past the end of the command gives no
  * keys at all (the command then answers its own arity or syntax error).
  */
-function legacyRangeKeys(
+export function legacyRangeKeys(
   range: LegacyKeyRange,
   argv: readonly Buffer[],
 ): Buffer[] {
@@ -198,13 +198,14 @@ export function atoi(value: Buffer): number {
  * `numkeys` at `keyCountOfs` (read with {@link atoi}), keys from
  * `firstKeyOfs` every `keyStep`, plus the destination at `storeKeyOfs` when it
  * is not 0. A count below 1 or past the end of the command gives no keys.
+ * Like Redis's, the keys carry no flags.
  */
 export function numkeysGetKeys(
   storeKeyOfs: number,
   keyCountOfs: number,
   firstKeyOfs: number,
   keyStep = 1,
-): (argv: readonly Buffer[]) => Buffer[] {
+): (argv: readonly Buffer[]) => KeyWithFlags[] {
   return argv => {
     const argc = argv.length
     if (keyCountOfs >= argc) {
@@ -215,12 +216,12 @@ export function numkeysGetKeys(
       return []
     }
 
-    const keys: Buffer[] = []
+    const keys: KeyWithFlags[] = []
     for (let i = 0; i < num; i++) {
-      keys.push(argv[firstKeyOfs + i * keyStep])
+      keys.push({ key: argv[firstKeyOfs + i * keyStep], flags: [] })
     }
     if (storeKeyOfs) {
-      keys.push(argv[storeKeyOfs])
+      keys.push({ key: argv[storeKeyOfs], flags: [] })
     }
     return keys
   }
@@ -231,7 +232,7 @@ export function numkeysGetKeys(
  * until `STREAMS`, and the keys are the first half of what follows. Anything
  * unexpected before `STREAMS`, or an odd or empty tail, gives no keys.
  */
-export function xreadGetKeys(argv: readonly Buffer[]): Buffer[] {
+export function xreadGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
   const argc = argv.length
   let streamsPos = -1
   for (let i = 1; i < argc; i++) {
@@ -254,14 +255,16 @@ export function xreadGetKeys(argv: readonly Buffer[]): Buffer[] {
   if (streamsPos === -1 || num === 0 || num % 2 !== 0) {
     return []
   }
-  return argv.slice(streamsPos + 1, streamsPos + 1 + num / 2)
+  return argv
+    .slice(streamsPos + 1, streamsPos + 1 + num / 2)
+    .map(key => ({ key, flags: [] }))
 }
 
 /**
  * Redis's `georadiusGetKeys` (GEORADIUS and GEORADIUSBYMEMBER): the key, plus
  * the destination of the last `STORE` / `STOREDIST` from argument 5 on.
  */
-export function georadiusGetKeys(argv: readonly Buffer[]): Buffer[] {
+export function georadiusGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
   let storedKey = -1
   for (let i = 5; i < argv.length; i++) {
     const arg = argv[i]
@@ -273,14 +276,14 @@ export function georadiusGetKeys(argv: readonly Buffer[]): Buffer[] {
       i++
     }
   }
-  return storedKey === -1 ? [argv[1]] : [argv[1], argv[storedKey]]
+  return sourceAndDestination(argv, storedKey)
 }
 
 /**
  * Redis's `sortGetKeys`: the key, plus the destination of the last `STORE`,
  * skipping the arguments of `LIMIT`, `GET` and `BY`.
  */
-export function sortGetKeys(argv: readonly Buffer[]): Buffer[] {
+export function sortGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
   const skips: Record<string, number> = { limit: 2, get: 1, by: 1 }
   let storedKey = -1
   for (let i = 2; i < argv.length; i++) {
@@ -291,7 +294,33 @@ export function sortGetKeys(argv: readonly Buffer[]): Buffer[] {
       storedKey = i + 1
     }
   }
-  return storedKey === -1 ? [argv[1]] : [argv[1], argv[storedKey]]
+  return sourceAndDestination(argv, storedKey)
+}
+
+// The source key read, and the destination written when there is one, with
+// the flags Redis's georadius / sort procs give them.
+function sourceAndDestination(
+  argv: readonly Buffer[],
+  storedKey: number,
+): KeyWithFlags[] {
+  const source = { key: argv[1], flags: ['RO', 'access'] }
+  return storedKey === -1
+    ? [source]
+    : [source, { key: argv[storedKey], flags: ['OW', 'update'] }]
+}
+
+/**
+ * Redis's `setGetKeys`: the key, `OW update`, or `RW access update` when a
+ * `GET` follows the value.
+ */
+export function setGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
+  const get = argv.slice(3).some(arg => equalsAscii(arg, 'get'))
+  return [
+    {
+      key: argv[1],
+      flags: get ? ['RW', 'access', 'update'] : ['OW', 'update'],
+    },
+  ]
 }
 
 function beginSearch(

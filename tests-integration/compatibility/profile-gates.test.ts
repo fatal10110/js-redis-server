@@ -1063,7 +1063,9 @@ describe(
           1,
           ['@write', '@stream', '@slow'],
         ])
-        assert.deepStrictEqual(xinfo[9] ?? [], [])
+        // 6.2 entries stop at the ACL categories: no tips, key specs or
+        // subcommands.
+        assert.strictEqual(xinfo.length, 7)
         connection.write(commandFrame('COMMAND', 'INFO', 'xinfo|stream'))
         assert.deepStrictEqual(normalizeFrame(await connection.readFrame()), [
           null,
@@ -1071,6 +1073,7 @@ describe(
         return
       }
 
+      assert.strictEqual(xinfo.length, 10)
       assert.deepStrictEqual(xinfo.slice(1, 7), [-2, [], 0, 0, 0, ['@slow']])
       const subcommands = (xinfo[9] as RespWireValue[][]).map(entry => [
         entry[0],

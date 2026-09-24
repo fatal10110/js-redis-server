@@ -1,4 +1,5 @@
 import { defineCommand } from '../core/command-definition'
+import { setGetKeys } from '../core/key-specs'
 import {
   parseFiniteFloatToken,
   t,
@@ -88,6 +89,7 @@ export const getCommand = defineCommand({
 
 export const setCommand = defineCommand({
   name: 'set',
+  rawKeys: setGetKeys,
   schema: createSetSchema(),
   flags: ['write', 'denyoom'],
   introspection: {

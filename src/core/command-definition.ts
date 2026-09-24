@@ -26,13 +26,14 @@ export type CommandCapabilities = {
   scriptKeys?: boolean
   /**
    * How the command behaves under cluster mode. `'forbidden'` is rejected
-   * outright, and `'singleDb'` only when it targets a non-zero database,
-   * unless the profile models Valkey 9's cluster databases
-   * (`cluster.multi-db`). Either is checked when the command runs, so inside
-   * MULTI it is queued and answers at EXEC. Consumed by `ClusterPolicy`
-   * instead of matching command names.
+   * outright; `'multiDbOnly'` (MOVE) is rejected unless the profile models
+   * Valkey 9's cluster databases (`cluster.multi-db`), and `'singleDb'`
+   * (SELECT) only when it targets a non-zero database, with the same
+   * exemption. Each is checked when the command runs, so inside MULTI it is
+   * queued and answers at EXEC. Consumed by `ClusterPolicy` instead of
+   * matching command names.
    */
-  clusterMode?: 'forbidden' | 'singleDb'
+  clusterMode?: 'forbidden' | 'multiDbOnly' | 'singleDb'
   /**
    * Marks the command as a transaction boundary. `'begin'` opens a transaction
    * (MULTI); `'end'` closes one (EXEC/DISCARD). `ClusterPolicy` uses this to
@@ -132,11 +133,13 @@ export interface CommandDefinition<TArgs = unknown> {
   keys(args: TArgs): readonly Buffer[]
   /**
    * Redis's getkeys proc: the keys in a raw `argv` (command name at index 0)
-   * without parsing it. Only consulted to route a command queued inside MULTI
-   * whose own parser failed; without one, the legacy first/last/step range
-   * `COMMAND INFO` reports is used, as Redis does.
+   * without parsing it, each with the flags the proc gives it (none, for
+   * most). Consulted to route a command queued inside MULTI whose own parser
+   * failed (without one, the legacy first/last/step range `COMMAND INFO`
+   * reports is used, as Redis does), and by `COMMAND GETKEYS` /
+   * `GETKEYSANDFLAGS` when the key specs cannot answer.
    */
-  rawKeys?(argv: readonly Buffer[]): readonly Buffer[]
+  rawKeys?(argv: readonly Buffer[]): readonly KeyWithFlags[]
   execute(args: TArgs, ctx: RedisExecutionContext): CommandExecutionResult
 }
 
@@ -155,6 +158,13 @@ type CommandPlanBase<TArgs> = {
  * command's getkeys proc or legacy key range over `rawArgs`. A policy that
  * reads `args` narrows on `deferredError` first.
  */
+/**
+ * A key a command names, with its access flags (`RO`, `OW`, `access`,
+ * `update`, ...) as `COMMAND GETKEYSANDFLAGS` reports them: from the key spec
+ * that found it, or from the command's getkeys procedure.
+ */
+export type KeyWithFlags = { key: Buffer; flags: readonly string[] }
+
 export type CommandPlan<TArgs = unknown> =
   | (CommandPlanBase<TArgs> & { args: TArgs; deferredError?: undefined })
   | (CommandPlanBase<TArgs> & {

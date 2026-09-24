@@ -11,6 +11,7 @@ export type {
   CommandFlag,
   CommandDefinition,
   CommandPlan,
+  KeyWithFlags,
 } from './core/command-definition'
 
 export type {

@@ -140,12 +140,14 @@ Current profile gates:
 | `HSCAN ... NOVALUES` | `redis-7.4+` | `valkey-9.0+` |
 | `XREAD ... +` latest-entry stream ID | `redis-7.4+` | unsupported |
 | `XREAD` / `XREADGROUP` `Unbalanced '<cmd>' list of streams` wording per command (6.2 / 7.0: `Unbalanced XREAD list of streams` for both) | `redis-7.2+` | `valkey-8.0+` |
+| `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |
 | `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
 | `variable_flags` on the `GEORADIUS` / `GEORADIUSBYMEMBER` `STORE` / `STOREDIST` key specs | never | `valkey-8.0+` |
 | `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
+| `COMMAND INFO` entries with tips, key specs and subcommands (10 fields; 6.2 has 7, ending with the ACL categories) | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |

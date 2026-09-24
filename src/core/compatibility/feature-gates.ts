@@ -6,6 +6,9 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'set.nx-get': { redis: '7.0.0', valkey: '7.2.0' },
   'set.exat-pxat': { redis: '6.2.0', valkey: '7.2.0' },
   'command.docs': { redis: '7.0.0', valkey: '7.2.0' },
+  // COMMAND INFO entries grew tips, key specs and subcommands in 7.0; 6.2's
+  // have 7 fields, ending with the ACL categories (redis-server 6.2.24).
+  'command.info-extended-fields': { redis: '7.0.0', valkey: '7.2.0' },
   'command.getkeysandflags': { redis: '7.0.0', valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
@@ -92,10 +95,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'geo.store-keyspec-variable-flags': { valkey: '8.0.0' },
   // XREAD / XREADGROUP's odd STREAMS tail: 6.2 and 7.0 say `Unbalanced XREAD
   // list of streams ... an ID or '$'` for both; 7.2 names the command and
-  // gives XREADGROUP its `'>'` (and 7.4's XREAD its `'+'`, `xread.plus-id`).
-  // Verified against redis-server 6.2.24, 7.0.15, 7.2, 8.0.6 and valkey 8.0 /
-  // 9.0.
+  // gives XREADGROUP its `'>'`. Verified against redis-server 6.2.24, 7.0.15,
+  // 7.2, 8.0.6 and valkey 8.0 / 9.0.
   'stream.xread-unbalanced-wording': { redis: '7.2.0', valkey: '7.2.0' },
+  // XREAD's Unbalanced error lists `'+'` from Redis 8.0.0, although `XREAD
+  // ... +` itself is 7.4 (`xread.plus-id`): 7.4.0 - 7.4.11 still say `an ID
+  // or '$'`. Verified against redis-server 7.4.0, 7.4.11, 8.0.0 and 8.0.6.
+  'stream.xread-unbalanced-plus-wording': { redis: '8.0.0' },
   'error.unknown-command-wording': { redis: '7.0.0', valkey: '7.2.0' },
   // An odd field/value tail the command table accepts but the command itself
   // refuses: 6.2 answers `wrong number of arguments for MSET` (MSET and
