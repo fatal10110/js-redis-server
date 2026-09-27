@@ -137,7 +137,7 @@ Current profile gates:
 | Redis 6.2 root commands: `BLMOVE`, `COPY`, `GETDEL`, `GETEX`, `HRANDFIELD`, `LMOVE`, `RESET`, `SMISMEMBER`, `XAUTOCLAIM`, `ZMSCORE` | `redis-6.2+` | `valkey-8.0+` |
 | Redis 7.0 root commands: `BLMPOP`, `BZMPOP`, `EXPIRETIME`, `LMPOP`, `PEXPIRETIME`, `SINTERCARD`, `SORT_RO`, `SPUBLISH`, `SSUBSCRIBE`, `SUNSUBSCRIBE`, `ZINTERCARD`, `ZMPOP` | `redis-7.0+` | `valkey-8.0+` |
 | Redis 7.4 hash-field expiration commands: `HEXPIRE`, `HEXPIREAT`, `HEXPIRETIME`, `HPERSIST`, `HPEXPIRE`, `HPEXPIREAT`, `HPEXPIRETIME`, `HPTTL`, `HTTL` | `redis-7.4+` | `valkey-9.0+` |
-| `HSCAN ... NOVALUES` | `redis-7.4+` | `valkey-9.0+` |
+| `HSCAN ... NOVALUES` | `redis-7.4+` | `valkey-8.0+` |
 | `XREAD ... +` latest-entry stream ID | `redis-7.4+` | unsupported |
 | `XREAD` / `XREADGROUP` `Unbalanced '<cmd>' list of streams` wording per command (6.2 / 7.0: `Unbalanced XREAD list of streams` for both) | `redis-7.2+` | `valkey-8.0+` |
 | `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |

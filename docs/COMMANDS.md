@@ -515,7 +515,12 @@ with `GT` or `LT`.
 `TYPE` is only accepted by `SCAN` (matching real Redis); `HSCAN`/`SSCAN`/`ZSCAN`
 reject it.
 
-`NOVALUES` is only accepted by `HSCAN` for Redis 7.4+ / Valkey 9.0+ profiles.
+`NOVALUES` is only accepted by `HSCAN` for Redis 7.4+ / Valkey 8.0+ profiles;
+there `SCAN`/`SSCAN`/`ZSCAN` answer `NOVALUES option can only be used in HSCAN`,
+and on older profiles every scan treats it as an unknown option (`syntax
+error`). `HSCAN`/`SSCAN`/`ZSCAN` parse their options only after the key lookup,
+as Redis does: a missing key returns the empty scan reply whatever the options,
+and a key of the wrong type returns `WRONGTYPE` first.
 
 ## 11. Transaction Commands
 

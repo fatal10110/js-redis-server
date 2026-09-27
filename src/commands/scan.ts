@@ -4,6 +4,7 @@ import { RedisCommandError, errors } from '../core/redis-error'
 import { redisGlobMatch } from '../core/glob'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
+import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisDataTypeName } from '../state'
 import { array, scoreBuffer } from './helpers'
 
@@ -15,12 +16,18 @@ type ScanOptions = {
   noValues?: boolean
 }
 
-type KeyedScanOptions = {
+/**
+ * What the keyed scans (HSCAN / SSCAN / ZSCAN) parse up front: the key and the
+ * cursor. The options stay raw until the key has been looked up, because real
+ * Redis parses them only then (`scanGenericCommand` runs after
+ * `lookupKeyReadOrReply` and `checkType`): a missing key answers the empty scan
+ * reply whatever follows the cursor, and a key of the wrong type answers
+ * WRONGTYPE before any option error.
+ */
+type KeyedScanArgs = {
   key: Buffer
   cursor: bigint
-  match?: Buffer
-  count?: number
-  noValues?: boolean
+  options: readonly Buffer[]
 }
 
 type ScanResultOptions = {
@@ -54,7 +61,7 @@ export const keysCommand = defineCommand({
 
 export const scanCommand = defineCommand({
   name: 'scan',
-  schema: createScanOptionsSchema(true),
+  schema: createScanOptionsSchema(),
   flags: ['readonly', 'random'],
   keys: () => [],
   execute: (args, ctx) => {
@@ -70,44 +77,52 @@ export const scanCommand = defineCommand({
 
 export const hscanCommand = defineCommand({
   name: 'hscan',
-  schema: createKeyedScanOptionsSchema(),
+  schema: createKeyedScanSchema(),
   flags: ['readonly', 'random'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (args.noValues && !ctx.server.profile.has('hscan.novalues')) {
-      throw errors.syntax()
-    }
-
     const hash = ctx.db.getHash(args.key)
     if (!hash) {
-      return scanResult([], args)
+      return emptyScanResult()
     }
 
+    const options = parseScanOptions(
+      args.options,
+      0,
+      'hscan',
+      ctx.server.profile,
+    )
     const entries = ctx.db.updateHash(args.key, hash =>
       Array.from(hash.entries()),
     )
     const items: ScanItem[] = entries.map(({ field, value }) => ({
       matchValue: field,
-      values: args.noValues
+      values: options.noValues
         ? [RedisValue.bulkString(field)]
         : [RedisValue.bulkString(field), RedisValue.bulkString(value)],
     }))
 
-    return scanResult(items, args)
+    return scanResult(items, { cursor: args.cursor, ...options })
   },
 })
 
 export const sscanCommand = defineCommand({
   name: 'sscan',
-  schema: createKeyedScanOptionsSchema(),
+  schema: createKeyedScanSchema(),
   flags: ['readonly', 'random'],
   keys: args => [args.key],
   execute: (args, ctx) => {
     const set = ctx.db.getSet(args.key)
     if (!set) {
-      return scanResult([], args)
+      return emptyScanResult()
     }
 
+    const options = parseScanOptions(
+      args.options,
+      0,
+      'sscan',
+      ctx.server.profile,
+    )
     const items: ScanItem[] = []
     for (const member of set.members.values()) {
       items.push({
@@ -116,21 +131,27 @@ export const sscanCommand = defineCommand({
       })
     }
 
-    return scanResult(items, args)
+    return scanResult(items, { cursor: args.cursor, ...options })
   },
 })
 
 export const zscanCommand = defineCommand({
   name: 'zscan',
-  schema: createKeyedScanOptionsSchema(),
+  schema: createKeyedScanSchema(),
   flags: ['readonly', 'random'],
   keys: args => [args.key],
   execute: (args, ctx) => {
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) {
-      return scanResult([], args)
+      return emptyScanResult()
     }
 
+    const options = parseScanOptions(
+      args.options,
+      0,
+      'zscan',
+      ctx.server.profile,
+    )
     const items: ScanItem[] = []
     for (const entry of zset.members.values()) {
       items.push({
@@ -142,7 +163,7 @@ export const zscanCommand = defineCommand({
       })
     }
 
-    return scanResult(items, args)
+    return scanResult(items, { cursor: args.cursor, ...options })
   },
 })
 
@@ -154,15 +175,10 @@ export const scanCommands = [
   zscanCommand,
 ]
 
-function createScanOptionsSchema(allowType: boolean) {
+function createScanOptionsSchema() {
   return t.custom<ScanOptions>({ min: 1 }, (input, index, ctx) => {
     const cursor = parseCursor(readRequired(input, index, ctx.commandName))
-    const options = parseScanOptions(
-      input,
-      index + 1,
-      ctx.commandName,
-      allowType,
-    )
+    const options = parseScanOptions(input, index + 1, 'scan', ctx.profile)
 
     return {
       value: { cursor, ...options },
@@ -171,61 +187,64 @@ function createScanOptionsSchema(allowType: boolean) {
   })
 }
 
-function createKeyedScanOptionsSchema() {
+function createKeyedScanSchema() {
   const layout = { min: 2, keys: [0] }
-  return t.custom<KeyedScanOptions>(layout, (input, index, ctx) => {
+  return t.custom<KeyedScanArgs>(layout, (input, index, ctx) => {
     const key = readRequired(input, index, ctx.commandName)
+    // The cursor, unlike the options, is checked before the key is looked up
+    // (`parseScanCursorOrReply` comes first in h/s/zscanCommand), so
+    // `HSCAN missing abc` is `invalid cursor` rather than an empty scan.
     const cursor = parseCursor(readRequired(input, index + 1, ctx.commandName))
-    const options = parseScanOptions(
-      input,
-      index + 2,
-      ctx.commandName,
-      false,
-      ctx.commandName === 'hscan',
-    )
 
     return {
-      value: { key, cursor, ...options },
+      value: { key, cursor, options: input.slice(index + 2) },
       nextIndex: input.length,
     }
   })
 }
 
+type ScanCommandName = 'scan' | 'hscan' | 'sscan' | 'zscan'
+
+/**
+ * The option loop of Redis's `scanGenericCommand`, left to right, stopping at
+ * the first bad option. An option whose value is missing (`MATCH` as the last
+ * argument) is not an arity error there: it falls through to `syntax error`
+ * like any unknown word.
+ */
 function parseScanOptions(
   input: readonly Buffer[],
   index: number,
-  commandName: string,
-  allowType: boolean,
-  allowNoValues = false,
+  command: ScanCommandName,
+  profile: CompatibilityProfile,
 ): Omit<ScanOptions, 'cursor'> {
   const options: Omit<ScanOptions, 'cursor'> = {}
   let cursor = index
 
   while (cursor < input.length) {
     const option = input[cursor].toString().toLowerCase()
+    const hasValue = cursor + 1 < input.length
 
-    if (option === 'match') {
-      options.match = readOptionValue(input, cursor, commandName)
+    if (option === 'match' && hasValue) {
+      options.match = input[cursor + 1]
       cursor += 2
       continue
     }
 
-    if (option === 'count') {
-      options.count = parseCount(readOptionValue(input, cursor, commandName))
+    if (option === 'count' && hasValue) {
+      options.count = parseCount(input[cursor + 1])
       cursor += 2
       continue
     }
 
-    if (option === 'type' && allowType) {
-      options.type = readOptionValue(input, cursor, commandName)
-        .toString()
-        .toLowerCase()
+    if (option === 'type' && command === 'scan' && hasValue) {
+      options.type = input[cursor + 1].toString().toLowerCase()
       cursor += 2
       continue
     }
 
-    if (option === 'novalues') {
-      if (!allowNoValues) {
+    // Before Redis 7.4 / Valkey 8.0 NOVALUES is just an unknown option.
+    if (option === 'novalues' && profile.has('hscan.novalues')) {
+      if (command !== 'hscan') {
         throw new RedisCommandError('NOVALUES option can only be used in HSCAN')
       }
       options.noValues = true
@@ -252,14 +271,6 @@ function readRequired(
   }
 
   return value
-}
-
-function readOptionValue(
-  input: readonly Buffer[],
-  optionIndex: number,
-  commandName: string,
-): Buffer {
-  return readRequired(input, optionIndex + 1, commandName)
 }
 
 function parseCursor(raw: Buffer): bigint {
@@ -302,6 +313,11 @@ function matchesPattern(value: Buffer, pattern?: Buffer): boolean {
   }
 
   return redisGlobMatch(pattern, value)
+}
+
+/** `shared.emptyscan`: the reply for a keyed scan whose key does not exist. */
+function emptyScanResult(): RedisResult {
+  return scanResult([], { cursor: 0n })
 }
 
 function scanResult(

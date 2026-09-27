@@ -154,7 +154,12 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'stream.consumer-active-time': { redis: '7.2.0', valkey: '7.2.0' },
   // BITCOUNT/BITPOS BYTE|BIT range modifier — Redis 7.0 / Valkey 7.2.
   'bit.byte-bit-range': { redis: '7.0.0', valkey: '7.2.0' },
-  'hscan.novalues': { redis: '7.4.0', valkey: '9.0.0' },
+  // HSCAN ... NOVALUES. Before it, `NOVALUES` is an unknown option (`syntax
+  // error`) on every SCAN family command; with it, SCAN / SSCAN / ZSCAN answer
+  // `NOVALUES option can only be used in HSCAN`. Valkey took it in 8.0.0, not
+  // 9.0: checked against redis-server 6.2.24, 7.2, 7.4.0, 7.4.4, 8.0.6 and
+  // valkey-server 7.2.14 (refuses), 8.0.0, 8.0.11, 8.1 and 9.0.6 (#214).
+  'hscan.novalues': { redis: '7.4.0', valkey: '8.0.0' },
   'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
   // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
