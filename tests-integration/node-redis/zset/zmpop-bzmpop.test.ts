@@ -5,6 +5,7 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -240,16 +241,20 @@ describe(`ZMPOP / BZMPOP Integration (node-redis, ${testRunner.getBackendName()}
         errorWithMessage('ERR timeout is not a float or out of range'),
       )
 
+      const otherSlotKey = keyInAnotherSlot(
+        zset,
+        () => `other-slot:${randomKey()}`,
+      )
       const directClient = await connectToNodeRedisSlotOwner(client1, zset)
       try {
         await assert.rejects(
-          () => directClient.zmPop([zset, 'other-slot-key'], 'MIN'),
+          () => directClient.zmPop([zset, otherSlotKey], 'MIN'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () => directClient.bzmPop(1, [zset, 'other-slot-key'], 'MIN'),
+          () => directClient.bzmPop(1, [zset, otherSlotKey], 'MIN'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

@@ -5,6 +5,7 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -188,16 +189,20 @@ describe(`LMPOP / BLMPOP Integration (node-redis, ${testRunner.getBackendName()}
       errorWithMessage('ERR timeout is not a float or out of range'),
     )
 
+    const otherSlotKey = keyInAnotherSlot(
+      list,
+      () => `other-slot:${randomKey()}`,
+    )
     const directClient = await connectToNodeRedisSlotOwner(client1, list)
     try {
       await assert.rejects(
-        () => directClient.lmPop([list, 'other-slot-key'], 'LEFT'),
+        () => directClient.lmPop([list, otherSlotKey], 'LEFT'),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),
       )
       await assert.rejects(
-        () => directClient.blmPop(1, [list, 'other-slot-key'], 'LEFT'),
+        () => directClient.blmPop(1, [list, otherSlotKey], 'LEFT'),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),

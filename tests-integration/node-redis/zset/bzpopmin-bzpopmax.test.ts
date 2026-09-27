@@ -5,6 +5,7 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -189,16 +190,20 @@ describe(`BZPOPMIN / BZPOPMAX Integration (node-redis, ${testRunner.getBackendNa
         ),
       )
 
+      const otherSlotKey = keyInAnotherSlot(
+        zset,
+        () => `other-slot:${randomKey()}`,
+      )
       const directClient = await connectToNodeRedisSlotOwner(client1, zset)
       try {
         await assert.rejects(
-          () => directClient.bzPopMin([zset, 'other-slot-key'], 1),
+          () => directClient.bzPopMin([zset, otherSlotKey], 1),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () => directClient.bzPopMax([zset, 'other-slot-key'], 1),
+          () => directClient.bzPopMax([zset, otherSlotKey], 1),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),

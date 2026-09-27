@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  keyInAnotherSlot,
+  randomKey,
+} from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -162,16 +167,20 @@ describe(`BZPOPMIN / BZPOPMAX Integration (${testRunner.getBackendName()})`, () 
         ),
       )
 
+      const otherSlotKey = keyInAnotherSlot(
+        zset,
+        () => `other-slot:${randomKey()}`,
+      )
       const directClient = await connectToSlotOwner(client1!, zset)
       try {
         await assert.rejects(
-          () => directClient.bzpopmin(zset, 'other-slot-key', '1'),
+          () => directClient.bzpopmin(zset, otherSlotKey, '1'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
         )
         await assert.rejects(
-          () => directClient.bzpopmax(zset, 'other-slot-key', '1'),
+          () => directClient.bzpopmax(zset, otherSlotKey, '1'),
           errorWithMessage(
             "CROSSSLOT Keys in request don't hash to the same slot",
           ),
