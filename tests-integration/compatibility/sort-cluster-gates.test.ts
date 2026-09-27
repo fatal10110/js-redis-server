@@ -7,6 +7,7 @@ import {
   activeProfile,
   connectToSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
   type ProfileName,
 } from '../utils'
@@ -109,9 +110,13 @@ describe(
 
     test('a cross-slot BY glob is always refused, with profile-specific wording', async () => {
       await withOps(async (c, k) => {
+        const otherTag = keyInAnotherSlot(
+          k('ids'),
+          () => `{sort-other:${randomKey()}}`,
+        )
         await c.rpush(k('ids'), '1')
         await assert.rejects(
-          () => c.sort(k('ids'), 'BY', `{sort-other:${randomKey()}}:weight:*`),
+          () => c.sort(k('ids'), 'BY', `${otherTag}:weight:*`),
           errorWithMessage(byError),
         )
       })

@@ -24,6 +24,25 @@ export function errorWithMessage(message: string): (error: unknown) => boolean {
   }
 }
 
+/**
+ * Like `errorWithMessage`, for the rare reply whose exact wording depends on
+ * how the real server was built rather than on its version, so no
+ * compatibility profile can pick one. The message must still be one of
+ * `messages`, character for character.
+ */
+export function errorWithMessageIn(
+  messages: readonly string[],
+): (error: unknown) => boolean {
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof Error)
+    assert.ok(
+      messages.includes(error.message),
+      `expected one of ${JSON.stringify(messages)}, got ${JSON.stringify(error.message)}`,
+    )
+    return true
+  }
+}
+
 export function assertBuffersEqual(actual: Buffer[], expected: Buffer[]): void {
   assert.deepStrictEqual(cloneBuffers(actual), cloneBuffers(expected))
 }

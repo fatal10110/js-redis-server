@@ -702,7 +702,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'CONFIG SET accepts every Redis memory-unit suffix',
       'CONFIG SET rejects a proto-max-bulk-len below the 1MB minimum',
       'CONFIG SET rejects a proto-max-bulk-len that is not a memory value',
-      'CONFIG SET reports an empty proto-max-bulk-len as out of range',
+      'CONFIG SET rejects an empty proto-max-bulk-len',
       'GETRANGE clamps a resolved-negative end up to 0',
       'GETRANGE is never size-checked, however large the requested range',
       'SETRANGE and APPEND honour a lowered proto-max-bulk-len',

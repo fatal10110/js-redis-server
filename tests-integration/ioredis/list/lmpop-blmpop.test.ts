@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  keyInAnotherSlot,
+  randomKey,
+} from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -174,16 +179,20 @@ describe(`LMPOP / BLMPOP Integration (${testRunner.getBackendName()})`, () => {
       errorWithMessage('ERR timeout is not a float or out of range'),
     )
 
+    const otherSlotKey = keyInAnotherSlot(
+      list,
+      () => `other-slot:${randomKey()}`,
+    )
     const directClient = await connectToSlotOwner(client1!, list)
     try {
       await assert.rejects(
-        () => directClient.lmpop('2', list, 'other-slot-key', 'LEFT'),
+        () => directClient.lmpop('2', list, otherSlotKey, 'LEFT'),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),
       )
       await assert.rejects(
-        () => directClient.blmpop('1', '2', list, 'other-slot-key', 'LEFT'),
+        () => directClient.blmpop('1', '2', list, otherSlotKey, 'LEFT'),
         errorWithMessage(
           "CROSSSLOT Keys in request don't hash to the same slot",
         ),

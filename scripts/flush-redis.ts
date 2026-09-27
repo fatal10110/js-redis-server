@@ -41,7 +41,8 @@
  *
  * Endpoints mirror `tests-integration/test-config.ts` via the shared
  * `tests-integration/redis-endpoints.ts`:
- *  - the cluster, seeded from REDIS_CLUSTER_PORTS (default 30000-30005)
+ *  - the cluster, seeded from REDIS_CLUSTER_PORTS, else REDIS_CLUSTER_PORT_RANGE
+ *    (default 30000-30005)
  *  - the standalone server, when REDIS_STANDALONE_PORT is set
  *  - the requirepass standalone, when REDIS_STANDALONE_AUTH_PORT is set
  */

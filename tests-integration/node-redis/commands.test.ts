@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import { RedisClusterType } from 'redis'
-import { errorWithMessage, randomKey } from '../utils'
+import { errorWithMessage, keyInAnotherSlot, randomKey } from '../utils'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
 
@@ -42,7 +42,7 @@ describe(`Redis commands with node-redis (${testRunner.getBackendName()})`, () =
 
     test('cross slot error', async () => {
       const key1 = randomKey()
-      const key2 = randomKey()
+      const key2 = keyInAnotherSlot(key1, randomKey)
       await redisClient?.set(key1, 1)
       await redisClient?.set(key2, 2)
 

@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  keyInAnotherSlot,
+  randomKey,
+} from '../utils'
 
 const testRunner = new TestRunner()
 
@@ -569,7 +574,10 @@ describe(`SORT / SORT_RO (${testRunner.getBackendName()})`, () => {
 
   test('SORT rejects BY or GET patterns that hash to a different slot', async () => {
     await withOps(async (c, k) => {
-      const otherTag = `{sort-other:${randomKey()}}`
+      const otherTag = keyInAnotherSlot(
+        k('ids'),
+        () => `{sort-other:${randomKey()}}`,
+      )
       await c.rpush(k('ids'), '1')
       await c.set(k('weight:1'), '1')
 

@@ -5,6 +5,7 @@ import { TestRunner } from '../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
 } from '../utils'
 
@@ -529,7 +530,10 @@ describe(`SORT / SORT_RO (node-redis, ${testRunner.getBackendName()})`, () => {
 
   test('SORT rejects BY or GET patterns that hash to a different slot', async () => {
     await withOps(async (c, k) => {
-      const otherTag = `{sort-other:${randomKey()}}`
+      const otherTag = keyInAnotherSlot(
+        k('ids'),
+        () => `{sort-other:${randomKey()}}`,
+      )
       await c.rPush(k('ids'), '1')
       await c.set(k('weight:1'), '1')
 

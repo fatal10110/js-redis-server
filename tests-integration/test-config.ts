@@ -576,8 +576,10 @@ export class TestRunner {
 
   /**
    * Ports of the real cluster's nodes — docker-compose.test.yml's published
-   * ports by default, overridable with REDIS_CLUSTER_PORTS so a developer can
-   * point the suite at a private cluster instead of sharing one.
+   * ports by default, overridable with REDIS_CLUSTER_PORTS (seeds) or
+   * REDIS_CLUSTER_PORT_RANGE (the range a private docker-compose stack was
+   * started on) so a developer can point the suite at a private cluster
+   * instead of sharing one.
    *
    * Parsing lives in `redis-endpoints.ts` so `scripts/flush-redis.ts` resolves
    * the exact same list: a cleanup that flushes a different set of nodes than

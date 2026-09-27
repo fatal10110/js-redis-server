@@ -15,6 +15,7 @@ export {
   assertBuffersEqual,
   commandFrame,
   errorWithMessage,
+  errorWithMessageIn,
 } from '../tests/shared-test-helpers'
 
 export type RedisEndpoint = {

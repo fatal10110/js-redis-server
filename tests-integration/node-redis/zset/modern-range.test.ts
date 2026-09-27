@@ -5,6 +5,7 @@ import { TestRunner } from '../../test-config'
 import {
   connectToNodeRedisSlotOwner,
   errorWithMessage,
+  keyInAnotherSlot,
   randomKey,
 } from '../../utils'
 
@@ -631,7 +632,10 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (node-redis, ${testRun
 
   test('ZRANGESTORE rejects destination and source keys from different slots', async () => {
     const source = `{zrangestore-cross:${randomKey()}}:source`
-    const destination = `zrangestore-cross-destination:${randomKey()}`
+    const destination = keyInAnotherSlot(
+      source,
+      () => `zrangestore-cross-destination:${randomKey()}`,
+    )
 
     try {
       await redisClient.zAdd(source, { score: 1, value: 'a' })

@@ -68,17 +68,103 @@ export function parseClusterPorts(configured: string | undefined): number[] {
       throw new Error(
         `REDIS_CLUSTER_PORTS entry "${trimmed}" is not a TCP port between ` +
           `${MIN_PORT} and ${MAX_PORT} (got "${raw}"). Pass a comma-separated ` +
-          `list of individual ports — ranges such as "30000-30005" are not ` +
-          `supported, spell every port out.`,
+          `list of individual ports — for a range such as "30000-30005", set ` +
+          `REDIS_CLUSTER_PORT_RANGE instead.`,
       )
     }
     return port
   })
 }
 
+/** How many nodes the docker-compose cluster runs (3 masters + 3 replicas). */
+export const CLUSTER_NODE_COUNT = 6
+
+/**
+ * Each node's cluster bus listens on its client port + 10000, so that sum has
+ * to be a port too.
+ */
+const CLUSTER_BUS_PORT_OFFSET = 10000
+
+/**
+ * Parse `REDIS_CLUSTER_PORT_RANGE` — `first-last`, the six consecutive client
+ * ports of one docker-compose cluster. docker-compose.test.yml publishes the
+ * cluster on this range (and `docker/redis-cluster-init.sh` binds its nodes to
+ * it), so one variable moves the stack and the harness together: a second
+ * checkout or worktree can run its own stack beside the default one instead of
+ * sharing it and flushing it under a concurrent run (#497).
+ *
+ * Accepts exactly the ranges the init script accepts — no surrounding
+ * whitespace either, since the script (and compose's port mapping) gets the
+ * value verbatim. tests/redis-endpoints.test.ts runs the script beside this
+ * parser to keep the two in step.
+ */
+export function parseClusterPortRange(raw: string): number[] {
+  const match = /^([1-9]\d*)-([1-9]\d*)$/.exec(raw)
+  const first = match ? Number(match[1]) : NaN
+  const last = match ? Number(match[2]) : NaN
+  const span = CLUSTER_NODE_COUNT - 1
+
+  if (!isPort(first) || !isPort(last) || last - first !== span) {
+    throw new Error(
+      `REDIS_CLUSTER_PORT_RANGE="${raw}" is not a range of ` +
+        `${CLUSTER_NODE_COUNT} consecutive ports — write it as first-last, ` +
+        `e.g. "31000-${31000 + span}".`,
+    )
+  }
+  if (last + CLUSTER_BUS_PORT_OFFSET > MAX_PORT) {
+    throw new Error(
+      `REDIS_CLUSTER_PORT_RANGE="${raw}" puts the cluster bus (client port + ` +
+        `${CLUSTER_BUS_PORT_OFFSET}) past port ${MAX_PORT}; pick a range ` +
+        `ending at or below ${MAX_PORT - CLUSTER_BUS_PORT_OFFSET}.`,
+    )
+  }
+
+  return Array.from({ length: CLUSTER_NODE_COUNT }, (_, i) => first + i)
+}
+
+/**
+ * Resolve the cluster seed ports from the two env vars that can name them.
+ * `REDIS_CLUSTER_PORTS` (explicit seeds) wins; otherwise
+ * `REDIS_CLUSTER_PORT_RANGE` (the range a compose stack was started on);
+ * otherwise the docker-compose default. When both are set, every seed must lie
+ * inside the range — seeds pointing at some other cluster than the stack the
+ * range describes are a misconfiguration, not a preference.
+ */
+export function resolveClusterPorts(
+  ports: string | undefined,
+  range: string | undefined,
+): number[] {
+  // Unset or empty means the default, as ${REDIS_CLUSTER_PORT_RANGE:-...} does
+  // in docker-compose.test.yml; anything else, whitespace included, is parsed.
+  const rangePorts =
+    range === undefined || range === ''
+      ? undefined
+      : parseClusterPortRange(range)
+
+  if ((ports?.trim() ?? '') === '') {
+    return rangePorts ?? [...DEFAULT_CLUSTER_PORTS]
+  }
+
+  const seeds = parseClusterPorts(ports)
+  const outside = seeds.filter(
+    port => rangePorts !== undefined && !rangePorts.includes(port),
+  )
+  if (outside.length > 0) {
+    throw new Error(
+      `REDIS_CLUSTER_PORTS="${ports}" names port(s) ${outside.join(', ')} ` +
+        `outside REDIS_CLUSTER_PORT_RANGE="${range}". Unset one of them, or ` +
+        `make the seeds part of the range.`,
+    )
+  }
+  return seeds
+}
+
 /** The real cluster's seed ports for this process. */
 export function realClusterPorts(): number[] {
-  return parseClusterPorts(process.env.REDIS_CLUSTER_PORTS)
+  return resolveClusterPorts(
+    process.env.REDIS_CLUSTER_PORTS,
+    process.env.REDIS_CLUSTER_PORT_RANGE,
+  )
 }
 
 /** Port of the docker-compose standalone server, if the run is pointed at one. */

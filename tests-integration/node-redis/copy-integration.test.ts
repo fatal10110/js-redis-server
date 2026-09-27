@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClientType, RedisClusterType } from 'redis'
 import { TestRunner } from '../test-config'
-import { randomKey } from '../utils'
+import { keyInAnotherSlot, randomKey } from '../utils'
 import { errorWithMessage } from '../../tests/shared-test-helpers'
 
 const testRunner = new TestRunner()
@@ -123,7 +123,7 @@ describe(`COPY command integration (node-redis, ${testRunner.getBackendName()})`
 
   test('rejects keys that hash to different slots with CROSSSLOT', async () => {
     const src = `{copy-a:${randomKey()}}:src`
-    const dst = `{copy-b:${randomKey()}}:dst`
+    const dst = keyInAnotherSlot(src, () => `{copy-b:${randomKey()}}:dst`)
 
     await redisClient.set(src, 'hello')
 

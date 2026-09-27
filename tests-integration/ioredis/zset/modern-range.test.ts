@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { connectToSlotOwner, errorWithMessage, randomKey } from '../../utils'
+import {
+  connectToSlotOwner,
+  errorWithMessage,
+  keyInAnotherSlot,
+  randomKey,
+} from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -489,7 +494,10 @@ describe(`Sorted Set Modern Range / ZMSCORE / ZRANDMEMBER (${testRunner.getBacke
 
   test('ZRANGESTORE rejects destination and source keys from different slots', async () => {
     const source = `{zrangestore-cross:${randomKey()}}:source`
-    const destination = `zrangestore-cross-destination:${randomKey()}`
+    const destination = keyInAnotherSlot(
+      source,
+      () => `zrangestore-cross-destination:${randomKey()}`,
+    )
 
     try {
       await redisClient?.zadd(source, 1, 'a')
