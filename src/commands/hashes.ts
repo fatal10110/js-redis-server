@@ -1,10 +1,6 @@
 import { defineCommand } from '../core/command-definition'
-import {
-  isIntegerToken,
-  parseFiniteFloatToken,
-  t,
-  type ParseContext,
-} from '../core/command-schema'
+import { isIntegerToken, t, type ParseContext } from '../core/command-schema'
+import { parseLongDoubleToken } from '../core/long-double-token'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   RedisCommandError,
@@ -1187,24 +1183,35 @@ export const hincrbyCommand = defineCommand({
 
 export const hincrbyfloatCommand = defineCommand({
   name: 'hincrbyfloat',
-  schema: t.object({ key: t.key(), field: t.bulk(), increment: t.float() }),
+  schema: t.object({ key: t.key(), field: t.bulk(), increment: t.bulk() }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    // Redis' order (t_hash.c): the increment is parsed with string2ld() (see
+    // parseLongDoubleToken) and refused if infinite *before* the type check.
+    // The stored value is parsed the same way, so a stored "inf" or "0x10" is
+    // a valid operand; only the sum is then checked for NaN/Infinity.
+    const increment = parseLongDoubleToken(args.increment)
+    if (increment === undefined) {
+      throw errors.expectedFloat()
+    }
+    if (!Number.isFinite(increment)) {
+      throw new RedisCommandError('value is NaN or Infinity')
+    }
+
     const result = ctx.db.updateHash(args.key, hash => {
       const entry = hash.getField(args.field)
       let current = 0
       if (entry) {
-        const raw = entry.value.toString()
-        const parsed = parseFiniteFloatToken(raw)
+        const parsed = parseLongDoubleToken(entry.value)
         if (parsed === undefined) {
           throw errors.hashValueNotFloat()
         }
         current = parsed
       }
-      const next = current + args.increment
-      if (isNaN(next) || !isFinite(next)) {
-        throw errors.hashValueNotFloat()
+      const next = current + increment
+      if (!Number.isFinite(next)) {
+        throw errors.incrByFloatNanOrInfinity()
       }
       // Format like Redis: strip trailing zeros, use fixed notation for small values
       let formatted = String(next)

@@ -1008,6 +1008,27 @@ so the PR body is not a durable home for a breaking-change note.
   listener; the clone is now made only when a listener reads it (see the
   `RedisMutationEvent` change above).
 
+- `INCRBYFLOAT` and `HINCRBYFLOAT` parse their increment and the stored value
+  the way Redis's `string2ld()` (C `strtold`) does ([#234]), the same on every
+  Redis and Valkey version:
+  - C99 hex floats are valid: `INCRBYFLOAT k 0x10` on `1` answers `17`, and
+    `0x1.8p3`, `-0x.8` and `0x1e5` (485) work too. `0b11` and `0o7` are still
+    invalid floats.
+  - A token of 5120 bytes or more is refused, and so is a nonzero value that
+    underflows an 80-bit `long double` to zero (`1e-4952`, `0x1p-16446`).
+    `1e-4950` is still accepted.
+  - `INCRBYFLOAT` checks the key's type before it parses the increment, so a
+    hash key with a bad increment answers `WRONGTYPE`, not `value is not a
+    valid float`.
+  - `HINCRBYFLOAT` with an infinite increment answers `ERR value is NaN or
+    Infinity`. It used to answer `value is not a valid float`. A stored `inf`
+    is now a valid operand, so the sum fails with `ERR increment would
+    produce NaN or Infinity`. That is also the error for an infinite sum,
+    which used to be `hash value is not a float`.
+  - Known limit: values past the `double` range but inside the `long double`
+    range (`1e400`, `0x1p1024`) are still refused, because the arithmetic is
+    `double` ([#512]).
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -1055,5 +1076,7 @@ requests they contain.
 [#489]: https://github.com/fatal10110/js-redis-server/issues/489
 [#492]: https://github.com/fatal10110/js-redis-server/issues/492
 [#503]: https://github.com/fatal10110/js-redis-server/issues/503
+[#234]: https://github.com/fatal10110/js-redis-server/issues/234
+[#512]: https://github.com/fatal10110/js-redis-server/issues/512
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

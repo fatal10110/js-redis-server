@@ -303,6 +303,9 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'HINCRBY respects Redis 64-bit signed integer range',
     'HINCRBYFLOAT command',
   ]),
+  todo('node-redis/hash/incr.test.ts', CAUSE.clusterTopology, [
+    'HINCRBYFLOAT parses operands like strtold: hex floats, infinity and error order (#234)',
+  ]),
   todo('node-redis/info-standalone.test.ts', missing('info'), [
     'INFO cluster omits cluster-only state fields for standalone servers',
     'INFO replication exposes Redis-compatible replication identifiers',
@@ -669,6 +672,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/string/incr.test.ts', CAUSE.clusterTopology, [
     'INCR/INCRBY/DECR/DECRBY operate over the full int64 range',
     'INCRBYFLOAT distinguishes invalid-float from NaN/Infinity result (#56)',
+    'INCRBYFLOAT parses operands like strtold: hex floats and long double limits (#234)',
   ]),
   todo(
     'node-redis/string/proto-max-bulk-len.test.ts',

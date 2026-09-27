@@ -213,4 +213,86 @@ describe(`String Commands Integration (${testRunner.getBackendName()})`, () => {
       direct.disconnect()
     }
   })
+
+  test('INCRBYFLOAT parses operands like strtold: hex floats and long double limits (#234)', async () => {
+    const tag = `{incrbyfloat-strtold:${randomKey()}}`
+    const key = `${tag}:key`
+    const hashKey = `${tag}:hash`
+
+    try {
+      // C99 hex floats are valid operands; `e` is a hex digit there.
+      for (const [increment, expected] of [
+        ['0x10', '17'],
+        ['0X10', '17'],
+        ['-0x10', '-15'],
+        ['0x1.8p3', '13'],
+        ['0x1p-2', '1.25'],
+        ['0x.8', '1.5'],
+        ['0x1e5', '486'],
+        ['0xAbC.dEf', '2749.870849609375'],
+        // A leading zero is still a decimal.
+        ['010', '11'],
+        // Tiny, but still nonzero as a long double.
+        ['1e-4950', '1'],
+        ['0x1p-16445', '1'],
+      ]) {
+        await redisClient?.set(key, '1')
+        assert.strictEqual(
+          await redisClient?.incrbyfloat(key, increment!),
+          expected,
+          `increment "${increment}"`,
+        )
+      }
+
+      // The stored value goes through the same parser.
+      await redisClient?.set(key, '0x10')
+      assert.strictEqual(await redisClient?.incrbyfloat(key, '1'), '17')
+
+      for (const bad of [
+        '0x',
+        '0x1p',
+        '0xg',
+        '0x-10',
+        '0x1p3.5',
+        // Not C syntax.
+        '0b11',
+        '0o7',
+        ' 0x10',
+        '0x10 ',
+        'nan(1)',
+        // Underflows a long double to zero, or overflows it.
+        '1e-4952',
+        '0x1p-16446',
+        '0x1p16384',
+        // One byte past string2ld's 5120-byte buffer.
+        `1.${'0'.repeat(5118)}`,
+      ]) {
+        await redisClient?.set(key, '1')
+        await assert.rejects(
+          () => redisClient!.incrbyfloat(key, bad),
+          errorWithMessage('ERR value is not a valid float'),
+          `increment "${bad.length > 20 ? `${bad.slice(0, 20)}...` : bad}"`,
+        )
+        assert.strictEqual(await redisClient?.get(key), '1')
+      }
+
+      // The whole stored value must be the number: a NUL byte ends nothing.
+      await redisClient?.set(key, Buffer.from('2\0zz'))
+      await assert.rejects(
+        () => redisClient!.incrbyfloat(key, '1'),
+        errorWithMessage('ERR value is not a valid float'),
+      )
+
+      // The type check comes before the increment is parsed.
+      await redisClient?.hset(hashKey, 'f', 'v')
+      await assert.rejects(
+        () => redisClient!.incrbyfloat(hashKey, 'abc'),
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+    } finally {
+      await redisClient?.del(key, hashKey)
+    }
+  })
 })
