@@ -1,11 +1,11 @@
 import { defineCommand } from '../core/command-definition'
 import { setGetKeys } from '../core/key-specs'
 import {
-  parseFiniteFloatToken,
   t,
   type CommandSchema,
   type ParseContext,
 } from '../core/command-schema'
+import { parseLongDoubleToken } from '../core/long-double-token'
 import type { RedisDatabase } from '../state'
 import {
   WrongTypeRedisError,
@@ -252,17 +252,14 @@ export const incrbyfloatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    // Like real Redis, an infinity literal ("inf"/"+inf"/"-inf"/"infinity",
-    // any case) is a *valid* operand — it only fails the post-arithmetic
-    // NaN/Infinity check. A non-numeric or overflow-magnitude value (e.g.
-    // "nan", "abc", "1e5000") is a parse error ("value is not a valid float").
-    const increment = parseIncrByFloatValue(args.amount.toString())
-
+    // Redis' order (t_string.c): the type check, then the stored value, then
+    // the increment, so a wrong-type key wins over a bad increment. Both go
+    // through string2ld() (see parseLongDoubleToken): an infinity literal is a
+    // valid operand that only fails the post-arithmetic NaN/Infinity check,
+    // while "nan", "abc", "1e5000" or " 3.5" are parse errors.
     const existing = ensureStringOrMissing(ctx.db, args.key)
-    let current = 0
-    if (existing) {
-      current = parseIncrByFloatValue(existing.toString())
-    }
+    const current = existing ? parseIncrByFloatValue(existing) : 0
+    const increment = parseIncrByFloatValue(args.amount)
 
     const next = current + increment
     if (!Number.isFinite(next)) {
@@ -275,18 +272,8 @@ export const incrbyfloatCommand = defineCommand({
   },
 })
 
-// Parses an INCRBYFLOAT operand the way real Redis does (strtold): an infinity
-// literal is accepted (and returned as +/-Infinity) so the result check can
-// flag it, while NaN and finite-overflow magnitudes are rejected as invalid
-// floats. No surrounding whitespace is allowed and the *whole* token must be a
-// valid decimal float — "3abc", " 3.5", and "1,5" are parse errors, not silent
-// prefix parses (unlike JS parseFloat).
-function parseIncrByFloatValue(raw: string): number {
-  if (/^[+-]?inf(inity)?$/i.test(raw)) {
-    return raw.startsWith('-') ? -Infinity : Infinity
-  }
-
-  const value = parseFiniteFloatToken(raw)
+function parseIncrByFloatValue(raw: Buffer): number {
+  const value = parseLongDoubleToken(raw)
   if (value === undefined) {
     throw errors.expectedFloat()
   }
