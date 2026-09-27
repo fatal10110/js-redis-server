@@ -114,7 +114,28 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.resp3-publish-reply-first': { redis: '7.2.0', valkey: '8.0.0' },
+  // Redis 7.0 made XCLAIM / XAUTOCLAIM drop a pending entry whose stream
+  // entry was deleted (XAUTOCLAIM lists it in a third reply element). 6.2
+  // claims it like any other and replies nil for it (the id under JUSTID),
+  // so it stays pending. The same change capped XAUTOCLAIM COUNT at
+  // LONG_MAX / 16 (it allocates the deleted-ids array up front); 6.2 accepts
+  // up to LONG_MAX. Verified against redis-server 6.2.24, 7.0.15 and 8.0.6.
   'stream.xautoclaim-deleted-ids': { redis: '7.0.0', valkey: '7.2.0' },
+  // Consumer group lag tracking, Redis 7.0: XGROUP CREATE / SETID take
+  // ENTRIESREAD, XINFO GROUPS reports `entries-read` and `lag`, and XINFO
+  // STREAM reports `max-deleted-entry-id`, `entries-added` and
+  // `recorded-first-entry-id` (FULL: and each group's `entries-read` /
+  // `lag`). 6.2 has none of them, and parses XGROUP options its own way:
+  // CREATE takes exactly `MKSTREAM` (checked before the key), SETID nothing.
+  // Verified against redis-server 6.2.24, 7.0.15 and 8.0.6.
+  'stream.consumer-group-lag': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.2 added the consumer's active time: XINFO CONSUMERS reports
+  // `inactive`, and XCLAIM / XAUTOCLAIM create (and refresh) the consumer up
+  // front, whether or not they claim anything. Through 7.0 the consumer is
+  // looked up only when the first entry is claimed, so a call that claims
+  // nothing leaves a missing consumer missing. Verified against redis-server
+  // 6.2.24, 7.0.15, 7.2.4 and 8.0.6.
+  'stream.consumer-active-time': { redis: '7.2.0', valkey: '7.2.0' },
   // BITCOUNT/BITPOS BYTE|BIT range modifier — Redis 7.0 / Valkey 7.2.
   'bit.byte-bit-range': { redis: '7.0.0', valkey: '7.2.0' },
   'hscan.novalues': { redis: '7.4.0', valkey: '9.0.0' },

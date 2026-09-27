@@ -1304,7 +1304,8 @@ describe(
       await connection.readFrame()
     })
 
-    test('XREADGROUP and XAUTOCLAIM create the consumer entry even when nothing is delivered or claimed', async () => {
+    test('XREADGROUP and XAUTOCLAIM create the consumer entry up front from 7.2, only on delivery before', async () => {
+      const eager = supportsConsumerActiveTime()
       const key = `compat:${profile}:consumer-create-on-empty`
 
       connection.write(commandFrame('XADD', key, '1-1', 'f', 'v'))
@@ -1326,9 +1327,9 @@ describe(
       )
       await connection.readFrame()
 
-      // bob delivers nothing (alice already consumed the only entry) but must
-      // still be created as a consumer: ensureConsumer() runs unconditionally
-      // before the empty-delivery check.
+      // bob delivers nothing (alice already consumed the only entry): 7.2+
+      // still creates him as a consumer, 6.2 / 7.0 only serve (and create) a
+      // consumer when there is something past the last-delivered id.
       connection.write(
         commandFrame(
           'XREADGROUP',
@@ -1345,14 +1346,15 @@ describe(
       assert.strictEqual(await connection.readFrame(), null)
 
       const bob = await findConsumer(key, 'g', 'bob')
-      assert.ok(
-        bob,
-        `bob should be created as a consumer for ${profile} despite an empty XREADGROUP delivery`,
+      assert.strictEqual(
+        bob !== undefined,
+        eager,
+        `bob after an empty XREADGROUP delivery on ${profile}`,
       )
-      assert.strictEqual(bob.pending, 0)
+      if (bob) assert.strictEqual(bob.pending, 0)
 
       // carol's min-idle-time (999999999ms) is never met, so nothing is
-      // actually claimed, but ensureConsumer() still runs first.
+      // actually claimed; again only 7.2+ creates her anyway.
       connection.write(
         commandFrame(
           'XAUTOCLAIM',
@@ -1371,14 +1373,15 @@ describe(
       assert.deepStrictEqual(autoclaim[1], [])
 
       const carol = await findConsumer(key, 'g', 'carol')
-      assert.ok(
-        carol,
-        `carol should be created as a consumer for ${profile} despite an empty XAUTOCLAIM claim`,
+      assert.strictEqual(
+        carol !== undefined,
+        eager,
+        `carol after an empty XAUTOCLAIM claim on ${profile}`,
       )
-      assert.strictEqual(carol.pending, 0)
+      if (carol) assert.strictEqual(carol.pending, 0)
     })
 
-    test('XINFO CONSUMERS reports idle and inactive fields', async () => {
+    test('XINFO CONSUMERS reports idle, and inactive from 7.2', async () => {
       const key = `compat:${profile}:consumers-idle-inactive`
 
       connection.write(commandFrame('XADD', key, '1-1', 'f', 'v'))
@@ -1404,6 +1407,10 @@ describe(
       assert.ok(alice)
       assert.strictEqual(typeof alice.idle, 'number')
       assert.ok((alice.idle as number) >= 0)
+      if (!supportsConsumerActiveTime()) {
+        assert.deepStrictEqual(Object.keys(alice), ['name', 'pending', 'idle'])
+        return
+      }
       assert.strictEqual(typeof alice.inactive, 'number')
       assert.ok((alice.inactive as number) >= 0)
     })
@@ -1486,6 +1493,12 @@ function supportsLuaOsLib(): boolean {
   return ['redis-7.4', 'redis-8.0', 'valkey-8.0', 'valkey-9.0'].includes(
     profile,
   )
+}
+
+// Consumer active time (Redis 7.2 / Valkey 7.2): XINFO CONSUMERS `inactive`,
+// and XREADGROUP / XCLAIM / XAUTOCLAIM creating the consumer up front.
+function supportsConsumerActiveTime(): boolean {
+  return !['redis-6.2', 'redis-7.0'].includes(profile)
 }
 
 function supportsResp3PublishReplyBeforeSelfMessage(): boolean {

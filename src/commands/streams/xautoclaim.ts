@@ -6,6 +6,7 @@ import {
   errors,
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
+import type { CompatibilityProfile } from '../../core/compatibility'
 import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
@@ -19,6 +20,7 @@ type XautoclaimArgs = {
   minIdleMs: number
   start: StreamId
   count: number
+  attempts: number
   justId: boolean
 }
 
@@ -48,13 +50,13 @@ function createXautoclaimSchema() {
         throw new RedisCommandError('invalid start ID for the interval')
 
       let cursor = index + 5
-      let count = 100
+      let count = 100n
       let justId = false
       while (cursor < input.length) {
         const option = input[cursor].toString().toUpperCase()
         const hasValue = cursor + 1 < input.length
         if (option === 'COUNT' && hasValue) {
-          count = parseXautoclaimCount(input[cursor + 1])
+          count = parseXautoclaimCount(input[cursor + 1], ctx.profile)
           cursor += 2
           continue
         }
@@ -75,7 +77,8 @@ function createXautoclaimSchema() {
           consumer,
           minIdleMs: minIdle < 0n ? 0 : Number(minIdle),
           start,
-          count,
+          count: Number(count),
+          attempts: autoclaimAttempts(count),
           justId,
         },
         nextIndex: input.length,
@@ -84,17 +87,33 @@ function createXautoclaimSchema() {
   )
 }
 
-// Real Redis: COUNT is a long in [1, LONG_MAX / 16] (its attempts factor),
-// and anything else — including a non-integer — is `ERR COUNT must be > 0`.
-const MAX_XAUTOCLAIM_COUNT = ((1n << 63n) - 1n) / 16n
+// Real Redis: COUNT is a long in [1, LONG_MAX / 16] from 7.0 (it allocates
+// the deleted-ids array up front), in [1, LONG_MAX] on 6.2, and anything else
+// — including a non-integer — is `ERR COUNT must be > 0`.
+const LONG_MAX = (1n << 63n) - 1n
 
-function parseXautoclaimCount(token: Buffer): number {
+function parseXautoclaimCount(
+  token: Buffer,
+  profile: CompatibilityProfile,
+): bigint {
   const message = 'COUNT must be > 0'
+  const max = profile.has('stream.xautoclaim-deleted-ids')
+    ? LONG_MAX / 16n
+    : LONG_MAX
   const count = parseLongLong(token, message)
-  if (count < 1n || count > MAX_XAUTOCLAIM_COUNT) {
+  if (count < 1n || count > max) {
     throw new RedisCommandError(message)
   }
-  return Number(count)
+  return count
+}
+
+// Real Redis examines at most `count * 10` pending entries, computed as a C
+// long. On 6.2 COUNT goes up to LONG_MAX, so the product can wrap: a negative
+// result never reaches 0 and means no limit, a positive one is the limit
+// (COUNT 1844674407370955162 examines 4).
+function autoclaimAttempts(count: bigint): number {
+  const attempts = BigInt.asIntN(64, count * 10n)
+  return attempts < 0n ? Infinity : Number(attempts)
 }
 
 export const xautoclaimCommand = defineCommand({
@@ -114,13 +133,18 @@ export const xautoclaimCommand = defineCommand({
       command.key,
       command.group,
     )
-    createConsumerIfMissing(
-      ctx.db,
-      command.key,
-      command.group,
-      command.consumer,
-      now,
-    )
+    // 7.2+ creates the consumer up front; through 7.0 only once an entry is
+    // claimed (#498), below.
+    const eagerConsumer = ctx.server.profile.has('stream.consumer-active-time')
+    if (eagerConsumer) {
+      createConsumerIfMissing(
+        ctx.db,
+        command.key,
+        command.group,
+        command.consumer,
+        now,
+      )
+    }
     const result = ctx.db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream.value, command.key, command.group)
       return stream.autoClaim(
@@ -130,12 +154,23 @@ export const xautoclaimCommand = defineCommand({
           minIdleMs: command.minIdleMs,
           start: command.start,
           count: command.count,
+          attempts: command.attempts,
           justId: command.justId,
           cleanDeletedEntries: includeDeletedIds,
+          eagerConsumer,
         },
         now,
       )
     })
+    if (!eagerConsumer && result.claimed.length > 0) {
+      createConsumerIfMissing(
+        ctx.db,
+        command.key,
+        command.group,
+        command.consumer,
+        now,
+      )
+    }
 
     const claimed = result.claimed.map(entry =>
       command.justId

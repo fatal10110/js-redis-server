@@ -609,6 +609,44 @@ so the PR body is not a durable home for a breaking-change note.
   reports `resp=3`. It also follows a `HELLO` sent while subscribed, straight
   away, as a RESP3 node-redis client's single connection does.
 
+- Stream consumer-group error paths follow real Redis' order ([#507]).
+  `XINFO STREAM` reads its `FULL [COUNT n]` options after the key, so a
+  missing key is `no such key` (a string key `WRONGTYPE`) before any option
+  error. `XGROUP CREATE` / `SETID` read their options, then check the key and
+  group, then the argument count, then the id. Every `XGROUP` subcommand
+  except `CREATE ... MKSTREAM` answers a missing key with `The XGROUP
+  subcommand requires the key to exist...`, where `SETID`, `CREATECONSUMER`
+  and `DELCONSUMER` used to answer NOGROUP and `DESTROY` `:0`. A missing
+  group is `NOGROUP No such consumer group '<g>' for key name '<k>'`, XGROUP's
+  own wording, which `XINFO CONSUMERS` now uses too. `ENTRIESREAD -1` is accepted (the "unknown" counter), a lower
+  value is `value for ENTRIESREAD must be positive or -1`, and `SETID`
+  takes `-` and `+` as ids. `XINFO STREAM ... FULL COUNT` treats a negative
+  count as the default 10 and 0 as no limit, and `FULL` lists `entries`
+  before `groups`.
+
+- `XCLAIM` ignores a `LASTID` behind the group's last-delivered id instead of
+  moving the group back, and `FORCE` adds a missing entry to the PEL as one
+  delivery that the min-idle-time does not apply to (it used to start at 0
+  deliveries and be skipped by any min-idle-time) ([#498]). `XAUTOCLAIM`
+  examines at most `COUNT * 10` pending entries, counts deleted entries
+  towards `COUNT` from 7.0, and returns the pending id after the last one
+  examined as its cursor, as Redis does.
+
+- The `redis-6.2` and `redis-7.0` profiles model three more version deltas
+  ([#498], [#507]). New gate `stream.consumer-group-lag` (7.0): 6.2 has no
+  `ENTRIESREAD` (its `XGROUP CREATE` takes exactly `MKSTREAM`, checked before
+  the key), no `entries-read` / `lag` in `XINFO GROUPS` or `XINFO STREAM
+  FULL`, and no `max-deleted-entry-id` / `entries-added` /
+  `recorded-first-entry-id` in `XINFO STREAM`. The existing
+  `stream.xautoclaim-deleted-ids` gate (7.0) now also covers `XCLAIM`: on 6.2
+  it claims a deleted entry, replies nil for it and keeps it pending, and
+  `XAUTOCLAIM COUNT` goes up to `LONG_MAX`, with `COUNT * 10` wrapping as a
+  64-bit signed value, as in 6.2. New gate
+  `stream.consumer-active-time` (7.2): before it `XINFO CONSUMERS` has no
+  `inactive`, and `XREADGROUP` / `XCLAIM` / `XAUTOCLAIM` create a missing
+  consumer only once they deliver or claim something (an `XREADGROUP`
+  history read creates it even when nothing is pending).
+
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity
   -1 and `0 0 0`. The version-dependent ones follow the profile: `EXPIRE`
@@ -1124,5 +1162,7 @@ requests they contain.
 [#234]: https://github.com/fatal10110/js-redis-server/issues/234
 [#512]: https://github.com/fatal10110/js-redis-server/issues/512
 [#504]: https://github.com/fatal10110/js-redis-server/issues/504
+[#498]: https://github.com/fatal10110/js-redis-server/issues/498
+[#507]: https://github.com/fatal10110/js-redis-server/issues/507
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

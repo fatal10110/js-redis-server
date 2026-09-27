@@ -459,7 +459,7 @@ export class TrackedSortedSetData {
 // XREADGROUP delivery: a present entry carries its fields; a history read of an
 // entry that has since been deleted carries fields === null.
 export type StreamDelivery = { id: StreamId; fields: Buffer[] | null }
-export type ClaimedEntry = { id: StreamId; fields: Buffer[] }
+export type ClaimedEntry = { id: StreamId; fields: Buffer[] | null }
 export type AutoClaimedEntry = { id: StreamId; fields: Buffer[] | null }
 export type AutoClaimResult = {
   nextStartId: StreamId
@@ -620,8 +620,9 @@ export class TrackedStreamData {
   }
 
   // XCLAIM. Returns the claimed entries for the command to shape into a reply
-  // (justId vs full). Reassigning pending ownership does not dirty a WATCH on the
-  // stream key in real Redis.
+  // (justId vs full; fields === null is a deleted entry claimed on 6.2).
+  // Reassigning pending ownership does not dirty a WATCH on the stream key in
+  // real Redis.
   claim(
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
@@ -634,13 +635,27 @@ export class TrackedStreamData {
       force: boolean
       justId: boolean
       lastId: StreamId | null
+      // 7.2+: create / refresh the consumer before claiming anything. Earlier
+      // versions look an existing one up at the first claim and leave a
+      // missing one for the caller to create once something was claimed.
+      eagerConsumer: boolean
+      // 7.0+: a pending entry whose stream entry is gone is dropped from the
+      // PEL; 6.2 claims it like any other.
+      dropDeleted: boolean
     },
     now: number,
   ): ClaimedEntry[] {
-    // Seen on every attempt; active only once something is claimed.
-    const consumer = ensureConsumer(group, consumerName, now)
+    let consumer = options.eagerConsumer
+      ? ensureConsumer(group, consumerName, now)
+      : null
     const consumerId = consumerName.toString('hex')
-    if (options.lastId) group.lastDeliveredId = cloneStreamId(options.lastId)
+    // A LASTID behind the group's last-delivered id is ignored.
+    if (
+      options.lastId &&
+      compareStreamId(options.lastId, group.lastDeliveredId) > 0
+    ) {
+      group.lastDeliveredId = cloneStreamId(options.lastId)
+    }
 
     const claimed: ClaimedEntry[] = []
     for (const id of ids) {
@@ -648,25 +663,33 @@ export class TrackedStreamData {
       const entry = findEntry(this.stream, id)
       let pending = group.pending.get(pendingId)
 
+      if (!entry && options.dropDeleted) {
+        group.pending.delete(pendingId)
+        continue
+      }
+
+      // FORCE puts an existing entry missing from the PEL there, as one
+      // delivery that has no owner yet, so the minimum idle time does not
+      // apply to it.
+      let forced = false
       if (!pending && options.force && entry) {
         pending = {
           id: cloneStreamId(id),
           consumerId,
           deliveredAt: now,
-          deliveryCount: 0,
+          deliveryCount: 1,
         }
         group.pending.set(pendingId, pending)
+        forced = true
       }
 
       if (!pending) continue
-      if (!entry) {
-        group.pending.delete(pendingId)
-        continue
+      if (!forced && now - pending.deliveredAt < options.minIdleMs) continue
+
+      if (!consumer) {
+        consumer = group.consumers.get(consumerId) ?? null
+        if (consumer) consumer.seenAt = now
       }
-
-      const idleTime = Math.max(0, now - pending.deliveredAt)
-      if (idleTime < options.minIdleMs) continue
-
       pending.consumerId = consumerId
       pending.deliveredAt =
         options.timeMs ?? (options.idleMs !== null ? now - options.idleMs : now)
@@ -676,15 +699,18 @@ export class TrackedStreamData {
         pending.deliveryCount++
       }
 
-      claimed.push({ id: entry.id, fields: entry.fields })
+      claimed.push({ id: cloneStreamId(id), fields: entry?.fields ?? null })
     }
-    if (claimed.length > 0) consumer.activeAt = now
+    if (claimed.length > 0 && consumer) consumer.activeAt = now
     return claimed
   }
 
-  // XAUTOCLAIM. Returns the next cursor, the claimed entries, and the ids of
-  // pending entries dropped because their stream entry was gone. Does not dirty a
-  // WATCH on the stream key in real Redis.
+  // XAUTOCLAIM, following real Redis' scan of the PEL from `start`: at most
+  // `count * 10` pending entries are examined and at most `count` answered.
+  // Returns the next cursor (the pending entry after the last one examined,
+  // 0-0 at the end), the claimed entries, and the ids of pending entries
+  // dropped because their stream entry was gone. Does not dirty a WATCH on the
+  // stream key in real Redis.
   autoClaim(
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
@@ -692,64 +718,60 @@ export class TrackedStreamData {
       minIdleMs: number
       start: StreamId
       count: number
+      // At most this many pending entries are examined (COUNT * 10, see
+      // xautoclaim.ts).
+      attempts: number
       justId: boolean
+      // 7.0+: drop a deleted entry from the PEL (it counts towards `count`);
+      // 6.2 claims it and answers nil for it.
       cleanDeletedEntries: boolean
+      // See claim().
+      eagerConsumer: boolean
     },
     now: number,
   ): AutoClaimResult {
-    // Seen on every attempt; active only once something is claimed.
-    const consumer = ensureConsumer(group, consumerName, now)
+    let consumer = options.eagerConsumer
+      ? ensureConsumer(group, consumerName, now)
+      : null
     const consumerId = consumerName.toString('hex')
     const claimed: AutoClaimedEntry[] = []
     const deleted: StreamId[] = []
-    let nextStartId: StreamId = MIN_ID
+    const candidates = pendingEntriesSorted(group).filter(
+      pending => compareStreamId(pending.id, options.start) >= 0,
+    )
 
-    for (const pending of pendingEntriesSorted(group)) {
-      if (compareStreamId(pending.id, options.start) < 0) continue
-
+    let attempts = options.attempts
+    let remaining = options.count
+    let index = 0
+    for (; index < candidates.length; index++) {
+      if (attempts <= 0 || remaining <= 0) break
+      attempts--
+      const pending = candidates[index]
       const entry = findEntry(this.stream, pending.id)
-      if (!entry) {
-        if (options.cleanDeletedEntries) {
-          group.pending.delete(streamIdKey(pending.id))
-          deleted.push(pending.id)
-          continue
-        }
 
-        const idleTime = Math.max(0, now - pending.deliveredAt)
-        if (idleTime < options.minIdleMs) continue
-
-        pending.consumerId = consumerId
-        pending.deliveredAt = now
-        if (!options.justId) pending.deliveryCount++
-        claimed.push({ id: pending.id, fields: null })
-
-        if (claimed.length >= options.count) {
-          const next = pendingEntriesSorted(group).find(
-            item => compareStreamId(item.id, pending.id) > 0,
-          )
-          nextStartId = next ? cloneStreamId(next.id) : MIN_ID
-        }
+      if (!entry && options.cleanDeletedEntries) {
+        group.pending.delete(streamIdKey(pending.id))
+        deleted.push(pending.id)
+        remaining--
         continue
       }
 
-      const idleTime = Math.max(0, now - pending.deliveredAt)
-      if (idleTime < options.minIdleMs) continue
+      if (now - pending.deliveredAt < options.minIdleMs) continue
 
+      if (!consumer) {
+        consumer = group.consumers.get(consumerId) ?? null
+        if (consumer) consumer.seenAt = now
+      }
       pending.consumerId = consumerId
       pending.deliveredAt = now
       if (!options.justId) pending.deliveryCount++
-      claimed.push({ id: entry.id, fields: entry.fields })
-
-      if (claimed.length >= options.count) {
-        const next = pendingEntriesSorted(group).find(
-          item => compareStreamId(item.id, pending.id) > 0,
-        )
-        nextStartId = next ? cloneStreamId(next.id) : MIN_ID
-        break
-      }
+      claimed.push({ id: pending.id, fields: entry?.fields ?? null })
+      remaining--
     }
 
-    if (claimed.length > 0) consumer.activeAt = now
+    const next = candidates[index]
+    const nextStartId = next ? cloneStreamId(next.id) : MIN_ID
+    if (claimed.length > 0 && consumer) consumer.activeAt = now
     return { nextStartId, claimed, deleted }
   }
 

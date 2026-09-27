@@ -36,6 +36,8 @@ export type FeatureId =
   | 'pubsub.sharded'
   | 'pubsub.resp3-publish-reply-first'
   | 'stream.xautoclaim-deleted-ids'
+  | 'stream.consumer-group-lag'
+  | 'stream.consumer-active-time'
   | 'bit.byte-bit-range'
   | 'hscan.novalues'
   | 'xread.plus-id'

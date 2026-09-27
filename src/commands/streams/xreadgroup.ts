@@ -8,7 +8,7 @@ import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
 import { bulk } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
-import { parseExactId } from './ids'
+import { compareStreamId, parseExactId } from './ids'
 import { bulkString, deletedEntryToReply, entryToReply } from './replies'
 import { blockOnKeys } from '../blocking'
 import { parseXreadOptions } from './xread-options'
@@ -63,7 +63,16 @@ function readGroupEntries(
     requireStreamGroup(ctx.db.getStream(key), key, groupName, 'XREADGROUP')
   }
 
+  // 7.2+ creates the consumer before it looks for anything to deliver.
+  // Through 7.0 a stream is only served (and the consumer only created or
+  // refreshed) for a history read or when it holds an entry past the group's
+  // last-delivered id, so an empty `>` read leaves a missing consumer missing
+  // (#498).
+  const eagerConsumer = ctx.server.profile.has('stream.consumer-active-time')
   for (const { key, id } of streams) {
+    if (!eagerConsumer && id === '>' && !hasUndelivered(ctx, key, groupName)) {
+      continue
+    }
     createConsumerIfMissing(ctx.db, key, groupName, consumerName, now)
     const delivered = ctx.db.updateStream(key, stream => {
       const group = requireStreamGroup(
@@ -89,6 +98,19 @@ function readGroupEntries(
   return results.length > 0
     ? RedisResult.create(RedisValue.mapPairs(results))
     : null
+}
+
+function hasUndelivered(
+  ctx: RedisExecutionContext,
+  key: Buffer,
+  groupName: Buffer,
+): boolean {
+  const stream = ctx.db.getStream(key)
+  const group = requireStreamGroup(stream, key, groupName, 'XREADGROUP')
+  const last = stream?.entries[stream.entries.length - 1]
+  return (
+    last !== undefined && compareStreamId(last.id, group.lastDeliveredId) > 0
+  )
 }
 
 async function blockingXreadGroup(

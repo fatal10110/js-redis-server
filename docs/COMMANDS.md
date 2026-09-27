@@ -496,6 +496,8 @@ with `GT` or `LT`.
 
 - Approximate (`~`) `XADD`/`XTRIM` trim specs use a simplified mock heuristic that may leave one extra eligible entry; `LIMIT count` is accepted for Redis-compatible parsing and treated as a trimming hint.
 - [ ] Stream radix-tree statistics in `XINFO STREAM` are approximated for mock compatibility rather than mirroring Redis internals
+- [ ] A consumer group's `lag` (`XINFO GROUPS`, `XINFO STREAM FULL`) counts the entries after its last-delivered ID instead of Redis' `entries-read`-based estimate, so it can differ after `XGROUP SETID ... ENTRIESREAD`, an `XCLAIM LASTID` past the delivered entries, or deletions (#528)
+- [ ] `XGROUP CREATE` / `SETID` `ENTRIESREAD` refuses a value above 2^53 - 1 (`value is not an integer or out of range`), like `XSETID ENTRIESADDED`; real Redis takes any 64-bit value (#528)
 
 ## 10. Scan Family
 

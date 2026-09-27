@@ -8,7 +8,13 @@ import {
   streamSubcommandInfo,
 } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
-import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import {
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+  errors,
+} from '../../core/redis-error'
+import type { RedisResult } from '../../core/redis-result'
+import type { RedisDatabase } from '../../state/database'
 import type { StreamId } from '../../state/data-types'
 import type { CompatibilityProfile } from '../../core/compatibility'
 import {
@@ -18,31 +24,30 @@ import {
   subcommandSyntaxError,
   unknownSubcommandError,
 } from '../helpers'
-import { requireStreamGroup } from './groups'
+import { requireStreamGroup, streamGroup } from './groups'
 import {
   bufferId,
   cloneStreamId,
+  MAX_ID,
   MIN_ID,
   parseExactId,
-  parseNonNegativeInteger,
+  parseLongLong,
 } from './ids'
 
+// CREATE / SETID: the id and the options after it stay raw. Real Redis reads
+// the options before the key but the id only after the key and group checks,
+// so both are parsed in execute (#507).
+type XgroupIdArgs = {
+  rawName: Buffer
+  key: Buffer
+  group: Buffer
+  id: Buffer
+  options: readonly Buffer[]
+}
+
 type XgroupArgs =
-  | {
-      subcommand: 'create'
-      key: Buffer
-      group: Buffer
-      id: StreamId | '$'
-      mkstream: boolean
-      entriesRead: number | null
-    }
-  | {
-      subcommand: 'setid'
-      key: Buffer
-      group: Buffer
-      id: StreamId | '$'
-      entriesRead: number | null
-    }
+  | ({ subcommand: 'create' } & XgroupIdArgs)
+  | ({ subcommand: 'setid' } & XgroupIdArgs)
   | { subcommand: 'destroy'; key: Buffer; group: Buffer }
   | {
       subcommand: 'createconsumer'
@@ -117,45 +122,19 @@ function createXgroupSchema() {
         const name = subcommand === 'CREATE' ? 'create' : 'setid'
         const key = input[index + 1]
         const group = input[index + 2]
-        const rawId = input[index + 3]?.toString()
-        if (!key || !group || rawId === undefined) {
+        const id = input[index + 3]
+        if (!key || !group || !id) {
           throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
-        }
-
-        let cursor = index + 4
-        let mkstream = false
-        let entriesRead: number | null = null
-        while (cursor < input.length) {
-          const option = input[cursor].toString().toUpperCase()
-          if (subcommand === 'CREATE' && option === 'MKSTREAM') {
-            mkstream = true
-            cursor++
-            continue
-          }
-
-          if (option === 'ENTRIESREAD') {
-            const rawEntriesRead = input[cursor + 1]
-            if (!rawEntriesRead) break
-            entriesRead = parseNonNegativeInteger(rawEntriesRead)
-            cursor += 2
-            continue
-          }
-
-          break
-        }
-
-        if (cursor !== input.length) {
-          throw subcommandSyntaxError('XGROUP', rawSubcommand, ctx.profile)
         }
 
         return {
           value: {
             subcommand: name,
+            rawName: rawSubcommand,
             key,
             group,
-            id: rawId === '$' ? '$' : parseExactId(rawId),
-            mkstream,
-            entriesRead,
+            id,
+            options: input.slice(index + 4),
           },
           nextIndex: input.length,
         }
@@ -311,72 +290,38 @@ export const xgroupCommand = defineCommand({
       throw unknownSubcommandError('XGROUP', command.name, ctx.server.profile)
     }
 
-    if (command.subcommand === 'create') {
-      const type = db.getType(command.key)
-      if (type === null && !command.mkstream) {
-        throw errors.xgroupCreateMissingKey()
-      }
-
-      const lastDeliveredId =
-        command.id === '$'
-          ? (db.getStream(command.key)?.lastId ?? MIN_ID)
-          : command.id
-
-      db.updateStream(command.key, stream => {
-        const groupId = bufferId(command.group)
-        if (stream.value.groups.has(groupId)) {
-          throw errors.busyStreamGroup()
-        }
-
-        stream.addGroup(groupId, {
-          name: Buffer.from(command.group),
-          lastDeliveredId: cloneStreamId(lastDeliveredId),
-          entriesRead: command.entriesRead,
-          consumers: new Map(),
-          pending: new Map(),
-        })
-      })
-      return ok()
+    if (command.subcommand === 'create' || command.subcommand === 'setid') {
+      return createOrSetId(command, db, ctx.server.profile)
     }
 
-    if (command.subcommand === 'setid') {
-      requireStreamGroup(db.getStream(command.key), command.key, command.group)
-      db.updateStream(command.key, stream => {
-        const group = requireStreamGroup(
-          stream.value,
-          command.key,
-          command.group,
-        )
-        const lastDeliveredId = command.id === '$' ? stream.lastId : command.id
-        stream.setGroupId(group, lastDeliveredId, command.entriesRead)
-      })
-      return ok()
-    }
+    // Every other subcommand needs the stream, and all but DESTROY the group.
+    const stream = db.getStream(command.key)
+    if (!stream) throw errors.xgroupCreateMissingKey()
+    const exists = streamGroup(stream, command.group) !== null
 
     if (command.subcommand === 'destroy') {
-      const stream = db.getStream(command.key)
-      if (!stream) return integer(0)
-
-      const removed = db.updateStream(command.key, writable => {
-        return writable.deleteGroup(bufferId(command.group))
-      })
+      if (!exists) return integer(0)
+      db.updateStream(command.key, writable =>
+        writable.deleteGroup(bufferId(command.group)),
+      )
       // Like real Redis: wake XREADGROUP clients blocked on the key, so those
       // reading the destroyed group reply NOGROUP. Not a modification — WATCH
       // stays clean.
-      if (removed) db.signalKeyReady(command.key)
-      return integer(removed ? 1 : 0)
+      db.signalKeyReady(command.key)
+      return integer(1)
     }
 
+    if (!exists) throw errors.xgroupNoSuchGroup(command.key, command.group)
+
     if (command.subcommand === 'createconsumer') {
-      requireStreamGroup(db.getStream(command.key), command.key, command.group)
-      const created = db.updateStream(command.key, stream => {
+      const created = db.updateStream(command.key, writable => {
         const group = requireStreamGroup(
-          stream.value,
+          writable.value,
           command.key,
           command.group,
         )
         const consumerId = bufferId(command.consumer)
-        return stream.addConsumer(group, consumerId, {
+        return writable.addConsumer(group, consumerId, {
           name: Buffer.from(command.consumer),
           seenAt: Date.now(),
           activeAt: null,
@@ -385,12 +330,149 @@ export const xgroupCommand = defineCommand({
       return integer(created ? 1 : 0)
     }
 
-    requireStreamGroup(db.getStream(command.key), command.key, command.group)
-    const deleted = db.updateStream(command.key, stream => {
-      const group = requireStreamGroup(stream.value, command.key, command.group)
+    const deleted = db.updateStream(command.key, writable => {
+      const group = requireStreamGroup(
+        writable.value,
+        command.key,
+        command.group,
+      )
       const consumerId = bufferId(command.consumer)
-      return stream.deleteConsumer(group, consumerId)
+      return writable.deleteConsumer(group, consumerId)
     })
     return integer(deleted)
   },
 })
+
+type XgroupIdCommand = Extract<XgroupArgs, { subcommand: 'create' | 'setid' }>
+
+/**
+ * XGROUP CREATE / SETID, in real Redis' order: the options, then the key and
+ * group checks, then the argument count, then the id (#507).
+ */
+function createOrSetId(
+  command: XgroupIdCommand,
+  db: RedisDatabase,
+  profile: CompatibilityProfile,
+): RedisResult {
+  const create = command.subcommand === 'create'
+  const { mkstream, entriesRead } = parseXgroupOptions(command, profile)
+
+  const stream = db.getStream(command.key)
+  if (!mkstream) {
+    if (!stream) throw errors.xgroupCreateMissingKey()
+    if (!create && !streamGroup(stream, command.group)) {
+      throw errors.xgroupNoSuchGroup(command.key, command.group)
+    }
+  }
+
+  // Past its options loop real Redis still checks the argument count, so an
+  // option list it accepted can still be too long for the subcommand. `argc`
+  // counts XGROUP itself: the id is argument 4.
+  const argc = 5 + command.options.length
+  const lag = profile.has('stream.consumer-group-lag')
+  const argcOk = create
+    ? argc <= (lag ? 8 : 6)
+    : argc === 5 || (lag && argc === 7)
+  if (!argcOk) {
+    throw subcommandSyntaxError('XGROUP', command.rawName, profile)
+  }
+
+  const rawId = command.id.toString()
+  if (create) {
+    const lastDeliveredId =
+      rawId === '$' ? (stream?.lastId ?? MIN_ID) : parseExactId(rawId)
+
+    db.updateStream(command.key, writable => {
+      const groupId = bufferId(command.group)
+      if (writable.value.groups.has(groupId)) {
+        throw errors.busyStreamGroup()
+      }
+
+      writable.addGroup(groupId, {
+        name: Buffer.from(command.group),
+        lastDeliveredId: cloneStreamId(lastDeliveredId),
+        entriesRead,
+        consumers: new Map(),
+        pending: new Map(),
+      })
+    })
+    return ok()
+  }
+
+  // SETID parses its id like a range bound: `-` and `+` are 0-0 and the
+  // maximum id, where CREATE's strict parse rejects both.
+  const id = parseSetIdTarget(rawId)
+  db.updateStream(command.key, writable => {
+    const group = requireStreamGroup(writable.value, command.key, command.group)
+    writable.setGroupId(group, id ?? writable.lastId, entriesRead)
+  })
+  return ok()
+}
+
+// null is `$`: the stream's last id, read inside the update.
+function parseSetIdTarget(rawId: string): StreamId | null {
+  if (rawId === '$') return null
+  if (rawId === '-') return MIN_ID
+  if (rawId === '+') return MAX_ID
+  return parseExactId(rawId)
+}
+
+/**
+ * The options after the id. 7.0+ reads `MKSTREAM` (CREATE only) and
+ * `ENTRIESREAD <n>` in any order and number before it looks at the key, and
+ * rejects anything else with the subcommand syntax error. 6.2 knows only
+ * CREATE's `MKSTREAM`, and only as the sole option: a single other CREATE
+ * option is rejected before the key, and every other option list is left to
+ * the argument count check after it.
+ */
+function parseXgroupOptions(
+  command: XgroupIdCommand,
+  profile: CompatibilityProfile,
+): { mkstream: boolean; entriesRead: number | null } {
+  const create = command.subcommand === 'create'
+  const options = command.options
+
+  if (!profile.has('stream.consumer-group-lag')) {
+    if (!create || options.length !== 1) {
+      return { mkstream: false, entriesRead: null }
+    }
+    if (asciiUpperCase(options[0].toString()) !== 'MKSTREAM') {
+      throw subcommandSyntaxError('XGROUP', command.rawName, profile)
+    }
+    return { mkstream: true, entriesRead: null }
+  }
+
+  let mkstream = false
+  let entriesRead: number | null = null
+  for (let i = 0; i < options.length; i++) {
+    const option = asciiUpperCase(options[i].toString())
+    if (create && option === 'MKSTREAM') {
+      mkstream = true
+      continue
+    }
+
+    if (option === 'ENTRIESREAD' && i + 1 < options.length) {
+      const value = parseLongLong(
+        options[i + 1],
+        'value is not an integer or out of range',
+      )
+      // -1 is the "unknown" sentinel, the same as not giving the option.
+      if (value < -1n) {
+        throw new RedisCommandError(
+          'value for ENTRIESREAD must be positive or -1',
+        )
+      }
+      // Counters are numbers here, so like XSETID ENTRIESADDED a value past
+      // 2^53 - 1 is refused (real Redis takes any int64).
+      if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw errors.expectedInteger()
+      }
+      entriesRead = value === -1n ? null : Number(value)
+      i++
+      continue
+    }
+
+    throw subcommandSyntaxError('XGROUP', command.rawName, profile)
+  }
+  return { mkstream, entriesRead }
+}
