@@ -1,4 +1,5 @@
 import { asciiLowerCase } from '../core/ascii-case'
+import type { CompatibilityProfile } from '../core/compatibility'
 import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
@@ -357,7 +358,7 @@ export const scriptsCommands = [
 /**
  * Caches a script without running it. Like real Redis (every version), one
  * that does not compile is refused with the error EVAL would give and is not
- * cached.
+ * cached. A shebang line is skipped for the check (see {@link withoutShebang}).
  */
 async function scriptLoad(
   args: ScriptArgs,
@@ -368,7 +369,7 @@ async function scriptLoad(
   const runtime = await ctx.server.getLuaRuntime()
   let compileError: ReturnType<typeof runtime.compile>
   try {
-    compileError = runtime.compile(script)
+    compileError = runtime.compile(withoutShebang(script, ctx.server.profile))
   } catch (err) {
     // As for EVAL: the engine throws only for a script its heap cannot hold.
     return RedisResult.error(errorMessage(err), 'ERR')
@@ -382,6 +383,25 @@ async function scriptLoad(
   }
   const sha = ctx.server.scriptCache.load(script)
   return RedisResult.create(RedisValue.bulkString(Buffer.from(sha)))
+}
+
+/**
+ * The body Redis 7.0+ compiles for a script that opens with a `#!` shebang
+ * line (`script.shebang`): the script with that line blanked, its line feed
+ * kept so Lua's line numbers still count it. The engine does not skip it yet
+ * (fatal10110/lua-redis-wasm#98), so SCRIPT LOAD compiles this instead. The
+ * shebang itself (engine name, flags) is not checked.
+ */
+function withoutShebang(script: Buffer, profile: CompatibilityProfile): Buffer {
+  if (
+    !profile.has('script.shebang') ||
+    script[0] !== 0x23 /* # */ ||
+    script[1] !== 0x21 /* ! */
+  ) {
+    return script
+  }
+  const lineFeed = script.indexOf(0x0a)
+  return lineFeed === -1 ? script : script.subarray(lineFeed)
 }
 
 function scriptExists(
@@ -516,7 +536,7 @@ async function runLuaScript(
       ctx.server.scriptCache.load(script)
     }
     const reply = renderScriptError(result, { profile: ctx.server.profile })
-    return RedisResult.create(luaReplyToRedisValue(reply))
+    return RedisResult.create(luaReplyToRedisValue(reply, ctx.server.profile))
   } catch (err) {
     if (err instanceof RedisCommandError) {
       return RedisResult.fromError(err)

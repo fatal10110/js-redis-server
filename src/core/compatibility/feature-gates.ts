@@ -213,6 +213,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Redis and Valkey 7.2 add ` Please use EVAL.` Checked against redis-server
   // 8.0.6 and valkey-server 7.2.14, 8.0.11, 9.0.6.
   'script.noscript-short-wording': { valkey: '8.0.0' },
+  // Redis 7.0 taught a script's return value the `{big_number=}` and
+  // `{verbatim_string=}` tables; 6.2 converts them like any other table
+  // without an array part, to an empty array (`*0`), at top level and nested.
+  // `{double=}`, `{map=}` and `{set=}` convert on 6.2 already. Checked against
+  // redis-server 6.2.24, 7.0.15, 7.4.11, 8.0.6 and valkey-server 7.2.14,
+  // 8.0.11, 9.0.6.
+  'script.big-number-verbatim-returns': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 lets a script open with a `#!lua [flags=...]` shebang line,
+  // which it skips before compiling, keeping the line feed so line numbers
+  // hold (`#!lua\nreturn +` is a compile error at `user_script:2`); 6.2
+  // compiles it as Lua (`unexpected symbol near '#'`). Checked against
+  // redis-server 6.2.24, 7.0.15, 8.0.6 and valkey-server 7.2.14, 8.0.11,
+  // 9.0.6.
+  'script.shebang': { redis: '7.0.0', valkey: '7.2.0' },
   // COMMAND GETKEYS / GETKEYSANDFLAGS took arity -4 in 7.0 (a command and at
   // least one argument: `COMMAND GETKEYS GET` is a `command|getkeys` arity
   // error); 7.2 relaxed it to -3 and answers a short target with `Invalid

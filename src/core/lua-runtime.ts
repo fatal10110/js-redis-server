@@ -291,10 +291,10 @@ function createLuaCallContext(
 // Each RedisLuaRuntime gets its own WASM instance + LuaEngine + hostState
 // (lua-redis-wasm compiles the WebAssembly module once per process; every
 // load() after the first only instantiates it). A LuaWasmModule is single-use
-// (module.create() consumes it), so it cannot be shared between engines. Scoping a runtime per RedisServerState (see
-// RedisServerState.getLuaRuntime) keeps each logical node's script re-entrancy
-// guard isolated, so concurrent EVALs on independent server/cluster nodes never
-// collide (issue #130).
+// (module.create() consumes it), so it cannot be shared between engines.
+// Scoping a runtime per RedisServerState (see RedisServerState.getLuaRuntime)
+// keeps each logical node's script re-entrancy guard isolated, so concurrent
+// EVALs on independent server/cluster nodes never collide (issue #130).
 let luaWasmLoadOptions: LoadOptions = {}
 
 /**
@@ -408,7 +408,21 @@ function luaVersionNum(version: string): number {
   return major * 0x10000 + minor * 0x100 + patch
 }
 
-export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
+/**
+ * Converts a script's return value (or a rendered script error) to a reply.
+ * `profile` is the server's: before 7.0 a returned `{big_number=}` or
+ * `{verbatim_string=}` table is not a typed reply but an ordinary table with
+ * no array part, which Redis 6.2 sends as an empty array, at any depth
+ * (`script.big-number-verbatim-returns`). The engine converts those tables on
+ * every profile and drops the rest of the table, so a 6.2 table that also has
+ * an array part or a `set`/`map` field is not reproduced. Without a profile
+ * the 7.0+ conversion applies.
+ */
+export function luaReplyToRedisValue(
+  value: ReplyValue,
+  profile?: CompatibilityProfile,
+): RedisValue {
+  const convert = (inner: ReplyValue) => luaReplyToRedisValue(inner, profile)
   if (value === null || value === undefined) {
     return RedisValue.null()
   }
@@ -427,7 +441,7 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   }
 
   if (Array.isArray(value)) {
-    return RedisValue.array(value.map(luaReplyToRedisValue))
+    return RedisValue.array(value.map(convert))
   }
 
   if ('ok' in value) {
@@ -447,6 +461,14 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
     return RedisValue.double(value.double)
   }
 
+  if (
+    ('big_number' in value || 'verbatim_string' in value) &&
+    profile &&
+    !profile.has('script.big-number-verbatim-returns')
+  ) {
+    return RedisValue.array([])
+  }
+
   if ('big_number' in value) {
     return RedisValue.bigNumber(BigInt(value.big_number.toString()))
   }
@@ -459,16 +481,11 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
   }
 
   if ('map' in value) {
-    return RedisValue.map(
-      value.map.map(([k, v]) => [
-        luaReplyToRedisValue(k),
-        luaReplyToRedisValue(v),
-      ]),
-    )
+    return RedisValue.map(value.map.map(([k, v]) => [convert(k), convert(v)]))
   }
 
   if ('set' in value) {
-    return RedisValue.set(value.set.map(luaReplyToRedisValue))
+    return RedisValue.set(value.set.map(convert))
   }
 
   return RedisValue.bulkString(Buffer.from(String(value)))

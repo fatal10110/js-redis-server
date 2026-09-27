@@ -413,10 +413,26 @@ so the PR body is not a durable home for a breaking-change note.
 
 - Scripts run on **lua-redis-wasm 2.1** (was 1.5) ([#449], [#502], [#503]).
   What a script sees changes to match real Redis, byte for byte against
-  redis-server 6.2.24 to 8.0.6 and valkey-server 7.2.14 to 9.0.6:
+  redis-server 6.2.24 to 8.0.6 and valkey-server 7.2.14 to 9.0.6, except for
+  the known gaps at the end of this list:
   - `{double=…}`, `{big_number=…}`, `{map=…}`, `{set=…}` and
     `{verbatim_string=…}` tables convert at either protocol level; they came
     back as `[]` unless the script had called `redis.setresp(3)` ([#449]).
+    On `redis-6.2` a `{big_number=…}` or `{verbatim_string=…}` table still
+    replies `[]`, at any depth, because Redis 6.2 has neither type (new gate
+    `script.big-number-verbatim-returns`).
+  - Number arguments to `redis.call` / `redis.pcall` are spelled in the
+    shortest form that round-trips, and whole numbers as integers:
+    `1/3` → `0.3333333333333333` and `1e15` → `1000000000000000` (were
+    `0.33333333333333` and `1e+15`, from Lua's `%.14g`).
+  - A returned function or userdata becomes a null reply, at any depth,
+    instead of failing the script. A returned number outside the 64-bit
+    range replies `-9223372036854775808` instead of saturating. A
+    `{ok=…}` / `{err=…}` reply string is cut at its first NUL byte, and CR / LF
+    become spaces.
+  - A script that runs out of its instruction budget aborts with `Script
+    killed by fuel limit` in the profile's decoration (the message used to
+    start with `user_script:<line>: `), and `pcall` can no longer catch it.
   - After `redis.setresp(3)` a null reply reaches the script as `nil`, not
     `false`, so `HMGET h f nope f` returns `['v']` as in Redis ([#449]).
   - `return 1, 2` replies `1`, the first value (was `2`), and `math.random`
@@ -435,6 +451,13 @@ so the PR body is not a durable home for a breaking-change note.
     `xpcall` handler receives `{err=...}`; `pcall` still returns the string.
   - `redis.log` checks its level (`Invalid log level.`, `Invalid debug
     level.` before 7.4) and arguments with each version's wording.
+  - Known gaps, which need engine work ([#540]): on 6.2 and 7.0 Redis spells
+    number arguments with `%.17g` (`0.1` → `0.10000000000000001`, `1/3` →
+    `0.33333333333333331`) and 7.2.0 to 7.2.4 spell `1e15` as `1e+15`; the
+    mock uses the shortest form on every profile. On 6.2, `error()`,
+    `error(nil)` and `error({…})` make Redis's own error handler fail
+    (`@err_handler_def:9: ... attempt to concatenate local 'err'`); the mock
+    reports the value.
 
   **BREAKING (`/core`)** `setLuaWasmLoadOptions()` takes lua-redis-wasm 2.x
   `LoadOptions`: `limits.maxMemoryBytes` is gone (it was never enforced),
@@ -719,8 +742,12 @@ so the PR body is not a durable home for a breaking-change note.
   Redis does, instead of a runtime error with the abort decoration ([#502]).
   `SCRIPT LOAD` compiles the script first and refuses invalid Lua with the
   same error (it returned a SHA), and neither `EVAL` nor `SCRIPT LOAD` caches
-  a script that does not compile. `/core`: `RedisLuaRuntime.compile(script)`
-  returns the compile error or `null`.
+  a script that does not compile. From 7.0 (and on Valkey) the check skips a
+  leading `#!lua` shebang line, keeping its line feed, so `SCRIPT LOAD
+  "#!lua\nreturn 1"` still returns the SHA (new gate `script.shebang`); the
+  shebang itself is not checked, and `EVAL` of a shebang script is still a
+  compile error ([#536]). `/core`: `RedisLuaRuntime.compile(script)` returns
+  the compile error or `null`.
 
 - On `redis-6.2` a `redis.pcall` rejected by the scripting layer (an unknown
   or not-allowed command, wrong arity, no command) carries the calling line,
@@ -735,8 +762,9 @@ so the PR body is not a durable home for a breaking-change note.
   `REDIS_VERSION` / `REDIS_VERSION_NUM` (new gate
   `script.redis-version-props`). Valkey reports `7.2.4` there, like its
   INFO, plus `SERVER_NAME`, `VALKEY_VERSION` and `VALKEY_VERSION_NUM`.
-  `set_repl` does not check its argument, and `acl_check_cmd` (7.0+) is not
-  provided.
+  Known gaps ([#540]): `set_repl` does not check its argument, and on 6.2
+  `replicate_commands()` returns `true` even after the script has written,
+  where Redis 6.2 returns `false`. `acl_check_cmd` (7.0+) is not provided.
 
 - A Valkey 7.2 profile (`{ flavor: 'valkey', version: '7.2.x' }`) gets
   Valkey 7.2's Lua sandbox: Redis 7.2's (no `os`, `Invalid debug level.`,
@@ -1268,5 +1296,7 @@ requests they contain.
 [#380]: https://github.com/fatal10110/js-redis-server/issues/380
 [#445]: https://github.com/fatal10110/js-redis-server/issues/445
 [#527]: https://github.com/fatal10110/js-redis-server/issues/527
+[#536]: https://github.com/fatal10110/js-redis-server/issues/536
+[#540]: https://github.com/fatal10110/js-redis-server/issues/540
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

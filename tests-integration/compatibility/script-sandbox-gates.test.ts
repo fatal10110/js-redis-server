@@ -3,7 +3,12 @@ import assert from 'node:assert'
 import { createHash } from 'node:crypto'
 
 import { TestRunner } from '../test-config'
-import { activeProfile, commandFrame, type ProfileName } from '../utils'
+import {
+  activeProfile,
+  commandFrame,
+  randomKey,
+  type ProfileName,
+} from '../utils'
 import { RawRedisConnection } from '../raw-tcp/raw-connection'
 
 /**
@@ -128,6 +133,82 @@ describe(
       assert.strictEqual(await send('SCRIPT', 'LOAD', 'return +'), compile)
     })
 
+    test('SCRIPT LOAD skips a shebang line from 7.0', async () => {
+      const valid = '#!lua\nreturn 1'
+      assert.strictEqual(
+        await send('SCRIPT', 'LOAD', valid),
+        legacy
+          ? "-ERR Error compiling script (new function): user_script:1: unexpected symbol near '#'\r\n"
+          : bulk(sha1(valid)),
+      )
+      // The shebang's line feed is kept, so the body's lines still count it.
+      assert.strictEqual(
+        await send('SCRIPT', 'LOAD', '#!lua flags=no-writes\nreturn +'),
+        `-ERR Error compiling script (new function): user_script:${legacy ? 1 : 2}: unexpected symbol near '${legacy ? '#' : '+'}'\r\n`,
+      )
+    })
+
+    test('a returned {big_number=} or {verbatim_string=} is an empty array on 6.2', async () => {
+      const bigNumber = "return {big_number='123'}"
+      const verbatim = "return {verbatim_string={format='txt', string='hi'}}"
+      const nested = "return {1, {big_number='5'}, 2}"
+      assert.strictEqual(
+        await evalRaw(bigNumber),
+        legacy ? '*0\r\n' : bulk('123'),
+      )
+      assert.strictEqual(
+        await evalRaw(verbatim),
+        legacy ? '*0\r\n' : bulk('hi'),
+      )
+      assert.strictEqual(
+        await evalRaw(nested),
+        `*3\r\n:1\r\n${legacy ? '*0\r\n' : bulk('5')}:2\r\n`,
+      )
+      // The other typed tables convert on 6.2 too.
+      assert.strictEqual(await evalRaw('return {double=1.5}'), bulk('1.5'))
+
+      await send('HELLO', '3')
+      try {
+        assert.strictEqual(
+          await evalRaw(`redis.setresp(3) ${bigNumber}`),
+          legacy ? '*0\r\n' : '(123\r\n',
+        )
+        assert.strictEqual(
+          await evalRaw(`redis.setresp(3) ${verbatim}`),
+          legacy ? '*0\r\n' : '=6\r\ntxt:hi\r\n',
+        )
+        assert.strictEqual(
+          await evalRaw(`redis.setresp(3) ${nested}`),
+          `*3\r\n:1\r\n${legacy ? '*0' : '(5'}\r\n:2\r\n`,
+        )
+      } finally {
+        await send('HELLO', '2')
+      }
+    })
+
+    // KNOWN GAP: on 6.2 `redis.replicate_commands()` returns false (`$-1`)
+    // once the script has written, since it can no longer switch to effects
+    // replication. The stub always returns true.
+    test(
+      'replicate_commands() after a write on 6.2',
+      {
+        skip: !legacy && '6.2 only',
+        todo: 'static redis.* stubs (#540, fatal10110/lua-redis-wasm#104)',
+      },
+      async () => {
+        const key = `sandbox:${randomKey()}`
+        assert.strictEqual(
+          await send(
+            'EVAL',
+            "redis.call('set', KEYS[1], 'v') return redis.replicate_commands()",
+            '1',
+            key,
+          ),
+          '$-1\r\n',
+        )
+      },
+    )
+
     test('EVALSHA of an uncached script: Valkey 8.0+ drops "Please use EVAL."', async () => {
       assert.strictEqual(
         await send('EVALSHA', 'ffffffffffffffffffffffffffffffffffffffff', '0'),
@@ -202,7 +283,7 @@ describe(
       'error() with no value, nil or a table on 6.2',
       {
         skip: !legacy && '6.2 only',
-        todo: 'lua-redis-wasm redis-6.2 model: error handler failure',
+        todo: '6.2 error handler failure (#540, fatal10110/lua-redis-wasm#102)',
       },
       async () => {
         const cases: Array<[string, string]> = [

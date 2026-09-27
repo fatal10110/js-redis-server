@@ -53,6 +53,8 @@ export type FeatureId =
   | 'script.not-allowed-valkey-wording'
   | 'script.redis-version-props'
   | 'script.noscript-short-wording'
+  | 'script.big-number-verbatim-returns'
+  | 'script.shebang'
   | 'command.getkeys-single-arg'
   | 'zrank.withscore'
   | 'xsetid.entries-added'
