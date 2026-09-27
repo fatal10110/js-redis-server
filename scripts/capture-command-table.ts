@@ -17,6 +17,8 @@
  *     redis-8.0=47480 valkey-8.0=47481 valkey-9.0=47490
  *
  * Use exactly these versions (see `TABLES` in command-table.ts for why).
+ * The names asked for include the cluster-mode commands (CLUSTER and its
+ * subcommands, READONLY, READWRITE); a standalone server knows them too.
  * Only `COMMAND INFO` is sent. Redis 8.0 is written out in full; every other
  * version is written as the entries that differ from the version it is
  * derived from (see `TABLES` in command-table.ts). A command this server
@@ -29,7 +31,10 @@ import { resolve } from 'node:path'
 import Redis from 'ioredis'
 import type { CommandKeySpec } from '../src/core/command-definition'
 import type { CommandTableEntry } from '../src/core/compatibility/command-table'
-import { createRedisCommandExecutor } from '../src/internal'
+import {
+  createClusterCommands,
+  createRedisCommandExecutor,
+} from '../src/internal'
 import type { CompatibilitySpec } from '../src/core/compatibility'
 
 const OUTPUT = resolve(
@@ -87,9 +92,16 @@ const PRESETS: Array<{
 type Table = Map<string, CommandTableEntry>
 type Reply = string | number | null | Reply[]
 
+// Every command and subcommand this server registers on `preset`, in
+// standalone and in cluster mode: cluster nodes add CLUSTER, READONLY and
+// READWRITE through `extraCommands`, and real standalone servers answer
+// COMMAND INFO for those too.
 function registeredNames(preset: CompatibilitySpec): string[] {
   const names: string[] = []
-  const executor = createRedisCommandExecutor({ compatibility: preset })
+  const executor = createRedisCommandExecutor({
+    compatibility: preset,
+    extraCommands: createClusterCommands('capture'),
+  })
   for (const definition of executor.getCommandDefinitions()) {
     names.push(definition.name)
     for (const subcommand of definition.introspection?.subcommands ?? []) {

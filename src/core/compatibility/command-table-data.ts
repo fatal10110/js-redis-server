@@ -193,6 +193,28 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     categories: ['@slow', '@connection'],
     tips: ['request_policy:all_nodes', 'response_policy:all_succeeded'],
   },
+  cluster: { flags: [], categories: ['@slow'] },
+  'cluster|info': {
+    flags: ['stale'],
+    categories: ['@slow'],
+    tips: ['nondeterministic_output'],
+  },
+  'cluster|myid': { flags: ['stale'], categories: ['@slow'] },
+  'cluster|nodes': {
+    flags: ['stale'],
+    categories: ['@slow'],
+    tips: ['nondeterministic_output'],
+  },
+  'cluster|shards': {
+    flags: ['loading', 'stale'],
+    categories: ['@slow'],
+    tips: ['nondeterministic_output'],
+  },
+  'cluster|slots': {
+    flags: ['loading', 'stale'],
+    categories: ['@slow'],
+    tips: ['nondeterministic_output'],
+  },
   command: {
     flags: ['loading', 'stale'],
     categories: ['@slow', '@connection'],
@@ -1212,6 +1234,14 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
       'nondeterministic_output',
     ],
   },
+  readonly: {
+    flags: ['loading', 'stale', 'fast'],
+    categories: ['@fast', '@connection'],
+  },
+  readwrite: {
+    flags: ['loading', 'stale', 'fast'],
+    categories: ['@fast', '@connection'],
+  },
   rename: {
     flags: ['write'],
     categories: ['@keyspace', '@write', '@slow'],
@@ -2177,6 +2207,8 @@ export const REDIS_70: CommandTableDelta = {
   bzpopmin: { flags: ['write', 'noscript', 'blocking', 'fast'] },
   'client|setinfo': null,
   'client|setname': { tips: [] },
+  'cluster|shards': { flags: ['stale'] },
+  'cluster|slots': { flags: ['stale'] },
   'config|resetstat': { tips: [] },
   'config|rewrite': { tips: [] },
   msetnx: { tips: ['request_policy:multi_shard', 'response_policy:agg_min'] },
@@ -2212,6 +2244,15 @@ export const REDIS_62: CommandTableDelta = {
   'client|list': null,
   'client|no-evict': null,
   'client|setname': null,
+  cluster: {
+    flags: ['admin', 'random', 'stale'],
+    categories: ['@admin', '@slow', '@dangerous'],
+  },
+  'cluster|info': null,
+  'cluster|myid': null,
+  'cluster|nodes': null,
+  'cluster|shards': null,
+  'cluster|slots': null,
   command: { flags: ['random', 'loading', 'stale'] },
   'command|count': null,
   'command|docs': null,
@@ -2279,6 +2320,8 @@ export const REDIS_62: CommandTableDelta = {
   'pubsub|shardnumsub': null,
   quit: null,
   randomkey: { flags: ['readonly', 'random'] },
+  readonly: { flags: ['fast'], categories: ['@keyspace', '@fast'] },
+  readwrite: { flags: ['fast'], categories: ['@keyspace', '@fast'] },
   reset: { flags: ['noscript', 'loading', 'stale', 'fast'] },
   scan: { flags: ['readonly', 'random'] },
   script: {
@@ -2351,6 +2394,9 @@ export const REDIS_62: CommandTableDelta = {
 }
 
 export const VALKEY_80: CommandTableDelta = {
+  'cluster|info': { flags: ['loading', 'stale'] },
+  'cluster|myid': { flags: ['loading', 'stale'] },
+  'cluster|nodes': { flags: ['loading', 'stale'] },
   georadius: {
     keySpecs: [
       { flags: ['RO', 'access'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },

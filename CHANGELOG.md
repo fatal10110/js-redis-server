@@ -794,8 +794,16 @@ so the PR body is not a durable home for a breaking-change note.
   flags are status strings in sets (they were bulk strings in arrays), tips
   a set, key specs maps, and an entry without subcommands ends in an empty
   set on Redis and an empty array on Valkey; RESP2 output changes only from
-  bulk to status strings. A command added with `extraCommands` still reports
-  what its `introspection` declares.
+  bulk to status strings. A command the real table does not know (for
+  example one added with `extraCommands` under a new name) still reports what
+  its `introspection` declares. The cluster-mode commands (`CLUSTER` and its
+  subcommands, `READONLY`, `READWRITE`) read the table too (`READONLY`:
+  `loading stale fast`, `@fast @connection`; it was `readonly fast`, `@read
+  @fast`). The metadata is the captured patch release's: the `redis-6.2`
+  preset (6.2.14) reports 6.2.24's `denyoom` on `SUBSCRIBE` / `PSUBSCRIBE`,
+  and the `valkey-8.0` / `valkey-9.0` presets (8.0.0 / 9.0.0) answer as
+  8.0.11 / 9.0.6, whose entries end in `*0` where 8.0.0, 9.0.0 and 9.0.1
+  still send `~0`.
 - `COMMAND GETKEYS` / `GETKEYSANDFLAGS` find keys through those real key
   specs ([#493], [#494]), so a key's flags are its real spec's (`LPUSH k v`:
   `RW insert`, it was `RW access update`) and a command is no longer parsed

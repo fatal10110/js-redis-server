@@ -18,8 +18,10 @@ import {
  * A command-table entry's `COMMAND INFO` metadata that nothing in a command's
  * definition can derive: its flags, ACL categories, tips and key specs, as a
  * real server reports them. Arity and the legacy first/last/step key range are
- * not here; they come from the definition (see `commandTableArity` and
- * `legacyKeyRange`).
+ * not here. Arity comes from the definition (`commandTableArity`); the key
+ * range is folded from these key specs on 7.0+ and derived from the schema
+ * on 6.2 or when an entry has no key specs (`legacyKeyRange`).
+ * tests/core/command-schema-layout.test.ts keeps the two in agreement.
  */
 export type CommandTableEntry = {
   readonly flags: readonly string[]
@@ -132,11 +134,15 @@ const valkey90: TableSource = {
  * the patch releases the rest of the compatibility gates are verified
  * against: redis-server 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.6 (8.0.0 answers
  * the same) and valkey 8.0.11 / 9.0.6. Valkey 7.2 reads Redis 7.2's table.
- * Patch releases do change the table (7.4.11 marks the SUBSCRIBE family
- * `denyoom` and GEORADIUS's STORE specs `incomplete`; valkey 8.0.0 lacks the
- * `variable_flags` 8.0.11 has), so recapture from the same versions. Redis
- * 8.0 is stored whole, every other version as its differences from the one
- * it is derived from.
+ * Patch releases do change the table, so recapture from the same versions:
+ * 7.4.11 marks the SUBSCRIBE family `denyoom` and GEORADIUS's STORE specs
+ * `incomplete`; valkey 8.0.0 lacks the `variable_flags` 8.0.11 has. Some
+ * presets are versioned below the patch captured for them and so answer as
+ * the captured patch, not as their nominal version: the redis-6.2 preset
+ * (6.2.14) reports 6.2.24's `denyoom` on SUBSCRIBE / PSUBSCRIBE, which 6.2.14
+ * does not have, and the valkey-8.0 / valkey-9.0 presets (8.0.0 / 9.0.0)
+ * report 8.0.11 / 9.0.6's metadata. Redis 8.0 is stored whole, every other
+ * version as its differences from the one it is derived from.
  */
 const TABLES: readonly TableSource[] = [
   valkey90,
@@ -151,15 +157,16 @@ const TABLES: readonly TableSource[] = [
 /**
  * The real command-table entry `name` (`container|subcommand` for a
  * subcommand) has on `profile`, or `undefined` when the table this server was
- * captured against has none: a command added with `extraCommands`, or one the
- * real server of that version does not have. Tips and key specs are left out
+ * captured against has none: a command added with `extraCommands` under a
+ * name real Redis does not have, or one the real server of that version does
+ * not have. Tips and key specs are left out
  * on Redis 6.2, which has neither.
  */
 export function commandTableEntry(
   name: string,
   profile: CompatibilityProfile,
 ): CommandTableEntry | undefined {
-  const source =
-    TABLES.find(table => gateSatisfied(table.gate, profile)) ?? redis62
-  return resolved(source).get(name)
+  // redis62's gate is satisfied by every profile, so a table is always found.
+  const source = TABLES.find(table => gateSatisfied(table.gate, profile))
+  return source ? resolved(source).get(name) : undefined
 }

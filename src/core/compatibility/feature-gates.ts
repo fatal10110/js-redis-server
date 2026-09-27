@@ -25,7 +25,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // A COMMAND INFO entry without subcommands ends in an empty set on Redis
   // (`~0` in RESP3) and an empty array on Valkey (`*0`); RESP2 cannot tell
   // them apart. Verified against redis-server 7.0.15 / 8.0.6 and Valkey
-  // 7.2.14 / 8.0.11 / 9.0.6.
+  // 7.2.14 / 8.0.11 / 9.0.6, the patch releases the command table is
+  // captured from. Earlier Valkey patches still send `~0`: 8.0.0, 9.0.0 and
+  // 9.0.1 do, so the valkey-8.0 / valkey-9.0 presets (nominally 8.0.0 /
+  // 9.0.0) answer as 8.0.11 / 9.0.6 do, not as those first releases.
   'command.info-subcommands-array': { valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from

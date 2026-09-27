@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import {
   ClientSession,
   RedisServerState,
+  createClusterCommands,
   createRedisCommandExecutor,
 } from '../../src/internal'
 import {
@@ -81,7 +82,79 @@ describe('real command table (#494)', () => {
         assert.deepStrictEqual(flags, real.flags, name)
       }
     })
+
+    // A cluster node registers CLUSTER, READONLY and READWRITE through
+    // extraCommands; they are in the real table too.
+    test(`every entry a cluster node lists on ${preset} comes from the table`, async () => {
+      const profile = resolveCompatibilityProfile(preset)
+      const result = await session(
+        preset,
+        createClusterCommands('node-1'),
+      ).execute('command', [])
+      const entries = listed(result.value)
+      for (const name of ['cluster', 'readonly', 'readwrite']) {
+        assert.ok(entries.has(name), `${name} is not listed on ${preset}`)
+      }
+      for (const [name, flags] of entries) {
+        const real = commandTableEntry(name, profile)
+        assert.ok(real, `${name} has no ${preset} table entry`)
+        assert.deepStrictEqual(flags, real.flags, name)
+      }
+    })
   }
+
+  test('cluster-mode commands report real metadata', async () => {
+    // Real redis 8.0.6 COMMAND INFO readonly / cluster|info / cluster|slots.
+    const client = session('redis-8.0', createClusterCommands('node-1'))
+    const info = await client.execute('command', [
+      Buffer.from('info'),
+      Buffer.from('readonly'),
+      Buffer.from('cluster|info'),
+      Buffer.from('cluster|slots'),
+      Buffer.from('cluster'),
+    ])
+    const [readonly, clusterInfo, clusterSlots, cluster] = items(
+      info.value,
+    ).map(items)
+    assert.deepStrictEqual(items(readonly[2]).map(text), [
+      'loading',
+      'stale',
+      'fast',
+    ])
+    assert.deepStrictEqual(items(readonly[6]).map(text), [
+      '@fast',
+      '@connection',
+    ])
+    assert.deepStrictEqual(items(clusterInfo[2]).map(text), ['stale'])
+    assert.deepStrictEqual(items(clusterInfo[7]).map(text), [
+      'nondeterministic_output',
+    ])
+    assert.deepStrictEqual(items(clusterSlots[2]).map(text), [
+      'loading',
+      'stale',
+    ])
+    assert.deepStrictEqual(items(cluster[2]).map(text), [])
+    assert.deepStrictEqual(items(cluster[6]).map(text), ['@slow'])
+
+    // Redis 6.2.24: CLUSTER is `admin random stale`, READONLY `fast`.
+    const client62 = session('redis-6.2', createClusterCommands('node-1'))
+    const info62 = await client62.execute('command', [
+      Buffer.from('info'),
+      Buffer.from('cluster'),
+      Buffer.from('readonly'),
+    ])
+    const [cluster62, readonly62] = items(info62.value).map(items)
+    assert.deepStrictEqual(items(cluster62[2]).map(text), [
+      'admin',
+      'random',
+      'stale',
+    ])
+    assert.deepStrictEqual(items(readonly62[2]).map(text), ['fast'])
+    assert.deepStrictEqual(items(readonly62[6]).map(text), [
+      '@keyspace',
+      '@fast',
+    ])
+  })
 
   test('each profile reads the table of its version', () => {
     const hexpire = (spec: CompatibilitySpec) =>

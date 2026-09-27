@@ -49,6 +49,23 @@ const GETKEYS: Array<[string[], string]> = [
       ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
       : NO_KEYS,
   ],
+  [['PING', 'x', 'y'], NO_KEYS],
+  // A bare container: 6.2 finds no keys (CONFIG) or fails XINFO's getkeys
+  // procedure; 7.0 needs an argument after the target; 7.2+ has none.
+  [
+    ['CONFIG'],
+    profile === 'redis-7.0'
+      ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
+      : NO_KEYS,
+  ],
+  [
+    ['XINFO'],
+    legacy
+      ? INVALID_COUNT
+      : profile === 'redis-7.0'
+        ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
+        : NO_KEYS,
+  ],
   [['CLIENT', 'BOGUS'], legacy ? NO_KEYS : INVALID_COMMAND],
   [['XINFO', 'HELP'], legacy ? INVALID_ARGS : NO_KEYS],
   [['XINFO', 'HELP', 'x'], legacy ? keys('x') : NO_KEYS],
