@@ -358,6 +358,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'LMPOP / BLMPOP publish lpop / rpop by direction (#446)',
       'MOVE publishes move_from on the source database, then move_to on the target (#445)',
       'SET EX|PX|EXAT / SETEX / PSETEX publish set, then expire (#380)',
+      'SET PX / GETEX PX queued in MULTI count the TTL from EXEC (#380)',
       'SMOVE publishes srem on the source and sadd on the destination (#446)',
       'XGROUP subcommands publish xgroup-<subcommand> (#381)',
       'XREADGROUP / XCLAIM / XAUTOCLAIM publish xgroup-createconsumer for a new consumer',

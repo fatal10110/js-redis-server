@@ -290,6 +290,38 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
     ])
   })
 
+  test('SET PX / GETEX PX queued in MULTI count the TTL from EXEC (#380)', async () => {
+    const getex = randomKey()
+    const set = randomKey()
+    const events = await capture({ getex, set }, async actor => {
+      await actor.set(getex, 'v')
+      // Raw MULTI so each command is queued on the server right away.
+      assert.strictEqual(await actor.sendCommand(['MULTI']), 'OK')
+      assert.strictEqual(
+        await actor.sendCommand(['GETEX', getex, 'PX', '150']),
+        'QUEUED',
+      )
+      assert.strictEqual(
+        await actor.sendCommand(['SET', set, 'v', 'PX', '150']),
+        'QUEUED',
+      )
+      // Longer than the TTL: counted from queueing, both would be past.
+      await new Promise(resolve => setTimeout(resolve, 300))
+      assert.deepStrictEqual(await actor.sendCommand(['EXEC']), ['v', 'OK'])
+      assert.strictEqual(await actor.exists([getex, set]), 2)
+      for (const key of [getex, set]) {
+        const pttl = await actor.pTTL(key)
+        assert.ok(pttl > 0 && pttl <= 150, `PTTL ${key} = ${pttl}`)
+      }
+    })
+    assert.deepStrictEqual(events, [
+      'getex:set',
+      'getex:expire',
+      'set:set',
+      'set:expire',
+    ])
+  })
+
   test('MOVE publishes move_from on the source database, then move_to on the target (#445)', async () => {
     const moved = randomKey()
     const hash = randomKey()
