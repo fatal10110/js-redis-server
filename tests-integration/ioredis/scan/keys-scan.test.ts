@@ -406,6 +406,44 @@ describe(`Scan Commands Integration (${testRunner.getBackendName()})`, () => {
       errorWithMessage('ERR syntax error'),
     )
   })
+
+  // HSCAN / SSCAN / ZSCAN check the cursor, then look the key up, and only
+  // then parse the options: a missing key is the empty scan reply whatever the
+  // options say, and a wrong-type key is WRONGTYPE before any option error.
+  test('keyed scans look the key up before parsing options', async () => {
+    const missing = taggedKey('missing')
+    const stringKey = taggedKey('string')
+    await redisClient!.set(stringKey, 'value')
+
+    assert.deepStrictEqual(
+      await redisClient!.hscan(missing, '0', 'COUNT', '0'),
+      ['0', []],
+    )
+    assert.deepStrictEqual(
+      await redisClient!.sscan(missing, '0', 'COUNT', 'abc'),
+      ['0', []],
+    )
+    assert.deepStrictEqual(
+      await redisClient!.zscan(missing, '7', 'COUNT', '0'),
+      ['0', []],
+    )
+    await assert.rejects(
+      () => redisClient!.hscan(missing, 'abc'),
+      errorWithMessage('ERR invalid cursor'),
+    )
+    for (const scan of [
+      () => redisClient!.hscan(stringKey, '0', 'COUNT', '0'),
+      () => redisClient!.sscan(stringKey, '0', 'COUNT', 'abc'),
+      () => redisClient!.zscan(stringKey, '0', 'COUNT', '0'),
+    ]) {
+      await assert.rejects(
+        scan,
+        errorWithMessage(
+          'WRONGTYPE Operation against a key holding the wrong kind of value',
+        ),
+      )
+    }
+  })
 })
 
 function taggedKey(name: string): string {

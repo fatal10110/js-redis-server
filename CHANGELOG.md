@@ -822,6 +822,28 @@ so the PR body is not a durable home for a breaking-change note.
   `command.list`, `command.help-valkey-wording` and
   `command.info-subcommands-array`.
 
+- Importing the package no longer throws in a browser ([#499]).
+  `src/core/clock.ts` called `process.hrtime.bigint()` at module load, and
+  browser `process` polyfills have no `hrtime`. The clock now uses
+  `process.hrtime.bigint()` when it exists and falls back to
+  `performance.now()`, then `Date.now()`. MONITOR timestamps in Node still
+  have microsecond resolution. The browser demo's `process-shim.ts`, which
+  patched `hrtime` in for the demo only, is gone.
+
+- `HSCAN ... NOVALUES` is accepted on the `valkey-8.0` profile ([#214]). The
+  `hscan.novalues` gate said Valkey 9.0, but valkey-server 8.0.0 already
+  takes it (7.2.14 refuses it). Before the gate (Redis 6.2 - 7.2), `NOVALUES`
+  on SCAN / SSCAN / ZSCAN is now `syntax error`, the same as any unknown
+  option. It used to be `NOVALUES option can only be used in HSCAN`, which
+  those versions never send.
+
+- HSCAN / SSCAN / ZSCAN parse their options after the key lookup, as Redis
+  does ([#214]). A missing key answers the empty scan reply whatever follows
+  the cursor (`HSCAN missing 0 COUNT 0`, `SSCAN missing 0 NOVALUES`), and a
+  key of the wrong type answers WRONGTYPE before any option error. The cursor
+  is still checked first. An option missing its value (`HSCAN h 0 MATCH`,
+  `SCAN 0 COUNT`) is `syntax error` instead of `wrong number of arguments`.
+
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity
   -1 and `0 0 0`. The version-dependent ones follow the profile: `EXPIRE`
@@ -1347,5 +1369,7 @@ requests they contain.
 [#540]: https://github.com/fatal10110/js-redis-server/issues/540
 [#493]: https://github.com/fatal10110/js-redis-server/issues/493
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
+[#499]: https://github.com/fatal10110/js-redis-server/issues/499
+[#214]: https://github.com/fatal10110/js-redis-server/issues/214
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

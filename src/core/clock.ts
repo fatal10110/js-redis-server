@@ -13,10 +13,42 @@
  * it touches no `RedisServerState`, keyspace or feed — and because
  * `command-executor.ts` is its caller. Putting it here keeps every `core/` ->
  * `state/` import type-only, as it is on `main`.
+ *
+ * The monotonic source is feature-detected, not assumed. The package is
+ * imported by browser bundles too (the Pages demo), whose `process` polyfill
+ * has no `hrtime`, and a bare `process.hrtime.bigint()` here threw while the
+ * module graph was still being evaluated, before any caller code ran (#499).
  */
 
+type MonotonicNanos = () => bigint
+
+/**
+ * The best monotonic nanosecond counter the host has: `process.hrtime.bigint()`
+ * in Node, else `performance.now()` (browsers, workers, other runtimes), which
+ * browsers coarsen to microseconds or worse. That is enough here: the value is
+ * only an offset from a `Date.now()` anchor. `Date.now()` is the last resort,
+ * which just gives the millisecond-quantized timestamps #388 fixed.
+ */
+function resolveMonotonicNanos(): MonotonicNanos {
+  const hrtime =
+    typeof process === 'object' && process !== null
+      ? (process.hrtime as Partial<NodeJS.HRTime> | undefined)
+      : undefined
+  if (typeof hrtime?.bigint === 'function') {
+    return () => process.hrtime.bigint()
+  }
+
+  const clock = typeof performance === 'object' ? performance : undefined
+  if (typeof clock?.now === 'function') {
+    return () => BigInt(Math.round(clock.now() * 1e6))
+  }
+
+  return () => BigInt(Date.now()) * 1_000_000n
+}
+
+const monotonicNanos = resolveMonotonicNanos()
 let wallClockOriginMicros = BigInt(Date.now()) * 1000n
-let monotonicOriginNanos = process.hrtime.bigint()
+let monotonicOriginNanos = monotonicNanos()
 
 /**
  * How far the derived clock may drift from `Date.now()` before the anchor is
@@ -51,7 +83,7 @@ const RESYNC_THRESHOLD_MICROS = 1_000_000n
  */
 export function monitorTimestampMicros(): number {
   const wallClockMicros = BigInt(Date.now()) * 1000n
-  const elapsedMicros = (process.hrtime.bigint() - monotonicOriginNanos) / 1000n
+  const elapsedMicros = (monotonicNanos() - monotonicOriginNanos) / 1000n
   const derivedMicros = wallClockOriginMicros + elapsedMicros
 
   const drift =
@@ -64,7 +96,7 @@ export function monitorTimestampMicros(): number {
   }
 
   wallClockOriginMicros = wallClockMicros
-  monotonicOriginNanos = process.hrtime.bigint()
+  monotonicOriginNanos = monotonicNanos()
   return Number(wallClockMicros)
 }
 
