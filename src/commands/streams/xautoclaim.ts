@@ -20,6 +20,7 @@ type XautoclaimArgs = {
   minIdleMs: number
   start: StreamId
   count: number
+  attempts: number
   justId: boolean
 }
 
@@ -49,7 +50,7 @@ function createXautoclaimSchema() {
         throw new RedisCommandError('invalid start ID for the interval')
 
       let cursor = index + 5
-      let count = 100
+      let count = 100n
       let justId = false
       while (cursor < input.length) {
         const option = input[cursor].toString().toUpperCase()
@@ -76,7 +77,8 @@ function createXautoclaimSchema() {
           consumer,
           minIdleMs: minIdle < 0n ? 0 : Number(minIdle),
           start,
-          count,
+          count: Number(count),
+          attempts: autoclaimAttempts(count),
           justId,
         },
         nextIndex: input.length,
@@ -93,7 +95,7 @@ const LONG_MAX = (1n << 63n) - 1n
 function parseXautoclaimCount(
   token: Buffer,
   profile: CompatibilityProfile,
-): number {
+): bigint {
   const message = 'COUNT must be > 0'
   const max = profile.has('stream.xautoclaim-deleted-ids')
     ? LONG_MAX / 16n
@@ -102,7 +104,16 @@ function parseXautoclaimCount(
   if (count < 1n || count > max) {
     throw new RedisCommandError(message)
   }
-  return Number(count)
+  return count
+}
+
+// Real Redis examines at most `count * 10` pending entries, computed as a C
+// long. On 6.2 COUNT goes up to LONG_MAX, so the product can wrap: a negative
+// result never reaches 0 and means no limit, a positive one is the limit
+// (COUNT 1844674407370955162 examines 4).
+function autoclaimAttempts(count: bigint): number {
+  const attempts = BigInt.asIntN(64, count * 10n)
+  return attempts < 0n ? Infinity : Number(attempts)
 }
 
 export const xautoclaimCommand = defineCommand({
@@ -143,6 +154,7 @@ export const xautoclaimCommand = defineCommand({
           minIdleMs: command.minIdleMs,
           start: command.start,
           count: command.count,
+          attempts: command.attempts,
           justId: command.justId,
           cleanDeletedEntries: includeDeletedIds,
           eagerConsumer,

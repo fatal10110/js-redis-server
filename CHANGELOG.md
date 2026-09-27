@@ -618,7 +618,7 @@ so the PR body is not a durable home for a breaking-change note.
   subcommand requires the key to exist...`, where `SETID`, `CREATECONSUMER`
   and `DELCONSUMER` used to answer NOGROUP and `DESTROY` `:0`. A missing
   group is `NOGROUP No such consumer group '<g>' for key name '<k>'`, XGROUP's
-  own wording. `ENTRIESREAD -1` is accepted (the "unknown" counter), a lower
+  own wording, which `XINFO CONSUMERS` now uses too. `ENTRIESREAD -1` is accepted (the "unknown" counter), a lower
   value is `value for ENTRIESREAD must be positive or -1`, and `SETID`
   takes `-` and `+` as ids. `XINFO STREAM ... FULL COUNT` treats a negative
   count as the default 10 and 0 as no limit, and `FULL` lists `entries`
@@ -640,10 +640,12 @@ so the PR body is not a durable home for a breaking-change note.
   `recorded-first-entry-id` in `XINFO STREAM`. The existing
   `stream.xautoclaim-deleted-ids` gate (7.0) now also covers `XCLAIM`: on 6.2
   it claims a deleted entry, replies nil for it and keeps it pending, and
-  `XAUTOCLAIM COUNT` goes up to `LONG_MAX`. New gate
+  `XAUTOCLAIM COUNT` goes up to `LONG_MAX`, with `COUNT * 10` wrapping as a
+  64-bit signed value, as in 6.2. New gate
   `stream.consumer-active-time` (7.2): before it `XINFO CONSUMERS` has no
   `inactive`, and `XREADGROUP` / `XCLAIM` / `XAUTOCLAIM` create a missing
-  consumer only once they deliver or claim something.
+  consumer only once they deliver or claim something (an `XREADGROUP`
+  history read creates it even when nothing is pending).
 
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity

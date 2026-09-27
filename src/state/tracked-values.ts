@@ -718,6 +718,9 @@ export class TrackedStreamData {
       minIdleMs: number
       start: StreamId
       count: number
+      // At most this many pending entries are examined (COUNT * 10, see
+      // xautoclaim.ts).
+      attempts: number
       justId: boolean
       // 7.0+: drop a deleted entry from the PEL (it counts towards `count`);
       // 6.2 claims it and answers nil for it.
@@ -737,7 +740,7 @@ export class TrackedStreamData {
       pending => compareStreamId(pending.id, options.start) >= 0,
     )
 
-    let attempts = options.count * 10
+    let attempts = options.attempts
     let remaining = options.count
     let index = 0
     for (; index < candidates.length; index++) {

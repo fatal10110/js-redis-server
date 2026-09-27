@@ -127,6 +127,19 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
     return k
   }
 
+  /** The value after field `name` in a flat RESP2 field/value array. */
+  function fieldValue(reply: RespWireValue, name: string): RespWireValue {
+    assert.ok(Array.isArray(reply))
+    const at = reply.findIndex(
+      (field, i) =>
+        i % 2 === 0 &&
+        (typeof field === 'string' || Buffer.isBuffer(field)) &&
+        respText(field) === name,
+    )
+    assert.ok(at >= 0, `missing field ${name}`)
+    return reply[at + 1]
+  }
+
   /** Group `g`'s consumers, sorted (the listing order is not under test). */
   async function consumerNames(k: string): Promise<string[]> {
     const reply = await command('XINFO', 'CONSUMERS', k, 'g')
@@ -216,6 +229,27 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
         ids.push(`${i}-1`)
         await send(conn, ['XADD', k, `${i}-1`, 'f', 'v'])
       }
+      await expectReply(conn, ['XGROUP', 'CREATE', k, 'g', '0'], OK)
+
+      // A group with nothing delivered: `entries-read` / `lag` from 7.0.
+      const groupFields = [
+        bulk('name'),
+        bulk('g'),
+        bulk('last-delivered-id'),
+        bulk('0-0'),
+      ]
+      if (groupLag) {
+        groupFields.push(bulk('entries-read'), NIL, bulk('lag'), int(12))
+      }
+      groupFields.push(
+        bulk('pel-count'),
+        int(0),
+        bulk('pending'),
+        '*0\r\n',
+        bulk('consumers'),
+        '*0\r\n',
+      )
+      const group = `*${groupFields.length}\r\n${groupFields.join('')}`
 
       // `entries` comes before `groups`, as in real Redis.
       const full = (count: number): string => {
@@ -244,7 +278,7 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
           bulk('entries'),
           `*${listed.length}\r\n${listed.map(entry).join('')}`,
           bulk('groups'),
-          '*0\r\n',
+          `*1\r\n${group}`,
         )
         return `*${fields.length}\r\n${fields.join('')}`
       }
@@ -265,6 +299,27 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
         full(2),
       )
       await expectReply(conn, ['XINFO', 'STREAM', k, 'FULL'], full(10))
+    })
+
+    test('FULL COUNT limits the group PEL the same way', async () => {
+      const k = await streamWithGroup('full-pel', 12)
+      await send(conn, ['XREADGROUP', 'GROUP', 'g', 'c', 'STREAMS', k, '>'])
+
+      // The group row's `pel-count` and `pending` length. (The pending rows'
+      // timestamps and the consumer rows are not under test here.)
+      const pel = async (...count: string[]): Promise<[number, number]> => {
+        const reply = await command('XINFO', 'STREAM', k, 'FULL', ...count)
+        const groups = fieldValue(reply, 'groups')
+        assert.ok(Array.isArray(groups))
+        const pending = fieldValue(groups[0], 'pending')
+        assert.ok(Array.isArray(pending))
+        return [respNumber(fieldValue(groups[0], 'pel-count')), pending.length]
+      }
+
+      assert.deepStrictEqual(await pel('COUNT', '-1'), [12, 10])
+      assert.deepStrictEqual(await pel('COUNT', '0'), [12, 12])
+      assert.deepStrictEqual(await pel('COUNT', '2'), [12, 2])
+      assert.deepStrictEqual(await pel(), [12, 10])
     })
 
     test('the 7.0 stream fields are absent on 6.2', async () => {
@@ -350,6 +405,17 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
         await expectReply(conn, ['XGROUP', ...args], noGroup(k, 'nog'))
       }
       await expectReply(conn, ['XGROUP', 'DESTROY', k, 'nog'], ':0\r\n')
+      // XINFO CONSUMERS uses the same wording.
+      await expectReply(
+        conn,
+        ['XINFO', 'CONSUMERS', k, 'nog'],
+        noGroup(k, 'nog'),
+      )
+      await expectReply(
+        conn,
+        ['XINFO', 'CONSUMERS', key('missing'), 'nog'],
+        NO_SUCH_KEY,
+      )
     })
 
     test('SETID takes - and + as ids; CREATE does not', async () => {
@@ -414,148 +480,157 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
   })
 
   describe('XGROUP ENTRIESREAD (#507)', () => {
-    test('7.0+: -1 is accepted as "unknown", below -1 is refused', async () => {
-      if (!groupLag) return
-      const k = key('entriesread')
-      await send(conn, ['XADD', k, '1-1', 'f', 'v'])
-      await send(conn, ['XADD', k, '2-1', 'f', 'v'])
+    test(
+      '7.0+: -1 is accepted as "unknown", below -1 is refused',
+      { skip: !groupLag && '7.0+ only' },
+      async () => {
+        const k = key('entriesread')
+        await send(conn, ['XADD', k, '1-1', 'f', 'v'])
+        await send(conn, ['XADD', k, '2-1', 'f', 'v'])
 
-      await expectReply(
-        conn,
-        ['XGROUP', 'CREATE', k, 'g', '0', 'ENTRIESREAD', '-1'],
-        OK,
-      )
-      await expectReply(
-        conn,
-        ['XGROUP', 'SETID', k, 'g', '0', 'ENTRIESREAD', '-1'],
-        OK,
-      )
-      await expectReply(
-        conn,
-        ['XINFO', 'GROUPS', k],
-        groupsReply([
-          {
-            name: 'g',
-            consumers: 0,
-            pending: 0,
-            lastId: '0-0',
-            entriesRead: null,
-            lag: 2,
-          },
-        ]),
-      )
-      const refused = '-ERR value for ENTRIESREAD must be positive or -1\r\n'
-      await expectReply(
-        conn,
-        ['XGROUP', 'SETID', k, 'g', '0', 'ENTRIESREAD', '-2'],
-        refused,
-      )
-      // Read before the key, so it beats both a missing key and WRONGTYPE.
-      await expectReply(
-        conn,
-        ['XGROUP', 'SETID', key('missing'), 'g', '0', 'ENTRIESREAD', '-5'],
-        refused,
-      )
-      await expectReply(
-        conn,
-        [
-          'XGROUP',
-          'CREATE',
-          key('missing'),
-          'g',
-          '0',
-          'MKSTREAM',
-          'ENTRIESREAD',
-          '-3',
-        ],
-        refused,
-      )
-    })
+        await expectReply(
+          conn,
+          ['XGROUP', 'CREATE', k, 'g', '0', 'ENTRIESREAD', '-1'],
+          OK,
+        )
+        await expectReply(
+          conn,
+          ['XGROUP', 'SETID', k, 'g', '0', 'ENTRIESREAD', '-1'],
+          OK,
+        )
+        await expectReply(
+          conn,
+          ['XINFO', 'GROUPS', k],
+          groupsReply([
+            {
+              name: 'g',
+              consumers: 0,
+              pending: 0,
+              lastId: '0-0',
+              entriesRead: null,
+              lag: 2,
+            },
+          ]),
+        )
+        const refused = '-ERR value for ENTRIESREAD must be positive or -1\r\n'
+        await expectReply(
+          conn,
+          ['XGROUP', 'SETID', k, 'g', '0', 'ENTRIESREAD', '-2'],
+          refused,
+        )
+        // Read before the key, so it beats both a missing key and WRONGTYPE.
+        await expectReply(
+          conn,
+          ['XGROUP', 'SETID', key('missing'), 'g', '0', 'ENTRIESREAD', '-5'],
+          refused,
+        )
+        await expectReply(
+          conn,
+          [
+            'XGROUP',
+            'CREATE',
+            key('missing'),
+            'g',
+            '0',
+            'MKSTREAM',
+            'ENTRIESREAD',
+            '-3',
+          ],
+          refused,
+        )
+      },
+    )
 
-    test('7.0+: the options repeat, but only up to the argument limit', async () => {
-      if (!groupLag) return
-      const k = await streamWithGroup('entriesread-argc', 1)
-      await expectReply(
-        conn,
-        ['XGROUP', 'CREATE', k, 'g2', '0', 'MKSTREAM', 'MKSTREAM'],
-        OK,
-      )
-      await expectReply(
-        conn,
-        [
-          'XGROUP',
-          'CREATE',
-          k,
-          'g3',
-          '0',
-          'MKSTREAM',
-          'MKSTREAM',
-          'MKSTREAM',
-          'MKSTREAM',
-        ],
-        syntaxError('XGROUP', 'CREATE'),
-      )
-      await expectReply(
-        conn,
-        [
-          'XGROUP',
-          'SETID',
-          k,
-          'g',
-          '0',
-          'ENTRIESREAD',
-          '1',
-          'ENTRIESREAD',
-          '2',
-        ],
-        syntaxError('XGROUP', 'SETID'),
-      )
-      await expectReply(
-        conn,
-        ['XGROUP', 'SETID', k, 'g', '0', 'MKSTREAM'],
-        syntaxError('XGROUP', 'SETID'),
-      )
-    })
+    test(
+      '7.0+: the options repeat, but only up to the argument limit',
+      { skip: !groupLag && '7.0+ only' },
+      async () => {
+        const k = await streamWithGroup('entriesread-argc', 1)
+        await expectReply(
+          conn,
+          ['XGROUP', 'CREATE', k, 'g2', '0', 'MKSTREAM', 'MKSTREAM'],
+          OK,
+        )
+        await expectReply(
+          conn,
+          [
+            'XGROUP',
+            'CREATE',
+            k,
+            'g3',
+            '0',
+            'MKSTREAM',
+            'MKSTREAM',
+            'MKSTREAM',
+            'MKSTREAM',
+          ],
+          syntaxError('XGROUP', 'CREATE'),
+        )
+        await expectReply(
+          conn,
+          [
+            'XGROUP',
+            'SETID',
+            k,
+            'g',
+            '0',
+            'ENTRIESREAD',
+            '1',
+            'ENTRIESREAD',
+            '2',
+          ],
+          syntaxError('XGROUP', 'SETID'),
+        )
+        await expectReply(
+          conn,
+          ['XGROUP', 'SETID', k, 'g', '0', 'MKSTREAM'],
+          syntaxError('XGROUP', 'SETID'),
+        )
+      },
+    )
 
-    test('6.2: ENTRIESREAD is not an option', async () => {
-      if (groupLag) return
-      const k = await streamWithGroup('entriesread-62', 1)
-      await expectReply(
-        conn,
-        ['XGROUP', 'CREATE', k, 'g2', '0', 'ENTRIESREAD', '1'],
-        syntaxError('XGROUP', 'CREATE'),
-      )
-      await expectReply(
-        conn,
-        ['XGROUP', 'SETID', k, 'g', '0', 'ENTRIESREAD', '1'],
-        syntaxError('XGROUP', 'SETID'),
-      )
-      // The key and group are checked first.
-      await expectReply(
-        conn,
-        ['XGROUP', 'SETID', k, 'nog', 'bad', 'ENTRIESREAD', '1'],
-        noGroup(k, 'nog'),
-      )
-      await expectReply(
-        conn,
-        [
-          'XGROUP',
-          'CREATE',
-          key('missing'),
-          'g',
-          '0',
-          'ENTRIESREAD',
-          '3',
-          'MKSTREAM',
-        ],
-        XGROUP_MISSING_KEY,
-      )
-      await expectReply(
-        conn,
-        ['XGROUP', 'CREATE', k, 'g2', '0', 'MKSTREAM', 'MKSTREAM'],
-        syntaxError('XGROUP', 'CREATE'),
-      )
-    })
+    test(
+      '6.2: ENTRIESREAD is not an option',
+      { skip: groupLag && 'redis-6.2 only' },
+      async () => {
+        const k = await streamWithGroup('entriesread-62', 1)
+        await expectReply(
+          conn,
+          ['XGROUP', 'CREATE', k, 'g2', '0', 'ENTRIESREAD', '1'],
+          syntaxError('XGROUP', 'CREATE'),
+        )
+        await expectReply(
+          conn,
+          ['XGROUP', 'SETID', k, 'g', '0', 'ENTRIESREAD', '1'],
+          syntaxError('XGROUP', 'SETID'),
+        )
+        // The key and group are checked first.
+        await expectReply(
+          conn,
+          ['XGROUP', 'SETID', k, 'nog', 'bad', 'ENTRIESREAD', '1'],
+          noGroup(k, 'nog'),
+        )
+        await expectReply(
+          conn,
+          [
+            'XGROUP',
+            'CREATE',
+            key('missing'),
+            'g',
+            '0',
+            'ENTRIESREAD',
+            '3',
+            'MKSTREAM',
+          ],
+          XGROUP_MISSING_KEY,
+        )
+        await expectReply(
+          conn,
+          ['XGROUP', 'CREATE', k, 'g2', '0', 'MKSTREAM', 'MKSTREAM'],
+          syntaxError('XGROUP', 'CREATE'),
+        )
+      },
+    )
   })
 
   describe('XCLAIM (#498)', () => {
@@ -694,9 +769,18 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
       await send(conn, ['XAUTOCLAIM', k, 'g', 'auto', '999999999', '0'])
       // Nothing to deliver. (The null reply itself is not under test here.)
       await send(conn, ['XREADGROUP', 'GROUP', 'g', 'empty', 'STREAMS', k, '>'])
+      // A history read creates the consumer on every version, even with an
+      // empty PEL.
+      await expectReply(
+        conn,
+        ['XREADGROUP', 'GROUP', 'g', 'hist', 'STREAMS', k, '0'],
+        `*1\r\n*2\r\n${bulk(k)}*0\r\n`,
+      )
       assert.deepStrictEqual(
         await consumerNames(k),
-        activeTime ? ['auto', 'c1', 'empty', 'idle', 'none'] : ['c1'],
+        activeTime
+          ? ['auto', 'c1', 'empty', 'hist', 'idle', 'none']
+          : ['c1', 'hist'],
       )
     })
   })
@@ -719,6 +803,44 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
         `*2\r\n${bulk('0-0')}*0\r\n`,
       )
     })
+
+    test(
+      '6.2: COUNT * 10 wraps as a C long',
+      { skip: dropsDeleted && 'redis-6.2 only' },
+      async () => {
+        const k = await streamWithGroup('count-wrap', 6)
+        await send(conn, ['XREADGROUP', 'GROUP', 'g', 'c1', 'STREAMS', k, '>'])
+        const autoclaim = (minIdle: string, count: string) => [
+          'XAUTOCLAIM',
+          k,
+          'g',
+          'c2',
+          minIdle,
+          '0',
+          'COUNT',
+          count,
+          'JUSTID',
+        ]
+
+        // 1844674407370955162 * 10 = 2^64 + 4: four entries are examined.
+        await expectReply(
+          conn,
+          autoclaim('99999999', '1844674407370955162'),
+          `*2\r\n${bulk('5-1')}*0\r\n`,
+        )
+        await expectReply(
+          conn,
+          autoclaim('0', '1844674407370955162'),
+          `*2\r\n${bulk('5-1')}*4\r\n${['1-1', '2-1', '3-1', '4-1'].map(bulk).join('')}`,
+        )
+        // A negative product is no limit at all.
+        await expectReply(
+          conn,
+          autoclaim('99999999', '922337203685477581'),
+          `*2\r\n${bulk('0-0')}*0\r\n`,
+        )
+      },
+    )
 
     test('at most COUNT * 10 pending entries are examined; the cursor follows the last', async () => {
       const k = await streamWithGroup('attempts', 25)

@@ -25,7 +25,7 @@ import {
 import {
   consumerPendingCount,
   pendingEntriesSorted,
-  requireStreamGroup,
+  streamGroup,
   streamLag,
 } from './groups'
 import type { CompatibilityProfile } from '../../core/compatibility'
@@ -275,7 +275,9 @@ export const xinfoCommand = defineCommand({
       )
     }
 
-    const group = requireStreamGroup(stream, command.key, command.group)
+    // XINFO CONSUMERS answers a missing group in XGROUP's wording.
+    const group = streamGroup(stream, command.group)
+    if (!group) throw errors.xgroupNoSuchGroup(command.key, command.group)
     const now = Date.now()
     return array(
       Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
