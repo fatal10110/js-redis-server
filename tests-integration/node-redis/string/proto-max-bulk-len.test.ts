@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClientType, RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, randomKey } from '../../utils'
+import { errorWithMessage, errorWithMessageIn, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -21,6 +21,18 @@ const mockOnly =
   testRunner.backend === 'real'
     ? { skip: 'mutates server-wide proto-max-bulk-len; mock backend only' }
     : {}
+
+/**
+ * How a real server rejects `CONFIG SET proto-max-bulk-len ""`. The wording
+ * depends on the C library the server was built against (glibc: the range
+ * message; musl or BSD libc: the memory-value message), not on its version —
+ * see the ioredis twin of this suite for the measurements (#497). The mock
+ * follows glibc, which the official images and CI use.
+ */
+const EMPTY_VALUE_REJECTIONS = [
+  "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be between 1048576 and 9223372036854775807 inclusive",
+  "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value",
+] as const
 
 // CONFIG GET is a flat array on RESP2 and a map (object) on RESP3 — node-redis
 // negotiates RESP3, so normalise both into a Map keyed by lower-cased name.
@@ -270,13 +282,14 @@ describe(`proto-max-bulk-len enforcement (node-redis, ${testRunner.getBackendNam
   // without hanging on its own retry.
 
   // Redis' memtoull reads an empty string as 0, so it fails the *range* check
-  // rather than the memory-value check.
+  // rather than the memory-value check — on the official images. See
+  // EMPTY_VALUE_REJECTIONS for why a real server may say otherwise.
   test('CONFIG SET reports an empty proto-max-bulk-len as out of range', async () => {
     await assert.rejects(
       () => standaloneClient.configSet('proto-max-bulk-len', ''),
-      errorWithMessage(
-        "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be between 1048576 and 9223372036854775807 inclusive",
-      ),
+      testRunner.backend === 'real'
+        ? errorWithMessageIn(EMPTY_VALUE_REJECTIONS)
+        : errorWithMessage(EMPTY_VALUE_REJECTIONS[0]),
     )
   })
 

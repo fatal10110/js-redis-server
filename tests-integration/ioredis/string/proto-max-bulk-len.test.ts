@@ -2,7 +2,7 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { Cluster, Redis } from 'ioredis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, randomKey } from '../../utils'
+import { errorWithMessage, errorWithMessageIn, randomKey } from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -26,6 +26,27 @@ const mockOnly =
   testRunner.backend === 'real'
     ? { skip: 'mutates server-wide proto-max-bulk-len; mock backend only' }
     : {}
+
+/**
+ * How a real server rejects `CONFIG SET proto-max-bulk-len ""`. memtoull hands
+ * the empty digit prefix to strtoull, and whether that counts as a parse error
+ * depends on the C library the server was built against, not on its version
+ * (#497):
+ *
+ *  - glibc (the official Debian-based images, which CI runs) returns 0 without
+ *    setting errno, so the value fails the range check — the first message;
+ *  - musl (the `-alpine` images) and the BSD libc (a Homebrew redis-server,
+ *    which the harness spawns when REDIS_STANDALONE_PORT is unset) set EINVAL,
+ *    so it fails the memory-value check — the second.
+ *
+ * Measured on redis:8.0 against redis:8.0-alpine, both 8.0.6; every glibc
+ * image from 6.2 to 8.4 and valkey 7.2 to 9.0 gives the first. The mock follows
+ * glibc; the real backend may be either.
+ */
+const EMPTY_VALUE_REJECTIONS = [
+  "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be between 1048576 and 9223372036854775807 inclusive",
+  "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be a memory value",
+] as const
 
 describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -234,13 +255,14 @@ describe(`proto-max-bulk-len enforcement (${testRunner.getBackendName()})`, () =
   // Measured — this test wedged the runner before it was moved.
 
   // Redis' memtoull reads an empty string as 0, so it fails the *range* check
-  // rather than the memory-value check.
+  // rather than the memory-value check — on the official images. See
+  // EMPTY_VALUE_REJECTIONS for why a real server may say otherwise.
   test('CONFIG SET reports an empty proto-max-bulk-len as out of range', async () => {
     await assert.rejects(
       () => standaloneClient!.config('SET', 'proto-max-bulk-len', ''),
-      errorWithMessage(
-        "ERR CONFIG SET failed (possibly related to argument 'proto-max-bulk-len') - argument must be between 1048576 and 9223372036854775807 inclusive",
-      ),
+      testRunner.backend === 'real'
+        ? errorWithMessageIn(EMPTY_VALUE_REJECTIONS)
+        : errorWithMessage(EMPTY_VALUE_REJECTIONS[0]),
     )
   })
 
