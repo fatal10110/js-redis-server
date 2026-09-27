@@ -78,8 +78,23 @@ unless every endpoint is verifiably empty and the cluster reports
 the backends with `docker compose -f docker-compose.test.yml up -d --wait`
 beforehand.
 
-Both the harness and that script read the same env vars, so you can point them
-at a private cluster when the default one is shared:
+Because of that flush, two real-backend runs must never share one stack — a
+second worktree or checkout would wipe the first one's keys mid-test (#497).
+The harness, that script and `docker-compose.test.yml` all read the same env
+vars, so a concurrent run starts its own stack on other ports:
+
+```bash
+export COMPOSE_PROJECT_NAME=redis-test-2
+export REDIS_CLUSTER_PORT_RANGE=31000-31005
+export REDIS_STANDALONE_PORT=31006
+export REDIS_STANDALONE_AUTH_PORT=31007
+docker compose -f docker-compose.test.yml up -d --wait
+npm run test:integration:real
+```
+
+See [Running a private stack](docs/TEST-INTEGRATION.md#running-a-private-stack)
+for the rules. The same variables also point the suite at a cluster you started
+some other way:
 
 ```bash
 REDIS_CLUSTER_PORTS=31100 \
@@ -92,8 +107,9 @@ REDIS_STANDALONE_AUTH_PORT=7812 \
 to `30000,30001,30002,30003,30004,30005`. One reachable node is enough: the
 harness's cluster clients discover the rest from it, and `clean:redis` flushes
 the whole topology it finds, failing if any node in it is unreachable. Ranges
-like `30000-30005` are rejected rather than expanded, and any malformed entry —
-in this or either standalone port — is an error instead of being skipped.
+like `30000-30005` are rejected there (use `REDIS_CLUSTER_PORT_RANGE` for a
+range), and any malformed entry — in this, the range or either standalone
+port — is an error instead of being skipped.
 
 ## Adding New Redis Commands
 

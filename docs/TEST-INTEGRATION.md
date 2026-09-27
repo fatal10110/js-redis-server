@@ -50,7 +50,7 @@ See [Socketless backend](#socketless-backend) below.
 For testing against real Redis, you need:
 
 - Docker and Docker Compose installed
-- Ports available: **30000-30005** (cluster), **6399** (standalone), **6400** (password-protected standalone)
+- Ports available: **30000-30005** (cluster), **6399** (standalone), **6400** (password-protected standalone) — or any other free ports, see [Running a private stack](#running-a-private-stack)
 
 ## Test Infrastructure Management
 
@@ -73,6 +73,26 @@ docker-compose -f docker-compose.test.yml down
 ```
 
 Do **not** pass `-v` — the cluster's `nodes-*.conf` topology lives in the container and a volume wipe forces a slow re-form on next boot.
+
+### Running a private stack
+
+The default stack is one shared set of servers per machine, and `npm run test:integration:real*` starts by flushing it with `clean:redis`. Two runs against it at once — two worktrees, two checkouts, two agents — therefore wipe each other's keys mid-test (#497). Give each concurrent run its own stack instead: every published port in `docker-compose.test.yml` can be moved, and the variables that move them are the ones the harness and `clean:redis` read, so exporting them once points the stack and the suite at the same servers.
+
+```bash
+export COMPOSE_PROJECT_NAME=redis-test-2           # separate containers and volumes
+export REDIS_CLUSTER_PORT_RANGE=31000-31005        # six consecutive ports, first-last
+export REDIS_STANDALONE_PORT=31006
+export REDIS_STANDALONE_AUTH_PORT=31007
+
+docker compose -f docker-compose.test.yml up -d --wait
+npm run test:integration:real                       # flushes and tests this stack only
+docker compose -f docker-compose.test.yml down
+```
+
+- `REDIS_CLUSTER_PORT_RANGE` must be six consecutive ports written `first-last`, ending at or below 55535 (each node's cluster bus is its client port + 10000, container-internal). `docker/redis-cluster-init.sh` binds the nodes to exactly those ports inside the container, so the host port map stays 1:1 and `MOVED` redirects still resolve from the host. The init script and the harness apply the same validation, and both refuse a malformed range rather than falling back to the default.
+- When `REDIS_CLUSTER_PORTS` is also set it wins as the seed list, but every seed must lie inside the range: seeds pointing at a different cluster than the one the range describes are an error.
+- `COMPOSE_PROJECT_NAME` keeps the second stack's containers and volumes apart from the first. Compose derives the default name from the checkout's directory, so separate worktrees already differ — what they shared was the ports. Set it explicitly when a second stack runs from the same directory, or `up` recreates the first one on the new ports.
+- Unset, everything stays on the defaults (30000-30005, 6399, 6400), which is what CI uses.
 
 ## How It Works
 
@@ -112,6 +132,8 @@ For the `real` backend, the standalone services are located via:
 
 - `REDIS_STANDALONE_PORT` — host port of `redis-standalone` (6399 in docker-compose)
 - `REDIS_STANDALONE_AUTH_PORT` — host port of `redis-standalone-auth` (6400 in docker-compose)
+
+and the cluster via `REDIS_CLUSTER_PORTS` (comma-separated seed ports) or `REDIS_CLUSTER_PORT_RANGE` (`first-last`, the range a [private stack](#running-a-private-stack) was started on), defaulting to 30000-30005. docker-compose publishes its services on these same variables.
 
 If unset, the harness spawns a local `redis-server` child as a dev fallback.
 
@@ -197,7 +219,7 @@ The `docker-compose.test.yml` file defines three services, all on the official `
 ### Cluster Configuration
 
 - 3 master nodes + 3 replica nodes (6 total), formed with `--cluster-replicas 1`.
-- Ports: 30000-30005 (bus ports 40000-4000x stay container-internal).
+- Ports: 30000-30005 by default, or the six given by `REDIS_CLUSTER_PORT_RANGE` (bus ports, client port + 10000, stay container-internal).
 - All six `redis-server` processes run in **one** container so they reach each other over 127.0.0.1 and the host port map is 1:1.
 - Mac-compatible networking via `--cluster-announce-ip 127.0.0.1`, so MOVED/ASK redirects resolve from the host.
 - Startup is driven by [`docker/redis-cluster-init.sh`](../docker/redis-cluster-init.sh), mounted read-only into the container. It wipes each node's data directory (below), waits for **all six** nodes to answer `PING` and report `cluster_enabled:1`, then retries `redis-cli --cluster create` (up to 3 times, resetting the nodes between attempts) until the readiness gate below passes.
@@ -209,7 +231,7 @@ The `docker-compose.test.yml` file defines three services, all on the official `
 
 **Timeout budget.** The init script is the authoritative budget: worst case 294s (35s node gate + 3 attempts x (45s create + 35s settle) + 2 x (5s reset + 2s backoff) + 5s diagnostics), after which it exits non-zero having dumped diagnostics. That bound holds even with a *hung* node, because every `redis-cli` call is capped at 5s and whenever all six nodes are queried they are queried in parallel, so a round costs one 5s cap at most. The healthcheck's `start_period` (330s) covers the whole script budget so a slow-but-healthy boot can never exhaust its retries, and the workflow's `--wait-timeout` (420s) is only an outer backstop. Keep that ordering if you change any of them — inverting it is how a failure ends up with no diagnostics at all.
 
-Tunables (env vars on the `redis-cluster` service): `NODE_READY_TIMEOUT`, `CLUSTER_READY_TIMEOUT`, `CREATE_TIMEOUT`, `CREATE_ATTEMPTS`, `CLI_TIMEOUT`, `CLUSTER_NODE_TIMEOUT`, `DATA_DIR`.
+Tunables (env vars on the `redis-cluster` service): `NODE_READY_TIMEOUT`, `CLUSTER_READY_TIMEOUT`, `CREATE_TIMEOUT`, `CREATE_ATTEMPTS`, `CLI_TIMEOUT`, `CLUSTER_NODE_TIMEOUT`, `DATA_DIR`, and `CLUSTER_PORT_RANGE` (set from `REDIS_CLUSTER_PORT_RANGE` by the compose file).
 
 Either compose spelling works for the commands in this document: the `docker compose` v2 plugin and the standalone `docker-compose` v2 binary are the same implementation, and everything used here (`--wait`, `--wait-timeout`) needs only v2.17+.
 

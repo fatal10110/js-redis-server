@@ -56,7 +56,43 @@
 # recheck both of those files.
 set -eu
 
-PORTS='30000 30001 30002 30003 30004 30005'
+log() {
+  echo "[cluster-init] $*"
+}
+
+# The six client ports, given as one `first-last` range of consecutive ports.
+# docker-compose.test.yml passes REDIS_CLUSTER_PORT_RANGE through as this, so a
+# second stack (another worktree or checkout) can run beside the default one
+# on other ports instead of sharing it; the test harness reads the same
+# variable (tests-integration/redis-endpoints.ts, which applies the same rules).
+# Each node's bus port is its client port + 10000 and stays container-internal.
+# The ports are fixed for the container's lifetime: the healthcheck's `check`
+# mode sees the same environment as the boot.
+CLUSTER_PORT_RANGE="${CLUSTER_PORT_RANGE:-30000-30005}"
+first_port=${CLUSTER_PORT_RANGE%%-*}
+last_port=${CLUSTER_PORT_RANGE#*-}
+case "$first_port:$last_port" in
+  # Digits only, no empty half, no leading zero (sh arithmetic reads it as octal).
+  *[!0-9:]* | :* | *: | 0* | *:0*) valid_range=0 ;;
+  *) valid_range=1 ;;
+esac
+if [ "$valid_range" = 1 ]; then
+  if [ "$first_port" -lt 1 ] || [ $((last_port - first_port)) -ne 5 ] ||
+    [ $((last_port + 10000)) -gt 65535 ]; then
+    valid_range=0
+  fi
+fi
+if [ "$valid_range" != 1 ]; then
+  log "FATAL: CLUSTER_PORT_RANGE='$CLUSTER_PORT_RANGE' is not 6 consecutive ports first-last with first >= 1 and last <= 55535 (bus port = client port + 10000)"
+  exit 1
+fi
+PORTS=''
+port=$first_port
+while [ "$port" -le "$last_port" ]; do
+  PORTS="$PORTS $port"
+  port=$((port + 1))
+done
+PORTS=${PORTS# }
 LOG_DIR='/var/log/redis-cluster'
 # Each node gets its OWN working directory, $DATA_DIR/<port>, wiped on every
 # boot. /data is a declared VOLUME *and* the image's WORKDIR, so anything a node
@@ -107,10 +143,6 @@ CLI_TIMEOUT="${CLI_TIMEOUT:-5}"
 # partition, not a crash. Nothing here exercises failover, so the trade is
 # worth it; it is a trade all the same.
 CLUSTER_NODE_TIMEOUT="${CLUSTER_NODE_TIMEOUT:-15000}"
-
-log() {
-  echo "[cluster-init] $*"
-}
 
 now() {
   date +%s

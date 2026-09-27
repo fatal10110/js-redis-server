@@ -6,11 +6,23 @@ services:
   # MOVED/ASK redirects resolvable from a Mac host (the same property that made
   # grokzen "just work"). Bus ports default to client-port + 10000 (40000-4000x)
   # and stay container-internal — host clients only ever touch the client ports.
+  #
+  # Every published port can be moved, so a second stack (another worktree or
+  # checkout) runs beside this one under its own COMPOSE_PROJECT_NAME instead
+  # of sharing it — and `clean:redis` flushing it under a concurrent run
+  # (#497). The variables are the ones the test harness reads, so exporting
+  # them once points both the stack and the suite at the same ports; see
+  # "Running a private stack" in docs/TEST-INTEGRATION.md. Unset, everything
+  # stays on the defaults below.
   redis-cluster:
     image: redis:8.0
     platform: linux/amd64
+    environment:
+      # Six consecutive ports, first-last. The init script binds the nodes to
+      # them inside the container, which keeps the host port map 1:1.
+      CLUSTER_PORT_RANGE: ${REDIS_CLUSTER_PORT_RANGE:-30000-30005}
     ports:
-      - '30000-30005:30000-30005'
+      - '${REDIS_CLUSTER_PORT_RANGE:-30000-30005}:${REDIS_CLUSTER_PORT_RANGE:-30000-30005}'
     volumes:
       # Read-only mount of the init script. It lives outside this file so it can
       # be read, commented and run on its own; see the header comment there for
@@ -50,7 +62,7 @@ services:
   redis-standalone:
     image: redis:8.0
     ports:
-      - '6399:6379'
+      - '${REDIS_STANDALONE_PORT:-6399}:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', '-p', '6379', 'ping']
       interval: 5s
@@ -75,7 +87,7 @@ services:
         'no',
       ]
     ports:
-      - '6400:6379'
+      - '${REDIS_STANDALONE_AUTH_PORT:-6400}:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', '-p', '6379', '-a', 'testpass', 'ping']
       interval: 5s
