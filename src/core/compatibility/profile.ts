@@ -53,6 +53,7 @@ export type FeatureId =
   | 'zrank.withscore'
   | 'xsetid.entries-added'
   | 'set.listpack-encoding'
+  | 'set.union-diff-hashtable'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

@@ -67,7 +67,11 @@ so the PR body is not a durable home for a breaking-change note.
 
   `addMember()` takes an optional `SetEncodingRules` second argument and
   `RedisSetData` gains an optional `intset` flag; code that builds a
-  `RedisSetData` without it gets a set that is never an intset.
+  `RedisSetData` without it gets a set that is never an intset. Likewise, a
+  new set becomes an intset only if the callback calls
+  `prepareForAdd(first, sizeHint, rules)` before its first `addMember()`, as
+  `SADD` does; adding members to a new key without it gives a set that is
+  never an intset.
 
 - **BREAKING (`/core`)** The three hand-rolled in-memory transports were
   replaced by [`stream.duplexPair()`](https://nodejs.org/api/stream.html#streamduplexpairoptions),
@@ -819,22 +823,31 @@ so the PR body is not a durable home for a breaking-change note.
 
 - Sets are read in the order Redis stores them ([#504]). A set of integers is
   an intset, kept sorted, until it gains a non-integer or grows past
-  `set-max-intset-entries`; it then keeps its integers sorted ahead of the
-  later members and never becomes an intset again. So `SADD s 3 1` reads
-  `1 3`, `SADD s 3 1 a` reads `1 3 a` and `SADD s a 3 1` then `SREM s a` reads
-  `3 1` in `SMEMBERS`, `SSCAN`, `SORT ... BY nosort`, `SRANDMEMBER` and `SPOP`
-  with a count that covers the set; these used to follow insertion order, and
-  SORT re-derived the order from the current members. The set commands build
+  `set-max-intset-entries`, and it never becomes an intset again. A small
+  intset that gains a non-integer keeps its integers sorted ahead of the
+  later members. So `SADD s 3 1` reads `1 3`, `SADD s 3 1 a` reads `1 3 a`
+  and `SADD s a 3 1` then `SREM s a` reads `3 1` in `SMEMBERS`, `SSCAN`,
+  `SORT ... BY nosort` and `SRANDMEMBER` with a count that covers the set;
+  these used to follow insertion order, and SORT re-derived the order from
+  the current members. (An intset that grows past the limit, or gains a
+  non-integer at 128+ members, is a hashtable in Redis, whose order is
+  undefined; the mock keeps the order above there.) The set commands build
   their results the way Redis does: `SINTER` walks the smallest set,
   `SINTERSTORE` stores an all-integer result as an intset, `SUNION`, `SDIFF`
   and their `STORE` forms build the result from an empty intset (and `SDIFF`
   picks between Redis's two algorithms, which can leave different orders),
+  `SPOP` with a count that covers the set replies an `SUNION` of the key,
   `SMOVE` creates its destination like `SADD`, `COPY` keeps the encoding and
-  seeding a set works like `SADD`. `SRANDMEMBER` and `SPOP` with a count now
-  reply in storage order, which is the order Redis replies a small set's
-  sample in. On the `redis-7.2+` / Valkey profiles (new gate
-  `set.listpack-encoding`) `SADD` creates an intset only when its member count
-  fits `set-max-intset-entries`; on 6.2 / 7.0 a large `SPOP` that keeps only
+  seeding a set works like `SADD`. On the `redis-8.0` / Valkey profiles (new
+  gate `set.union-diff-hashtable`) a non-`STORE` `SUNION` / `SDIFF` with a
+  non-intset source keeps the order it walks the sources in, as Redis builds
+  that result as a hashtable: after `SADD u x 3 1` and `SREM u x`,
+  `SUNION u` replies `3 1` there (Valkey 9's order) and `1 3` on 7.4 and
+  earlier. `SRANDMEMBER` and `SPOP` with a smaller count now reply in storage
+  order, which is the order Redis replies a small set's sample in. On the
+  `redis-7.2+` / Valkey profiles (new gate `set.listpack-encoding`) `SADD`
+  creates an intset only when its member count fits
+  `set-max-intset-entries`; on 6.2 / 7.0 a large `SPOP` that keeps only
   integers turns the survivors into an intset.
 
 - A command pipelined behind a multi-channel `SUBSCRIBE` / `PSUBSCRIBE` /

@@ -28,6 +28,23 @@ const sizeHintProfiles: ProfileName[] = [
   'valkey-9.0',
 ]
 
+/**
+ * `set.union-diff-hashtable` — from Redis 8.0 / Valkey 8.0 a non-STORE SUNION
+ * or SDIFF (and SPOP with a count that covers the set, which replies an
+ * SUNION of the key) builds its result as a hashtable when a source is not an
+ * intset, so the integers of a listpack keep their order; before that the
+ * result starts as an intset and sorts them. The STORE forms still start from
+ * an intset. Valkey 9.0.0 gives the walk order pinned here; Redis 8.0's and
+ * Valkey 8.0's hashtable order is undefined, and the mock gives the same walk
+ * order there. Verified against redis-server 6.2.24, 7.2.16, 7.4, 8.0.6 and
+ * Valkey 7.2.14 / 8.0 / 9.0.
+ */
+const hashtableResultProfiles: ProfileName[] = [
+  'redis-8.0',
+  'valkey-8.0',
+  'valkey-9.0',
+]
+
 describe(
   `Set encoding gates (${testRunner.getBackendName()}, ${profile})`,
   // CONFIG SET would leak into the shared real cluster.
@@ -71,6 +88,38 @@ describe(
         assert.deepStrictEqual(
           await c.smembers(k('s')),
           sizeHintProfiles.includes(profile) ? ['3', '1'] : ['1', '3'],
+        )
+      })
+    })
+
+    test('SUNION / SDIFF / SPOP of a non-intset keep its order only from 8.0', async () => {
+      await withOps(async (c, k) => {
+        const walked = hashtableResultProfiles.includes(profile)
+        await c.sadd(k('u'), 'x', '3', '1')
+        await c.srem(k('u'), 'x')
+        await c.sadd(k('a'), '5', '2')
+
+        assert.deepStrictEqual(
+          await c.sunion(k('u')),
+          walked ? ['3', '1'] : ['1', '3'],
+        )
+        assert.deepStrictEqual(
+          await c.sdiff(k('u'), k('missing')),
+          walked ? ['3', '1'] : ['1', '3'],
+        )
+        assert.deepStrictEqual(
+          await c.sunion(k('a'), k('u')),
+          walked ? ['2', '5', '3', '1'] : ['1', '2', '3', '5'],
+        )
+        // Intset sources alone still give an intset.
+        assert.deepStrictEqual(await c.sunion(k('a')), ['2', '5'])
+        // The STORE forms start from an intset on every profile.
+        assert.strictEqual(await c.sunionstore(k('d'), k('u')), 2)
+        assert.deepStrictEqual(await c.smembers(k('d')), ['1', '3'])
+
+        assert.deepStrictEqual(
+          await c.spop(k('u'), 9),
+          walked ? ['3', '1'] : ['1', '3'],
         )
       })
     })

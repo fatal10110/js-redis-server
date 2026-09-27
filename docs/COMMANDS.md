@@ -396,22 +396,30 @@ with `GT` or `LT`.
 - Set members come back in the order Redis stores them (#504). A set that
   `SADD` (or `SMOVE`, or seeding) creates from an integer is an intset, kept
   in ascending order, until it gains a non-integer or holds more than
-  `set-max-intset-entries` members; it then keeps its integers sorted ahead
-  of the later members, in insertion order from there on, and never turns
-  back into an intset. A set created from a non-integer keeps insertion
-  order. `SMEMBERS`, `SSCAN`, `SORT`, `SRANDMEMBER` / `SPOP` with a count that
-  covers the set, and the set-algebra commands all read this order. The
-  set-algebra commands build their results the way Redis does: `SINTER`
+  `set-max-intset-entries` members, and it never turns back into an intset.
+  A small intset that gains a non-integer becomes a listpack: its integers
+  stay sorted ahead of the new member, in insertion order from there on. A
+  set created from a non-integer keeps insertion order. `SMEMBERS`, `SSCAN`,
+  `SORT` and `SRANDMEMBER` with a count that covers the set read this order.
+  The set-algebra commands build their results the way Redis does: `SINTER`
   walks the smallest set and `SINTERSTORE` stores an all-integer result as
   an intset; `SUNION`, `SDIFF` and their `STORE` forms add the members to an
-  empty intset one by one. On `redis-6.2` / `redis-7.0` a large `SPOP` that
-  leaves only integers makes the survivors an intset too.
-- Redis stores a large non-integer set (more than 128 members or a member
-  longer than 64 bytes from 7.2, any non-intset set before 7.2) as a
-  hashtable, whose order is undefined. The mock does not model that
-  encoding and keeps insertion order there. From 8.0 (Redis and Valkey) a
+  empty intset one by one, except that from 8.0 (Redis and Valkey) a
   non-`STORE` `SUNION` / `SDIFF` with a non-intset source builds a hashtable
-  too, so the order the mock gives is one of many a real server can.
+  and so keeps the order it walks the sources in (gate
+  `set.union-diff-hashtable`). `SPOP` with a count that covers the set
+  replies an `SUNION` of the key, as Redis does. On `redis-6.2` /
+  `redis-7.0` a large `SPOP` that leaves only integers makes the survivors an
+  intset too.
+- Redis stores some sets as a hashtable, whose order is undefined: an intset
+  that grows past `set-max-intset-entries`, or that gains a non-integer while
+  holding 128 or more members; a large non-integer set (more than 128
+  members or a member longer than 64 bytes); and before 7.2 any non-intset
+  set. The mock does not model that encoding and keeps the listpack order
+  there (for an intset, its sorted integers followed by later members in
+  insertion order). The same goes for the hashtable a non-`STORE` `SUNION` /
+  `SDIFF` builds from 8.0: the mock's walk order is exactly Valkey 9's for a
+  small result, and one of many Redis 8.0 and Valkey 8.0 can give.
 - `SRANDMEMBER` / `SPOP` with a count smaller than the set reply their random
   sample in storage order: that is the order Redis replies a small
   non-integer set's sample in, and one of the random orders it gives for an

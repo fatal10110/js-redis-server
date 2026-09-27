@@ -204,4 +204,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Verified against redis-server 6.2.24, 7.0.15, 7.4, 8.0.6 and Valkey 8.0 /
   // 9.0.
   'set.listpack-encoding': { redis: '7.2.0', valkey: '7.2.0' },
+  // Redis 8.0 / Valkey 8.0: a non-STORE SUNION / SDIFF (and so SPOP with a
+  // count that covers the set) builds its result as a hashtable when any
+  // source is not an intset, instead of starting from an empty intset. The
+  // integers of `SADD u x 3 1; SREM u x` then stay `3 1` in `SUNION u` rather
+  // than sorting to `1 3` (#504). Valkey 8.1+'s small hashtable walks in
+  // insertion order, so Valkey 9 gives exactly that; a Redis 8.0 / Valkey 8.0
+  // dict order is undefined. Verified against redis-server 7.2.16, 7.4,
+  // 8.0.6 and Valkey 7.2.14 / 8.0 / 8.1 / 9.0.
+  'set.union-diff-hashtable': { redis: '8.0.0', valkey: '8.0.0' },
 }

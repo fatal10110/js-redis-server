@@ -74,21 +74,29 @@ function intersectInOrder(db: RedisDatabase, keys: Buffer[]): Buffer[] {
 }
 
 /**
- * `sunionDiffGenericCommand()`: the result is built in a fresh set that
- * starts as an empty intset, member by member, so it goes through the same
- * conversions SADD does — integers stay sorted until the first non-integer
- * arrives. (Redis 8.0 / Valkey 8.0 start a non-STORE result as a hashtable
- * when a source is not an intset; a hashtable's order is undefined, so this
- * order is one it can give.)
+ * `sunionDiffGenericCommand()`: the result is built in a fresh set, member by
+ * member, so it goes through the same conversions SADD does. It starts as an
+ * empty intset, so integers stay sorted until the first non-integer arrives
+ * — except that on Redis 8.0 / Valkey 8.0+ (`set.union-diff-hashtable`) a
+ * reply-only result (no STORE destination) starts as a hashtable when any
+ * source is not an intset, and so keeps the order it walks the sources in.
+ * That is Valkey 8.1+'s order for a small result; a Redis 8.0 / Valkey 8.0
+ * hashtable's order is undefined.
  */
 function unionOrDiff(
-  db: RedisDatabase,
+  ctx: { db: RedisDatabase; server: RedisServerState },
   keys: Buffer[],
   op: 'union' | 'diff',
-  rules: SetEncodingRules,
+  store: boolean,
 ): RedisSetData {
+  const { db } = ctx
+  const rules = setEncodingRules(ctx.server)
   const sets = keys.map(key => db.getSet(key)) // WRONGTYPE for every key first
-  const result = createSetData({ intset: true })
+  const hashtable =
+    !store &&
+    ctx.server.profile.has('set.union-diff-hashtable') &&
+    sets.some(set => !!set && !set.intset)
+  const result = createSetData({ intset: !hashtable })
 
   if (op === 'union') {
     for (const set of sets) {
@@ -390,7 +398,7 @@ export const spopCommand = defineCommand({
 
       // The whole set is popped: Redis replies with an SUNION of the key.
       if (count >= entries.length) {
-        const union = unionOrDiff(ctx.db, [args.key], 'union', rules)
+        const union = unionOrDiff(ctx, [args.key], 'union', false)
         for (const [hex] of entries) set.deleteMemberId(hex)
         return Array.from(union.members.values())
       }
@@ -471,8 +479,7 @@ export const sdiffCommand = defineCommand({
   flags: ['readonly'],
   keys: args => args.keys,
   execute: (args, ctx) => {
-    const rules = setEncodingRules(ctx.server)
-    const diff = unionOrDiff(ctx.db, args.keys, 'diff', rules)
+    const diff = unionOrDiff(ctx, args.keys, 'diff', false)
     return bulkMembers(diff.members.values())
   },
 })
@@ -519,8 +526,7 @@ export const sunionCommand = defineCommand({
   flags: ['readonly'],
   keys: args => args.keys,
   execute: (args, ctx) => {
-    const rules = setEncodingRules(ctx.server)
-    const union = unionOrDiff(ctx.db, args.keys, 'union', rules)
+    const union = unionOrDiff(ctx, args.keys, 'union', false)
     return bulkMembers(union.members.values())
   },
 })
@@ -582,8 +588,7 @@ export const sdiffstoreCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.destination, ...args.keys],
   execute: (args, ctx) => {
-    const rules = setEncodingRules(ctx.server)
-    const diff = unionOrDiff(ctx.db, args.keys, 'diff', rules)
+    const diff = unionOrDiff(ctx, args.keys, 'diff', true)
     return integer(storeSetResult(ctx.db, args.destination, diff))
   },
 })
@@ -625,8 +630,7 @@ export const sunionstoreCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.destination, ...args.keys],
   execute: (args, ctx) => {
-    const rules = setEncodingRules(ctx.server)
-    const union = unionOrDiff(ctx.db, args.keys, 'union', rules)
+    const union = unionOrDiff(ctx, args.keys, 'union', true)
     return integer(storeSetResult(ctx.db, args.destination, union))
   },
 })

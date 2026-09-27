@@ -110,6 +110,11 @@ export function addSetMember(
   return true
 }
 
+/**
+ * Inserts an integer into an intset's value order. A Map only appends, so an
+ * insert anywhere else rebuilds it: O(n), fine at the default limit of 512.
+ * The position is found by binary search, parsing O(log n) members.
+ */
 function insertInValueOrder(
   set: RedisSetData,
   hex: string,
@@ -117,14 +122,19 @@ function insertInValueOrder(
   value: bigint,
 ): void {
   const entries = Array.from(set.members)
-  let index = entries.length
-  while (index > 0 && intsetValue(entries[index - 1][1])! > value) {
-    index--
-  }
-  if (index === entries.length) {
+  const last = entries[entries.length - 1]
+  if (!last || intsetValue(last[1])! < value) {
     set.members.set(hex, member)
     return
   }
+  let low = 0
+  let high = entries.length - 1
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (intsetValue(entries[mid][1])! < value) low = mid + 1
+    else high = mid
+  }
+  const index = low
   entries.splice(index, 0, [hex, member])
   set.members.clear()
   for (const [entryHex, entryMember] of entries) {

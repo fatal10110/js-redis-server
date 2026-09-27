@@ -359,7 +359,9 @@ mirrors `t_set.c`'s conversions (an intset gaining a non-integer or passing
 `SMEMBERS` to `SORT`, just walks the map. The limit and the profile's
 `set.listpack-encoding` gate reach the state layer as `SetEncodingRules`,
 built per command by `setEncodingRules()` in
-[`src/commands/sets.ts`](../src/commands/sets.ts). Stream values store ordered entries plus consumer groups, per-group
+[`src/commands/sets.ts`](../src/commands/sets.ts); the
+`set.union-diff-hashtable` gate, which only decides how a non-`STORE`
+`SUNION` / `SDIFF` result starts, is read there too. Stream values store ordered entries plus consumer groups, per-group
 pending-entry lists, and consumer idle metadata. Key (and hash-field) expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass that sweeps every database under one turn of

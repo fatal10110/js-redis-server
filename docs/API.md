@@ -183,6 +183,7 @@ Current profile gates:
 | Lua scripts resolve a `noscript` container's (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) subcommand before refusing it: `<container> HELP` runs, and an unknown subcommand fails lookup (see the container-subcommand row). 6.2 refuses every subcommand. (The mock has no `CONFIG HELP` yet, so that one call still errors.) | `redis-7.0+` | `valkey-8.0+` |
 | `QUIT` from a Lua script is refused as `noscript` (6.2 has no `QUIT` table entry: unknown command) | `redis-7.0+` | `valkey-8.0+` |
 | Listpack sets' encoding rules: `SADD` creates an intset only when its member count fits `set-max-intset-entries` (so with the limit at 2, `SADD s 3 1 3` keeps `3 1`; 6.2 / 7.0 sort it), and `SPOP`'s rebuild of a large pop keeps a non-intset set out of the intset encoding (6.2 / 7.0 turn all-integer survivors into a sorted intset) | `redis-7.2+` | `valkey-8.0+` |
+| A non-`STORE` `SUNION` / `SDIFF` (and `SPOP` with a count that covers the set) with a non-intset source builds its result as a hashtable, so a listpack's integers keep their order (`SADD u x 3 1`, `SREM u x`, then `SUNION u` replies `3 1`; 7.4 and earlier sort it to `1 3`) | `redis-8.0+` | `valkey-8.0+` |
 
 ## Package Entry Points
 
