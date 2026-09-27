@@ -8,7 +8,7 @@ import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
 import { parseExactId, parseLongLong } from './ids'
-import { entryToReply, streamIdValue } from './replies'
+import { entryToReply, nullBulk, streamIdValue } from './replies'
 
 type XclaimArgs = {
   key: Buffer
@@ -151,13 +151,19 @@ export const xclaimCommand = defineCommand({
       command.group,
     )
     const options = parseXclaimOptions(command.rest, now)
-    createConsumerIfMissing(
-      ctx.db,
-      command.key,
-      command.group,
-      command.consumer,
-      now,
-    )
+    const profile = ctx.server.profile
+    // 7.2+ creates the consumer up front; through 7.0 only once an entry is
+    // claimed (#498), below.
+    const eagerConsumer = profile.has('stream.consumer-active-time')
+    if (eagerConsumer) {
+      createConsumerIfMissing(
+        ctx.db,
+        command.key,
+        command.group,
+        command.consumer,
+        now,
+      )
+    }
     const claimed = ctx.db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream.value, command.key, command.group)
       return stream.claim(
@@ -172,15 +178,29 @@ export const xclaimCommand = defineCommand({
           force: options.force,
           justId: options.justId,
           lastId: options.lastId,
+          eagerConsumer,
+          dropDeleted: profile.has('stream.xautoclaim-deleted-ids'),
         },
         now,
       )
     })
+    if (!eagerConsumer && claimed.length > 0) {
+      createConsumerIfMissing(
+        ctx.db,
+        command.key,
+        command.group,
+        command.consumer,
+        now,
+      )
+    }
 
+    // A deleted entry claimed on 6.2 is a nil in the full reply.
     const replies = claimed.map(entry =>
       options.justId
         ? streamIdValue(entry.id)
-        : entryToReply(entry.id, entry.fields),
+        : entry.fields === null
+          ? nullBulk()
+          : entryToReply(entry.id, entry.fields),
     )
     return array(replies)
   },

@@ -6,6 +6,7 @@ import {
   errors,
 } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
+import type { CompatibilityProfile } from '../../core/compatibility'
 import type { StreamId } from '../../state/data-types'
 import { array } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
@@ -54,7 +55,7 @@ function createXautoclaimSchema() {
         const option = input[cursor].toString().toUpperCase()
         const hasValue = cursor + 1 < input.length
         if (option === 'COUNT' && hasValue) {
-          count = parseXautoclaimCount(input[cursor + 1])
+          count = parseXautoclaimCount(input[cursor + 1], ctx.profile)
           cursor += 2
           continue
         }
@@ -84,14 +85,21 @@ function createXautoclaimSchema() {
   )
 }
 
-// Real Redis: COUNT is a long in [1, LONG_MAX / 16] (its attempts factor),
-// and anything else — including a non-integer — is `ERR COUNT must be > 0`.
-const MAX_XAUTOCLAIM_COUNT = ((1n << 63n) - 1n) / 16n
+// Real Redis: COUNT is a long in [1, LONG_MAX / 16] from 7.0 (it allocates
+// the deleted-ids array up front), in [1, LONG_MAX] on 6.2, and anything else
+// — including a non-integer — is `ERR COUNT must be > 0`.
+const LONG_MAX = (1n << 63n) - 1n
 
-function parseXautoclaimCount(token: Buffer): number {
+function parseXautoclaimCount(
+  token: Buffer,
+  profile: CompatibilityProfile,
+): number {
   const message = 'COUNT must be > 0'
+  const max = profile.has('stream.xautoclaim-deleted-ids')
+    ? LONG_MAX / 16n
+    : LONG_MAX
   const count = parseLongLong(token, message)
-  if (count < 1n || count > MAX_XAUTOCLAIM_COUNT) {
+  if (count < 1n || count > max) {
     throw new RedisCommandError(message)
   }
   return Number(count)
@@ -114,13 +122,18 @@ export const xautoclaimCommand = defineCommand({
       command.key,
       command.group,
     )
-    createConsumerIfMissing(
-      ctx.db,
-      command.key,
-      command.group,
-      command.consumer,
-      now,
-    )
+    // 7.2+ creates the consumer up front; through 7.0 only once an entry is
+    // claimed (#498), below.
+    const eagerConsumer = ctx.server.profile.has('stream.consumer-active-time')
+    if (eagerConsumer) {
+      createConsumerIfMissing(
+        ctx.db,
+        command.key,
+        command.group,
+        command.consumer,
+        now,
+      )
+    }
     const result = ctx.db.updateStream(command.key, stream => {
       const group = requireStreamGroup(stream.value, command.key, command.group)
       return stream.autoClaim(
@@ -132,10 +145,20 @@ export const xautoclaimCommand = defineCommand({
           count: command.count,
           justId: command.justId,
           cleanDeletedEntries: includeDeletedIds,
+          eagerConsumer,
         },
         now,
       )
     })
+    if (!eagerConsumer && result.claimed.length > 0) {
+      createConsumerIfMissing(
+        ctx.db,
+        command.key,
+        command.group,
+        command.consumer,
+        now,
+      )
+    }
 
     const claimed = result.claimed.map(entry =>
       command.justId

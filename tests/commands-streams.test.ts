@@ -255,4 +255,76 @@ describe('stream commands (unit)', () => {
     assert.strictEqual(result.value.kind, 'map-pairs')
     assert.strictEqual(result.value.entries.length, 2)
   })
+
+  // Consumer groups (#498)
+
+  async function groupWithEntries(n: number) {
+    const harness = createSession()
+    for (let i = 1; i <= n; i++) {
+      await harness.session.execute('xadd', buf('s', `${i}-1`, 'f', 'v'))
+    }
+    await harness.session.execute('xgroup', buf('CREATE', 's', 'g', '0'))
+    return harness
+  }
+
+  function group(server: ReturnType<typeof createSession>['server']) {
+    const stream = server.getDatabase(0).getStream(Buffer.from('s'))
+    assert.ok(stream)
+    const found = stream.groups.get(Buffer.from('g').toString('hex'))
+    assert.ok(found)
+    return found
+  }
+
+  test('XCLAIM LASTID only ever moves the group forward', async () => {
+    const { session, server } = await groupWithEntries(3)
+    await session.execute(
+      'xreadgroup',
+      buf('GROUP', 'g', 'c1', 'COUNT', '2', 'STREAMS', 's', '>'),
+    )
+
+    await session.execute(
+      'xclaim',
+      buf('s', 'g', 'c2', '0', '1-1', 'LASTID', '0-1', 'JUSTID'),
+    )
+    assert.deepStrictEqual(group(server).lastDeliveredId, { ms: 2n, seq: 1n })
+
+    await session.execute('xclaim', buf('s', 'g', 'c2', '0', 'LASTID', '7-0'))
+    assert.deepStrictEqual(group(server).lastDeliveredId, { ms: 7n, seq: 0n })
+  })
+
+  test('XCLAIM FORCE adds an entry as one delivery and skips the min-idle check', async () => {
+    const { session, server } = await groupWithEntries(2)
+
+    const reply = await session.execute(
+      'xclaim',
+      buf('s', 'g', 'c', '100000', '1-1', '2-1', 'FORCE', 'JUSTID'),
+    )
+    assert.strictEqual(reply.value.kind, 'array')
+    assert.strictEqual(reply.value.items.length, 2)
+    const counts = Array.from(
+      group(server).pending.values(),
+      p => p.deliveryCount,
+    )
+    assert.deepStrictEqual(counts, [1, 1])
+  })
+
+  test('XAUTOCLAIM examines at most COUNT * 10 pending entries', async () => {
+    const { session } = await groupWithEntries(25)
+    await session.execute(
+      'xreadgroup',
+      buf('GROUP', 'g', 'c1', 'STREAMS', 's', '>'),
+    )
+
+    const reply = await session.execute(
+      'xautoclaim',
+      buf('s', 'g', 'c2', '999999', '0', 'COUNT', '1'),
+    )
+    assert.strictEqual(reply.value.kind, 'array')
+    // Ten entries examined, none idle long enough: the cursor is the 11th.
+    assert.deepStrictEqual(
+      reply.value.items[0],
+      RedisValue.bulkString(Buffer.from('11-1')),
+    )
+    assert.deepStrictEqual(reply.value.items[1], RedisValue.array([]))
+  })
 })

@@ -415,8 +415,10 @@ only when the key is brand-new (coming into existence is itself a write), and
 otherwise emits a `notify` so the change is still announced as a keyspace
 notification — matching real Redis, which fires `notifyKeyspaceEvent` for
 these without calling `signalModifiedKey`. When `XREADGROUP`/`XCLAIM`/
-`XAUTOCLAIM` name a consumer that does not exist yet, they first create it the
-same way, as its own `xgroup-createconsumer` notification.
+`XAUTOCLAIM` name a consumer that does not exist yet, they create it the same
+way, as its own `xgroup-createconsumer` notification: up front from Redis 7.2,
+and on 6.2 / 7.0 only once there is something to deliver or claim (the
+`stream.consumer-active-time` gate).
 
 ## Concurrency model
 

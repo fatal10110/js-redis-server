@@ -505,6 +505,13 @@ export const errors = Object.freeze({
       }`,
       'NOGROUP',
     ),
+  // XGROUP's own wording (SETID / CREATECONSUMER / DELCONSUMER), raised once
+  // the key is known to exist.
+  xgroupNoSuchGroup: (key: Buffer, group: Buffer) =>
+    new RedisCommandError(
+      `No such consumer group '${group.toString()}' for key name '${key.toString()}'`,
+      'NOGROUP',
+    ),
   streamIdExhausted: () =>
     new RedisCommandError(
       'The stream has exhausted the last possible ID, unable to add more items',

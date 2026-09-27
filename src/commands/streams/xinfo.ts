@@ -28,7 +28,8 @@ import {
   requireStreamGroup,
   streamLag,
 } from './groups'
-import { parseNonNegativeInteger } from './ids'
+import type { CompatibilityProfile } from '../../core/compatibility'
+import { parseLongLong } from './ids'
 import {
   bulkString,
   entryToReply,
@@ -38,7 +39,12 @@ import {
 } from './replies'
 
 type XinfoArgs =
-  | { subcommand: 'stream'; key: Buffer; full: boolean; count: number | null }
+  | {
+      subcommand: 'stream'
+      rawName: Buffer
+      key: Buffer
+      options: readonly Buffer[]
+    }
   | { subcommand: 'groups'; key: Buffer }
   | { subcommand: 'consumers'; key: Buffer; group: Buffer }
   | { subcommand: 'help'; key: Buffer | undefined }
@@ -55,7 +61,41 @@ const XINFO_HELP = [
 ]
 
 function isToken(arg: Buffer, token: string): boolean {
-  return arg.toString().toUpperCase() === token
+  return asciiUpperCase(arg.toString()) === token
+}
+
+type StreamInfoOptions = { full: boolean; count: number }
+
+/**
+ * `[FULL [COUNT <count>]]`: nothing, `FULL`, or `FULL COUNT <count>`, read
+ * after the key lookup as real Redis does (so a missing key wins over a bad
+ * option). A negative COUNT means the default, 10; 0 means no limit.
+ */
+function parseStreamOptions(
+  rawName: Buffer,
+  options: readonly Buffer[],
+  profile: CompatibilityProfile,
+): StreamInfoOptions {
+  if (options.length === 0) return { full: false, count: 10 }
+  if (
+    (options.length !== 1 && options.length !== 3) ||
+    !isToken(options[0], 'FULL') ||
+    (options.length === 3 && !isToken(options[1], 'COUNT'))
+  ) {
+    throw subcommandSyntaxError('XINFO', rawName, profile)
+  }
+  if (options.length === 1) return { full: true, count: 10 }
+
+  const count = parseLongLong(
+    options[2],
+    'value is not an integer or out of range',
+  )
+  if (count < 0n) return { full: true, count: 10 }
+  // Anything past the stream's size is the same as no limit.
+  return {
+    full: true,
+    count: count > BigInt(Number.MAX_SAFE_INTEGER) ? 0 : Number(count),
+  }
 }
 
 function createXinfoSchema() {
@@ -76,22 +116,15 @@ function createXinfoSchema() {
         const key = input[index + 1]
         if (!key) throw new WrongNumberOfArgumentsError('xinfo|stream')
 
-        // `[FULL [COUNT <count>]]`: nothing, `FULL`, or `FULL COUNT <count>`.
-        const options = input.slice(index + 2)
-        const valid =
-          options.length === 0 ||
-          (isToken(options[0], 'FULL') &&
-            (options.length === 1 ||
-              (options.length === 3 && isToken(options[1], 'COUNT'))))
-        if (!valid) {
-          throw subcommandSyntaxError('XINFO', rawSubcommand, ctx.profile)
-        }
-        const full = options.length > 0
-        const count =
-          options.length === 3 ? parseNonNegativeInteger(options[2]) : null
-
+        // The options are read only after the key (#507): see
+        // parseStreamOptions.
         return {
-          value: { subcommand: 'stream', key, full, count },
+          value: {
+            subcommand: 'stream',
+            rawName: rawSubcommand,
+            key,
+            options: input.slice(index + 2),
+          },
           nextIndex: input.length,
         }
       }
@@ -204,8 +237,9 @@ export const xinfoCommand = defineCommand({
   keys: args => (args.args.key ? [args.args.key] : []),
   execute: (args, ctx) => {
     const command = args.args
+    const profile = ctx.server.profile
     if (command.subcommand === 'help') {
-      return helpReply(XINFO_HELP, ctx.server.profile)
+      return helpReply(XINFO_HELP, profile)
     }
 
     if (command.subcommand === 'unknown') {
@@ -214,29 +248,38 @@ export const xinfoCommand = defineCommand({
       if (command.key && !ctx.db.getStream(command.key)) {
         throw errors.noSuchKey()
       }
-      throw unknownSubcommandError('XINFO', command.name, ctx.server.profile)
+      throw unknownSubcommandError('XINFO', command.name, profile)
     }
 
     const stream = ctx.db.getStream(command.key)
     if (!stream) throw errors.noSuchKey()
 
     if (command.subcommand === 'stream') {
+      const options = parseStreamOptions(
+        command.rawName,
+        command.options,
+        profile,
+      )
       // XINFO replies are field/value maps: a flat array on RESP2, a `%` map on
       // RESP3 (matching real Redis). first/last-entry and PEL rows stay arrays.
       return RedisResult.create(
-        kvMap(streamInfoReply(stream, command.full, command.count)),
+        kvMap(streamInfoReply(stream, options, profile)),
       )
     }
 
     if (command.subcommand === 'groups') {
-      return array(Array.from(stream.groups.values(), groupInfoReply(stream)))
+      return array(
+        Array.from(stream.groups.values(), group =>
+          groupInfoReply(stream, group, profile),
+        ),
+      )
     }
 
     const group = requireStreamGroup(stream, command.key, command.group)
     const now = Date.now()
     return array(
       Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
-        consumerInfoReply(group, consumerId, consumer, now),
+        consumerInfoReply(group, consumerId, consumer, now, profile),
       ),
     )
   },
@@ -252,10 +295,28 @@ function kvMap(flat: RedisValue[]): RedisValue {
   return RedisValue.map(entries)
 }
 
+// `count` 0 lists everything.
+function limited<T>(items: T[], count: number): T[] {
+  return count === 0 ? items : items.slice(0, count)
+}
+
+// A group's `entries-read` / `lag` pair (Redis 7.0+).
+function groupLagFields(
+  stream: RedisStreamData,
+  group: RedisStreamConsumerGroup,
+): RedisValue[] {
+  return [
+    bulkString('entries-read'),
+    group.entriesRead === null ? nullBulk() : integerValue(group.entriesRead),
+    bulkString('lag'),
+    integerValue(streamLag(stream, group)),
+  ]
+}
+
 function streamInfoReply(
   stream: RedisStreamData,
-  full: boolean,
-  count: number | null,
+  options: StreamInfoOptions,
+  profile: CompatibilityProfile,
 ): RedisValue[] {
   const firstEntry = stream.entries[0] ?? null
   const lastEntry = stream.entries[stream.entries.length - 1] ?? null
@@ -269,17 +330,21 @@ function streamInfoReply(
     integerValue(stream.entries.length > 0 ? 2 : 1),
     bulkString('last-generated-id'),
     streamIdValue(stream.lastId),
-    bulkString('max-deleted-entry-id'),
-    streamIdValue(stream.maxDeletedEntryId),
-    bulkString('entries-added'),
-    integerValue(stream.entriesAdded),
-    bulkString('recorded-first-entry-id'),
-    firstEntry ? streamIdValue(firstEntry.id) : bulkString('0-0'),
-    bulkString('groups'),
   ]
-
-  if (!full) {
+  if (profile.has('stream.consumer-group-lag')) {
     fields.push(
+      bulkString('max-deleted-entry-id'),
+      streamIdValue(stream.maxDeletedEntryId),
+      bulkString('entries-added'),
+      integerValue(stream.entriesAdded),
+      bulkString('recorded-first-entry-id'),
+      firstEntry ? streamIdValue(firstEntry.id) : bulkString('0-0'),
+    )
+  }
+
+  if (!options.full) {
+    fields.push(
+      bulkString('groups'),
       integerValue(stream.groups.size),
       bulkString('first-entry'),
       firstEntry ? entryToReply(firstEntry.id, firstEntry.fields) : nullBulk(),
@@ -289,77 +354,78 @@ function streamInfoReply(
     return fields
   }
 
-  const fullCount = count ?? 10
+  // FULL lists the entries before the groups.
   fields.push(
-    RedisValue.array(
-      Array.from(stream.groups.values(), group =>
-        fullGroupInfoReply(stream, group, fullCount),
-      ),
-    ),
     bulkString('entries'),
     RedisValue.array(
-      stream.entries
-        .slice(0, fullCount)
-        .map(entry => entryToReply(entry.id, entry.fields)),
+      limited(stream.entries, options.count).map(entry =>
+        entryToReply(entry.id, entry.fields),
+      ),
+    ),
+    bulkString('groups'),
+    RedisValue.array(
+      Array.from(stream.groups.values(), group =>
+        fullGroupInfoReply(stream, group, options.count, profile),
+      ),
     ),
   )
   return fields
 }
 
-function groupInfoReply(stream: RedisStreamData) {
-  return (group: RedisStreamConsumerGroup): RedisValue =>
-    kvMap([
-      bulkString('name'),
-      bulkString(group.name),
-      bulkString('consumers'),
-      integerValue(group.consumers.size),
-      bulkString('pending'),
-      integerValue(group.pending.size),
-      bulkString('last-delivered-id'),
-      streamIdValue(group.lastDeliveredId),
-      bulkString('entries-read'),
-      group.entriesRead === null ? nullBulk() : integerValue(group.entriesRead),
-      bulkString('lag'),
-      integerValue(streamLag(stream, group)),
-    ])
+function groupInfoReply(
+  stream: RedisStreamData,
+  group: RedisStreamConsumerGroup,
+  profile: CompatibilityProfile,
+): RedisValue {
+  return kvMap([
+    bulkString('name'),
+    bulkString(group.name),
+    bulkString('consumers'),
+    integerValue(group.consumers.size),
+    bulkString('pending'),
+    integerValue(group.pending.size),
+    bulkString('last-delivered-id'),
+    streamIdValue(group.lastDeliveredId),
+    ...(profile.has('stream.consumer-group-lag')
+      ? groupLagFields(stream, group)
+      : []),
+  ])
 }
 
 function fullGroupInfoReply(
   stream: RedisStreamData,
   group: RedisStreamConsumerGroup,
   count: number,
+  profile: CompatibilityProfile,
 ): RedisValue {
   return kvMap([
     bulkString('name'),
     bulkString(group.name),
     bulkString('last-delivered-id'),
     streamIdValue(group.lastDeliveredId),
-    bulkString('entries-read'),
-    group.entriesRead === null ? nullBulk() : integerValue(group.entriesRead),
-    bulkString('lag'),
-    integerValue(streamLag(stream, group)),
+    ...(profile.has('stream.consumer-group-lag')
+      ? groupLagFields(stream, group)
+      : []),
     bulkString('pel-count'),
     integerValue(group.pending.size),
     bulkString('pending'),
     RedisValue.array(
-      pendingEntriesSorted(group)
-        .slice(0, count)
-        .map(pending =>
-          RedisValue.array([
-            streamIdValue(pending.id),
-            bulkString(
-              group.consumers.get(pending.consumerId)?.name ??
-                Buffer.from(pending.consumerId, 'hex'),
-            ),
-            integerValue(Math.max(0, Date.now() - pending.deliveredAt)),
-            integerValue(pending.deliveryCount),
-          ]),
-        ),
+      limited(pendingEntriesSorted(group), count).map(pending =>
+        RedisValue.array([
+          streamIdValue(pending.id),
+          bulkString(
+            group.consumers.get(pending.consumerId)?.name ??
+              Buffer.from(pending.consumerId, 'hex'),
+          ),
+          integerValue(Math.max(0, Date.now() - pending.deliveredAt)),
+          integerValue(pending.deliveryCount),
+        ]),
+      ),
     ),
     bulkString('consumers'),
     RedisValue.array(
       Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
-        consumerInfoReply(group, consumerId, consumer, Date.now()),
+        consumerInfoReply(group, consumerId, consumer, Date.now(), profile),
       ),
     ),
   ])
@@ -370,19 +436,25 @@ function consumerInfoReply(
   consumerId: string,
   consumer: RedisStreamConsumer,
   now: number,
+  profile: CompatibilityProfile,
 ): RedisValue {
-  const idle = Math.max(0, now - consumer.seenAt)
-  // -1 until the consumer is first delivered or claims an entry (real 7.2+).
-  const inactive =
-    consumer.activeAt === null ? -1 : Math.max(0, now - consumer.activeAt)
-  return kvMap([
+  const fields: RedisValue[] = [
     bulkString('name'),
     bulkString(consumer.name),
     bulkString('pending'),
     integerValue(consumerPendingCount(group, consumerId)),
     bulkString('idle'),
-    integerValue(idle),
-    bulkString('inactive'),
-    integerValue(inactive),
-  ])
+    integerValue(Math.max(0, now - consumer.seenAt)),
+  ]
+  // -1 until the consumer is first delivered or claims an entry (real 7.2+,
+  // which added the field).
+  if (profile.has('stream.consumer-active-time')) {
+    fields.push(
+      bulkString('inactive'),
+      integerValue(
+        consumer.activeAt === null ? -1 : Math.max(0, now - consumer.activeAt),
+      ),
+    )
+  }
+  return kvMap(fields)
 }
