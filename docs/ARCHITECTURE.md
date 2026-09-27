@@ -395,7 +395,14 @@ the underlying operation rather than the command mutates through its own
 `lpop`/`rpop`/`zpopmin`/`zpopmax` (and `lpush`/`rpush`, `srem`/`sadd` on the
 other key of a move), XGROUP subcommands `xgroup-<subcommand>`, the 8.x
 hash-field commands `hdel`/`hexpire`/`hpersist`, and `SORT ... STORE`
-`sortstore`.
+`sortstore`. The executor tags only the selected database, so `MOVE` and
+`COPY ... DB` tag the database they write into themselves; the notifier's
+override tables turn MOVE's delete and write into `move_from`/`move_to`, and
+COPY's write into `copy_to` (#445). A write that sets a TTL (`SET ... EX`,
+`SETEX`, `PSETEX`) passes `expireEvent` to `RedisDatabase.set`, which follows
+the write with an `expire` mutation, as Redis notifies `set` then `expire`;
+`GETEX` changes only the TTL, so it emits `expire` (or `del` for a time already
+past) and no write (#380).
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and

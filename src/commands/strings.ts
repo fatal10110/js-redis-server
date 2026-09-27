@@ -64,7 +64,7 @@ type SetArgs = {
   key: Buffer
   value: Buffer
   condition?: SetCondition
-  expiresAt?: number
+  expire?: ExpireOption
   keepTtl?: boolean
   get?: boolean
 }
@@ -127,8 +127,9 @@ export const setCommand = defineCommand({
     }
 
     ctx.db.setString(args.key, args.value, {
-      expiresAt: args.expiresAt,
+      expiresAt: args.expire ? resolveExpireAt(args.expire) : undefined,
       keepTtl: args.keepTtl,
+      expireEvent: true,
     })
 
     if (args.get) {
@@ -337,6 +338,7 @@ export const setexCommand = defineCommand({
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.seconds * 1000,
+      expireEvent: true,
     })
     return ok()
   },
@@ -357,6 +359,7 @@ export const psetexCommand = defineCommand({
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.milliseconds,
+      expireEvent: true,
     })
     return ok()
   },
@@ -484,10 +487,17 @@ export const getexCommand = defineCommand({
       return bulk(null)
     }
 
+    // Only the TTL changes, so real Redis publishes `expire` (or `del` for an
+    // EXAT/PXAT time already past), never `getex` (#380).
     if (args.persist) {
       ctx.db.persist(args.key)
-    } else if (args.expiresAt !== undefined) {
-      ctx.db.setString(args.key, existing, { expiresAt: args.expiresAt })
+    } else if (args.expire) {
+      const expiresAt = resolveExpireAt(args.expire)
+      if (isAbsoluteExpire(args.expire) && expiresAt <= Date.now()) {
+        ctx.db.delete(args.key)
+      } else {
+        ctx.db.expire(args.key, expiresAt)
+      }
     }
 
     return bulk(existing)
@@ -562,7 +572,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
         }
 
         if (option === 'KEEPTTL') {
-          if (args.keepTtl || args.expiresAt !== undefined) {
+          if (args.keepTtl || args.expire) {
             throw errors.syntax()
           }
 
@@ -584,12 +594,15 @@ function createSetSchema(): CommandSchema<SetArgs> {
             throw errors.syntax()
           }
 
-          if (args.expiresAt !== undefined || args.keepTtl) {
+          if (args.expire || args.keepTtl) {
             throw errors.syntax()
           }
 
           const ttl = requireNextOptionValue(input, cursor + 1)
-          args.expiresAt = parseSetExpiration(option, ttl)
+          args.expire = {
+            unit: option,
+            value: parsePositiveExpireToken(ttl, 'set'),
+          }
           cursor += 2
           continue
         }
@@ -610,23 +623,6 @@ function createSetSchema(): CommandSchema<SetArgs> {
   )
 }
 
-function parseSetExpiration(option: string, token: Buffer): number {
-  const value = parsePositiveExpireToken(token, 'set')
-
-  switch (option) {
-    case 'EX':
-      return Date.now() + value * 1000
-    case 'PX':
-      return Date.now() + value
-    case 'EXAT':
-      return value * 1000
-    case 'PXAT':
-      return value
-    default:
-      throw errors.syntax()
-  }
-}
-
 function throwWrongArity(commandName: string): never {
   throw new WrongNumberOfArgumentsError(commandName)
 }
@@ -635,8 +631,30 @@ type KeyValuePair = { key: Buffer; value: Buffer }
 
 type GetexArgs = {
   key: Buffer
-  expiresAt?: number
+  expire?: ExpireOption
   persist?: boolean
+}
+
+// An EX/PX/EXAT/PXAT option as parsed. Relative units are turned into a
+// deadline only when the command runs, so a SET or GETEX queued in MULTI
+// counts its TTL from EXEC, as real Redis does.
+type ExpireOption = { unit: 'EX' | 'PX' | 'EXAT' | 'PXAT'; value: number }
+
+function resolveExpireAt({ unit, value }: ExpireOption): number {
+  switch (unit) {
+    case 'EX':
+      return Date.now() + value * 1000
+    case 'PX':
+      return Date.now() + value
+    case 'EXAT':
+      return value * 1000
+    case 'PXAT':
+      return value
+  }
+}
+
+function isAbsoluteExpire({ unit }: ExpireOption): boolean {
+  return unit === 'EXAT' || unit === 'PXAT'
 }
 
 function incrementBy(
@@ -765,7 +783,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
         const option = input[cursor]!.toString().toUpperCase()
 
         if (option === 'PERSIST') {
-          if (args.persist || args.expiresAt !== undefined) {
+          if (args.persist || args.expire) {
             throw errors.syntax()
           }
           args.persist = true
@@ -779,12 +797,15 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
           option === 'EXAT' ||
           option === 'PXAT'
         ) {
-          if (args.expiresAt !== undefined || args.persist) {
+          if (args.expire || args.persist) {
             throw errors.syntax()
           }
 
           const ttl = requireNextOptionValue(input, cursor + 1)
-          args.expiresAt = parseGetexExpiration(option, ttl)
+          args.expire = {
+            unit: option,
+            value: parsePositiveExpireToken(ttl, 'getex'),
+          }
           cursor += 2
           continue
         }
@@ -795,21 +816,4 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
       return { value: args, nextIndex: input.length }
     },
   )
-}
-
-function parseGetexExpiration(option: string, token: Buffer): number {
-  const value = parsePositiveExpireToken(token, 'getex')
-
-  switch (option) {
-    case 'EX':
-      return Date.now() + value * 1000
-    case 'PX':
-      return Date.now() + value
-    case 'EXAT':
-      return value * 1000
-    case 'PXAT':
-      return value
-    default:
-      throw errors.syntax()
-  }
 }

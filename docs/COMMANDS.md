@@ -607,14 +607,21 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
 
 - [x] Lifecycle events derived from the keyspace itself: `del`, `expire`,
       `persist`, and `expired` (fired when a key is lazily evicted on access).
+      A write given a TTL publishes `set`, then `expire` (`SET ... EX|PX|EXAT|
+      PXAT`, `SETEX`, `PSETEX`; not `KEEPTTL`). `GETEX EX|PX|EXAT|PXAT`
+      publishes `expire`, or `del` for an `EXAT|PXAT` time already past;
+      `GETEX PERSIST` publishes `persist`. A relative `EX|PX` queued in
+      `MULTI` counts from `EXEC`.
 - [x] Write events named after the originating command, matching real Redis:
       `set` (and `setnx`/`setex`/`getset`/`mset` → `set`), `incrby`
       (`incr`/`decr`/`decrby` → `incrby`), `append`, `setrange`, `lpush`/`rpush`
       (`lpushx`/`rpushx` too), `lpop`, `lset`, `linsert`, `hset`
       (`hmset`/`hsetnx` → `hset`), `hdel`, `sadd`, `srem`, `spop`, `zadd`,
       `zincr` (from `ZINCRBY`), `zrem`, `xadd`, etc.
-- [x] `RENAME`/`RENAMENX` emit `rename_from` + `rename_to`; `COPY` emits
-      `copy_to`.
+- [x] `RENAME`/`RENAMENX` emit `rename_from` + `rename_to`; `MOVE` emits
+      `move_from` on the source database, then `move_to` on the target; `COPY`
+      (including `COPY ... DB`) emits `copy_to` on the destination's database.
+      A TTL carried over by any of them publishes no `expire`.
 - [x] Removing the last element emits the removal event, then `del`
       (`hdel`, `lpop`, `srem`, `zrem`, `spop`, ...).
 - [x] Blocking, multi-key and move-style pops are named after the operation:

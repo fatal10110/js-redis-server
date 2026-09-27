@@ -7,8 +7,8 @@ import { randomKey } from '../../utils'
 // Pins the keyspace-event *names* real Redis publishes for commands whose
 // event is named after the underlying operation rather than the command:
 // blocking / multi-key / move-style pops (#446), XGROUP subcommands (#381),
-// the 8.x hash-field commands, lazily purged hash fields, and STORE targets
-// (#486 review).
+// the 8.x hash-field commands, lazily purged hash fields, STORE targets
+// (#486 review), TTLs set by a write (#380), and MOVE / COPY ... DB (#445).
 
 const testRunner = new TestRunner()
 
@@ -172,6 +172,205 @@ describe(`Keyspace notification names (${testRunner.getBackendName()})`, () => {
       'src:del',
       'dst:sadd',
       'same:sadd',
+    ])
+  })
+
+  test('SET EX|PX|EXAT / SETEX / PSETEX publish set, then expire (#380)', async () => {
+    const ex = randomKey()
+    const pxGet = randomKey()
+    const exat = randomKey()
+    const keepttl = randomKey()
+    const nx = randomKey()
+    const setex = randomKey()
+    const psetex = randomKey()
+    const events = await capture(
+      { ex, pxGet, exat, keepttl, nx, setex, psetex },
+      async actor => {
+        await actor.set(ex, 'v', 'EX', 100)
+        assert.strictEqual(
+          await actor.set(pxGet, 'v', 'PX', 100000, 'GET'),
+          null,
+        )
+        const at = Math.floor(Date.now() / 1000) + 100
+        await actor.set(exat, 'v', 'EXAT', at)
+        await actor.set(keepttl, 'v', 'EX', 100)
+        // KEEPTTL keeps the TTL rather than setting one: no expire.
+        await actor.set(keepttl, 'w', 'KEEPTTL')
+        assert.strictEqual(await actor.set(nx, 'v', 'EX', 100, 'NX'), 'OK')
+        // NX refused: nothing is written, so nothing is published.
+        assert.strictEqual(await actor.set(nx, 'w', 'EX', 100, 'NX'), null)
+        await actor.setex(setex, 100, 'v')
+        await actor.psetex(psetex, 100000, 'v')
+      },
+    )
+    assert.deepStrictEqual(events, [
+      'ex:set',
+      'ex:expire',
+      'pxGet:set',
+      'pxGet:expire',
+      'exat:set',
+      'exat:expire',
+      'keepttl:set',
+      'keepttl:expire',
+      'keepttl:set',
+      'nx:set',
+      'nx:expire',
+      'setex:set',
+      'setex:expire',
+      'psetex:set',
+      'psetex:expire',
+    ])
+  })
+
+  test('GETEX publishes expire / persist / del, never getex (#380)', async () => {
+    const key = randomKey()
+    const past = randomKey()
+    const events = await capture({ key, past }, async actor => {
+      await actor.set(key, 'v')
+      assert.strictEqual(await actor.getex(key, 'EX', 100), 'v')
+      assert.strictEqual(
+        await actor.getex(key, 'PXAT', Date.now() + 100000),
+        'v',
+      )
+      assert.strictEqual(await actor.getex(key, 'PERSIST'), 'v')
+      // No TTL left to remove, and no option at all: nothing changes.
+      assert.strictEqual(await actor.getex(key, 'PERSIST'), 'v')
+      assert.strictEqual(await actor.getex(key), 'v')
+      // A time already past deletes the key there and then.
+      await actor.set(past, 'v')
+      assert.strictEqual(await actor.getex(past, 'EXAT', 1), 'v')
+      assert.strictEqual(await actor.exists(past), 0)
+    })
+    assert.deepStrictEqual(events, [
+      'key:set',
+      'key:expire',
+      'key:expire',
+      'key:persist',
+      'past:set',
+      'past:del',
+    ])
+  })
+
+  test('SET PX / GETEX PX queued in MULTI count the TTL from EXEC (#380)', async () => {
+    const getex = randomKey()
+    const set = randomKey()
+    const events = await capture({ getex, set }, async actor => {
+      await actor.set(getex, 'v')
+      // Raw MULTI so each command is queued on the server right away.
+      assert.strictEqual(await actor.call('MULTI'), 'OK')
+      assert.strictEqual(await actor.call('GETEX', getex, 'PX', 150), 'QUEUED')
+      assert.strictEqual(await actor.call('SET', set, 'v', 'PX', 150), 'QUEUED')
+      // Longer than the TTL: counted from queueing, both would be past.
+      await new Promise(resolve => setTimeout(resolve, 300))
+      assert.deepStrictEqual(await actor.call('EXEC'), ['v', 'OK'])
+      assert.strictEqual(await actor.exists(getex, set), 2)
+      for (const key of [getex, set]) {
+        const pttl = await actor.pttl(key)
+        assert.ok(pttl > 0 && pttl <= 150, `PTTL ${key} = ${pttl}`)
+      }
+    })
+    assert.deepStrictEqual(events, [
+      'getex:set',
+      'getex:expire',
+      'set:set',
+      'set:expire',
+    ])
+  })
+
+  test('MOVE publishes move_from on the source database, then move_to on the target (#445)', async () => {
+    const moved = randomKey()
+    const hash = randomKey()
+    const taken = randomKey()
+    const events = await capture({ moved, hash, taken }, async actor => {
+      await actor.set(taken, 'v')
+      await actor.select(1)
+      await actor.set(moved, 'v')
+      assert.strictEqual(await actor.move(moved, 0), 1)
+      // Any type, and a TTL carried over: still move_from / move_to only.
+      await actor.hset(hash, 'f', 'v')
+      await actor.expire(hash, 100)
+      assert.strictEqual(await actor.move(hash, 0), 1)
+      // The target already holds the key: nothing moves or is published.
+      await actor.set(taken, 'v')
+      assert.strictEqual(await actor.move(taken, 0), 0)
+      await actor.del(taken)
+    })
+    assert.deepStrictEqual(events, [
+      'taken:set',
+      'moved@1:set',
+      'moved@1:move_from',
+      'moved:move_to',
+      'hash@1:hset',
+      'hash@1:expire',
+      'hash@1:move_from',
+      'hash:move_to',
+      'taken@1:set',
+      'taken@1:del',
+    ])
+  })
+
+  test('COPY ... DB publishes copy_to on the target database (#445)', async () => {
+    const src = randomKey()
+    const copied = randomKey()
+    const here = randomKey()
+    const hereCopy = randomKey()
+    const events = await capture(
+      { src, copied, here, hereCopy },
+      async actor => {
+        await actor.select(1)
+        await actor.set(src, 'v', 'EX', 100)
+        assert.strictEqual(await actor.copy(src, copied, 'DB', 0), 1)
+        // The destination exists: refused without REPLACE, and REPLACE
+        // overwrites it with no del of its own.
+        assert.strictEqual(await actor.copy(src, copied, 'DB', 0), 0)
+        assert.strictEqual(await actor.copy(src, copied, 'DB', 0, 'REPLACE'), 1)
+        await actor.del(src)
+        // DB naming the selected database is the same as no DB at all.
+        await actor.select(0)
+        await actor.set(here, 'v')
+        assert.strictEqual(await actor.copy(here, hereCopy, 'DB', 0), 1)
+      },
+    )
+    assert.deepStrictEqual(events, [
+      'src@1:set',
+      'src@1:expire',
+      'copied:copy_to',
+      'copied:copy_to',
+      'src@1:del',
+      'here:set',
+      'hereCopy:copy_to',
+    ])
+  })
+
+  test('expire, move_from / move_to and copy_to are generic (g) events (#380, #445)', async () => {
+    const run = (flags: string) => {
+      const str = randomKey()
+      const hash = randomKey()
+      const copied = randomKey()
+      return capture(
+        { str, hash, copied },
+        async actor => {
+          await actor.set(str, 'v', 'EX', 100)
+          await actor.select(1)
+          await actor.hset(hash, 'f', 'v')
+          assert.strictEqual(await actor.move(hash, 0), 1)
+          await actor.select(0)
+          assert.strictEqual(await actor.copy(hash, copied, 'DB', 1), 1)
+          await actor.select(1)
+          await actor.del(copied)
+        },
+        flags,
+      )
+    }
+    // Neither the value's type ($, h) nor the command decides the class.
+    assert.deepStrictEqual(await run('KE$h'), ['str:set', 'hash@1:hset'])
+    assert.deepStrictEqual(await run('KEg$'), [
+      'str:set',
+      'str:expire',
+      'hash@1:move_from',
+      'hash:move_to',
+      'copied@1:copy_to',
+      'copied@1:del',
     ])
   })
 
@@ -408,16 +607,20 @@ describe(`Keyspace notification names (${testRunner.getBackendName()})`, () => {
 
   /**
    * Run `steps` with keyevent notifications on, then return the events
-   * published for the named keys, in order, as `<name>:<event>`.
+   * published for the named keys, in order, as `<name>:<event>` — or
+   * `<name>@<db>:<event>` for a database other than 0. `steps` may SELECT;
+   * the named keys are deleted from database 0 afterwards. `flags` must
+   * include `E` and `$`, which the closing sentinel `set` is published under.
    */
   async function capture(
     keys: Record<string, string>,
     steps: (actor: Redis) => Promise<void>,
+    flags = 'KEA',
   ): Promise<string[]> {
     const actor = await connect()
     const subscriber = await connect()
-    await actor.config('SET', 'notify-keyspace-events', 'KEA')
-    await subscriber.psubscribe('__keyevent@0__:*')
+    await actor.config('SET', 'notify-keyspace-events', flags)
+    await subscriber.psubscribe('__keyevent@*__:*')
     await settle()
 
     const names = new Map(
@@ -426,11 +629,14 @@ describe(`Keyspace notification names (${testRunner.getBackendName()})`, () => {
     const events: string[] = []
     subscriber.on('pmessage', (_pattern, channel: string, key: string) => {
       const name = names.get(key)
-      if (name)
-        events.push(`${name}:${channel.slice('__keyevent@0__:'.length)}`)
+      const match = /^__keyevent@(\d+)__:(.*)$/.exec(channel)
+      if (!name || !match) return
+      const [, db, event] = match
+      events.push(db === '0' ? `${name}:${event}` : `${name}@${db}:${event}`)
     })
 
     await steps(actor)
+    await actor.select(0)
 
     // Delivery to one subscriber is ordered: once this sentinel arrives,
     // everything published before it has too.

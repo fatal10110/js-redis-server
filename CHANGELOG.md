@@ -647,6 +647,41 @@ so the PR body is not a durable home for a breaking-change note.
   consumer only once they deliver or claim something (an `XREADGROUP`
   history read creates it even when nothing is pending).
 
+- Keyspace notifications for writes that set a TTL, and for `MOVE` and
+  `COPY … DB`, now match real Redis ([#380], [#445]). The sequences were checked
+  on Redis 6.2, 7.0, 7.2, 7.4 and 8.0 and on Valkey 7.2, 8.0 and 9.0, and are
+  the same on all of them except the past-deadline row (see below). With
+  `notify-keyspace-events KEA`, keyevent channel shown (the keyspace channel
+  carries the same event names):
+
+  ```
+  SET k v EX 100 / SETEX / PSETEX / SET ... PX|EXAT|PXAT
+    real:   set k | expire k        before: set k
+  GETEX k EX 100 (also PX / EXAT / PXAT)
+    real:   expire k                before: getex k
+  GETEX k EXAT 1 (a time already past; Redis 6.2-8.0, Valkey 7.2-8.0)
+    real:   del k                   before: getex k, then expired k on access
+  SELECT 1; SET k v; MOVE k 0
+    real:   @1 move_from k | @0 move_to k        before: @1 del k
+  SELECT 1; SET k v; COPY k c DB 0
+    real:   @0 copy_to c                         before: (nothing)
+  ```
+
+  `SET ... KEEPTTL` publishes no `expire`, and neither does a TTL that
+  `RENAME`, `MOVE` or `COPY` carries over. `expire`, `move_from`, `move_to` and
+  `copy_to` belong to the generic class (`g`). `COPY … DB` naming the selected
+  database publishes `copy_to` as well; before, it published nothing.
+  `RedisDatabase.set` takes a new `SetOptions.expireEvent` flag, which follows
+  the write with an `expire` mutation. On Valkey 8.0 and 9.0, a deadline that is
+  already past behaves differently (Valkey 9.0 publishes `expired k` for the
+  `GETEX` row). That is tracked in [#527].
+
+- `SET … EX|PX` and `GETEX … EX|PX` queued in `MULTI` count the TTL from
+  `EXEC`, as real Redis does, not from the moment they were queued. Before, a
+  transaction run later than the TTL made `SET` publish `expired` and lose the
+  key at once, and made `GETEX` publish `del` and delete it. Only `GETEX …
+  EXAT|PXAT` with a time already past deletes the key.
+
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity
   -1 and `0 0 0`. The version-dependent ones follow the profile: `EXPIRE`
@@ -1164,5 +1199,8 @@ requests they contain.
 [#504]: https://github.com/fatal10110/js-redis-server/issues/504
 [#498]: https://github.com/fatal10110/js-redis-server/issues/498
 [#507]: https://github.com/fatal10110/js-redis-server/issues/507
+[#380]: https://github.com/fatal10110/js-redis-server/issues/380
+[#445]: https://github.com/fatal10110/js-redis-server/issues/445
+[#527]: https://github.com/fatal10110/js-redis-server/issues/527
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

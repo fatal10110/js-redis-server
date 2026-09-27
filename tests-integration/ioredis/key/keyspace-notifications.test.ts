@@ -172,7 +172,8 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
     // old one tagged `select` — and since every later command restores the tag
     // it saved, the stale value was never cleared. COPY ... DB and MOVE write
     // into a database the executor never tags, so their events there were
-    // published as `select` (#359). Real Redis names them copy_to / move_to.
+    // published as `select` (#359). Real Redis names them copy_to / move_to
+    // (#445).
     const actor = await connect()
     const subscriber = await connect()
     const sentinelWriter = await connect()
@@ -207,6 +208,8 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
       ),
       [],
     )
+    assert.deepStrictEqual(eventsFor(events, 0, copied), ['copy_to'])
+    assertMovedInto(events, 0, moved)
   })
 
   test('emits the type-specific event before del when the last element goes (#379)', async () => {
@@ -327,7 +330,7 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(await actor.move(moved, 1), 1)
     await drain(subscriber, sentinelWriter, 1)
 
-    assertNotNamedBlpop(events, 1, moved)
+    assertMovedInto(events, 1, moved)
 
     await sentinelWriter.rpush(queue, 'x')
     assert.deepStrictEqual(await blocked, [queue, 'x'])
@@ -367,7 +370,7 @@ describe(`Keyspace notifications (${testRunner.getBackendName()})`, () => {
     assert.strictEqual(await actor.move(moved, 1), 1)
     await drain(subscriber, pusher, 1)
 
-    assertNotNamedBlpop(events, 1, moved)
+    assertMovedInto(events, 1, moved)
     await pusher.del(moved)
   })
 
@@ -481,22 +484,20 @@ function eventsFor(
 }
 
 /**
- * The MOVE into `db` is not published under the parked BLPOP's name. Real
- * Redis publishes it as `move_to`; the mock does not name MOVE's target write
- * yet (#445), so only the absence of the stale `blpop` name is pinned here.
+ * The MOVE into `db` is published there as `move_to`, on both channels
+ * (#445) — never under the name of a BLPOP parked on that database (#444).
  */
-function assertNotNamedBlpop(
+function assertMovedInto(
   events: { channel: string; message: string }[],
   db: number,
   key: string,
 ): void {
+  assert.deepStrictEqual(eventsFor(events, db, key), ['move_to'])
   assert.deepStrictEqual(
-    events.filter(
-      e =>
-        (e.channel === `__keyevent@${db}__:blpop` && e.message === key) ||
-        (e.channel === `__keyspace@${db}__:${key}` && e.message === 'blpop'),
-    ),
-    [],
+    events
+      .filter(e => e.channel === `__keyspace@${db}__:${key}`)
+      .map(e => e.message),
+    ['move_to'],
   )
 }
 

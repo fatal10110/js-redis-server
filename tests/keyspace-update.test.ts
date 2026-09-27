@@ -267,6 +267,69 @@ describe('RedisDatabase.set — empty values', () => {
   })
 })
 
+describe('RedisDatabase.set — expireEvent (#380)', () => {
+  // Events without the lazily-cloned write value, which is not under test.
+  function shapes(events: RedisMutationEvent[]) {
+    return events.map(event =>
+      event.type === 'write'
+        ? { type: event.type, expiresAt: event.expiresAt }
+        : event,
+    )
+  }
+
+  test('a TTL set by the write is followed by an expire event', () => {
+    const { db, events } = setup()
+    const key = Buffer.from('k')
+    const expiresAt = Date.now() + 100_000
+
+    db.setString(key, Buffer.from('v'), { expiresAt, expireEvent: true })
+
+    assert.deepStrictEqual(shapes(events), [
+      { type: 'write', expiresAt },
+      { type: 'expire', database: 0, key, expiresAt },
+    ])
+  })
+
+  test('without expireEvent, a carried-over TTL emits the write alone', () => {
+    const { db, events } = setup()
+    const expiresAt = Date.now() + 100_000
+
+    db.setString(Buffer.from('k'), Buffer.from('v'), { expiresAt })
+
+    assert.deepStrictEqual(shapes(events), [{ type: 'write', expiresAt }])
+  })
+
+  test('KEEPTTL or no TTL at all emits no expire event', () => {
+    const { db, events } = setup()
+    const key = Buffer.from('k')
+    const expiresAt = Date.now() + 100_000
+    db.setString(key, Buffer.from('v'), { expiresAt })
+    events.length = 0
+
+    db.setString(key, Buffer.from('w'), { keepTtl: true, expireEvent: true })
+    db.setString(Buffer.from('other'), Buffer.from('v'), { expireEvent: true })
+
+    assert.deepStrictEqual(shapes(events), [
+      { type: 'write', expiresAt },
+      { type: 'write', expiresAt: undefined },
+    ])
+  })
+
+  test('a deadline already past is announced, then evicted on the next access', () => {
+    const { db, events } = setup()
+    const key = Buffer.from('k')
+
+    db.setString(key, Buffer.from('v'), { expiresAt: 1, expireEvent: true })
+    assert.strictEqual(db.getType(key), null)
+
+    assert.deepStrictEqual(shapes(events), [
+      { type: 'write', expiresAt: 1 },
+      { type: 'expire', database: 0, key, expiresAt: 1 },
+      { type: 'evict', database: 0, key },
+    ])
+  })
+})
+
 describe('RedisDatabase.withOrigin — a prototype-linked view (#444)', () => {
   test('writes through a view stamp its origin and leave origin as its only own property', () => {
     // The view reads all state through to the database; a RedisDatabase

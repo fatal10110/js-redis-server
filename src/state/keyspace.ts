@@ -20,6 +20,15 @@ export type KeyspaceEntry = {
 export type SetOptions = {
   expiresAt?: number
   keepTtl?: boolean
+  /**
+   * Follow the write with an `expire` mutation for `expiresAt`, as the SET
+   * family does when it is given a TTL: real Redis' `setGenericCommand` runs
+   * `setKey`, then `setExpire`, and notifies `set` then `expire` (#380).
+   * Commands that only carry an existing TTL over to the key they write
+   * (RENAME, MOVE, COPY) leave it unset — Redis announces no `expire` there.
+   * Ignored without `expiresAt`, or with `keepTtl`.
+   */
+  expireEvent?: boolean
 }
 
 export type KeyspaceMutationTracker = {
