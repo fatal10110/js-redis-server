@@ -10,8 +10,9 @@ import { cloneRedisDataValue, type RedisDataValue } from './data-types'
  * `command` is the name of the command the event was emitted on behalf of
  * (see `RedisDatabase.withOrigin`); keyspace notifications name write events
  * after it. Absent for a mutation made through the database itself rather
- * than a command's handle — active expiry, replication, and (for now) MOVE /
- * COPY ... DB writes into another database.
+ * than a command's handle — active expiry and replication. A command that
+ * writes into a database other than its own (MOVE, COPY ... DB) tags that one
+ * itself with `withOrigin`.
  */
 export type RedisMutationEvent = (
   | {

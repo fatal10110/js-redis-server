@@ -352,8 +352,12 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     [
       '8.x hash-field commands publish hdel / hexpire / hpersist',
       'BLPOP / BRPOP publish lpop / rpop (#446)',
+      'COPY ... DB publishes copy_to on the target database (#445)',
+      'GETEX publishes expire / persist / del, never getex (#380)',
       'LMOVE / BLMOVE / RPOPLPUSH publish the destination push, then the source pop (#446)',
       'LMPOP / BLMPOP publish lpop / rpop by direction (#446)',
+      'MOVE publishes move_from on the source database, then move_to on the target (#445)',
+      'SET EX|PX|EXAT / SETEX / PSETEX publish set, then expire (#380)',
       'SMOVE publishes srem on the source and sadd on the destination (#446)',
       'XGROUP subcommands publish xgroup-<subcommand> (#381)',
       'XREADGROUP / XCLAIM / XAUTOCLAIM publish xgroup-createconsumer for a new consumer',

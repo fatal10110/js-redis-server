@@ -128,17 +128,19 @@ const WRITE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
   rename: 'rename_to',
   renamenx: 'rename_to',
   copy: 'copy_to',
+  move: 'move_to',
 }
 
-// Commands that delete a key as part of a rename emit a dedicated event
-// instead of the default `del`.
+// Commands that delete a key as part of a rename or a move emit a dedicated
+// event instead of the default `del`.
 const DELETE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
   rename: 'rename_from',
   renamenx: 'rename_from',
+  move: 'move_from',
 }
 
 // Write events whose class is generic (g) rather than the value's data type.
-const GENERIC_WRITE_COMMANDS = new Set(['rename', 'renamenx', 'copy'])
+const GENERIC_WRITE_COMMANDS = new Set(['rename', 'renamenx', 'copy', 'move'])
 
 const CLASS_FOR_TYPE: Readonly<Record<RedisDataValue['type'], NotifyClass>> = {
   string: '$',
@@ -158,8 +160,8 @@ const CLASS_FOR_TYPE: Readonly<Record<RedisDataValue['type'], NotifyClass>> = {
  * (`set`, `lpush`, `hset`, ...) — for both `write` and notification-only
  * `notify` mutations — come from the originating command the mutation carries
  * (`event.command`). Commands that map one logical operation onto several
- * mutations with special names (RENAME → rename_from / rename_to) are handled
- * via the override tables above.
+ * mutations with special names (RENAME → rename_from / rename_to, MOVE →
+ * move_from / move_to) are handled via the override tables above.
  */
 export class KeyspaceNotifier {
   constructor(private readonly broker: RedisPubSubBroker) {}

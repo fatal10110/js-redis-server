@@ -124,6 +124,16 @@ export class RedisDatabase {
       }
     }
     this.emitWrite(entry)
+    // No liveness check: a deadline already past is still announced, then
+    // the key expires on its next access, exactly as in real Redis.
+    if (options?.expireEvent && !options.keepTtl && expiresAt !== undefined) {
+      this.emit({
+        type: 'expire',
+        database: this.id,
+        key: entry.key,
+        expiresAt,
+      })
+    }
   }
 
   setString(key: Buffer, value: Buffer, options?: SetOptions): void {

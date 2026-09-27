@@ -129,6 +129,7 @@ export const setCommand = defineCommand({
     ctx.db.setString(args.key, args.value, {
       expiresAt: args.expiresAt,
       keepTtl: args.keepTtl,
+      expireEvent: true,
     })
 
     if (args.get) {
@@ -337,6 +338,7 @@ export const setexCommand = defineCommand({
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.seconds * 1000,
+      expireEvent: true,
     })
     return ok()
   },
@@ -357,6 +359,7 @@ export const psetexCommand = defineCommand({
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.milliseconds,
+      expireEvent: true,
     })
     return ok()
   },
@@ -484,10 +487,14 @@ export const getexCommand = defineCommand({
       return bulk(null)
     }
 
+    // Only the TTL changes, so real Redis publishes `expire` (or `del` for a
+    // time already past), never `getex` (#380).
     if (args.persist) {
       ctx.db.persist(args.key)
+    } else if (args.expiresAt !== undefined && args.expiresAt <= Date.now()) {
+      ctx.db.delete(args.key)
     } else if (args.expiresAt !== undefined) {
-      ctx.db.setString(args.key, existing, { expiresAt: args.expiresAt })
+      ctx.db.expire(args.key, args.expiresAt)
     }
 
     return bulk(existing)

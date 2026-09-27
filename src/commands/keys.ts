@@ -485,12 +485,11 @@ export const moveCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // move_from on the source, then move_to on the target (#445).
     ctx.db.delete(args.key)
-    targetDb.set(
-      args.key,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    targetDb
+      .withOrigin('move')
+      .set(args.key, value, expiresAt !== undefined ? { expiresAt } : undefined)
 
     return integer(1)
   },
@@ -555,7 +554,9 @@ export const copyCommand = defineCommand({
       if (options.db < 0 || options.db >= ctx.server.databases.length) {
         throw errors.dbIndexOutOfRange()
       }
-      targetDb = ctx.server.getDatabase(options.db)
+      // The executor tags only the selected database with the command's
+      // name; tag the target too so its write is published as copy_to (#445).
+      targetDb = ctx.server.getDatabase(options.db).withOrigin('copy')
     }
 
     if (targetDb.id === ctx.db.id && source.equals(destination)) {

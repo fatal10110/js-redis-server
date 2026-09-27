@@ -8,7 +8,8 @@ import { randomKey } from '../../utils'
 // keyspace-event names real Redis publishes for commands whose event is named
 // after the underlying operation — blocking / multi-key / move-style pops
 // (#446), XGROUP subcommands (#381), the 8.x hash-field commands, lazily
-// purged hash fields, and STORE targets (#486 review).
+// purged hash fields, STORE targets (#486 review), TTLs set by a write (#380),
+// and MOVE / COPY ... DB (#445).
 
 const testRunner = new TestRunner()
 
@@ -196,6 +197,166 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
       'src:del',
       'dst:sadd',
       'same:sadd',
+    ])
+  })
+
+  test('SET EX|PX|EXAT / SETEX / PSETEX publish set, then expire (#380)', async () => {
+    const ex = randomKey()
+    const pxGet = randomKey()
+    const exat = randomKey()
+    const keepttl = randomKey()
+    const nx = randomKey()
+    const setex = randomKey()
+    const psetex = randomKey()
+    const events = await capture(
+      { ex, pxGet, exat, keepttl, nx, setex, psetex },
+      async actor => {
+        await actor.set(ex, 'v', { expiration: { type: 'EX', value: 100 } })
+        assert.strictEqual(
+          await actor.set(pxGet, 'v', {
+            expiration: { type: 'PX', value: 100000 },
+            GET: true,
+          }),
+          null,
+        )
+        const at = Math.floor(Date.now() / 1000) + 100
+        await actor.set(exat, 'v', { expiration: { type: 'EXAT', value: at } })
+        await actor.set(keepttl, 'v', {
+          expiration: { type: 'EX', value: 100 },
+        })
+        // KEEPTTL keeps the TTL rather than setting one: no expire.
+        await actor.set(keepttl, 'w', { expiration: 'KEEPTTL' })
+        const nxOptions = {
+          expiration: { type: 'EX', value: 100 },
+          condition: 'NX',
+        } as const
+        assert.strictEqual(await actor.set(nx, 'v', nxOptions), 'OK')
+        // NX refused: nothing is written, so nothing is published.
+        assert.strictEqual(await actor.set(nx, 'w', nxOptions), null)
+        await actor.setEx(setex, 100, 'v')
+        await actor.pSetEx(psetex, 100000, 'v')
+      },
+    )
+    assert.deepStrictEqual(events, [
+      'ex:set',
+      'ex:expire',
+      'pxGet:set',
+      'pxGet:expire',
+      'exat:set',
+      'exat:expire',
+      'keepttl:set',
+      'keepttl:expire',
+      'keepttl:set',
+      'nx:set',
+      'nx:expire',
+      'setex:set',
+      'setex:expire',
+      'psetex:set',
+      'psetex:expire',
+    ])
+  })
+
+  test('GETEX publishes expire / persist / del, never getex (#380)', async () => {
+    const key = randomKey()
+    const past = randomKey()
+    const events = await capture({ key, past }, async actor => {
+      await actor.set(key, 'v')
+      assert.strictEqual(
+        await actor.getEx(key, { type: 'EX', value: 100 }),
+        'v',
+      )
+      assert.strictEqual(
+        await actor.getEx(key, { type: 'PXAT', value: Date.now() + 100000 }),
+        'v',
+      )
+      assert.strictEqual(await actor.getEx(key, { type: 'PERSIST' }), 'v')
+      // No TTL left to remove: nothing changes.
+      assert.strictEqual(await actor.getEx(key, { type: 'PERSIST' }), 'v')
+      // A time already past deletes the key there and then.
+      await actor.set(past, 'v')
+      assert.strictEqual(
+        await actor.getEx(past, { type: 'EXAT', value: 1 }),
+        'v',
+      )
+      assert.strictEqual(await actor.exists(past), 0)
+    })
+    assert.deepStrictEqual(events, [
+      'key:set',
+      'key:expire',
+      'key:expire',
+      'key:persist',
+      'past:set',
+      'past:del',
+    ])
+  })
+
+  test('MOVE publishes move_from on the source database, then move_to on the target (#445)', async () => {
+    const moved = randomKey()
+    const hash = randomKey()
+    const taken = randomKey()
+    const events = await capture({ moved, hash, taken }, async actor => {
+      await actor.set(taken, 'v')
+      await actor.select(1)
+      await actor.set(moved, 'v')
+      assert.strictEqual(await actor.move(moved, 0), 1)
+      // Any type, and a TTL carried over: still move_from / move_to only.
+      await actor.hSet(hash, 'f', 'v')
+      await actor.expire(hash, 100)
+      assert.strictEqual(await actor.move(hash, 0), 1)
+      // The target already holds the key: nothing moves or is published.
+      await actor.set(taken, 'v')
+      assert.strictEqual(await actor.move(taken, 0), 0)
+      await actor.del(taken)
+    })
+    assert.deepStrictEqual(events, [
+      'taken:set',
+      'moved@1:set',
+      'moved@1:move_from',
+      'moved:move_to',
+      'hash@1:hset',
+      'hash@1:expire',
+      'hash@1:move_from',
+      'hash:move_to',
+      'taken@1:set',
+      'taken@1:del',
+    ])
+  })
+
+  test('COPY ... DB publishes copy_to on the target database (#445)', async () => {
+    // node-redis drops a falsy `DB` option, so COPY here targets database 1.
+    const src = randomKey()
+    const copied = randomKey()
+    const here = randomKey()
+    const hereCopy = randomKey()
+    const events = await capture(
+      { src, copied, here, hereCopy },
+      async actor => {
+        await actor.set(src, 'v', { expiration: { type: 'EX', value: 100 } })
+        assert.strictEqual(await actor.copy(src, copied, { DB: 1 }), 1)
+        // The destination exists: refused without REPLACE, and REPLACE
+        // overwrites it with no del of its own.
+        assert.strictEqual(await actor.copy(src, copied, { DB: 1 }), 0)
+        assert.strictEqual(
+          await actor.copy(src, copied, { DB: 1, REPLACE: true }),
+          1,
+        )
+        // DB naming the selected database is the same as no DB at all.
+        await actor.select(1)
+        await actor.set(here, 'v')
+        assert.strictEqual(await actor.copy(here, hereCopy, { DB: 1 }), 1)
+        await actor.del([copied, here, hereCopy])
+      },
+    )
+    assert.deepStrictEqual(events, [
+      'src:set',
+      'src:expire',
+      'copied@1:copy_to',
+      'copied@1:copy_to',
+      'here@1:set',
+      'hereCopy@1:copy_to',
+      'copied@1:del',
+      'here@1:del',
+      'hereCopy@1:del',
     ])
   })
 
@@ -440,7 +601,9 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
 
   /**
    * Run `steps` with keyevent notifications on, then return the events
-   * published for the named keys, in order, as `<name>:<event>`.
+   * published for the named keys, in order, as `<name>:<event>` — or
+   * `<name>@<db>:<event>` for a database other than 0. `steps` may SELECT;
+   * the named keys are deleted from database 0 afterwards.
    */
   async function capture(
     keys: Record<string, string>,
@@ -459,15 +622,19 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
     const seen = new Promise<void>(resolve => {
       sentinelSeen = resolve
     })
-    await subscriber.pSubscribe('__keyevent@0__:*', (key, channel) => {
-      const event = channel.slice('__keyevent@0__:'.length)
-      if (event === 'set' && key === sentinel) sentinelSeen()
+    await subscriber.pSubscribe('__keyevent@*__:*', (key, channel) => {
+      const match = /^__keyevent@(\d+)__:(.*)$/.exec(channel)
+      if (!match) return
+      const [, db, event] = match
+      if (db === '0' && event === 'set' && key === sentinel) sentinelSeen()
       const name = names.get(key)
-      if (name) events.push(`${name}:${event}`)
+      if (!name) return
+      events.push(db === '0' ? `${name}:${event}` : `${name}@${db}:${event}`)
     })
     await settle()
 
     await steps(actor)
+    await actor.select(0)
 
     // Delivery to one subscriber is ordered: once this sentinel arrives,
     // everything published before it has too.

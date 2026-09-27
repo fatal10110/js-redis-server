@@ -187,39 +187,46 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
     // old one tagged `select` — and since every later command restores the tag
     // it saved, the stale value was never cleared. COPY ... DB and MOVE write
     // into a database the executor never tags, so their events there were
-    // published as `select` (#359). Real Redis names them copy_to / move_to.
+    // published as `select` (#359). Real Redis names them copy_to / move_to
+    // (#445).
+    //
+    // node-redis drops a falsy COPY `DB` option, so the database switched
+    // away from (and written into) is 2 rather than 0.
     const actor = await connect()
     const sentinelWriter = await connect()
     await actor.configSet('notify-keyspace-events', 'KEA')
+    await sentinelWriter.select(2)
     const source = randomKey()
     const copied = randomKey()
     const moved = randomKey()
-    const sentinel = randomKey()
 
-    const { bus } = await subscribe(['__keyspace@0__:*', '__keyevent@0__:*'])
+    const { bus } = await subscribe(['__keyspace@2__:*', '__keyevent@2__:*'])
     const events = bus.collect()
 
+    await actor.select(2)
     await actor.select(1)
     await actor.set(source, 'v')
-    assert.strictEqual(await actor.copy(source, copied, { DB: 0 }), 1)
+    assert.strictEqual(await actor.copy(source, copied, { DB: 2 }), 1)
     await actor.set(moved, 'v')
-    assert.strictEqual(await actor.move(moved, 0), 1)
+    assert.strictEqual(await actor.move(moved, 2), 1)
+    await actor.del(source)
 
-    // Pub/sub delivery to one subscriber is ordered: once this db0 event
+    // Pub/sub delivery to one subscriber is ordered: once this db2 event
     // arrives, every event published before it has too. It also proves the
     // subscription is live, so the assertion below cannot pass vacuously.
-    const flushed = bus.waitForEvent(`__keyevent@0__:set`, sentinel)
-    await sentinelWriter.set(sentinel, 'v')
-    assert.strictEqual(await flushed, true)
+    await drain(bus, sentinelWriter, 2)
 
     assert.deepStrictEqual(
       events.filter(
         e =>
-          e.channel === `__keyevent@0__:select` ||
-          (e.channel.startsWith('__keyspace@0__:') && e.message === 'select'),
+          e.channel === `__keyevent@2__:select` ||
+          (e.channel.startsWith('__keyspace@2__:') && e.message === 'select'),
       ),
       [],
     )
+    assert.deepStrictEqual(eventsFor(events, 2, copied), ['copy_to'])
+    assertMovedInto(events, 2, moved)
+    await sentinelWriter.del([copied, moved])
   })
 
   test('emits the type-specific event before del when the last element goes (#379)', async () => {
@@ -323,7 +330,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
     assert.strictEqual(await actor.move(moved, 1), 1)
     await drain(bus, sentinelWriter, 1)
 
-    assertNotNamedBlpop(events, 1, moved)
+    assertMovedInto(events, 1, moved)
 
     await sentinelWriter.rPush(queue, 'x')
     assert.deepStrictEqual(await blocked, { key: queue, element: 'x' })
@@ -367,7 +374,7 @@ describe(`Keyspace notifications (node-redis, ${testRunner.getBackendName()})`, 
     assert.strictEqual(await actor.move(moved, 1), 1)
     await drain(bus, pusher, 1)
 
-    assertNotNamedBlpop(events, 1, moved)
+    assertMovedInto(events, 1, moved)
     await pusher.del(moved)
   })
 
@@ -479,21 +486,19 @@ function eventsFor(events: KeyspaceEvent[], db: number, key: string): string[] {
 }
 
 /**
- * The MOVE into `db` is not published under the parked BLPOP's name. Real
- * Redis publishes it as `move_to`; the mock does not name MOVE's target write
- * yet (#445), so only the absence of the stale `blpop` name is pinned here.
+ * The MOVE into `db` is published there as `move_to`, on both channels
+ * (#445) — never under the name of a BLPOP parked on that database (#444).
  */
-function assertNotNamedBlpop(
+function assertMovedInto(
   events: KeyspaceEvent[],
   db: number,
   key: string,
 ): void {
+  assert.deepStrictEqual(eventsFor(events, db, key), ['move_to'])
   assert.deepStrictEqual(
-    events.filter(
-      e =>
-        (e.channel === `__keyevent@${db}__:blpop` && e.message === key) ||
-        (e.channel === `__keyspace@${db}__:${key}` && e.message === 'blpop'),
-    ),
-    [],
+    events
+      .filter(e => e.channel === `__keyspace@${db}__:${key}`)
+      .map(e => e.message),
+    ['move_to'],
   )
 }
