@@ -1,5 +1,7 @@
 import type { RedisCluster } from './cluster-server'
+import { setEncodingRules } from './commands/sets'
 import type { RedisDatabase, RedisServerState } from './state'
+import type { SetEncodingRules } from './state/set-encoding'
 
 /**
  * Public seeding contract for {@link RedisMock}. Callers describe data with
@@ -52,7 +54,11 @@ function toBuffer(value: string | number): Buffer {
   return Buffer.from(typeof value === 'number' ? String(value) : value)
 }
 
-function writeEntry(db: RedisDatabase, entry: SeedEntry): void {
+function writeEntry(
+  db: RedisDatabase,
+  entry: SeedEntry,
+  rules: SetEncodingRules,
+): void {
   const key = Buffer.from(entry.key)
 
   switch (entry.type) {
@@ -71,13 +77,18 @@ function writeEntry(db: RedisDatabase, entry: SeedEntry): void {
         list.pushRight(entry.value.map(toBuffer))
       })
       break
-    case 'set':
+    case 'set': {
+      // Seeded like `SADD key ...members`, so an integer set is an intset.
+      const members = entry.value.map(toBuffer)
+      if (members.length === 0) break
       db.updateSet(key, set => {
-        for (const member of entry.value) {
-          set.addMember(toBuffer(member))
+        set.prepareForAdd(members[0], members.length, rules)
+        for (const member of members) {
+          set.addMember(member, rules)
         }
       })
       break
+    }
     case 'zset':
       db.updateSortedSet(key, zset => {
         for (const [member, score] of Object.entries(entry.value)) {
@@ -119,7 +130,11 @@ export async function seedStandalone(
   // client observes a half-applied seed.
   await withServerTurn(state, () => {
     for (const entry of entries) {
-      writeEntry(state.getDatabase(entry.db ?? 0), entry)
+      writeEntry(
+        state.getDatabase(entry.db ?? 0),
+        entry,
+        setEncodingRules(state),
+      )
     }
   })
 }
@@ -158,7 +173,11 @@ export async function seedCluster(
     // Writing into the master's keyspace fires mutation events that the
     // existing replication links propagate to replicas — no extra work here.
     await withServerTurn(handle.server, () =>
-      writeEntry(handle.server.getDatabase(entry.db ?? 0), entry),
+      writeEntry(
+        handle.server.getDatabase(entry.db ?? 0),
+        entry,
+        setEncodingRules(handle.server),
+      ),
     )
   }
 }

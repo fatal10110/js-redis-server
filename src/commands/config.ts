@@ -202,12 +202,29 @@ const CONFIG_DEFAULTS: Readonly<Record<string, string>> = {
 const configStores = new WeakMap<object, Map<string, string>>()
 
 function getConfigStore(ctx: RedisExecutionContext): Map<string, string> {
-  let store = configStores.get(ctx.server)
+  return configStoreFor(ctx.server)
+}
+
+function configStoreFor(server: object): Map<string, string> {
+  let store = configStores.get(server)
   if (store === undefined) {
     store = new Map(Object.entries(CONFIG_DEFAULTS))
-    configStores.set(ctx.server, store)
+    configStores.set(server, store)
   }
   return store
+}
+
+/**
+ * The live `set-max-intset-entries`, which decides when a set stops being an
+ * intset (#504). CONFIG SET does not validate stored parameters yet, so a
+ * value that is not a non-negative integer reads as the default.
+ */
+export function configuredSetMaxIntsetEntries(server: object): number {
+  const raw = configStoreFor(server).get('set-max-intset-entries') ?? ''
+  if (!/^[0-9]+$/.test(raw)) {
+    return Number(CONFIG_DEFAULTS['set-max-intset-entries'])
+  }
+  return Number(raw)
 }
 
 function globMatches(pattern: string, value: string): boolean {

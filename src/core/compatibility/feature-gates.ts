@@ -194,4 +194,14 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // XSETID ENTRIESADDED / MAXDELETEDID arrived in 7.0; 6.2 has arity 3 and
   // answers any extra token with an arity error (6.2.14).
   'xsetid.entries-added': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.2 added listpack sets (Valkey forked with them). Two ordering
+  // rules come with it (#504). SADD creates an intset only when its member
+  // count fits set-max-intset-entries (`setTypeCreate()`'s size hint), so with
+  // the limit at 2 `SADD s 3 1 3` is the listpack `3 1` on 7.2+ and the
+  // intset `1 3` on 6.2 / 7.0. And SPOP's "keep the few survivors" rebuild
+  // makes a non-intset set a listpack, where 6.2 / 7.0 start the rebuilt set
+  // from its first survivor, so all-integer survivors become a sorted intset.
+  // Verified against redis-server 6.2.24, 7.0.15, 7.4, 8.0.6 and Valkey 8.0 /
+  // 9.0.
+  'set.listpack-encoding': { redis: '7.2.0', valkey: '7.2.0' },
 }

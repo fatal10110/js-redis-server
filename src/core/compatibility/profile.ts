@@ -52,6 +52,7 @@ export type FeatureId =
   | 'command.getkeys-single-arg'
   | 'zrank.withscore'
   | 'xsetid.entries-added'
+  | 'set.listpack-encoding'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

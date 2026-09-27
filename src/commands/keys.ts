@@ -712,10 +712,9 @@ function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
   if (!value) return { type: null, elements: [] }
   if (value.type === 'list') return { type: 'list', elements: value.values }
   if (value.type === 'set') {
-    return {
-      type: 'set',
-      elements: setLoadOrder(Array.from(value.members.values())),
-    }
+    // setTypeIterator walks the set in storage order, which the members Map
+    // keeps: ascending by value for an intset, insertion order otherwise (#504).
+    return { type: 'set', elements: Array.from(value.members.values()) }
   }
   if (value.type === 'zset') {
     // sortCommand() walks the skiplist, so a zset source is read in rank
@@ -724,48 +723,6 @@ function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
     return { type: 'zset', elements: members.map(entry => entry.member) }
   }
   throw new WrongTypeRedisError()
-}
-
-const INT64_MIN = -(2n ** 63n)
-const INT64_MAX = 2n ** 63n - 1n
-
-/**
- * The order `setTypeIterator` hands SORT a set's members in (#443). A set
- * whose members are all canonical 64-bit integers is an intset, which is
- * stored sorted, so it loads in ascending numeric order. Any other set is
- * loaded in insertion order, which matches a small listpack set built from a
- * non-integer first (a large hashtable-encoded set has no defined order).
- *
- * The real order depends on the set's encoding history, which the mock does
- * not keep, so it is re-derived from the current members. Two known
- * differences follow:
- * - A set created from an integer starts as an intset. When a non-integer
- *   arrives, Redis converts it to a listpack by walking the intset in sorted
- *   order, so the integers stay sorted ahead of later members:
- *   `SADD s 3 1 a` loads `1 3 a` in Redis and `3 1 a` here.
- * - Redis never converts back to an intset, so a set that briefly held a
- *   non-integer keeps its listpack order after that member is removed; the
- *   mock sorts it numerically again.
- * Tracking the encoding in the state layer would fix both, and `SMEMBERS`
- * with them.
- */
-function setLoadOrder(members: Buffer[]): Buffer[] {
-  const numbered: Array<{ member: Buffer; value: bigint }> = []
-  for (const member of members) {
-    const value = parseIntsetMember(member)
-    if (value === null) return members
-    numbered.push({ member, value })
-  }
-  numbered.sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
-  return numbered.map(entry => entry.member)
-}
-
-/** `string2ll()`: no sign but '-', no leading zeros, no "-0", int64 range. */
-function parseIntsetMember(member: Buffer): bigint | null {
-  const text = member.toString('latin1')
-  if (!/^(?:0|-?[1-9][0-9]*)$/.test(text)) return null
-  const value = BigInt(text)
-  return value < INT64_MIN || value > INT64_MAX ? null : value
 }
 
 function sortNumericScore(weight: Buffer | null): number {

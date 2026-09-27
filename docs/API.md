@@ -182,6 +182,7 @@ Current profile gates:
 | Double reply text (`ZSCORE`, `ZINCRBY`, `ZMSCORE`, `WITHSCORES`, RESP3 `,` doubles, scores read by `redis.call`, `ZSCAN`) spelled by `d2string()` / `fpconv_dtoa` (`0.1`, `1.23e-5`, `4611686018427387904`) instead of 6.2 / 7.0's `%.17g` (`0.10000000000000001`, `1.2300000000000001e-05`, `4.6116860184273879e+18`) | `redis-7.2+` | `valkey-8.0+` |
 | Lua scripts resolve a `noscript` container's (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) subcommand before refusing it: `<container> HELP` runs, and an unknown subcommand fails lookup (see the container-subcommand row). 6.2 refuses every subcommand. (The mock has no `CONFIG HELP` yet, so that one call still errors.) | `redis-7.0+` | `valkey-8.0+` |
 | `QUIT` from a Lua script is refused as `noscript` (6.2 has no `QUIT` table entry: unknown command) | `redis-7.0+` | `valkey-8.0+` |
+| Listpack sets' encoding rules: `SADD` creates an intset only when its member count fits `set-max-intset-entries` (so with the limit at 2, `SADD s 3 1 3` keeps `3 1`; 6.2 / 7.0 sort it), and `SPOP`'s rebuild of a large pop keeps a non-intset set out of the intset encoding (6.2 / 7.0 turn all-integer survivors into a sorted intset) | `redis-7.2+` | `valkey-8.0+` |
 
 ## Package Entry Points
 
