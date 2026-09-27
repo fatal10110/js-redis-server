@@ -392,8 +392,14 @@ export const errors = Object.freeze({
         ? 'Command arguments must be strings or integers'
         : 'Lua redis lib command arguments must be strings or integers',
     ),
-  noScript: () =>
-    new RedisCommandError('No matching script. Please use EVAL.', 'NOSCRIPT'),
+  /** EVALSHA of an uncached script. Valkey 8.0+ drops `Please use EVAL.` */
+  noScript: (profile?: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile?.has('script.noscript-short-wording')
+        ? 'No matching script.'
+        : 'No matching script. Please use EVAL.',
+      'NOSCRIPT',
+    ),
 
   // numkeys / multi-key
   wrongNumberOfKeys: () =>

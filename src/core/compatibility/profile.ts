@@ -51,6 +51,8 @@ export type FeatureId =
   | 'script.abort-error-suffix'
   | 'script.unknown-command-valkey-wording'
   | 'script.not-allowed-valkey-wording'
+  | 'script.redis-version-props'
+  | 'script.noscript-short-wording'
   | 'command.getkeys-single-arg'
   | 'zrank.withscore'
   | 'xsetid.entries-added'
@@ -92,6 +94,13 @@ const PRESETS: Record<
 }
 
 const DEFAULT_SPEC = 'redis-8.0'
+
+/**
+ * The Redis version every Valkey release reports for compatibility: INFO's
+ * `redis_version` and a script's `redis.REDIS_VERSION` (Valkey forked Redis
+ * 7.2.4). Its own version is `valkey_version` / `VALKEY_VERSION`.
+ */
+export const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 
 export function parseVersion(version: string): number {
   const [majorRaw, minorRaw = '0', patchRaw = '0'] = version.split('.')

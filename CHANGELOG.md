@@ -411,6 +411,38 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
+- Scripts run on **lua-redis-wasm 2.1** (was 1.5) ([#449], [#502], [#503]).
+  What a script sees changes to match real Redis, byte for byte against
+  redis-server 6.2.24 to 8.0.6 and valkey-server 7.2.14 to 9.0.6:
+  - `{double=…}`, `{big_number=…}`, `{map=…}`, `{set=…}` and
+    `{verbatim_string=…}` tables convert at either protocol level; they came
+    back as `[]` unless the script had called `redis.setresp(3)` ([#449]).
+  - After `redis.setresp(3)` a null reply reaches the script as `nil`, not
+    `false`, so `HMGET h f nope f` returns `['v']` as in Redis ([#449]).
+  - `return 1, 2` replies `1`, the first value (was `2`), and `math.random`
+    uses Redis's generator, so a seeded sequence is the one Redis gives.
+  - `error()`, `error(nil)` and `error({err=...})` abort with `-ERR nil
+    script: …` or the table's own error (`-WRONGTYPE x script: …`, `-boom
+    script: …`) from 7.0, instead of `script execution failed` and a NUL
+    byte. `error('ERR x', 0)` keeps its leading `ERR` (`-ERR ERR x …`).
+  - `redis.error_reply('-MY x')` replies `-MY x` from 7.0 and `--MY x` on
+    6.2; `redis.error_reply('x')` is `-ERR x` from 7.0 and `-x` on 6.2.
+  - `redis.sha1hex()` with no argument, or more than one, is `wrong number of
+    arguments`.
+  - A `redis.pcall` argument that is not a string or number returns the
+    error instead of aborting the script ([#492]).
+  - From 7.0 (and on Valkey) `redis.call` raises an error table, so an
+    `xpcall` handler receives `{err=...}`; `pcall` still returns the string.
+  - `redis.log` checks its level (`Invalid log level.`, `Invalid debug
+    level.` before 7.4) and arguments with each version's wording.
+
+  **BREAKING (`/core`)** `setLuaWasmLoadOptions()` takes lua-redis-wasm 2.x
+  `LoadOptions`: `limits.maxMemoryBytes` is gone (it was never enforced),
+  limits must be non-negative integers, and a custom `.wasm` / glue given
+  through `wasmPath` / `wasmBytes` / `modulePath` must be built from
+  lua-redis-wasm 2.1. Its `redisProps` are merged over the ones the server
+  sets (see Fixed).
+
 - **BREAKING (`/core`)** `RedisServerState.notifyKeyspaceEvents` is now the
   parsed flag set (`ReadonlySet<KeyspaceNotifyFlag>`), not the canonical
   string ([#371]); both types are now exported from `/core`. CONFIG SET parses the value once instead of the notifier
@@ -682,6 +714,39 @@ so the PR body is not a durable home for a breaking-change note.
   key at once, and made `GETEX` publish `del` and delete it. Only `GETEX …
   EXAT|PXAT` with a time already past deletes the key.
 
+- A script that is not valid Lua replies `-ERR Error compiling script (new
+  function): user_script:1: unexpected symbol near '+'` on every profile, as
+  Redis does, instead of a runtime error with the abort decoration ([#502]).
+  `SCRIPT LOAD` compiles the script first and refuses invalid Lua with the
+  same error (it returned a SHA), and neither `EVAL` nor `SCRIPT LOAD` caches
+  a script that does not compile. `/core`: `RedisLuaRuntime.compile(script)`
+  returns the compile error or `null`.
+
+- On `redis-6.2` a `redis.pcall` rejected by the scripting layer (an unknown
+  or not-allowed command, wrong arity, no command) carries the calling line,
+  `-@user_script: 2: Unknown Redis command called from Lua script`, and
+  `=[C]: -1: ` when called through the global `pcall`, as in Redis 6.2
+  ([#503], [#492]).
+
+- Scripts have the `redis.*` members the engine leaves to the host
+  ([#502]): `REPL_NONE` / `REPL_AOF` / `REPL_SLAVE` / `REPL_REPLICA` /
+  `REPL_ALL`, `set_repl()` (a no-op), `replicate_commands()` (`true`) and the
+  debugger hooks `breakpoint()` / `debug()` on every version, and from 7.0
+  `REDIS_VERSION` / `REDIS_VERSION_NUM` (new gate
+  `script.redis-version-props`). Valkey reports `7.2.4` there, like its
+  INFO, plus `SERVER_NAME`, `VALKEY_VERSION` and `VALKEY_VERSION_NUM`.
+  `set_repl` does not check its argument, and `acl_check_cmd` (7.0+) is not
+  provided.
+
+- A Valkey 7.2 profile (`{ flavor: 'valkey', version: '7.2.x' }`) gets
+  Valkey 7.2's Lua sandbox: Redis 7.2's (no `os`, `Invalid debug level.`,
+  `Lua redis lib command arguments ...`) with the `server` alias. It used to
+  get Valkey 8.0's.
+
+- `EVALSHA` of an uncached script replies `-NOSCRIPT No matching script.` on
+  Valkey 8.0+, which dropped ` Please use EVAL.` (new gate
+  `script.noscript-short-wording`).
+
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity
   -1 and `0 0 0`. The version-dependent ones follow the profile: `EXPIRE`
@@ -709,9 +774,8 @@ so the PR body is not a durable home for a breaking-change note.
   argument) use 6.2's wording, for example `Unknown Redis command called from
   Lua script`, with no `ERR` code. A `redis.call` abort also gets 6.2's inner
   `@user_script: <line>: ` position, byte for byte against redis-server
-  6.2.24. A `redis.pcall` rejection still lacks that position, because the Lua
-  engine does not pass the calling line to the host
-  (fatal10110/lua-redis-wasm#28, [#503]). Only an argument count the command
+  6.2.24. A `redis.pcall` rejection gets the same position as an error reply
+  ([#503]). Only an argument count the command
   table rejects gets the scripting layer's arity error, and it now comes
   before the noscript / read-only checks, as in Redis. A count the table
   accepts but the command refuses (`HSET h f v x`, an odd `MSET`) returns the
@@ -1192,7 +1256,9 @@ requests they contain.
 [#384]: https://github.com/fatal10110/js-redis-server/issues/384
 [#488]: https://github.com/fatal10110/js-redis-server/issues/488
 [#489]: https://github.com/fatal10110/js-redis-server/issues/489
+[#449]: https://github.com/fatal10110/js-redis-server/issues/449
 [#492]: https://github.com/fatal10110/js-redis-server/issues/492
+[#502]: https://github.com/fatal10110/js-redis-server/issues/502
 [#503]: https://github.com/fatal10110/js-redis-server/issues/503
 [#234]: https://github.com/fatal10110/js-redis-server/issues/234
 [#512]: https://github.com/fatal10110/js-redis-server/issues/512

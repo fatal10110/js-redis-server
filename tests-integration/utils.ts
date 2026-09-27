@@ -435,26 +435,14 @@ export const activeProfile = (process.env.REDIS_COMPAT ??
 /**
  * The error a script's redis.pcall rejection (unknown / not-allowed command,
  * wrong arity, ...) returns, as an `assert.rejects` matcher. Real 6.2 also
- * prefixes the calling line (`@user_script: 1: `), which this server cannot
- * produce: the Lua engine does not pass that line to the host
- * (fatal10110/lua-redis-wasm#28, #503). So on redis-6.2 the prefix is
- * optional; the gap is pinned in compatibility/profile-gates.test.ts.
+ * prefixes the calling line (`@user_script: 1: `, for a one-line script).
  */
 export function scriptPcallRejection(
   message: string,
 ): (error: unknown) => boolean {
-  if (activeProfile !== 'redis-6.2') {
-    return errorWithMessage(message)
-  }
-  return (error: unknown): boolean => {
-    assert.ok(error instanceof Error)
-    assert.ok(
-      error.message === message ||
-        error.message === `@user_script: 1: ${message}`,
-      `unexpected message: ${error.message}`,
-    )
-    return true
-  }
+  return errorWithMessage(
+    activeProfile === 'redis-6.2' ? `@user_script: 1: ${message}` : message,
+  )
 }
 
 /**

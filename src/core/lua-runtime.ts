@@ -4,9 +4,15 @@ import {
   type LoadOptions,
   type LuaEngine,
   type LuaWasmModule,
+  type RedisCallContext,
+  type RedisProps,
+  type ReplyError,
   type ReplyValue,
 } from 'lua-redis-wasm'
-import type { CompatibilityProfile } from './compatibility/profile'
+import {
+  VALKEY_REDIS_COMPAT_VERSION,
+  type CompatibilityProfile,
+} from './compatibility/profile'
 import { containerSubcommandExists } from './compatibility/subcommand-gates'
 import { asciiLowerCase } from './ascii-case'
 import type { CommandDefinition, CommandPlan } from './command-definition'
@@ -40,21 +46,11 @@ export class RedisLuaRuntime {
     resp: 2,
   }
   private readonly engine: LuaEngine
-  // The last error a `redis.call` command handed back to the engine during
-  // the running eval. A failing redis.call raises it, so when the script aborts
-  // with this exact error the abort came from the command rather than from Lua
-  // itself — a distinction the engine's reply does not carry, but the pre-7.0
-  // abort decoration depends on (see renderScriptError). Cleared when the eval
-  // ends.
-  private lastRedisCallError: { err: Buffer; code?: Buffer } | null = null
-  // The last script-level rejection a `redis.call` got during the running
-  // eval (see scriptRejection). Cleared when the eval ends.
-  private lastScriptRejection: Buffer | null = null
 
   constructor(module: LuaWasmModule) {
     this.engine = module.create({
-      redisCall: args => this.recordRedisCallError(this.runRedisCommand(args)),
-      redisPcall: args => this.runRedisCommand(args),
+      redisCall: (args, call) => this.runRedisCommand(args, call),
+      redisPcall: (args, call) => this.runRedisCommand(args, call),
       log: () => {},
       onSetResp: version => {
         this.hostState.resp = version
@@ -62,6 +58,10 @@ export class RedisLuaRuntime {
     })
   }
 
+  /**
+   * Runs a script. A script-aborting error comes back as the engine reports
+   * it, with its `meta`; {@link renderScriptError} turns it into the reply.
+   */
   eval(
     script: Buffer,
     keys: readonly Buffer[],
@@ -69,27 +69,6 @@ export class RedisLuaRuntime {
     ctx: RedisExecutionContext,
     options?: { readOnly?: boolean },
   ): ReplyValue {
-    return this.evalScript(script, keys, args, ctx, options).reply
-  }
-
-  /**
-   * Runs a script like `eval`, and also reports what raised the reply when it
-   * is a script abort: a command's error through `redis.call`
-   * (`raisedByRedisCall`), or a script-level rejection such as an unknown or
-   * not-allowed command (`raisedByScriptRejection`). Neither is set for a Lua
-   * runtime error or an engine error.
-   */
-  evalScript(
-    script: Buffer,
-    keys: readonly Buffer[],
-    args: readonly Buffer[],
-    ctx: RedisExecutionContext,
-    options?: { readOnly?: boolean },
-  ): {
-    reply: ReplyValue
-    raisedByRedisCall: boolean
-    raisedByScriptRejection: boolean
-  } {
     if (this.hostState.ctx) {
       throw new RedisCommandError('Lua runtime is already executing a script')
     }
@@ -97,69 +76,33 @@ export class RedisLuaRuntime {
     this.hostState.ctx = ctx
     this.hostState.readOnly = options?.readOnly ?? false
     this.hostState.resp = 2
-    this.lastRedisCallError = null
-    this.lastScriptRejection = null
 
     try {
-      const reply = this.engine.evalWithArgs(script, [...keys], [...args])
-      return {
-        reply,
-        raisedByRedisCall: this.isRedisCallAbort(reply),
-        raisedByScriptRejection: this.isScriptRejectionAbort(reply),
-      }
+      return this.engine.evalWithArgs(script, [...keys], [...args])
     } finally {
       this.hostState.ctx = null
       this.hostState.readOnly = false
       this.hostState.resp = 2
-      this.lastRedisCallError = null
-      this.lastScriptRejection = null
     }
-  }
-
-  private isRedisCallAbort(reply: ReplyValue): boolean {
-    const callError = this.lastRedisCallError
-    if (!callError || !isErrorReply(reply) || !reply.meta) {
-      return false
-    }
-    return (
-      reply.err.equals(callError.err) &&
-      (reply.code?.toString() ?? '') === (callError.code?.toString() ?? '')
-    )
-  }
-
-  private recordRedisCallError(reply: ReplyValue): ReplyValue {
-    if (!isErrorReply(reply)) {
-      return reply
-    }
-    if (scriptRejections.has(reply)) {
-      this.lastScriptRejection = reply.err
-    } else {
-      this.lastRedisCallError = { err: reply.err, code: reply.code }
-    }
-    return reply
   }
 
   /**
-   * Whether the reply is a script abort raised by a `redis.call` rejection,
-   * which {@link renderScriptError} gives 6.2's inner position. Matched on the
-   * message alone, since the engine may add a default code to an abort that
-   * had none.
+   * Compiles a script without running it, for `SCRIPT LOAD`: `null` when it
+   * is valid Lua, else the compile error (`meta.kind` `compile`) that `eval`
+   * would abort with.
    */
-  private isScriptRejectionAbort(reply: ReplyValue): boolean {
-    const rejection = this.lastScriptRejection
-    return (
-      rejection !== null &&
-      isErrorReply(reply) &&
-      reply.meta !== undefined &&
-      !reply.meta.kind &&
-      reply.err.equals(rejection)
-    )
+  compile(script: Buffer): ReplyError | null {
+    return this.engine.compile(script)
   }
 
   // Host callback for redis.call()/redis.pcall(). Both modes share the same
   // dispatch: the engine decides whether an error aborts the script (call) or is
   // returned as a value (pcall) and decorates it with the script sha accordingly.
-  private runRedisCommand(args: Buffer[]): ReplyValue {
+  // `call` is the calling Lua frame, which 6.2's rejections name.
+  private runRedisCommand(
+    args: Buffer[],
+    call: RedisCallContext | undefined,
+  ): ReplyValue {
     const ctx = this.hostState.ctx
     if (!ctx) {
       throw new Error('ERR Lua runtime is not initialized')
@@ -174,6 +117,7 @@ export class RedisLuaRuntime {
         'no-command',
         errors.scriptCallNoCommand(profile),
         profile,
+        call,
       )
     }
 
@@ -199,6 +143,7 @@ export class RedisLuaRuntime {
           'unknown-command',
           errors.scriptUnknownCommand(profile),
           profile,
+          call,
         )
       }
 
@@ -226,6 +171,7 @@ export class RedisLuaRuntime {
         'wrong-arity',
         errors.scriptWrongArity(profile),
         profile,
+        call,
       )
     }
 
@@ -237,6 +183,7 @@ export class RedisLuaRuntime {
           ? errors.scriptUnknownCommand(profile)
           : errors.scriptNotAllowedCommand(profile),
         profile,
+        call,
       )
     }
 
@@ -248,6 +195,7 @@ export class RedisLuaRuntime {
           'Write commands are not allowed from read-only scripts.',
         ),
         profile,
+        call,
       )
     }
 
@@ -340,9 +288,10 @@ function createLuaCallContext(
   }
 }
 
-// Each RedisLuaRuntime gets its own freshly-loaded WASM module + LuaEngine +
-// hostState. A LuaWasmModule is single-use (module.create() consumes it), so it
-// cannot be shared between engines. Scoping a runtime per RedisServerState (see
+// Each RedisLuaRuntime gets its own WASM instance + LuaEngine + hostState
+// (lua-redis-wasm compiles the WebAssembly module once per process; every
+// load() after the first only instantiates it). A LuaWasmModule is single-use
+// (module.create() consumes it), so it cannot be shared between engines. Scoping a runtime per RedisServerState (see
 // RedisServerState.getLuaRuntime) keeps each logical node's script re-entrancy
 // guard isolated, so concurrent EVALs on independent server/cluster nodes never
 // collide (issue #130).
@@ -364,29 +313,99 @@ export async function createRedisLuaRuntime(
 ): Promise<RedisLuaRuntime> {
   const module = await load({
     ...luaWasmLoadOptions,
-    ...(profile ? { profile: toLuaCompatProfile(profile) } : {}),
+    ...(profile ? toLuaCompat(profile) : {}),
+    redisProps: {
+      ...luaRedisProps(profile),
+      ...luaWasmLoadOptions.redisProps,
+    },
   })
   return new RedisLuaRuntime(module)
 }
 
 /**
- * Map a server compatibility profile to the Lua engine's compat profile. The
- * engine collapses aliases (redis-7.0 == 7.2, redis-7.4 == 8.0, valkey-8.0 ==
- * 9.0), so only the behavioral groups matter — they gate whether the sandbox
- * keeps `print` (6.2 only), exposes `os` (7.4+), and aliases `server` (valkey).
+ * Map a server compatibility profile to the closest Lua engine profile. It
+ * picks the sandbox (`print` on 6.2 only, `os` from 7.4, the `server` alias
+ * on Valkey), the error model (6.2's string errors) and the `redis.log` and
+ * argument-type wording. Valkey 7.2 is a fork of Redis 7.2.4 and its scripts
+ * behave like 7.2's (no `os`, `Invalid debug level.`, `redis.log()` and
+ * `Lua redis lib ...` wording) except that it already has the `server` alias
+ * (checked against valkey-server 7.2.14).
  */
-function toLuaCompatProfile(profile: CompatibilityProfile): CompatProfile {
-  if (profile.flavor === 'valkey') {
-    return 'valkey-8.0'
-  }
+function toLuaCompat(
+  profile: CompatibilityProfile,
+): Pick<LoadOptions, 'profile' | 'compat'> {
   const [major, minor] = profile.version.split('.').map(n => parseInt(n, 10))
+  if (profile.flavor === 'valkey') {
+    if (major < 8) {
+      return {
+        profile: 'redis-7.2',
+        compat: { serverAlias: true, ...luaWasmLoadOptions.compat },
+      }
+    }
+    return { profile: major < 9 ? 'valkey-8.0' : 'valkey-9.0' }
+  }
+  return { profile: toRedisLuaProfile(major, minor) }
+}
+
+function toRedisLuaProfile(major: number, minor: number): CompatProfile {
   if (major < 7) {
     return 'redis-6.2'
   }
-  if (major === 7 && minor < 4) {
-    return 'redis-7.0'
+  if (major === 7) {
+    return minor < 2 ? 'redis-7.0' : minor < 4 ? 'redis-7.2' : 'redis-7.4'
   }
   return 'redis-8.0'
+}
+
+/**
+ * The version-specific `redis.*` members the engine leaves to the host. Every
+ * version has the replication constants and `set_repl` /
+ * `replicate_commands`, which only matter to a replica (a no-op and `true`
+ * since 7.0, where scripts always replicate their effects), and the debugger
+ * hooks, which do nothing outside a `SCRIPT DEBUG` session. 7.0 added
+ * `REDIS_VERSION` / `REDIS_VERSION_NUM`; Valkey reports the Redis version it
+ * forked from there (7.2.4, as its INFO does) and its own under
+ * `VALKEY_VERSION` / `VALKEY_VERSION_NUM`, with `SERVER_NAME`. Values checked
+ * against redis-server 6.2.24, 7.0.15, 7.2.16, 7.4.11, 8.0.6 and
+ * valkey-server 7.2.14, 8.0.11, 9.0.6.
+ *
+ * The stubs ignore their arguments, so `set_repl`'s own argument errors are
+ * not reproduced.
+ */
+function luaRedisProps(profile?: CompatibilityProfile): RedisProps {
+  const props: RedisProps = {
+    REPL_NONE: { value: 0 },
+    REPL_AOF: { value: 1 },
+    REPL_SLAVE: { value: 2 },
+    REPL_REPLICA: { value: 2 },
+    REPL_ALL: { value: 3 },
+    set_repl: { returns: null },
+    replicate_commands: { returns: true },
+    breakpoint: { returns: false },
+    debug: { returns: null },
+  }
+  if (!profile?.has('script.redis-version-props')) {
+    return props
+  }
+
+  const redisVersion =
+    profile.flavor === 'valkey' ? VALKEY_REDIS_COMPAT_VERSION : profile.version
+  props.REDIS_VERSION = { value: redisVersion }
+  props.REDIS_VERSION_NUM = { value: luaVersionNum(redisVersion) }
+  if (profile.flavor === 'valkey') {
+    props.SERVER_NAME = { value: 'valkey' }
+    props.VALKEY_VERSION = { value: profile.version }
+    props.VALKEY_VERSION_NUM = { value: luaVersionNum(profile.version) }
+  }
+  return props
+}
+
+/** The version as Redis encodes `REDIS_VERSION_NUM`: one byte per part. */
+function luaVersionNum(version: string): number {
+  const [major = 0, minor = 0, patch = 0] = version
+    .split('.')
+    .map(n => parseInt(n, 10))
+  return major * 0x10000 + minor * 0x100 + patch
 }
 
 export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
@@ -462,26 +481,26 @@ export function luaReplyToRedisValue(value: ReplyValue): RedisValue {
  * user-facing prose, so the host owns the wording and the decoration:
  * `<error> script: <sha>, on @user_script:<line>.` from Redis 7.0 / Valkey 7.2,
  * `Error running script (call to f_<sha>): @user_script:<line>: <error>` before
- * that (`script.abort-error-suffix`).
+ * that (`script.abort-error-suffix`), always with the `ERR` code.
+ *
+ * A script that does not compile never ran, so it has neither decoration:
+ * every version replies `-ERR Error compiling script (new function): <Lua's
+ * message>`.
  *
  * Errors carrying their own message (Lua runtime errors, propagated command
- * errors, and global writes — which Lua's native readonly table rejects with
- * "Attempt to modify a readonly table") have no kind and pass through. Replies
- * without metadata (returned error tables, redis.error_reply, host-side limit
- * errors) are emitted verbatim, matching real Redis.
+ * errors, script-level rejections of a redis.call, and global writes — which
+ * Lua's native readonly table rejects with "Attempt to modify a readonly
+ * table") have no kind and pass through. On 6.2 the engine hands over the
+ * whole Lua error string, a failing command's `<CODE> ` included, which is
+ * the body 6.2 decorates. Replies without metadata (returned error tables,
+ * redis.error_reply, host-side limit errors) are emitted verbatim, matching
+ * real Redis.
  */
 export function renderScriptError(
   value: ReplyValue,
   options: {
     /** Picks the decoration (`script.abort-error-suffix`). */
     profile: CompatibilityProfile
-    /** The abort is a command's error raised through redis.call (RedisLuaRuntime.evalScript). */
-    raisedByRedisCall: boolean
-    /**
-     * The abort is a script-level rejection of a redis.call (unknown command,
-     * not allowed, wrong arity, no command; RedisLuaRuntime.evalScript).
-     */
-    raisedByScriptRejection?: boolean
   },
 ): ReplyValue {
   if (!isErrorReply(value)) {
@@ -493,6 +512,17 @@ export function renderScriptError(
   }
 
   const { line, sha, kind, name } = meta
+  if (kind === 'compile') {
+    return {
+      err: Buffer.concat([
+        Buffer.from('Error compiling script (new function): '),
+        value.err,
+      ]),
+      code: Buffer.from('ERR'),
+    }
+  }
+
+  const legacy = !options.profile.has('script.abort-error-suffix')
   let body: Buffer
   switch (kind) {
     case 'global-read':
@@ -501,8 +531,13 @@ export function renderScriptError(
       )
       break
     case 'command-arg-type':
-      // Raised by redis.call/pcall without a script-position prefix.
-      body = Buffer.from(errors.scriptArgumentType(options.profile).message)
+      // Raised by redis.call without a script-position prefix, except on 6.2,
+      // where `luaPushError` adds the calling line.
+      body = Buffer.from(
+        legacy
+          ? `@user_script: ${line}: ${LEGACY_ARGUMENT_TYPE}`
+          : errors.scriptArgumentType(options.profile).message,
+      )
       break
     default:
       // Kept as bytes: a propagated command error or a Lua runtime error can
@@ -511,26 +546,13 @@ export function renderScriptError(
       body = value.err
   }
 
-  if (!options.profile.has('script.abort-error-suffix')) {
-    // 6.2 raises script-level rejections through `luaPushError`, which adds
-    // its own `@user_script: <line>: ` inside the abort decoration.
-    const rejection =
-      options.raisedByScriptRejection === true || kind === 'command-arg-type'
+  if (legacy) {
     return {
       err: Buffer.concat([
         Buffer.from(
           `Error running script (call to f_${sha}): @user_script:${line}: `,
         ),
-        rejection
-          ? Buffer.concat([
-              Buffer.from(`@user_script: ${line}: `),
-              kind === 'command-arg-type'
-                ? Buffer.from(
-                    'Lua redis() command arguments must be strings or integers',
-                  )
-                : body,
-            ])
-          : legacyScriptErrorBody(body, value.code, options.raisedByRedisCall),
+        body,
       ]),
       code: Buffer.from('ERR'),
     }
@@ -545,24 +567,9 @@ export function renderScriptError(
   }
 }
 
-/**
- * The pre-7.0 abort body is the raw Lua error string: a failing redis.call
- * raises its whole `<CODE> <message>` reply, so the code is folded back in
- * (the reply itself is always `-ERR`). A Lua runtime error keeps its text as
- * is; the engine reports those under a default `ERR` code, so only a code it
- * split off the message itself (`error('WRONGTYPE x', 0)`) is restored.
- * Script-level rejections (unknown / not-allowed command, wrong arity, ...)
- * are not command replies; {@link renderScriptError} renders those itself.
- */
-function legacyScriptErrorBody(
-  body: Buffer,
-  code: Buffer | undefined,
-  raisedByRedisCall: boolean,
-): Buffer {
-  if (!code || (!raisedByRedisCall && code.toString() === 'ERR')) {
-    return body
-  }
-  return Buffer.concat([code, Buffer.from(' '), body])
+/** Whether `eval` aborted because the script does not compile. */
+export function isCompileError(value: ReplyValue): boolean {
+  return isErrorReply(value) && value.meta?.kind === 'compile'
 }
 
 function isErrorReply(
@@ -654,8 +661,7 @@ export function redisValueToLuaReply(
 /**
  * The RESP3 reply kinds whose Lua shape differs from RESP2, mirroring
  * `encodeResp3`; `undefined` for every kind both protocols convert alike. (A
- * RESP3 null still reaches Lua as `false`, not `nil`: the engine decodes every
- * null that way.)
+ * null reaches Lua as `nil` at either protocol, as in Redis.)
  *
  * Through `redis.call` only `double`, `map`, `map-pairs` and `flat-pairs` are
  * reachable today. No command emits `set`, `boolean`, `big-number` or
@@ -715,12 +721,7 @@ function normalizeScriptCommandValue(value: RedisValue): RedisValue {
 
 // Errors the scripting layer itself raises before a command runs (no command
 // given, unknown command, wrong arity, not allowed from scripts, write from a
-// read-only script). Real Redis 6.2 renders these through `luaPushError`: an
-// inner `@user_script: <line>: ` position, no error code, and 6.2's own
-// wording, not a command's `<CODE> <message>` reply. So they are kept out of
-// RedisLuaRuntime.lastRedisCallError and never have a code folded in.
-const scriptRejections = new WeakSet<object>()
-
+// read-only script).
 type ScriptRejectionKind =
   | 'no-command'
   | 'unknown-command'
@@ -744,25 +745,36 @@ const LEGACY_SCRIPT_REJECTIONS: Record<
   'wrong-arity': 'Wrong number of args calling Redis command From Lua script',
 }
 
+/** Redis 6.2's wording for a redis.call argument that is not a string or number. */
+const LEGACY_ARGUMENT_TYPE =
+  'Lua redis() command arguments must be strings or integers'
+
 /**
- * A rejection reply, in the profile's wording. On 6.2 it has no code. It also
- * lacks the inner `@user_script: <line>: ` position, because the engine does
- * not tell the host which line made the call. A `redis.call` rejection
- * aborts the script, and the abort carries the line, so
- * {@link renderScriptError} adds the position there. A `redis.pcall`
- * rejection is returned to the script without it (a known gap).
+ * A rejection reply, in the profile's wording. Real Redis 6.2 builds these
+ * with `luaPushError`: no error code, and the calling frame's position in
+ * front, `<source>: <line>: ` (`@user_script: 2: ` for a call on the script's
+ * second line, `=[C]: -1: ` for `pcall(redis.call, ...)`), for redis.call and
+ * redis.pcall alike. The engine names that frame in `call`; without one the
+ * position is left out, as Redis does when it cannot find the frame.
  */
 function scriptRejection(
   kind: ScriptRejectionKind,
   current: RedisCommandError,
   profile: CompatibilityProfile,
+  call: RedisCallContext | undefined,
 ): ReplyValue {
-  const reply =
-    kind !== 'read-only-write' && !profile.has('script.abort-error-suffix')
-      ? { err: Buffer.from(LEGACY_SCRIPT_REJECTIONS[kind]) }
-      : redisErrorToLuaReply(current)
-  scriptRejections.add(reply as object)
-  return reply
+  if (kind === 'read-only-write' || profile.has('script.abort-error-suffix')) {
+    return redisErrorToLuaReply(current)
+  }
+
+  const message = Buffer.from(LEGACY_SCRIPT_REJECTIONS[kind])
+  const source = call?.source
+  return {
+    err:
+      source && source.length > 0
+        ? Buffer.concat([source, Buffer.from(`: ${call.line}: `), message])
+        : message,
+  }
 }
 
 function redisErrorToLuaReply(err: RedisCommandError): ReplyValue {

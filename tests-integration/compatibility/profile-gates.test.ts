@@ -874,30 +874,38 @@ describe(
       },
     )
 
-    // KNOWN GAP: real 6.2 hands redis.pcall the same text with the inner
-    // position, `-@user_script: 2: <wording>`. The position is the line of the
-    // pcall, and the engine (lua-redis-wasm) does not pass the calling line to
-    // the host's redis.pcall callback, so this server answers the wording
-    // without it. The argument-type rejection is raised by the engine itself,
-    // even under pcall, so it aborts the script instead (on every profile).
-    // Tighten to the real frames once the engine exposes the line
-    // (fatal10110/lua-redis-wasm#28, #503).
+    // redis.pcall gets the same text with the inner position, the line of the
+    // pcall, as an error reply (`-@user_script: 2: <wording>`); so does the
+    // engine's own argument-type rejection. Called through the global pcall,
+    // the caller is a C function, which 6.2 names `=[C]: -1: `. Byte for byte
+    // against real redis-server 6.2.24.
     test(
-      'script-level redis.pcall rejections on 6.2 (known gap: inner position)',
+      'script-level redis.pcall rejections on 6.2 carry the calling line',
       {
         skip:
           supportsSuffixScriptErrorDecoration() && 'redis-6.2 only, see above',
       },
       async () => {
         for (const [call, body] of legacyScriptRejections) {
-          if (call.includes('{}')) continue
           const script = `local x = 1\n${call.replace('redis.call', 'redis.pcall')}`
           assert.strictEqual(
             await send('EVAL', script, '0'),
-            `-${body}\r\n`,
+            `-@user_script: 2: ${body}\r\n`,
             script,
           )
         }
+
+        const viaPcall = "local ok, e = pcall(redis.call, 'nosuchcmd') return e"
+        assert.strictEqual(
+          await send('EVAL', viaPcall, '0'),
+          '$54\r\n=[C]: -1: Unknown Redis command called from Lua script\r\n',
+        )
+        const inFunction =
+          "local function f()\n  return redis.pcall('GET')\nend\nreturn f()"
+        assert.strictEqual(
+          await send('EVAL', inFunction, '0'),
+          '-@user_script: 2: Wrong number of args calling Redis command From Lua script\r\n',
+        )
       },
     )
 
@@ -1002,6 +1010,8 @@ describe(
           ["redis.pcall('xgroup', 'create', 'k', 'g')", WRONG_ARITY],
           ['redis.pcall()', NO_COMMAND],
           ["redis.pcall('subscribe', 'c')", NOT_ALLOWED],
+          // The engine's own check: redis.pcall returns it too.
+          ["redis.pcall('set', 'k', {})", ARGUMENT_TYPE],
         ]
         for (const [call, error] of cases) {
           assert.strictEqual(
@@ -1017,15 +1027,6 @@ describe(
             script,
           )
         }
-
-        // The argument-type check is the engine's own, and it raises even under
-        // redis.pcall (fatal10110/lua-redis-wasm#28, #503), so only the aborting
-        // redis.call form is pinned.
-        const script = "return redis.call('set', 'k', {})"
-        assert.strictEqual(
-          await send('EVAL', script, '0'),
-          `-${ARGUMENT_TYPE} script: ${sha1(script)}, on @user_script:1.\r\n`,
-        )
       },
     )
 

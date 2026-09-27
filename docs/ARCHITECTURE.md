@@ -593,9 +593,24 @@ to scripts via a host callback
    any command/policy that tries to go async or stream is rejected outright
    (Lua cannot await).
 
+The engine is created with the Lua profile closest to the server's
+compatibility profile (`toLuaCompat`), which picks the sandbox (`print`, `os`,
+the `server` alias), the error model and the version-specific wording, and
+with the `redis.*` members the engine leaves to the host (`luaRedisProps`:
+`REPL_*`, `set_repl`, `replicate_commands`, `REDIS_VERSION`, Valkey's
+`VALKEY_VERSION`, ...). The engine hands every script-aborting error back with
+metadata (`line`, `sha`, and a `kind` for its own errors, `compile` for a
+script that is not valid Lua); [`renderScriptError`](../src/core/lua-runtime.ts)
+turns it into the profile's wire form. The host callback also receives the
+calling Lua frame, which Redis 6.2's script-level rejections name
+(`@user_script: <line>: `).
+
 `EVAL`/`EVALSHA`/`SCRIPT LOAD`/`SCRIPT EXISTS`/`SCRIPT FLUSH` are implemented in
 [`src/commands/scripts.ts`](../src/commands/scripts.ts); compiled scripts live
-in the server-wide [`RedisScriptCache`](../src/state/script-cache.ts).
+in the server-wide [`RedisScriptCache`](../src/state/script-cache.ts). A script
+is cached only once it compiles: `EVAL` caches it after the run unless it was
+a compile error, and `SCRIPT LOAD` compiles it first (`RedisLuaRuntime.compile`)
+and refuses invalid Lua, as Redis does.
 
 ## Adding a command
 
