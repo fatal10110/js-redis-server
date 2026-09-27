@@ -22,7 +22,7 @@ import {
   type RedisFunctionLibrary,
 } from '../state'
 import { array, bulk, ok, unknownSubcommandError } from './helpers'
-import { commandSubcommandInfo, commandKeynumKeySpec } from './introspection'
+import { commandSubcommandInfo } from './introspection'
 
 type ScriptArgs = {
   subcommand: Buffer
@@ -52,15 +52,6 @@ type FcallArgs = {
   rest: Buffer[]
 }
 
-const DYNAMIC_SCRIPT_FLAGS = [
-  'noscript',
-  'stale',
-  'skip_monitor',
-  'no_mandatory_keys',
-  'movablekeys',
-]
-const READONLY_DYNAMIC_SCRIPT_FLAGS = ['readonly', ...DYNAMIC_SCRIPT_FLAGS]
-
 export const scriptCommand = defineCommand({
   name: 'script',
   schema: t.object({
@@ -71,27 +62,13 @@ export const scriptCommand = defineCommand({
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    flags: ['admin', 'noscript'],
-    categories: ['@slow', '@scripting'],
     subcommands: [
-      commandSubcommandInfo('script|debug', 3, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('script|exists', -3, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('script|flush', -2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('script|help', 2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('script|kill', 2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('script|load', 3, {
-        categories: ['@slow', '@scripting'],
-      }),
+      commandSubcommandInfo('script|debug', 3),
+      commandSubcommandInfo('script|exists', -3),
+      commandSubcommandInfo('script|flush', -2),
+      commandSubcommandInfo('script|help', 2),
+      commandSubcommandInfo('script|kill', 2),
+      commandSubcommandInfo('script|load', 3),
     ],
   },
   keys: () => [],
@@ -128,16 +105,6 @@ export const evalCommand = defineCommand<EvalArgs>({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
-  introspection: {
-    keySpecs: [
-      commandKeynumKeySpec(2, ['RW', 'access', 'update'], {
-        notes:
-          'We cannot tell how the keys will be used so we assume the worst, RW and UPDATE',
-      }),
-    ],
-    flags: DYNAMIC_SCRIPT_FLAGS,
-    categories: ['@slow', '@scripting'],
-  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -155,11 +122,6 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
-  introspection: {
-    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'update'])],
-    flags: DYNAMIC_SCRIPT_FLAGS,
-    categories: ['@slow', '@scripting'],
-  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -179,16 +141,6 @@ export const evalRoCommand = defineCommand<EvalArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: evalCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
-  introspection: {
-    keySpecs: [
-      commandKeynumKeySpec(2, ['RO', 'access'], {
-        notes:
-          'We cannot tell how the keys will be used so we assume the worst, RO and ACCESS',
-      }),
-    ],
-    flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
-    categories: ['@slow', '@scripting'],
-  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -206,11 +158,6 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: evalshaCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
-  introspection: {
-    keySpecs: [commandKeynumKeySpec(2, ['RO', 'access'])],
-    flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
-    categories: ['@slow', '@scripting'],
-  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: evalKeys,
   execute: async (args, ctx) => {
@@ -235,36 +182,16 @@ export const functionCommand = defineCommand<FunctionArgs>({
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    flags: [],
-    categories: ['@slow', '@scripting'],
     subcommands: [
-      commandSubcommandInfo('function|load', -3, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|delete', 3, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|list', -2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|stats', 2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|dump', 2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|restore', -3, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|flush', -2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|kill', 2, {
-        categories: ['@slow', '@scripting'],
-      }),
-      commandSubcommandInfo('function|help', 2, {
-        categories: ['@slow', '@scripting'],
-      }),
+      commandSubcommandInfo('function|load', -3),
+      commandSubcommandInfo('function|delete', 3),
+      commandSubcommandInfo('function|list', -2),
+      commandSubcommandInfo('function|stats', 2),
+      commandSubcommandInfo('function|dump', 2),
+      commandSubcommandInfo('function|restore', -3),
+      commandSubcommandInfo('function|flush', -2),
+      commandSubcommandInfo('function|kill', 2),
+      commandSubcommandInfo('function|help', 2),
     ],
   },
   keys: () => [],
@@ -308,16 +235,6 @@ export const fcallCommand = defineCommand<FcallArgs>({
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
-  introspection: {
-    keySpecs: [
-      commandKeynumKeySpec(2, ['RW', 'access', 'update'], {
-        notes:
-          'We cannot tell how the keys will be used so we assume the worst, RW and UPDATE',
-      }),
-    ],
-    flags: DYNAMIC_SCRIPT_FLAGS,
-    categories: ['@slow', '@scripting'],
-  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: fcallKeys,
   execute: (args, ctx) => runFunction(args, ctx, false),
@@ -329,16 +246,6 @@ export const fcallRoCommand = defineCommand<FcallArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: fcallCommand.schema,
   flags: ['readonly', 'movablekeys', 'noscript'],
-  introspection: {
-    keySpecs: [
-      commandKeynumKeySpec(2, ['RO', 'access'], {
-        notes:
-          'We cannot tell how the keys will be used so we assume the worst, RO and ACCESS',
-      }),
-    ],
-    flags: READONLY_DYNAMIC_SCRIPT_FLAGS,
-    categories: ['@slow', '@scripting'],
-  },
   capabilities: { scriptKeys: true, movableKeys: true },
   keys: fcallKeys,
   execute: (args, ctx) => runFunction(args, ctx, true),

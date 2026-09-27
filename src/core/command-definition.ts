@@ -3,6 +3,7 @@ import type { RedisExecutionContext } from './redis-context'
 import type { RedisCommandError } from './redis-error'
 import type { RedisResult } from './redis-result'
 import type { CompatibilityProfile, VersionGate } from './compatibility'
+import { commandTableEntry } from './compatibility/command-table'
 import { asciiLowerCase } from './ascii-case'
 
 export type CommandFlag =
@@ -53,18 +54,22 @@ export type CommandMonitorMetadata = {
  * keyword searched for from `startFrom` (backwards from the end when
  * negative). `find_keys` is the range `lastKey` / `keyStep` / `limit`, or with
  * `findKeysKeynum` a count read from the argument `keyNumIdx` after the
- * begin position, the keys starting `firstKey` after it. Besides COMMAND INFO,
- * specs are how a queued command whose own parser failed is routed in a
- * cluster (see `keysFromKeySpecs`).
+ * begin position, the keys starting `firstKey` after it. `beginSearchUnknown`
+ * / `findKeysUnknown` are Redis's `unknown` types (SORT's STORE destination,
+ * an `incomplete` spec): the spec cannot find its keys, so a lookup that
+ * reaches it falls back to the command's getkeys procedure. Besides COMMAND
+ * INFO, specs are how `COMMAND GETKEYS` finds keys (see `keysFromKeySpecs`).
  */
 export type CommandKeySpec = {
   flags: readonly string[]
   beginSearchIndex: number
   beginSearchKeyword?: { keyword: string; startFrom: number }
+  beginSearchUnknown?: true
   lastKey: number
   keyStep: number
   limit?: number
   findKeysKeynum?: { keyNumIdx: number; firstKey: number; keyStep: number }
+  findKeysUnknown?: true
   notes?: string
 }
 
@@ -91,6 +96,11 @@ export type CommandDocumentationArgument = {
  * schema's key positions) — declare `arity` only where the schema cannot
  * express it, such as synthetic subcommand entries or a version-gated
  * argument whose arity differs by compatibility profile.
+ *
+ * `flags`, `categories`, `tips` and `keySpecs` are for commands the real
+ * command table does not have (one added with `extraCommands`): for every
+ * other name the table captured from real servers supplies them (see
+ * `introspectionFor` and src/core/compatibility/command-table.ts).
  */
 export type CommandIntrospection = {
   name?: string
@@ -103,21 +113,43 @@ export type CommandIntrospection = {
   docs?: CommandDocumentation
   /**
    * The fields that differ on some profiles, merged over the rest when it
-   * returns them (see `introspectionFor`): XINFO's 6.2 entry, say, or the
-   * `variable_flags` Valkey puts on GEORADIUS's STORE key specs.
+   * returns them (see `introspectionFor`): XINFO's 6.2 key range, say, or
+   * the docs summaries Redis 7.2 rewrote.
    */
   forProfile?: (
     profile: CompatibilityProfile,
   ) => Omit<CommandIntrospection, 'forProfile' | 'name'> | undefined
 }
 
-/** `introspection` as `profile` reports it: `forProfile` merged over it. */
+/**
+ * The command-table entry `name` (`container|subcommand` for a subcommand)
+ * has on `profile`: `introspection` with its `forProfile` merged over it,
+ * then the flags, ACL categories, tips and key specs the real command table
+ * of that version gives `name` (`commandTableEntry`), which win over declared
+ * ones. A name the real table does not have (a command added with
+ * `extraCommands`) keeps what it declares. Redis 6.2 has no tips or key specs,
+ * so there the declared key specs stay; they only feed the legacy key range.
+ */
 export function introspectionFor(
   introspection: CommandIntrospection | undefined,
   profile: CompatibilityProfile,
+  name: string,
 ): CommandIntrospection | undefined {
   const override = introspection?.forProfile?.(profile)
-  return override ? { ...introspection, ...override } : introspection
+  const declared = override ? { ...introspection, ...override } : introspection
+  const real = commandTableEntry(name, profile)
+  if (!real) {
+    return declared
+  }
+
+  const extended = profile.has('command.info-extended-fields')
+  return {
+    ...declared,
+    flags: real.flags,
+    categories: real.categories,
+    tips: real.tips ?? [],
+    keySpecs: extended ? (real.keySpecs ?? []) : declared?.keySpecs,
+  }
 }
 
 export type CommandExecutionResult = RedisResult | Promise<RedisResult>

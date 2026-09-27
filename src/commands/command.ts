@@ -31,7 +31,11 @@ import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { CompatibilityProfile, FeatureId } from '../core/compatibility'
 import { containerSubcommandExists } from '../core/compatibility/subcommand-gates'
-import { unknownSubcommandError } from './helpers'
+import {
+  helpReply,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
 
 type CommandArgs = {
@@ -78,22 +82,13 @@ function getKeysArity(profile: CompatibilityProfile): number {
 }
 
 const commandIntrospection: CommandIntrospection = {
-  flags: ['loading', 'stale'],
-  categories: ['@slow', '@connection'],
-  tips: ['nondeterministic_output_order'],
   subcommands: [
-    commandSubcommandInfo('command|docs', -2, {
-      tips: ['nondeterministic_output_order'],
-    }),
+    commandSubcommandInfo('command|docs', -2),
     commandSubcommandInfo('command|getkeys', getKeysArity),
     commandSubcommandInfo('command|getkeysandflags', getKeysArity),
-    commandSubcommandInfo('command|info', -2, {
-      tips: ['nondeterministic_output_order'],
-    }),
+    commandSubcommandInfo('command|info', -2),
     commandSubcommandInfo('command|count', 2),
-    commandSubcommandInfo('command|list', -2, {
-      tips: ['nondeterministic_output_order'],
-    }),
+    commandSubcommandInfo('command|list', -2),
     commandSubcommandInfo('command|help', 2),
   ],
   docs: commandDocs('Return details about Redis commands', 'connection', [], {
@@ -117,6 +112,10 @@ export const commandCommand = defineCommand({
     if (args.subcommand === undefined) {
       expectArgCount('command', args.args, 0)
       return commandInfo(ctx, allRootCommandInfos(ctx))
+    }
+
+    if (!ctx.server.profile.has('command.list')) {
+      return legacyCommandSubcommand(args.subcommand, args, ctx)
     }
 
     switch (asciiLowerCase(args.subcommand.toString())) {
@@ -157,6 +156,33 @@ export const commandCommand = defineCommand({
     }
   },
 })
+
+/**
+ * Redis 6.2's COMMAND dispatch: by name and argument count at once, HELP and
+ * COUNT taking no arguments, GETKEYS at least one and INFO any; anything else,
+ * a wrong count included, is `addReplySubcommandSyntaxError`.
+ */
+function legacyCommandSubcommand(
+  subcommand: Buffer,
+  args: CommandArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
+  const count = args.args.length
+  switch (asciiLowerCase(subcommand.toString())) {
+    case 'help':
+      if (count === 0) return commandHelp(args, ctx)
+      break
+    case 'info':
+      return commandInfoSubcommand(args, ctx)
+    case 'count':
+      if (count === 0) return commandCount(args, ctx)
+      break
+    case 'getkeys':
+      if (count > 0) return commandGetKeys(args, ctx)
+      break
+  }
+  throw subcommandSyntaxError('COMMAND', subcommand, ctx.server.profile)
+}
 
 function commandCount(
   args: CommandArgs,
@@ -199,7 +225,11 @@ function commandInfoSubcommand(
   ctx: RedisExecutionContext,
 ): RedisResult {
   if (args.args.length === 0) {
-    return commandInfo(ctx, allRootCommandInfos(ctx))
+    // Redis 6.2 answers a bare COMMAND INFO with an empty array.
+    return commandInfo(
+      ctx,
+      ctx.server.profile.has('command.list') ? allRootCommandInfos(ctx) : [],
+    )
   }
 
   return commandInfo(
@@ -258,7 +288,25 @@ function commandHelp(
   args: CommandArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
+  const profile = ctx.server.profile
   expectArgCount('command|help', args.args, 0)
+  if (!profile.has('command.list')) {
+    return helpReply(
+      [
+        'COMMAND <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
+        '(no subcommand)',
+        '    Return details about all Redis commands.',
+        'COUNT',
+        '    Return the total number of commands in this Redis server.',
+        'GETKEYS <full-command>',
+        '    Return the keys from a full Redis command.',
+        'INFO [<command-name> ...]',
+        '    Return details about multiple Redis commands.',
+      ],
+      profile,
+    )
+  }
+
   const lines = [
     'COMMAND <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
     '(no subcommand)',
@@ -271,32 +319,22 @@ function commandHelp(
     '    Return details about multiple Redis commands.',
     '    If no command names are given, documentation details for all',
     '    commands are returned.',
-  ]
-
-  if (ctx.server.profile.has('command.docs')) {
-    lines.push(
-      'DOCS [<command-name> ...]',
-      '    Return documentation details about multiple Redis commands.',
-      '    If no command names are given, documentation details for all',
-      '    commands are returned.',
-    )
-  }
-
-  lines.push(
+    'DOCS [<command-name> ...]',
+    '    Return documentation details about multiple Redis commands.',
+    '    If no command names are given, documentation details for all',
+    '    commands are returned.',
     'GETKEYS <full-command>',
     '    Return the keys from a full Redis command.',
+    'GETKEYSANDFLAGS <full-command>',
+    '    Return the keys and the access flags from a full Redis command.',
+  ]
+  // Valkey 8.0+ says "commands" and "this server" where Redis says "Redis".
+  return helpReply(
+    profile.has('command.help-valkey-wording')
+      ? lines.map(line => line.replace(/ Redis /g, ' '))
+      : lines,
+    profile,
   )
-
-  if (ctx.server.profile.has('command.getkeysandflags')) {
-    lines.push(
-      'GETKEYSANDFLAGS <full-command>',
-      '    Return the keys and the access flags from a full Redis command.',
-    )
-  }
-
-  lines.push('HELP', '    Prints this help.')
-
-  return RedisResult.create(RedisValue.array(lines.map(bulkString)))
 }
 
 /**
@@ -327,6 +365,7 @@ function commandKeys(
   )
   if (
     !definition ||
+    !inCommandTable(definition, profile) ||
     (rawArgs.length > 0 &&
       profile.has('error.unknown-subcommand-dispatch-timing') &&
       containerSubcommandExists(definition.name, rawArgs[0], profile) === false)
@@ -336,10 +375,9 @@ function commandKeys(
 
   const argv = [Buffer.from(definition.name), ...rawArgs]
   const subcommand = lookupSubcommandEntry(definition, rawArgs, profile)
-  const entry = introspectionFor(
-    subcommand ? subcommand.introspection : definition.introspection,
-    profile,
-  )
+  const entry = subcommand
+    ? introspectionFor(subcommand.introspection, profile, subcommand.name)
+    : introspectionFor(definition.introspection, profile, definition.name)
   const specs = entry?.keySpecs ?? []
   const proc = subcommand ? undefined : definition.rawKeys
   const range = legacyKeyRange(
@@ -431,7 +469,17 @@ function parsedKeys(
 function allRootCommandInfos(ctx: RedisExecutionContext): CommandInfo[] {
   return ctx.executor
     .getCommandDefinitions()
+    .filter(definition => inCommandTable(definition, ctx.server.profile))
     .map(definition => createCommandInfo(definition, ctx))
+}
+
+// Redis 6.2 has no QUIT entry: its connection loop answers QUIT before
+// command lookup, so COMMAND does not list it and GETKEYS does not know it.
+function inCommandTable(
+  definition: CommandDefinition<unknown>,
+  profile: CompatibilityProfile,
+): boolean {
+  return definition.name !== 'quit' || profile.has('command.quit-table-entry')
 }
 
 function allCommandInfos(ctx: RedisExecutionContext): CommandInfo[] {
@@ -477,7 +525,7 @@ function createCommandInfoFromIntrospection(
   ctx: RedisExecutionContext,
   schema?: CommandSchema<unknown>,
 ): CommandInfo {
-  const introspection = introspectionFor(declared, ctx.server.profile)
+  const introspection = introspectionFor(declared, ctx.server.profile, name)
   const keySpecs = introspection?.keySpecs ?? []
   const flags = introspection?.flags ?? fallbackFlags
 
@@ -558,7 +606,7 @@ function commandInfo(
             return preserveNulls ? RedisValue.null() : null
           }
 
-          return formatCommandInfo(info, extended)
+          return formatCommandInfo(info, extended, ctx.server.profile)
         })
         .filter((value): value is RedisValue => value !== null),
     ),
@@ -566,99 +614,105 @@ function commandInfo(
 }
 
 // Redis 6.2's entries stop at the ACL categories; 7.0 added tips, key specs
-// and subcommands (`command.info-extended-fields`).
-function formatCommandInfo(info: CommandInfo, extended: boolean): RedisValue {
+// and subcommands (`command.info-extended-fields`). Flags, categories and
+// key-spec flags are status strings in sets, tips bulk strings in a set, a key
+// spec is a map, and the subcommands an array - or, on Redis, an empty set
+// when there are none. That is what RESP3 shows; RESP2 renders sets as arrays
+// and maps as flat arrays.
+function formatCommandInfo(
+  info: CommandInfo,
+  extended: boolean,
+  profile: CompatibilityProfile,
+): RedisValue {
   const fields = [
     bulkString(info.name),
     RedisValue.integer(info.arity),
-    RedisValue.array(info.flags.map(bulkString)),
+    statusSet(info.flags),
     RedisValue.integer(info.firstKey),
     RedisValue.integer(info.lastKey),
     RedisValue.integer(info.keyStep),
-    RedisValue.array(info.categories.map(bulkString)),
+    statusSet(info.categories),
   ]
   if (extended) {
     fields.push(
-      RedisValue.array(info.tips.map(bulkString)),
-      RedisValue.array(info.keySpecs.map(formatKeySpec)),
-      RedisValue.array(
-        info.subcommands.map(subcommand =>
-          formatCommandInfo(subcommand, extended),
-        ),
-      ),
+      RedisValue.set(info.tips.map(bulkString)),
+      RedisValue.set(info.keySpecs.map(formatKeySpec)),
+      info.subcommands.length === 0 &&
+        !profile.has('command.info-subcommands-array')
+        ? RedisValue.set([])
+        : RedisValue.array(
+            info.subcommands.map(subcommand =>
+              formatCommandInfo(subcommand, extended, profile),
+            ),
+          ),
     )
   }
   return RedisValue.array(fields)
 }
 
+function statusSet(values: readonly string[]): RedisValue {
+  return RedisValue.set(values.map(simpleString))
+}
+
 function formatKeySpec(spec: CommandKeySpec): RedisValue {
-  const items: RedisValue[] = []
+  const entries: [RedisValue, RedisValue][] = []
   if (spec.notes) {
-    items.push(bulkString('notes'), bulkString(spec.notes))
+    entries.push([bulkString('notes'), bulkString(spec.notes)])
   }
-
-  const keyword = spec.beginSearchKeyword
-  const keynum = spec.findKeysKeynum
-  items.push(
-    bulkString('flags'),
-    RedisValue.array(spec.flags.map(bulkString)),
-    bulkString('begin_search'),
-    RedisValue.array(
-      keyword
-        ? [
-            bulkString('type'),
-            bulkString('keyword'),
-            bulkString('spec'),
-            RedisValue.array([
-              bulkString('keyword'),
-              bulkString(keyword.keyword),
-              bulkString('startfrom'),
-              RedisValue.integer(keyword.startFrom),
-            ]),
-          ]
-        : [
-            bulkString('type'),
-            bulkString('index'),
-            bulkString('spec'),
-            RedisValue.array([
-              bulkString('index'),
-              RedisValue.integer(spec.beginSearchIndex),
-            ]),
-          ],
-    ),
-    bulkString('find_keys'),
-    RedisValue.array(
-      keynum
-        ? [
-            bulkString('type'),
-            bulkString('keynum'),
-            bulkString('spec'),
-            RedisValue.array([
-              bulkString('keynumidx'),
-              RedisValue.integer(keynum.keyNumIdx),
-              bulkString('firstkey'),
-              RedisValue.integer(keynum.firstKey),
-              bulkString('keystep'),
-              RedisValue.integer(keynum.keyStep),
-            ]),
-          ]
-        : [
-            bulkString('type'),
-            bulkString('range'),
-            bulkString('spec'),
-            RedisValue.array([
-              bulkString('lastkey'),
-              RedisValue.integer(spec.lastKey),
-              bulkString('keystep'),
-              RedisValue.integer(spec.keyStep),
-              bulkString('limit'),
-              RedisValue.integer(spec.limit ?? 0),
-            ]),
-          ],
-    ),
+  entries.push(
+    [bulkString('flags'), statusSet(spec.flags)],
+    [bulkString('begin_search'), formatBeginSearch(spec)],
+    [bulkString('find_keys'), formatFindKeys(spec)],
   )
+  return RedisValue.map(entries)
+}
 
-  return RedisValue.array(items)
+function formatBeginSearch(spec: CommandKeySpec): RedisValue {
+  const keyword = spec.beginSearchKeyword
+  if (spec.beginSearchUnknown) {
+    return searchType('unknown', [])
+  }
+  if (keyword) {
+    return searchType('keyword', [
+      ['keyword', bulkString(keyword.keyword)],
+      ['startfrom', RedisValue.integer(keyword.startFrom)],
+    ])
+  }
+  return searchType('index', [
+    ['index', RedisValue.integer(spec.beginSearchIndex)],
+  ])
+}
+
+function formatFindKeys(spec: CommandKeySpec): RedisValue {
+  const keynum = spec.findKeysKeynum
+  if (spec.findKeysUnknown) {
+    return searchType('unknown', [])
+  }
+  if (keynum) {
+    return searchType('keynum', [
+      ['keynumidx', RedisValue.integer(keynum.keyNumIdx)],
+      ['firstkey', RedisValue.integer(keynum.firstKey)],
+      ['keystep', RedisValue.integer(keynum.keyStep)],
+    ])
+  }
+  return searchType('range', [
+    ['lastkey', RedisValue.integer(spec.lastKey)],
+    ['keystep', RedisValue.integer(spec.keyStep)],
+    ['limit', RedisValue.integer(spec.limit ?? 0)],
+  ])
+}
+
+function searchType(
+  type: string,
+  spec: readonly [string, RedisValue][],
+): RedisValue {
+  return RedisValue.map([
+    [bulkString('type'), bulkString(type)],
+    [
+      bulkString('spec'),
+      RedisValue.map(spec.map(([name, value]) => [bulkString(name), value])),
+    ],
+  ])
 }
 
 function formatDocs(docs: CommandDocumentation): RedisValue {

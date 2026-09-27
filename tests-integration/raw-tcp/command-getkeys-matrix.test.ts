@@ -164,8 +164,8 @@ describe(
     }
 
     // The shard pub/sub commands' only key spec is `not_key`: it gives the
-    // slot to route by, but COMMAND GETKEYS finds no key arguments. Flags
-    // and categories are left out (simple strings on real Redis).
+    // slot to route by, but COMMAND GETKEYS finds no key arguments. Whole
+    // entries are pinned per profile in compatibility/command-info-gates.
     test('COMMAND INFO: shard-channel key specs are not_key', async () => {
       const conn = await connect('2')
       const text = (value: RespWireValue): unknown =>

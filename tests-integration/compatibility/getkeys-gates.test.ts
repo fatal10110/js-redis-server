@@ -49,6 +49,23 @@ const GETKEYS: Array<[string[], string]> = [
       ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
       : NO_KEYS,
   ],
+  [['PING', 'x', 'y'], NO_KEYS],
+  // A bare container: 6.2 finds no keys (CONFIG) or fails XINFO's getkeys
+  // procedure; 7.0 needs an argument after the target; 7.2+ has none.
+  [
+    ['CONFIG'],
+    profile === 'redis-7.0'
+      ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
+      : NO_KEYS,
+  ],
+  [
+    ['XINFO'],
+    legacy
+      ? INVALID_COUNT
+      : profile === 'redis-7.0'
+        ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
+        : NO_KEYS,
+  ],
   [['CLIENT', 'BOGUS'], legacy ? NO_KEYS : INVALID_COMMAND],
   [['XINFO', 'HELP'], legacy ? INVALID_ARGS : NO_KEYS],
   [['XINFO', 'HELP', 'x'], legacy ? keys('x') : NO_KEYS],
@@ -66,6 +83,20 @@ const GETKEYS: Array<[string[], string]> = [
   ],
   [['SPUBLISH', 'ch', 'msg'], legacy ? INVALID_COMMAND : NO_KEYS],
   [['LMPOP', '1x', 'a', 'LEFT'], legacy ? INVALID_COMMAND : keys('a')],
+  // 6.2 has no QUIT entry (#494); 7.0 needs an argument after the target.
+  [
+    ['QUIT'],
+    legacy
+      ? INVALID_COMMAND
+      : profile === 'redis-7.0'
+        ? "-ERR wrong number of arguments for 'command|getkeys' command\r\n"
+        : NO_KEYS,
+  ],
+  // Arity is all GETKEYS checks before the key specs; the command's own
+  // parser never runs (#493).
+  [['SET', 'k', 'v', 'EX'], keys('k')],
+  [['MSET', 'a', 'b', 'c'], keys('a', 'c')],
+  [['HSET', 'k', 'f', 'v', 'x'], keys('k')],
 ]
 
 const GETKEYSANDFLAGS: Array<[string[], string]> = [
@@ -78,6 +109,25 @@ const GETKEYSANDFLAGS: Array<[string[], string]> = [
     valkey ? flagged(source, dest('e')) : flagged(source, dest('d'), dest('e')),
   ],
   [['SPUBLISH', 'ch', 'msg'], NO_KEYS],
+  // Every key takes its real key spec's flags (#494); BITFIELD's and
+  // SORT_RO's specs defer to their getkeys procedures.
+  [['BITFIELD', 'k', 'GET', 'u8', '0'], flagged(['k', ['RO', 'access']])],
+  [
+    ['BITFIELD', 'k', 'SET', 'u8', '0', '1'],
+    flagged(['k', ['RW', 'access', 'update']]),
+  ],
+  [['SORT_RO', 'k', 'BY', 'p'], flagged(['k', ['RO', 'access']])],
+  [['ZADD', 'k', 'XX', '1'], flagged(['k', ['RW', 'update']])],
+  [['LPUSH', 'k', 'v'], flagged(['k', ['RW', 'insert']])],
+  [['XADD', 's', '*', 'f', 'v'], flagged(['s', ['RW', 'update']])],
+  [
+    ['RENAME', 'a', 'b'],
+    flagged(['a', ['RW', 'access', 'delete']], ['b', ['OW', 'update']]),
+  ],
+  [
+    ['LMOVE', 'a', 'b', 'LEFT', 'RIGHT'],
+    flagged(['a', ['RW', 'access', 'delete']], ['b', ['RW', 'insert']]),
+  ],
 ]
 
 describe(`COMMAND GETKEYS profile rows (${testRunner.getBackendName()}, ${profile})`, () => {

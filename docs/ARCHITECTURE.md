@@ -623,7 +623,14 @@ and refuses invalid Lua, as Redis does.
    from `schema` rather than hand-written, so `t.key()` must mark only actual
    key arguments (use `t.bulk()` for members/fields/values), and a
    hand-written `t.custom()` parser needs a `layout` (or `t.withLayout()`) to
-   report correctly.
+   report correctly. Its flags, ACL categories, tips and key specs come from
+   the real command table (`commandTableEntry` in
+   [`src/core/compatibility/command-table.ts`](../src/core/compatibility/command-table.ts)):
+   regenerate it with `scripts/capture-command-table.ts` against one real
+   server per preset profile, or `tests/core/command-table.test.ts` fails.
+   Those key specs drive `COMMAND GETKEYS` and the legacy key range, so a
+   spec the command cannot answer from (`variable_flags`, `unknown`) needs a
+   getkeys procedure (`rawKeys`), as in Redis.
 2. Register it in [`src/commands/index.ts`](../src/commands/index.ts) (and
    re-export it if other modules need direct access).
 3. Add unit tests under [`tests/`](../tests/) using the project's

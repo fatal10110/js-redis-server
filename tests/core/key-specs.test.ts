@@ -9,6 +9,7 @@ import {
 import { lookupTableArity } from '../../src/core/command-arity'
 import { containerSubcommandArity } from '../../src/core/compatibility/subcommand-gates'
 import { resolveCompatibilityProfile } from '../../src/core/compatibility'
+import { commandTableEntry } from '../../src/core/compatibility/command-table'
 import {
   defineCommand,
   type CommandKeySpec,
@@ -119,7 +120,7 @@ describe('rawCommandKeys', () => {
 
 describe('keysFromKeySpecs', () => {
   test('each key carries the flags of the spec that found it', () => {
-    const specs = definition('zunionstore').introspection?.keySpecs ?? []
+    const specs = commandTableEntry('zunionstore', redis80)?.keySpecs ?? []
     assert.deepStrictEqual(
       keysFromKeySpecs(specs, argv('zunionstore', 'd', '2', 'a', 'b'))?.map(
         ({ key, flags }) => [key.toString(), flags],
@@ -133,7 +134,7 @@ describe('keysFromKeySpecs', () => {
   })
 
   test('a spec that cannot be applied fails the lookup', () => {
-    const specs = definition('zunionstore').introspection?.keySpecs ?? []
+    const specs = commandTableEntry('zunionstore', redis80)?.keySpecs ?? []
     assert.strictEqual(
       keysFromKeySpecs(specs, argv('zunionstore', 'd', '2abc', 'a', 'b')),
       null,

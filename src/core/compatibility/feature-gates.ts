@@ -10,6 +10,26 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // have 7 fields, ending with the ACL categories (redis-server 6.2.24).
   'command.info-extended-fields': { redis: '7.0.0', valkey: '7.2.0' },
   'command.getkeysandflags': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 rewrote COMMAND as a container with per-subcommand entries:
+  // COMMAND LIST arrived, a bare COMMAND INFO lists every command (6.2
+  // answers an empty array) and HELP gained the new subcommands. 6.2
+  // dispatches on the argument count alone (HELP and COUNT take none, GETKEYS
+  // at least one, INFO any) and answers everything else, a wrong count
+  // included, with `addReplySubcommandSyntaxError`. Verified against
+  // redis-server 6.2.24 and 7.0.15.
+  'command.list': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 8.0 dropped "Redis" from COMMAND HELP (`Return details about all
+  // commands.`); Valkey 7.2.14 still has it. Verified against 7.2.14, 8.0.11
+  // and 9.0.6.
+  'command.help-valkey-wording': { valkey: '8.0.0' },
+  // A COMMAND INFO entry without subcommands ends in an empty set on Redis
+  // (`~0` in RESP3) and an empty array on Valkey (`*0`); RESP2 cannot tell
+  // them apart. Verified against redis-server 7.0.15 / 8.0.6 and Valkey
+  // 7.2.14 / 8.0.11 / 9.0.6, the patch releases the command table is
+  // captured from. Earlier Valkey patches still send `~0`: 8.0.0, 9.0.0 and
+  // 9.0.1 do, so the valkey-8.0 / valkey-9.0 presets (nominally 8.0.0 /
+  // 9.0.0) answer as 8.0.11 / 9.0.6 do, not as those first releases.
+  'command.info-subcommands-array': { valkey: '7.2.0' },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
   // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
@@ -89,10 +109,6 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // stream.`). Only the XINFO / XGROUP entries read it so far. Verified
   // against redis-server 7.0.15, 7.2, 8.0.6 and Valkey 8.0 / 9.0.
   'docs.summary-7.2-wording': { redis: '7.2.0', valkey: '7.2.0' },
-  // Valkey 8.0 marks GEORADIUS / GEORADIUSBYMEMBER's STORE and STOREDIST key
-  // specs `variable_flags`; Redis (through 8.0.6) and Valkey 7.2 do not.
-  // Verified against valkey-server 7.2, 8.0.11 and 9.0.6.
-  'geo.store-keyspec-variable-flags': { valkey: '8.0.0' },
   // XREAD / XREADGROUP's odd STREAMS tail: 6.2 and 7.0 say `Unbalanced XREAD
   // list of streams ... an ID or '$'` for both; 7.2 names the command and
   // gives XREADGROUP its `'>'`. Verified against redis-server 6.2.24, 7.0.15,

@@ -12,12 +12,7 @@ import {
   subcommandSyntaxError,
   unknownSubcommandError,
 } from './helpers'
-import { commandKeySpec, commandSubcommandInfo } from './introspection'
-
-// Redis gives the shard pub/sub commands a key spec for their channels, so
-// they route by slot, but marks it `not_key`: COMMAND GETKEYS says they have
-// no key arguments.
-const shardChannels = commandKeySpec(1, -1, 1, ['not_key'])
+import { commandSubcommandInfo } from './introspection'
 
 type PubSubArgs = {
   subcommand: Buffer
@@ -30,10 +25,6 @@ export const subscribeCommand = defineCommand({
     channels: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
-  introspection: {
-    flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    categories: ['@pubsub', '@slow'],
-  },
   keys: () => [],
   execute: (args, ctx) =>
     confirmations(ctx, ctx.session.pubsubSubscribe('channel', args.channels)),
@@ -45,10 +36,6 @@ export const unsubscribeCommand = defineCommand({
     channels: t.variadic(t.bulk()),
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
-  introspection: {
-    flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    categories: ['@pubsub', '@slow'],
-  },
   keys: () => [],
   execute: (args, ctx) =>
     confirmations(ctx, ctx.session.pubsubUnsubscribe('channel', args.channels)),
@@ -61,11 +48,6 @@ export const ssubscribeCommand = defineCommand({
     channels: t.variadic(t.key(), { min: 1 }),
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
-  introspection: {
-    flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    categories: ['@pubsub', '@slow'],
-    keySpecs: [shardChannels],
-  },
   keys: args => args.channels,
   execute: (args, ctx) =>
     confirmations(ctx, ctx.session.pubsubSubscribe('shard', args.channels)),
@@ -78,11 +60,6 @@ export const sunsubscribeCommand = defineCommand({
     channels: t.variadic(t.key()),
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
-  introspection: {
-    flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    categories: ['@pubsub', '@slow'],
-    keySpecs: [shardChannels],
-  },
   keys: args => args.channels,
   execute: (args, ctx) =>
     confirmations(ctx, ctx.session.pubsubUnsubscribe('shard', args.channels)),
@@ -94,10 +71,6 @@ export const psubscribeCommand = defineCommand({
     patterns: t.variadic(t.bulk(), { min: 1 }),
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
-  introspection: {
-    flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    categories: ['@pubsub', '@slow'],
-  },
   keys: () => [],
   execute: (args, ctx) =>
     confirmations(ctx, ctx.session.pubsubSubscribe('pattern', args.patterns)),
@@ -109,10 +82,6 @@ export const punsubscribeCommand = defineCommand({
     patterns: t.variadic(t.bulk()),
   }),
   flags: ['pubsub', 'noscript', 'subscribed'],
-  introspection: {
-    flags: ['pubsub', 'noscript', 'loading', 'stale'],
-    categories: ['@pubsub', '@slow'],
-  },
   keys: () => [],
   execute: (args, ctx) =>
     confirmations(ctx, ctx.session.pubsubUnsubscribe('pattern', args.patterns)),
@@ -125,10 +94,6 @@ export const publishCommand = defineCommand({
     message: t.bulk(),
   }),
   flags: ['pubsub', 'fast'],
-  introspection: {
-    flags: ['pubsub', 'loading', 'stale', 'fast'],
-    categories: ['@pubsub', '@fast'],
-  },
   keys: () => [],
   execute: (args, ctx) => {
     if (
@@ -160,11 +125,6 @@ export const spublishCommand = defineCommand({
     message: t.bulk(),
   }),
   flags: ['pubsub', 'fast'],
-  introspection: {
-    flags: ['pubsub', 'loading', 'stale', 'fast'],
-    categories: ['@pubsub', '@fast'],
-    keySpecs: [commandKeySpec(1, 0, 1, ['not_key'])],
-  },
   keys: args => [args.channel],
   execute: (args, ctx) =>
     integer(ctx.server.pubsubBroker.spublish(args.channel, args.message)),
@@ -180,27 +140,13 @@ export const pubsubCommand = defineCommand({
   }),
   flags: ['readonly', 'pubsub', 'fast'],
   introspection: {
-    flags: ['pubsub', 'loading', 'stale', 'fast'],
-    categories: ['@pubsub', '@slow'],
     subcommands: [
-      commandSubcommandInfo('pubsub|channels', -2, {
-        categories: ['@pubsub', '@slow'],
-      }),
-      commandSubcommandInfo('pubsub|numsub', -2, {
-        categories: ['@pubsub', '@slow'],
-      }),
-      commandSubcommandInfo('pubsub|numpat', 2, {
-        categories: ['@pubsub', '@slow'],
-      }),
-      commandSubcommandInfo('pubsub|shardchannels', -2, {
-        categories: ['@pubsub', '@slow'],
-      }),
-      commandSubcommandInfo('pubsub|shardnumsub', -2, {
-        categories: ['@pubsub', '@slow'],
-      }),
-      commandSubcommandInfo('pubsub|help', 2, {
-        categories: ['@pubsub', '@slow'],
-      }),
+      commandSubcommandInfo('pubsub|channels', -2),
+      commandSubcommandInfo('pubsub|numsub', -2),
+      commandSubcommandInfo('pubsub|numpat', 2),
+      commandSubcommandInfo('pubsub|shardchannels', -2),
+      commandSubcommandInfo('pubsub|shardnumsub', -2),
+      commandSubcommandInfo('pubsub|help', 2),
     ],
   },
   keys: () => [],

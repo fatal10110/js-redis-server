@@ -1,6 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
-import { commandKeySpec, commandKeynumKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
   WrongNumberOfArgumentsError,
@@ -276,12 +275,6 @@ export const zunionstoreCommand = defineCommand({
   rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: true }),
   flags: ['write', 'denyoom'],
-  introspection: {
-    keySpecs: [
-      commandKeySpec(1, 0, 1, ['OW', 'update']),
-      commandKeynumKeySpec(2, ['RO', 'access']),
-    ],
-  },
   keys: args => [args.destination!, ...args.keys],
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
@@ -295,12 +288,6 @@ export const zinterstoreCommand = defineCommand({
   rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: true }),
   flags: ['write', 'denyoom'],
-  introspection: {
-    keySpecs: [
-      commandKeySpec(1, 0, 1, ['OW', 'update']),
-      commandKeynumKeySpec(2, ['RO', 'access']),
-    ],
-  },
   keys: args => [args.destination!, ...args.keys],
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
@@ -314,12 +301,6 @@ export const zdiffstoreCommand = defineCommand({
   rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: false }),
   flags: ['write', 'denyoom'],
-  introspection: {
-    keySpecs: [
-      commandKeySpec(1, 0, 1, ['OW', 'update']),
-      commandKeynumKeySpec(2, ['RO', 'access']),
-    ],
-  },
   keys: args => [args.destination!, ...args.keys],
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
@@ -333,7 +314,6 @@ export const zunionCommand = defineCommand({
   rawKeys: numkeysGetKeys(0, 1, 2),
   schema: setOpSchema({ hasDest: false, weightsAggregate: true }),
   flags: ['readonly'],
-  introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
@@ -347,7 +327,6 @@ export const zinterCommand = defineCommand({
   rawKeys: numkeysGetKeys(0, 1, 2),
   schema: setOpSchema({ hasDest: false, weightsAggregate: true }),
   flags: ['readonly'],
-  introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
@@ -361,7 +340,6 @@ export const zdiffCommand = defineCommand({
   rawKeys: numkeysGetKeys(0, 1, 2),
   schema: setOpSchema({ hasDest: false, weightsAggregate: false }),
   flags: ['readonly'],
-  introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
@@ -413,7 +391,6 @@ export const zintercardCommand = defineCommand({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.withLayout(zintercardSchema, { min: 2 }),
   flags: ['readonly'],
-  introspection: { keySpecs: [commandKeynumKeySpec(1, ['RO', 'access'])] },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))

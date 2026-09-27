@@ -1,6 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
-import { commandKeynumKeySpec } from '../introspection'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
@@ -199,9 +198,6 @@ export const zmpopCommand = defineCommand({
     nextIndex: input.length,
   })),
   flags: ['write'],
-  introspection: {
-    keySpecs: [commandKeynumKeySpec(1, ['RW', 'access', 'delete'])],
-  },
   keys: args => args.keys,
   execute: (args, ctx) =>
     tryZsetMultiPop(args.keys, args.side, args.count, ctx.db) ??
@@ -220,9 +216,6 @@ export const bzmpopCommand = defineCommand({
     }),
   ),
   flags: ['write', 'noscript'],
-  introspection: {
-    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'delete'])],
-  },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const immediate = tryZsetMultiPop(args.keys, args.side, args.count, ctx.db)

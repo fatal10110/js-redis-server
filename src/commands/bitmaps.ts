@@ -1,4 +1,5 @@
 import { defineCommand } from '../core/command-definition'
+import { bitfieldGetKeys } from '../core/key-specs'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   isIntegerToken,
@@ -812,6 +813,7 @@ function bitFieldSchema(readonly: boolean): CommandSchema<BitFieldArgs> {
 
 export const bitfieldCommand = defineCommand({
   name: 'bitfield',
+  rawKeys: bitfieldGetKeys,
   schema: bitFieldSchema(false),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],

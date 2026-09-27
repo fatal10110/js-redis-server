@@ -1,6 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
-import { commandKeynumKeySpec } from '../introspection'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
@@ -166,9 +165,6 @@ export const lmpopCommand = defineCommand({
     nextIndex: input.length,
   })),
   flags: ['write'],
-  introspection: {
-    keySpecs: [commandKeynumKeySpec(1, ['RW', 'access', 'delete'])],
-  },
   keys: args => args.keys,
   execute: (args, ctx) =>
     tryListMultiPop(args.keys, args.side, args.count, ctx.db) ??
@@ -187,9 +183,6 @@ export const blmpopCommand = defineCommand({
     }),
   ),
   flags: ['write', 'noscript'],
-  introspection: {
-    keySpecs: [commandKeynumKeySpec(2, ['RW', 'access', 'delete'])],
-  },
   keys: args => args.keys,
   execute: (args, ctx) => {
     const immediate = tryListMultiPop(args.keys, args.side, args.count, ctx.db)

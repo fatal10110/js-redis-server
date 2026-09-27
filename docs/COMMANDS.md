@@ -96,7 +96,7 @@ is rejected from Lua.
 - [x] `COMMAND` - Return details for commands in the active registry
 - [x] `COMMAND COUNT` - Return the command count for the active registry
 - [x] `COMMAND LIST [FILTERBY PATTERN pattern|MODULE module]` - Return command names
-- [x] `COMMAND INFO [command-name ...]` - Return command metadata
+- [x] `COMMAND INFO [command-name ...]` - Return command metadata: arity derived from each definition, the key range folded from the real key specs on 7.0+ (from the definition's schema on 6.2), flags, ACL categories, tips and key specs from the real command table of the profile's version (RESP3 sets and maps, as real Redis sends them)
 - [x] `COMMAND DOCS [command-name ...]` - Return command documentation (RESP3 maps / RESP2 flat arrays)
 - [x] `COMMAND GETKEYS command [arg ...]` - Extract keys as Redis does, without running the command: from its key specs (7.0+), else its getkeys procedure (`rawKeys`), else its key range; a command that declares none of these (for example one added with `extraCommands`) answers the keys its `keys(args)` returns, and has no key arguments when there are none
 - [x] `COMMAND GETKEYSANDFLAGS command [arg ...]` - Extract keys with access flags (from the key spec or getkeys procedure that found each key; RESP3 sets)
@@ -105,7 +105,12 @@ is rejected from Lua.
 `COMMAND` is generated from registered command definitions and their
 introspection metadata. It should not carry a separate hardcoded list of Redis
 commands, so alternate Redis-version command registries can expose their own
-surface.
+surface. What a definition cannot derive (flags, ACL categories, tips, key
+specs) comes from the per-version command table in
+[`src/core/compatibility/command-table-data.ts`](../src/core/compatibility/command-table-data.ts),
+captured from real servers by `scripts/capture-command-table.ts`; a command the
+table does not know (for example one added with `extraCommands` under a name
+real Redis does not have) reports what its `introspection` declares.
 
 #### CONFIG
 

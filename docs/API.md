@@ -142,12 +142,16 @@ Current profile gates:
 | `XREAD` / `XREADGROUP` `Unbalanced '<cmd>' list of streams` wording per command (6.2 / 7.0: `Unbalanced XREAD list of streams` for both) | `redis-7.2+` | `valkey-8.0+` |
 | `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |
 | `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
-| `variable_flags` on the `GEORADIUS` / `GEORADIUSBYMEMBER` `STORE` / `STOREDIST` key specs | never | `valkey-8.0+` |
+| `COMMAND INFO` flags, ACL categories, tips and key specs: the real command table of the profile's version (captured from redis-server 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.6 and valkey 8.0.11 / 9.0.6; Valkey 7.2 reads Redis 7.2's), for example `variable_flags` on the `GEORADIUS` `STORE` / `STOREDIST` key specs. A preset versioned below its captured patch answers as that patch: `redis-6.2` (6.2.14) reports 6.2.24's `denyoom` on `SUBSCRIBE` / `PSUBSCRIBE`, which 6.2.14 lacks | per version | per version |
 | `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
 | `COMMAND INFO` entries with tips, key specs and subcommands (10 fields; 6.2 has 7, ending with the ACL categories) | `redis-7.0+` | `valkey-8.0+` |
+| `COMMAND LIST`, a bare `COMMAND INFO` listing every command (6.2: an empty array) and per-subcommand arity errors (6.2 dispatches on the argument count and answers `Unknown subcommand or wrong number of arguments for '<sub>'. Try COMMAND HELP.`) | `redis-7.0+` | `valkey-8.0+` |
+| A `QUIT` command-table entry (`COMMAND INFO quit`, `COMMAND GETKEYS QUIT`) | `redis-7.0+` | `valkey-8.0+` |
+| `COMMAND HELP` without "Redis" (`Return details about all commands.`) | never | `valkey-8.0+` |
+| An empty array, not an empty set, for a `COMMAND INFO` entry without subcommands (RESP3 `*0` rather than `~0`), as Valkey 7.2.14, 8.0.11 and 9.0.6 send it; Valkey 8.0.0, 9.0.0 and 9.0.1 still send `~0`, so the `valkey-8.0` / `valkey-9.0` presets (8.0.0 / 9.0.0) differ from those first releases | never | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |

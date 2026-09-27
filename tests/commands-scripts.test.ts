@@ -726,13 +726,13 @@ function bulkValue(value: string): RedisValue {
   return RedisValue.bulkString(Buffer.from(value))
 }
 
+// COMMAND INFO flags are a set of status strings, as real Redis sends them.
 function commandInfoFlags(value: RedisValue): string[] {
   assert.strictEqual(value.kind, 'array')
   const flags = value.items[2]
-  assert.strictEqual(flags.kind, 'array')
+  assert.strictEqual(flags.kind, 'set')
   return flags.items.map(flag => {
-    assert.strictEqual(flag.kind, 'bulk-string')
-    assert.ok(flag.value)
-    return flag.value.toString()
+    assert.strictEqual(flag.kind, 'simple-string')
+    return flag.value
   })
 }

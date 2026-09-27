@@ -524,8 +524,6 @@ export const echoCommand = defineCommand({
   }),
   flags: ['readonly', 'fast'],
   introspection: {
-    flags: ['loading', 'stale', 'fast'],
-    categories: ['@fast', '@connection'],
     docs: commandDocs('Returns the given string.', 'connection', [
       { name: 'message', type: 'string' },
     ]),
@@ -591,8 +589,6 @@ export const clientCommand = defineCommand({
   // subcommand but HELP on 7.0+ (see lua-runtime's isRefusedFromScript).
   flags: ['readonly', 'admin', 'noscript'],
   introspection: {
-    flags: [],
-    categories: ['@slow', '@connection'],
     subcommands: [
       commandSubcommandInfo('client|id', 2),
       commandSubcommandInfo('client|info', 2),
@@ -912,18 +908,10 @@ export const aclCommand = defineCommand({
   }),
   flags: ['admin', 'noscript'],
   introspection: {
-    flags: [],
-    categories: ['@admin', '@slow', '@dangerous'],
     subcommands: [
-      commandSubcommandInfo('acl|whoami', 2, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
-      commandSubcommandInfo('acl|dryrun', -4, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
-      commandSubcommandInfo('acl|help', 2, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
+      commandSubcommandInfo('acl|whoami', 2),
+      commandSubcommandInfo('acl|dryrun', -4),
+      commandSubcommandInfo('acl|help', 2),
     ],
   },
   keys: () => [],
@@ -999,21 +987,11 @@ export const slowlogCommand = defineCommand({
   }),
   flags: ['readonly', 'admin'],
   introspection: {
-    flags: [],
-    categories: ['@admin', '@slow', '@dangerous'],
     subcommands: [
-      commandSubcommandInfo('slowlog|get', -2, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
-      commandSubcommandInfo('slowlog|len', 2, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
-      commandSubcommandInfo('slowlog|reset', 2, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
-      commandSubcommandInfo('slowlog|help', 2, {
-        categories: ['@admin', '@slow', '@dangerous'],
-      }),
+      commandSubcommandInfo('slowlog|get', -2),
+      commandSubcommandInfo('slowlog|len', 2),
+      commandSubcommandInfo('slowlog|reset', 2),
+      commandSubcommandInfo('slowlog|help', 2),
     ],
   },
   keys: () => [],
@@ -1072,10 +1050,6 @@ export const shutdownCommand = defineCommand({
     args: t.variadic(t.bulk()),
   }),
   flags: ['admin', 'noscript'],
-  introspection: {
-    flags: ['admin', 'noscript', 'loading', 'stale', 'no_multi', 'allow_busy'],
-    categories: ['@admin', '@slow', '@dangerous', '@connection'],
-  },
   keys: () => [],
   execute: (args, ctx) => {
     const options = parseShutdownOptions(args.args, ctx)

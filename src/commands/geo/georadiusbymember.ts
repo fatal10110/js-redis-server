@@ -1,6 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
 import { georadiusGetKeys } from '../../core/key-specs'
-import { georadiusIntrospection } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
@@ -94,7 +93,6 @@ export const georadiusbymemberCommand = defineCommand({
   rawKeys: georadiusGetKeys,
   schema: createGeoRadiusByMemberSchema(true),
   flags: ['write', 'denyoom'],
-  introspection: georadiusIntrospection(5),
   keys: args =>
     (args.store ?? args.storeDist)
       ? [args.key, (args.store ?? args.storeDist)!]

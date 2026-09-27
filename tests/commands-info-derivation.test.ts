@@ -31,7 +31,8 @@ function commandInfoLayouts(value: RedisValue): Map<string, KeyLayout> {
       number(last),
       number(step),
     ])
-    assert.strictEqual(subcommands.kind, 'array')
+    // An array, or an empty set for a command without subcommands.
+    assert.ok(subcommands.kind === 'array' || subcommands.kind === 'set')
     subcommands.items.forEach(collect)
   }
   value.items.forEach(collect)

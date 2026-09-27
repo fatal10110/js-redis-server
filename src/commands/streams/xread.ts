@@ -1,6 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
 import { xreadGetKeys } from '../../core/key-specs'
-import { commandKeywordKeySpec } from '../introspection'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
@@ -107,16 +106,6 @@ export const xreadCommand = defineCommand({
   rawKeys: xreadGetKeys,
   schema: t.object({ args: t.withLayout(createXreadSchema(), { min: 3 }) }),
   flags: ['readonly'],
-  introspection: {
-    keySpecs: [
-      commandKeywordKeySpec(
-        'STREAMS',
-        1,
-        { lastKey: -1, keyStep: 1, limit: 2 },
-        ['RO', 'access'],
-      ),
-    ],
-  },
   keys: args => args.args.streams.map(s => s.key),
   execute: (args, ctx) => {
     const { count, blockMs, streams } = args.args
