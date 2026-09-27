@@ -284,7 +284,7 @@ describe(`proto-max-bulk-len enforcement (node-redis, ${testRunner.getBackendNam
   // Redis' memtoull reads an empty string as 0, so it fails the *range* check
   // rather than the memory-value check — on the official images. See
   // EMPTY_VALUE_REJECTIONS for why a real server may say otherwise.
-  test('CONFIG SET reports an empty proto-max-bulk-len as out of range', async () => {
+  test('CONFIG SET rejects an empty proto-max-bulk-len', async () => {
     await assert.rejects(
       () => standaloneClient.configSet('proto-max-bulk-len', ''),
       testRunner.backend === 'real'

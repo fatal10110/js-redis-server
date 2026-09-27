@@ -91,12 +91,15 @@ const CLUSTER_BUS_PORT_OFFSET = 10000
  * cluster on this range (and `docker/redis-cluster-init.sh` binds its nodes to
  * it), so one variable moves the stack and the harness together: a second
  * checkout or worktree can run its own stack beside the default one instead of
- * sharing it and flushing it under a concurrent run (#497). Applies the same
- * rules as the init script, so a range one of them accepts the other accepts.
+ * sharing it and flushing it under a concurrent run (#497).
+ *
+ * Accepts exactly the ranges the init script accepts — no surrounding
+ * whitespace either, since the script (and compose's port mapping) gets the
+ * value verbatim. tests/redis-endpoints.test.ts runs the script beside this
+ * parser to keep the two in step.
  */
 export function parseClusterPortRange(raw: string): number[] {
-  const trimmed = raw.trim()
-  const match = /^([1-9]\d*)-([1-9]\d*)$/.exec(trimmed)
+  const match = /^([1-9]\d*)-([1-9]\d*)$/.exec(raw)
   const first = match ? Number(match[1]) : NaN
   const last = match ? Number(match[2]) : NaN
   const span = CLUSTER_NODE_COUNT - 1
@@ -131,9 +134,12 @@ export function resolveClusterPorts(
   ports: string | undefined,
   range: string | undefined,
 ): number[] {
-  const rangeRaw = range?.trim() ?? ''
+  // Unset or empty means the default, as ${REDIS_CLUSTER_PORT_RANGE:-...} does
+  // in docker-compose.test.yml; anything else, whitespace included, is parsed.
   const rangePorts =
-    rangeRaw === '' ? undefined : parseClusterPortRange(rangeRaw)
+    range === undefined || range === ''
+      ? undefined
+      : parseClusterPortRange(range)
 
   if ((ports?.trim() ?? '') === '') {
     return rangePorts ?? [...DEFAULT_CLUSTER_PORTS]

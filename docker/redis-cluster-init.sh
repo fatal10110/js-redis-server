@@ -64,23 +64,30 @@ log() {
 # docker-compose.test.yml passes REDIS_CLUSTER_PORT_RANGE through as this, so a
 # second stack (another worktree or checkout) can run beside the default one
 # on other ports instead of sharing it; the test harness reads the same
-# variable (tests-integration/redis-endpoints.ts, which applies the same rules).
+# variable (tests-integration/redis-endpoints.ts). The two must accept exactly
+# the same ranges; tests/redis-endpoints.test.ts runs this script's `ports`
+# mode beside the harness's parser to hold them to that.
 # Each node's bus port is its client port + 10000 and stays container-internal.
 # The ports are fixed for the container's lifetime: the healthcheck's `check`
 # mode sees the same environment as the boot.
 CLUSTER_PORT_RANGE="${CLUSTER_PORT_RANGE:-30000-30005}"
 first_port=${CLUSTER_PORT_RANGE%%-*}
 last_port=${CLUSTER_PORT_RANGE#*-}
-case "$first_port:$last_port" in
-  # Digits only, no empty half, no leading zero (sh arithmetic reads it as octal).
-  *[!0-9:]* | :* | *: | 0* | *:0*) valid_range=0 ;;
-  *) valid_range=1 ;;
-esac
-if [ "$valid_range" = 1 ]; then
-  if [ "$first_port" -lt 1 ] || [ $((last_port - first_port)) -ne 5 ] ||
-    [ $((last_port + 10000)) -gt 65535 ]; then
-    valid_range=0
-  fi
+# One half of the range: digits only, not empty, no leading zero (sh arithmetic
+# reads that as octal), and at most five digits — a longer one is no port, and
+# sh arithmetic on it would abort the script with a shell error instead of the
+# FATAL below. Each half is checked on its own, so no separator can hide
+# inside one of them.
+is_port_number() {
+  case "$1" in
+    '' | *[!0-9]* | 0* | ??????*) return 1 ;;
+  esac
+}
+valid_range=0
+if is_port_number "$first_port" && is_port_number "$last_port" &&
+  [ $((last_port - first_port)) -eq 5 ] &&
+  [ $((last_port + 10000)) -le 65535 ]; then
+  valid_range=1
 fi
 if [ "$valid_range" != 1 ]; then
   log "FATAL: CLUSTER_PORT_RANGE='$CLUSTER_PORT_RANGE' is not 6 consecutive ports first-last with first >= 1 and last <= 55535 (bus port = client port + 10000)"
@@ -93,6 +100,13 @@ while [ "$port" -le "$last_port" ]; do
   port=$((port + 1))
 done
 PORTS=${PORTS# }
+# `ports` mode: print the node ports the range resolves to and stop before
+# anything starts. Only the unit test that checks the script and the harness
+# agree uses it.
+if [ "${1:-}" = 'ports' ]; then
+  echo "$PORTS"
+  exit 0
+fi
 LOG_DIR='/var/log/redis-cluster'
 # Each node gets its OWN working directory, $DATA_DIR/<port>, wiped on every
 # boot. /data is a declared VOLUME *and* the image's WORKDIR, so anything a node
