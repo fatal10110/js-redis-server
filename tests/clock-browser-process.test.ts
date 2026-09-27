@@ -17,8 +17,16 @@ import { pathToFileURL } from 'node:url'
  */
 const ROOT = path.resolve(__dirname, '..')
 
-const CHILD_SCRIPT = `
+/**
+ * On Node 22.6 (the engines floor) a tsx-compiled CommonJS module imported from
+ * an ESM script exposes only a `default` export: the named exports are not
+ * detected. Newer Node versions expose both, and `default` is `module.exports`
+ * everywhere, so reading through it works on every supported version.
+ */
+function childScript(options: { withoutPerformance: boolean }): string {
+  return `
 const nodeProcess = globalThis.process
+const unwrap = namespace => namespace.default ?? namespace
 // The shape of the \`process\` npm package's browser build: no hrtime.
 const browserProcess = {
   browser: true,
@@ -35,12 +43,22 @@ Object.defineProperty(globalThis, 'process', {
   configurable: true,
   writable: true,
 })
+if (${options.withoutPerformance}) {
+  // A host with neither hrtime nor performance.now(): Date.now() is all
+  // that is left.
+  Object.defineProperty(globalThis, 'performance', {
+    value: undefined,
+    configurable: true,
+    writable: true,
+  })
+}
 
 const result = {}
 try {
-  const pkg = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'src/index.ts')).href)})
-  const core = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'src/internal.ts')).href)})
+  const pkg = unwrap(await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'src/index.ts')).href)}))
+  const core = unwrap(await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'src/internal.ts')).href)}))
   result.hrtime = typeof globalThis.process.hrtime
+  result.performance = typeof globalThis.performance
   result.samples = []
   for (let i = 0; i < 64; i++) {
     result.samples.push(core.monitorTimestampMicros())
@@ -60,17 +78,21 @@ try {
 }
 nodeProcess.stdout.write(JSON.stringify(result))
 `
+}
 
 type ChildResult = {
   error?: string
   hrtime?: string
+  performance?: string
   samples?: number[]
   now?: number
   monitorReply?: unknown
   monitorLine?: unknown
 }
 
-function runWithoutHrtime(): ChildResult {
+function runWithoutHrtime(options: {
+  withoutPerformance: boolean
+}): ChildResult {
   const result = spawnSync(
     process.execPath,
     [
@@ -79,7 +101,7 @@ function runWithoutHrtime(): ChildResult {
       '--no-warnings',
       '--input-type=module',
       '-e',
-      CHILD_SCRIPT,
+      childScript(options),
     ],
     { cwd: ROOT, encoding: 'utf8', timeout: 30000 },
   )
@@ -87,28 +109,50 @@ function runWithoutHrtime(): ChildResult {
   return JSON.parse(result.stdout) as ChildResult
 }
 
-describe('clock without process.hrtime (browser bundles)', () => {
-  test('importing the package does not throw and MONITOR still stamps lines', () => {
-    const result = runWithoutHrtime()
-    assert.strictEqual(result.error, undefined, result.error)
-    assert.strictEqual(result.hrtime, 'undefined')
+function assertTimestamps(result: ChildResult): number[] {
+  assert.strictEqual(result.error, undefined, result.error)
+  assert.strictEqual(result.hrtime, 'undefined')
 
-    const samples = result.samples!
-    for (let i = 1; i < samples.length; i++) {
-      assert.ok(Number.isSafeInteger(samples[i]))
+  const samples = result.samples!
+  for (let i = 0; i < samples.length; i++) {
+    assert.ok(Number.isSafeInteger(samples[i]))
+    if (i > 0) {
       assert.ok(
         samples[i] >= samples[i - 1],
         `sample ${i} went backwards: ${samples[i - 1]} then ${samples[i]}`,
       )
     }
+  }
+  assert.ok(Math.abs(samples[samples.length - 1] / 1000 - result.now!) < 1000)
+
+  assert.strictEqual(result.monitorReply, 'OK')
+  assert.match(
+    String(result.monitorLine),
+    /^\d+\.\d{6} \[0 [^\]]+\] "SET" "clock-browser" "value"$/,
+  )
+  return samples
+}
+
+describe('clock without process.hrtime (browser bundles)', () => {
+  test('importing the package does not throw and MONITOR still stamps lines', () => {
+    const result = runWithoutHrtime({ withoutPerformance: false })
+    assert.strictEqual(result.performance, 'object')
+    const samples = assertTimestamps(result)
     // performance.now() is the fallback, and in Node it is sub-millisecond.
     assert.ok(samples.some(sample => sample % 1000 !== 0))
-    assert.ok(Math.abs(samples[samples.length - 1] / 1000 - result.now!) < 1000)
+  })
 
-    assert.strictEqual(result.monitorReply, 'OK')
-    assert.match(
-      String(result.monitorLine),
-      /^\d+\.\d{6} \[0 [^\]]+\] "SET" "clock-browser" "value"$/,
-    )
+  test('falls back to Date.now() when performance.now() is missing too', () => {
+    const result = runWithoutHrtime({ withoutPerformance: true })
+    assert.strictEqual(result.performance, 'undefined')
+    const samples = assertTimestamps(result)
+    // Date.now() only has whole milliseconds, so the last three digits are 0.
+    for (const sample of samples) {
+      assert.strictEqual(
+        sample % 1000,
+        0,
+        `sample ${sample} is sub-millisecond`,
+      )
+    }
   })
 })

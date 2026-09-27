@@ -17,8 +17,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const here = (rel: string) => fileURLToPath(new URL(rel, import.meta.url))
 const url = (rel: string) => pathToFileURL(here(rel)).href
 
+// On Node 22.6 (the engines floor) a tsx-compiled CommonJS module imported
+// from an ESM script exposes only a `default` export; newer versions expose
+// the named exports as well. `default` is `module.exports` on all of them.
 const CHILD_SCRIPT = `
 const nodeProcess = globalThis.process
+const unwrap = namespace => namespace.default ?? namespace
 const { default: browserProcess } = await import(${JSON.stringify(
   url('./node_modules/vite-plugin-node-polyfills/shims/process/dist/index.js'),
 )})
@@ -30,9 +34,9 @@ Object.defineProperty(globalThis, 'process', {
 
 const result = { hrtime: typeof globalThis.process.hrtime }
 try {
-  const { createInMemoryRedis } = await import(${JSON.stringify(
-    url('../../src/in-memory-client.ts'),
-  )})
+  const { createInMemoryRedis } = unwrap(
+    await import(${JSON.stringify(url('../../src/in-memory-client.ts'))}),
+  )
   await import(${JSON.stringify(url('../../src/cluster.ts'))})
 
   const instance = await createInMemoryRedis()
