@@ -147,3 +147,16 @@ test('with no MultiErrorReply, exec resolves with the error inline', async () =>
     await client.quit()
   }
 })
+
+// node-redis v4 and v5 export no DEFAULT_RESP and open a client on RESP2
+// unless given `RESP` (@redis/client 5.x: `this.#options.RESP ?? 2`), so the
+// facade's default follows the installed release, as its error classes do.
+test('with no DEFAULT_RESP export, a default client stays on RESP2', async () => {
+  const client = newClient()
+  try {
+    await client.sendCommand(['ZADD', 'z', '2.5', 'b'])
+    assert.strictEqual(await client.sendCommand(['ZSCORE', 'z', 'b']), '2.5')
+  } finally {
+    await client.quit()
+  }
+})

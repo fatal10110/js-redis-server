@@ -48,16 +48,6 @@ import {
 export type TestBackend = 'mock' | 'real' | 'socketless'
 
 /**
- * socketless: the protocol the node-redis facades are switched to before a
- * suite sees them. node-redis 5+ (`redis@6` here) defaults to RESP3 and opens
- * every connection with `HELLO 3`, so that is what the node-redis suites run
- * at on mock/real. `createNodeRedisMock()` itself starts at RESP2 — a known
- * divergence of its default (see known-gaps.ts `FACADE_DEFAULT_PROTOCOL`),
- * which the harness mirrors away here so the suites compare like with like.
- */
-const NODE_REDIS_DEFAULT_HANDSHAKE = ['HELLO', '3']
-
-/**
  * Thrown by a `TestRunner` setup method the `socketless` backend cannot serve
  * — anything that needs a TCP port or a server option the socketless factories
  * do not take.
@@ -365,7 +355,6 @@ export class TestRunner {
     if (this.backend === 'socketless') {
       const client = (await createNodeRedisMock()) as NodeRedisMockClient
       this.socketlessNodeRedisStandalone.push(client)
-      await client.sendCommand(NODE_REDIS_DEFAULT_HANDSHAKE)
       return client as unknown as RedisClientType
     }
 
@@ -750,7 +739,6 @@ export class TestRunner {
       },
     })) as NodeRedisMockCluster
     this.socketlessNodeRedisClusters.set(key, cluster)
-    await cluster.sendCommand(NODE_REDIS_DEFAULT_HANDSHAKE)
     return cluster
   }
 }

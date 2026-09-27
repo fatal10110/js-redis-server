@@ -193,6 +193,30 @@ function disconnectsClientError(): Error {
   return closeError('DisconnectsClientError')
 }
 
+let resolvedDefaultResp: NodeRedisRespVersion | undefined
+
+/**
+ * The protocol a node-redis client negotiates when given no `RESP` option,
+ * resolved like the error classes above (lazily, from the installed `redis`,
+ * cached). node-redis v6 exports `DEFAULT_RESP` (3) and opens every connection
+ * with `HELLO 3`; v4 and v5 export no such constant and stay on RESP2 unless
+ * asked (`@redis/client` 5.x: `this.#options.RESP ?? 2`). Without `redis`
+ * at all the facade models v6, as its error stand-ins do.
+ */
+function nodeRedisDefaultResp(): NodeRedisRespVersion {
+  resolvedDefaultResp ??= loadDefaultResp()
+  return resolvedDefaultResp
+}
+
+function loadDefaultResp(): NodeRedisRespVersion {
+  const redis = requireRedis()
+  if (!redis) {
+    return 3
+  }
+  const declared = redis.DEFAULT_RESP
+  return declared === 2 || declared === 3 ? declared : 2
+}
+
 /** A command argument node-redis accepts on the wire. */
 export type NodeRedisCommandArgument = string | Buffer
 
@@ -204,9 +228,32 @@ export type NodeRedisMockClusterOptions = {
   replicas?: number
 }
 
-export type CreateNodeRedisMockOptions =
-  | { cluster?: undefined; databaseCount?: number }
-  | { cluster: NodeRedisMockClusterOptions }
+/** A protocol version node-redis' `RESP` client option accepts. */
+export type NodeRedisRespVersion = 2 | 3
+
+/** Client options shared by the standalone and the cluster facade. */
+export type NodeRedisMockClientOptions = {
+  /**
+   * The protocol the client negotiates on connect, like node-redis' own `RESP`
+   * option. Defaults to the installed node-redis' default: RESP3 on v6 (and
+   * when `redis` is not installed), RESP2 on v4 and v5. `HELLO` still switches
+   * it mid-connection.
+   */
+  RESP?: NodeRedisRespVersion
+}
+
+export type CreateNodeRedisMockOptions = NodeRedisMockClientOptions &
+  (
+    | { cluster?: undefined; databaseCount?: number }
+    | { cluster: NodeRedisMockClusterOptions }
+  )
+
+/** node-redis' `ZRANGE` options (its `ZRangeOptions`). */
+export type NodeRedisZRangeOptions = {
+  BY?: 'SCORE' | 'LEX'
+  REV?: boolean
+  LIMIT?: { offset: number; count: number }
+}
 
 /** A single `{ score, value }` member for ZADD-style methods. */
 export type NodeRedisZMember = { score: number; value: string }
@@ -226,14 +273,19 @@ export async function createNodeRedisMock(
   // redisErrors()), so every construction path — this factory or a direct
   // `new`/`create()` — gets the real WatchError/ErrorReply/ClientClosedError.
   if ('cluster' in options && options.cluster) {
-    return NodeRedisMockCluster.create(options.cluster)
+    return NodeRedisMockCluster.create(options.cluster, { RESP: options.RESP })
   }
   const databaseCount =
     ('databaseCount' in options ? options.databaseCount : undefined) ??
     DEFAULT_DATABASE_COUNT
   const state = new RedisServerState({ databaseCount })
   const executor = createRedisCommandExecutor()
-  return new NodeRedisMockClient({ state, executor, ownsState: true })
+  return new NodeRedisMockClient({
+    state,
+    executor,
+    ownsState: true,
+    RESP: options.RESP,
+  })
 }
 
 type FacadeBackend = {
@@ -398,9 +450,44 @@ abstract class CommandRunner extends EventEmitter {
     return asNumber(await this.run(args))
   }
 
-  async zRange(key: string, start: number, stop: number): Promise<string[]> {
+  /**
+   * ZRANGE with node-redis' signature: `min` / `max` are indexes, scores or
+   * lex bounds depending on `BY`, and the options are appended exactly as
+   * node-redis' `zRangeArgument` appends them — `BY` (only `'SCORE'` / `'LEX'`
+   * add anything), then `REV`, then `LIMIT offset count` — so the server sees
+   * the argument list a real client sends and answers, or rejects, it the
+   * same way.
+   */
+  async zRange(
+    key: NodeRedisCommandArgument,
+    min: NodeRedisCommandArgument | number,
+    max: NodeRedisCommandArgument | number,
+    options?: NodeRedisZRangeOptions,
+  ): Promise<string[]> {
     return asStringArray(
-      await this.run(['ZRANGE', key, String(start), String(stop)]),
+      await this.run(['ZRANGE', key, ...zRangeArguments(min, max, options)]),
+    )
+  }
+
+  /**
+   * {@link zRange} plus `WITHSCORES`, as `{ value, score }` members. node-redis'
+   * `transformSortedSetReply` builds the same objects at both protocols — it
+   * parses the RESP2 score string with `Number` (`inf` → `Infinity`) and
+   * takes the RESP3 double as is — so the method is protocol-independent.
+   */
+  async zRangeWithScores(
+    key: NodeRedisCommandArgument,
+    min: NodeRedisCommandArgument | number,
+    max: NodeRedisCommandArgument | number,
+    options?: NodeRedisZRangeOptions,
+  ): Promise<NodeRedisZMember[]> {
+    return decodeSortedSetReply(
+      await this.run([
+        'ZRANGE',
+        key,
+        ...zRangeArguments(min, max, options),
+        'WITHSCORES',
+      ]),
     )
   }
 
@@ -439,11 +526,12 @@ abstract class CommandRunner extends EventEmitter {
   }
 }
 
-export type NodeRedisMockClientInit = FacadeBackend & {
-  database?: number
-  /** True only for the client that created the state — it owns its teardown. */
-  ownsState?: boolean
-}
+export type NodeRedisMockClientInit = FacadeBackend &
+  NodeRedisMockClientOptions & {
+    database?: number
+    /** True only for the client that created the state — it owns its teardown. */
+    ownsState?: boolean
+  }
 
 /**
  * Standalone in-memory node-redis facade. Drives one {@link ClientSession}
@@ -455,6 +543,8 @@ export class NodeRedisMockClient extends CommandRunner {
   private readonly backend: FacadeBackend
   private readonly database?: number
   private readonly ownsState: boolean
+  /** The `RESP` this client was configured with — what `duplicate()` copies. */
+  private readonly resp: NodeRedisRespVersion
   private readonly session: ClientSession
   /**
    * Serializes commands on this client the way a real single node-redis
@@ -491,11 +581,15 @@ export class NodeRedisMockClient extends CommandRunner {
     this.backend = { state: init.state, executor: init.executor }
     this.database = init.database
     this.ownsState = init.ownsState ?? false
+    this.resp = init.RESP ?? nodeRedisDefaultResp()
     this.session = new ClientSession({
       server: init.state,
       executor: init.executor,
       database: init.database,
     })
+    // The connect-time handshake: node-redis opens a RESP3 client with
+    // `HELLO 3` before anything else, and a RESP2 one with no HELLO at all.
+    this.session.setProtocolVersion(this.resp)
     // node-redis emits 'connect' then 'ready' once the handshake completes.
     queueMicrotask(() => {
       this.emit('connect')
@@ -520,11 +614,19 @@ export class NodeRedisMockClient extends CommandRunner {
     return this
   }
 
-  /** A fresh, independent client over the **same** shared keyspace. */
-  async duplicate(): Promise<NodeRedisMockClient> {
+  /**
+   * A fresh, independent client over the **same** shared keyspace. Like
+   * node-redis' `duplicate(overrides)`, it takes this client's options — so
+   * its configured `RESP`, not whatever a `HELLO` has since switched this
+   * connection to — unless `overrides` says otherwise.
+   */
+  async duplicate(
+    overrides: NodeRedisMockClientOptions = {},
+  ): Promise<NodeRedisMockClient> {
     return new NodeRedisMockClient({
       ...this.backend,
       database: this.database,
+      RESP: overrides.RESP ?? this.resp,
     })
   }
 
@@ -599,6 +701,7 @@ export class NodeRedisMockClient extends CommandRunner {
   ): Promise<void> {
     const pubsub = this.ensurePubSub()
     addListener(pubsub.listeners, channel, listener)
+    this.syncPubSubProtocol(pubsub)
     await runOnSession(pubsub.session, ['SUBSCRIBE', channel], this.closed)
   }
 
@@ -608,6 +711,7 @@ export class NodeRedisMockClient extends CommandRunner {
   ): Promise<void> {
     const pubsub = this.ensurePubSub()
     addListener(pubsub.patternListeners, pattern, listener)
+    this.syncPubSubProtocol(pubsub)
     await runOnSession(pubsub.session, ['PSUBSCRIBE', pattern], this.closed)
   }
 
@@ -616,6 +720,7 @@ export class NodeRedisMockClient extends CommandRunner {
       return
     }
     const args = channel ? ['UNSUBSCRIBE', channel] : ['UNSUBSCRIBE']
+    this.syncPubSubProtocol(this.pubsub)
     await runOnSession(this.pubsub.session, args, this.closed)
     if (channel) {
       this.pubsub.listeners.delete(channel)
@@ -629,6 +734,7 @@ export class NodeRedisMockClient extends CommandRunner {
       return
     }
     const args = pattern ? ['PUNSUBSCRIBE', pattern] : ['PUNSUBSCRIBE']
+    this.syncPubSubProtocol(this.pubsub)
     await runOnSession(this.pubsub.session, args, this.closed)
     if (pattern) {
       this.pubsub.patternListeners.delete(pattern)
@@ -812,6 +918,21 @@ export class NodeRedisMockClient extends CommandRunner {
     }
   }
 
+  /**
+   * Keep the pub/sub session on the client's protocol. A RESP3 node-redis
+   * client subscribes on its one connection (only RESP2 needs a connection
+   * reserved for pub/sub), so its subscriptions run at whatever that
+   * connection negotiated: its `RESP` option, or a later `HELLO`. The facade
+   * keeps a separate session for them, so it carries the command session's
+   * version over before each (un)subscribe. `CLIENT LIST` then reports the
+   * subscriber at the client's `resp=`, as it does against a real server.
+   */
+  private syncPubSubProtocol(
+    pubsub: NonNullable<NodeRedisMockClient['pubsub']>,
+  ): void {
+    pubsub.session.setProtocolVersion(this.session.protocolVersion)
+  }
+
   private ensurePubSub(): NonNullable<NodeRedisMockClient['pubsub']> {
     if (this.pubsub) {
       return this.pubsub
@@ -823,6 +944,7 @@ export class NodeRedisMockClient extends CommandRunner {
       executor: this.backend.executor,
       database: this.database,
     })
+    session.setProtocolVersion(this.session.protocolVersion)
     // Drain pushes for the lifetime of the subscription; route each delivered
     // message/pmessage frame to the registered listeners. The promise is held
     // so teardown can await its completion.
@@ -958,6 +1080,57 @@ function protocolSwitchedBy(
 
 function toText(arg: NodeRedisCommandArgument): string {
   return Buffer.isBuffer(arg) ? arg.toString('utf8') : arg
+}
+
+/**
+ * node-redis' `zRangeArgument`: the bounds, then `BY` (only `'SCORE'` /
+ * `'LEX'` add anything), `REV` and `LIMIT offset count`, in that order.
+ */
+function zRangeArguments(
+  min: NodeRedisCommandArgument | number,
+  max: NodeRedisCommandArgument | number,
+  options: NodeRedisZRangeOptions | undefined,
+): NodeRedisCommandArgument[] {
+  const args = [doubleArgument(min), doubleArgument(max)]
+  switch (options?.BY) {
+    case 'SCORE':
+      args.push('BYSCORE')
+      break
+    case 'LEX':
+      args.push('BYLEX')
+      break
+  }
+  if (options?.REV) {
+    args.push('REV')
+  }
+  if (options?.LIMIT) {
+    args.push(
+      'LIMIT',
+      options.LIMIT.offset.toString(),
+      options.LIMIT.count.toString(),
+    )
+  }
+  return args
+}
+
+/**
+ * node-redis' `transformStringDoubleArgument`: a number is spelled the way
+ * Redis parses a score bound (`Infinity` → `+inf`), anything else passes
+ * through untouched.
+ */
+function doubleArgument(
+  value: NodeRedisCommandArgument | number,
+): NodeRedisCommandArgument {
+  if (typeof value !== 'number') {
+    return value
+  }
+  if (value === Infinity) {
+    return '+inf'
+  }
+  if (value === -Infinity) {
+    return '-inf'
+  }
+  return value.toString()
 }
 
 /**
@@ -1107,31 +1280,44 @@ export class NodeRedisMockCluster extends CommandRunner {
    * the conditional write in {@link run} is to stop that window outliving the
    * switch, not to close it.
    */
-  private clientRespVersion: RespVersion = 2
+  private clientRespVersion: RespVersion
+  /** The `RESP` this client was configured with: its handshake protocol. */
+  private readonly resp: NodeRedisRespVersion
 
   private constructor(
     topology: RedisClusterTopology,
     masters: ClusterNodePipeline[],
     replicationLinks: readonly { close(): void }[],
+    options: NodeRedisMockClientOptions,
   ) {
     super()
     this.topology = topology
     this.masters = masters
     this.replicationLinks = [...replicationLinks]
+    this.resp = options.RESP ?? nodeRedisDefaultResp()
+    this.clientRespVersion = this.resp
     queueMicrotask(() => {
       this.emit('connect')
       this.emit('ready')
     })
   }
 
-  static create(options: NodeRedisMockClusterOptions): NodeRedisMockCluster {
+  static create(
+    options: NodeRedisMockClusterOptions,
+    clientOptions: NodeRedisMockClientOptions = {},
+  ): NodeRedisMockCluster {
     const { topology, nodes, replicationLinks } = buildClusterNodes({
       masters: options.masters,
       replicasPerMaster: options.replicas ?? 0,
       basePort: 0,
     })
     const masters = nodes.filter(node => node.role === 'master')
-    return new NodeRedisMockCluster(topology, masters, replicationLinks)
+    return new NodeRedisMockCluster(
+      topology,
+      masters,
+      replicationLinks,
+      clientOptions,
+    )
   }
 
   async connect(): Promise<this> {
@@ -1249,7 +1435,7 @@ export class NodeRedisMockCluster extends CommandRunner {
     this.sessions.clear()
     // Per-connection state goes back to its handshake default alongside the
     // sessions it belongs to.
-    this.clientRespVersion = 2
+    this.clientRespVersion = this.resp
     for (const link of this.replicationLinks) {
       link.close()
     }
@@ -1533,6 +1719,31 @@ function decodeMapReply(
     decodeRedisValue(value, options) // throws the reply's own error
   }
   throw new RedisCommandError(`expected a map reply, got ${value.kind}`)
+}
+
+/**
+ * Decode a `WITHSCORES` reply into node-redis' `{ value, score }` members, the
+ * same objects on both protocols (its `transformSortedSetReply`). Decoding
+ * the pairs' own kinds at RESP3 gives exactly that: the member a string and
+ * the score a number, `±Infinity` included. An `error` throws the reply's own
+ * error; an empty `array` (nothing in range) is no members; anything else
+ * fails loudly, as {@link decodeMapReply} does.
+ */
+function decodeSortedSetReply(value: RedisValue): NodeRedisZMember[] {
+  const options = { ...NODE_REDIS_DECODE_OPTIONS, version: 3 as const }
+  if (value.kind === 'flat-pairs') {
+    return value.entries.map(([member, score]) => ({
+      value: String(decodeRedisValue(member, options)),
+      score: Number(decodeRedisValue(score, options)),
+    }))
+  }
+  if (value.kind === 'array' && value.items.length === 0) {
+    return []
+  }
+  if (value.kind === 'error') {
+    decodeRedisValue(value, options) // throws the reply's own error
+  }
+  throw new RedisCommandError(`expected a sorted-set reply, got ${value.kind}`)
 }
 
 function asNumber(value: RedisValue): number {

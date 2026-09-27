@@ -59,6 +59,17 @@ function settleWithin(promise: Promise<unknown>, ms = 2000): Promise<unknown> {
   ]).finally(() => clearTimeout(timer))
 }
 
+/** Poll until `condition` holds; fail instead of hanging after 2s. */
+async function waitUntil(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2000
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error('condition still false after 2000ms')
+    }
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 /**
  * For tests that park a blocking command: if a regression leaves something
  * pending forever, the test must FAIL and name itself, not stall the run
@@ -76,8 +87,10 @@ describe('createNodeRedisMock (standalone)', () => {
     }
   })
 
-  async function makeClient(): Promise<NodeRedisMockClient> {
-    const client = (await createNodeRedisMock()) as NodeRedisMockClient
+  async function makeClient(
+    options: { RESP?: 2 | 3 } = {},
+  ): Promise<NodeRedisMockClient> {
+    const client = (await createNodeRedisMock(options)) as NodeRedisMockClient
     openClients.push(client)
     return client
   }
@@ -139,6 +152,212 @@ describe('createNodeRedisMock (standalone)', () => {
       { score: 3, value: 'c' },
     ])
     assert.deepStrictEqual(await client.zRange('z', 0, -1), ['a', 'b', 'c'])
+  })
+
+  // #488. node-redis' `zRange(key, min, max, options)` appends BY / REV /
+  // LIMIT to the ZRANGE it sends; the facade used to drop them and run a
+  // plain index range. Every expected reply here is what real node-redis@6
+  // returns against real Redis 8.0.6 (and 6.2.24) for the same calls.
+  describe('zRange options follow node-redis (#488)', () => {
+    async function seeded(): Promise<NodeRedisMockClient> {
+      const client = await makeClient()
+      await client.sendCommand([
+        'ZADD',
+        'z',
+        '1',
+        'a',
+        '2.5',
+        'b',
+        '3',
+        'c',
+        '4',
+        'd',
+        '5',
+        'e',
+      ])
+      await client.sendCommand([
+        'ZADD',
+        'lex',
+        '0',
+        'a',
+        '0',
+        'b',
+        '0',
+        'c',
+        '0',
+        'd',
+      ])
+      return client
+    }
+
+    test('REV reverses an index range', async () => {
+      const client = await seeded()
+      assert.deepStrictEqual(await client.zRange('z', 0, -1, { REV: true }), [
+        'e',
+        'd',
+        'c',
+        'b',
+        'a',
+      ])
+      assert.deepStrictEqual(await client.zRange('z', 1, 2, { REV: true }), [
+        'd',
+        'c',
+      ])
+      assert.deepStrictEqual(await client.zRange('z', 0, 1, { REV: false }), [
+        'a',
+        'b',
+      ])
+    })
+
+    test('BY SCORE takes score bounds, numbers or strings', async () => {
+      const client = await seeded()
+      assert.deepStrictEqual(await client.zRange('z', 2, 4, { BY: 'SCORE' }), [
+        'b',
+        'c',
+        'd',
+      ])
+      assert.deepStrictEqual(
+        await client.zRange('z', '(1', '4', { BY: 'SCORE' }),
+        ['b', 'c', 'd'],
+      )
+      assert.deepStrictEqual(
+        await client.zRange('z', 2.5, 2.5, { BY: 'SCORE' }),
+        ['b'],
+      )
+      // node-redis spells ±Infinity as Redis' +inf / -inf.
+      assert.deepStrictEqual(
+        await client.zRange('z', -Infinity, Infinity, { BY: 'SCORE' }),
+        ['a', 'b', 'c', 'd', 'e'],
+      )
+      assert.deepStrictEqual(
+        await client.zRange('missing', '-inf', '+inf', { BY: 'SCORE' }),
+        [],
+      )
+    })
+
+    test('BY SCORE with REV takes max then min, and LIMIT pages it', async () => {
+      const client = await seeded()
+      assert.deepStrictEqual(
+        await client.zRange('z', 5, 2, { BY: 'SCORE', REV: true }),
+        ['e', 'd', 'c', 'b'],
+      )
+      assert.deepStrictEqual(
+        await client.zRange('z', Infinity, -Infinity, {
+          BY: 'SCORE',
+          REV: true,
+          LIMIT: { offset: 1, count: 2 },
+        }),
+        ['d', 'c'],
+      )
+      assert.deepStrictEqual(
+        await client.zRange('z', '-inf', '+inf', {
+          BY: 'SCORE',
+          LIMIT: { offset: 0, count: -1 },
+        }),
+        ['a', 'b', 'c', 'd', 'e'],
+      )
+    })
+
+    test('BY LEX takes lex bounds, with REV and LIMIT', async () => {
+      const client = await seeded()
+      assert.deepStrictEqual(
+        await client.zRange('lex', '[b', '[c', { BY: 'LEX' }),
+        ['b', 'c'],
+      )
+      assert.deepStrictEqual(
+        await client.zRange('lex', '+', '-', {
+          BY: 'LEX',
+          REV: true,
+          LIMIT: { offset: 1, count: 2 },
+        }),
+        ['c', 'b'],
+      )
+    })
+
+    test('the server judges the arguments, as it does for node-redis', async () => {
+      const client = await seeded()
+      // LIMIT goes on the wire even without BY; Redis refuses it.
+      await assert.rejects(
+        () => client.zRange('z', 0, -1, { LIMIT: { offset: 0, count: 1 } }),
+        {
+          name: 'Error',
+          message:
+            'ERR syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX',
+        },
+      )
+      // An index range has no +inf.
+      await assert.rejects(() => client.zRange('z', 0, Infinity), {
+        message: 'ERR value is not an integer or out of range',
+      })
+      // node-redis appends nothing for a BY it does not know.
+      assert.deepStrictEqual(
+        await client.zRange('z', 0, -1, {
+          BY: 'BOGUS' as unknown as 'SCORE',
+        }),
+        ['a', 'b', 'c', 'd', 'e'],
+      )
+    })
+
+    // node-redis' transformSortedSetReply builds the same `{ value, score }`
+    // members at RESP2 (parsing the score string) and RESP3.
+    for (const RESP of [2, 3] as const) {
+      test(`zRangeWithScores takes the same options at RESP${RESP}`, async () => {
+        const client = await makeClient({ RESP })
+        await client.sendCommand(['ZADD', 'z', '1', 'a', '2.5', 'b', '3', 'c'])
+        await client.sendCommand([
+          'ZADD',
+          'inf',
+          '+inf',
+          'hi',
+          '-inf',
+          'lo',
+          '1.5',
+          'mid',
+        ])
+        assert.deepStrictEqual(
+          await client.zRangeWithScores('z', 0, 1, { REV: true }),
+          [
+            { value: 'c', score: 3 },
+            { value: 'b', score: 2.5 },
+          ],
+        )
+        assert.deepStrictEqual(
+          await client.zRangeWithScores('z', '(1', 3, { BY: 'SCORE' }),
+          [
+            { value: 'b', score: 2.5 },
+            { value: 'c', score: 3 },
+          ],
+        )
+        assert.deepStrictEqual(await client.zRangeWithScores('inf', 0, -1), [
+          { value: 'lo', score: -Infinity },
+          { value: 'mid', score: 1.5 },
+          { value: 'hi', score: Infinity },
+        ])
+        assert.deepStrictEqual(
+          await client.zRangeWithScores('missing', 0, -1),
+          [],
+        )
+        await assert.rejects(
+          () => client.zRangeWithScores('z', '-', '+', { BY: 'LEX' }),
+          {
+            message:
+              'ERR syntax error, WITHSCORES not supported in combination with BYLEX',
+          },
+        )
+      })
+    }
+
+    test('Buffer arguments pass through', async () => {
+      const client = await seeded()
+      assert.deepStrictEqual(
+        await client.zRange(
+          Buffer.from('z'),
+          Buffer.from('0'),
+          Buffer.from('1'),
+        ),
+        ['a', 'b'],
+      )
+    })
   })
 
   test('sendCommand fallback decodes generic replies', async () => {
@@ -217,10 +436,7 @@ describe('createNodeRedisMock (standalone)', () => {
 
   for (const resp of [2, 3] as const) {
     test(`server errors are SimpleError at RESP${resp}, as real node-redis v6 throws`, async () => {
-      const client = await makeClient()
-      if (resp === 3) {
-        await client.sendCommand(['HELLO', '3'])
-      }
+      const client = await makeClient({ RESP: resp })
       await client.set('s', 'notAnInteger')
       // Real node-redis v6 decodes every `-ERR` reply into a SimpleError (a
       // subclass of ErrorReply), at RESP2 and RESP3 alike — so both the
@@ -311,6 +527,106 @@ describe('createNodeRedisMock (standalone)', () => {
     const dup = await client.duplicate()
     openClients.push(dup)
     assert.strictEqual(await dup.get('shared'), 'v')
+  })
+
+  // #489. Ground truth: node-redis@6 against real Redis 8.0.6. A client with
+  // no `RESP` option sends `HELLO 3` on connect (node-redis 6's DEFAULT_RESP),
+  // `RESP: 2` sends no HELLO at all, and a subscriber connection reports the
+  // protocol of the client it belongs to.
+  describe('protocol follows node-redis (#489)', () => {
+    /** The `resp=` field of the connection's own CLIENT INFO line. */
+    async function respOf(client: NodeRedisMockClient): Promise<string> {
+      const info = String(await client.sendCommand(['CLIENT', 'INFO']))
+      return /\bresp=(\d)/.exec(info)?.[1] ?? 'none'
+    }
+
+    /** `resp=` of the one subscribed connection in CLIENT LIST. */
+    async function subscriberResp(
+      client: NodeRedisMockClient,
+    ): Promise<string> {
+      const list = String(await client.sendCommand(['CLIENT', 'LIST']))
+      const lines = list.split('\n').filter(line => / p?sub=1 /.test(line))
+      assert.strictEqual(lines.length, 1, list)
+      return /\bresp=(\d)/.exec(lines[0])?.[1] ?? 'none'
+    }
+
+    async function shapes(client: NodeRedisMockClient) {
+      await client.sendCommand(['ZADD', 'z', '2.5', 'b'])
+      await client.sendCommand(['HSET', 'h', 'f', 'v'])
+      return {
+        zscore: await client.sendCommand(['ZSCORE', 'z', 'b']),
+        hgetall: await client.sendCommand(['HGETALL', 'h']),
+      }
+    }
+
+    test('a default client negotiates RESP3, as node-redis 6 does', async () => {
+      const client = await makeClient()
+      assert.strictEqual(await respOf(client), '3')
+      assert.deepStrictEqual(await shapes(client), {
+        zscore: 2.5,
+        hgetall: { f: 'v' },
+      })
+    })
+
+    test('RESP: 2 stays on RESP2, RESP: 3 negotiates RESP3', async () => {
+      const resp2 = await makeClient({ RESP: 2 })
+      assert.strictEqual(await respOf(resp2), '2')
+      assert.deepStrictEqual(await shapes(resp2), {
+        zscore: '2.5',
+        hgetall: ['f', 'v'],
+      })
+
+      const resp3 = await makeClient({ RESP: 3 })
+      assert.strictEqual(await respOf(resp3), '3')
+      assert.deepStrictEqual(await shapes(resp3), {
+        zscore: 2.5,
+        hgetall: { f: 'v' },
+      })
+    })
+
+    test('HELLO still switches the protocol mid-connection', async () => {
+      const client = await makeClient()
+      await client.sendCommand(['HELLO', '2'])
+      assert.strictEqual(await respOf(client), '2')
+      assert.deepStrictEqual((await shapes(client)).zscore, '2.5')
+    })
+
+    test('duplicate() copies the RESP option, not a later HELLO', async () => {
+      const client = await makeClient({ RESP: 2 })
+      await client.sendCommand(['HELLO', '3'])
+      const dup = await client.duplicate()
+      openClients.push(dup)
+      assert.strictEqual(await respOf(dup), '2')
+
+      const overridden = await client.duplicate({ RESP: 3 })
+      openClients.push(overridden)
+      assert.strictEqual(await respOf(overridden), '3')
+
+      const fromDefault = await (await makeClient()).duplicate()
+      openClients.push(fromDefault)
+      assert.strictEqual(await respOf(fromDefault), '3')
+    })
+
+    for (const RESP of [2, 3] as const) {
+      test(`the pub/sub session runs at the client's RESP${RESP}`, async () => {
+        const client = await makeClient({ RESP })
+        const received: string[][] = []
+        await client.subscribe('ch', (message, channel) => {
+          received.push([message, channel])
+        })
+        assert.strictEqual(await subscriberResp(client), String(RESP))
+        assert.strictEqual(await client.publish('ch', 'hi'), 1)
+        await waitUntil(() => received.length === 1)
+        assert.deepStrictEqual(received, [['hi', 'ch']])
+      })
+    }
+
+    test('the pub/sub session follows a HELLO sent before subscribing', async () => {
+      const client = await makeClient({ RESP: 2 })
+      await client.sendCommand(['HELLO', '3'])
+      await client.pSubscribe('news.*', () => {})
+      assert.strictEqual(await subscriberResp(client), '3')
+    })
   })
 
   test('on / once / off drive the client event surface', async () => {

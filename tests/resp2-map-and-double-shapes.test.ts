@@ -179,7 +179,9 @@ describe('map and double shapes follow the negotiated RESP version', () => {
     })
 
     async function seeded(resp: 2 | 3): Promise<NodeRedisMockClient> {
-      const client = (await createNodeRedisMock()) as NodeRedisMockClient
+      const client = (await createNodeRedisMock({
+        RESP: 2,
+      })) as NodeRedisMockClient
       openClients.push(client)
       if (resp === 3) {
         await client.sendCommand(['HELLO', '3'])
@@ -387,7 +389,9 @@ describe('Lua boolean and big-number replies follow the negotiated RESP version'
     })
 
     async function connect(resp: 2 | 3): Promise<NodeRedisMockClient> {
-      const client = (await createNodeRedisMock()) as NodeRedisMockClient
+      const client = (await createNodeRedisMock({
+        RESP: 2,
+      })) as NodeRedisMockClient
       openClients.push(client)
       if (resp === 3) {
         await client.sendCommand(['HELLO', '3'])

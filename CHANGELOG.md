@@ -437,6 +437,24 @@ so the PR body is not a durable home for a breaking-change note.
   it from the flat array. `createIoredisMock()` drives the real RESP2-only
   `ioredis` and is unaffected by this entry.
 
+- **BREAKING** `createNodeRedisMock()` (standalone and cluster) now starts on
+  the protocol the installed node-redis negotiates by default, not always on
+  RESP2 ([#489]). On node-redis 6 that is RESP3, the protocol a
+  `createClient()` with no `RESP` option gets from its connect-time `HELLO 3`
+  (node-redis 6 exports `DEFAULT_RESP = 3`). Without `redis` installed the
+  facade also uses RESP3, as it models v6 elsewhere. On node-redis 4 and 5,
+  which default to RESP2, nothing changes. The raw paths of a default facade
+  therefore now return the RESP3 column of the [#414] entry above: `HGETALL`
+  through `sendCommand()` is `{ f1: 'v1' }`, `ZSCORE` is `2.5`. To keep the
+  RESP2 shapes, pass the new `RESP: 2` option, as you would to node-redis:
+
+  ```
+  await createNodeRedisMock()              -> await createNodeRedisMock({ RESP: 2 })
+  ```
+
+  The curated methods (`hGetAll()`, `zRange()`, …) return the same values at
+  both protocols and are unaffected.
+
 - **BREAKING (`/core`)** `Resp2CommandDecoder` is now pull-based, and its
   constructor requires the live bulk-length limit ([#431]). Two breaks to the
   exported class:
@@ -545,7 +563,30 @@ so the PR body is not a durable home for a breaking-change note.
   because it appears in the signature of the published `RedisClientSession`
   interface and declaration emit requires it ([#376]).
 
+- `createNodeRedisMock()` takes node-redis' `RESP: 2 | 3` client option, for
+  the standalone and the cluster facade ([#489]). `NodeRedisMockClient`'s
+  `duplicate()` copies it, and, like node-redis' `duplicate(overrides)`,
+  takes `{ RESP }` to override it. The facade also gains
+  `zRangeWithScores(key, min, max, options)`, which returns node-redis'
+  `{ value, score }` members at both protocols ([#488]). New exported types:
+  `NodeRedisMockClientOptions`, `NodeRedisRespVersion`,
+  `NodeRedisZRangeOptions`.
+
 ### Fixed
+
+- The node-redis facade's `zRange(key, min, max, options)` no longer ignores
+  its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
+  plain index range, so `zRange(key, 0, -1, { REV: true })` came back in
+  ascending order and `zRange(key, 5, 2, { BY: 'SCORE', REV: true })` came
+  back empty. It now builds the ZRANGE the way node-redis does: numeric bounds
+  spelled as Redis parses them (`Infinity` becomes `+inf`), then `BYSCORE` /
+  `BYLEX`, `REV` and `LIMIT offset count`. The replies match real node-redis
+  against real Redis, including the server's errors (`LIMIT` without `BY`).
+
+- The node-redis facade's pub/sub session now runs at the client's protocol
+  ([#489]). It used to stay on RESP2 even after `HELLO 3` on the client, so
+  `CLIENT LIST` reported the subscriber as `resp=2` where real node-redis
+  reports `resp=3`.
 
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity
@@ -1008,6 +1049,8 @@ requests they contain.
 [#486]: https://github.com/fatal10110/js-redis-server/pull/486
 [#364]: https://github.com/fatal10110/js-redis-server/issues/364
 [#384]: https://github.com/fatal10110/js-redis-server/issues/384
+[#488]: https://github.com/fatal10110/js-redis-server/issues/488
+[#489]: https://github.com/fatal10110/js-redis-server/issues/489
 [#492]: https://github.com/fatal10110/js-redis-server/issues/492
 [#503]: https://github.com/fatal10110/js-redis-server/issues/503
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD

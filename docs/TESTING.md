@@ -261,13 +261,12 @@ also run against the socketless clients (`npm run test:integration:socketless`).
 a much smaller surface. The methods, signatures and argument forms it does not
 support yet are listed in
 [`tests-integration/socketless/known-gaps.ts`](../tests-integration/socketless/known-gaps.ts).
-One gap concerns the default protocol. node-redis 5+ negotiates RESP3 by
-default, but `createNodeRedisMock()` starts on RESP2, so its out-of-the-box
-replies follow the RESP2 column below, not a default node-redis client. Send
-`sendCommand(['HELLO', '3'])` first to match node-redis.
 
-The two hand-rolled clients (`createNodeRedisMock`, `createInMemoryClient`)
-start on RESP2 and follow a `HELLO 3` the way a real connection does, so every
+`createNodeRedisMock()` starts on the protocol the installed node-redis
+negotiates by default: RESP3 on v6 (and when `redis` is not installed), RESP2
+on v4 and v5. Its `RESP: 2 | 3` option picks one explicitly, as node-redis'
+own `RESP` client option does. `createInMemoryClient()` starts on RESP2. Both
+follow a `HELLO` the way a real connection does, so every
 reply whose shape the protocol decides changes with it — RESP2 has no map,
 double, boolean, big-number or pair type, and these clients hand back what a
 real client reads off the wire at each version:
@@ -400,6 +399,19 @@ await client.sendCommand(['HSET', 'h', 'f1', 'a']) // escape hatch
 
 await client.quit() // tears down the in-memory state
 ```
+
+Like a real client, the facade opens at node-redis' default protocol (RESP3
+on node-redis 6) unless given `RESP`. `duplicate()` copies that option, and
+the facade's pub/sub session always runs at the client's current protocol:
+
+```typescript
+const resp2 = await createNodeRedisMock({ RESP: 2 })
+await resp2.sendCommand(['ZSCORE', 'z', 'm']) // '2.5' (RESP3: 2.5)
+```
+
+`zRange()` and `zRangeWithScores()` take node-redis' `{ BY, REV, LIMIT }`
+options and send them the way node-redis does, so `zRange(key, 5, 2, { BY:
+'SCORE', REV: true })` is a reverse score range, not an index range.
 
 #### Close path
 
