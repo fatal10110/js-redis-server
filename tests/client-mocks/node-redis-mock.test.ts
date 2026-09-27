@@ -605,6 +605,13 @@ describe('createNodeRedisMock (standalone)', () => {
       const fromDefault = await (await makeClient()).duplicate()
       openClients.push(fromDefault)
       assert.strictEqual(await respOf(fromDefault), '3')
+
+      // node-redis spreads the overrides over its options, so an explicit
+      // `RESP: undefined` drops the option: the duplicate falls back to
+      // DEFAULT_RESP (3 on node-redis 6) rather than inheriting RESP2.
+      const dropped = await client.duplicate({ RESP: undefined })
+      openClients.push(dropped)
+      assert.strictEqual(await respOf(dropped), '3')
     })
 
     for (const RESP of [2, 3] as const) {
@@ -618,6 +625,24 @@ describe('createNodeRedisMock (standalone)', () => {
         assert.strictEqual(await client.publish('ch', 'hi'), 1)
         await waitUntil(() => received.length === 1)
         assert.deepStrictEqual(received, [['hi', 'ch']])
+      })
+    }
+
+    // Real node-redis 6 against Redis 8.0.6: a RESP3 client subscribes on its
+    // one connection, so a HELLO 2 sent while subscribed — on its own or
+    // inside MULTI — is accepted, and CLIENT LIST shows the sub=1 connection
+    // at resp=2 straight away, with no (un)subscribe in between.
+    for (const via of ['sendCommand', 'multi'] as const) {
+      test(`the pub/sub session follows a HELLO sent while subscribed (${via})`, async () => {
+        const client = await makeClient()
+        await client.subscribe('ch', () => {})
+        assert.strictEqual(await subscriberResp(client), '3')
+        if (via === 'sendCommand') {
+          await client.sendCommand(['HELLO', '2'])
+        } else {
+          await client.multi().addCommand(['HELLO', '2']).exec()
+        }
+        assert.strictEqual(await subscriberResp(client), '2')
       })
     }
 

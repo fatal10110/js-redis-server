@@ -566,7 +566,8 @@ so the PR body is not a durable home for a breaking-change note.
 - `createNodeRedisMock()` takes node-redis' `RESP: 2 | 3` client option, for
   the standalone and the cluster facade ([#489]). `NodeRedisMockClient`'s
   `duplicate()` copies it, and, like node-redis' `duplicate(overrides)`,
-  takes `{ RESP }` to override it. The facade also gains
+  takes `{ RESP }` to override it (an explicit `RESP: undefined` falls back
+  to node-redis' default). The facade also gains
   `zRangeWithScores(key, min, max, options)`, which returns node-redis'
   `{ value, score }` members at both protocols ([#488]). New exported types:
   `NodeRedisMockClientOptions`, `NodeRedisRespVersion`,
@@ -586,7 +587,8 @@ so the PR body is not a durable home for a breaking-change note.
 - The node-redis facade's pub/sub session now runs at the client's protocol
   ([#489]). It used to stay on RESP2 even after `HELLO 3` on the client, so
   `CLIENT LIST` reported the subscriber as `resp=2` where real node-redis
-  reports `resp=3`.
+  reports `resp=3`. It also follows a `HELLO` sent while subscribed, straight
+  away, as a RESP3 node-redis client's single connection does.
 
 - `COMMAND` / `COMMAND INFO` report each command's real arity and
   first/last/step key positions ([#370]); most commands used to answer arity

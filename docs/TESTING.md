@@ -402,7 +402,8 @@ await client.quit() // tears down the in-memory state
 
 Like a real client, the facade opens at node-redis' default protocol (RESP3
 on node-redis 6) unless given `RESP`. `duplicate()` copies that option, and
-the facade's pub/sub session always runs at the client's current protocol:
+the facade's pub/sub session always runs at the client's current protocol,
+following a `HELLO` sent before or while subscribed:
 
 ```typescript
 const resp2 = await createNodeRedisMock({ RESP: 2 })

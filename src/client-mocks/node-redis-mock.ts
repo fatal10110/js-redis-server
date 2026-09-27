@@ -472,8 +472,9 @@ abstract class CommandRunner extends EventEmitter {
   /**
    * {@link zRange} plus `WITHSCORES`, as `{ value, score }` members. node-redis'
    * `transformSortedSetReply` builds the same objects at both protocols — it
-   * parses the RESP2 score string with `Number` (`inf` → `Infinity`) and
-   * takes the RESP3 double as is — so the method is protocol-independent.
+   * parses the RESP2 score string like `transformDoubleReply` (`inf` →
+   * `Infinity`) and takes the RESP3 double as is — so the method is
+   * protocol-independent.
    */
   async zRangeWithScores(
     key: NodeRedisCommandArgument,
@@ -626,7 +627,9 @@ export class NodeRedisMockClient extends CommandRunner {
     return new NodeRedisMockClient({
       ...this.backend,
       database: this.database,
-      RESP: overrides.RESP ?? this.resp,
+      // node-redis spreads `overrides` over its options, so an explicit
+      // `RESP: undefined` drops the option and falls back to DEFAULT_RESP.
+      RESP: 'RESP' in overrides ? overrides.RESP : this.resp,
     })
   }
 
@@ -646,8 +649,28 @@ export class NodeRedisMockClient extends CommandRunner {
     // `disconnect()`/`destroy()` flush them via `flushPendingWith`.
     this.assertOpen()
     return this.runExclusive(() =>
-      this.flushable(() => runOnSession(this.session, args, false)),
+      this.flushable(() =>
+        this.followingProtocol(() => runOnSession(this.session, args, false)),
+      ),
     )
+  }
+
+  /**
+   * Run `work` on the command session and, if it moved that session's
+   * protocol (a `HELLO` or a `RESET`), carry the new version over to a live
+   * pub/sub session at once. A RESP3 node-redis client subscribes on its one
+   * connection, so a `HELLO 2` sent while subscribed re-shapes that
+   * connection too: real Redis then lists the subscriber at `resp=2`.
+   */
+  private async followingProtocol<T>(work: () => Promise<T>): Promise<T> {
+    const before = this.session.protocolVersion
+    try {
+      return await work()
+    } finally {
+      if (this.pubsub && this.session.protocolVersion !== before) {
+        this.syncPubSubProtocol(this.pubsub)
+      }
+    }
   }
 
   /**
@@ -760,7 +783,9 @@ export class NodeRedisMockClient extends CommandRunner {
       // close drains with the rest of the queue.
       this.assertOpen()
       return this.runExclusive(() =>
-        this.flushable(() => this.runTransactionSpan(queued)),
+        this.flushable(() =>
+          this.followingProtocol(() => this.runTransactionSpan(queued)),
+        ),
       )
     })
   }
@@ -924,8 +949,10 @@ export class NodeRedisMockClient extends CommandRunner {
    * reserved for pub/sub), so its subscriptions run at whatever that
    * connection negotiated: its `RESP` option, or a later `HELLO`. The facade
    * keeps a separate session for them, so it carries the command session's
-   * version over before each (un)subscribe. `CLIENT LIST` then reports the
-   * subscriber at the client's `resp=`, as it does against a real server.
+   * version over before each (un)subscribe, and after any command that moves
+   * it while subscribed (see {@link followingProtocol}). `CLIENT LIST` then
+   * reports the subscriber at the client's `resp=`, as it does against a real
+   * server.
    */
   private syncPubSubProtocol(
     pubsub: NonNullable<NodeRedisMockClient['pubsub']>,
