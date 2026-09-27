@@ -1,4 +1,5 @@
 import { asciiLowerCase } from '../core/ascii-case'
+import type { CompatibilityProfile } from '../core/compatibility'
 import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
@@ -7,7 +8,11 @@ import {
   WrongNumberOfArgumentsError,
   errors,
 } from '../core/redis-error'
-import { luaReplyToRedisValue, renderScriptError } from '../core/lua-runtime'
+import {
+  isCompileError,
+  luaReplyToRedisValue,
+  renderScriptError,
+} from '../core/lua-runtime'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
@@ -137,9 +142,7 @@ export const evalCommand = defineCommand<EvalArgs>({
   keys: evalKeys,
   execute: async (args, ctx) => {
     const { keys, argv } = splitEvalArgs(args)
-    // Cache the script so a later EVALSHA can find it by digest.
-    ctx.server.scriptCache.load(args.script)
-    return runLuaScript(args.script, keys, argv, ctx)
+    return runLuaScript(args.script, keys, argv, ctx, { cache: true })
   },
 })
 
@@ -162,7 +165,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
   execute: async (args, ctx) => {
     const script = ctx.server.scriptCache.get(args.sha)
     if (!script) {
-      throw errors.noScript()
+      throw errors.noScript(ctx.server.profile)
     }
 
     const { keys, argv } = splitEvalArgs(args)
@@ -190,8 +193,10 @@ export const evalRoCommand = defineCommand<EvalArgs>({
   keys: evalKeys,
   execute: async (args, ctx) => {
     const { keys, argv } = splitEvalArgs(args)
-    ctx.server.scriptCache.load(args.script)
-    return runLuaScript(args.script, keys, argv, ctx, true)
+    return runLuaScript(args.script, keys, argv, ctx, {
+      cache: true,
+      readOnly: true,
+    })
   },
 })
 
@@ -211,11 +216,11 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
   execute: async (args, ctx) => {
     const script = ctx.server.scriptCache.get(args.sha)
     if (!script) {
-      throw errors.noScript()
+      throw errors.noScript(ctx.server.profile)
     }
 
     const { keys, argv } = splitEvalArgs(args)
-    return runLuaScript(script, keys, argv, ctx, true)
+    return runLuaScript(script, keys, argv, ctx, { readOnly: true })
   },
 })
 
@@ -350,10 +355,53 @@ export const scriptsCommands = [
   fcallRoCommand,
 ]
 
-function scriptLoad(args: ScriptArgs, ctx: RedisExecutionContext): RedisResult {
+/**
+ * Caches a script without running it. Like real Redis (every version), one
+ * that does not compile is refused with the error EVAL would give and is not
+ * cached. A shebang line is skipped for the check (see {@link withoutShebang}).
+ */
+async function scriptLoad(
+  args: ScriptArgs,
+  ctx: RedisExecutionContext,
+): Promise<RedisResult> {
   expectRestLength(args, 'script|load', 1)
-  const sha = ctx.server.scriptCache.load(args.rest[0])
+  const script = args.rest[0]
+  const runtime = await ctx.server.getLuaRuntime()
+  let compileError: ReturnType<typeof runtime.compile>
+  try {
+    compileError = runtime.compile(withoutShebang(script, ctx.server.profile))
+  } catch (err) {
+    // As for EVAL: the engine throws only for a script its heap cannot hold.
+    return RedisResult.error(errorMessage(err), 'ERR')
+  }
+  if (compileError) {
+    return RedisResult.create(
+      luaReplyToRedisValue(
+        renderScriptError(compileError, { profile: ctx.server.profile }),
+      ),
+    )
+  }
+  const sha = ctx.server.scriptCache.load(script)
   return RedisResult.create(RedisValue.bulkString(Buffer.from(sha)))
+}
+
+/**
+ * The body Redis 7.0+ compiles for a script that opens with a `#!` shebang
+ * line (`script.shebang`): the script with that line blanked, its line feed
+ * kept so Lua's line numbers still count it. The engine does not skip it yet
+ * (fatal10110/lua-redis-wasm#98), so SCRIPT LOAD compiles this instead. The
+ * shebang itself (engine name, flags) is not checked.
+ */
+function withoutShebang(script: Buffer, profile: CompatibilityProfile): Buffer {
+  if (
+    !profile.has('script.shebang') ||
+    script[0] !== 0x23 /* # */ ||
+    script[1] !== 0x21 /* ! */
+  ) {
+    return script
+  }
+  const lineFeed = script.indexOf(0x0a)
+  return lineFeed === -1 ? script : script.subarray(lineFeed)
 }
 
 function scriptExists(
@@ -470,22 +518,25 @@ async function runLuaScript(
   keys: readonly Buffer[],
   argv: readonly Buffer[],
   ctx: RedisExecutionContext,
-  readOnly = false,
+  options: {
+    /** EVAL / EVAL_RO: cache the script for EVALSHA once it compiles. */
+    cache?: boolean
+    readOnly?: boolean
+  } = {},
 ): Promise<RedisResult> {
   const runtime = await ctx.server.getLuaRuntime()
 
   try {
-    const {
-      reply: result,
-      raisedByRedisCall,
-      raisedByScriptRejection,
-    } = runtime.evalScript(script, keys, argv, ctx, { readOnly })
-    const reply = renderScriptError(result, {
-      profile: ctx.server.profile,
-      raisedByRedisCall,
-      raisedByScriptRejection,
+    const result = runtime.eval(script, keys, argv, ctx, {
+      readOnly: options.readOnly,
     })
-    return RedisResult.create(luaReplyToRedisValue(reply))
+    // Real Redis caches a script when it compiles, before it runs, so one
+    // that fails at run time is cached and one that does not compile is not.
+    if (options.cache && !isCompileError(result)) {
+      ctx.server.scriptCache.load(script)
+    }
+    const reply = renderScriptError(result, { profile: ctx.server.profile })
+    return RedisResult.create(luaReplyToRedisValue(reply, ctx.server.profile))
   } catch (err) {
     if (err instanceof RedisCommandError) {
       return RedisResult.fromError(err)
@@ -676,7 +727,7 @@ async function runFunction(
   }
 
   const { keys, argv } = splitFcallArgs(args)
-  return runLuaScript(fn.script, keys, argv, ctx, readOnly)
+  return runLuaScript(fn.script, keys, argv, ctx, { readOnly })
 }
 
 function fcallKeys(args: FcallArgs): readonly Buffer[] {

@@ -287,27 +287,20 @@ A Lua script can return two more of these kinds. A `{big_number=…}` table is a
 digit string at RESP2 and a `bigint` at RESP3. A boolean is `1` / `0` at RESP2
 and `true` / `false` at RESP3 — but only from a script that has called
 `redis.setresp(3)`, since without it real Redis converts a Lua `true` to the
-integer `1` and `false` to nil. After `redis.setresp(3)`, `redis.call` also
+integer `1` and `false` to nil. The typed tables (`{double=…}`,
+`{big_number=…}`, `{map=…}`, `{set=…}`, `{verbatim_string=…}`) convert
+whether or not the script called it, except on the `redis-6.2` profile, where
+`{big_number=…}` and `{verbatim_string=…}` are not typed yet and reply `[]`,
+as Redis 6.2 does. After `redis.setresp(3)`, `redis.call` also
 hands the script RESP3 replies — `HGETALL` as a `{map=…}` table, `ZSCORE` as a
 `{double=…}` table — so returning one gives the client a map or a double.
 
-Known mock gaps here — none of them Redis behaviour:
-
-- The `setresp(3)` requirement is Redis's rule for booleans only. Real Redis
-  converts `{big_number=…}`, `{double=…}`, `{map=…}`, `{set=…}` and
-  `{verbatim_string=…}` tables without it; the mock's bundled Lua engine
-  (`lua-redis-wasm`) returns `[]` for them unless the script calls
-  `redis.setresp(3)` first.
-- After `redis.setresp(3)`, a missing value (`GET` of an absent key, a missing
-  `HMGET`/`MGET` field) reaches the script as `false`, not `nil` — also the
-  engine. Returning it gives `false` to a RESP3 client and `0` to a RESP2
-  client rather than a null reply, and inside an array it does not end the
-  array the way a Lua `nil` does in Redis: `HMGET h f nope f` returns
-  `['v']` from real Redis but `['v', false, 'v']` (RESP2: `['v', 0, 'v']`)
-  from the mock.
-- The mock's `SMEMBERS` replies with an array, not a RESP3 set (`~`), so after
-  `redis.setresp(3)` the script sees a plain list instead of a `{set=…}`
-  table. This one is in this repo, not the engine.
+One known mock gap here, not Redis behaviour: the mock's `SMEMBERS` replies
+with an array, not a RESP3 set (`~`), so after `redis.setresp(3)` the script
+sees a plain list instead of a `{set=…}` table. The script gaps that still
+need Lua engine work (6.2's error handler, `redis.call` number arguments on
+6.2 / 7.0, `set_repl` / `replicate_commands`) are tracked in
+[#540](https://github.com/fatal10110/js-redis-server/issues/540).
 
 (`createIoredisMock` drives the real `ioredis@5`, which is RESP2-only, so it
 only ever sees the left column.) The *curated* methods on the node-redis facade

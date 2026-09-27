@@ -10,12 +10,10 @@
  * matches nothing fails the file).
  *
  * `ioredis/**` has no entries: `createIoredisMock` is the real ioredis client
- * over a virtual socket, and the whole suite passes on it (bar the in-process
- * server's own gaps, which `scripts-typed-replies` marks for mock and socketless
- * alike). Everything below is the hand-written node-redis facade
- * (`createNodeRedisMock`), which curates a few dozen of node-redis' methods and
- * signatures — most of these are surface it does not have yet, not wrong
- * replies.
+ * over a virtual socket, and the whole suite passes on it. Everything below is
+ * the hand-written node-redis facade (`createNodeRedisMock`), which curates a
+ * few dozen of node-redis' methods and signatures — most of these are surface
+ * it does not have yet, not wrong replies.
  *
  * One divergence is not listed per test, because the harness works around it:
  * see {@link FACADE_DUPLICATE_PROMISE}.

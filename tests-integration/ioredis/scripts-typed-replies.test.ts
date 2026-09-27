@@ -19,18 +19,6 @@ import { randomKey } from '../utils'
 const testRunner = new TestRunner()
 const RUN = randomKey()
 
-// Known mock gaps in the bundled `lua-redis-wasm` engine, pinned against real
-// Redis until they close.
-// mock and socketless run the same in-process server, so they share its gaps.
-const mockGap = (reason: string) =>
-  testRunner.backend !== 'real' ? reason : false
-const ENGINE_GAP = mockGap(
-  'lua-redis-wasm drops typed tables without redis.setresp(3) (#449)',
-)
-const ENGINE_NULL_GAP = mockGap(
-  'lua-redis-wasm decodes a RESP3 null as false, not nil (#449)',
-)
-
 describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`, () => {
   const hashKey = `lua449:${RUN}:h`
   const zsetKey = `lua449:${RUN}:z`
@@ -55,40 +43,36 @@ describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`,
   }
 
   describe('typed tables convert without redis.setresp(3)', () => {
-    test('{double=…} is a bulk string', { todo: ENGINE_GAP }, async () => {
+    test('{double=…} is a bulk string', async () => {
       assert.strictEqual(await evalScript('return {double=2.5}'), '2.5')
     })
 
-    test('{big_number=…} is a bulk string', { todo: ENGINE_GAP }, async () => {
+    test('{big_number=…} is a bulk string', async () => {
       assert.strictEqual(
         await evalScript("return {big_number='12345678901234567890'}"),
         '12345678901234567890',
       )
     })
 
-    test('{map=…} is a flat array', { todo: ENGINE_GAP }, async () => {
+    test('{map=…} is a flat array', async () => {
       assert.deepStrictEqual(await evalScript("return {map={a='1'}}"), [
         'a',
         '1',
       ])
     })
 
-    test('{set=…} is an array', { todo: ENGINE_GAP }, async () => {
+    test('{set=…} is an array', async () => {
       assert.deepStrictEqual(await evalScript('return {set={a=true}}'), ['a'])
     })
 
-    test(
-      '{verbatim_string=…} is a bulk string',
-      { todo: ENGINE_GAP },
-      async () => {
-        assert.strictEqual(
-          await evalScript(
-            "return {verbatim_string={format='txt', string='hi'}}",
-          ),
-          'hi',
-        )
-      },
-    )
+    test('{verbatim_string=…} is a bulk string', async () => {
+      assert.strictEqual(
+        await evalScript(
+          "return {verbatim_string={format='txt', string='hi'}}",
+        ),
+        'hi',
+      )
+    })
   })
 
   describe('redis.call replies after redis.setresp(3)', () => {
@@ -146,7 +130,7 @@ describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`,
       )
     })
 
-    test('a missing value is nil', { todo: ENGINE_NULL_GAP }, async () => {
+    test('a missing value is nil', async () => {
       assert.strictEqual(
         await evalScript("redis.setresp(3); return redis.call('GET', KEYS[3])"),
         null,
@@ -159,19 +143,15 @@ describe(`Lua typed replies at RESP2 (ioredis, ${testRunner.getBackendName()})`,
       )
     })
 
-    test(
-      'a missing value ends an array reply',
-      { todo: ENGINE_NULL_GAP },
-      async () => {
-        // A Lua nil ends the array Redis builds from a table.
-        assert.deepStrictEqual(
-          await evalScript(
-            "redis.setresp(3); return redis.call('HMGET', KEYS[1], 'f', 'nope', 'f')",
-          ),
-          ['v'],
-        )
-      },
-    )
+    test('a missing value ends an array reply', async () => {
+      // A Lua nil ends the array Redis builds from a table.
+      assert.deepStrictEqual(
+        await evalScript(
+          "redis.setresp(3); return redis.call('HMGET', KEYS[1], 'f', 'nope', 'f')",
+        ),
+        ['v'],
+      )
+    })
 
     test('redis.setresp(2) switches back to RESP2 shapes', async () => {
       assert.deepStrictEqual(

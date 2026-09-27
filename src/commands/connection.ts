@@ -24,8 +24,8 @@ import {
   unknownSubcommandError,
 } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
+import { VALKEY_REDIS_COMPAT_VERSION } from '../core/compatibility/profile'
 
-const VALKEY_REDIS_COMPAT_VERSION = '7.2.4'
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
 // There is no persistence, so LASTSAVE reports the process/server start time.
