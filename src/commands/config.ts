@@ -441,8 +441,6 @@ export const configCommand = defineCommand({
     skip: true,
   },
   introspection: {
-    flags: [],
-    categories: ['@admin', '@slow', '@dangerous'],
     subcommands: [
       commandSubcommandInfo('config|get', -3),
       commandSubcommandInfo('config|set', -4),

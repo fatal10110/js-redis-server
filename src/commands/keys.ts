@@ -15,7 +15,7 @@ import {
   isSelfSortPattern,
   sortPatternWildcardIndex,
 } from '../core/sort-patterns'
-import { sortGetKeys } from '../core/key-specs'
+import { sortGetKeys, sortRoGetKeys } from '../core/key-specs'
 import { assertSortPatternAllowed } from '../core/sort-cluster-guard'
 import type { ExpirationState, RedisDatabase } from '../state'
 import {
@@ -979,6 +979,7 @@ export const sortCommand = defineCommand({
 export const sortRoCommand = defineCommand({
   name: 'sort_ro',
   since: { redis: '7.0.0', valkey: '7.2.0' },
+  rawKeys: sortRoGetKeys,
   schema: sortSchema(),
   flags: ['readonly'],
   // sortROGetKeys() reports the source key only: SORT_RO has no STORE.

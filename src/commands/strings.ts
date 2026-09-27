@@ -26,11 +26,7 @@ import {
   parsePositiveExpireToken,
   requireNextOptionValue,
 } from './helpers'
-import {
-  commandDocs,
-  commandKeyArgument,
-  commandKeySpec,
-} from './introspection'
+import { commandDocs, commandKeyArgument } from './introspection'
 
 /**
  * Largest string this mock will actually materialise, regardless of how high
@@ -76,9 +72,6 @@ export const getCommand = defineCommand({
   }),
   flags: ['readonly', 'fast'],
   introspection: {
-    flags: ['readonly', 'fast'],
-    categories: ['@read', '@string', '@fast'],
-    keySpecs: [commandKeySpec(1, 0, 1, ['RO', 'access'])],
     docs: commandDocs('Returns the string value of a key.', 'string', [
       commandKeyArgument('key', 0),
     ]),
@@ -93,13 +86,6 @@ export const setCommand = defineCommand({
   schema: createSetSchema(),
   flags: ['write', 'denyoom'],
   introspection: {
-    flags: ['write', 'denyoom'],
-    categories: ['@write', '@string', '@slow'],
-    keySpecs: [
-      commandKeySpec(1, 0, 1, ['RW', 'access', 'update', 'variable_flags'], {
-        notes: 'RW and ACCESS due to the optional `GET` argument',
-      }),
-    ],
     docs: commandDocs('Set the string value of a key', 'string', [
       commandKeyArgument('key', 0),
       { name: 'value', type: 'string' },
@@ -147,10 +133,6 @@ export const mgetCommand = defineCommand({
   }),
   flags: ['readonly'],
   introspection: {
-    flags: ['readonly', 'fast'],
-    categories: ['@read', '@string', '@fast'],
-    tips: ['request_policy:multi_shard'],
-    keySpecs: [commandKeySpec(1, -1, 1, ['RO', 'access'])],
     docs: commandDocs('Get the values of all the given keys', 'string', [
       commandKeyArgument('key', 0, { flags: ['multiple'] }),
     ]),

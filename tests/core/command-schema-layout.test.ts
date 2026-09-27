@@ -8,6 +8,8 @@ import {
 } from '../../src/core/command-schema'
 import { keySpecsKeyRange } from '../../src/commands/command'
 import { createRedisCommandExecutor } from '../../src/internal'
+import { resolveCompatibilityProfile } from '../../src/core/compatibility'
+import { commandTableEntry } from '../../src/core/compatibility/command-table'
 
 describe('schema layout (#370)', () => {
   test('arity counts the command name and negates open-ended schemas', () => {
@@ -115,25 +117,38 @@ describe('schema layout (#370)', () => {
     })
   })
 
-  test('declared key specs agree with the schema key positions', () => {
-    const executor = createRedisCommandExecutor()
-    let checked = 0
-    for (const definition of executor.getCommandDefinitions()) {
-      const keySpecs = definition.introspection?.keySpecs ?? []
-      if (keySpecs.length === 0) {
-        continue
+  // The real key specs decide the key range from 7.0; the schema's key
+  // positions stand in for them on 6.2 and for custom commands, so the two
+  // must agree wherever both exist.
+  for (const preset of [
+    'redis-7.0',
+    'redis-7.2',
+    'redis-7.4',
+    'redis-8.0',
+    'valkey-8.0',
+    'valkey-9.0',
+  ] as const) {
+    test(`real key specs agree with the schema key positions (${preset})`, () => {
+      const profile = resolveCompatibilityProfile(preset)
+      const executor = createRedisCommandExecutor({ compatibility: preset })
+      let checked = 0
+      for (const definition of executor.getCommandDefinitions()) {
+        const keySpecs = commandTableEntry(definition.name, profile)?.keySpecs
+        if (!keySpecs || keySpecs.length === 0) {
+          continue
+        }
+
+        checked++
+        assert.deepStrictEqual(
+          keySpecsKeyRange(keySpecs),
+          schemaKeyRange(definition.schema),
+          definition.name,
+        )
       }
 
-      checked++
-      assert.deepStrictEqual(
-        keySpecsKeyRange(keySpecs),
-        schemaKeyRange(definition.schema),
-        definition.name,
-      )
-    }
-
-    assert.ok(checked > 0)
-  })
+      assert.ok(checked > 0)
+    })
+  }
 })
 
 describe('schema layout composition (#370 review)', () => {

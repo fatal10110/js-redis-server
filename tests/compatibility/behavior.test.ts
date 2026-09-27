@@ -584,9 +584,13 @@ function commandSubcommandNames(result: RedisResult): string[] {
   })
 }
 
+// HELP lines: status lines (COMMAND HELP, as real Redis sends them) or bulk
+// strings (the containers that still answer that way).
 function arrayTexts(result: RedisResult): string[] {
   assert.strictEqual(result.value.kind, 'array')
-  return result.value.items.map(bulkStringText)
+  return result.value.items.map(item =>
+    item.kind === 'simple-string' ? item.value : bulkStringText(item),
+  )
 }
 
 function helloField(result: RedisResult, key: string): string {
@@ -601,11 +605,15 @@ function helloField(result: RedisResult, key: string): string {
   throw new Error(`Missing HELLO field ${key}`)
 }
 
+// COMMAND INFO flags are a set of status strings, as real Redis sends them.
 function commandInfoFlags(value: RedisValue): string[] {
   assert.strictEqual(value.kind, 'array')
   const flags = value.items[2]
-  assert.strictEqual(flags.kind, 'array')
-  return flags.items.map(bulkStringText)
+  assert.strictEqual(flags.kind, 'set')
+  return flags.items.map(flag => {
+    assert.strictEqual(flag.kind, 'simple-string')
+    return flag.value
+  })
 }
 
 function bulkStringText(value: RedisValue): string {

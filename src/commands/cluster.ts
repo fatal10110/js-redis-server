@@ -35,24 +35,12 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
       skip: true,
     },
     introspection: {
-      flags: ['admin'],
-      categories: ['@admin', '@slow', '@dangerous'],
       subcommands: [
-        commandSubcommandInfo('cluster|info', 2, {
-          categories: ['@admin', '@slow', '@dangerous'],
-        }),
-        commandSubcommandInfo('cluster|nodes', 2, {
-          categories: ['@admin', '@slow', '@dangerous'],
-        }),
-        commandSubcommandInfo('cluster|slots', 2, {
-          categories: ['@admin', '@slow', '@dangerous'],
-        }),
-        commandSubcommandInfo('cluster|shards', 2, {
-          categories: ['@admin', '@slow', '@dangerous'],
-        }),
-        commandSubcommandInfo('cluster|myid', 2, {
-          categories: ['@admin', '@slow', '@dangerous'],
-        }),
+        commandSubcommandInfo('cluster|info', 2),
+        commandSubcommandInfo('cluster|nodes', 2),
+        commandSubcommandInfo('cluster|slots', 2),
+        commandSubcommandInfo('cluster|shards', 2),
+        commandSubcommandInfo('cluster|myid', 2),
       ],
     },
     keys: () => [],

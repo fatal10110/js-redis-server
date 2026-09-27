@@ -21,9 +21,9 @@ export type { KeyWithFlags }
  * index 0), each with its spec's flags, following Redis's
  * `getKeysUsingKeySpecs` without partial results: a spec whose keyword is
  * absent adds nothing, nor does a `not_key` one (a shard channel), and a
- * spec that cannot be applied (a numkeys that is
- * not a non-negative integer, keys running past the end of the command, a
- * step below 1) makes the whole lookup fail with `null`. This is how
+ * spec that cannot be applied (an `unknown` one, a numkeys that is not a
+ * non-negative integer, keys running past the end of the command, a step
+ * below 1) makes the whole lookup fail with `null`. This is how
  * `COMMAND GETKEYSANDFLAGS` attributes flags to keys.
  */
 export function keysFromKeySpecs(
@@ -35,6 +35,9 @@ export function keysFromKeySpecs(
   for (const spec of specs) {
     if (spec.flags.includes('not_key')) {
       continue
+    }
+    if (spec.beginSearchUnknown || spec.findKeysUnknown) {
+      return null
     }
     const first = beginSearch(spec, argv)
     if (first === null) {
@@ -80,9 +83,11 @@ export function rawCommandKeys(
 
   const subcommand = lookupSubcommandEntry(definition, rawArgs, profile)
   const range = subcommand
-    ? legacyKeyRange(introspectionFor(subcommand.introspection, profile))
+    ? legacyKeyRange(
+        introspectionFor(subcommand.introspection, profile, subcommand.name),
+      )
     : legacyKeyRange(
-        introspectionFor(definition.introspection, profile),
+        introspectionFor(definition.introspection, profile, definition.name),
         definition.schema,
       )
   return legacyRangeKeys(range, argv)
@@ -98,8 +103,8 @@ export type LegacyKeyRange = {
 /**
  * The legacy first/last/step triple of a command-table entry. Declared key
  * specs win, folded the way Redis's `populateCommandLegacyRangeSpec` does:
- * only index + range specs count (a keyword or keynum spec makes the keys
- * movable), and several merge only while each is a plain step-1 range picking
+ * only index + range specs count (a keyword, keynum or unknown spec makes
+ * the keys movable), and several merge only while each is a plain step-1 range picking
  * up where the previous one ended. Without specs, the schema's key positions
  * stand in for them.
  */
@@ -115,7 +120,11 @@ export function legacyKeyRange(
   }
 
   const specs = declared.filter(
-    spec => !spec.beginSearchKeyword && !spec.findKeysKeynum,
+    spec =>
+      !spec.beginSearchKeyword &&
+      !spec.beginSearchUnknown &&
+      !spec.findKeysKeynum &&
+      !spec.findKeysUnknown,
   )
   if (specs.length === 0) {
     return { firstKey: 0, lastKey: 0, keyStep: 0 }
@@ -311,6 +320,49 @@ function sourceAndDestination(
   return storedKey === -1
     ? [source]
     : [source, { key: argv[storedKey], flags: ['OW', 'update'] }]
+}
+
+/**
+ * Redis's `sortROGetKeys` (SORT_RO): the key, always `RO access`. SORT_RO has
+ * no STORE, and the BY / GET patterns name keys only through the sorted
+ * key's content, which a key spec cannot express.
+ */
+export function sortRoGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
+  return [{ key: argv[1], flags: ['RO', 'access'] }]
+}
+
+/**
+ * Redis's `bitfieldGetKeys` (7.0+): the key, `RO access` while every
+ * subcommand is a complete `GET` or `OVERFLOW`, `RW access update` from the
+ * first `SET` / `INCRBY` or anything it cannot read.
+ */
+export function bitfieldGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
+  const argc = argv.length
+  let readonly = true
+  for (let i = 2; i < argc; i++) {
+    const remaining = argc - i - 1
+    const arg = argv[i]
+    if (equalsAscii(arg, 'get') && remaining >= 2) {
+      i += 2
+    } else if (
+      (equalsAscii(arg, 'set') || equalsAscii(arg, 'incrby')) &&
+      remaining >= 3
+    ) {
+      readonly = false
+      break
+    } else if (equalsAscii(arg, 'overflow') && remaining >= 1) {
+      i += 1
+    } else {
+      readonly = false
+      break
+    }
+  }
+  return [
+    {
+      key: argv[1],
+      flags: readonly ? ['RO', 'access'] : ['RW', 'access', 'update'],
+    },
+  ]
 }
 
 /**

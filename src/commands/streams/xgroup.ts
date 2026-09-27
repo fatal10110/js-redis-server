@@ -209,18 +209,14 @@ const xgroupIntrospection: CommandIntrospection = streamContainerIntrospection({
     before72: 'A container for consumer groups commands',
     from72: 'A container for consumer groups commands.',
   },
-  legacy: { flags: ['write', 'denyoom'], keyFlags: ['RW', 'insert'] },
   subcommands: [
     streamSubcommandInfo('xgroup|help', 2, {
-      flags: ['loading', 'stale'],
       summaries: {
         before72: 'Show helpful text about the different subcommands',
         from72: 'Returns helpful text about the different subcommands.',
       },
     }),
     streamSubcommandInfo('xgroup|destroy', 4, {
-      flags: ['write'],
-      keyFlags: ['RW', 'delete'],
       complexity:
         "O(N) where N is the number of entries in the group's pending entries list (PEL).",
       summaries: {
@@ -229,8 +225,6 @@ const xgroupIntrospection: CommandIntrospection = streamContainerIntrospection({
       },
     }),
     streamSubcommandInfo('xgroup|setid', -5, {
-      flags: ['write'],
-      keyFlags: ['RW', 'update'],
       summaries: {
         before72:
           'Set a consumer group to an arbitrary last delivered ID value.',
@@ -238,8 +232,6 @@ const xgroupIntrospection: CommandIntrospection = streamContainerIntrospection({
       },
     }),
     streamSubcommandInfo('xgroup|createconsumer', 5, {
-      flags: ['write', 'denyoom'],
-      keyFlags: ['RW', 'insert'],
       since: '6.2.0',
       summaries: {
         before72: 'Create a consumer in a consumer group.',
@@ -247,16 +239,12 @@ const xgroupIntrospection: CommandIntrospection = streamContainerIntrospection({
       },
     }),
     streamSubcommandInfo('xgroup|delconsumer', 5, {
-      flags: ['write'],
-      keyFlags: ['RW', 'delete'],
       summaries: {
         before72: 'Delete a consumer from a consumer group.',
         from72: 'Deletes a consumer from a consumer group.',
       },
     }),
     streamSubcommandInfo('xgroup|create', -5, {
-      flags: ['write', 'denyoom'],
-      keyFlags: ['RW', 'insert'],
       summaries: {
         before72: 'Create a consumer group.',
         from72: 'Creates a consumer group.',
