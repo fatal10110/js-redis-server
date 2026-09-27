@@ -166,7 +166,9 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
     })
 
     async function seeded(resp: 2 | 3): Promise<NodeRedisMockClient> {
-      const client = (await createNodeRedisMock()) as NodeRedisMockClient
+      const client = (await createNodeRedisMock({
+        RESP: 2,
+      })) as NodeRedisMockClient
       openClients.push(client)
       if (resp === 3) {
         await client.sendCommand(['HELLO', '3'])
@@ -360,9 +362,14 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       }
     })
 
-    async function seededCluster(): Promise<NodeRedisMockCluster> {
+    // RESP2 unless told otherwise, so the HELLO tests below start from the
+    // flat shape. `{}` leaves `RESP` unset: node-redis' own default.
+    async function seededCluster(
+      options: { RESP?: 2 | 3 } = { RESP: 2 },
+    ): Promise<NodeRedisMockCluster> {
       const cluster = (await createNodeRedisMock({
         cluster: { masters: 3 },
+        ...options,
       })) as NodeRedisMockCluster
       openClusters.push(cluster)
       for (const key of keys) {
@@ -407,6 +414,26 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
         await Promise.all([zrange(cluster, 'k0'), zrange(cluster, 'k2')]),
         [tuples, tuples],
       )
+    })
+
+    // node-redis 6 defaults to RESP3 and hands `RESP` to every node client
+    // it opens, so a default cluster client needs no HELLO to get tuples.
+    test('a default cluster client is RESP3 on every node', async () => {
+      const cluster = await seededCluster({})
+      for (const key of keys) {
+        assert.deepStrictEqual(await zrange(cluster, key), tuples)
+      }
+    })
+
+    test('RESP: 3 reaches every node, and HELLO 2 still downgrades them', async () => {
+      const cluster = await seededCluster({ RESP: 3 })
+      for (const key of keys) {
+        assert.deepStrictEqual(await zrange(cluster, key), tuples)
+      }
+      await cluster.sendCommand(['HELLO', '2'])
+      for (const key of keys) {
+        assert.deepStrictEqual(await zrange(cluster, key), flat)
+      }
     })
 
     test('a RESP2 cluster client is flat on every node', async () => {

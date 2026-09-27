@@ -48,10 +48,13 @@ export {
   NodeRedisMockCluster,
   NodeRedisMockMulti,
   type CreateNodeRedisMockOptions,
+  type NodeRedisMockClientOptions,
   type NodeRedisMockClusterOptions,
   type NodeRedisCommandArgument,
   type NodeRedisReply,
+  type NodeRedisRespVersion,
   type NodeRedisZMember,
+  type NodeRedisZRangeOptions,
   type NodeRedisPubSubListener,
 } from './client-mocks/node-redis-mock'
 

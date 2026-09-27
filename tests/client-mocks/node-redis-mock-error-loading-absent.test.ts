@@ -163,3 +163,14 @@ test('a failed queued command throws the MultiErrorReply stand-in', async () => 
     await client.quit()
   }
 })
+
+// Like the stand-ins, the default protocol models v6: RESP3.
+test('with no redis at all, a default client negotiates RESP3', async () => {
+  const client = newClient()
+  try {
+    await client.sendCommand(['ZADD', 'z', '2.5', 'b'])
+    assert.strictEqual(await client.sendCommand(['ZSCORE', 'z', 'b']), 2.5)
+  } finally {
+    await client.quit()
+  }
+})

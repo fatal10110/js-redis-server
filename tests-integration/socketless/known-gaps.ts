@@ -17,13 +17,9 @@
  * signatures — most of these are surface it does not have yet, not wrong
  * replies.
  *
- * Three divergences are not listed per test, because the harness works around
- * them or no suite can observe them through the facade: see
- * {@link FACADE_DEFAULT_PROTOCOL}, {@link FACADE_DUPLICATE_PROMISE} and
- * {@link FACADE_PUBSUB_PROTOCOL}.
+ * One divergence is not listed per test, because the harness works around it:
+ * see {@link FACADE_DUPLICATE_PROMISE}.
  */
-import assert from 'node:assert'
-import { isDeepStrictEqual } from 'node:util'
 
 export type KnownGap = {
   /** Test file, relative to `tests-integration/` (e.g. `ioredis/multi.test.ts`). */
@@ -51,20 +47,6 @@ export type KnownGap = {
 }
 
 /**
- * `createNodeRedisMock()` starts on RESP2, while node-redis 5+ (`redis@6`
- * here) defaults to RESP3 and says `HELLO 3` on connect. So out of the box the
- * facade answers ZSCORE with `'2.5'` and HGETALL (via `sendCommand`) with
- * `['f', 'v']` where a default node-redis 6 client gets `2.5` and
- * `{ f: 'v' }`. The socketless harness sends `HELLO 3` to every facade so the
- * suites run on the protocol they run on against mock/real. The divergence
- * itself is pinned by `node-redis/socketless-parity.test.ts`, which asserts
- * today's facade replies — so it fails, loudly, once the facade is fixed.
- * Follow-up for `src/`: default the facade to node-redis' own default.
- */
-export const FACADE_DEFAULT_PROTOCOL =
-  "createNodeRedisMock() starts on RESP2; node-redis 6's default client negotiates RESP3 (HELLO 3), so default-protocol replies differ (ZSCORE '2.5' vs 2.5, HGETALL flat array vs object)"
-
-/**
  * `NodeRedisMockClient.duplicate()` returns a Promise of an already-usable
  * client; real node-redis returns an unconnected client synchronously (you
  * `connect()` it). The harness's `duplicateNodeRedisClient()` (test-config.ts)
@@ -74,18 +56,6 @@ export const FACADE_DEFAULT_PROTOCOL =
  */
 export const FACADE_DUPLICATE_PROMISE =
   'NodeRedisMockClient.duplicate() returns a Promise; node-redis returns the unconnected client synchronously'
-
-/**
- * The facade's pub/sub runs on a dedicated session it opens on first
- * subscribe (`ensurePubSub()`), and that session never negotiates RESP3 —
- * not even on a client that sent `HELLO 3` — so a RESP3 facade subscriber
- * still receives RESP2 frames. The listener API (`(message, channel)`) hides
- * the frame shape, so no test through the facade can observe it; the parity
- * suite's facade pub/sub case therefore claims delivery parity only.
- * Follow-up for `src/`: open the pub/sub session at the client's protocol.
- */
-export const FACADE_PUBSUB_PROTOCOL =
-  "NodeRedisMockClient's pub/sub session (ensurePubSub) always runs RESP2, even after HELLO 3 on the client"
 
 type Cause = { reason: string; error: NonNullable<KnownGap['error']> }
 
@@ -113,11 +83,6 @@ const CAUSE = {
       "passes node-redis' array / object argument forms (`sAdd(key, [members])`, `hSet(key, { … })`, `set(key, v, { expiration })`, …); the facade's curated methods only take positional strings",
     error: /"arguments\[\d+\]" must be of type "string \| Buffer", got object/,
   },
-  zRangeOptionsError: {
-    reason:
-      "the facade's `zRange(key, start, stop)` drops node-redis' options argument (`BY` / `REV` / `LIMIT`) and runs a plain index ZRANGE, which rejects score/lex bounds",
-    error: /ERR value is not an integer or out of range/,
-  },
   secondClusterClient: {
     reason:
       'needs a second cluster client on the same keyspace (blocking pop + push, WATCH from another connection); `NodeRedisMockCluster` has no `duplicate()` or equivalent',
@@ -132,8 +97,8 @@ const SKIP = {
   secondClusterClient: CAUSE.secondClusterClient.reason,
   flushAllInHook:
     'beforeEach() calls `flushAll()`, which the facade does not have',
-  respOption:
-    "opens node-redis clients at a chosen RESP version on a TCP port; `createNodeRedisMock()` takes no `RESP` option (RESP3 only via `sendCommand(['HELLO', '3'])`)",
+  tcpClients:
+    'before() opens real node-redis clients (`createClient({ url, RESP })`) on a `setupRawStandalone()` TCP port, which the socketless backend has no way to provide',
 } as const
 
 /** The facade has no such curated method (node-redis' typed command API). */
@@ -141,22 +106,6 @@ function missing(...methods: string[]): Cause {
   return {
     reason: `the facade has no ${methods.map(m => `\`${m}()\``).join(', ')}`,
     error: new RegExp(`\\.(?:${methods.join('|')}) is not a function$`),
-  }
-}
-
-/**
- * The facade's `zRange(key, start, stop)` silently drops node-redis' options
- * argument (`REV` / `BY`) and runs a plain index ZRANGE — wrong results, not an
- * error. The only observable failure is the test's own deep-equal, so each
- * title is pinned to the exact wrong reply it gets (`AssertionError.actual`);
- * any other failure of that test is a different one.
- */
-function zRangeWrongResult(actual: readonly string[]): Cause {
-  return {
-    reason: `the facade's \`zRange(key, start, stop)\` silently drops node-redis' options argument (\`REV\` / \`BY\`) and runs a plain index ZRANGE — wrong results, not an error (it returns ${JSON.stringify(actual)})`,
-    error: err =>
-      err instanceof assert.AssertionError &&
-      isDeepStrictEqual(err.actual, actual),
   }
 }
 
@@ -525,7 +474,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'RESET and QUIT are refused from scripts',
     'a refused CLIENT SETNAME leaves the connection name untouched',
   ]),
-  skip('node-redis/scripts-typed-replies.test.ts', SKIP.respOption),
+  skip('node-redis/scripts-typed-replies.test.ts', SKIP.tcpClients),
   todo('node-redis/select-multi.test.ts', missing('select'), [
     'a queued SELECT switches the DB for later commands in the same EXEC',
   ]),
@@ -798,15 +747,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/zset/core.test.ts', CAUSE.clusterSendCommand, [
     'ZADD option syntax errors match Redis',
   ]),
-  todo(
-    'node-redis/zset/double-format.test.ts',
-    missing('zIncrBy', 'zRangeWithScores', 'zScore'),
-    [
-      'WITHSCORES parses back to the stored scores',
-      'ZINCRBY parses back to the new score',
-      'ZSCORE / ZMSCORE parse back to the stored score',
-    ],
-  ),
+  todo('node-redis/zset/double-format.test.ts', missing('zIncrBy', 'zScore'), [
+    'ZINCRBY parses back to the new score',
+    'ZSCORE / ZMSCORE parse back to the stored score',
+  ]),
   todo(
     'node-redis/zset/lex.test.ts',
     missing('zLexCount', 'zRangeByLex', 'zRemRangeByLex'),
@@ -825,9 +769,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'ZRANGEBYLEX validates LIMIT clause',
     'lex commands reject wrong arity',
   ]),
-  todo('node-redis/zset/lex.test.ts', CAUSE.zRangeOptionsError, [
-    'ZREVRANGEBYLEX returns members in reverse lex order (max then min)',
-  ]),
   todo(
     'node-redis/zset/modern-range.test.ts',
     missing(
@@ -835,7 +776,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'zRandMemberCount',
       'zRandMemberCountWithScores',
       'zRangeStore',
-      'zRangeWithScores',
       'zmScore',
     ),
     [
@@ -850,7 +790,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'ZRANDMEMBER with negative count allows repeats and matches |count| length',
       'ZRANDMEMBER with positive count returns distinct members',
       'ZRANDMEMBER without count returns one existing member',
-      'ZRANGE legacy index form returns members in order',
       'ZRANGESTORE stores an index range and overwrites destination',
     ],
   ),
@@ -867,45 +806,16 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/zset/modern-range.test.ts', CAUSE.clusterTopology, [
     'ZRANGESTORE rejects destination and source keys from different slots',
   ]),
-  todo('node-redis/zset/modern-range.test.ts', CAUSE.zRangeOptionsError, [
-    'ZRANGE BYLEX REV takes bounds as max min and reverses',
-    'ZRANGE BYLEX filters by lex bounds',
-    'ZRANGE BYSCORE filters by score bounds',
-    'ZRANGE on a missing key returns empty array',
+  todo('node-redis/zset/range.test.ts', missing('zRangeByScore', 'zRank'), [
+    'ZRANK and ZREVRANK commands',
+    'score range commands support infinite and exclusive bounds',
   ]),
-  todo('node-redis/zset/modern-range.test.ts', zRangeWrongResult([]), [
-    'ZRANGE BYSCORE REV takes bounds as max min and reverses',
-  ]),
-  todo(
-    'node-redis/zset/modern-range.test.ts',
-    zRangeWrongResult(['a', 'b', 'c']),
-    ['ZRANGE REV reverses the index ordering'],
-  ),
-  todo(
-    'node-redis/zset/range.test.ts',
-    missing('zRangeByScore', 'zRangeWithScores', 'zRank'),
-    [
-      'ZRANGE command',
-      'ZRANK and ZREVRANK commands',
-      'score range commands support infinite and exclusive bounds',
-    ],
-  ),
   todo('node-redis/zset/range.test.ts', CAUSE.argumentShapes, [
     'ZRANK and ZREVRANK WITHSCORE option',
   ]),
   todo(
-    'node-redis/zset/range.test.ts',
-    zRangeWrongResult(['one', 'two', 'three']),
-    ['ZREVRANGE command'],
-  ),
-  todo(
     'node-redis/zset/score-range.test.ts',
-    missing(
-      'zRangeByScore',
-      'zRangeByScoreWithScores',
-      'zRangeWithScores',
-      'zRemRangeByRank',
-    ),
+    missing('zRangeByScore', 'zRangeByScoreWithScores', 'zRemRangeByRank'),
     [
       'ZRANGEBYSCORE LIMIT negative count returns all remaining',
       'ZRANGEBYSCORE LIMIT negative offset returns empty',
@@ -920,7 +830,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'ZREMRANGEBYRANK removes members in rank range',
       'ZREMRANGEBYRANK removing all members deletes the key',
       'ZREMRANGEBYRANK supports negative ranks',
-      'ZREVRANGEBYSCORE returns descending range with max/min order',
     ],
   ),
   todo('node-redis/zset/score-range.test.ts', CAUSE.clusterSendCommand, [
@@ -929,12 +838,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'ZRANGEBYSCORE rejects wrong arity',
     'ZREMRANGEBYRANK rejects non-integer rank',
     'ZREMRANGEBYRANK rejects wrong arity',
-  ]),
-  todo('node-redis/zset/score-range.test.ts', CAUSE.zRangeOptionsError, [
-    'ZREVRANGEBYSCORE exclusive bounds',
-    'ZREVRANGEBYSCORE on missing key returns empty',
-    'ZREVRANGEBYSCORE rejects non-float bound',
-    'ZREVRANGEBYSCORE supports LIMIT',
   ]),
   todo('node-redis/zset/setops.test.ts', CAUSE.clusterTopology, [
     'ZDIFF rejects WEIGHTS (diff has no weights/aggregate)',
@@ -966,7 +869,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   ]),
   todo(
     'node-redis/zset/workflow.test.ts',
-    missing('zRangeByScore', 'zRangeWithScores', 'zRem'),
+    missing('zIncrBy', 'zRangeByScore', 'zRem', 'zRevRank'),
     [
       'Sorted Set commands workflow - Leaderboard',
       'Sorted Set commands workflow - Priority Queue',
