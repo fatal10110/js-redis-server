@@ -494,6 +494,20 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/set/core.test.ts', CAUSE.clusterTopology, [
     'SMISMEMBER command matches Redis',
   ]),
+  todo('node-redis/set/order.test.ts', CAUSE.argumentShapes, [
+    'COPY keeps the encoding',
+    'SDIFFSTORE result depends on the difference algorithm Redis picks',
+    'SINTER walks the smallest set',
+    'SINTERSTORE stores an integer-only result as an intset',
+    'SMOVE creates its destination like SADD does',
+    'SRANDMEMBER and SPOP return the whole set in storage order',
+    'SRANDMEMBER and SPOP sample a small set in storage order',
+    'SUNION and SDIFF of intsets are sorted',
+    'SUNIONSTORE and SDIFFSTORE rebuild the result from an empty intset',
+    'a set that held a non-integer never becomes an intset again',
+    'an intset that gains a non-integer keeps its integers sorted first',
+    'an integer-only set is read in ascending order',
+  ]),
   todo('node-redis/set/setops.test.ts', CAUSE.argumentShapes, [
     'SDIFF command',
     'SINTER command',

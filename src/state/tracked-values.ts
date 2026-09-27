@@ -13,6 +13,13 @@ import type {
 } from './data-types'
 import type { KeyspaceMutationTracker } from './keyspace'
 import {
+  addSetMember,
+  convertToIntsetIfPossible,
+  DEFAULT_SET_ENCODING_RULES,
+  prepareSetForAdd,
+  type SetEncodingRules,
+} from './set-encoding'
+import {
   ensureConsumer,
   findEntry,
   pendingEntriesSorted,
@@ -297,17 +304,33 @@ export class TrackedSetData {
     return this.set.members.size
   }
 
+  get intset(): boolean {
+    return this.set.intset === true
+  }
+
   hasMember(member: Buffer): boolean {
     return this.set.members.has(member.toString('hex'))
   }
 
-  addMember(member: Buffer): boolean {
-    const hex = member.toString('hex')
-    if (this.set.members.has(hex)) {
+  /**
+   * Run before adding `sizeHint` members starting with `first`: settles the
+   * encoding of a new set, and converts an intset about to overflow (#504).
+   */
+  prepareForAdd(
+    first: Buffer,
+    sizeHint: number,
+    rules: SetEncodingRules = DEFAULT_SET_ENCODING_RULES,
+  ): void {
+    prepareSetForAdd(this.set, first, sizeHint, rules)
+  }
+
+  addMember(
+    member: Buffer,
+    rules: SetEncodingRules = DEFAULT_SET_ENCODING_RULES,
+  ): boolean {
+    if (!addSetMember(this.set, member, rules)) {
       return false
     }
-
-    this.set.members.set(hex, member)
     this.tracker.markChanged()
     return true
   }
@@ -328,25 +351,36 @@ export class TrackedSetData {
     return deleted
   }
 
-  randomMemberEntries(): [string, Buffer][] {
+  /** Members in storage order, as `[hex, member]` pairs. */
+  memberEntries(): [string, Buffer][] {
     return Array.from(this.set.members.entries())
   }
 
-  replaceMembers(
-    hexSet: Set<string>,
-    bufferMap: Map<string, Buffer>,
+  /** `maybeConvertToIntset()`; see `convertToIntsetIfPossible`. */
+  convertToIntsetIfPossible(
+    rules: SetEncodingRules = DEFAULT_SET_ENCODING_RULES,
+  ): void {
+    convertToIntsetIfPossible(this.set, rules)
+  }
+
+  /**
+   * Replace the whole set with `source`'s members, order and encoding, as a
+   * STORE command overwriting its destination does.
+   */
+  replaceWith(
+    source: RedisSetData,
     options: { forceDirty?: boolean } = {},
   ): void {
     const changed =
       options.forceDirty ||
-      this.set.members.size !== hexSet.size ||
-      Array.from(hexSet).some(hex => !this.set.members.has(hex))
+      this.set.members.size !== source.members.size ||
+      Array.from(source.members.keys()).some(hex => !this.set.members.has(hex))
 
     this.set.members.clear()
-    for (const hex of hexSet) {
-      const buf = bufferMap.get(hex)!
-      this.set.members.set(hex, buf)
+    for (const [hex, member] of source.members) {
+      this.set.members.set(hex, member)
     }
+    this.set.intset = source.intset === true
 
     if (changed) {
       this.tracker.markChanged()

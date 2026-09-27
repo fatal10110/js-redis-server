@@ -350,7 +350,18 @@ command that touched the key: by the active sweep, which scans a hash only
 once the lower bound `RedisDatabase` keeps on its earliest field deadline is
 due (so an ordinary hash write costs O(1)), and lazily by `updateHash` for a
 field that expired since the last tick. The keyspace
-removes the hash key when the last live field disappears. Stream values store ordered entries plus consumer groups, per-group
+removes the hash key when the last live field disappears. Set values keep
+their members `Map` in the order Redis stores them, with an `intset` flag:
+ascending by value while the set would be an intset, insertion order
+otherwise. [`src/state/set-encoding.ts`](../src/state/set-encoding.ts)
+mirrors `t_set.c`'s conversions (an intset gaining a non-integer or passing
+`set-max-intset-entries`, SADD's 7.2+ size hint), so every reader, from
+`SMEMBERS` to `SORT`, just walks the map. The limit and the profile's
+`set.listpack-encoding` gate reach the state layer as `SetEncodingRules`,
+built per command by `setEncodingRules()` in
+[`src/commands/sets.ts`](../src/commands/sets.ts); the
+`set.union-diff-hashtable` gate, which only decides how a non-`STORE`
+`SUNION` / `SDIFF` result starts, is read there too. Stream values store ordered entries plus consumer groups, per-group
 pending-entry lists, and consumer idle metadata. Key (and hash-field) expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass that sweeps every database under one turn of

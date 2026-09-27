@@ -24,7 +24,14 @@ export type RedisListData = {
 
 export type RedisSetData = {
   type: 'set'
+  /**
+   * Members in the order real Redis stores them (#504): ascending by value
+   * while `intset` is true, insertion order otherwise. Mutate them through
+   * the helpers in `set-encoding.ts`, which keep that order.
+   */
   members: Map<string, Buffer>
+  /** Whether a real server would hold this set as an intset. */
+  intset?: boolean
 }
 
 export type RedisSortedSetData = {
@@ -120,6 +127,7 @@ export function cloneRedisDataValue(value: RedisDataValue): RedisDataValue {
             Buffer.from(member),
           ]),
         ),
+        intset: value.intset,
       }
     case 'zset':
       return {
@@ -197,8 +205,14 @@ export function createListData(): RedisListData {
   return { type: 'list', values: [] }
 }
 
-export function createSetData(): RedisSetData {
-  return { type: 'set', members: new Map() }
+/**
+ * An empty set. `intset: true` gives what `createIntsetObject()` does in
+ * Redis, an empty intset the first non-integer member converts away.
+ */
+export function createSetData(
+  options: { intset?: boolean } = {},
+): RedisSetData {
+  return { type: 'set', members: new Map(), intset: options.intset ?? false }
 }
 
 export function createSortedSetData(): RedisSortedSetData {

@@ -9,32 +9,35 @@ import {
   WrongTypeRedisError,
   errors,
 } from '../core/redis-error'
-import type { RedisDatabase } from '../state'
+import {
+  createSetData,
+  type RedisDatabase,
+  type RedisServerState,
+  type RedisSetData,
+} from '../state'
+import {
+  addSetMember,
+  convertToIntsetIfPossible,
+  type SetEncodingRules,
+} from '../state/set-encoding'
+import { configuredSetMaxIntsetEntries } from './config'
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/** The server settings that decide when a set is an intset (#504). */
+export function setEncodingRules(server: RedisServerState): SetEncodingRules {
+  return {
+    maxIntsetEntries: configuredSetMaxIntsetEntries(server),
+    listpack: server.profile.has('set.listpack-encoding'),
+  }
+}
+
 function getSetMembers(db: RedisDatabase, key: Buffer): Set<string> {
   const setData = db.getSet(key) // throws WrongTypeRedisError if wrong type
   if (!setData) return new Set()
   return new Set(setData.members.keys())
-}
-
-function getSetBufferMap(db: RedisDatabase, key: Buffer): Map<string, Buffer> {
-  const setData = db.getSet(key)
-  if (!setData) return new Map()
-  return new Map(setData.members)
-}
-
-function computeDiff(sets: Set<string>[]): Set<string> {
-  if (sets.length === 0) return new Set()
-  const [first, ...rest] = sets
-  const result = new Set(first)
-  for (const s of rest) {
-    for (const m of s) result.delete(m)
-  }
-  return result
 }
 
 function computeInter(sets: Set<string>[]): Set<string> {
@@ -48,26 +51,119 @@ function computeInter(sets: Set<string>[]): Set<string> {
   return result
 }
 
-function computeUnion(sets: Set<string>[]): Set<string> {
-  const result = new Set<string>()
-  for (const s of sets) for (const m of s) result.add(m)
+/**
+ * `sinterGenericCommand()`'s walk: the sets sorted smallest first (a stable
+ * sort, so equal sizes keep argument order), and the members of the smallest
+ * that every other set holds, in its storage order. A missing key is an empty
+ * set, so it empties the result.
+ */
+function intersectInOrder(db: RedisDatabase, keys: Buffer[]): Buffer[] {
+  const sets = keys.map(key => db.getSet(key))
+  const present: RedisSetData[] = []
+  for (const set of sets) {
+    if (!set) return []
+    present.push(set)
+  }
+  present.sort((a, b) => a.members.size - b.members.size)
+  const [smallest, ...rest] = present
+  const result: Buffer[] = []
+  for (const [hex, member] of smallest.members) {
+    if (rest.every(set => set.members.has(hex))) result.push(member)
+  }
+  return result
+}
+
+/**
+ * `sunionDiffGenericCommand()`: the result is built in a fresh set, member by
+ * member, so it goes through the same conversions SADD does. It starts as an
+ * empty intset, so integers stay sorted until the first non-integer arrives
+ * — except that on Redis 8.0 / Valkey 8.0+ (`set.union-diff-hashtable`) a
+ * reply-only result (no STORE destination) starts as a hashtable when any
+ * source is not an intset, and so keeps the order it walks the sources in.
+ * That is Valkey 8.1+'s order for a small result; a Redis 8.0 / Valkey 8.0
+ * hashtable's order is undefined.
+ */
+function unionOrDiff(
+  ctx: { db: RedisDatabase; server: RedisServerState },
+  keys: Buffer[],
+  op: 'union' | 'diff',
+  store: boolean,
+): RedisSetData {
+  const { db } = ctx
+  const rules = setEncodingRules(ctx.server)
+  const sets = keys.map(key => db.getSet(key)) // WRONGTYPE for every key first
+  const hashtable =
+    !store &&
+    ctx.server.profile.has('set.union-diff-hashtable') &&
+    sets.some(set => !!set && !set.intset)
+  const result = createSetData({ intset: !hashtable })
+
+  if (op === 'union') {
+    for (const set of sets) {
+      if (!set) continue
+      for (const member of set.members.values()) {
+        addSetMember(result, member, rules)
+      }
+    }
+    return result
+  }
+
+  const [first, ...others] = sets
+  if (!first) return result
+  // The first key given again as a later set empties the difference.
+  if (keys.slice(1).some(key => key.equals(keys[0]))) return result
+
+  // Pick the algorithm the way Redis does: #1 walks the first set and tests
+  // each member against the others; #2 adds the first set whole and removes
+  // every other set's members. They can leave the result in different
+  // encodings, so the choice is observable in its order.
+  let algoOneWork = 0
+  let algoTwoWork = 0
+  for (const set of sets) {
+    if (!set) continue
+    algoOneWork += first.members.size
+    algoTwoWork += set.members.size
+  }
+  algoOneWork = Math.floor(algoOneWork / 2)
+
+  if (algoOneWork <= algoTwoWork) {
+    for (const [hex, member] of first.members) {
+      if (others.some(set => set?.members.has(hex))) continue
+      addSetMember(result, member, rules)
+    }
+    return result
+  }
+
+  for (const member of first.members.values()) {
+    addSetMember(result, member, rules)
+  }
+  for (const set of others) {
+    if (result.members.size === 0) break
+    if (!set) continue
+    for (const hex of set.members.keys()) {
+      result.members.delete(hex)
+    }
+  }
   return result
 }
 
 function storeSetResult(
   db: RedisDatabase,
   destKey: Buffer,
-  hexSet: Set<string>,
-  bufferMap: Map<string, Buffer>,
+  result: RedisSetData,
 ): number {
-  if (hexSet.size === 0) {
+  if (result.members.size === 0) {
     db.delete(destKey)
     return 0
   }
   db.updateSet(destKey, set => {
-    set.replaceMembers(hexSet, bufferMap, { forceDirty: true })
+    set.replaceWith(result, { forceDirty: true })
   })
-  return hexSet.size
+  return result.members.size
+}
+
+function bulkMembers(members: Iterable<Buffer>) {
+  return array(Array.from(members, member => RedisValue.bulkString(member)))
 }
 
 function parseSintercardCount(token: Buffer): number {
@@ -139,10 +235,12 @@ export const saddCommand = defineCommand({
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    const rules = setEncodingRules(ctx.server)
     const added = ctx.db.updateSet(args.key, set => {
+      set.prepareForAdd(args.members[0], args.members.length, rules)
       let count = 0
       for (const member of args.members) {
-        if (set.addMember(member)) count++
+        if (set.addMember(member, rules)) count++
       }
       return count
     })
@@ -248,6 +346,24 @@ export const smismemberCommand = defineCommand({
 // SPOP key [count]
 // ---------------------------------------------------------------------------
 
+/** spopWithCountCommand() rebuilds the set when few members survive. */
+const SPOP_MOVE_STRATEGY_MUL = 5
+
+/**
+ * `count` distinct random positions in `0..size-1`, in ascending order.
+ * Popped and sampled members are replied in storage order: that is the order
+ * Redis replies a listpack's sample in, and for an intset or hashtable, whose
+ * sample it replies in random order, it is one random order among others.
+ */
+function randomPositions(size: number, count: number): number[] {
+  const pool = Array.from({ length: size }, (_, i) => i)
+  for (let i = 0; i < count; i++) {
+    const j = i + Math.floor(Math.random() * (size - i))
+    ;[pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+  return pool.slice(0, count).sort((a, b) => a - b)
+}
+
 export const spopCommand = defineCommand({
   name: 'spop',
   schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
@@ -263,39 +379,52 @@ export const spopCommand = defineCommand({
     if (type !== 'set') throw new WrongTypeRedisError()
 
     if (args.count === undefined) {
-      const result = ctx.db.updateSet(args.key, set => {
-        if (set.size === 0)
-          return { member: null as Buffer | null, empty: false }
-        const entries = set.randomMemberEntries()
-        const [hex, member] =
+      const member = ctx.db.updateSet(args.key, set => {
+        const entries = set.memberEntries()
+        const [hex, picked] =
           entries[Math.floor(Math.random() * entries.length)]
         set.deleteMemberId(hex)
-        return { member, empty: set.size === 0 }
+        return picked
       })
-      if (result.empty) ctx.db.delete(args.key)
-      return bulk(result.member)
+      return bulk(member)
     }
 
-    if (args.count === 0) return array([])
+    const count = args.count
+    if (count === 0) return array([])
 
-    const result = ctx.db.updateSet(args.key, set => {
-      if (set.size === 0) return { members: [] as Buffer[], empty: true }
-      const entries = set.randomMemberEntries()
-      const size = Math.min(args.count!, entries.length)
+    const rules = setEncodingRules(ctx.server)
+    const popped = ctx.db.updateSet(args.key, set => {
+      const entries = set.memberEntries()
+
+      // The whole set is popped: Redis replies with an SUNION of the key.
+      if (count >= entries.length) {
+        const union = unionOrDiff(ctx, [args.key], 'union', false)
+        for (const [hex] of entries) set.deleteMemberId(hex)
+        return Array.from(union.members.values())
+      }
+
       const members: Buffer[] = []
-
-      for (let i = 0; i < size; i++) {
-        const j = i + Math.floor(Math.random() * (entries.length - i))
-        ;[entries[i], entries[j]] = [entries[j], entries[i]]
-        const [hex, member] = entries[i]
+      for (const position of randomPositions(entries.length, count)) {
+        const [hex, member] = entries[position]
         set.deleteMemberId(hex)
         members.push(member)
       }
 
-      return { members, empty: set.size === 0 }
+      // When few members survive, Redis moves them into a new set. Through
+      // 7.0 that set is created from its first member, so all-integer
+      // survivors of a non-intset set become an intset; from 7.2 a
+      // non-intset set is rebuilt as a listpack, in its old order.
+      const remaining = entries.length - count
+      if (
+        remaining * SPOP_MOVE_STRATEGY_MUL <= count &&
+        !rules.listpack &&
+        !set.intset
+      ) {
+        set.convertToIntsetIfPossible(rules)
+      }
+      return members
     })
-    if (result.empty) ctx.db.delete(args.key)
-    return array(result.members.map(member => RedisValue.bulkString(member)))
+    return bulkMembers(popped)
   },
 })
 
@@ -323,26 +452,20 @@ export const srandmemberCommand = defineCommand({
     const count = args.count
 
     if (count >= 0) {
-      // unique members, up to count
-      const size = Math.min(count, values.length)
-      // Fisher-Yates partial shuffle
-      const pool = values.slice()
-      const result: Buffer[] = []
-      for (let i = 0; i < size; i++) {
-        const j = i + Math.floor(Math.random() * (pool.length - i))
-        ;[pool[i], pool[j]] = [pool[j], pool[i]]
-        result.push(pool[i])
-      }
-      return array(result.map(m => RedisValue.bulkString(m)))
-    } else {
-      // with repetition, |count| members
-      const n = -count
-      const result: Buffer[] = []
-      for (let i = 0; i < n; i++) {
-        result.push(values[Math.floor(Math.random() * values.length)])
-      }
-      return array(result.map(m => RedisValue.bulkString(m)))
+      // Distinct members, up to count. Asking for at least the whole set
+      // returns it in storage order, as Redis iterates it.
+      if (count >= values.length) return bulkMembers(values)
+      return bulkMembers(
+        randomPositions(values.length, count).map(position => values[position]),
+      )
     }
+
+    // With repetition, |count| members in random order.
+    const result: Buffer[] = []
+    for (let i = 0; i < -count; i++) {
+      result.push(values[Math.floor(Math.random() * values.length)])
+    }
+    return bulkMembers(result)
   },
 })
 
@@ -356,14 +479,8 @@ export const sdiffCommand = defineCommand({
   flags: ['readonly'],
   keys: args => args.keys,
   execute: (args, ctx) => {
-    const sets = args.keys.map(k => getSetMembers(ctx.db, k))
-    const diff = computeDiff(sets)
-    if (diff.size === 0) return array([])
-    // collect buffers from first set (all diff members come from it)
-    const firstMap = getSetBufferMap(ctx.db, args.keys[0])
-    return array(
-      Array.from(diff).map(hex => RedisValue.bulkString(firstMap.get(hex)!)),
-    )
+    const diff = unionOrDiff(ctx, args.keys, 'diff', false)
+    return bulkMembers(diff.members.values())
   },
 })
 
@@ -376,15 +493,7 @@ export const sinterCommand = defineCommand({
   schema: t.object({ keys: t.variadic(t.key(), { min: 1 }) }),
   flags: ['readonly'],
   keys: args => args.keys,
-  execute: (args, ctx) => {
-    const sets = args.keys.map(k => getSetMembers(ctx.db, k))
-    const inter = computeInter(sets)
-    if (inter.size === 0) return array([])
-    const firstMap = getSetBufferMap(ctx.db, args.keys[0])
-    return array(
-      Array.from(inter).map(hex => RedisValue.bulkString(firstMap.get(hex)!)),
-    )
-  },
+  execute: (args, ctx) => bulkMembers(intersectInOrder(ctx.db, args.keys)),
 })
 
 // ---------------------------------------------------------------------------
@@ -417,17 +526,8 @@ export const sunionCommand = defineCommand({
   flags: ['readonly'],
   keys: args => args.keys,
   execute: (args, ctx) => {
-    const bufferMaps = args.keys.map(k => getSetBufferMap(ctx.db, k))
-    const union = computeUnion(bufferMaps.map(m => new Set(m.keys())))
-    if (union.size === 0) return array([])
-    // build combined buffer map
-    const combined = new Map<string, Buffer>()
-    for (const m of bufferMaps) {
-      for (const [hex, buf] of m) combined.set(hex, buf)
-    }
-    return array(
-      Array.from(union).map(hex => RedisValue.bulkString(combined.get(hex)!)),
-    )
+    const union = unionOrDiff(ctx, args.keys, 'union', false)
+    return bulkMembers(union.members.values())
   },
 })
 
@@ -464,8 +564,11 @@ export const smoveCommand = defineCommand({
       .updateSet(args.source, set => set.deleteMember(args.member))
     if (!moved) return integer(0)
 
+    const rules = setEncodingRules(ctx.server)
     ctx.db.withOrigin('sadd').updateSet(args.destination, set => {
-      set.addMember(args.member)
+      // A new destination is created for its one member, as SADD would.
+      if (set.size === 0) set.prepareForAdd(args.member, 1, rules)
+      set.addMember(args.member, rules)
     })
 
     return integer(1)
@@ -485,14 +588,8 @@ export const sdiffstoreCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.destination, ...args.keys],
   execute: (args, ctx) => {
-    const bufferMaps = args.keys.map(k => getSetBufferMap(ctx.db, k))
-    const sets = bufferMaps.map(m => new Set(m.keys()))
-    const diff = computeDiff(sets)
-    const combined = new Map<string, Buffer>()
-    for (const m of bufferMaps) {
-      for (const [hex, buf] of m) combined.set(hex, buf)
-    }
-    return integer(storeSetResult(ctx.db, args.destination, diff, combined))
+    const diff = unionOrDiff(ctx, args.keys, 'diff', true)
+    return integer(storeSetResult(ctx.db, args.destination, diff))
   },
 })
 
@@ -509,14 +606,14 @@ export const sinterstoreCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.destination, ...args.keys],
   execute: (args, ctx) => {
-    const bufferMaps = args.keys.map(k => getSetBufferMap(ctx.db, k))
-    const sets = bufferMaps.map(m => new Set(m.keys()))
-    const inter = computeInter(sets)
-    const combined = new Map<string, Buffer>()
-    for (const m of bufferMaps) {
-      for (const [hex, buf] of m) combined.set(hex, buf)
+    // The members arrive in the smallest set's order. A result made only of
+    // integers is then stored as an intset, sorted (`maybeConvertToIntset`).
+    const inter = createSetData()
+    for (const member of intersectInOrder(ctx.db, args.keys)) {
+      inter.members.set(member.toString('hex'), member)
     }
-    return integer(storeSetResult(ctx.db, args.destination, inter, combined))
+    convertToIntsetIfPossible(inter, setEncodingRules(ctx.server))
+    return integer(storeSetResult(ctx.db, args.destination, inter))
   },
 })
 
@@ -533,14 +630,8 @@ export const sunionstoreCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.destination, ...args.keys],
   execute: (args, ctx) => {
-    const bufferMaps = args.keys.map(k => getSetBufferMap(ctx.db, k))
-    const sets = bufferMaps.map(m => new Set(m.keys()))
-    const union = computeUnion(sets)
-    const combined = new Map<string, Buffer>()
-    for (const m of bufferMaps) {
-      for (const [hex, buf] of m) combined.set(hex, buf)
-    }
-    return integer(storeSetResult(ctx.db, args.destination, union, combined))
+    const union = unionOrDiff(ctx, args.keys, 'union', true)
+    return integer(storeSetResult(ctx.db, args.destination, union))
   },
 })
 

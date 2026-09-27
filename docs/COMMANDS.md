@@ -280,15 +280,8 @@ with `GT` or `LT`.
   error is never reached, and inside `MULTI` the command queues and the error
   surfaces in `EXEC`. Hash-field dereference patterns such as
   `object_*->field` are not modeled.
-- `SORT` loads a set of canonical 64-bit integers in ascending numeric order
-  (as an intset is stored) and any other set in insertion order (as a small
-  listpack set built from a non-integer first is). The real order depends on
-  the set's encoding history, which the mock does not keep, so two cases
-  differ: a set created from an integer keeps its integers sorted ahead of
-  later non-integer members in Redis (`SADD s 3 1 a` loads `1 3 a`, the mock
-  `3 1 a`), and a set that briefly held a non-integer keeps its listpack order
-  in Redis after that member is removed, where the mock sorts it numerically
-  again. `SMEMBERS` has the same intset-order gap. With `BY` plus a `LIMIT` that
+- `SORT` loads a set in the order Redis stores it, like every other set
+  reader (see the set notes below). With `BY` plus a `LIMIT` that
   does not cover every element, Redis' partial quicksort can reorder elements
   that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
   a small zset to the `skiplist` encoding is not observable until
@@ -397,6 +390,43 @@ with `GT` or `LT`.
 - [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
 - [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
+
+#### Notes / gaps vs. real Redis
+
+- Set members come back in the order Redis stores them (#504). A set that
+  `SADD` (or `SMOVE`, or seeding) creates from an integer is an intset, kept
+  in ascending order, until it gains a non-integer or holds more than
+  `set-max-intset-entries` members, and it never turns back into an intset.
+  A small intset that gains a non-integer becomes a listpack: its integers
+  stay sorted ahead of the new member, in insertion order from there on. A
+  set created from a non-integer keeps insertion order. `SMEMBERS`, `SSCAN`,
+  `SORT` and `SRANDMEMBER` with a count that covers the set read this order.
+  The set-algebra commands build their results the way Redis does: `SINTER`
+  walks the smallest set and `SINTERSTORE` stores an all-integer result as
+  an intset; `SUNION`, `SDIFF` and their `STORE` forms add the members to an
+  empty intset one by one, except that from 8.0 (Redis and Valkey) a
+  non-`STORE` `SUNION` / `SDIFF` with a non-intset source builds a hashtable
+  and so keeps the order it walks the sources in (gate
+  `set.union-diff-hashtable`). `SPOP` with a count that covers the set
+  replies an `SUNION` of the key, as Redis does. On `redis-6.2` /
+  `redis-7.0` a large `SPOP` that leaves only integers makes the survivors an
+  intset too.
+- Redis stores some sets as a hashtable, whose order is undefined: an intset
+  that grows past `set-max-intset-entries`, or that gains a non-integer while
+  holding 128 or more members; a large non-integer set (more than 128
+  members or a member longer than 64 bytes); and before 7.2 any non-intset
+  set. The mock does not model that encoding and keeps the listpack order
+  there (for an intset, its sorted integers followed by later members in
+  insertion order). The same goes for the hashtable a non-`STORE` `SUNION` /
+  `SDIFF` builds from 8.0: the mock's walk order is exactly Valkey 9's for a
+  small result, and one of many Redis 8.0 and Valkey 8.0 can give.
+- `SRANDMEMBER` / `SPOP` with a count smaller than the set reply their random
+  sample in storage order: that is the order Redis replies a small
+  non-integer set's sample in, and one of the random orders it gives for an
+  intset or a hashtable.
+- `CONFIG SET set-max-intset-entries` takes effect for later commands, as in
+  Redis. The value is not validated yet; one that is not a non-negative
+  integer is treated as the default, 512.
 
 ## 8. Sorted Set Commands
 
