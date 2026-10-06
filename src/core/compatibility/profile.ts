@@ -57,6 +57,7 @@ export type FeatureId =
   | 'script.noscript-short-wording'
   | 'script.big-number-verbatim-returns'
   | 'script.shebang'
+  | 'script.shebang-engine-lookup'
   | 'command.getkeys-single-arg'
   | 'zrank.withscore'
   | 'xsetid.entries-added'

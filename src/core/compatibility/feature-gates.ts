@@ -248,6 +248,14 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis-server 6.2.24, 7.0.15, 8.0.6 and valkey-server 7.2.14, 8.0.11,
   // 9.0.6.
   'script.shebang': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 8.1 made the shebang name a scripting engine: it reads the
+  // `flags=` options first, then looks the engine up by name, ignoring case,
+  // so `#!LUA` runs and `#!notlua` is `Could not find scripting engine
+  // 'notlua'`. Redis and Valkey up to 8.0 check the engine first and accept
+  // only `#!lua` (`Unexpected engine in script shebang: #!notlua`). Checked
+  // against redis-server 7.0.15, the #536 transcripts (valkey-server 8.0.11
+  // and 9.0.6) and the Valkey 8.1.0 / 9.0.0 sources (`evalRegisterNewScript`).
+  'script.shebang-engine-lookup': { valkey: '8.1.0' },
   // COMMAND GETKEYS / GETKEYSANDFLAGS took arity -4 in 7.0 (a command and at
   // least one argument: `COMMAND GETKEYS GET` is a `command|getkeys` arity
   // error); 7.2 relaxed it to -3 and answers a short target with `Invalid

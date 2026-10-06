@@ -1,5 +1,5 @@
+import { createHash } from 'node:crypto'
 import { asciiLowerCase } from '../core/ascii-case'
-import type { CompatibilityProfile } from '../core/compatibility'
 import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
@@ -12,15 +12,25 @@ import {
   isCompileError,
   luaReplyToRedisValue,
   renderScriptError,
+  type LuaReplyValue,
 } from '../core/lua-runtime'
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
+  isScriptShebangFlag,
+  parseScriptShebang,
+  type ParsedScript,
+} from '../core/script-shebang'
+import {
   parseFunctionLibrary,
   type RedisFunctionDefinition,
   type RedisFunctionLibrary,
 } from '../state'
+import {
+  functionLibraryBody,
+  parseFunctionLibraryName,
+} from '../state/function-registry'
 import { array, bulk, ok, unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
@@ -265,7 +275,8 @@ export const scriptsCommands = [
 /**
  * Caches a script without running it. Like real Redis (every version), one
  * that does not compile is refused with the error EVAL would give and is not
- * cached. A shebang line is skipped for the check (see {@link withoutShebang}).
+ * cached, and so is one whose shebang Redis refuses (7.0+, see
+ * {@link parseScriptShebang}). The shebang line is blanked for the compile.
  */
 async function scriptLoad(
   args: ScriptArgs,
@@ -273,12 +284,14 @@ async function scriptLoad(
 ): Promise<RedisResult> {
   expectRestLength(args, 'script|load', 1)
   const script = args.rest[0]
+  const parsed = parseScriptShebang(script, ctx.server.profile)
   const runtime = await ctx.server.getLuaRuntime()
   let compileError: ReturnType<typeof runtime.compile>
   try {
-    compileError = runtime.compile(withoutShebang(script, ctx.server.profile))
+    compileError = runtime.compile(parsed.body)
   } catch (err) {
-    // As for EVAL: the engine throws only for a script its heap cannot hold.
+    // As for EVAL: the engine throws only for a script its heap cannot hold,
+    // or when it has faulted (the server then replaces it, #539).
     return RedisResult.error(errorMessage(err), 'ERR')
   }
   if (compileError) {
@@ -290,25 +303,6 @@ async function scriptLoad(
   }
   const sha = ctx.server.scriptCache.load(script)
   return RedisResult.create(RedisValue.bulkString(Buffer.from(sha)))
-}
-
-/**
- * The body Redis 7.0+ compiles for a script that opens with a `#!` shebang
- * line (`script.shebang`): the script with that line blanked, its line feed
- * kept so Lua's line numbers still count it. The engine does not skip it yet
- * (fatal10110/lua-redis-wasm#98), so SCRIPT LOAD compiles this instead. The
- * shebang itself (engine name, flags) is not checked.
- */
-function withoutShebang(script: Buffer, profile: CompatibilityProfile): Buffer {
-  if (
-    !profile.has('script.shebang') ||
-    script[0] !== 0x23 /* # */ ||
-    script[1] !== 0x21 /* ! */
-  ) {
-    return script
-  }
-  const lineFeed = script.indexOf(0x0a)
-  return lineFeed === -1 ? script : script.subarray(lineFeed)
 }
 
 function scriptExists(
@@ -431,19 +425,44 @@ async function runLuaScript(
     readOnly?: boolean
   } = {},
 ): Promise<RedisResult> {
+  // A shebang Redis refuses fails before anything is compiled or cached.
+  const parsed = parseScriptShebang(script, ctx.server.profile)
+  // The engine names the SHA of the body it ran; Redis names the script's.
+  const sha = parsed.body === script ? undefined : scriptSha(script)
+  const render = (value: LuaReplyValue) =>
+    RedisResult.create(
+      luaReplyToRedisValue(
+        renderScriptError(value, { profile: ctx.server.profile, sha }),
+        ctx.server.profile,
+      ),
+    )
   const runtime = await ctx.server.getLuaRuntime()
 
   try {
-    const result = runtime.eval(script, keys, argv, ctx, {
-      readOnly: options.readOnly,
+    // Redis caches a script once it compiles, before it checks the
+    // shebang's flags against the call, so a refused script is cached.
+    const refusal = scriptRunRefusal(parsed.flags, options.readOnly, ctx)
+    if (refusal) {
+      const compileError = runtime.compile(parsed.body)
+      if (compileError) {
+        return render(compileError)
+      }
+      if (options.cache) {
+        ctx.server.scriptCache.load(script)
+      }
+      return RedisResult.fromError(refusal)
+    }
+
+    const result = runtime.eval(parsed.body, keys, argv, ctx, {
+      readOnly:
+        options.readOnly === true || parsed.flags?.includes('no-writes'),
     })
     // Real Redis caches a script when it compiles, before it runs, so one
     // that fails at run time is cached and one that does not compile is not.
     if (options.cache && !isCompileError(result)) {
       ctx.server.scriptCache.load(script)
     }
-    const reply = renderScriptError(result, { profile: ctx.server.profile })
-    return RedisResult.create(luaReplyToRedisValue(reply, ctx.server.profile))
+    return render(result)
   } catch (err) {
     if (err instanceof RedisCommandError) {
       return RedisResult.fromError(err)
@@ -454,10 +473,49 @@ async function runLuaScript(
   }
 }
 
-function functionLoad(
+/**
+ * Redis's `scriptPrepareForRun` checks of a script's declared flags against
+ * the call, or `null` when it may run. A script without a shebang (`flags`
+ * `null`) declares nothing and is never refused here. `allow-oom`,
+ * `allow-stale` and `allow-cross-slot-keys` are accepted but change nothing:
+ * the server has no `maxmemory`, no stale replica and no per-script slot
+ * check for them to relax.
+ */
+function scriptRunRefusal(
+  flags: ParsedScript['flags'],
+  readOnly: boolean | undefined,
+  ctx: RedisExecutionContext,
+): RedisCommandError | null {
+  if (!flags) {
+    return null
+  }
+  if (flags.includes('no-cluster') && ctx.server.clusterEnabled) {
+    return new RedisCommandError(
+      "Can not run script on cluster, 'no-cluster' flag is set.",
+    )
+  }
+  if (readOnly && !flags.includes('no-writes')) {
+    return new RedisCommandError(
+      'Can not execute a script with write flag using *_ro command.',
+    )
+  }
+  return null
+}
+
+function scriptSha(script: Buffer): string {
+  return createHash('sha1').update(script).digest('hex')
+}
+
+/**
+ * Redis's order (`functionsCreateWithLibraryCtx`): the metadata, an existing
+ * library without REPLACE, then the code must compile, and only then must it
+ * register a function. A library that does not compile is refused and
+ * nothing changes, REPLACE included (#538).
+ */
+async function functionLoad(
   args: FunctionArgs,
   ctx: RedisExecutionContext,
-): RedisResult {
+): Promise<RedisResult> {
   let replace = false
   let code: Buffer
 
@@ -473,13 +531,38 @@ function functionLoad(
     throw new WrongNumberOfArgumentsError('function|load')
   }
 
+  let library: RedisFunctionLibrary
   try {
-    const library = parseFunctionLibrary(code)
+    const name = parseFunctionLibraryName(code)
+    if (!replace && ctx.server.functionRegistry.has(name)) {
+      throw new Error(`Library '${name}' already exists`)
+    }
+    const runtime = await ctx.server.getLuaRuntime()
+    const compileError = runtime.compile(functionLibraryBody(code))
+    if (compileError) {
+      throw new Error(functionCompileError(compileError.err))
+    }
+    library = parseFunctionLibrary(code)
     ctx.server.functionRegistry.load(library, replace)
-    return bulk(Buffer.from(library.name))
   } catch (err) {
     throw new RedisCommandError(errorMessage(err))
   }
+  return bulk(Buffer.from(library.name))
+}
+
+/**
+ * Redis compiles a library under the chunk name `user_function`
+ * (`Error compiling function: user_function:2: ...`); the engine always
+ * names its chunk `user_script`, so the prefix is swapped here.
+ */
+function functionCompileError(luaMessage: Buffer): string {
+  const message = luaMessage.toString()
+  const engineChunk = 'user_script:'
+  return `Error compiling function: ${
+    message.startsWith(engineChunk)
+      ? `user_function:${message.slice(engineChunk.length)}`
+      : message
+  }`
 }
 
 function functionDelete(
@@ -627,14 +710,22 @@ async function runFunction(
     throw new RedisCommandError('Function not found')
   }
 
-  if (readOnly && !fn.flags.includes('no-writes')) {
-    throw new RedisCommandError(
-      'Can not execute a script with write flag using *_ro command.',
-    )
+  // A function always declares its flags (it never runs in the shebang-less
+  // compatibility mode), so they are checked like a shebang's.
+  const refusal = scriptRunRefusal(
+    fn.flags.filter(isScriptShebangFlag),
+    readOnly,
+    ctx,
+  )
+  if (refusal) {
+    throw refusal
   }
 
   const { keys, argv } = splitFcallArgs(args)
-  return runLuaScript(fn.script, keys, argv, ctx, { readOnly })
+  // A no-writes function runs read-only under FCALL too.
+  return runLuaScript(fn.script, keys, argv, ctx, {
+    readOnly: readOnly || fn.flags.includes('no-writes'),
+  })
 }
 
 function fcallKeys(args: FcallArgs): readonly Buffer[] {

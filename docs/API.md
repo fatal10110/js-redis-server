@@ -192,7 +192,8 @@ Current profile gates:
 | A non-`STORE` `SUNION` / `SDIFF` (and `SPOP` with a count that covers the set) with a non-intset source builds its result as a hashtable, so a listpack's integers keep their order (`SADD u x 3 1`, `SREM u x`, then `SUNION u` replies `3 1`; 7.4 and earlier sort it to `1 3`) | `redis-8.0+` | `valkey-8.0+` |
 | `redis.REDIS_VERSION` / `redis.REDIS_VERSION_NUM` in scripts (Valkey reports `7.2.4` there and adds `SERVER_NAME`, `VALKEY_VERSION` and `VALKEY_VERSION_NUM`; 6.2 has none of them) | `redis-7.0+` | `valkey-8.0+` |
 | A script's returned `{big_number=...}` / `{verbatim_string=...}` table converts to a big number / verbatim string (a bulk string on RESP2), at any depth; 6.2 sends it as an empty array (`*0`) | `redis-7.0+` | `valkey-8.0+` |
-| `SCRIPT LOAD` skips a leading `#!` shebang line before its compile check, keeping the line feed so line numbers count it (6.2 compiles it as Lua: `unexpected symbol near '#'`). The shebang itself is not checked, and `EVAL` of a shebang script is not supported yet ([#536](https://github.com/fatal10110/js-redis-server/issues/536)) | `redis-7.0+` | `valkey-8.0+` |
+| `#!lua [flags=...]` shebang scripts: `EVAL` / `EVALSHA` / `EVAL_RO` / `SCRIPT LOAD` check the shebang (`Unexpected flag in script shebang: ...`, `Unknown lua shebang option: ...`, `Invalid script shebang`, ...) and run the body with the shebang line blanked, so line numbers count it; `no-writes` and `no-cluster` are enforced (6.2 compiles the shebang as Lua: `unexpected symbol near '#'`) | `redis-7.0+` | `valkey-8.0+` |
+| Shebang engine looked up by name, ignoring case, after the options (`#!LUA` runs; `#!notlua` is `Could not find scripting engine 'notlua'`, vs. `Unexpected engine in script shebang: #!notlua`) | never | `valkey-9.0+` (8.1) |
 | `EVALSHA` miss worded `-NOSCRIPT No matching script.`, without ` Please use EVAL.` | never | `valkey-8.0+` |
 
 ## Package Entry Points
