@@ -1,5 +1,6 @@
 import {
   load,
+  WasmFault,
   type CompatProfile,
   type LoadOptions,
   type LuaEngine,
@@ -39,6 +40,8 @@ type LuaHostState = {
 
 export type LuaReplyValue = ReplyValue
 
+const EMPTY_SCRIPT = Buffer.alloc(0)
+
 export class RedisLuaRuntime {
   private readonly hostState: LuaHostState = {
     ctx: null,
@@ -46,6 +49,7 @@ export class RedisLuaRuntime {
     resp: 2,
   }
   private readonly engine: LuaEngine
+  private broken = false
 
   constructor(module: LuaWasmModule) {
     this.engine = module.create({
@@ -56,6 +60,17 @@ export class RedisLuaRuntime {
         this.hostState.resp = version
       },
     })
+  }
+
+  /**
+   * False once the engine can no longer run scripts. Since lua-redis-wasm
+   * 2.0 an exception that escapes the WASM module (a `WasmFault`, an
+   * Emscripten abort, a trap) leaves the engine unusable: every later call
+   * throws `LuaEngine is unusable: ...`. `RedisServerState.getLuaRuntime()`
+   * then replaces this runtime with a fresh one (#539).
+   */
+  get usable(): boolean {
+    return !this.broken
   }
 
   /**
@@ -78,7 +93,9 @@ export class RedisLuaRuntime {
     this.hostState.resp = 2
 
     try {
-      return this.engine.evalWithArgs(script, [...keys], [...args])
+      return this.guard(() =>
+        this.engine.evalWithArgs(script, [...keys], [...args]),
+      )
     } finally {
       this.hostState.ctx = null
       this.hostState.readOnly = false
@@ -92,7 +109,45 @@ export class RedisLuaRuntime {
    * would abort with.
    */
   compile(script: Buffer): ReplyError | null {
-    return this.engine.compile(script)
+    return this.guard(() => this.engine.compile(script))
+  }
+
+  /** Releases the engine. The runtime cannot run scripts afterwards. */
+  dispose(): void {
+    this.broken = true
+    try {
+      this.engine.dispose()
+    } catch {
+      // Only a running script makes dispose() throw; the engine is dropped
+      // with this runtime either way.
+    }
+  }
+
+  /**
+   * Runs an engine call and, when it throws, finds out whether the engine
+   * survived. A `WasmFault` always leaves it unusable. Any other throw (a
+   * trap rethrown as is, the heap-size `RangeError`, which leaves it usable)
+   * is told apart by asking the engine for an empty compile, which throws
+   * once the engine is unusable.
+   */
+  private guard<T>(call: () => T): T {
+    try {
+      return call()
+    } catch (err) {
+      if (err instanceof WasmFault || !this.engineResponds()) {
+        this.broken = true
+      }
+      throw err
+    }
+  }
+
+  private engineResponds(): boolean {
+    try {
+      this.engine.compile(EMPTY_SCRIPT)
+      return true
+    } catch {
+      return false
+    }
   }
 
   // Host callback for redis.call()/redis.pcall(). Both modes share the same
@@ -518,6 +573,12 @@ export function renderScriptError(
   options: {
     /** Picks the decoration (`script.abort-error-suffix`). */
     profile: CompatibilityProfile
+    /**
+     * The SHA to name, when the engine ran a rewritten body: a shebang
+     * script runs with its shebang line blanked, but Redis names the SHA of
+     * the script the client sent.
+     */
+    sha?: string
   },
 ): ReplyValue {
   if (!isErrorReply(value)) {
@@ -528,7 +589,8 @@ export function renderScriptError(
     return value
   }
 
-  const { line, sha, kind, name } = meta
+  const { line, kind, name } = meta
+  const sha = options.sha ?? meta.sha
   if (kind === 'compile') {
     return {
       err: Buffer.concat([

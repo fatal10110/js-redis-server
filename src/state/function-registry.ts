@@ -32,6 +32,10 @@ export class RedisFunctionRegistry {
     this.libraries.set(library.name, cloneLibrary(library))
   }
 
+  has(name: string): boolean {
+    return this.libraries.has(name)
+  }
+
   delete(name: string): boolean {
     return this.libraries.delete(name)
   }
@@ -87,14 +91,34 @@ export class RedisFunctionRegistry {
   }
 }
 
-export function parseFunctionLibrary(code: Buffer): RedisFunctionLibrary {
+/**
+ * The library name in the code's `#!lua name=<name>` metadata line. Like
+ * Redis, code that does not open with `#!` has no metadata.
+ */
+export function parseFunctionLibraryName(code: Buffer): string {
   const text = code.toString()
-  const libraryMatch = text.match(/^#!lua\s+name=([^\s]+)\s*$/m)
+  const libraryMatch = text.startsWith('#!')
+    ? text.match(/^#!lua\s+name=([^\s]+)\s*$/m)
+    : null
   if (!libraryMatch) {
     throw new Error('Missing library metadata')
   }
 
-  const name = libraryMatch[1]
+  return libraryMatch[1]
+}
+
+/**
+ * The code Redis compiles for a library (`functionExtractLibMetaData`): from
+ * the metadata line's line feed on, so Lua's line numbers count that line.
+ */
+export function functionLibraryBody(code: Buffer): Buffer {
+  const lineFeed = code.indexOf(0x0a)
+  return lineFeed === -1 ? Buffer.alloc(0) : code.subarray(lineFeed)
+}
+
+export function parseFunctionLibrary(code: Buffer): RedisFunctionLibrary {
+  const text = code.toString()
+  const name = parseFunctionLibraryName(code)
   const body = text.replace(/^#![^\n]*(?:\n|$)/, '')
   const registrations = registeredFunctions(body)
   const functions = registrations.map(registration => ({

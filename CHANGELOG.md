@@ -656,6 +656,55 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- From 7.0 (and on Valkey) `EVAL`, `EVALSHA`, `EVAL_RO` and `EVALSHA_RO` run
+  a script that opens with a `#!lua [flags=...]` shebang ([#536]). It used to
+  be a compile error near `#`. The engine does not skip the shebang yet
+  (fatal10110/lua-redis-wasm#98, tracked in [#540]), so the server hands it
+  the body with the shebang line blanked: line numbers still count that line,
+  and errors name the SHA of the script as sent. `EVAL` and `SCRIPT LOAD`
+  check the shebang with Redis's errors and cache nothing when it is refused:
+  `Invalid script shebang`, `Invalid engine in script shebang`, `Unexpected
+  engine in script shebang: #!notlua`, `Unknown lua shebang option: name=x`
+  and `Unexpected flag in script shebang: bogus`. Valkey 8.1+ reads the
+  options first and looks the engine up by name, ignoring case, so `#!LUA`
+  runs there and `#!notlua` is `Could not find scripting engine 'notlua'`
+  (new gate `script.shebang-engine-lookup`). The flags are checked as in
+  Redis's `scriptPrepareForRun`. `no-writes` refuses writes like `EVAL_RO`.
+  `EVAL_RO` / `EVALSHA_RO` refuse a shebang script without `no-writes`
+  (`Can not execute a script with write flag using *_ro command.`), and
+  `EVAL_RO` still caches it. `no-cluster` refuses to run on a cluster node
+  (`Can not run script on cluster, 'no-cluster' flag is set.`), for a
+  function's `no-cluster` flag too. A function flagged `no-writes` now runs
+  read-only under `FCALL` as well, not only under `FCALL_RO`. Known gaps:
+  `allow-oom`, `allow-stale` and `allow-cross-slot-keys` are accepted but
+  change nothing (no `maxmemory`, no stale replicas, no per-script
+  cross-slot check), and a `no-writes` script is still routed as a write
+  command. Checked against redis-server 7.0.15 and the transcripts in the
+  issue. `/core`: `renderScriptError` takes an optional `sha` to name.
+
+- `FUNCTION LOAD` compiles the library before registering it ([#538]). A
+  library that is not valid Lua replies `-ERR Error compiling function:
+  user_function:<line>: <Lua's message>`, counting the metadata line, and
+  registers nothing; under `REPLACE` the old library stays. It used to reply
+  `No functions registered`, or register the library. Errors now come in
+  Redis's order: missing metadata, then `Library '<name>' already exists`
+  (before the code is compiled), then the compile error, then `No functions
+  registered`. Code that does not open with `#!` is `Missing library
+  metadata`, as in Redis, even if a later line holds the metadata. Checked
+  against redis-server 7.0.15. Known gap: the library is not run while it
+  loads, so a load-time error (`Error registering functions: ...`) is not
+  reproduced.
+
+- A Lua engine that faulted is replaced ([#539]). Since lua-redis-wasm 2.0
+  an exception that escapes the WASM module (a `WasmFault`, an Emscripten
+  abort, a trap) leaves the engine unusable, and every later `EVAL`,
+  `EVALSHA`, `EVAL_RO`, `SCRIPT LOAD`, `FUNCTION LOAD` and `FCALL` on that
+  server replied `-ERR LuaEngine is unusable: ...` until the process
+  restarted. The command that hits the fault still gets an `ERR` reply; the
+  next script command gets a fresh runtime, with the script cache and the
+  function libraries kept. A runtime that failed to load is retried too.
+  `/core`: `RedisLuaRuntime` gained `usable` and `dispose()`.
+
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
   plain index range, so `zRange(key, 0, -1, { REV: true })` came back in
@@ -751,9 +800,9 @@ so the PR body is not a durable home for a breaking-change note.
   same error (it returned a SHA), and neither `EVAL` nor `SCRIPT LOAD` caches
   a script that does not compile. From 7.0 (and on Valkey) the check skips a
   leading `#!lua` shebang line, keeping its line feed, so `SCRIPT LOAD
-  "#!lua\nreturn 1"` still returns the SHA (new gate `script.shebang`); the
-  shebang itself is not checked, and `EVAL` of a shebang script is still a
-  compile error ([#536]). `/core`: `RedisLuaRuntime.compile(script)` returns
+  "#!lua\nreturn 1"` still returns the SHA (new gate `script.shebang`; the
+  shebang itself and `EVAL` of a shebang script are covered by the [#536]
+  entry above). `/core`: `RedisLuaRuntime.compile(script)` returns
   the compile error or `null`.
 
 - On `redis-6.2` a `redis.pcall` rejected by the scripting layer (an unknown
@@ -1366,6 +1415,8 @@ requests they contain.
 [#445]: https://github.com/fatal10110/js-redis-server/issues/445
 [#527]: https://github.com/fatal10110/js-redis-server/issues/527
 [#536]: https://github.com/fatal10110/js-redis-server/issues/536
+[#538]: https://github.com/fatal10110/js-redis-server/issues/538
+[#539]: https://github.com/fatal10110/js-redis-server/issues/539
 [#540]: https://github.com/fatal10110/js-redis-server/issues/540
 [#493]: https://github.com/fatal10110/js-redis-server/issues/493
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494

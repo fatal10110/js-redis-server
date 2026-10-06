@@ -79,6 +79,7 @@ export class RedisServerState {
   private activeExpiryTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
   private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
+  private luaRuntime: RedisLuaRuntime | null = null
 
   constructor(options?: RedisServerStateOptions) {
     this.requirepass = options?.requirepass
@@ -129,10 +130,39 @@ export class RedisServerState {
    * process-wide singleton) keeps each logical node's LuaEngine + script
    * re-entrancy guard isolated, so concurrent EVALs on independent
    * server/cluster nodes never collide (issue #130).
+   *
+   * A runtime whose engine faulted is dropped and the next call creates a
+   * fresh one, as is a creation that failed (#539). Only the engine is
+   * replaced: the script cache and the function libraries live here.
    */
   getLuaRuntime(): Promise<RedisLuaRuntime> {
-    this.luaRuntimePromise ??= createRedisLuaRuntime(this.profile)
-    return this.luaRuntimePromise
+    if (this.luaRuntime && !this.luaRuntime.usable) {
+      this.luaRuntime.dispose()
+      this.luaRuntime = null
+      this.luaRuntimePromise = null
+    }
+    if (this.luaRuntimePromise) {
+      return this.luaRuntimePromise
+    }
+
+    const created: Promise<RedisLuaRuntime> = createRedisLuaRuntime(
+      this.profile,
+    ).then(
+      runtime => {
+        if (this.luaRuntimePromise === created) {
+          this.luaRuntime = runtime
+        }
+        return runtime
+      },
+      (err: unknown) => {
+        if (this.luaRuntimePromise === created) {
+          this.luaRuntimePromise = null
+        }
+        throw err
+      },
+    )
+    this.luaRuntimePromise = created
+    return created
   }
 
   getDatabase(id: number): RedisDatabase {
