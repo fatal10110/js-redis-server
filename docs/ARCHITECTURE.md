@@ -402,7 +402,10 @@ COPY's write into `copy_to` (#445). A write that sets a TTL (`SET ... EX`,
 `SETEX`, `PSETEX`) passes `expireEvent` to `RedisDatabase.set`, which follows
 the write with an `expire` mutation, as Redis notifies `set` then `expire`;
 `GETEX` changes only the TTL, so it emits `expire` (or `del` for a time already
-past) and no write (#380).
+past) and no write (#380). On Valkey 8.0+ a `SET` with a deadline already past
+writes nothing and deletes the key if it exists, and on Valkey 8.1+ every such
+past-deadline deletion goes through `RedisDatabase.expireNow`, an `evict`
+mutation published as `expired`, instead of `delete` (#527).
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and

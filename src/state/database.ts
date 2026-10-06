@@ -156,6 +156,28 @@ export class RedisDatabase {
     return true
   }
 
+  /**
+   * Delete a key a command has just given a deadline already past, as an
+   * expiry rather than a delete: the `evict` event, published as `expired`
+   * (class `x`). Valkey 8.1+ does this for SET / GETEX / the EXPIRE family
+   * (`deleteExpiredKeyFromOverwriteAndPropagate`); Redis and earlier Valkey
+   * use {@link delete}, published as `del` (#527).
+   */
+  expireNow(key: Buffer): boolean {
+    const existing = this.getLiveEntry(key)
+    if (!existing) {
+      return false
+    }
+
+    this.entries.delete(keyId(key))
+    this.emit({
+      type: 'evict',
+      database: this.id,
+      key: existing.key,
+    })
+    return true
+  }
+
   expire(key: Buffer, expiresAt: number): boolean {
     const entry = this.getLiveEntry(key)
     if (!entry) {

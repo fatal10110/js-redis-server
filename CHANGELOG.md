@@ -656,6 +656,32 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- On the `valkey-8.0` and `valkey-9.0` profiles, a deadline that is already
+  past now behaves as it does on Valkey ([#527]). Before, every profile
+  followed Redis. With `notify-keyspace-events KEA`, keyevent channel shown:
+
+  ```
+  SET k v EXAT 1   (k absent)
+    redis 6.2-8.0, valkey 7.2:  set k | expire k   (then expired k on access)
+    valkey 8.0, 9.0:            nothing; k is never created
+  SET k w EXAT 1   (k exists)
+    redis 6.2-8.0, valkey 7.2:  set k | expire k   (then expired k on access)
+    valkey 8.0:                 del k
+    valkey 9.0:                 expired k
+  EXPIREAT k 1 / PEXPIRE k -5 / GETEX k EXAT 1   (k exists)
+    redis 6.2-8.0, valkey 7.2-8.0:  del k
+    valkey 9.0:                     expired k
+  ```
+
+  SET still replies `OK` (or the old value with `GET`), and the EXPIRE family
+  still replies `1`. Valkey 9.0's `expired` belongs to the `x` class, not
+  `g`. Deleting an existing key dirties a `WATCH` on it; a SET that creates
+  nothing leaves a `WATCH` clean. Two members are added to `FeatureId`:
+  `set.past-deadline-deletes` (Valkey 8.0+) and
+  `expire.past-deadline-expired-event` (Valkey 8.1+, from the Valkey 8.1.0
+  source). `RedisDatabase.expireNow(key)` deletes a key as an expiry (an
+  `evict` mutation).
+
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
   plain index range, so `zRange(key, 0, -1, { REV: true })` came back in
@@ -736,7 +762,7 @@ so the PR body is not a durable home for a breaking-change note.
   `RedisDatabase.set` takes a new `SetOptions.expireEvent` flag, which follows
   the write with an `expire` mutation. On Valkey 8.0 and 9.0, a deadline that is
   already past behaves differently (Valkey 9.0 publishes `expired k` for the
-  `GETEX` row). That is tracked in [#527].
+  `GETEX` row); see the [#527] entry above.
 
 - `SET … EX|PX` and `GETEX … EX|PX` queued in `MULTI` count the TTL from
   `EXEC`, as real Redis does, not from the moment they were queued. Before, a

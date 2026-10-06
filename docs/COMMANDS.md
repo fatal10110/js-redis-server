@@ -621,7 +621,11 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
       PXAT`, `SETEX`, `PSETEX`; not `KEEPTTL`). `GETEX EX|PX|EXAT|PXAT`
       publishes `expire`, or `del` for an `EXAT|PXAT` time already past;
       `GETEX PERSIST` publishes `persist`. A relative `EX|PX` queued in
-      `MULTI` counts from `EXEC`.
+      `MULTI` counts from `EXEC`. A deadline already past differs on Valkey
+      (#527): from 8.0, `SET` never writes the key, and deletes it if it
+      exists (`del`); from 8.1 (the `valkey-9.0` profile), that deletion and
+      the one by `GETEX` or the `EXPIRE` family publish `expired` (class `x`)
+      instead of `del`.
 - [x] Write events named after the originating command, matching real Redis:
       `set` (and `setnx`/`setex`/`getset`/`mset` → `set`), `incrby`
       (`incr`/`decr`/`decrby` → `incrby`), `append`, `setrange`, `lpush`/`rpush`

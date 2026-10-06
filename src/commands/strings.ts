@@ -17,6 +17,7 @@ import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
   bulk,
+  deleteForPastDeadline,
   ensureStringOrMissing,
   INT64_MAX,
   INT64_MIN,
@@ -112,8 +113,22 @@ export const setCommand = defineCommand({
       return args.get ? bulk(null) : RedisResult.nil()
     }
 
+    const expiresAt = args.expire ? resolveExpireAt(args.expire) : undefined
+    // Valkey 8.0+ never writes a key whose deadline is already past: it
+    // deletes the key if it exists and replies as if it had set it (#527).
+    if (
+      expiresAt !== undefined &&
+      expiresAt <= Date.now() &&
+      ctx.server.profile.has('set.past-deadline-deletes')
+    ) {
+      if (existingType !== null) {
+        deleteForPastDeadline(ctx.db, args.key, ctx.server.profile)
+      }
+      return args.get ? bulk(oldValue) : ok()
+    }
+
     ctx.db.setString(args.key, args.value, {
-      expiresAt: args.expire ? resolveExpireAt(args.expire) : undefined,
+      expiresAt,
       keepTtl: args.keepTtl,
       expireEvent: true,
     })
@@ -470,13 +485,14 @@ export const getexCommand = defineCommand({
     }
 
     // Only the TTL changes, so real Redis publishes `expire` (or `del` for an
-    // EXAT/PXAT time already past), never `getex` (#380).
+    // EXAT/PXAT time already past; `expired` on Valkey 8.1+, #527), never
+    // `getex` (#380).
     if (args.persist) {
       ctx.db.persist(args.key)
     } else if (args.expire) {
       const expiresAt = resolveExpireAt(args.expire)
       if (isAbsoluteExpire(args.expire) && expiresAt <= Date.now()) {
-        ctx.db.delete(args.key)
+        deleteForPastDeadline(ctx.db, args.key, ctx.server.profile)
       } else {
         ctx.db.expire(args.key, expiresAt)
       }
