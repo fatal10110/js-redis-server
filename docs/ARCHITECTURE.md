@@ -482,9 +482,14 @@ parsed — which is what lets the decoder enforce the *live*
 `Protocol error: invalid bulk length` and closing the connection before any
 command handler sees it, exactly as Redis does. The adapter also hands the
 decoder the server's compatibility profile, which picks the multibulk
-element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+). Like Redis, the
-decoder refuses an inline request once more than 64KB is buffered with no
-newline.
+element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+) and the few other
+framing rules that differ by version. Like Redis, the decoder refuses a request
+once more than 64KB is buffered without the line it is waiting for: the
+newline of an inline request, or the CR of a `*<count>` or `$<length>` header.
+It splits inline arguments byte for byte as `sdssplitargs` does. It parses
+incrementally, keeping its place in a partly received multibulk (the element
+count left and the current bulk length, as Redis keeps on the client), so a
+large request split across many reads costs linear time.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
