@@ -40,6 +40,16 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
 - [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
+
+  Both lines carry the profile version's fields in its order (for example
+  `ssub`, `resp` from 7.0, `lib-name` / `lib-ver` from 7.2, `watch` from 7.4,
+  `io-thread` on Redis 8.0, `tot-net-in` / `tot-net-out` / `tot-cmds` on
+  Valkey, `capa` on Valkey 9.0). `laddr` is the listening address, `fd` the
+  socket's descriptor (`-1` on the in-process transport), `cmd` the last
+  command by its command-table name (`client|info` from 7.0, `NULL` after an
+  unknown command), and `flags`, `multi`, `watch`, `idle` follow the
+  connection (`P`, `x`, `b`, `d`, `r`, `e`). Buffer, memory and network
+  counters read 0. On RESP3 both replies are `txt` verbatim strings.
 - [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
@@ -68,7 +78,10 @@ unknown-command error.
 #### INFO
 
 - [x] `INFO [section ...]` - Get information and statistics about the server; Redis 7.0+ profiles accept multiple sections
-  - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry)
+  - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry), except:
+    - `blocked_clients` counts the clients parked in a blocking command (`BLPOP`, `XREAD BLOCK`, ...)
+    - each keyspace line counts the keys with a TTL (`expires`) and gives their exact mean remaining TTL in milliseconds (`avg_ttl`; real Redis reports a sampled estimate that starts at 0), plus the hashes with field TTLs as `subexpiry` on Redis 7.4+ / `keys_with_volatile_items` on Valkey 9.0
+  - [x] On RESP3 the reply is a `txt` verbatim string (`=<len>\r\ntxt:...`), as on every real version
   - [x] `commandstats`, `latencystats`, `errorstats`, `modules`, `sentinel` - return empty sections
   - [x] `default` / `all` - returns the default section set
   - [ ] Real per-command/error/latency stats are not tracked

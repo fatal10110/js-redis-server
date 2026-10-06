@@ -11,6 +11,10 @@ export type AttachSessionOptions = {
   nodeRole?: RedisClusterNodeRole
   logger?: Pick<Logger, 'error'>
   clientAddress?: string
+  /** The server's end of the connection, `host:port` (CLIENT LIST `laddr=`). */
+  localAddress?: string
+  /** The socket's file descriptor (CLIENT LIST `fd=`), when it has one. */
+  fd?: number
 }
 
 export type AttachedSession = {
@@ -42,6 +46,8 @@ export function attachSession(
     executor: opts.executor,
     nodeRole: opts.nodeRole,
     clientAddress: opts.clientAddress,
+    localAddress: opts.localAddress,
+    fd: opts.fd,
     closeConnection: reason => transport.close(reason ?? 'client disconnected'),
   })
 

@@ -155,6 +155,44 @@ export class CommandExecutor {
   }
 
   /**
+   * The command-table name lookup resolves a raw command to, as Redis keeps
+   * it in `c->lastcmd` for CLIENT LIST's `cmd=`: the command's name, from
+   * 7.0 `container|subcommand` for a container called with a subcommand, and
+   * `null` when lookup fails (an unknown command, or from 7.0 an unknown
+   * subcommand). It does not check arity: Redis records the command before
+   * its arity check.
+   */
+  lookupCommandName(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+  ): string | null {
+    const definition = this.registry.get(rawCommand.toString())
+    if (!definition) {
+      return null
+    }
+
+    if (
+      rawArgs.length === 0 ||
+      !this.profile.has('error.unknown-subcommand-dispatch-timing')
+    ) {
+      return definition.name
+    }
+
+    const exists = containerSubcommandExists(
+      definition.name,
+      rawArgs[0],
+      this.profile,
+    )
+    if (exists === undefined) {
+      return definition.name
+    }
+
+    return exists
+      ? `${definition.name}|${asciiLowerCase(rawArgs[0].toString('latin1'))}`
+      : null
+  }
+
+  /**
    * Plan and execute a raw command in one step — the normal entry point for a
    * network client.
    *

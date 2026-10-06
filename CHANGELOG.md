@@ -418,6 +418,14 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
+- `INFO`, `CLIENT INFO` and `CLIENT LIST` reply with a `txt` verbatim
+  string, as real Redis does on every version ([#501]). RESP3 clients now get
+  `=<len>\r\ntxt:...` instead of a bulk string; RESP2 is unchanged, and a
+  script's `redis.call('INFO')` after `redis.setresp(3)` gets a
+  `{verbatim_string=...}` table. For `/core` users who read the `RedisValue`
+  directly, its `kind` is now `'verbatim'` (the text is in `value`, as
+  before).
+
 - Scripts run on **lua-redis-wasm 2.1** (was 1.5) ([#449], [#502], [#503]).
   What a script sees changes to match real Redis, byte for byte against
   redis-server 6.2.24 to 8.0.6 and valkey-server 7.2.14 to 9.0.6, except for
@@ -633,6 +641,17 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Added
 
+- **`/core`** New `FeatureId` gates for the per-version `CLIENT LIST` /
+  `CLIENT INFO` fields and the `INFO keyspace` line ([#496], [#32]):
+  `client.list.redis7-fields`, `client.list.watch`, `client.list.io-thread`,
+  `client.list.net-stats`, `client.list.capa`, `info.keyspace.subexpiry` and
+  `info.keyspace.volatile-items`. `RedisClientSession` gains optional
+  `localAddress`, `fd`, `lastCommand`, `lastInteractionMs`,
+  `queuedCommandCount` and `watchedKeyCount` (`ClientSession` implements
+  them; `ClientSessionOptions` and `AttachSessionOptions` take `localAddress`
+  and `fd`), `CommandExecutor` gains `lookupCommandName(rawCommand, rawArgs)`
+  and `RedisDatabase` gains `keyspaceStats()`.
+
 - **`/core`** A `CommandDefinition` can declare `rawKeys(argv)`, its getkeys
   procedure: the keys it finds in the raw arguments, each with its flags
   (`KeyWithFlags`, now exported), for commands whose keys the key specs or
@@ -655,6 +674,34 @@ so the PR body is not a durable home for a breaking-change note.
   `NodeRedisZRangeOptions`.
 
 ### Fixed
+
+- `INFO clients` reports `blocked_clients` as the number of clients parked
+  in a blocking command (`BLPOP`, `BLMOVE`, `BZPOPMIN`, `XREAD BLOCK`, ...)
+  instead of a fixed 0 ([#496]). The blocking FIFO integration suites poll it
+  instead of sleeping 80 ms per waiter.
+
+- `CLIENT INFO` / `CLIENT LIST` lines match real Redis field for field
+  ([#496]). Each profile prints its version's fields in its order (`db` after
+  `flags`; 6.2 has no `ssub`, `multi-mem`, `rbs`, `rbp` or `resp`; `lib-name`
+  / `lib-ver` are always printed from 7.2; `watch` from Redis 7.4 / Valkey
+  8.0; `io-thread` on Redis 8.0; `tot-net-in` / `tot-net-out` / `tot-cmds` on
+  Valkey; `capa` on Valkey 9.0). `laddr` is the server's listening address
+  (it was always `:6379`), `fd` the socket's descriptor (it was 0; `-1` on the
+  in-process transport, Redis's spelling for no socket), and `cmd` the
+  client's last command by its command-table name, recorded at lookup:
+  `client|info` from 7.0 (it was always `client`), `NULL` after an unknown
+  command or subcommand. `flags` shows `x` (MULTI), `b` (blocked), `d`
+  (a WATCHed key changed) and `r` (READONLY) and no longer prefixes `e` with
+  `N`; `multi` counts the queued commands, `watch` the WATCHed keys, and
+  `idle` the seconds since the last command. Verified against redis-server
+  7.0.15 and the other versions' `catClientInfoString`.
+
+- `INFO keyspace` reports `expires` (keys with a TTL) and `avg_ttl` (their
+  mean remaining TTL in milliseconds) instead of 0 ([#32]). Real Redis's
+  `avg_ttl` is an estimate its active-expire cycle samples; the mock reports
+  the exact mean it converges to. Redis 7.4+ profiles add `subexpiry=` and
+  Valkey 9.0 `keys_with_volatile_items=` (hashes with field TTLs), as those
+  versions do.
 
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
@@ -1371,5 +1418,8 @@ requests they contain.
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
+[#32]: https://github.com/fatal10110/js-redis-server/issues/32
+[#496]: https://github.com/fatal10110/js-redis-server/issues/496
+[#501]: https://github.com/fatal10110/js-redis-server/issues/501
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

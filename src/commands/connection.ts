@@ -24,7 +24,11 @@ import {
   unknownSubcommandError,
 } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
-import { VALKEY_REDIS_COMPAT_VERSION } from '../core/compatibility/profile'
+import { isClientBlocked } from './blocking'
+import {
+  VALKEY_REDIS_COMPAT_VERSION,
+  type CompatibilityProfile,
+} from '../core/compatibility/profile'
 
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
@@ -80,6 +84,15 @@ function value(value: string): RedisValue {
   return RedisValue.bulkString(Buffer.from(value))
 }
 
+/**
+ * INFO, CLIENT INFO and CLIENT LIST answer with `addReplyVerbatim(..., "txt")`
+ * on every version: a RESP3 verbatim string (`=<len>\r\ntxt:...`), which
+ * RESP2 sends as a plain bulk string.
+ */
+function verbatimText(text: string): RedisResult {
+  return RedisResult.create(RedisValue.verbatim('txt', Buffer.from(text)))
+}
+
 function expectArgCount(
   commandName: string,
   args: readonly Buffer[],
@@ -130,7 +143,9 @@ function buildInfo(
       'connected_clients:1',
       'client_recent_max_input_buffer:0',
       'client_recent_max_output_buffer:0',
-      'blocked_clients:0',
+      `blocked_clients:${
+        ctx.server.getConnectedClients().filter(isClientBlocked).length
+      }`,
     ],
     memory: () => [
       '# Memory',
@@ -193,13 +208,20 @@ function buildInfo(
     sentinel: () => ['# Sentinel'],
     keyspace: () => {
       const lines = ['# Keyspace']
+      const profile = ctx.server.profile
       for (const [index, database] of ctx.server.databases.entries()) {
-        const keyCount = database.size()
-        if (keyCount === 0) {
+        const stats = database.keyspaceStats()
+        if (stats.keys === 0) {
           continue
         }
 
-        lines.push(`db${index}:keys=${keyCount},expires=0,avg_ttl=0`)
+        let line = `db${index}:keys=${stats.keys},expires=${stats.expires},avg_ttl=${stats.avgTtlMs}`
+        if (profile.has('info.keyspace.subexpiry')) {
+          line += `,subexpiry=${stats.hashesWithFieldTtl}`
+        } else if (profile.has('info.keyspace.volatile-items')) {
+          line += `,keys_with_volatile_items=${stats.hashesWithFieldTtl}`
+        }
+        lines.push(line)
       }
       return lines
     },
@@ -236,56 +258,90 @@ function buildInfo(
   return `${lines.join('\r\n')}\r\n`
 }
 
-function formatClientLine(session: RedisClientSession): string {
+/**
+ * One CLIENT LIST / CLIENT INFO line, field for field as `catClientInfoString`
+ * prints it for the profile's version (see the `client.list.*` gates). The
+ * buffer and memory counters (`qbuf`, `rbs`, `tot-mem`, ...) and the network
+ * counters have nothing to measure here and read 0.
+ */
+function formatClientLine(
+  session: RedisClientSession,
+  profile: CompatibilityProfile,
+): string {
   const name = clientNames.get(session)?.toString() ?? ''
-  const libName = clientLibraryNames.get(session)?.toString()
-  const libVersion = clientLibraryVersions.get(session)?.toString()
+  const redis7 = profile.has('client.list.redis7-fields')
   const fields = [
     `id=${getClientId(session)}`,
     `addr=${session.clientAddress ?? '127.0.0.1:0'}`,
-    'laddr=127.0.0.1:6379',
-    'fd=0',
+    `laddr=${session.localAddress ?? session.clientAddress ?? '127.0.0.1:0'}`,
+    `fd=${session.fd ?? -1}`,
     `name=${name}`,
-    `db=${session.selectedDatabase}`,
     `age=${clientAgeSeconds(session)}`,
-    'idle=0',
+    `idle=${clientIdleSeconds(session)}`,
     `flags=${clientFlags(session)}`,
+  ]
+  if (profile.has('client.list.capa')) {
+    fields.push('capa=')
+  }
+  fields.push(
+    `db=${session.selectedDatabase}`,
     `sub=${session.pubsubChannelCount}`,
     `psub=${session.pubsubPatternCount}`,
-    'multi=-1',
-    'qbuf=0',
-    'qbuf-free=0',
-    'argv-mem=0',
-    'multi-mem=0',
-    'rbs=0',
-    'rbp=0',
+  )
+  if (redis7) {
+    fields.push(`ssub=${session.pubsubShardChannelCount}`)
+  }
+  fields.push(`multi=${session.queuedCommandCount ?? -1}`)
+  if (profile.has('client.list.watch')) {
+    fields.push(`watch=${session.watchedKeyCount ?? 0}`)
+  }
+  fields.push('qbuf=0', 'qbuf-free=0', 'argv-mem=0')
+  if (redis7) {
+    fields.push('multi-mem=0', 'rbs=0', 'rbp=0')
+  }
+  fields.push(
     'obl=0',
     'oll=0',
     'omem=0',
     'tot-mem=0',
     'events=r',
-    'cmd=client',
+    `cmd=${session.lastCommand ?? 'NULL'}`,
     'user=default',
     'redir=-1',
-    `resp=${session.protocolVersion}`,
-  ]
-
-  if (libName !== undefined) {
-    fields.push(`lib-name=${libName}`)
+  )
+  if (redis7) {
+    fields.push(`resp=${session.protocolVersion}`)
   }
-  if (libVersion !== undefined) {
-    fields.push(`lib-ver=${libVersion}`)
+  if (profile.has('client.setinfo')) {
+    fields.push(
+      `lib-name=${clientLibraryNames.get(session)?.toString() ?? ''}`,
+      `lib-ver=${clientLibraryVersions.get(session)?.toString() ?? ''}`,
+    )
+  }
+  if (profile.has('client.list.io-thread')) {
+    fields.push('io-thread=0')
+  }
+  if (profile.has('client.list.net-stats')) {
+    fields.push('tot-net-in=0', 'tot-net-out=0', 'tot-cmds=0')
   }
 
   return `${fields.join(' ')}\n`
 }
 
+/**
+ * The `flags=` letters, in `catClientInfoString`'s order, for the states this
+ * server models: `P` subscribed, `x` in MULTI, `b` blocked, `d` a WATCHed key
+ * changed, `r` READONLY (cluster), `e` CLIENT NO-EVICT; `N` for none.
+ */
 function clientFlags(session: RedisClientSession): string {
-  let flags = session.mode === 'subscribed' ? 'P' : 'N'
-  if (noEvictClients.has(session)) {
-    flags += 'e'
-  }
-  return flags
+  let flags = ''
+  if (session.pubsubSubscriptionCount > 0) flags += 'P'
+  if (session.mode === 'transaction') flags += 'x'
+  if (isClientBlocked(session)) flags += 'b'
+  if (session.isWatchDirty()) flags += 'd'
+  if (session.clusterReadOnly) flags += 'r'
+  if (noEvictClients.has(session)) flags += 'e'
+  return flags === '' ? 'N' : flags
 }
 
 type ClientKillOptions = {
@@ -296,6 +352,11 @@ type ClientKillOptions = {
 
 function clientAgeSeconds(session: RedisClientSession): number {
   return Math.max(0, Math.floor((Date.now() - session.connectedAtMs) / 1000))
+}
+
+function clientIdleSeconds(session: RedisClientSession): number {
+  const last = session.lastInteractionMs ?? session.connectedAtMs
+  return Math.max(0, Math.floor((Date.now() - last) / 1000))
 }
 
 function parseClientKillOptions(
@@ -573,7 +634,7 @@ export const infoCommand = defineCommand({
       throw errors.syntax()
     }
 
-    return bulk(Buffer.from(buildInfo(ctx, args.sections)))
+    return verbatimText(buildInfo(ctx, args.sections))
   },
 })
 
@@ -688,13 +749,15 @@ export const clientCommand = defineCommand({
 
     if (subcommand === 'info') {
       expectArgCount('client|info', args.args, 0)
-      return bulk(Buffer.from(formatClientLine(ctx.session)))
+      return verbatimText(formatClientLine(ctx.session, ctx.server.profile))
     }
 
     if (subcommand === 'list') {
       expectArgCount('client|list', args.args, 0)
-      const lines = ctx.server.getConnectedClients().map(formatClientLine)
-      return bulk(Buffer.from(lines.join('')))
+      const lines = ctx.server
+        .getConnectedClients()
+        .map(session => formatClientLine(session, ctx.server.profile))
+      return verbatimText(lines.join(''))
     }
 
     if (subcommand === 'help') {
