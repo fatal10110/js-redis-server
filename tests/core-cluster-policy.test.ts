@@ -37,6 +37,25 @@ describe('new cluster execution policy', () => {
     )
   })
 
+  test('routes a key with an empty hash tag by the whole key (#88)', async () => {
+    const { session } = createClusterHarness()
+
+    // `{}{foo}` is slot 2263 (local) on real Redis. The cluster-key-slot
+    // package hashes only `{foo`, slot 13308 (remote).
+    assert.deepStrictEqual(
+      await session.execute('set', [
+        Buffer.from('{}{foo}'),
+        Buffer.from('value'),
+      ]),
+      RedisResult.ok(),
+    )
+    // `{{foo}}` really is slot 13308, so it still redirects.
+    assert.deepStrictEqual(
+      await session.execute('get', [Buffer.from('{{foo}}')]),
+      RedisResult.error('13308 127.0.0.1:7001', 'MOVED'),
+    )
+  })
+
   test('rejects multi-key commands whose keys span slots', async () => {
     const { session, topology } = createClusterHarness()
     const localKey = findKeyOwnedBy(topology, 'local')

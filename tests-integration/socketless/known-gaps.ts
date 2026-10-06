@@ -156,6 +156,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'READONLY and READWRITE arity errors match Redis',
     'READONLY lets direct replica connections serve readonly commands for master slots',
     'RESET clears READONLY replica mode',
+    'an empty first hash tag hashes the whole key; node-redis gives up on the MOVED (#88)',
     'direct node connections return MOVED for keys owned by another node',
     'direct replica connections redirect keyed commands to the master',
   ]),
