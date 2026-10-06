@@ -214,6 +214,17 @@ export const errors = Object.freeze({
   /** `HELLO <version>` where version is not a valid integer at all. */
   helloProtocolNotInteger: () =>
     new RedisCommandError('Protocol version is not an integer or out of range'),
+  /**
+   * A keyspace command (readonly, write or may_replicate) sent on a MONITOR
+   * connection, which Redis treats as a replica. 6.2 misspells it; see
+   * `error.replica-keyspace-wording`.
+   */
+  replicaKeyspace: (profile: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile.has('error.replica-keyspace-wording')
+        ? "Replica can't interact with the keyspace"
+        : "Replica can't interract with the keyspace",
+    ),
 
   // Numbers
   expectedInteger: () =>

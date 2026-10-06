@@ -69,10 +69,17 @@ redirects and pre-execution cluster errors are skipped because the command is no
 executed on that node. Commands with monitor skip metadata are skipped, sensitive
 authentication arguments are redacted, transaction commands are emitted when
 `EXEC` replays them, and Lua `redis.call` / `redis.pcall` commands are emitted
-with the `lua` source. Credential-bearing commands declare their own monitor
-redaction metadata in the command definition, and Redis-invisible commands
-declare monitor skip metadata there too, so the executor does not need
-command-specific argument knowledge.
+with the `lua` source. A command is stamped after it ran, except the ones the
+real command table flags `skip_monitor` (`EVAL`, `EVALSHA`, `FCALL`, ...),
+which Redis feeds from inside the command and the executor stamps at dispatch.
+A short-circuit from a policy marked `rejectsBeforeCall` (auth, subscribed
+mode, the monitor connection's keyspace refusal) is not published, as Redis
+rejects those in `processCommand`, before `call()`. Every subscriber, the
+sending connection included, receives each event; the session holds its own
+command's lines until the reply is written. Credential-bearing commands
+declare their own monitor redaction metadata in the command definition, and
+Redis-invisible commands declare monitor skip metadata there too, so the
+executor does not need command-specific argument knowledge.
 
 ## Layers
 
