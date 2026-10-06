@@ -656,6 +656,23 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- A standalone server now has `CLUSTER`, `READONLY` and `READWRITE`, as a
+  real `cluster-enabled no` server does ([#537]). They used to be unknown
+  commands outside cluster mode. Now `COMMAND`, `COMMAND COUNT`,
+  `COMMAND INFO` and `COMMAND GETKEYS` list and describe them from the real
+  command table. `CLUSTER <subcommand>` answers `ERR This instance has
+  cluster support disabled`. From Redis 7.0 / Valkey 7.2, an unknown
+  subcommand gets `unknown subcommand '<name>'. Try CLUSTER HELP.` instead,
+  and a wrong argument count gets the `cluster|<sub>` arity error. Redis 6.2
+  answers the disabled error for both. `READONLY` is refused the same way
+  until Valkey 8.0, which answers `+OK`. `READWRITE` answers `+OK` on 6.2
+  and Valkey 8.0+ and is refused on Redis 7.0+ / Valkey 7.2. Two new gates
+  carry this: `cluster.standalone-readwrite-refused` and
+  `cluster.standalone-readonly-allowed`. Cluster nodes are unchanged. An
+  `extraCommands` entry named `cluster`, `readonly` or `readwrite` replaces
+  the standalone one in `createRedisCommandRegistry` /
+  `createRedisCommandExecutor`.
+
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
   plain index range, so `zRange(key, 0, -1, { REV: true })` came back in
@@ -1366,6 +1383,7 @@ requests they contain.
 [#445]: https://github.com/fatal10110/js-redis-server/issues/445
 [#527]: https://github.com/fatal10110/js-redis-server/issues/527
 [#536]: https://github.com/fatal10110/js-redis-server/issues/536
+[#537]: https://github.com/fatal10110/js-redis-server/issues/537
 [#540]: https://github.com/fatal10110/js-redis-server/issues/540
 [#493]: https://github.com/fatal10110/js-redis-server/issues/493
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494

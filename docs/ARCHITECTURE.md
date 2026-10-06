@@ -516,7 +516,10 @@ genuinely partitioned) but **sharing** the topology object, registered with:
 
 - extra cluster commands ([`createClusterCommands`](../src/commands/cluster.ts)):
   `CLUSTER`, scoped to that node's id
-  (`CLUSTER INFO`/`MYID`/`NODES`/`SHARDS`/`SLOTS`), plus `READONLY`/`READWRITE`, and
+  (`CLUSTER INFO`/`MYID`/`NODES`/`SHARDS`/`SLOTS`), plus `READONLY`/`READWRITE`.
+  These replace the standalone versions every executor registers, which
+  answer `This instance has cluster support disabled` the way a real
+  `cluster-enabled no` server does, and
 - a [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts) bound to
   that node's id, so each node independently validates ownership and redirects
   with `MOVED`/`CROSSSLOT`/`CLUSTERDOWN` (see [Cluster routing](#cluster-routing)).
