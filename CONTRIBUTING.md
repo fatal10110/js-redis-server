@@ -80,6 +80,9 @@ beforehand.
 
 Because of that flush, two real-backend runs must never share one stack — a
 second worktree or checkout would wipe the first one's keys mid-test (#497).
+`clean:redis` takes a run lock on the stack first, so a second run exits
+non-zero before it flushes anything (#542; see
+[The run lock](docs/TEST-INTEGRATION.md#the-run-lock)).
 The harness, that script and `docker-compose.test.yml` all read the same env
 vars, so a concurrent run starts its own stack on other ports:
 
