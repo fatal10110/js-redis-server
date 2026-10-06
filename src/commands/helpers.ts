@@ -79,6 +79,21 @@ export function helpReply(
   )
 }
 
+/**
+ * Delete a key because a command gave it a deadline already past (SET,
+ * GETEX EXAT / PXAT, the EXPIRE family). Published as `del`, or as
+ * `expired` (class `x`) from Valkey 8.1 (#527).
+ */
+export function deleteForPastDeadline(
+  db: RedisDatabase,
+  key: Buffer,
+  profile: CompatibilityProfile,
+): boolean {
+  return profile.has('expire.past-deadline-expired-event')
+    ? db.expireNow(key)
+    : db.delete(key)
+}
+
 export function ensureStringOrMissing(
   db: RedisDatabase,
   key: Buffer,

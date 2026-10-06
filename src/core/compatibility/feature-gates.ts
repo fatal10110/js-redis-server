@@ -280,4 +280,19 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // dict order is undefined. Verified against redis-server 7.2.16, 7.4,
   // 8.0.6 and Valkey 7.2.14 / 8.0 / 8.1 / 9.0.
   'set.union-diff-hashtable': { redis: '8.0.0', valkey: '8.0.0' },
+  // Valkey 8.0: a SET whose EX / PX / EXAT / PXAT deadline is already past
+  // (`checkAlreadyExpired`) writes nothing. It deletes a key that exists,
+  // and creates none, so no `set` / `expire` is published. Redis (6.2-8.0)
+  // and Valkey 7.2 write the key with the past TTL and publish `set` and
+  // `expire`, and the key expires on its next access (#527). Verified against
+  // the Valkey 7.2.14, 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources
+  // (`setGenericCommand`).
+  'set.past-deadline-deletes': { valkey: '8.0.0' },
+  // Valkey 8.1: a key deleted because a command gave it a deadline already
+  // past (SET, GETEX EXAT / PXAT, the EXPIRE family) is published as
+  // `expired` (class `x`), not `del` (class `g`):
+  // `deleteExpiredKeyFromOverwriteAndPropagate` switched notifications in
+  // 8.1.0. Redis and Valkey 7.2 / 8.0 publish `del` (#527). Verified against
+  // the Valkey 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources.
+  'expire.past-deadline-expired-event': { valkey: '8.1.0' },
 }

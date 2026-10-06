@@ -21,6 +21,7 @@ import type { ExpirationState, RedisDatabase } from '../state'
 import {
   array,
   bulk,
+  deleteForPastDeadline,
   integer,
   keyTtlSeconds,
   ok,
@@ -300,7 +301,7 @@ export const expireCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
-    expireKey(ctx.db, args.key, args.seconds, 1000, args.options),
+    expireKey(ctx, args.key, args.seconds, 1000, args.options),
 })
 
 export const pexpireCommand = defineCommand({
@@ -314,7 +315,7 @@ export const pexpireCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
-    expireKey(ctx.db, args.key, args.milliseconds, 1, args.options),
+    expireKey(ctx, args.key, args.milliseconds, 1, args.options),
 })
 
 export const persistCommand = defineCommand({
@@ -384,7 +385,7 @@ export const expireatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return expireAtKey(ctx.db, args.key, args.timestamp * 1000, args.options)
+    return expireAtKey(ctx, args.key, args.timestamp * 1000, args.options)
   },
 })
 
@@ -399,7 +400,7 @@ export const pexpireatCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return expireAtKey(ctx.db, args.key, args.timestamp, args.options)
+    return expireAtKey(ctx, args.key, args.timestamp, args.options)
   },
 })
 
@@ -1015,23 +1016,24 @@ export const keysCommands = [
 ]
 
 function expireKey(
-  db: RedisDatabase,
+  ctx: RedisExecutionContext,
   key: Buffer,
   duration: number,
   multiplier: number,
   options: ExpireOptions,
 ) {
   const now = Date.now()
-  return expireAtKey(db, key, now + duration * multiplier, options, now)
+  return expireAtKey(ctx, key, now + duration * multiplier, options, now)
 }
 
 function expireAtKey(
-  db: RedisDatabase,
+  ctx: RedisExecutionContext,
   key: Buffer,
   expiresAt: number,
   options: ExpireOptions,
   now = Date.now(),
 ) {
+  const db = ctx.db
   const expiration = db.getExpiration(key)
   if (expiration.kind === 'missing') {
     return integer(0)
@@ -1041,8 +1043,10 @@ function expireAtKey(
     return integer(0)
   }
 
+  // A deadline already past deletes the key there and then: `del`, or
+  // `expired` on Valkey 8.1+ (#527).
   if (expiresAt <= now) {
-    return integer(db.delete(key) ? 1 : 0)
+    return integer(deleteForPastDeadline(db, key, ctx.server.profile) ? 1 : 0)
   }
 
   return integer(db.expire(key, expiresAt) ? 1 : 0)
