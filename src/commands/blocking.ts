@@ -110,6 +110,27 @@ export async function blockOnKeys<TResult>(
   }
 }
 
+/**
+ * A blocking command's wait once its non-blocking attempt found nothing:
+ * {@link blockOnKeys}, then `timedOut()` for its timeout reply.
+ *
+ * A command called from a script cannot block (real Redis sets
+ * `CLIENT_DENY_BLOCKING` on the script client), so there it answers
+ * `timedOut()` at once, even with timeout 0, as if the timeout had expired
+ * (#500). Which blocking commands a script may call at all is the command
+ * table's `noscript` flag: from 7.2 every one of them, before that only
+ * BLMPOP and BZMPOP. The reply is synchronous, because `redis.call` runs
+ * through `executePlanSync`, which refuses a promise.
+ */
+export function blockOrTimeOut<TResult>(
+  ctx: RedisExecutionContext,
+  options: BlockOnKeysOptions<TResult>,
+  timedOut: () => TResult,
+): TResult | Promise<TResult> {
+  if (ctx.inScript) return timedOut()
+  return blockOnKeys(ctx, options).then(result => result ?? timedOut())
+}
+
 /** A blocking timeout in seconds (`0` = forever) as park milliseconds. */
 export function blockingTimeoutMs(timeoutSecs: number): number | undefined {
   return timeoutSecs === 0 ? undefined : Math.ceil(timeoutSecs * 1000)

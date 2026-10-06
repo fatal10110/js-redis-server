@@ -583,10 +583,15 @@ to scripts via a host callback
 
 1. builds a `CommandPlan` with `ctx.executor.plan(name, args)` — the _exact_
    same lookup/parse/key-extraction the normal path uses,
-2. rejects commands flagged `noscript` with the standard Redis script error
-   (on 7.0+ profiles a `noscript` container's subcommand is looked up
-   first, mirroring Redis's per-subcommand flags: `HELP` is exempt and an
-   unknown subcommand gets the unknown-command error), and
+2. rejects commands flagged `noscript` with the standard Redis script error.
+   The flag is read from the real command table of the profile's version
+   (the definition's own `flags` only for a name that table lacks), so it
+   follows each version: on 7.0+ profiles a container's subcommand is looked
+   up first, mirroring Redis's per-subcommand flags (`HELP` is exempt and an
+   unknown subcommand gets the unknown-command error), and from 7.2 the
+   blocking pops are allowed. A blocking command called from a script never
+   parks: like Redis's `CLIENT_DENY_BLOCKING`, it answers its timeout reply
+   at once (`blockOrTimeOut` in `src/commands/blocking.ts`), and
 3. runs the plan through [`executePlanSync`](../src/core/command-executor.ts#L116)
    — the same registry and policies as a client-issued command, so cluster
    slot validation and transaction-flag rules apply _inside_ scripts too, and

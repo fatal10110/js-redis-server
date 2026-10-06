@@ -8,7 +8,7 @@ import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { scoreValue } from '../helpers'
 import { getSortedMembers } from './helpers'
-import { blockOnKeys, blockingTimeoutMs } from '../blocking'
+import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
 
 type ZsetMultiPopSide = 'min' | 'max'
 
@@ -173,20 +173,23 @@ export function tryZsetMultiPop(
   return null
 }
 
-async function blockingZsetMultiPop(
+function blockingZsetMultiPop(
   keys: readonly Buffer[],
   timeoutSecs: number,
   side: ZsetMultiPopSide,
   count: number,
   ctx: RedisExecutionContext,
-): Promise<RedisResult> {
-  const result = await blockOnKeys(ctx, {
-    keys,
-    type: 'zset',
-    timeoutMs: blockingTimeoutMs(timeoutSecs),
-    attempt: () => tryZsetMultiPop(keys, side, count, ctx.db),
-  })
-  return result ?? RedisResult.create(RedisValue.nullArray())
+): RedisResult | Promise<RedisResult> {
+  return blockOrTimeOut(
+    ctx,
+    {
+      keys,
+      type: 'zset',
+      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      attempt: () => tryZsetMultiPop(keys, side, count, ctx.db),
+    },
+    () => RedisResult.create(RedisValue.nullArray()),
+  )
 }
 
 export const zmpopCommand = defineCommand({
@@ -215,7 +218,7 @@ export const bzmpopCommand = defineCommand({
       nextIndex: input.length,
     }),
   ),
-  flags: ['write', 'noscript'],
+  flags: ['write', 'blocking'],
   keys: args => args.keys,
   execute: (args, ctx) => {
     const immediate = tryZsetMultiPop(args.keys, args.side, args.count, ctx.db)

@@ -26,6 +26,13 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING** The `script.per-subcommand-noscript` member of `FeatureId` was
+  removed ([#500]). Whether a script may call a command is now read from the
+  real command table of the profile's version, which already knows that 7.0
+  moved `noscript` from the container to each subcommand, so no code asks for
+  the gate any more. A caller that tested it with `profile.has(...)` should
+  compare `profile.flavor` / `profile.versionNum` instead.
+
 - **BREAKING** The `geo.store-keyspec-variable-flags` member of `FeatureId`
   was removed ([#494]). `variable_flags` on Valkey's GEORADIUS STORE key
   specs is now one of the many per-version facts the real command table
@@ -655,6 +662,21 @@ so the PR body is not a durable home for a breaking-change note.
   `NodeRedisZRangeOptions`.
 
 ### Fixed
+
+- Scripts may call the commands real Redis lets them call ([#500]). The
+  `noscript` refusal used the mock's own flags, which refused `SPOP`,
+  `SRANDMEMBER` and `HRANDFIELD` and every blocking pop on every profile. It
+  now reads the real command table of the profile's version, so those three
+  run from scripts everywhere, `BLPOP` / `BRPOP` / `BLMOVE` / `BZPOPMIN` /
+  `BZPOPMAX` run from 7.2 (6.2 and 7.0 still refuse them) and `BLMPOP` /
+  `BZMPOP` from 7.0. A blocking command called from a script never blocks, as
+  under real Redis's `CLIENT_DENY_BLOCKING`: with nothing to pop it answers
+  its timeout reply at once, even with timeout 0, where it used to fail with
+  `... cannot run asynchronously from scripts`. The command-table arity is
+  checked before the refusal, as before (`redis.pcall('CLIENT','GETNAME','x')`
+  is the arity error on 7.0+). Checked against redis-server 7.0.15 and the
+  6.2.14, 7.2.4, 8.0.6 and valkey 9.0.0 sources. The profile tests now also
+  pin the `xinfo|help` / `xgroup|help` arity error from scripts ([#492]).
 
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
@@ -1370,6 +1392,7 @@ requests they contain.
 [#493]: https://github.com/fatal10110/js-redis-server/issues/493
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
+[#500]: https://github.com/fatal10110/js-redis-server/issues/500
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
