@@ -21,6 +21,8 @@ export type FeatureId =
   | 'config.memory-value.reject-overflow'
   | 'notify.keyspace.new-key-class'
   | 'protocol.multibulk-count-int-max'
+  | 'protocol.header-scan-past-nul'
+  | 'protocol.inline-adjacent-quotes'
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'

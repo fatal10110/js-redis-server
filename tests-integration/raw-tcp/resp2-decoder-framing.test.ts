@@ -5,9 +5,12 @@ import { activeProfile, commandFrame } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 
 /**
- * Raw TCP coverage for RESP2 request framing edge cases (#441): the multibulk
- * element-count bound, the bytes after a bulk payload, and the 64KB cap on an
- * inline request. None of these can be put on the wire by a real client.
+ * Raw TCP coverage for RESP2 request framing edge cases (#441, #505): the
+ * multibulk element-count bound, the bytes after a bulk payload, the 64KB cap
+ * on an inline request and on header lines, where a header line ends, and how
+ * inline arguments are split. None of these can be put on the wire by a real
+ * client. The #505 cases were ground-truthed on redis-server 7.0.15 and read
+ * off the 6.2-8.0 and Valkey sources; each says where they differ.
  *
  * Ground-truthed on redis 6.2.24, 7.0.15, 8.0 and valkey 7.2.14 / 8.0.0 /
  * 9.0.0. The inline-cap and length-format assertions hold on all of them. The
@@ -268,6 +271,199 @@ describe(`Raw TCP RESP2 decoder framing (${testRunner.getBackendName()})`, () =>
       conn.write(`PING\n${'a'.repeat(70000)}`)
       assert.strictEqual((await conn.readRawFrame()).toString(), '+PONG\r\n')
       await expectThenClose(conn, TOO_BIG_INLINE)
+    })
+  })
+
+  // #505 item 1: inline requests are split by `sdssplitargs`. Verified
+  // byte-for-byte on redis-server 7.0.15; sds.c's splitter is the same from
+  // 6.2 through 8.0 and in Valkey before 9.0.
+  describe('inline argument splitting', () => {
+    async function echoInline(line: string): Promise<Buffer> {
+      const conn = await connect()
+      conn.write(Buffer.from(`${line}\r\n`, 'latin1'))
+      return conn.readRawFrame()
+    }
+
+    test('a CR inside the line separates arguments', async () => {
+      assert.strictEqual(
+        (await echoInline('ECHO a\rb')).toString(),
+        "-ERR wrong number of arguments for 'echo' command\r\n",
+      )
+    })
+
+    test('\\v and \\f are skipped between arguments but kept inside one', async () => {
+      assert.strictEqual(
+        (await echoInline('ECHO a\vb')).toString(),
+        '$3\r\na\vb\r\n',
+      )
+      assert.strictEqual(
+        (await echoInline('ECHO \f\va')).toString(),
+        '$1\r\na\r\n',
+      )
+    })
+
+    test('a quote opens a quoted section in the middle of an argument', async () => {
+      assert.strictEqual(
+        (await echoInline('ECHO foo"bar baz"')).toString(),
+        '$10\r\nfoobar baz\r\n',
+      )
+    })
+
+    test("single quotes take no escapes but \\'", async () => {
+      assert.strictEqual(
+        (await echoInline("ECHO 'a\\x41'")).toString(),
+        '$5\r\na\\x41\r\n',
+      )
+      assert.strictEqual(
+        (await echoInline("ECHO 'it\\'s'")).toString(),
+        "$4\r\nit's\r\n",
+      )
+    })
+
+    test('non-ASCII bytes pass through unchanged', async () => {
+      assert.deepStrictEqual(
+        await echoInline('ECHO \xe9\xff'),
+        Buffer.from('$2\r\n\xe9\xff\r\n', 'latin1'),
+      )
+    })
+
+    // Valkey 9.0's sdsparsearg lets the argument continue after a closing
+    // quote (sds.c, valkey 9.0.0); everything else needs a separator there.
+    test('text right after a closing quote', async () => {
+      const conn = await connect()
+      conn.write('ECHO "a"b\r\n')
+
+      if (activeProfile === 'valkey-9.0') {
+        assert.strictEqual(
+          (await conn.readRawFrame()).toString(),
+          '$2\r\nab\r\n',
+        )
+        return
+      }
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: unbalanced quotes in request\r\n',
+      )
+    })
+  })
+
+  // #505 item 2: the 64KB `PROTO_INLINE_MAX_SIZE` cap also bounds a multibulk
+  // request's header lines. Verified on redis-server 7.0.15; the checks are
+  // the same in `processMultibulkBuffer` on 6.2 through 8.0 and in Valkey.
+  describe('header line cap', () => {
+    test('a count line with no CR past 64KB is refused and closed', async () => {
+      const conn = await connect()
+
+      conn.write(`*${'1'.repeat(70000)}`)
+
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: too big mbulk count string\r\n',
+      )
+    })
+
+    test('a bulk length line with no CR past 64KB is refused and closed', async () => {
+      const conn = await connect()
+
+      conn.write(`*1\r\n$${'1'.repeat(70000)}`)
+
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: too big bulk count string\r\n',
+      )
+    })
+
+    // The cap is checked before the element prefix: 64KB with no CR is "too
+    // big", whatever its first byte.
+    test('the cap applies even when the element does not start with $', async () => {
+      const conn = await connect()
+
+      conn.write(`*1\r\n${'X'.repeat(70000)}`)
+
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: too big bulk count string\r\n',
+      )
+    })
+
+    test('exactly 64KB with no CR is not refused; the line is judged when it ends', async () => {
+      const conn = await connect()
+
+      // `$` plus 65535 digits: 64KB from the start of the element.
+      conn.write(`*1\r\n$${'1'.repeat(INLINE_MAX - 1)}`)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      conn.write('\r\n')
+
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: invalid bulk length\r\n',
+      )
+    })
+
+    test('commands before an oversized header are answered first', async () => {
+      const conn = await connect()
+
+      conn.write(
+        Buffer.concat([
+          commandFrame('PING'),
+          Buffer.from(`*${'1'.repeat(70000)}`),
+        ]),
+      )
+
+      assert.strictEqual((await conn.readRawFrame()).toString(), '+PONG\r\n')
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: too big mbulk count string\r\n',
+      )
+    })
+  })
+
+  describe('header line end', () => {
+    // A header line runs to the first CR, and the byte after it is skipped
+    // without being looked at (`qb_pos = newline + 2`).
+    test('the byte after a header CR is skipped unchecked', async () => {
+      const conn = await connect()
+
+      conn.write('*1\rX$4\rYPING\r\n')
+
+      assert.strictEqual((await conn.readRawFrame()).toString(), '+PONG\r\n')
+    })
+
+    test("the element's $ is only checked once its line has ended", async () => {
+      const conn = await connect()
+
+      conn.write('*1\r\nX')
+      await new Promise(resolve => setTimeout(resolve, 100))
+      conn.write('\r\n')
+
+      await expectThenClose(
+        conn,
+        "-ERR Protocol error: expected '$', got 'X'\r\n",
+      )
+    })
+
+    // Redis looks for the CR with strchr, which stops at a NUL byte: the line
+    // never ends, so the request waits until the 64KB cap refuses it. Valkey
+    // 8.1+ uses memchr and reaches the CR (networking.c, valkey 9.0.0).
+    test('a NUL byte before the CR of a count line', async () => {
+      const conn = await connect()
+
+      conn.write('*1\0\r\n')
+
+      if (activeProfile === 'valkey-9.0') {
+        await expectThenClose(
+          conn,
+          '-ERR Protocol error: invalid multibulk length\r\n',
+        )
+        return
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+      conn.write('a'.repeat(70000))
+      await expectThenClose(
+        conn,
+        '-ERR Protocol error: too big mbulk count string\r\n',
+      )
     })
   })
 })
