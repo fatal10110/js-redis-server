@@ -7,6 +7,8 @@
  *  - which masters were flushed and which failed (`masterOutcomes`), and
  *  - how a replica is judged when its master was not flushed
  *    (`replicaMasterProblem`).
+ *
+ * The run lock taken before the flush lives in `flush-redis-lock.ts`.
  */
 
 /** What to actually do about each kind of failure — never one generic line. */
@@ -21,6 +23,8 @@ export const HINT = {
     'A replica is not following a flushed master: wait for it to resync, or restart it so it performs a full sync.',
   leftKeys:
     'Keys survived FLUSHALL: something is writing to this node concurrently — stop whatever else is using it.',
+  locked:
+    'Another real-backend run holds this stack. Wait for it to finish, or start a private stack: see docs/TEST-INTEGRATION.md#running-a-private-stack',
 } as const
 
 export type Failure = { message: string; hint?: string }
