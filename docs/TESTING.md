@@ -125,6 +125,16 @@ const cluster = createCluster({
 await cluster.connect()
 ```
 
+Slots are computed exactly as Redis computes them. That includes a key whose
+first hash tag is empty, such as `{}{foo}`: Redis hashes the whole key (slot
+2263). ioredis and node-redis route with the `cluster-key-slot` package, which
+hashes `{foo` instead (slot 13308). When those two slots belong to different
+masters, the client sends the key to the wrong one and gets `MOVED`, against
+the mock and a real cluster alike. ioredis follows the redirect. node-redis
+looks the slot up again, reaches the same master each time, and fails with
+the `MOVED` error once its redirections run out. With node-redis, avoid keys
+whose first `{...}` is empty.
+
 ### Compatibility profiles
 
 By default the mock exposes the newest implemented Redis behavior. Pass
@@ -487,7 +497,9 @@ Pass `cluster` for a cluster facade; keyed commands route by slot in-process.
 Routing keys come from `CommandExecutor.plan()` — the same extraction
 `ClusterPolicy` uses — so multi-key commands (`MSET`, `RENAME`), numkeys-prefixed
 ones (`EVAL`, `ZUNIONSTORE`) and STORE targets all reach the right node, and a
-key set spanning slots is refused with `CROSSSLOT`:
+key set spanning slots is refused with `CROSSSLOT`. The facade routes by the
+server's own slot, so unlike real node-redis it reaches the owner of a key
+whose first hash tag is empty (see [Cluster mocks](#cluster-mocks)):
 
 ```typescript
 const cluster = await createNodeRedisMock({

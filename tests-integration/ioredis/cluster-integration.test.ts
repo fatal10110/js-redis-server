@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { createHash } from 'node:crypto'
 import { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
+import { keyHashSlot } from '../../src/state/cluster-topology'
 import { TestRunner } from '../test-config'
 import {
   commandFrame,
@@ -13,6 +14,7 @@ import {
   findSlotMasterAndReplica,
   findSlotOwner,
   randomKey,
+  type RedisEndpoint,
 } from '../utils'
 import {
   RawRedisConnection,
@@ -55,6 +57,33 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
       )
     } finally {
       directClient.disconnect()
+    }
+  })
+
+  test('an empty first hash tag hashes the whole key; ioredis follows the MOVED (#88)', async () => {
+    // ioredis routes with cluster-key-slot, which hashes `{}{x}` as `{x`.
+    // The server hashes the whole key, so the client's first try lands on
+    // the wrong master and is redirected — against real Redis too.
+    const { key, fullKey, serverSlot, serverOwner, clientOwner } =
+      await findEmptyTagKeyOnTwoMasters(redisClient!)
+    const clientOwnerClient = await connectToEndpoint(clientOwner)
+    const serverOwnerClient = await connectToEndpoint(serverOwner)
+
+    try {
+      await assert.rejects(
+        () => clientOwnerClient.get(fullKey),
+        errorWithMessage(
+          `MOVED ${serverSlot} ${serverOwner.host}:${serverOwner.port}`,
+        ),
+      )
+
+      assert.strictEqual(await redisClient!.set(key, 'value'), 'OK')
+      assert.strictEqual(await redisClient!.get(key), 'value')
+      assert.strictEqual(await serverOwnerClient.get(fullKey), 'value')
+    } finally {
+      await serverOwnerClient.del(fullKey)
+      clientOwnerClient.disconnect()
+      serverOwnerClient.disconnect()
     }
   })
 
@@ -336,6 +365,49 @@ async function findKeyOwnedByDifferentMaster(
   }
 
   throw new Error('Could not find key owned by a different master')
+}
+
+/**
+ * A `{}{...}` key whose real slot (the whole key, #88) and the slot the
+ * clients compute with cluster-key-slot belong to different masters.
+ * `fullKey` carries the cluster client's `keyPrefix`, which ioredis hashes
+ * as part of the key; direct node clients must use it.
+ */
+async function findEmptyTagKeyOnTwoMasters(cluster: Cluster): Promise<{
+  key: string
+  fullKey: string
+  serverSlot: number
+  serverOwner: RedisEndpoint
+  clientOwner: RedisEndpoint
+}> {
+  const prefix = cluster.options.keyPrefix ?? ''
+  const ranges = (await cluster.cluster('SLOTS')) as Array<
+    [number, number, [string, number]]
+  >
+  const ownerOf = (slot: number): RedisEndpoint => {
+    for (const [min, max, [host, port]] of ranges) {
+      if (slot >= min && slot <= max) {
+        return { host, port }
+      }
+    }
+    throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)
+  }
+
+  for (let index = 0; index < 10000; index++) {
+    const key = `{}{empty-tag:${randomKey()}:${index}}`
+    const fullKey = `${prefix}${key}`
+    const serverSlot = keyHashSlot(Buffer.from(fullKey))
+    const serverOwner = ownerOf(serverSlot)
+    const clientOwner = ownerOf(clusterKeySlot(fullKey))
+    if (
+      serverOwner.host !== clientOwner.host ||
+      serverOwner.port !== clientOwner.port
+    ) {
+      return { key, fullKey, serverSlot, serverOwner, clientOwner }
+    }
+  }
+
+  throw new Error('Could not find an empty-tag key routed to the wrong master')
 }
 
 async function findDifferentNodeKeys(cluster: Cluster): Promise<{
