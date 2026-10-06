@@ -7,7 +7,7 @@ import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { array, scorePairs, scoreValue } from '../helpers'
 import { getSortedMembers } from './helpers'
-import { blockOnKeys, blockingTimeoutMs } from '../blocking'
+import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
 
 type ZsetPopSide = 'min' | 'max'
 
@@ -153,19 +153,22 @@ function tryBlockingZsetPop(
   return null
 }
 
-async function blockingZsetPop(
+function blockingZsetPop(
   keys: readonly Buffer[],
   timeoutSecs: number,
   side: ZsetPopSide,
   ctx: RedisExecutionContext,
-): Promise<RedisResult> {
-  const result = await blockOnKeys(ctx, {
-    keys,
-    type: 'zset',
-    timeoutMs: blockingTimeoutMs(timeoutSecs),
-    attempt: () => tryBlockingZsetPop(keys, side, ctx.db),
-  })
-  return result ?? RedisResult.create(RedisValue.nullArray())
+): RedisResult | Promise<RedisResult> {
+  return blockOrTimeOut(
+    ctx,
+    {
+      keys,
+      type: 'zset',
+      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      attempt: () => tryBlockingZsetPop(keys, side, ctx.db),
+    },
+    () => RedisResult.create(RedisValue.nullArray()),
+  )
 }
 
 function defineBlockingZsetPop(name: string, side: ZsetPopSide) {
@@ -178,7 +181,7 @@ function defineBlockingZsetPop(name: string, side: ZsetPopSide) {
         nextIndex: input.length,
       }),
     ),
-    flags: ['write', 'noscript'],
+    flags: ['write', 'blocking'],
     keys: args => args.keys,
     execute: (args, ctx) => {
       const immediate = tryBlockingZsetPop(args.keys, side, ctx.db)

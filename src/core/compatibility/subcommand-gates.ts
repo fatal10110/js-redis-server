@@ -33,7 +33,7 @@ const REDIS_84: VersionGate = { redis: '8.4.0' }
  * {@link containerSubcommandArity}.
  * Redis 6.2 has no subcommand entries at all, so these gates are only
  * consulted on profiles with `error.unknown-subcommand-dispatch-timing` (see
- * `CommandExecutor.plan()`) or `script.per-subcommand-noscript`.
+ * `CommandExecutor.plan()` and `lookupSubcommandEntry`).
  */
 const CONTAINER_SUBCOMMANDS: Record<
   string,
