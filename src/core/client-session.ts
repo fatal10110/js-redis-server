@@ -26,6 +26,10 @@ import type { RedisPubSubBroker } from '../state/pubsub-broker'
 export type ClientSessionOptions = {
   id?: string
   clientAddress?: string
+  /** The server's end of the connection, `host:port` (CLIENT LIST `laddr=`). */
+  localAddress?: string
+  /** The socket's file descriptor (CLIENT LIST `fd=`), when it has one. */
+  fd?: number
   server: RedisServerState
   executor: CommandExecutor
   database?: number
@@ -163,6 +167,8 @@ export class ClientSession implements RedisClientSession {
 
   readonly id: string
   readonly clientAddress?: string
+  readonly localAddress?: string
+  readonly fd?: number
   readonly connectedAtMs: number
   readonly server: RedisServerState
   /** Aborted when the connection closes; threaded into every command's ctx. */
@@ -205,11 +211,16 @@ export class ClientSession implements RedisClientSession {
   /** Set while this connection is in MONITOR mode; leaves it. */
   private stopMonitor?: () => void
   private unregisterClientSession?: Unsubscribe
+  private lastCommandName: string | null = null
+  private lastInteraction: number
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
     this.clientAddress = options.clientAddress
+    this.localAddress = options.localAddress
+    this.fd = options.fd
     this.connectedAtMs = Date.now()
+    this.lastInteraction = this.connectedAtMs
     this.server = options.server
     this.executor = options.executor
     this.selectedDatabaseId = options.database ?? 0
@@ -246,6 +257,24 @@ export class ClientSession implements RedisClientSession {
 
   get clusterReadOnly(): boolean {
     return this.clusterReadOnlyMode
+  }
+
+  get lastCommand(): string | null {
+    return this.lastCommandName
+  }
+
+  get lastInteractionMs(): number {
+    return this.lastInteraction
+  }
+
+  get queuedCommandCount(): number {
+    return this.sessionMode === 'transaction'
+      ? this.transactionPlans.length
+      : -1
+  }
+
+  get watchedKeyCount(): number {
+    return this.watches.size
   }
 
   get isAuthenticated(): boolean {
@@ -713,9 +742,18 @@ export class ClientSession implements RedisClientSession {
       },
     }
     try {
+      // Redis records the command as the client's last one (`cmd=` in CLIENT
+      // LIST) at lookup, before any check can refuse it, and stamps the
+      // interaction when the command is read and again when it is answered.
+      this.lastCommandName = this.executor.lookupCommandName(
+        rawCommand,
+        rawArgs,
+      )
+      this.lastInteraction = Date.now()
       const ctx = this.createExecutionContext(turnAccess)
       return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
+      this.lastInteraction = Date.now()
       turn?.release()
     }
   }

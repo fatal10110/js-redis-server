@@ -87,6 +87,21 @@ export class Resp2Server {
         socket.remoteAddress,
         socket.remotePort,
       ),
+      localAddress: formatSocketAddressParts(
+        socket.localAddress,
+        socket.localPort,
+      ),
+      fd: socketFd(socket),
     })
   }
+}
+
+/**
+ * The OS file descriptor behind an accepted socket, which real Redis reports
+ * as CLIENT LIST's `fd=`. Node keeps it on the libuv handle (`TCPWrap.fd`,
+ * not public API); it is -1 where the platform has none to expose (Windows).
+ */
+function socketFd(socket: Socket): number | undefined {
+  const fd = (socket as unknown as { _handle?: { fd?: unknown } })._handle?.fd
+  return typeof fd === 'number' && fd >= 0 ? fd : undefined
 }

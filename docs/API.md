@@ -161,6 +161,13 @@ Current profile gates:
 | `GEOSEARCH`, `GEOSEARCHSTORE` | `redis-6.2+` | `valkey-8.0+` |
 | `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
+| `ssub`, `multi-mem`, `rbs`, `rbp` and `resp` in `CLIENT LIST` / `CLIENT INFO`, and `cmd` naming `container\|subcommand` (6.2: the container); `lib-name` / `lib-ver` follow `CLIENT SETINFO` | `redis-7.0+` | `valkey-8.0+` |
+| `watch` in `CLIENT LIST` / `CLIENT INFO` | `redis-7.4+` | `valkey-8.0+` |
+| `io-thread` in `CLIENT LIST` / `CLIENT INFO` | `redis-8.0+` | never |
+| `tot-net-in`, `tot-net-out`, `tot-cmds` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-8.0+` |
+| `capa` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-9.0+` |
+| `subexpiry` (hashes with field TTLs) on the `INFO keyspace` line | `redis-7.4+` | never |
+| `keys_with_volatile_items` (the same count) on the `INFO keyspace` line | never | `valkey-9.0+` |
 | Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape, `XCLAIM` / `XAUTOCLAIM` dropping a deleted entry from the PEL (6.2 claims it and replies nil for it), and `XAUTOCLAIM COUNT` capped at `LONG_MAX / 16` (6.2: `LONG_MAX`) | `redis-7.0+` | `valkey-8.0+` |

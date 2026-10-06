@@ -1,15 +1,55 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
+import { setTimeout as delay } from 'node:timers/promises'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../test-config'
 import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
-// Give a blocking command time to park before the next client blocks, so the
-// order the waiters blocked in is well defined.
-function waitForPark(ms = 80): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+// The number of clients parked in blocking commands across the cluster: INFO
+// `blocked_clients`, summed over the masters.
+async function blockedClients(cluster: RedisClusterType): Promise<number> {
+  const infos = await Promise.all(
+    cluster.masters.map(async master =>
+      (await cluster.nodeClient(master)).info('clients'),
+    ),
+  )
+  return infos.reduce((sum, info) => sum + blockedCount(String(info)), 0)
+}
+
+function blockedCount(info: string): number {
+  const match = /^blocked_clients:(\d+)\r?$/m.exec(info)
+  assert.ok(match, `no blocked_clients in ${JSON.stringify(info)}`)
+  return Number(match[1])
+}
+
+// Wait until `count` waiters are parked, so the order they blocked in is well
+// defined (polled rather than slept for, so a slow run cannot reorder them).
+async function waitForBlocked(
+  cluster: RedisClusterType,
+  count: number,
+): Promise<void> {
+  const deadline = Date.now() + 5000
+  let blocked = await blockedClients(cluster)
+  while (blocked !== count) {
+    assert.ok(
+      Date.now() < deadline,
+      `expected ${count} blocked clients, still ${blocked}`,
+    )
+    await delay(5)
+    blocked = await blockedClients(cluster)
+  }
+}
+
+// After a write that must not serve the waiters: they are still parked. The
+// server settles the wakes a write causes before it reads the next command,
+// so one read suffices.
+async function expectBlocked(
+  cluster: RedisClusterType,
+  count: number,
+): Promise<void> {
+  assert.strictEqual(await blockedClients(cluster), count, 'still blocked')
 }
 
 type FifoCase = {
@@ -115,7 +155,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
       const replies: Promise<unknown>[] = []
       for (let i = 0; i < WAITERS; i++) {
         replies.push(c.block(waiters[i], key, i))
-        await waitForPark()
+        await waitForBlocked(feeder, i + 1)
       }
 
       for (let i = 0; i < WAITERS; i++) {
@@ -138,7 +178,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
       replies.push(
         waiters[i].xRead({ key, id: '$' }, { COUNT: 1, BLOCK: 5000 }),
       )
-      await waitForPark()
+      await waitForBlocked(feeder, i + 1)
     }
 
     await feeder.xAdd(key, '1-0', { f: 'v' })
@@ -158,7 +198,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
     const replies: Promise<unknown>[] = []
     for (let i = 0; i < WAITERS; i++) {
       replies.push(waiters[i].blPop(key, 5))
-      await waitForPark()
+      await waitForBlocked(feeder, i + 1)
     }
 
     await feeder.rPush(key, ['v0', 'v1', 'v2'])
@@ -226,13 +266,13 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
 
       // B blocks first (on k1 and k2), C second (on k1 only).
       const b = c.blockTwo(waiters[0], k1, k2)
-      await waitForPark()
+      await waitForBlocked(feeder, 1)
       const cReply = c.blockOne(waiters[1], k1)
-      await waitForPark()
+      await waitForBlocked(feeder, 2)
 
       // Wakes B for k2, which is gone again by the time B looks.
       await c.createAndDelete(feeder, k2)
-      await waitForPark()
+      await waitForBlocked(feeder, 2)
 
       await c.feed(feeder, k1)
       assert.deepStrictEqual(await b, c.expected(k1), 'B blocked first')
@@ -303,10 +343,10 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
       const reply = c.block(waiters[0], key).finally(() => {
         settled = true
       })
-      await waitForPark()
+      await waitForBlocked(feeder, 1)
 
       await c.wrongType(feeder, key)
-      await waitForPark()
+      await expectBlocked(feeder, 1)
       assert.strictEqual(settled, false, 'still blocked, no WRONGTYPE reply')
 
       await feeder.del(key)
@@ -322,9 +362,9 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
     const k2 = `{${base}}:k2`
 
     const reply = waiters[0].blPop([k1, k2], 2)
-    await waitForPark()
+    await waitForBlocked(feeder, 1)
     await feeder.set(k2, 'foo')
-    await waitForPark()
+    await expectBlocked(feeder, 1)
     await feeder.rPush(k1, 'v')
 
     assert.deepStrictEqual(await reply, { key: k1, element: 'v' })
@@ -349,7 +389,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
         { key, id: '>' },
         { BLOCK: 2000 },
       )
-      await waitForPark()
+      await waitForBlocked(feeder, 1)
 
       // Attach the assertion first: real Redis may reply before the
       // overwrite's own reply arrives.
@@ -392,7 +432,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
         { key, id: '>' },
         { BLOCK: 2000 },
       )
-      await waitForPark()
+      await waitForBlocked(feeder, 1)
 
       const started = Date.now()
       const rejected = assert.rejects(
@@ -423,7 +463,7 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
       ],
       { BLOCK: 2000 },
     )
-    await waitForPark()
+    await waitForBlocked(feeder, 1)
 
     const rejected = assert.rejects(
       reply,
@@ -466,10 +506,10 @@ describe(`Blocking waiters are served FIFO (node-redis, ${testRunner.getBackendN
         .finally(() => {
           settled = true
         })
-      await waitForPark()
+      await waitForBlocked(feeder, 1)
 
       await act(key)
-      await waitForPark()
+      await expectBlocked(feeder, 1)
       assert.strictEqual(settled, false, 'still blocked')
 
       await feeder.xAdd(key, '1-0', { f: 'v' })

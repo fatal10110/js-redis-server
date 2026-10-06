@@ -1,5 +1,34 @@
-import type { RedisExecutionContext } from '../core/redis-context'
+import type {
+  RedisClientSession,
+  RedisExecutionContext,
+} from '../core/redis-context'
 import type { RedisDataValue } from '../state/data-types'
+
+/**
+ * Sessions inside {@link blockOnKeys}, with how many of their commands are:
+ * the clients real Redis flags `CLIENT_BLOCKED` (`flags=b` in CLIENT LIST,
+ * counted by INFO's `blocked_clients`). A client sends one command at a time,
+ * so the count is 1 in practice; it is a count so nesting can never clear
+ * the flag early.
+ */
+const blockedSessions = new WeakMap<RedisClientSession, number>()
+
+/** Whether `session` is parked in a blocking command (BLPOP, XREAD BLOCK, ...). */
+export function isClientBlocked(session: RedisClientSession): boolean {
+  return (blockedSessions.get(session) ?? 0) > 0
+}
+
+function markBlocked(session: RedisClientSession): () => void {
+  blockedSessions.set(session, (blockedSessions.get(session) ?? 0) + 1)
+  return () => {
+    const count = (blockedSessions.get(session) ?? 1) - 1
+    if (count > 0) {
+      blockedSessions.set(session, count)
+    } else {
+      blockedSessions.delete(session)
+    }
+  }
+}
 
 export type BlockOnKeysOptions<TResult> = {
   keys: readonly Buffer[]
@@ -65,6 +94,10 @@ export async function blockOnKeys<TResult>(
         ],
   )
 
+  // Blocked from here until the command finishes: a wake that finds nothing
+  // ready re-parks without the client ever leaving the blocked state, and
+  // the flag is cleared before the reply is written.
+  const unmarkBlocked = markBlocked(ctx.session)
   try {
     while (true) {
       const remaining =
@@ -100,6 +133,7 @@ export async function blockOnKeys<TResult>(
       if (result !== null) return result
     }
   } finally {
+    unmarkBlocked()
     for (const unsub of unsubs) {
       try {
         unsub()

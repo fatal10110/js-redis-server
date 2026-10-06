@@ -280,7 +280,8 @@ describe('compatibility behavior gates', () => {
       'client',
       buf('info'),
     )) as RedisResult
-    assert.match(bulkStringText(noEvictInfo.value), /(?:^| )flags=Ne(?: |\n)/)
+    // Real Redis prints `N` only when no other flag is set (7.0.15: `flags=e`).
+    assert.match(verbatimText(noEvictInfo.value), /(?:^| )flags=e(?: |\n)/)
 
     assert.deepStrictEqual(
       await redis70.execute('client', buf('no-evict', 'off')),
@@ -290,7 +291,7 @@ describe('compatibility behavior gates', () => {
       'client',
       buf('info'),
     )) as RedisResult
-    assert.match(bulkStringText(evictableInfo.value), /(?:^| )flags=N(?: |\n)/)
+    assert.match(verbatimText(evictableInfo.value), /(?:^| )flags=N(?: |\n)/)
   })
 
   test('INFO multiple sections follow their feature gate', async () => {
@@ -305,9 +306,7 @@ describe('compatibility behavior gates', () => {
       'info',
       buf('server', 'clients'),
     )) as RedisResult
-    assert.strictEqual(info.value.kind, 'bulk-string')
-    assert.ok(info.value.value)
-    const text = info.value.value.toString()
+    const text = verbatimText(info.value)
     assert.match(text, /^# Server$/m)
     assert.match(text, /^# Clients$/m)
     assert.doesNotMatch(text, /^# Keyspace$/m)
@@ -522,9 +521,7 @@ describe('compatibility behavior gates', () => {
   test('INFO and HELLO report the selected profile', async () => {
     const redis62 = createSession('redis-6.2')
     const info = (await redis62.execute('info', buf('server'))) as RedisResult
-    assert.strictEqual(info.value.kind, 'bulk-string')
-    assert.ok(info.value.value)
-    assert.match(info.value.value.toString(), /^redis_version:6\.2\.14$/m)
+    assert.match(verbatimText(info.value), /^redis_version:6\.2\.14$/m)
 
     const redisHello = (await redis62.execute('hello', buf('2'))) as RedisResult
     assert.strictEqual(helloField(redisHello, 'server'), 'redis')
@@ -535,10 +532,8 @@ describe('compatibility behavior gates', () => {
       'info',
       buf('server'),
     )) as RedisResult
-    assert.strictEqual(valkeyInfo.value.kind, 'bulk-string')
-    assert.ok(valkeyInfo.value.value)
-    assert.match(valkeyInfo.value.value.toString(), /^server_name:valkey$/m)
-    assert.match(valkeyInfo.value.value.toString(), /^valkey_version:9\.0\.0$/m)
+    assert.match(verbatimText(valkeyInfo.value), /^server_name:valkey$/m)
+    assert.match(verbatimText(valkeyInfo.value), /^valkey_version:9\.0\.0$/m)
 
     const valkeyHello = (await valkey.execute('hello', buf('2'))) as RedisResult
     assert.strictEqual(helloField(valkeyHello, 'server'), 'valkey')
@@ -614,6 +609,13 @@ function commandInfoFlags(value: RedisValue): string[] {
     assert.strictEqual(flag.kind, 'simple-string')
     return flag.value
   })
+}
+
+/** The text of an INFO / CLIENT INFO reply: a `txt` verbatim string. */
+function verbatimText(value: RedisValue): string {
+  assert.strictEqual(value.kind, 'verbatim')
+  assert.strictEqual(value.format, 'txt')
+  return value.value.toString()
 }
 
 function bulkStringText(value: RedisValue): string {

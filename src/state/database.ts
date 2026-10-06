@@ -481,6 +481,48 @@ export class RedisDatabase {
     return this.entries.size
   }
 
+  /**
+   * The INFO keyspace counters, after an active-expiry sweep: `keys`, how
+   * many of them carry a TTL (`expires`), the mean remaining TTL of those in
+   * whole milliseconds (`avgTtlMs`, 0 without any), and how many hashes hold
+   * a field with a TTL (`subexpiry` / `keys_with_volatile_items`).
+   *
+   * Real Redis's `avg_ttl` is a running estimate, sampled by its active-expire
+   * cycle (0 until the first cycle that sees a volatile key); this is the
+   * exact mean the estimate converges to.
+   */
+  keyspaceStats(now = Date.now()): {
+    keys: number
+    expires: number
+    avgTtlMs: number
+    hashesWithFieldTtl: number
+  } {
+    this.sweepExpired(now)
+    let expires = 0
+    let ttlSumMs = 0
+    let hashesWithFieldTtl = 0
+    for (const entry of this.entries.values()) {
+      if (entry.expiresAt !== undefined) {
+        expires += 1
+        ttlSumMs += Math.max(0, entry.expiresAt - now)
+      }
+      if (entry.value.type !== 'hash') continue
+      for (const field of entry.value.fields.values()) {
+        if (field.expiresAt === undefined) continue
+        hashesWithFieldTtl += 1
+        break
+      }
+    }
+
+    return {
+      keys: this.entries.size,
+      expires,
+      // Integer division, as Redis computes `ttl_sum / ttl_samples`.
+      avgTtlMs: expires === 0 ? 0 : Math.floor(ttlSumMs / expires),
+      hashesWithFieldTtl,
+    }
+  }
+
   entriesSnapshot(): KeyspaceEntry[] {
     this.sweepExpired()
     const entries: KeyspaceEntry[] = []

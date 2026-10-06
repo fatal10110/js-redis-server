@@ -58,6 +58,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
+  // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
+  // per version; the order is fixed and every field is always printed. From
+  // the format strings of redis 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
+  // Valkey 7.2.4, 8.0.0, 8.1.0, 9.0.0, and redis-server 7.0.15's own output:
+  //  - 7.0 added `ssub`, `multi-mem`, `rbs`, `rbp` and `resp` (Valkey forked
+  //    with them). `lib-name` / `lib-ver` arrived with CLIENT SETINFO
+  //    (`client.setinfo`) and are printed, empty, before any SETINFO.
+  //  - `watch` (after `multi`): Redis 7.4, Valkey 8.0.
+  //  - `io-thread` (last): Redis 8.0 only.
+  //  - `tot-net-in`, `tot-net-out`, `tot-cmds` (last): Valkey 8.0.
+  //  - `capa` (after `flags`): Valkey 8.1.
+  'client.list.redis7-fields': { redis: '7.0.0', valkey: '7.2.0' },
+  'client.list.watch': { redis: '7.4.0', valkey: '8.0.0' },
+  'client.list.io-thread': { redis: '8.0.0' },
+  'client.list.net-stats': { valkey: '8.0.0' },
+  'client.list.capa': { valkey: '8.1.0' },
   // Redis 7.0 moved container commands into the command table, which replaced
   // `Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.`
   // with `unknown subcommand '%.128s'. Try %s HELP.` — a new template, a
@@ -127,6 +143,12 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Valkey 8.0 / 9.0 (#492).
   'error.odd-pairs-arity-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
+  // The INFO keyspace line counts the hashes with field expirations after
+  // `avg_ttl`: `subexpiry=` from Redis 7.4 (the release that added HEXPIRE),
+  // `keys_with_volatile_items=` on Valkey 9.0. 7.2.4 / Valkey 8.0.0 print
+  // neither (their `genRedisInfoString` / `genValkeyInfoString`).
+  'info.keyspace.subexpiry': { redis: '7.4.0' },
+  'info.keyspace.volatile-items': { valkey: '9.0.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.resp3-publish-reply-first': { redis: '7.2.0', valkey: '8.0.0' },

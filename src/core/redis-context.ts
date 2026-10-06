@@ -79,6 +79,25 @@ export interface RedisClientSession {
   readonly monitoring: boolean
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void
   disconnect(reason?: string): void
+  // What CLIENT LIST / CLIENT INFO report beyond the fields above. Optional
+  // so an implementation written before them still type-checks; CLIENT LIST
+  // prints a neutral value for a missing one.
+  /** The server's end of the connection, `host:port` (`laddr=`). */
+  readonly localAddress?: string
+  /** The socket's file descriptor (`fd=`); `-1` (Redis's own) without one. */
+  readonly fd?: number
+  /**
+   * The command-table name of the last command the client sent (`cmd=`):
+   * `container|subcommand` once lookup resolves subcommands (7.0+), `null`
+   * before the first command or after one lookup did not find.
+   */
+  readonly lastCommand?: string | null
+  /** When the client last sent a command or got its reply (`idle=`). */
+  readonly lastInteractionMs?: number
+  /** Commands queued since MULTI (`multi=`; `-1` outside a transaction). */
+  readonly queuedCommandCount?: number
+  /** Keys under WATCH (`watch=`). */
+  readonly watchedKeyCount?: number
 }
 
 export interface RedisExecutionContext {
