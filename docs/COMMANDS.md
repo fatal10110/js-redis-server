@@ -583,6 +583,15 @@ and register functions with `redis.register_function("name", function(keys, args
 - [x] `READONLY` - Allow read-only commands against a direct replica connection for slots served by its master
 - [x] `READWRITE` - Disable replica read mode on the current connection
 
+A standalone server registers `CLUSTER`, `READONLY` and `READWRITE` too, as a
+real `cluster-enabled no` server does. `COMMAND` lists them. They answer
+`ERR This instance has cluster support disabled`, with these exceptions:
+
+- From Redis 7.0 / Valkey 7.2, an unknown `CLUSTER` subcommand gets the
+  unknown-subcommand error.
+- `READWRITE` answers `+OK` on Redis 6.2.
+- `READONLY` and `READWRITE` answer `+OK` from Valkey 8.0.
+
 > Cluster topology is fixed at startup (config-driven), so dynamic
 > reconfiguration commands are out of scope by design:
 

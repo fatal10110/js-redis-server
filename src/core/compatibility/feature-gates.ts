@@ -162,6 +162,15 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'hscan.novalues': { redis: '7.4.0', valkey: '8.0.0' },
   'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
+  // A standalone (`cluster-enabled no`) server refuses READONLY with `This
+  // instance has cluster support disabled` on every version up to Valkey 8.0;
+  // READWRITE skipped that check until Redis 7.0 added it (6.2 answers +OK).
+  // Valkey 8.0 dropped the check from both, so they answer +OK there.
+  // Verified against the redis 6.2.24, 7.0.15 (local), 8.0.6 and valkey
+  // 7.2.5, 8.0.0, 8.0.6, 9.0.0 sources (`readonlyCommand` /
+  // `readwriteCommand` in cluster.c) and the transcripts in #537.
+  'cluster.standalone-readwrite-refused': { redis: '7.0.0', valkey: '7.2.0' },
+  'cluster.standalone-readonly-allowed': { valkey: '8.0.0' },
   // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
   // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
   // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.

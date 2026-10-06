@@ -470,6 +470,14 @@ export const errors = Object.freeze({
       'EXECABORT',
     ),
 
+  // Cluster
+  /**
+   * CLUSTER (and READONLY / READWRITE where the version refuses them) on a
+   * standalone (`cluster-enabled no`) server.
+   */
+  clusterSupportDisabled: () =>
+    new RedisCommandError('This instance has cluster support disabled'),
+
   // Keyspace / databases
   /** `COPY src dst` (and `SELECT`) when source and destination resolve to the same object. */
   sameObject: () =>
