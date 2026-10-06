@@ -204,6 +204,11 @@ export class ClientSession implements RedisClientSession {
   private readonly resetHooks = new Set<() => void>()
   /** Set while this connection is in MONITOR mode; leaves it. */
   private stopMonitor?: () => void
+  /**
+   * The monitor lines of this connection's own command, collected while it
+   * runs and delivered after its reply (see {@link execute}).
+   */
+  private ownMonitorLines: RedisResult[] | null = null
   private unregisterClientSession?: Unsubscribe
 
   constructor(options: ClientSessionOptions) {
@@ -616,9 +621,14 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * MONITOR: deliver every other client's command to this connection as a push
+   * MONITOR: deliver every client's command to this connection as a push
    * frame, rendered by `frame`, until RESET or close. No-op while already
    * monitoring, so a repeated MONITOR cannot double lines.
+   *
+   * Real Redis feeds the monitoring connection its own commands too (#456):
+   * `call()` adds the line after the command's reply, so a line from this
+   * connection's own command waits in {@link ownMonitorLines} until the
+   * reply is out.
    */
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
     if (this.stopMonitor) {
@@ -626,9 +636,13 @@ export class ClientSession implements RedisClientSession {
     }
 
     const unsubscribe = this.server.monitorFeed.subscribe(event => {
-      if (event.clientId !== this.id) {
-        this.enqueuePush(frame(event))
+      const line = frame(event)
+      if (event.clientId === this.id && this.ownMonitorLines) {
+        this.ownMonitorLines.push(line)
+        return
       }
+
+      this.enqueuePush(line)
     })
     this.stopMonitor = this.onReset(() => {
       unsubscribe()
@@ -712,12 +726,55 @@ export class ClientSession implements RedisClientSession {
         turn = nextTurn
       },
     }
+    const ownLines: RedisResult[] = []
+    const outerLines = this.ownMonitorLines
+    this.ownMonitorLines = ownLines
+    let result: RedisResult
     try {
       const ctx = this.createExecutionContext(turnAccess)
-      return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
+      result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
+      if (this.ownMonitorLines === ownLines) {
+        this.ownMonitorLines = outerLines
+      }
       turn?.release()
     }
+
+    return this.deliverOwnMonitorLinesAfter(result, ownLines)
+  }
+
+  /**
+   * Queue the monitor lines this connection's own command produced once its
+   * reply is written, as real Redis appends them to the same output buffer
+   * after the reply. A command that closes the connection (QUIT) gets none:
+   * Redis drops output added after `CLIENT_CLOSE_AFTER_REPLY` is set.
+   */
+  private deliverOwnMonitorLinesAfter(
+    result: RedisResult,
+    lines: readonly RedisResult[],
+  ): RedisResult {
+    if (lines.length === 0) {
+      return result
+    }
+
+    if (result.options?.close || result.options?.disconnect) {
+      return result
+    }
+
+    const afterReply = result.options?.afterReply
+    return new RedisResult(
+      result.value,
+      {
+        ...result.options,
+        afterReply: () => {
+          afterReply?.()
+          for (const line of lines) {
+            this.enqueuePush(line)
+          }
+        },
+      },
+      result.encoded,
+    )
   }
 
   /**

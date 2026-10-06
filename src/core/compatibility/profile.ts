@@ -33,6 +33,7 @@ export type FeatureId =
   | 'stream.xread-unbalanced-wording'
   | 'stream.xread-unbalanced-plus-wording'
   | 'error.odd-pairs-arity-wording'
+  | 'error.replica-keyspace-wording'
   | 'info.multi-section'
   | 'shutdown.now-force-abort'
   | 'pubsub.sharded'

@@ -21,6 +21,7 @@ const NO_AUTH_COMMANDS = new Set(['auth', 'hello', 'reset', 'quit'])
 export function createAuthPolicy(): ExecutionPolicy {
   return {
     name: 'auth',
+    rejectsBeforeCall: true,
     beforeExecute(plan, ctx) {
       if (!ctx.server.requirepass) {
         return
