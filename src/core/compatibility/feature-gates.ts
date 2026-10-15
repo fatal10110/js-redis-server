@@ -126,6 +126,12 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // command`). Verified against redis-server 6.2.24, 7.0.15 and 8.0.6, and
   // Valkey 8.0 / 9.0 (#492).
   'error.odd-pairs-arity-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // A MONITOR connection is a replica to `processCommand`, which refuses it
+  // any command flagged readonly, write or may_replicate. 6.2 misspells the
+  // refusal (`Replica can't interract with the keyspace`, 6.2.14 / 6.2.24
+  // server.c); 7.0 fixed it to `interact` (7.0.15 server.c and a live
+  // redis-server 7.0.15, 7.2.4 / 7.4.4 / 8.0.0 and Valkey 8.0 / 9.0 server.c).
+  'error.replica-keyspace-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },

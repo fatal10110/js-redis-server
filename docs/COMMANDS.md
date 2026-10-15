@@ -75,7 +75,7 @@ unknown-command error.
 
 #### MONITOR
 
-- [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
+- [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for every connection's commands, the monitoring connection's own included
 
 `MONITOR` replies `OK` and then delivers lines as session push frames, fed by
 a server-level command event feed. A repeated `MONITOR` gets no reply, and
@@ -88,8 +88,19 @@ Cluster redirects and pre-execution cluster errors are not emitted because the
 command is not executed on that node. Commands with monitor skip metadata are
 skipped, authentication credentials are redacted, commands replayed by `EXEC` are
 emitted once when the transaction runs, and Lua `redis.call` / `redis.pcall`
-commands are emitted with the `lua` source. `MONITOR` is flagged `noscript` and
-is rejected from Lua.
+commands are emitted with the `lua` source. `EVAL`, `EVALSHA`, `FCALL` and
+their `_RO` forms are stamped when dispatched, before their script runs (Redis
+feeds them from inside the command), so their line reads no later than its
+`lua` lines; every other command is stamped after it ran. Commands refused
+before they run (`NOAUTH`, the subscribed-context refusal) are not emitted.
+`MONITOR` is flagged `noscript` and is rejected from Lua.
+
+The monitoring connection is fed its own commands too, each line right after
+the command's reply (`QUIT` closes with `+OK` alone). Redis treats a monitor
+as a replica, so on it every command flagged readonly, write or may_replicate
+(`GET`, `SET`, `KEYS`, `PUBLISH`, `EVAL`, ...) fails with `ERR Replica can't
+interact with the keyspace` (`interract` on 6.2) and is not emitted, while
+`PING`, `ECHO`, `SELECT`, `CLIENT`, `INFO`, `MULTI` and the like still run.
 
 #### COMMAND
 

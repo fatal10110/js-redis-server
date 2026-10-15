@@ -3,7 +3,7 @@ import assert from 'node:assert'
 import type { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
 import { TestRunner } from '../test-config'
-import { commandFrame, randomKey } from '../utils'
+import { activeProfile, commandFrame, randomKey } from '../utils'
 import {
   RawRedisConnection,
   respMapGet,
@@ -353,6 +353,113 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     )
   })
 
+  // Real Redis feeds every monitor, the sender included, from `call()` after
+  // the command ran, so the monitoring connection sees its own command's line
+  // right after the reply. And a monitor is a replica to `processCommand`,
+  // which refuses it anything flagged readonly / write / may_replicate before
+  // `call()`, so those get an error and no line (#456). Captured from
+  // redis-server 7.0.15; 6.2 misspells the refusal.
+  test('a monitoring connection sees its own commands and is refused the keyspace (#456)', async () => {
+    const monitor = await connect()
+    const marker = `monitor-self:${randomKey()}`
+    const refusal = `-ERR Replica can't ${
+      activeProfile === 'redis-6.2' ? 'interract' : 'interact'
+    } with the keyspace\r\n`
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    // The reply first, then the connection's own line, which also tells us
+    // the address its later lines carry.
+    monitor.write(commandFrame('PING', marker))
+    assert.strictEqual(
+      (await monitor.readRawFrame()).toString(),
+      `$${marker.length}\r\n${marker}\r\n`,
+    )
+    const own = await readOwnLine(monitor, `"PING" "${marker}"`)
+    const next = () => readOwnFrame(monitor, own.source)
+
+    for (const argv of [
+      ['GET', marker],
+      ['SET', marker, 'v'],
+      ['KEYS', '*'],
+      ['EVAL', 'return 1', '0'],
+      ['PUBLISH', marker, 'm'],
+    ]) {
+      monitor.write(commandFrame(...argv))
+      assert.strictEqual(await next(), refusal, argv.join(' '))
+    }
+
+    // None of the refused commands left a line: the next frames are ECHO's
+    // reply and line.
+    monitor.write(commandFrame('ECHO', marker))
+    assert.strictEqual(await next(), `$${marker.length}\r\n${marker}\r\n`)
+    assertMonitorLine(stripLine(await next()), {
+      database: 0,
+      source: own.source,
+      argv: ['ECHO', marker],
+    })
+
+    // Inside MULTI the refusal dirties the transaction, as any command
+    // processCommand rejects does; MULTI and EXEC are still fed.
+    monitor.write(commandFrame('MULTI'))
+    assert.strictEqual(await next(), '+OK\r\n')
+    assertMonitorLine(stripLine(await next()), {
+      database: 0,
+      source: own.source,
+      argv: ['MULTI'],
+    })
+    monitor.write(commandFrame('GET', marker))
+    assert.strictEqual(await next(), refusal)
+    monitor.write(commandFrame('EXEC'))
+    assert.strictEqual(
+      await next(),
+      '-EXECABORT Transaction discarded because of previous errors.\r\n',
+    )
+    assertMonitorLine(stripLine(await next()), {
+      database: 0,
+      source: own.source,
+      argv: ['EXEC'],
+    })
+
+    // QUIT answers +OK and hangs up without its own line: Redis drops output
+    // added once the client is flagged close-after-reply.
+    monitor.write(commandFrame('QUIT'))
+    const rest = withoutForeignLines(await monitor.readUntilClose(), own.source)
+    assert.strictEqual(rest, '+OK\r\n')
+  })
+
+  // EVAL / EVALSHA / FCALL feed MONITOR from inside their own proc, before the
+  // script runs, so the outer line is stamped first and reads no later than
+  // the `[0 lua]` lines it produces (#433).
+  test('stamps EVAL no later than the redis.call lines it produces (#433)', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const key = `monitor-eval-order:${randomKey()}`
+    const script = `redis.call("set", "${key}", "1"); redis.call("incr", "${key}"); return redis.call("get", "${key}")`
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    actor.write(commandFrame('EVAL', script, '0'))
+    assert.deepStrictEqual(await actor.readFrame(), Buffer.from('2'))
+
+    const lines = await collectMonitorLines(monitor, key, 4)
+    const stamps = lines.map(line => {
+      const match = /^(\d+)\.(\d{6}) /.exec(line)
+      assert.ok(match, `unexpected monitor line: ${line}`)
+      return Number(match[1]) * 1_000_000 + Number(match[2])
+    })
+    assert.match(lines[0], / "EVAL" /)
+    for (let i = 1; i < lines.length; i++) {
+      assert.match(lines[i], / \[0 lua\] /)
+      assert.ok(
+        stamps[0] <= stamps[i],
+        `EVAL line stamped after a line it produced: ${lines[0]} / ${lines[i]}`,
+      )
+    }
+  })
+
   test('MONITOR queued in MULTI fails inside EXEC like Redis', async () => {
     const conn = await connect()
 
@@ -539,6 +646,67 @@ async function collectMonitorTimestamps(
   }
 
   return timestamps
+}
+
+/** A monitor line's text without its `+` and CRLF. */
+function stripLine(raw: string): string {
+  assert.ok(raw.startsWith('+') && raw.endsWith('\r\n'), `not a line: ${raw}`)
+  return raw.slice(1, -2)
+}
+
+/** The source in a raw monitor line's `[db source]`, or null for any other frame. */
+function lineSource(raw: string): string | null {
+  const match = /^\+\d+\.\d{6} \[\d+ ((?:\[[^\]]+\]:\d+)|[^\]]+)\] /.exec(raw)
+  return match ? match[1] : null
+}
+
+/**
+ * Read monitor lines until the one mentioning `text`, returning the source it
+ * carries. Other clients' lines on the shared real backend are skipped.
+ */
+async function readOwnLine(
+  connection: RawRedisConnection,
+  text: string,
+): Promise<{ source: string }> {
+  for (let i = 0; i < 64; i++) {
+    const raw = (
+      await withTimeout(connection.readRawFrame(), 5000, 'own monitor line')
+    ).toString()
+    const source = lineSource(raw)
+    if (source !== null && raw.includes(text)) {
+      return { source }
+    }
+  }
+  assert.fail(`no monitor line mentioning ${text}`)
+}
+
+/** The next frame that is not another client's monitor line. */
+async function readOwnFrame(
+  connection: RawRedisConnection,
+  source: string,
+): Promise<string> {
+  for (let i = 0; i < 64; i++) {
+    const raw = (
+      await withTimeout(connection.readRawFrame(), 5000, 'monitor connection')
+    ).toString()
+    const lineFrom = lineSource(raw)
+    if (lineFrom === null || lineFrom === source) {
+      return raw
+    }
+  }
+  assert.fail('only other clients’ monitor lines arrived')
+}
+
+/** `bytes` without other clients' monitor lines. */
+function withoutForeignLines(bytes: Buffer, source: string): string {
+  return bytes
+    .toString()
+    .split(/(?<=\r\n)/)
+    .filter(part => {
+      const lineFrom = lineSource(part)
+      return lineFrom === null || lineFrom === source
+    })
+    .join('')
 }
 
 /** Read monitor feed lines until `count` of them mention `marker`. */

@@ -8,6 +8,14 @@ export interface ExecutionPolicy {
   readonly name: string
 
   /**
+   * Set when every short-circuit of this policy is one of the rejections real
+   * Redis makes in `processCommand`, before `call()`: such a command never
+   * runs, so MONITOR never sees it (NOAUTH, the subscribed-context refusal, a
+   * MONITOR connection's keyspace refusal).
+   */
+  readonly rejectsBeforeCall?: boolean
+
+  /**
    * Runs before the command's own `execute`. Returning a {@link RedisResult}
    * short-circuits execution (queue / redirect / reject); returning nothing
    * lets the next policy — and ultimately the command — run.
@@ -24,5 +32,6 @@ export interface ExecutionPolicy {
 export { createTransactionPolicy } from './transaction-policy'
 export { createAuthPolicy } from './auth-policy'
 export { createSubscribedModePolicy } from './subscribed-policy'
+export { createMonitorClientPolicy } from './monitor-client-policy'
 export type { ClusterPolicyOptions } from './cluster-policy'
 export { createClusterPolicy } from './cluster-policy'
