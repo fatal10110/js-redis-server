@@ -656,6 +656,31 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- The RESP2 request decoder frames requests the way Redis'
+  `processInputBuffer` does ([#505]):
+  - Inline requests are split like `sdssplitargs`, byte for byte. A `\r`
+    inside the line separates arguments, and `\v` / `\f` are skipped between
+    arguments but kept inside one. A quote opens a quoted section anywhere in
+    an argument (`foo"bar baz"` is `foobar baz`), and single quotes take no
+    escape but `\'`. Non-ASCII bytes are no longer re-encoded as UTF-8. On
+    `valkey-9.0` an argument continues past a closing quote (`"a"b` is `ab`),
+    under the new gate `protocol.inline-adjacent-quotes`.
+  - The 64KB cap now also bounds a multibulk request's header lines. With no
+    CR in sight, a `*<count>` line is refused with `Protocol error: too big
+    mbulk count string` and a `$<length>` line with `Protocol error: too big
+    bulk count string`. They used to buffer without limit.
+  - A header line ends at its first CR, and the byte after it is skipped
+    unchecked. The element's `$` is checked only once its line is complete,
+    so `*1\r\nX` waits instead of failing at once. A NUL byte before the CR
+    hides it, as with Redis' `strchr`, so the request waits (and trips the
+    cap). Valkey 8.1+ scans past it (new gate
+    `protocol.header-scan-past-nul`).
+  - Parsing is incremental. The decoder keeps its place in a partly received
+    multibulk instead of re-parsing it from the first byte on every chunk, and
+    no longer copies the whole buffer on each read. A 200,000-element request
+    in 16KB chunks took about 22 s and now takes about 0.3 s
+    (`scripts/bench-resp2-decoder.ts`).
+
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
   plain index range, so `zRange(key, 0, -1, { REV: true })` came back in
@@ -1371,5 +1396,6 @@ requests they contain.
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
+[#505]: https://github.com/fatal10110/js-redis-server/issues/505
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
