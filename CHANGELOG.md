@@ -658,6 +658,11 @@ so the PR body is not a durable home for a breaking-change note.
   them; `ClientSessionOptions` and `AttachSessionOptions` take `localAddress`
   and `fd`), `CommandExecutor` gains `lookupCommandName(rawCommand, rawArgs)`
   and `RedisDatabase` gains `keyspaceStats()`.
+- **`/core`** `ExecutionPolicy` takes an optional `rejectsBeforeCall` flag
+  ([#456]): set it when every short-circuit of the policy stands for a
+  rejection real Redis makes in `processCommand`, and the executor keeps the
+  refused command off the MONITOR feed. New `FeatureId`
+  `error.replica-keyspace-wording`.
 
 - **`/core`** A `CommandDefinition` can declare `rawKeys(argv)`, its getkeys
   procedure: the keys it finds in the raw arguments, each with its flags
@@ -825,6 +830,41 @@ so the PR body is not a durable home for a breaking-change note.
   the exact mean it converges to. Redis 7.4+ profiles add `subexpiry=` and
   Valkey 9.0 `keys_with_volatile_items=` (hashes with field TTLs), as those
   versions do.
+
+- MONITOR stamps `EVAL`, `EVALSHA`, `FCALL` and their `_RO` forms when they
+  are dispatched, not after the script ran ([#433]). Real Redis feeds these
+  from inside the command, before the script runs (the reason the real
+  command table flags exactly them `skip_monitor`), so their line read later
+  than the `[0 lua]` lines it produced; it now reads no later, on every
+  profile. The line also carries the database selected at dispatch. Every
+  other command is still stamped after it ran, as `call()` does.
+
+- A MONITOR connection's own commands behave as in real Redis ([#456]). The
+  connection is fed its own command's line, right after the reply (it used
+  to see only other connections' commands); `QUIT` still closes with just
+  `+OK`. And since Redis treats a monitor as a replica, any command flagged
+  readonly, write or may_replicate (`GET`, `SET`, `KEYS`, `DBSIZE`,
+  `PUBLISH`, `EVAL`, `FCALL`, ...) is refused with `ERR Replica can't
+  interact with the keyspace` (6.2: `interract`, its spelling; gate
+  `error.replica-keyspace-wording`) and not fed, while `PING`, `ECHO`,
+  `SELECT`, `CLIENT`, `INFO`, `MULTI` and the like still run. The flags are
+  the resolved `container|subcommand` entry's from 7.0 (`SCRIPT EXISTS` runs,
+  `XINFO STREAM` is refused); on 6.2 the container's (`SCRIPT` is refused
+  whole). A subcommand this server does not implement is never refused
+  (`CLIENT TRACKINGINFO` gets CLIENT's unknown-subcommand reply). The refusal
+  comes after the arity check and before the command's own argument errors,
+  so `SET k v EX 0`, `EXPIRE k abc` and `SCAN x` are refused too, and a
+  non-keyspace command's argument error (`SELECT abc`) is fed like any other
+  error. Other connections' lines that arrive before the reply is written
+  wait behind it and the connection's own lines. Inside `MULTI` the refusal
+  dirties the transaction, so `EXEC` answers `EXECABORT`. Captured from
+  redis-server 7.0.15 and 7.2.1 and checked against the 6.2.14 - 8.0.0 and
+  Valkey 8.0 / 9.0 sources.
+
+- Commands that a policy refuses the way Redis's `processCommand` does
+  (`NOAUTH`, the subscribed-context `Can't execute`, the monitor refusal
+  above) are no longer fed to MONITOR: real Redis never reaches `call()` for
+  them ([#456]).
 
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
@@ -1549,5 +1589,7 @@ requests they contain.
 [#32]: https://github.com/fatal10110/js-redis-server/issues/32
 [#496]: https://github.com/fatal10110/js-redis-server/issues/496
 [#501]: https://github.com/fatal10110/js-redis-server/issues/501
+[#433]: https://github.com/fatal10110/js-redis-server/issues/433
+[#456]: https://github.com/fatal10110/js-redis-server/issues/456
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

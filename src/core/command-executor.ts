@@ -20,6 +20,7 @@ import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
 } from './compatibility'
+import { commandTableEntry } from './compatibility/command-table'
 import { containerSubcommandExists } from './compatibility/subcommand-gates'
 import { unknownSubcommandError } from './subcommand-errors'
 
@@ -200,9 +201,9 @@ export class CommandExecutor {
    * network client.
    *
    * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Inside MULTI a command
-   * is planned the way Redis's `processCommand` queues it (see
-   * {@link planForQueue}). Execution-time errors are handled inside
+   * caught here and converted into a RESP error reply. Inside MULTI, and on a
+   * MONITOR connection, a command is planned the way Redis's `processCommand`
+   * queues it (see {@link planForQueue}). Execution-time errors are handled inside
    * {@link executePlan}.
    */
   async executeRaw(
@@ -211,8 +212,11 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
+      // A MONITOR connection is refused the keyspace in processCommand, after
+      // the arity check but before the command parses its arguments, so its
+      // parse errors wait behind the policy chain as a queued command's do.
       const plan =
-        ctx.session.mode === 'transaction'
+        ctx.session.mode === 'transaction' || ctx.session.monitoring
           ? this.planForQueue(rawCommand, rawArgs)
           : this.plan(rawCommand, rawArgs)
       return await this.executePlan(plan, ctx)
@@ -309,8 +313,9 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     const monitorCtx = createMonitorDeferredContext(ctx)
-    const result = await this.executePlanInternal(plan, monitorCtx)
-    publishMonitorEvent(plan, monitorCtx, result)
+    const monitor: MonitorDispatch = {}
+    const result = await this.executePlanInternal(plan, monitorCtx, monitor)
+    publishMonitorEvent(plan, monitorCtx, result, monitor)
     flushDeferredMonitorEvents(monitorCtx)
     return result
   }
@@ -318,14 +323,18 @@ export class CommandExecutor {
   private async executePlanInternal(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
+    monitor: MonitorDispatch,
   ): Promise<RedisResult> {
     try {
       for (const policy of this.policies) {
         const policyResult = await policy.beforeExecute?.(plan, ctx)
         if (policyResult) {
+          monitor.rejected = policy.rejectsBeforeCall === true
           return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
       }
+
+      this.stampMonitorAtDispatch(plan, ctx, monitor)
 
       if (plan.deferredError) {
         throw plan.deferredError
@@ -355,8 +364,9 @@ export class CommandExecutor {
    */
   executePlanSync(plan: CommandPlan, ctx: RedisExecutionContext): RedisResult {
     const monitorCtx = createMonitorDeferredContext(ctx)
-    const result = this.executePlanSyncInternal(plan, monitorCtx)
-    publishMonitorEvent(plan, monitorCtx, result)
+    const monitor: MonitorDispatch = {}
+    const result = this.executePlanSyncInternal(plan, monitorCtx, monitor)
+    publishMonitorEvent(plan, monitorCtx, result, monitor)
     flushDeferredMonitorEvents(monitorCtx)
     return result
   }
@@ -364,6 +374,7 @@ export class CommandExecutor {
   private executePlanSyncInternal(
     plan: CommandPlan,
     ctx: RedisExecutionContext,
+    monitor: MonitorDispatch,
   ): RedisResult {
     try {
       for (const policy of this.policies) {
@@ -374,9 +385,12 @@ export class CommandExecutor {
           )
         }
         if (policyResult) {
+          monitor.rejected = policy.rejectsBeforeCall === true
           return applyPolicyShortCircuit(plan, ctx, policyResult)
         }
       }
+
+      this.stampMonitorAtDispatch(plan, ctx, monitor)
 
       if (plan.deferredError) {
         throw plan.deferredError
@@ -391,6 +405,34 @@ export class CommandExecutor {
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
     }
+  }
+
+  /**
+   * EVAL / EVALSHA / FCALL and their `_RO` forms feed MONITOR from inside
+   * their own proc, before the script runs (`replicationFeedMonitors` at the
+   * top of `evalCommand` / `fcallCommandGeneric`), which is why the real
+   * command table flags exactly them `skip_monitor`: `call()` must not feed
+   * them a second time. So their line is stamped, with the database selected,
+   * at dispatch, and reads no later than the `[0 lua]` lines the script
+   * produces (#433). Every other command is fed by `call()` after it ran.
+   * Verified against 6.2.14 - 8.0.0 and Valkey 8.0 / 9.0 source and a live
+   * redis-server 7.0.15.
+   */
+  private stampMonitorAtDispatch(
+    plan: CommandPlan,
+    ctx: RedisExecutionContext,
+    monitor: MonitorDispatch,
+  ): void {
+    if (!monitorFeedActive(plan, ctx)) {
+      return
+    }
+
+    const entry = commandTableEntry(plan.definition.name, this.profile)
+    if (!entry?.flags.includes('skip_monitor')) {
+      return
+    }
+
+    monitor.event = createMonitorEvent(plan, ctx)
   }
 
   /**
@@ -422,16 +464,21 @@ export class CommandExecutor {
   }
 }
 
-function publishMonitorEvent(
+/**
+ * What one command's run tells MONITOR beyond its result: whether a policy
+ * refused it the way `processCommand` does (never fed), and the line already
+ * stamped at dispatch for a command Redis feeds from inside its proc.
+ */
+type MonitorDispatch = {
+  rejected?: boolean
+  event?: RedisMonitorCommandEvent
+}
+
+function createMonitorEvent(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
-  result: RedisResult,
-): void {
-  if (!shouldPublishMonitorEvent(plan, ctx, result)) {
-    return
-  }
-
-  const event: RedisMonitorCommandEvent = {
+): RedisMonitorCommandEvent {
+  return {
     timestampMicros: monitorTimestampMicros(),
     database: ctx.session.selectedDatabase,
     clientId: ctx.session.id,
@@ -439,6 +486,19 @@ function publishMonitorEvent(
     command: Buffer.from(plan.rawCommand),
     args: redactMonitorArgs(plan),
   }
+}
+
+function publishMonitorEvent(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+  result: RedisResult,
+  monitor: MonitorDispatch,
+): void {
+  if (monitor.rejected || !shouldPublishMonitorEvent(plan, ctx, result)) {
+    return
+  }
+
+  const event = monitor.event ?? createMonitorEvent(plan, ctx)
 
   if (ctx.monitor?.defer && ctx.monitor.deferredEvents) {
     ctx.monitor.deferredEvents.push(event)
@@ -498,15 +558,7 @@ function shouldPublishMonitorEvent(
   ctx: RedisExecutionContext,
   result: RedisResult,
 ): boolean {
-  if (ctx.monitor?.disabled) {
-    return false
-  }
-
-  if (ctx.server.monitorFeed.subscriberCount === 0) {
-    return false
-  }
-
-  if (plan.definition.monitor?.skip) {
+  if (!monitorFeedActive(plan, ctx)) {
     return false
   }
 
@@ -522,6 +574,18 @@ function shouldPublishMonitorEvent(
   }
 
   return true
+}
+
+/** Whether anyone is monitoring and this command may be shown at all. */
+function monitorFeedActive(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+): boolean {
+  return (
+    !ctx.monitor?.disabled &&
+    ctx.server.monitorFeed.subscriberCount > 0 &&
+    !plan.definition.monitor?.skip
+  )
 }
 
 function isQueuedTransactionCommand(

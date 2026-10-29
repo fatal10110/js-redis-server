@@ -210,6 +210,12 @@ export class ClientSession implements RedisClientSession {
   private readonly resetHooks = new Set<() => void>()
   /** Set while this connection is in MONITOR mode; leaves it. */
   private stopMonitor?: () => void
+  /**
+   * The monitor lines of this connection's own command, collected while it
+   * runs and delivered after its reply (see {@link execute}). Set only while
+   * a call that started in MONITOR mode holds the turn.
+   */
+  private ownMonitorLines: RedisResult[] | null = null
   private unregisterClientSession?: Unsubscribe
   private lastCommandName: string | null = null
   private lastInteraction: number
@@ -668,9 +674,15 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * MONITOR: deliver every other client's command to this connection as a push
+   * MONITOR: deliver every client's command to this connection as a push
    * frame, rendered by `frame`, until RESET or close. No-op while already
    * monitoring, so a repeated MONITOR cannot double lines.
+   *
+   * Real Redis feeds the monitoring connection its own commands too (#456):
+   * `call()` adds the line after the command's reply, so a line from this
+   * connection's own command waits in {@link ownMonitorLines} until the
+   * reply is out, and every other line waits behind it
+   * ({@link holdMonitorPushes}).
    */
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
     if (this.stopMonitor) {
@@ -678,9 +690,13 @@ export class ClientSession implements RedisClientSession {
     }
 
     const unsubscribe = this.server.monitorFeed.subscribe(event => {
-      if (event.clientId !== this.id) {
-        this.enqueuePush(frame(event))
+      const line = frame(event)
+      if (event.clientId === this.id && this.ownMonitorLines) {
+        this.ownMonitorLines.push(line)
+        return
       }
+
+      this.enqueuePush(line)
     })
     this.stopMonitor = this.onReset(() => {
       unsubscribe()
@@ -758,12 +774,19 @@ export class ClientSession implements RedisClientSession {
 
     let turn: RedisTurnHandle | undefined =
       await this.server.turnQueue.waitTurn()
+    // Call-scoped: re-installed whenever this call gets the turn back, so
+    // overlapping calls (one parked, another running) never swap lines.
+    const ownLines: RedisResult[] | null = this.monitoring ? [] : null
+    this.ownMonitorLines = ownLines
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {
         turn = nextTurn
+        this.ownMonitorLines = nextTurn ? ownLines : null
       },
     }
+    let result: RedisResult | undefined
+    let releaseHeld: ((deliver: boolean) => void) | undefined
     try {
       // Redis records the command as the client's last one (`cmd=` in CLIENT
       // LIST) at lookup, before any check can refuse it, and stamps the
@@ -774,11 +797,83 @@ export class ClientSession implements RedisClientSession {
       )
       this.lastInteraction = Date.now()
       const ctx = this.createExecutionContext(turnAccess)
-      return await this.executor.executeRaw(rawCommand, rawArgs, ctx)
+      result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
       this.lastInteraction = Date.now()
+      this.ownMonitorLines = null
+      releaseHeld = this.holdMonitorPushes(ownLines)
       turn?.release()
+      // A throw has no reply to wait for.
+      if (!result) {
+        releaseHeld?.(true)
+      }
     }
+
+    return this.deliverHeldPushesAfter(result, releaseHeld)
+  }
+
+  /**
+   * On a monitoring connection, hold every push from here until the reply is
+   * written: real Redis appends to one output buffer, so the reply comes
+   * first, then the command's own monitor lines, then whatever other clients
+   * run once the turn is released. Returns the release (deliver or drop), or
+   * nothing when there is no hold to take: not monitoring, or a hold is
+   * already up (MONITOR's own, or an overlapping call's), which its
+   * `afterReply` releases and the own lines join.
+   */
+  private holdMonitorPushes(
+    ownLines: readonly RedisResult[] | null,
+  ): ((deliver: boolean) => void) | undefined {
+    if (!this.monitoring) {
+      return undefined
+    }
+
+    if (this.deferredPushes) {
+      this.deferredPushes.push(...(ownLines ?? []))
+      return undefined
+    }
+
+    const held: RedisResult[] = [...(ownLines ?? [])]
+    this.deferredPushes = held
+    return deliver => {
+      if (this.deferredPushes === held) {
+        this.deferredPushes = null
+      }
+      if (!deliver) {
+        return
+      }
+      for (const push of held) {
+        this.enqueuePush(push)
+      }
+    }
+  }
+
+  /**
+   * Release {@link holdMonitorPushes}'s hold once the reply is written. A
+   * command that closes the connection (QUIT) drops it: Redis discards output
+   * added after `CLIENT_CLOSE_AFTER_REPLY` is set.
+   */
+  private deliverHeldPushesAfter(
+    result: RedisResult,
+    releaseHeld: ((deliver: boolean) => void) | undefined,
+  ): RedisResult {
+    if (!releaseHeld) {
+      return result
+    }
+
+    const deliver = !result.options?.close && !result.options?.disconnect
+    const afterReply = result.options?.afterReply
+    return new RedisResult(
+      result.value,
+      {
+        ...result.options,
+        afterReply: () => {
+          afterReply?.()
+          releaseHeld(deliver)
+        },
+      },
+      result.encoded,
+    )
   }
 
   /**

@@ -11,6 +11,7 @@ import {
 import type { ExecutionPolicy } from '../core/execution-policies'
 import {
   createAuthPolicy,
+  createMonitorClientPolicy,
   createSubscribedModePolicy,
   createTransactionPolicy,
 } from '../core/execution-policies'
@@ -98,6 +99,7 @@ export function createRedisCommandExecutor(options?: {
       createAuthPolicy(),
       createSubscribedModePolicy(),
       ...(options?.policies ?? []),
+      createMonitorClientPolicy(),
       createTransactionPolicy(),
     ],
   })
