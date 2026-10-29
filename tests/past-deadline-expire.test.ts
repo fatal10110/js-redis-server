@@ -1,4 +1,4 @@
-import { describe, test } from 'node:test'
+import { describe, mock, test } from 'node:test'
 import assert from 'node:assert'
 
 import {
@@ -228,6 +228,51 @@ describe('a deadline already past (#527)', () => {
       assert.strictEqual(await harness.run('SET', 'k', 'w', 'EXAT', '1'), 'OK')
       assert.strictEqual(await runOn(other, ['MULTI']), 'OK')
       assert.strictEqual(await runOn(other, ['EXEC']), null)
+    })
+
+    // EX / PX are at least 1, so a relative deadline is never already past:
+    // Valkey resolves it against the same clock reading it compares with. A
+    // clock that ticks during the command must not make `SET k v PX 1` write
+    // nothing (#551 review).
+    test(`${spec}: a relative deadline is never already past`, async () => {
+      const harness = createHarness(spec)
+      const base = Date.now()
+      let ticking = false
+      let tick = 0
+      const now = mock.method(Date, 'now', () =>
+        ticking ? base + 1000 * ++tick : base,
+      )
+      const during = async (...command: string[]) => {
+        ticking = true
+        try {
+          return await harness.run(...command)
+        } finally {
+          ticking = false
+        }
+      }
+      try {
+        const events = await withNotifications(harness, 'KEA', async () => {
+          assert.strictEqual(await during('SET', 'a', 'v', 'EX', '1'), 'OK')
+          assert.strictEqual(await during('SET', 'b', 'v', 'PX', '1'), 'OK')
+          await harness.run('SET', 'c', 'v')
+          assert.strictEqual(await during('GETEX', 'c', 'PX', '1'), 'v')
+          await harness.run('SET', 'd', 'v')
+          assert.strictEqual(await during('PEXPIRE', 'd', '1'), 1)
+          assert.strictEqual(await harness.run('EXISTS', 'a', 'b', 'c', 'd'), 4)
+        })
+        assert.deepStrictEqual(events, [
+          'set a',
+          'expire a',
+          'set b',
+          'expire b',
+          'set c',
+          'expire c',
+          'set d',
+          'expire d',
+        ])
+      } finally {
+        now.mock.restore()
+      }
     })
 
     test(`${spec}: SET with a future deadline is unchanged`, async () => {

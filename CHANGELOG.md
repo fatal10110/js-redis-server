@@ -765,7 +765,7 @@ so the PR body is not a durable home for a breaking-change note.
   `g`. Deleting an existing key dirties a `WATCH` on it; a SET that creates
   nothing leaves a `WATCH` clean. Two members are added to `FeatureId`:
   `set.past-deadline-deletes` (Valkey 8.0+) and
-  `expire.past-deadline-expired-event` (Valkey 8.1+, from the Valkey 8.1.0
+  `notify.past-deadline-expired-event` (Valkey 8.1+, from the Valkey 8.1.0
   source). `RedisDatabase.expireNow(key)` deletes a key as an expiry (an
   `evict` mutation).
 

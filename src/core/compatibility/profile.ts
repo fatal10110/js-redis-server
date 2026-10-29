@@ -66,7 +66,7 @@ export type FeatureId =
   | 'set.listpack-encoding'
   | 'set.union-diff-hashtable'
   | 'set.past-deadline-deletes'
-  | 'expire.past-deadline-expired-event'
+  | 'notify.past-deadline-expired-event'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

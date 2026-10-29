@@ -89,7 +89,7 @@ export function deleteForPastDeadline(
   key: Buffer,
   profile: CompatibilityProfile,
 ): boolean {
-  return profile.has('expire.past-deadline-expired-event')
+  return profile.has('notify.past-deadline-expired-event')
     ? db.expireNow(key)
     : db.delete(key)
 }

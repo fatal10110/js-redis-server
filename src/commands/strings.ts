@@ -113,12 +113,14 @@ export const setCommand = defineCommand({
       return args.get ? bulk(null) : RedisResult.nil()
     }
 
-    const expiresAt = args.expire ? resolveExpireAt(args.expire) : undefined
     // Valkey 8.0+ never writes a key whose deadline is already past: it
     // deletes the key if it exists and replies as if it had set it (#527).
+    // Only EXAT / PXAT can be: EX / PX are at least 1, and Valkey resolves
+    // them against the clock reading it compares with.
     if (
-      expiresAt !== undefined &&
-      expiresAt <= Date.now() &&
+      args.expire &&
+      isAbsoluteExpire(args.expire) &&
+      resolveExpireAt(args.expire) <= Date.now() &&
       ctx.server.profile.has('set.past-deadline-deletes')
     ) {
       if (existingType !== null) {
@@ -128,7 +130,7 @@ export const setCommand = defineCommand({
     }
 
     ctx.db.setString(args.key, args.value, {
-      expiresAt,
+      expiresAt: args.expire ? resolveExpireAt(args.expire) : undefined,
       keepTtl: args.keepTtl,
       expireEvent: true,
     })

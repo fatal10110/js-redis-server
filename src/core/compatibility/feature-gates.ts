@@ -313,5 +313,5 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `deleteExpiredKeyFromOverwriteAndPropagate` switched notifications in
   // 8.1.0. Redis and Valkey 7.2 / 8.0 publish `del` (#527). Verified against
   // the Valkey 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources.
-  'expire.past-deadline-expired-event': { valkey: '8.1.0' },
+  'notify.past-deadline-expired-event': { valkey: '8.1.0' },
 }

@@ -141,18 +141,12 @@ export class RedisDatabase {
   }
 
   delete(key: Buffer): boolean {
-    const id = keyId(key)
     const existing = this.getLiveEntry(key)
     if (!existing) {
       return false
     }
 
-    this.entries.delete(id)
-    this.emit({
-      type: 'delete',
-      database: this.id,
-      key: existing.key,
-    })
+    this.removeEntry(existing, 'delete')
     return true
   }
 
@@ -169,12 +163,7 @@ export class RedisDatabase {
       return false
     }
 
-    this.entries.delete(keyId(key))
-    this.emit({
-      type: 'evict',
-      database: this.id,
-      key: existing.key,
-    })
+    this.removeEntry(existing, 'evict')
     return true
   }
 
@@ -586,13 +575,14 @@ export class RedisDatabase {
       return false
     }
 
-    this.entries.delete(keyId(entry.key))
-    this.emit({
-      type: 'evict',
-      database: this.id,
-      key: entry.key,
-    })
+    this.removeEntry(entry, 'evict')
     return true
+  }
+
+  /** Remove a key: `delete` publishes `del`, `evict` publishes `expired`. */
+  private removeEntry(entry: KeyspaceEntry, type: 'delete' | 'evict'): void {
+    this.entries.delete(keyId(entry.key))
+    this.emit({ type, database: this.id, key: entry.key })
   }
 
   private emitWrite(entry: KeyspaceEntry): void {
