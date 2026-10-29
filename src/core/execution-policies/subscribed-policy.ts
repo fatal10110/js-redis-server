@@ -4,6 +4,7 @@ import { RedisResult } from '../redis-result'
 export function createSubscribedModePolicy(): ExecutionPolicy {
   return {
     name: 'subscribed-mode',
+    rejectsBeforeCall: true,
     beforeExecute(plan, ctx) {
       if (!ctx.session.usesSubscribedReplyMode) {
         return
