@@ -654,8 +654,34 @@ so the PR body is not a durable home for a breaking-change note.
   `NodeRedisMockClientOptions`, `NodeRedisRespVersion`,
   `NodeRedisZRangeOptions`.
 
+- Development only (not in the package): `npm run clean:redis` and the
+  `test:integration:real*` scripts take a run lock on the real-backend stack
+  before they flush it ([#542]). A second run against a stack another run
+  is using now exits non-zero before it flushes anything, and names the fix
+  (a private stack), instead of wiping the first run's keys mid-test. The
+  lock is a named client connection on every endpoint, so the suites' own
+  `FLUSHALL`s do not drop it and a crashed run releases it at once. The
+  `test:integration:real*` scripts hold it until the test run exits.
+
 ### Fixed
 
+- A key whose first hash tag is empty now hashes to the slot real Redis uses
+  ([#88]). The hash tag is what lies between the first `{` and the first `}`
+  after it; when that is empty, the whole key is hashed. So `{}{foo}` is
+  slot 2263 on every supported Redis and Valkey version; the server used to
+  put it in slot 13308. That slot came from the `cluster-key-slot` package,
+  which keeps scanning after an empty `{}` and hashes `{foo`. The
+  server now uses its own port of Redis's `keyHashSlot()`, and
+  `cluster-key-slot` is no longer a runtime dependency.
+  - ioredis and node-redis still route with `cluster-key-slot`, so they send
+    such a key to the master owning the package's slot, which now answers
+    `-MOVED` like a real cluster does. ioredis follows the redirect.
+    node-redis looks the slot up again after each `-MOVED`, reaches the same
+    wrong master every time, and fails with the `-MOVED` error once it runs
+    out of redirections. Keys whose two slots fall on the same master are
+    unaffected.
+  - The socketless node-redis cluster facade (`createNodeRedisMock`) routes
+    by the server's slot, so it does not reproduce that node-redis failure.
 - A standalone server now has `CLUSTER`, `READONLY` and `READWRITE`, as a
   real `cluster-enabled no` server does ([#537]). They used to be unknown
   commands outside cluster mode. Now `COMMAND`, `COMMAND COUNT`,
@@ -1333,6 +1359,7 @@ requests they contain.
 
 [#360]: https://github.com/fatal10110/js-redis-server/issues/360
 
+[#88]: https://github.com/fatal10110/js-redis-server/issues/88
 [#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
@@ -1389,5 +1416,6 @@ requests they contain.
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
+[#542]: https://github.com/fatal10110/js-redis-server/issues/542
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
