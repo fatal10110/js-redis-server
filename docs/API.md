@@ -155,12 +155,21 @@ Current profile gates:
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `SET` with a deadline already past writes nothing and deletes an existing key (Redis writes the key with the past TTL and publishes `set` / `expire`) | never | `valkey-8.0+` |
+| A key deleted by a deadline already past (`SET`, `GETEX EXAT\|PXAT`, the `EXPIRE` family) publishes `expired` (class `x`), not `del` | never | `valkey-9.0+` |
 | `ZRANK`/`ZREVRANK` `WITHSCORE` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.2+` | `valkey-8.0+` |
 | `XSETID` `ENTRIESADDED`/`MAXDELETEDID` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `COMMAND GETKEYS`/`GETKEYSANDFLAGS` need an argument after the target command (arity -4; `COMMAND GETKEYS GET` is a `command\|getkeys` arity error) | `redis-7.0` only | never |
 | `GEOSEARCH`, `GEOSEARCHSTORE` | `redis-6.2+` | `valkey-8.0+` |
 | `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
+| `ssub`, `multi-mem`, `rbs`, `rbp` and `resp` in `CLIENT LIST` / `CLIENT INFO`, and `cmd` naming `container\|subcommand` (6.2: the container); `lib-name` / `lib-ver` follow `CLIENT SETINFO` | `redis-7.0+` | `valkey-8.0+` |
+| `watch` in `CLIENT LIST` / `CLIENT INFO` | `redis-7.4+` | `valkey-8.0+` |
+| `io-thread` in `CLIENT LIST` / `CLIENT INFO` | `redis-8.0+` | never |
+| `tot-net-in`, `tot-net-out`, `tot-cmds` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-8.0+` |
+| `capa` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-9.0+` |
+| `subexpiry` (hashes with field TTLs) on the `INFO keyspace` line | `redis-7.4+` | never |
+| `keys_with_volatile_items` (the same count) on the `INFO keyspace` line | never | `valkey-9.0+` |
 | Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape, `XCLAIM` / `XAUTOCLAIM` dropping a deleted entry from the PEL (6.2 claims it and replies nil for it), and `XAUTOCLAIM COUNT` capped at `LONG_MAX / 16` (6.2: `LONG_MAX`) | `redis-7.0+` | `valkey-8.0+` |

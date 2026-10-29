@@ -26,6 +26,13 @@ export type FeatureId =
   | 'client.no-evict'
   | 'client.kill.maxage'
   | 'client.setinfo'
+  | 'client.list.redis7-fields'
+  | 'client.list.watch'
+  | 'client.list.io-thread'
+  | 'client.list.net-stats'
+  | 'client.list.capa'
+  | 'info.keyspace.subexpiry'
+  | 'info.keyspace.volatile-items'
   | 'error.unknown-subcommand-wording'
   | 'error.unknown-subcommand-dispatch-timing'
   | 'reply.help-print-wording'
@@ -66,6 +73,8 @@ export type FeatureId =
   | 'xsetid.entries-added'
   | 'set.listpack-encoding'
   | 'set.union-diff-hashtable'
+  | 'set.past-deadline-deletes'
+  | 'notify.past-deadline-expired-event'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

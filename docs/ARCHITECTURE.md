@@ -415,7 +415,10 @@ COPY's write into `copy_to` (#445). A write that sets a TTL (`SET ... EX`,
 `SETEX`, `PSETEX`) passes `expireEvent` to `RedisDatabase.set`, which follows
 the write with an `expire` mutation, as Redis notifies `set` then `expire`;
 `GETEX` changes only the TTL, so it emits `expire` (or `del` for a time already
-past) and no write (#380).
+past) and no write (#380). On Valkey 8.0+ a `SET` with a deadline already past
+writes nothing and deletes the key if it exists, and on Valkey 8.1+ every such
+past-deadline deletion goes through `RedisDatabase.expireNow`, an `evict`
+mutation published as `expired`, instead of `delete` (#527).
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and
@@ -493,7 +496,11 @@ inline arguments) for the request side. The adapter pulls one frame at a time
 parsed — which is what lets the decoder enforce the *live*
 `proto-max-bulk-len` on every bulk header, refusing an oversized argument with
 `Protocol error: invalid bulk length` and closing the connection before any
-command handler sees it, exactly as Redis does. The adapter also hands the
+command handler sees it, exactly as Redis does. While a command is parked
+(`BLPOP`, `XREAD BLOCK`, ...) the adapter keeps reading the socket and
+buffers what arrives without parsing it, as Redis keeps reading a blocked
+client, so a client that hangs up while blocked is seen at once:
+`ClientSession.endInput()` aborts the park and the session closes. The adapter also hands the
 decoder the server's compatibility profile, which picks the multibulk
 element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+) and the few other
 framing rules that differ by version. Like Redis, the decoder refuses a request

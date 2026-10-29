@@ -425,6 +425,14 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
+- `INFO`, `CLIENT INFO` and `CLIENT LIST` reply with a `txt` verbatim
+  string, as real Redis does on every version ([#501]). RESP3 clients now get
+  `=<len>\r\ntxt:...` instead of a bulk string; RESP2 is unchanged, and a
+  script's `redis.call('INFO')` after `redis.setresp(3)` gets a
+  `{verbatim_string=...}` table. For `/core` users who read the `RedisValue`
+  directly, its `kind` is now `'verbatim'` (the text is in `value`, as
+  before).
+
 - Scripts run on **lua-redis-wasm 2.1** (was 1.5) ([#449], [#502], [#503]).
   What a script sees changes to match real Redis, byte for byte against
   redis-server 6.2.24 to 8.0.6 and valkey-server 7.2.14 to 9.0.6, except for
@@ -640,6 +648,16 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Added
 
+- **`/core`** New `FeatureId` gates for the per-version `CLIENT LIST` /
+  `CLIENT INFO` fields and the `INFO keyspace` line ([#496], [#32]):
+  `client.list.redis7-fields`, `client.list.watch`, `client.list.io-thread`,
+  `client.list.net-stats`, `client.list.capa`, `info.keyspace.subexpiry` and
+  `info.keyspace.volatile-items`. `RedisClientSession` gains optional
+  `localAddress`, `fd`, `lastCommand`, `lastInteractionMs`,
+  `queuedCommandCount` and `watchedKeyCount` (`ClientSession` implements
+  them; `ClientSessionOptions` and `AttachSessionOptions` take `localAddress`
+  and `fd`), `CommandExecutor` gains `lookupCommandName(rawCommand, rawArgs)`
+  and `RedisDatabase` gains `keyspaceStats()`.
 - **`/core`** `ExecutionPolicy` takes an optional `rejectsBeforeCall` flag
   ([#456]): set it when every short-circuit of the policy stands for a
   rejection real Redis makes in `processCommand`, and the executor keeps the
@@ -749,6 +767,69 @@ so the PR body is not a durable home for a breaking-change note.
     no longer copies the whole buffer on each read. A 200,000-element request
     in 16KB chunks took about 22 s and now takes about 0.3 s
     (`scripts/bench-resp2-decoder.ts`).
+- On the `valkey-8.0` and `valkey-9.0` profiles, a deadline that is already
+  past now behaves as it does on Valkey ([#527]). Before, every profile
+  followed Redis. With `notify-keyspace-events KEA`, keyevent channel shown:
+
+  ```
+  SET k v EXAT 1   (k absent)
+    redis 6.2-8.0, valkey 7.2:  set k | expire k   (then expired k on access)
+    valkey 8.0, 9.0:            nothing; k is never created
+  SET k w EXAT 1   (k exists)
+    redis 6.2-8.0, valkey 7.2:  set k | expire k   (then expired k on access)
+    valkey 8.0:                 del k
+    valkey 9.0:                 expired k
+  EXPIREAT k 1 / PEXPIRE k -5 / GETEX k EXAT 1   (k exists)
+    redis 6.2-8.0, valkey 7.2-8.0:  del k
+    valkey 9.0:                     expired k
+  ```
+
+  SET still replies `OK` (or the old value with `GET`), and the EXPIRE family
+  still replies `1`. Valkey 9.0's `expired` belongs to the `x` class, not
+  `g`. Deleting an existing key dirties a `WATCH` on it; a SET that creates
+  nothing leaves a `WATCH` clean. Two members are added to `FeatureId`:
+  `set.past-deadline-deletes` (Valkey 8.0+) and
+  `notify.past-deadline-expired-event` (Valkey 8.1+, from the Valkey 8.1.0
+  source). `RedisDatabase.expireNow(key)` deletes a key as an expiry (an
+  `evict` mutation).
+
+- `INFO clients` reports `blocked_clients` as the number of clients parked
+  in a blocking command (`BLPOP`, `BLMOVE`, `BZPOPMIN`, `XREAD BLOCK`, ...)
+  instead of a fixed 0 ([#496]). The blocking FIFO integration suites poll it
+  instead of sleeping 80 ms per waiter.
+
+- A client that hangs up while parked in a blocking command is freed at once,
+  as real Redis frees it ([#496]). Its session used to stay in `CLIENT LIST`
+  until the key it waited on was written, because the connection stopped
+  reading the socket while a command ran, so the client's EOF was never seen.
+  The connection now keeps reading while a command is parked (Redis likewise
+  keeps reading a blocked client and only stops parsing its input), and an
+  EOF then aborts the wait. Commands read before the EOF still run and are
+  answered; a blocking one among them is aborted when it parks.
+
+- `CLIENT INFO` / `CLIENT LIST` lines match real Redis field for field
+  ([#496]). Each profile prints its version's fields in its order (`db` after
+  `flags`; 6.2 has no `ssub`, `multi-mem`, `rbs`, `rbp` or `resp`; `lib-name`
+  / `lib-ver` are always printed from 7.2; `watch` from Redis 7.4 / Valkey
+  8.0; `io-thread` on Redis 8.0; `tot-net-in` / `tot-net-out` / `tot-cmds` on
+  Valkey; `capa` on Valkey 9.0). `laddr` is the server's listening address
+  (it was always `:6379`), `fd` the socket's descriptor (it was 0; `-1` on the
+  in-process transport, Redis's spelling for no socket), and `cmd` the
+  client's last command by its command-table name, recorded at lookup:
+  `client|info` from 7.0 (it was always `client`), `NULL` after an unknown
+  command or subcommand. `flags` shows `O` (MONITOR), `x` (MULTI, still set
+  while EXEC runs the queue), `b` (blocked), `d` (a WATCHed key changed) and
+  `r` (READONLY) and no longer prefixes `e` with `N`; `multi` counts the
+  queued commands (also while EXEC runs them), `watch` the WATCHed keys, and
+  `idle` the seconds since the last command. Verified against redis-server
+  7.0.15 and the other versions' `catClientInfoString`.
+
+- `INFO keyspace` reports `expires` (keys with a TTL) and `avg_ttl` (their
+  mean remaining TTL in milliseconds) instead of 0 ([#32]). Real Redis's
+  `avg_ttl` is an estimate its active-expire cycle samples; the mock reports
+  the exact mean it converges to. Redis 7.4+ profiles add `subexpiry=` and
+  Valkey 9.0 `keys_with_volatile_items=` (hashes with field TTLs), as those
+  versions do.
 
 - MONITOR stamps `EVAL`, `EVALSHA`, `FCALL` and their `_RO` forms when they
   are dispatched, not after the script ran ([#433]). Real Redis feeds these
@@ -865,7 +946,7 @@ so the PR body is not a durable home for a breaking-change note.
   `RedisDatabase.set` takes a new `SetOptions.expireEvent` flag, which follows
   the write with an `expire` mutation. On Valkey 8.0 and 9.0, a deadline that is
   already past behaves differently (Valkey 9.0 publishes `expired k` for the
-  `GETEX` row). That is tracked in [#527].
+  `GETEX` row); see the [#527] entry above.
 
 - `SET … EX|PX` and `GETEX … EX|PX` queued in `MULTI` count the TTL from
   `EXEC`, as real Redis does, not from the moment they were queued. Before, a
@@ -1505,6 +1586,9 @@ requests they contain.
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
 [#542]: https://github.com/fatal10110/js-redis-server/issues/542
 [#505]: https://github.com/fatal10110/js-redis-server/issues/505
+[#32]: https://github.com/fatal10110/js-redis-server/issues/32
+[#496]: https://github.com/fatal10110/js-redis-server/issues/496
+[#501]: https://github.com/fatal10110/js-redis-server/issues/501
 [#433]: https://github.com/fatal10110/js-redis-server/issues/433
 [#456]: https://github.com/fatal10110/js-redis-server/issues/456
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
