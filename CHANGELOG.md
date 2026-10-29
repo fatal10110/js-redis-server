@@ -654,6 +654,15 @@ so the PR body is not a durable home for a breaking-change note.
   `NodeRedisMockClientOptions`, `NodeRedisRespVersion`,
   `NodeRedisZRangeOptions`.
 
+- Development only (not in the package): `npm run clean:redis` and the
+  `test:integration:real*` scripts take a run lock on the real-backend stack
+  before they flush it ([#542]). A second run against a stack another run
+  is using now exits non-zero before it flushes anything, and names the fix
+  (a private stack), instead of wiping the first run's keys mid-test. The
+  lock is a named client connection on every endpoint, so the suites' own
+  `FLUSHALL`s do not drop it and a crashed run releases it at once. The
+  `test:integration:real*` scripts hold it until the test run exits.
+
 ### Fixed
 
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
@@ -1371,5 +1380,6 @@ requests they contain.
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
+[#542]: https://github.com/fatal10110/js-redis-server/issues/542
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
