@@ -76,6 +76,10 @@ describe('real command table (#494)', () => {
       const result = await session(preset).execute('command', [])
       const entries = listed(result.value)
       assert.ok(entries.size > 150)
+      // A standalone server lists CLUSTER, READONLY and READWRITE too (#537).
+      for (const name of ['cluster', 'readonly', 'readwrite']) {
+        assert.ok(entries.has(name), `${name} is not listed on ${preset}`)
+      }
       for (const [name, flags] of entries) {
         const real = commandTableEntry(name, profile)
         assert.ok(real, `${name} has no ${preset} table entry`)

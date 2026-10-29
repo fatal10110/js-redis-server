@@ -44,6 +44,8 @@ export type FeatureId =
   | 'hscan.novalues'
   | 'xread.plus-id'
   | 'cluster.multi-db'
+  | 'cluster.standalone-readwrite-refused'
+  | 'cluster.standalone-readonly-allowed'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
