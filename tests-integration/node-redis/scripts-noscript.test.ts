@@ -31,6 +31,14 @@ const UNKNOWN_COMMAND = legacy
 // From Redis 7.0 `noscript` is a per-subcommand flag and no container's HELP
 // carries it; 6.2 refuses the whole container.
 const helpAllowedFromScripts = !legacy
+// BLPOP, BRPOP, BLMOVE, BZPOPMIN and BZPOPMAX are `noscript` up to Redis 7.0;
+// from 7.2 a script runs them without blocking (#500). BLMPOP and BZMPOP
+// (7.0+) never carry the flag.
+const blockingRunsFromScripts =
+  activeProfile !== 'redis-6.2' && activeProfile !== 'redis-7.0'
+const WRONG_ARITY = activeProfile.startsWith('valkey-')
+  ? 'ERR Wrong number of args calling command from script'
+  : 'ERR Wrong number of args calling Redis command from script'
 
 describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()})`, () => {
   let redis: RedisClientType
@@ -179,6 +187,119 @@ describe(`noscript commands from Lua (node-redis, ${testRunner.getBackendName()}
           container,
         )
       }
+    },
+  )
+
+  test('SPOP, SRANDMEMBER and HRANDFIELD run from scripts (#500)', async () => {
+    const set = `{script-flags:${randomKey()}}:set`
+    const hash = `{script-flags:${randomKey()}}:hash`
+    await redis.sAdd(set, 'm')
+    await redis.hSet(hash, 'f', 'v')
+
+    assert.strictEqual(
+      await redis.eval("return redis.pcall('SRANDMEMBER', KEYS[1])", {
+        keys: [set],
+      }),
+      'm',
+    )
+    assert.strictEqual(
+      await redis.eval("return redis.call('HRANDFIELD', KEYS[1])", {
+        keys: [hash],
+      }),
+      'f',
+    )
+    assert.strictEqual(
+      await redis.eval("return redis.call('SPOP', KEYS[1])", { keys: [set] }),
+      'm',
+    )
+    assert.strictEqual(await redis.exists(set), 0)
+  })
+
+  test(
+    'blocking commands run from scripts without blocking from 7.2 (#500)',
+    { skip: !blockingRunsFromScripts && 'refused from scripts before 7.2' },
+    async () => {
+      const tag = `{script-flags:${randomKey()}}`
+      const list = `${tag}:list`
+      const zset = `${tag}:zset`
+      const missing = `${tag}:missing`
+      for (const value of ['a', 'b', 'c']) await redis.rPush(list, value)
+      await redis.zAdd(zset, { score: 1, value: 'a' })
+      await redis.zAdd(zset, { score: 2, value: 'b' })
+
+      assert.deepStrictEqual(
+        await redis.eval("return redis.call('BLPOP', KEYS[1], '0')", {
+          keys: [list],
+        }),
+        [list, 'a'],
+      )
+      assert.deepStrictEqual(
+        await redis.eval(
+          "return redis.call('BLMOVE', KEYS[1], KEYS[2], 'RIGHT', 'LEFT', '0')",
+          { keys: [list, `${tag}:dst`] },
+        ),
+        'c',
+      )
+      assert.deepStrictEqual(
+        await redis.eval("return redis.call('BZPOPMAX', KEYS[1], '0')", {
+          keys: [zset],
+        }),
+        [zset, 'b', '2'],
+      )
+
+      // Nothing to pop: the timeout reply at once, even with timeout 0.
+      for (const call of [
+        "redis.call('BLPOP', KEYS[1], '0')",
+        "redis.call('BRPOP', KEYS[1], '0')",
+        "redis.call('BLMOVE', KEYS[1], KEYS[2], 'LEFT', 'LEFT', '0')",
+        "redis.call('BZPOPMIN', KEYS[1], '0')",
+        "redis.call('BZPOPMAX', KEYS[1], '0')",
+        "redis.call('BLMPOP', '0', '1', KEYS[1], 'LEFT')",
+        "redis.call('BZMPOP', '0', '1', KEYS[1], 'MIN')",
+      ]) {
+        assert.strictEqual(
+          await redis.eval(`return ${call}`, {
+            keys: [missing, `${tag}:dst`],
+          }),
+          null,
+          call,
+        )
+      }
+      assert.strictEqual(await redis.exists(missing), 0)
+    },
+  )
+
+  test(
+    'blocking commands are refused from scripts before 7.2 (#500)',
+    { skip: blockingRunsFromScripts && 'they run from 7.2' },
+    async () => {
+      const list = `{script-flags:${randomKey()}}:list`
+      await redis.rPush(list, 'a')
+      for (const call of [
+        "'BLPOP', KEYS[1], '0'",
+        "'BRPOP', KEYS[1], '0'",
+        "'BLMOVE', KEYS[1], KEYS[1], 'LEFT', 'LEFT', '0'",
+        "'BZPOPMIN', KEYS[1], '0'",
+        "'BZPOPMAX', KEYS[1], '0'",
+      ]) {
+        await assert.rejects(
+          () => redis.eval(`return redis.pcall(${call})`, { keys: [list] }),
+          scriptPcallRejection(NOT_ALLOWED),
+          call,
+        )
+      }
+      assert.strictEqual(await redis.lLen(list), 1)
+    },
+  )
+
+  test(
+    'the command-table arity is checked before the noscript refusal (#500)',
+    { skip: legacy && 'redis-6.2 has one CLIENT entry, arity -2' },
+    async () => {
+      await assert.rejects(
+        () => redis.eval("return redis.pcall('CLIENT','GETNAME','x')"),
+        errorWithMessage(WRONG_ARITY),
+      )
     },
   )
 })

@@ -1087,7 +1087,7 @@ export const hrandfieldCommand = defineCommand({
   name: 'hrandfield',
   since: { redis: '6.2.0', valkey: '7.2.0' },
   schema: createHrandfieldSchema(),
-  flags: ['readonly', 'random', 'noscript'],
+  flags: ['readonly', 'random'],
   keys: args => [args.key],
   execute: (args, ctx) => {
     return withExistingHash(

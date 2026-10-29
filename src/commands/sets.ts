@@ -366,7 +366,7 @@ function randomPositions(size: number, count: number): number[] {
 export const spopCommand = defineCommand({
   name: 'spop',
   schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
-  flags: ['write', 'random', 'fast', 'noscript'],
+  flags: ['write', 'random', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.count !== undefined && args.count < 0) {
@@ -434,7 +434,7 @@ export const spopCommand = defineCommand({
 export const srandmemberCommand = defineCommand({
   name: 'srandmember',
   schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
-  flags: ['readonly', 'random', 'noscript'],
+  flags: ['readonly', 'random'],
   keys: args => [args.key],
   execute: (args, ctx) => {
     const set = ctx.db.getSet(args.key)

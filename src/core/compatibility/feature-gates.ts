@@ -55,6 +55,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
   // 7.0.15 / 8.0. Valkey forked after the change (7.2.14 accepts it).
   'protocol.multibulk-count-int-max': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis finds the end of a `*<count>` / `$<length>` header line with
+  // `strchr(querybuf, '\r')`, which stops at a NUL byte: a NUL before the CR
+  // reads as "no CR yet", so the request waits (or trips the 64KB `too big
+  // ... count string` cap) instead of failing `string2ll`. Verified on
+  // redis-server 7.0.15; the same `strchr` is in 6.2.14, 7.2.4, 7.4.4, 8.0.0
+  // and Valkey 7.2.4 / 8.0.x. Valkey 8.1.0 switched to `memchr` over the
+  // buffered length (networking.c, `parseMultibulk`), which scans past a NUL.
+  // Inline requests still use `strchr(querybuf, '\n')` on every version.
+  'protocol.header-scan-past-nul': { valkey: '8.1.0' },
+  // Valkey 9.0 rewrote `sdssplitargs` on top of `sdsparsearg`: a closing quote
+  // no longer ends the inline argument, so `"a"b` is one argument `ab`
+  // instead of `Protocol error: unbalanced quotes in request`. Every Redis
+  // version and Valkey up to 8.1.0 still require a separator after a closing
+  // quote (sds.c, checked in 6.2.14 through 8.0.0 and Valkey 7.2.4 / 8.0.0 /
+  // 8.1.0; the error verified on redis-server 7.0.15).
+  'protocol.inline-adjacent-quotes': { valkey: '9.0.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
@@ -184,6 +200,15 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'hscan.novalues': { redis: '7.4.0', valkey: '8.0.0' },
   'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
+  // A standalone (`cluster-enabled no`) server refuses READONLY with `This
+  // instance has cluster support disabled` on every version up to Valkey 8.0;
+  // READWRITE skipped that check until Redis 7.0 added it (6.2 answers +OK).
+  // Valkey 8.0 dropped the check from both, so they answer +OK there.
+  // Verified against the redis 6.2.24, 7.0.15 (local), 8.0.6 and valkey
+  // 7.2.5, 8.0.0, 8.0.6, 9.0.0 sources (`readonlyCommand` /
+  // `readwriteCommand` in cluster.c) and the transcripts in #537.
+  'cluster.standalone-readwrite-refused': { redis: '7.0.0', valkey: '7.2.0' },
+  'cluster.standalone-readonly-allowed': { valkey: '8.0.0' },
   // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
   // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
   // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.
@@ -207,12 +232,6 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0, 8.0.6 and valkey-server
   // 8.0.0 / 9.0.0.
   'geo.coord-d2string': { redis: '8.0.0' },
-  // Redis 7.0 moved `noscript` from the container to each subcommand, and no
-  // container's HELP subcommand carries it: `redis.pcall('CLIENT','HELP')`
-  // (likewise CONFIG/ACL/SCRIPT/FUNCTION) returns the help text on 7.0+, where
-  // 6.2 refuses the whole container. Verified against redis-server 6.2, 7.0,
-  // 8.0 and valkey 7.2/8.0/9.0.
-  'script.per-subcommand-noscript': { redis: '7.0.0', valkey: '7.2.0' },
   // QUIT got a command-table entry in Redis 7.0; 6.2 special-cases it in the
   // connection loop, so a 6.2 script calling QUIT fails command lookup
   // (unknown command) instead of hitting its 7.0+ `noscript` refusal.

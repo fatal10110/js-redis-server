@@ -76,7 +76,7 @@ Do **not** pass `-v` — the cluster's `nodes-*.conf` topology lives in the cont
 
 ### Running a private stack
 
-The default stack is one shared set of servers per machine, and `npm run test:integration:real*` starts by flushing it with `clean:redis`. Two runs against it at once — two worktrees, two checkouts, two agents — therefore wipe each other's keys mid-test (#497). Give each concurrent run its own stack instead: every published port in `docker-compose.test.yml` can be moved, and the variables that move them are the ones the harness and `clean:redis` read, so exporting them once points the stack and the suite at the same servers.
+The default stack is one shared set of servers per machine, and `npm run test:integration:real*` starts by flushing it with `clean:redis`. Two runs against it at once — two worktrees, two checkouts, two agents — would wipe each other's keys mid-test (#497), so a run takes a lock on the stack first and a second run refuses to start (see [The run lock](#the-run-lock)). Give each concurrent run its own stack instead: every published port in `docker-compose.test.yml` can be moved, and the variables that move them are the ones the harness and `clean:redis` read, so exporting them once points the stack and the suite at the same servers.
 
 ```bash
 export COMPOSE_PROJECT_NAME=redis-test-2           # separate containers and volumes
@@ -93,6 +93,23 @@ docker compose -f docker-compose.test.yml down
 - When `REDIS_CLUSTER_PORTS` is also set it wins as the seed list, but every seed must lie inside the range: seeds pointing at a different cluster than the one the range describes are an error.
 - `COMPOSE_PROJECT_NAME` keeps the second stack's containers and volumes apart from the first. Compose derives the default name from the checkout's directory, so separate worktrees already differ — what they shared was the ports. Set it explicitly when a second stack runs from the same directory, or `up` recreates the first one on the new ports.
 - Unset, everything stays on the defaults (30000-30005, 6399, 6400), which is what CI uses.
+
+### The run lock
+
+`clean:redis` ([scripts/flush-redis.ts](../scripts/flush-redis.ts)) takes a run lock on the stack before it flushes anything (#542). When another run holds it, `clean:redis` flushes nothing, exits non-zero, and names the run that holds it:
+
+```text
+clean:redis refused to flush — another real-backend run holds this stack:
+  cluster node 127.0.0.1:30000: held by js-redis-server-test-run:dev-box:22578:5afcee2d (from 172.17.0.1:51662, connected 41s ago)
+  ...
+What to do:
+  - Another real-backend run holds this stack. Wait for it to finish, or start a private stack: see docs/TEST-INTEGRATION.md#running-a-private-stack
+```
+
+- The lock is a connection named `js-redis-server-test-run:<host>:<pid>:<nonce>` on every endpoint the run flushes: the configured cluster seeds, every node discovered from them, and the standalone servers. A run refuses if it sees another run's name on any of them. A run names all its connections before it lists any server's clients, so of two runs started at the same moment at most one goes on. Rarely, both refuse; start one again.
+- The `test:integration:real*` scripts run the suite as a child of `flush-redis.ts -- <command>`. The lock stays held until the suite exits, and the script exits with the suite's status. A plain `npm run clean:redis` releases the lock as soon as the flush is verified.
+- The lock is client connection state, not a key, so the suites' own `FLUSHALL`/`FLUSHDB` do not drop it. It has no TTL either: when a run dies, even by `kill -9`, the kernel closes its connections and the next run can start at once. The exception is a run whose `flush-redis.ts` process is killed while the suite it started keeps running: that suite is no longer covered. SIGTERM is passed on to the suite; Ctrl-C reaches it from the terminal.
+- In CI each job has its own stack and takes the lock unopposed, so nothing changes there. The lock connections are idle and send nothing, so `MONITOR` tests do not see them, but they do appear in `CLIENT LIST`.
 
 ## How It Works
 
