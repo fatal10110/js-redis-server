@@ -605,6 +605,13 @@ per server state keeps each logical node's `LuaEngine` and script
 re-entrancy guard isolated, so concurrent `EVAL`s on independent
 server/cluster nodes never share Lua state.
 
+Since lua-redis-wasm 2.0 an exception that escapes the WASM module (a
+`WasmFault`, an Emscripten abort, a trap) leaves the engine unusable. The
+runtime notices (`RedisLuaRuntime.usable`), the command that hit the fault
+gets an `ERR` reply, and the next `getLuaRuntime()` replaces the runtime with
+a fresh one. The script cache and the function libraries live on the server
+state, so they survive the swap (#539).
+
 `RedisLuaRuntime` wraps `lua-redis-wasm` and exposes `redis.call`/`redis.pcall`
 to scripts via a host callback
 ([`runRedisCommand`](../src/core/lua-runtime.ts#L58)) that:
@@ -622,7 +629,9 @@ to scripts via a host callback
    at once (`blockOrTimeOut` in `src/commands/blocking.ts`), and
 3. runs the plan through [`executePlanSync`](../src/core/command-executor.ts#L116)
    — the same registry and policies as a client-issued command, so cluster
-   slot validation and transaction-flag rules apply _inside_ scripts too, and
+   slot validation and transaction-flag rules apply _inside_ scripts too
+   (a script that must keep to one slot carries a `scriptSlot` pin on its
+   context, which `ClusterPolicy` checks once the keys are known local), and
    any command/policy that tries to go async or stream is rejected outright
    (Lua cannot await).
 
@@ -644,6 +653,21 @@ in the server-wide [`RedisScriptCache`](../src/state/script-cache.ts). A script
 is cached only once it compiles: `EVAL` caches it after the run unless it was
 a compile error, and `SCRIPT LOAD` compiles it first (`RedisLuaRuntime.compile`)
 and refuses invalid Lua, as Redis does.
+
+From 7.0 a script may open with a `#!lua [flags=...]` shebang
+([`parseScriptShebang`](../src/core/script-shebang.ts)). The engine does not
+skip it (fatal10110/lua-redis-wasm#98), so the host checks the shebang with
+Redis's wording, hands the engine the body with that line blanked (its line
+feed kept, so line numbers count it) and renders errors with the SHA of the
+script the client sent. The declared flags are checked like Redis's
+`scriptPrepareForRun`: `no-writes` runs the script read-only (refusing
+writes and Redis's `may-replicate` commands), `EVAL_RO` refuses a script
+without it, `no-cluster` refuses to run on a cluster node, and a shebang
+script or function keeps to one slot on a cluster node unless it declares
+`allow-cross-slot-keys`. `FUNCTION LOAD` reads the library's metadata line
+as Redis's `functionExtractLibMetaData` does and compiles the library the
+same way before registering it, naming the chunk `user_function` as Redis
+does.
 
 ## Adding a command
 

@@ -596,6 +596,23 @@ flags are enforced inside `redis.call`/`redis.pcall`. Whether a command is
 the blocking pops run there without blocking from 7.2 (see
 [List Commands](#6-list-commands)).
 
+From 7.0 (and on Valkey) a script may open with a `#!lua [flags=...]`
+shebang. `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO` and `SCRIPT LOAD` check
+it with Redis's errors, and line numbers and the SHA in errors are those of
+the script as sent. `no-writes` refuses writes and the commands Redis flags
+`may-replicate` (`PUBLISH`, `SPUBLISH`, `PFCOUNT`), as `EVAL_RO` does, a
+shebang script without it is refused by the `_RO` variants, and `no-cluster`
+(also a function flag) refuses to run on a cluster node. On a cluster node a
+shebang script, and any function, keeps to one slot: the slot of its
+declared keys, else of the first key a command touches, pins it, and a
+command on another slot fails with `Script attempted to access keys that do
+not hash to the same slot`, unless the script declares
+`allow-cross-slot-keys`. A script without a shebang is not checked.
+`allow-oom` and `allow-stale` are accepted but change nothing: the server
+has no `maxmemory` and no stale replicas for them to relax. A `no-writes`
+script is still routed as a write command (a cluster replica with
+`READONLY` does not serve it).
+
 - [x] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
 - [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
 - [x] `FUNCTION LOAD [REPLACE] function-code` - Load a Lua function library
@@ -609,7 +626,14 @@ the blocking pops run there without blocking from 7.2 (see
 
 Redis Functions support plain Lua libraries that declare `#!lua name=<library>`
 and register functions with `redis.register_function("name", function(keys, args)
-...)`. Advanced Redis function metadata and flags are not modeled.
+...)`. `FUNCTION LOAD` checks the metadata line with Redis's errors (`Invalid
+library metadata`, `Library name was not given`, `Engine '<name>' not
+found`, ...), then compiles the library and refuses one that is not
+valid Lua (`Error compiling function: user_function:<line>: ...`), leaving an
+existing library in place under `REPLACE`. The library is not run when it is
+loaded, so an error raised at load time (Redis's `Error registering
+functions: ...`) is not reproduced. Function flags `no-writes` and
+`no-cluster` are enforced; other function metadata is not modeled.
 
 ## 13. Cluster Commands
 

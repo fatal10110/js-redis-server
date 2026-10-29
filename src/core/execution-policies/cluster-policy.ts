@@ -5,7 +5,7 @@ import {
   RedisCrossSlotError,
   RedisMovedError,
 } from '../redis-error'
-import type { RedisClientSession } from '../redis-context'
+import type { RedisClientSession, ScriptSlotPin } from '../redis-context'
 import type { RedisClusterTopology } from '../../state'
 
 export type ClusterPolicyOptions = {
@@ -103,6 +103,10 @@ export function createClusterPolicy(
         },
       )
 
+      if (slot !== null && ctx.scriptSlot) {
+        pinScriptSlot(ctx.scriptSlot, slot)
+      }
+
       if (slot === null || ctx.session.mode !== 'transaction') {
         return
       }
@@ -117,6 +121,23 @@ export function createClusterPolicy(
         throw new RedisCrossSlotError()
       }
     },
+  }
+}
+
+/**
+ * Redis's `scriptVerifyClusterState`: once a command's keys are known to be
+ * local, a script that must keep to one slot refuses any slot but the first
+ * it touched (or its declared keys').
+ */
+function pinScriptSlot(pin: ScriptSlotPin, slot: number): void {
+  if (pin.slot === null) {
+    pin.slot = slot
+    return
+  }
+  if (pin.slot !== slot) {
+    throw new RedisCommandError(
+      'Script attempted to access keys that do not hash to the same slot',
+    )
   }
 }
 

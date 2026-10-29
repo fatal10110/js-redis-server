@@ -148,6 +148,56 @@ describe(
       )
     })
 
+    // #536. Redis 7.0.15 / 8.0.6 and valkey-server 7.2.14 / 8.0.11 check the
+    // engine first and accept only `#!lua`; Valkey 8.1+ reads the options
+    // first and looks the engine up by name, ignoring case (9.0.6 transcript
+    // in #536, Valkey 8.1.0 / 9.0.0 sources).
+    test('EVAL runs a shebang script and checks its engine from 7.0', async () => {
+      const notCompiled =
+        "-ERR Error compiling script (new function): user_script:1: unexpected symbol near '#'\r\n"
+      assert.strictEqual(
+        await evalRaw('#!lua\nreturn 1'),
+        legacy ? notCompiled : ':1\r\n',
+      )
+
+      const engineLookup = valkey && profile !== 'valkey-8.0'
+      const unknownEngine = await send('SCRIPT', 'LOAD', '#!notlua\nreturn 1')
+      const upperCase = await send('SCRIPT', 'LOAD', '#!LUA\nreturn 1')
+      const flagsFirst = await send(
+        'SCRIPT',
+        'LOAD',
+        '#!notlua flags=bogus\nreturn 1',
+      )
+      if (legacy) {
+        assert.strictEqual(unknownEngine, notCompiled)
+        assert.strictEqual(upperCase, notCompiled)
+        assert.strictEqual(flagsFirst, notCompiled)
+      } else if (engineLookup) {
+        assert.strictEqual(
+          unknownEngine,
+          "-ERR Could not find scripting engine 'notlua'\r\n",
+        )
+        assert.strictEqual(upperCase, bulk(sha1('#!LUA\nreturn 1')))
+        assert.strictEqual(
+          flagsFirst,
+          '-ERR Unexpected flag in script shebang: bogus\r\n',
+        )
+      } else {
+        assert.strictEqual(
+          unknownEngine,
+          '-ERR Unexpected engine in script shebang: #!notlua\r\n',
+        )
+        assert.strictEqual(
+          upperCase,
+          '-ERR Unexpected engine in script shebang: #!LUA\r\n',
+        )
+        assert.strictEqual(
+          flagsFirst,
+          '-ERR Unexpected engine in script shebang: #!notlua\r\n',
+        )
+      }
+    })
+
     test('a returned {big_number=} or {verbatim_string=} is an empty array on 6.2', async () => {
       const bigNumber = "return {big_number='123'}"
       const verbatim = "return {verbatim_string={format='txt', string='hi'}}"
