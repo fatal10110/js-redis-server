@@ -492,6 +492,58 @@ export class RedisDatabase {
     return this.entries.size
   }
 
+  /**
+   * The INFO keyspace counters, after an active-expiry sweep: `keys`, how
+   * many of them carry a TTL (`expires`), the mean remaining TTL of those in
+   * whole milliseconds (`avgTtlMs`, 0 without any), and how many hashes hold
+   * a field with a TTL (`subexpiry` / `keys_with_volatile_items`).
+   *
+   * Real Redis's `avg_ttl` is a running estimate, sampled by its active-expire
+   * cycle (0 until the first cycle that sees a volatile key); this is the
+   * exact mean the estimate converges to.
+   *
+   * The sweep reclaims every expired key first, so an expired key is never
+   * counted. Real Redis counts one in `keys` and `expires` until lazy or
+   * active expiry reclaims it, so right after a TTL runs out its counts can
+   * be higher than these.
+   */
+  keyspaceStats(now = Date.now()): {
+    keys: number
+    expires: number
+    avgTtlMs: number
+    hashesWithFieldTtl: number
+  } {
+    this.sweepExpired(now)
+    let expires = 0
+    let ttlSumMs = 0
+    let hashesWithFieldTtl = 0
+    for (const entry of this.entries.values()) {
+      if (entry.expiresAt === undefined) continue
+      expires += 1
+      // Never negative: the sweep above evicted every key due by `now`.
+      ttlSumMs += entry.expiresAt - now
+    }
+    // Every hash with a field TTL is in `hashFieldExpiry` (the bound may be
+    // stale, so each candidate is still checked); other hashes are skipped.
+    for (const id of this.hashFieldExpiry.keys()) {
+      const value = this.entries.get(id)?.value
+      if (value?.type !== 'hash') continue
+      for (const field of value.fields.values()) {
+        if (field.expiresAt === undefined) continue
+        hashesWithFieldTtl += 1
+        break
+      }
+    }
+
+    return {
+      keys: this.entries.size,
+      expires,
+      // Integer division, as Redis computes `ttl_sum / ttl_samples`.
+      avgTtlMs: expires === 0 ? 0 : Math.floor(ttlSumMs / expires),
+      hashesWithFieldTtl,
+    }
+  }
+
   entriesSnapshot(): KeyspaceEntry[] {
     this.sweepExpired()
     const entries: KeyspaceEntry[] = []

@@ -141,6 +141,11 @@ export class RawRedisConnection {
     this.socket.destroy()
   }
 
+  /** Half-close: send EOF (a TCP FIN) and keep the read side open. */
+  end(): void {
+    this.socket.end()
+  }
+
   private wakeWaiters(): void {
     const waiters = this.waiters.splice(0)
     for (const waiter of waiters) {

@@ -77,7 +77,7 @@ export class CommandExecutor {
    *
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    * @throws {UnknownSubcommandError} if a container's subcommand fails lookup
-   *   (see {@link lookupSubcommand}).
+   *   (see {@link resolveTableEntry}).
    */
   plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
     return this.createPlan(
@@ -90,7 +90,7 @@ export class CommandExecutor {
   /**
    * Command lookup, as Redis's `processCommand` does it for every caller (a
    * client, MULTI, a script, COMMAND GETKEYS): the definition, from 7.0 the
-   * container subcommand (see {@link lookupSubcommand}), then the
+   * container subcommand (see {@link resolveTableEntry}), then the
    * command-table arity of the entry lookup resolved to — the
    * `container|subcommand` entry when there is one (`CLIENT REPLY` is `wrong
    * number of arguments for 'client|reply' command` before CLIENT sees it),
@@ -100,13 +100,22 @@ export class CommandExecutor {
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
   ): CommandDefinition<unknown> {
-    const definition = this.registry.get(rawCommand.toString())
+    const { definition, subcommandKnown } = this.resolveTableEntry(
+      rawCommand,
+      rawArgs,
+    )
 
     if (!definition) {
       throw new UnknownRedisCommandError(rawCommand, rawArgs, this.profile)
     }
 
-    this.lookupSubcommand(definition, rawArgs)
+    if (subcommandKnown === false) {
+      throw unknownSubcommandError(
+        asciiUpperCase(definition.name),
+        rawArgs[0],
+        this.profile,
+      )
+    }
     const table = lookupTableArity(definition, rawArgs, this.profile)
     if (failsTableArity(table.arity, rawArgs.length + 1)) {
       throw new WrongNumberOfArgumentsError(table.name)
@@ -115,43 +124,75 @@ export class CommandExecutor {
   }
 
   /**
+   * The command-table lookup shared by {@link lookup} and
+   * {@link lookupCommandName}: the definition (`undefined` for an unknown
+   * command) and, from 7.0, whether the first argument names a subcommand of
+   * the container (`subcommandKnown`).
+   *
    * Redis 7.0 put container subcommands (`config|get`, `xgroup|create`, ...)
    * in the command table, so from 7.0 command lookup resolves the subcommand
    * too and an unknown one fails right there — ahead of arity, the schema,
-   * routing keys and every policy. Doing it here, the one place every command
-   * is planned, is what makes MULTI refuse to queue it (#435), keeps XGROUP /
-   * XINFO from looking their key up first (#436) and gives a script's
-   * `redis.call` the unknown-command error (#439).
+   * routing keys and every policy. Doing it in lookup, the one place every
+   * command is planned, is what makes MULTI refuse to queue it (#435), keeps
+   * XGROUP / XINFO from looking their key up first (#436) and gives a
+   * script's `redis.call` the unknown-command error (#439).
    *
-   * 6.2 has no such lookup; there each container rejects the subcommand when
-   * it runs. The table is the *real* one (`subcommand-gates.ts`), so a real
-   * subcommand this server does not implement passes and is rejected by its
-   * container at execute time, as before.
+   * 6.2 has no such lookup (`subcommandKnown` is `undefined`); there each
+   * container rejects the subcommand when it runs. It is `undefined` too for
+   * a call without arguments and for a command that is not a container. The
+   * table is the *real* one (`subcommand-gates.ts`), so a real subcommand
+   * this server does not implement passes and is rejected by its container
+   * at execute time, as before.
    */
-  private lookupSubcommand(
-    definition: CommandDefinition<unknown>,
+  private resolveTableEntry(
+    rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
-  ): void {
+  ): {
+    definition: CommandDefinition<unknown> | undefined
+    subcommandKnown: boolean | undefined
+  } {
+    const definition = this.registry.get(rawCommand.toString())
     if (
+      !definition ||
       rawArgs.length === 0 ||
       !this.profile.has('error.unknown-subcommand-dispatch-timing')
     ) {
-      return
+      return { definition, subcommandKnown: undefined }
     }
 
-    const subcommand = rawArgs[0]
-    if (
-      containerSubcommandExists(definition.name, subcommand, this.profile) !==
-      false
-    ) {
-      return
+    return {
+      definition,
+      subcommandKnown: containerSubcommandExists(
+        definition.name,
+        rawArgs[0],
+        this.profile,
+      ),
     }
+  }
 
-    throw unknownSubcommandError(
-      asciiUpperCase(definition.name),
-      subcommand,
-      this.profile,
+  /**
+   * The command-table name lookup resolves a raw command to, as Redis keeps
+   * it in `c->lastcmd` for CLIENT LIST's `cmd=`: the command's name, from
+   * 7.0 `container|subcommand` for a container called with a subcommand, and
+   * `null` when lookup fails (an unknown command, or from 7.0 an unknown
+   * subcommand). It does not check arity: Redis records the command before
+   * its arity check.
+   */
+  lookupCommandName(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+  ): string | null {
+    const { definition, subcommandKnown } = this.resolveTableEntry(
+      rawCommand,
+      rawArgs,
     )
+    if (!definition || subcommandKnown === false) {
+      return null
+    }
+
+    return subcommandKnown
+      ? `${definition.name}|${asciiLowerCase(rawArgs[0].toString('latin1'))}`
+      : definition.name
   }
 
   /**
