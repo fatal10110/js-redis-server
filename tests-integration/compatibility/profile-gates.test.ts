@@ -1008,6 +1008,11 @@ describe(
           // XINFO / XGROUP subcommands have their own table entries (#518).
           ["redis.pcall('xinfo', 'stream')", WRONG_ARITY],
           ["redis.pcall('xgroup', 'create', 'k', 'g')", WRONG_ARITY],
+          // `xinfo|help` / `xgroup|help` take no argument (arity 2) (#492).
+          ["redis.pcall('xinfo', 'help', 'x')", WRONG_ARITY],
+          ["redis.pcall('xgroup', 'help', 'x')", WRONG_ARITY],
+          // Arity comes before the noscript refusal (#500).
+          ["redis.pcall('client', 'getname', 'x')", WRONG_ARITY],
           ['redis.pcall()', NO_COMMAND],
           ["redis.pcall('subscribe', 'c')", NOT_ALLOWED],
           // The engine's own check: redis.pcall returns it too.
@@ -1029,6 +1034,76 @@ describe(
         }
       },
     )
+
+    // Which commands a script may call follows the real command table of
+    // each version (#500). SPOP / SRANDMEMBER / HRANDFIELD run everywhere.
+    // BLPOP / BRPOP / BLMOVE / BZPOPMIN / BZPOPMAX are `noscript` up to 7.0;
+    // from 7.2 they run, and BLMPOP / BZMPOP (7.0+) always do, answering at
+    // once with the timeout reply (a Lua false, nil on the wire) when there
+    // is nothing to pop. Against real redis-server 7.0.15 and the 6.2.14,
+    // 7.2.4, 8.0.6 and valkey 9.0.0 sources (CLIENT_DENY_BLOCKING).
+    test('blocking and random commands from scripts follow the profile', async () => {
+      const key = `{script-flags:${randomKey()}}`
+      const legacy = !supportsSuffixScriptErrorDecoration()
+      const NOT_ALLOWED = legacy
+        ? '-@user_script: 1: This Redis command is not allowed from scripts\r\n'
+        : profile === 'valkey-9.0'
+          ? '-ERR This Valkey command is not allowed from script\r\n'
+          : '-ERR This Redis command is not allowed from script\r\n'
+      const blockingRuns = !['redis-6.2', 'redis-7.0'].includes(profile)
+      const evalOn = (call: string) => send('EVAL', `return ${call}`, '1', key)
+
+      assert.strictEqual(await send('SADD', key, 'm'), ':1\r\n')
+      assert.strictEqual(
+        await evalOn("redis.pcall('SRANDMEMBER', KEYS[1])"),
+        '$1\r\nm\r\n',
+      )
+      assert.strictEqual(
+        await evalOn("redis.pcall('SPOP', KEYS[1])"),
+        '$1\r\nm\r\n',
+      )
+      assert.strictEqual(await send('HSET', key, 'f', 'v'), ':1\r\n')
+      assert.strictEqual(
+        await evalOn("redis.pcall('HRANDFIELD', KEYS[1])"),
+        '$1\r\nf\r\n',
+      )
+      assert.strictEqual(await send('DEL', key), ':1\r\n')
+
+      for (const call of [
+        "redis.pcall('BLPOP', KEYS[1], '0')",
+        "redis.pcall('BRPOP', KEYS[1], '0')",
+        "redis.pcall('BLMOVE', KEYS[1], KEYS[1], 'LEFT', 'LEFT', '0')",
+        "redis.pcall('BZPOPMIN', KEYS[1], '0')",
+        "redis.pcall('BZPOPMAX', KEYS[1], '0')",
+      ]) {
+        assert.strictEqual(
+          await evalOn(call),
+          blockingRuns ? '$-1\r\n' : NOT_ALLOWED,
+          call,
+        )
+      }
+      for (const call of [
+        "redis.pcall('BLMPOP', '0', '1', KEYS[1], 'LEFT')",
+        "redis.pcall('BZMPOP', '0', '1', KEYS[1], 'MIN')",
+      ]) {
+        assert.strictEqual(
+          await evalOn(call),
+          legacy
+            ? '-@user_script: 1: Unknown Redis command called from Lua script\r\n'
+            : '$-1\r\n',
+          call,
+        )
+      }
+
+      assert.strictEqual(await send('RPUSH', key, 'a'), ':1\r\n')
+      assert.strictEqual(
+        await evalOn("redis.pcall('BLPOP', KEYS[1], '0')"),
+        blockingRuns
+          ? `*2\r\n$${Buffer.byteLength(key)}\r\n${key}\r\n$1\r\na\r\n`
+          : NOT_ALLOWED,
+      )
+      await send('DEL', key)
+    })
 
     // COMMAND INFO for the stream containers, as real servers report it (#518):
     // 6.2 has one entry per container, with flags, categories and the 2,2,1

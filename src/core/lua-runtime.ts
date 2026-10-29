@@ -13,8 +13,7 @@ import {
   VALKEY_REDIS_COMPAT_VERSION,
   type CompatibilityProfile,
 } from './compatibility/profile'
-import { containerSubcommandExists } from './compatibility/subcommand-gates'
-import { asciiLowerCase } from './ascii-case'
+import { commandTableEntry } from './compatibility/command-table'
 import type { CommandDefinition, CommandPlan } from './command-definition'
 import { failsTableArity, lookupTableArity } from './command-arity'
 import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
@@ -175,7 +174,7 @@ export class RedisLuaRuntime {
       )
     }
 
-    const refusal = noscriptRefusal(definition, args.slice(1), profile)
+    const refusal = noscriptRefusal(definition, lookup.name, profile)
     if (refusal) {
       return scriptRejection(
         refusal,
@@ -217,45 +216,41 @@ export class RedisLuaRuntime {
  * The rejection a script's `redis.call`/`redis.pcall` gets for a `noscript`
  * command, or `null` when the command may run.
  *
+ * Whether a command is `noscript` is read from the real command table of the
+ * profile's version, the entry `tableName` the call is looked up as
+ * (`lookupTableArity`): it differs between versions (#500). SPOP, SRANDMEMBER
+ * and HRANDFIELD never carry it. BLPOP, BRPOP, BLMOVE, BZPOPMIN and BZPOPMAX
+ * carry it up to 7.0 and run without blocking from 7.2; BLMPOP and BZMPOP
+ * never carry it, so they run without blocking from 7.0 (see `blockOrNow`).
+ * A name the table does not have keeps the definition's own flag: a command
+ * added with `extraCommands`, or a real subcommand this server does not
+ * implement (the captured table only has the ones it does).
+ *
  * On Redis 6.2 `noscript` is a property of the whole command, so a flagged
  * container (CLIENT, CONFIG, ACL, SCRIPT) refuses every subcommand, unknown
  * ones included. From 7.0 a script resolves `container|subcommand` through
  * the command table and the flag lives on each subcommand. An unknown
  * subcommand has already failed that lookup in `CommandExecutor.plan()`
  * (against the *real* table, so a real subcommand this server lacks, like
- * `CLIENT PAUSE`, still gets here and is refused), and no container's HELP
- * carries the flag, so `<container> HELP` runs.
+ * `CLIENT PAUSE`, still gets here and, through the container's own flag, is
+ * refused), and no container's HELP carries the flag, so `<container> HELP`
+ * runs.
  */
 function noscriptRefusal(
   definition: CommandDefinition<unknown>,
-  rawArgs: readonly Buffer[],
+  tableName: string,
   profile: CompatibilityProfile,
 ): 'unknown-command' | 'not-allowed' | null {
-  if (!definition.flags.includes('noscript')) {
-    return null
+  // 6.2 has no QUIT table entry, so its lookup fails before any flag check.
+  if (definition.name === 'quit' && !profile.has('command.quit-table-entry')) {
+    return 'unknown-command'
   }
 
-  if (!profile.has('script.per-subcommand-noscript')) {
-    // 6.2 has no QUIT table entry, so its lookup fails before any flag check.
-    if (
-      definition.name === 'quit' &&
-      !profile.has('command.quit-table-entry')
-    ) {
-      return 'unknown-command'
-    }
-    return 'not-allowed'
-  }
-
-  if (rawArgs.length === 0) {
-    return 'not-allowed'
-  }
-
-  // Only a container has a HELP subcommand: `SUBSCRIBE help` is a channel.
-  const subcommand = rawArgs[0]
-  const isContainerHelp =
-    asciiLowerCase(subcommand.toString()) === 'help' &&
-    containerSubcommandExists(definition.name, subcommand, profile) === true
-  return isContainerHelp ? null : 'not-allowed'
+  const entry = commandTableEntry(tableName, profile)
+  const noscript = entry
+    ? entry.flags.includes('noscript')
+    : definition.flags.includes('noscript')
+  return noscript ? 'not-allowed' : null
 }
 
 /**
