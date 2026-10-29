@@ -160,9 +160,9 @@ export class CommandExecutor {
    * network client.
    *
    * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Inside MULTI a command
-   * is planned the way Redis's `processCommand` queues it (see
-   * {@link planForQueue}). Execution-time errors are handled inside
+   * caught here and converted into a RESP error reply. Inside MULTI, and on a
+   * MONITOR connection, a command is planned the way Redis's `processCommand`
+   * queues it (see {@link planForQueue}). Execution-time errors are handled inside
    * {@link executePlan}.
    */
   async executeRaw(
@@ -171,8 +171,11 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
+      // A MONITOR connection is refused the keyspace in processCommand, after
+      // the arity check but before the command parses its arguments, so its
+      // parse errors wait behind the policy chain as a queued command's do.
       const plan =
-        ctx.session.mode === 'transaction'
+        ctx.session.mode === 'transaction' || ctx.session.monitoring
           ? this.planForQueue(rawCommand, rawArgs)
           : this.plan(rawCommand, rawArgs)
       return await this.executePlan(plan, ctx)

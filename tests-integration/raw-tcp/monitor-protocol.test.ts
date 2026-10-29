@@ -385,6 +385,11 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
       ['KEYS', '*'],
       ['EVAL', 'return 1', '0'],
       ['PUBLISH', marker, 'm'],
+      // Refused before the command parses its arguments.
+      ['SET', marker, 'v', 'EX', '0'],
+      ['EXPIRE', marker, 'abc'],
+      ['EVAL', 'return 1', 'x'],
+      ['SCAN', 'x'],
     ]) {
       monitor.write(commandFrame(...argv))
       assert.strictEqual(await next(), refusal, argv.join(' '))
@@ -427,6 +432,64 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     monitor.write(commandFrame('QUIT'))
     const rest = withoutForeignLines(await monitor.readUntilClose(), own.source)
     assert.strictEqual(rest, '+OK\r\n')
+  })
+
+  // Real Redis appends the reply, then the connection's own line, to one
+  // output buffer, and another client's command can only run after both, so
+  // its line follows them and the feed's timestamps never go backwards. With
+  // the two connections racing, the other client's command often runs before
+  // the monitoring connection's reply is written; its line must still wait.
+  test('a monitoring connection keeps its own lines in order while another client runs (#456)', async () => {
+    const monitor = await connect()
+    const actor = await connect()
+    const marker = `monitor-race:${randomKey()}`
+    const rounds = 40
+
+    monitor.write(commandFrame('MONITOR'))
+    assert.deepStrictEqual(await monitor.readRawFrame(), Buffer.from('+OK\r\n'))
+
+    // Both pipelined, so the two connections' commands take turns.
+    const burst = (tag: string) =>
+      Buffer.concat(
+        Array.from({ length: rounds }, (_, i) =>
+          commandFrame('PING', `${marker}:${tag}${i}`),
+        ),
+      )
+    actor.write(burst('a'))
+    monitor.write(burst('m'))
+    for (let i = 0; i < rounds; i++) {
+      await actor.readRawFrame()
+    }
+
+    // Every frame mentioning the marker: rounds replies, 2 * rounds lines.
+    const frames: string[] = []
+    while (frames.length < rounds * 3) {
+      const raw = (
+        await withTimeout(monitor.readRawFrame(), 5000, 'monitor frame')
+      ).toString()
+      if (raw.includes(marker)) {
+        frames.push(raw)
+      }
+    }
+
+    let previous = 0
+    for (let index = 0; index < frames.length; index++) {
+      const raw = frames[index]
+      if (lineSource(raw) === null) {
+        const own = frames[index + 1] ?? ''
+        const text = raw.split('\r\n')[1]
+        assert.ok(
+          lineSource(own) !== null && own.endsWith(` "PING" "${text}"\r\n`),
+          `reply ${text} not followed by its own line: ${own}`,
+        )
+        continue
+      }
+      const match = /^\+(\d+)\.(\d{6}) /.exec(raw)
+      assert.ok(match, raw)
+      const stamp = Number(match[1]) * 1_000_000 + Number(match[2])
+      assert.ok(stamp >= previous, `monitor line out of order: ${raw}`)
+      previous = stamp
+    }
   })
 
   // EVAL / EVALSHA / FCALL feed MONITOR from inside their own proc, before the

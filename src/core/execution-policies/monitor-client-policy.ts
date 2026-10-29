@@ -1,6 +1,6 @@
 import type { ExecutionPolicy } from './index'
 import type { CommandPlan } from '../command-definition'
-import { lookupTableArity } from '../command-arity'
+import { lookupSubcommandEntry } from '../command-arity'
 import type { CompatibilityProfile } from '../compatibility'
 import { commandTableEntry } from '../compatibility/command-table'
 import { errors } from '../redis-error'
@@ -64,7 +64,12 @@ function touchesKeyspace(
   plan: CommandPlan,
   profile: CompatibilityProfile,
 ): boolean {
-  const { name } = lookupTableArity(plan.definition, plan.rawArgs, profile)
+  const subcommand = lookupSubcommandEntry(
+    plan.definition,
+    plan.rawArgs,
+    profile,
+  )
+  const name = subcommand?.name ?? plan.definition.name
   // 6.2 answers QUIT in processCommand before any lookup or check, and has no
   // table entry for it; from 7.0 its entry is not a keyspace one.
   if (name === 'quit') {
@@ -78,9 +83,15 @@ function touchesKeyspace(
     return true
   }
 
-  const flags =
-    commandTableEntry(name, profile)?.flags ??
-    plan.definition.introspection?.flags ??
-    plan.definition.flags
+  // Never the mock's own `flags`: they are not the real table's (CLIENT is
+  // `readonly` here). The captured table lists only the subcommands this
+  // server implements, and every real subcommand it lacks that is flagged
+  // readonly / write belongs to a command it does not have (OBJECT, MEMORY),
+  // so a miss is not a keyspace command. A custom command answers with the
+  // entry it declares for COMMAND INFO.
+  const declared = subcommand
+    ? subcommand.introspection
+    : plan.definition.introspection
+  const flags = commandTableEntry(name, profile)?.flags ?? declared?.flags ?? []
   return flags.some(flag => KEYSPACE_FLAGS.includes(flag))
 }

@@ -206,7 +206,8 @@ export class ClientSession implements RedisClientSession {
   private stopMonitor?: () => void
   /**
    * The monitor lines of this connection's own command, collected while it
-   * runs and delivered after its reply (see {@link execute}).
+   * runs and delivered after its reply (see {@link execute}). Set only while
+   * a call that started in MONITOR mode holds the turn.
    */
   private ownMonitorLines: RedisResult[] | null = null
   private unregisterClientSession?: Unsubscribe
@@ -628,7 +629,8 @@ export class ClientSession implements RedisClientSession {
    * Real Redis feeds the monitoring connection its own commands too (#456):
    * `call()` adds the line after the command's reply, so a line from this
    * connection's own command waits in {@link ownMonitorLines} until the
-   * reply is out.
+   * reply is out, and every other line waits behind it
+   * ({@link holdMonitorPushes}).
    */
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
     if (this.stopMonitor) {
@@ -720,47 +722,85 @@ export class ClientSession implements RedisClientSession {
 
     let turn: RedisTurnHandle | undefined =
       await this.server.turnQueue.waitTurn()
+    // Call-scoped: re-installed whenever this call gets the turn back, so
+    // overlapping calls (one parked, another running) never swap lines.
+    const ownLines: RedisResult[] | null = this.monitoring ? [] : null
+    this.ownMonitorLines = ownLines
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {
         turn = nextTurn
+        this.ownMonitorLines = nextTurn ? ownLines : null
       },
     }
-    const ownLines: RedisResult[] = []
-    const outerLines = this.ownMonitorLines
-    this.ownMonitorLines = ownLines
-    let result: RedisResult
+    let result: RedisResult | undefined
+    let releaseHeld: ((deliver: boolean) => void) | undefined
     try {
       const ctx = this.createExecutionContext(turnAccess)
       result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
     } finally {
-      if (this.ownMonitorLines === ownLines) {
-        this.ownMonitorLines = outerLines
-      }
+      this.ownMonitorLines = null
+      releaseHeld = this.holdMonitorPushes(ownLines)
       turn?.release()
+      // A throw has no reply to wait for.
+      if (!result) {
+        releaseHeld?.(true)
+      }
     }
 
-    return this.deliverOwnMonitorLinesAfter(result, ownLines)
+    return this.deliverHeldPushesAfter(result, releaseHeld)
   }
 
   /**
-   * Queue the monitor lines this connection's own command produced once its
-   * reply is written, as real Redis appends them to the same output buffer
-   * after the reply. A command that closes the connection (QUIT) gets none:
-   * Redis drops output added after `CLIENT_CLOSE_AFTER_REPLY` is set.
+   * On a monitoring connection, hold every push from here until the reply is
+   * written: real Redis appends to one output buffer, so the reply comes
+   * first, then the command's own monitor lines, then whatever other clients
+   * run once the turn is released. Returns the release (deliver or drop), or
+   * nothing when there is no hold to take: not monitoring, or a hold is
+   * already up (MONITOR's own, or an overlapping call's), which its
+   * `afterReply` releases and the own lines join.
    */
-  private deliverOwnMonitorLinesAfter(
+  private holdMonitorPushes(
+    ownLines: readonly RedisResult[] | null,
+  ): ((deliver: boolean) => void) | undefined {
+    if (!this.monitoring) {
+      return undefined
+    }
+
+    if (this.deferredPushes) {
+      this.deferredPushes.push(...(ownLines ?? []))
+      return undefined
+    }
+
+    const held: RedisResult[] = [...(ownLines ?? [])]
+    this.deferredPushes = held
+    return deliver => {
+      if (this.deferredPushes === held) {
+        this.deferredPushes = null
+      }
+      if (!deliver) {
+        return
+      }
+      for (const push of held) {
+        this.enqueuePush(push)
+      }
+    }
+  }
+
+  /**
+   * Release {@link holdMonitorPushes}'s hold once the reply is written. A
+   * command that closes the connection (QUIT) drops it: Redis discards output
+   * added after `CLIENT_CLOSE_AFTER_REPLY` is set.
+   */
+  private deliverHeldPushesAfter(
     result: RedisResult,
-    lines: readonly RedisResult[],
+    releaseHeld: ((deliver: boolean) => void) | undefined,
   ): RedisResult {
-    if (lines.length === 0) {
+    if (!releaseHeld) {
       return result
     }
 
-    if (result.options?.close || result.options?.disconnect) {
-      return result
-    }
-
+    const deliver = !result.options?.close && !result.options?.disconnect
     const afterReply = result.options?.afterReply
     return new RedisResult(
       result.value,
@@ -768,9 +808,7 @@ export class ClientSession implements RedisClientSession {
         ...result.options,
         afterReply: () => {
           afterReply?.()
-          for (const line of lines) {
-            this.enqueuePush(line)
-          }
+          releaseHeld(deliver)
         },
       },
       result.encoded,

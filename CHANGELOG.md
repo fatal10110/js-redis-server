@@ -769,9 +769,16 @@ so the PR body is not a durable home for a breaking-change note.
   `SELECT`, `CLIENT`, `INFO`, `MULTI` and the like still run. The flags are
   the resolved `container|subcommand` entry's from 7.0 (`SCRIPT EXISTS` runs,
   `XINFO STREAM` is refused); on 6.2 the container's (`SCRIPT` is refused
-  whole). Inside `MULTI` the refusal dirties the transaction, so `EXEC`
-  answers `EXECABORT`. Captured from redis-server 7.0.15 and checked against
-  the 6.2.14 - 8.0.0 and Valkey 8.0 / 9.0 sources.
+  whole). A subcommand this server does not implement is never refused
+  (`CLIENT TRACKINGINFO` gets CLIENT's unknown-subcommand reply). The refusal
+  comes after the arity check and before the command's own argument errors,
+  so `SET k v EX 0`, `EXPIRE k abc` and `SCAN x` are refused too, and a
+  non-keyspace command's argument error (`SELECT abc`) is fed like any other
+  error. Other connections' lines that arrive before the reply is written
+  wait behind it and the connection's own lines. Inside `MULTI` the refusal
+  dirties the transaction, so `EXEC` answers `EXECABORT`. Captured from
+  redis-server 7.0.15 and 7.2.1 and checked against the 6.2.14 - 8.0.0 and
+  Valkey 8.0 / 9.0 sources.
 
 - Commands that a policy refuses the way Redis's `processCommand` does
   (`NOAUTH`, the subscribed-context `Can't execute`, the monitor refusal

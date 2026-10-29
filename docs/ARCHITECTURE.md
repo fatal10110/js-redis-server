@@ -75,8 +75,8 @@ which Redis feeds from inside the command and the executor stamps at dispatch.
 A short-circuit from a policy marked `rejectsBeforeCall` (auth, subscribed
 mode, the monitor connection's keyspace refusal) is not published, as Redis
 rejects those in `processCommand`, before `call()`. Every subscriber, the
-sending connection included, receives each event; the session holds its own
-command's lines until the reply is written. Credential-bearing commands
+sending connection included, receives each event; a monitoring session holds
+its own command's lines, then every later push, until the reply is written. Credential-bearing commands
 declare their own monitor redaction metadata in the command definition, and
 Redis-invisible commands declare monitor skip metadata there too, so the
 executor does not need command-specific argument knowledge.

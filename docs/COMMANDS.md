@@ -101,6 +101,10 @@ as a replica, so on it every command flagged readonly, write or may_replicate
 (`GET`, `SET`, `KEYS`, `PUBLISH`, `EVAL`, ...) fails with `ERR Replica can't
 interact with the keyspace` (`interract` on 6.2) and is not emitted, while
 `PING`, `ECHO`, `SELECT`, `CLIENT`, `INFO`, `MULTI` and the like still run.
+The refusal comes after the arity check and before the command's own argument
+errors (`SET k v EX 0` is refused). Lines from other connections that run
+before the reply is written wait behind the reply and the connection's own
+lines, so the feed never goes back in time.
 
 #### COMMAND
 

@@ -232,6 +232,124 @@ describe('MONITOR: commands sent on the monitoring connection (#456)', () => {
     )
     monitor.close()
   })
+
+  // Real Redis writes the reply, the connection's own line, then whatever
+  // other clients ran after it, in that order: everything lands in one output
+  // buffer as it happens. Here the reply goes out after the turn is released,
+  // so another client's line must wait behind it too.
+  test('another client running before the reply is written comes after the own line', async () => {
+    const { session } = createServer()
+    const monitor = session()
+    const actor = session()
+    await startMonitor(monitor)
+
+    const reply = await monitor.execute('ping', [])
+    await actor.execute('set', buffers('k', 'v'))
+    assert.deepStrictEqual(await queuedPushes(monitor), [])
+
+    reply.options?.afterReply?.()
+    const lines = await queuedPushes(monitor)
+    assert.strictEqual(lines.length, 2)
+    assert.match(lines[0], new RegExp(`\\[0 ${monitor.id}\\] "ping"$`))
+    assert.match(lines[1], new RegExp(`\\[0 ${actor.id}\\] "set" "k" "v"$`))
+    monitor.close()
+    actor.close()
+  })
+
+  test('a refused command still holds other clients’ lines until its reply', async () => {
+    const { session } = createServer()
+    const monitor = session()
+    const actor = session()
+    await startMonitor(monitor)
+
+    const reply = await monitor.execute('get', buffers('k'))
+    await actor.execute('ping', [])
+    assert.deepStrictEqual(await queuedPushes(monitor), [])
+
+    reply.options?.afterReply?.()
+    const lines = await queuedPushes(monitor)
+    assert.strictEqual(lines.length, 1)
+    assert.match(lines[0], new RegExp(`\\[0 ${actor.id}\\] "ping"$`))
+    monitor.close()
+    actor.close()
+  })
+
+  test('QUIT drops the lines held behind its reply', async () => {
+    const { session } = createServer()
+    const monitor = session()
+    const actor = session()
+    await startMonitor(monitor)
+
+    const reply = await monitor.execute('quit', [])
+    await actor.execute('ping', [])
+    reply.options?.afterReply?.()
+    assert.deepStrictEqual(await queuedPushes(monitor), [])
+    monitor.close()
+    actor.close()
+  })
+
+  // The captured table lists only the CLIENT subcommands this server has, so
+  // a lookup miss must not fall back to the mock's own CLIENT flags. Real
+  // 7.2.1 runs all of these on a monitor (TRACKINGINFO `*6`, GETREDIR `:-1`,
+  // TRACKING off `+OK`, ...); this server does not implement them, so they
+  // get CLIENT's unknown-subcommand reply.
+  for (const profile of ['redis-6.2', 'redis-7.2', 'valkey-9.0'] as const) {
+    test(`${profile}: CLIENT subcommands outside the captured table are not refused`, async () => {
+      const monitor = createServer(profile).session()
+      await startMonitor(monitor)
+
+      for (const args of [
+        ['TRACKINGINFO'],
+        ['GETREDIR'],
+        ['TRACKING', 'off'],
+        ['CACHING', 'yes'],
+        ['NO-TOUCH', 'off'],
+        ['UNPAUSE'],
+        ['UNBLOCK', '99999'],
+        ['PAUSE', '1', 'WRITE'],
+        ['REPLY', 'ON'],
+      ]) {
+        const reply = await monitor.execute('client', buffers(...args))
+        assert.match(
+          errorText(reply),
+          /^(unknown subcommand|Unknown subcommand or wrong number of arguments for) '/,
+          `CLIENT ${args.join(' ')}`,
+        )
+      }
+      monitor.close()
+    })
+  }
+
+  // Real Redis refuses a replica in processCommand, right after the arity
+  // check and before the command parses its arguments (7.2.1: every one of
+  // these is `ERR Replica can't interact with the keyspace`).
+  test('the refusal comes before the command’s own argument errors, after arity', async () => {
+    const { server, session } = createServer('redis-7.2')
+    const monitor = session()
+    await startMonitor(monitor)
+    const events = recordFeed(server)
+
+    for (const args of [
+      ['set', 'k', 'v', 'EX', '0'],
+      ['expire', 'k', 'abc'],
+      ['eval', 'return 1', 'x'],
+      ['scan', 'x'],
+    ]) {
+      const [command, ...rest] = args
+      const reply = await monitor.execute(command, buffers(...rest))
+      assert.strictEqual(
+        errorText(reply),
+        "Replica can't interact with the keyspace",
+        args.join(' '),
+      )
+    }
+    assert.strictEqual(
+      errorText(await monitor.execute('get', [])),
+      "wrong number of arguments for 'get' command",
+    )
+    assert.deepStrictEqual(events.map(argv), [])
+    monitor.close()
+  })
 })
 
 describe('MONITOR: commands refused before call() are not fed', () => {
