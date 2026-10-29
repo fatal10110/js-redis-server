@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import type { CommandDefinition } from '../core/command-definition'
 import { CommandExecutor } from '../core/command-executor'
 import { CommandRegistry } from '../core/command-registry'
@@ -15,6 +16,7 @@ import {
   createTransactionPolicy,
 } from '../core/execution-policies'
 import { bitmapsCommands } from './bitmaps'
+import { standaloneClusterCommands } from './cluster'
 import { commandCommand } from './command'
 import { configCommands } from './config'
 import { connectionCommands } from './connection'
@@ -54,6 +56,13 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...scriptsCommands,
 ]
 
+/**
+ * The registry every executor runs on: {@link redisCommandDefinitions}, then
+ * the standalone CLUSTER / READONLY / READWRITE (#537), then
+ * `extraCommands`. An extra command named like one of those three replaces
+ * it, which is how a cluster node's {@link createClusterCommands} takes over;
+ * any other name clash throws.
+ */
 export function createRedisCommandRegistry(
   extraCommands: readonly CommandDefinition[] = [],
   profile: CompatibilityProfile = resolveCompatibilityProfile(),
@@ -61,6 +70,17 @@ export function createRedisCommandRegistry(
   const registry = new CommandRegistry()
   registry.registerAll(
     filterCompatibleCommands(redisCommandDefinitions, profile),
+  )
+  const extraNames = new Set(
+    extraCommands.map(definition => asciiLowerCase(definition.name)),
+  )
+  registry.registerAll(
+    filterCompatibleCommands(
+      standaloneClusterCommands.filter(
+        definition => !extraNames.has(definition.name),
+      ),
+      profile,
+    ),
   )
   registry.registerAll(filterCompatibleCommands(extraCommands, profile))
   return registry
@@ -111,6 +131,7 @@ export {
   createClusterCommands,
   readonlyCommand,
   readwriteCommand,
+  standaloneClusterCommands,
 } from './cluster'
 export { commandCommand } from './command'
 export { configCommand, configCommands } from './config'

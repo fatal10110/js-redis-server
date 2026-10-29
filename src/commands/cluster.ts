@@ -5,7 +5,7 @@ import {
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { formatHostPort } from '../core/network-address'
-import { WrongNumberOfArgumentsError } from '../core/redis-error'
+import { errors, WrongNumberOfArgumentsError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
@@ -16,6 +16,25 @@ import {
 import { unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
+const clusterSchema = t.object({
+  // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
+  // name the client sent, and a UTF-8 decode here would lose its bytes.
+  subcommand: t.bulk(),
+  rest: t.variadic(t.bulk()),
+})
+
+// The subcommands COMMAND lists under `cluster`, in cluster and standalone
+// mode alike: the ones a cluster node implements.
+const clusterIntrospection = {
+  subcommands: [
+    commandSubcommandInfo('cluster|info', 2),
+    commandSubcommandInfo('cluster|nodes', 2),
+    commandSubcommandInfo('cluster|slots', 2),
+    commandSubcommandInfo('cluster|shards', 2),
+    commandSubcommandInfo('cluster|myid', 2),
+  ],
+}
+
 /**
  * Builds the CLUSTER command bound to a specific node id. Each cluster node
  * gets its own definition so that subcommands like NODES/MYID can report the
@@ -24,25 +43,12 @@ import { commandSubcommandInfo } from './introspection'
 export function createClusterCommand(localNodeId: string): CommandDefinition {
   return defineCommand({
     name: 'cluster',
-    schema: t.object({
-      // Raw bytes, not `t.string()`: the unknown-subcommand reply echoes the
-      // name the client sent, and a UTF-8 decode here would lose its bytes.
-      subcommand: t.bulk(),
-      rest: t.variadic(t.bulk()),
-    }),
+    schema: clusterSchema,
     flags: ['admin'],
     monitor: {
       skip: true,
     },
-    introspection: {
-      subcommands: [
-        commandSubcommandInfo('cluster|info', 2),
-        commandSubcommandInfo('cluster|nodes', 2),
-        commandSubcommandInfo('cluster|slots', 2),
-        commandSubcommandInfo('cluster|shards', 2),
-        commandSubcommandInfo('cluster|myid', 2),
-      ],
-    },
+    introspection: clusterIntrospection,
     keys: () => [],
     execute: (args, ctx) => {
       const topology = ctx.server.clusterTopology
@@ -104,6 +110,88 @@ export const readwriteCommand = defineCommand({
     return RedisResult.ok()
   },
 })
+
+/**
+ * CLUSTER, READONLY and READWRITE as a standalone (`cluster-enabled no`)
+ * server has them (#537): in the command table, so COMMAND lists them, but
+ * refusing to act. Every standalone executor registers these;
+ * `createRedisCommandRegistry` drops each one a cluster node's
+ * {@link createClusterCommands} replaces.
+ *
+ * CLUSTER answers `This instance has cluster support disabled` for every
+ * call that reaches it. From 7.0 an unknown subcommand, or a wrong argument
+ * count for a known one, never does: command lookup refuses it first
+ * (`CommandExecutor.plan()`), as on a real server. 6.2 has no such lookup,
+ * so there everything after the container's own arity check is refused as
+ * disabled. Captured from redis-server 7.0.15:
+ *
+ * ```
+ * CLUSTER INFO        -> -ERR This instance has cluster support disabled
+ * CLUSTER HELP        -> -ERR This instance has cluster support disabled
+ * CLUSTER BOGUS       -> -ERR unknown subcommand 'BOGUS'. Try CLUSTER HELP.
+ * CLUSTER INFO extra  -> -ERR wrong number of arguments for 'cluster|info' command
+ * ```
+ */
+export const standaloneClusterCommand = defineCommand({
+  name: 'cluster',
+  schema: clusterSchema,
+  flags: ['admin'],
+  monitor: {
+    skip: true,
+  },
+  introspection: clusterIntrospection,
+  keys: () => [],
+  execute: () => {
+    throw errors.clusterSupportDisabled()
+  },
+})
+
+/**
+ * Refused on a standalone server up to Valkey 8.0, which accepts it (see
+ * `cluster.standalone-readonly-allowed`). Accepting it only sets the flag a
+ * cluster node's routing reads; standalone mode has no such routing.
+ */
+export const standaloneReadonlyCommand = defineCommand({
+  name: 'readonly',
+  schema: t.object({}),
+  flags: ['readonly', 'fast'],
+  keys: () => [],
+  execute: (_args, ctx) => {
+    if (!ctx.server.profile.has('cluster.standalone-readonly-allowed')) {
+      throw errors.clusterSupportDisabled()
+    }
+    ctx.session.setClusterReadOnly(true)
+    return RedisResult.ok()
+  },
+})
+
+/**
+ * Accepted on a standalone 6.2, refused from Redis 7.0 / Valkey 7.2 (see
+ * `cluster.standalone-readwrite-refused`), accepted again from Valkey 8.0.
+ */
+export const standaloneReadwriteCommand = defineCommand({
+  name: 'readwrite',
+  schema: t.object({}),
+  flags: ['readonly', 'fast'],
+  keys: () => [],
+  execute: (_args, ctx) => {
+    const profile = ctx.server.profile
+    if (
+      profile.has('cluster.standalone-readwrite-refused') &&
+      !profile.has('cluster.standalone-readonly-allowed')
+    ) {
+      throw errors.clusterSupportDisabled()
+    }
+    ctx.session.setClusterReadOnly(false)
+    return RedisResult.ok()
+  },
+})
+
+export const standaloneClusterCommands: readonly CommandDefinition[] = [
+  standaloneClusterCommand,
+  standaloneReadonlyCommand,
+  standaloneReadwriteCommand,
+]
 
 function expectClusterRestLength(
   rest: readonly Buffer[],

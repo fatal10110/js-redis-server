@@ -26,6 +26,13 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING** The `script.per-subcommand-noscript` member of `FeatureId` was
+  removed ([#500]). Whether a script may call a command is now read from the
+  real command table of the profile's version, which already knows that 7.0
+  moved `noscript` from the container to each subcommand, so no code asks for
+  the gate any more. A caller that tested it with `profile.has(...)` should
+  compare `profile.flavor` / `profile.versionNum` instead.
+
 - **BREAKING** The `geo.store-keyspec-variable-flags` member of `FeatureId`
   was removed ([#494]). `variable_flags` on Valkey's GEORADIUS STORE key
   specs is now one of the many per-version facts the real command table
@@ -660,7 +667,88 @@ so the PR body is not a durable home for a breaking-change note.
   `NodeRedisMockClientOptions`, `NodeRedisRespVersion`,
   `NodeRedisZRangeOptions`.
 
+- Development only (not in the package): `npm run clean:redis` and the
+  `test:integration:real*` scripts take a run lock on the real-backend stack
+  before they flush it ([#542]). A second run against a stack another run
+  is using now exits non-zero before it flushes anything, and names the fix
+  (a private stack), instead of wiping the first run's keys mid-test. The
+  lock is a named client connection on every endpoint, so the suites' own
+  `FLUSHALL`s do not drop it and a crashed run releases it at once. The
+  `test:integration:real*` scripts hold it until the test run exits.
+
 ### Fixed
+
+- A key whose first hash tag is empty now hashes to the slot real Redis uses
+  ([#88]). The hash tag is what lies between the first `{` and the first `}`
+  after it; when that is empty, the whole key is hashed. So `{}{foo}` is
+  slot 2263 on every supported Redis and Valkey version; the server used to
+  put it in slot 13308. That slot came from the `cluster-key-slot` package,
+  which keeps scanning after an empty `{}` and hashes `{foo`. The
+  server now uses its own port of Redis's `keyHashSlot()`, and
+  `cluster-key-slot` is no longer a runtime dependency.
+  - ioredis and node-redis still route with `cluster-key-slot`, so they send
+    such a key to the master owning the package's slot, which now answers
+    `-MOVED` like a real cluster does. ioredis follows the redirect.
+    node-redis looks the slot up again after each `-MOVED`, reaches the same
+    wrong master every time, and fails with the `-MOVED` error once it runs
+    out of redirections. Keys whose two slots fall on the same master are
+    unaffected.
+  - The socketless node-redis cluster facade (`createNodeRedisMock`) routes
+    by the server's slot, so it does not reproduce that node-redis failure.
+- A standalone server now has `CLUSTER`, `READONLY` and `READWRITE`, as a
+  real `cluster-enabled no` server does ([#537]). They used to be unknown
+  commands outside cluster mode. Now `COMMAND`, `COMMAND COUNT`,
+  `COMMAND INFO` and `COMMAND GETKEYS` list and describe them from the real
+  command table. `CLUSTER <subcommand>` answers `ERR This instance has
+  cluster support disabled`. From Redis 7.0 / Valkey 7.2, an unknown
+  subcommand gets `unknown subcommand '<name>'. Try CLUSTER HELP.` instead,
+  and a wrong argument count gets the `cluster|<sub>` arity error. Redis 6.2
+  answers the disabled error for both. `READONLY` is refused the same way
+  until Valkey 8.0, which answers `+OK`. `READWRITE` answers `+OK` on 6.2
+  and Valkey 8.0+ and is refused on Redis 7.0+ / Valkey 7.2. Two new gates
+  carry this: `cluster.standalone-readwrite-refused` and
+  `cluster.standalone-readonly-allowed`. Cluster nodes are unchanged. An
+  `extraCommands` entry named `cluster`, `readonly` or `readwrite` replaces
+  the standalone one in `createRedisCommandRegistry` /
+  `createRedisCommandExecutor`.
+- Scripts may call the commands real Redis lets them call ([#500]). The
+  `noscript` refusal used the mock's own flags, which refused `SPOP`,
+  `SRANDMEMBER` and `HRANDFIELD` and every blocking pop on every profile. It
+  now reads the real command table of the profile's version, so those three
+  run from scripts everywhere, `BLPOP` / `BRPOP` / `BLMOVE` / `BZPOPMIN` /
+  `BZPOPMAX` run from 7.2 (6.2 and 7.0 still refuse them) and `BLMPOP` /
+  `BZMPOP` from 7.0. A blocking command called from a script never blocks, as
+  under real Redis's `CLIENT_DENY_BLOCKING`: with nothing to pop it answers
+  its timeout reply at once, even with timeout 0, where it used to fail with
+  `... cannot run asynchronously from scripts`. The command-table arity is
+  checked before the refusal, as before (`redis.pcall('CLIENT','GETNAME','x')`
+  is the arity error on 7.0+). Checked against redis-server 7.0.15 and the
+  6.2.14, 7.2.4, 8.0.6 and valkey 9.0.0 sources. The profile tests now also
+  pin the `xinfo|help` / `xgroup|help` arity error from scripts ([#492]).
+- The RESP2 request decoder frames requests the way Redis'
+  `processInputBuffer` does ([#505]):
+  - Inline requests are split like `sdssplitargs`, byte for byte. A `\r`
+    inside the line separates arguments, and `\v` / `\f` are skipped between
+    arguments but kept inside one. A quote opens a quoted section anywhere in
+    an argument (`foo"bar baz"` is `foobar baz`), and single quotes take no
+    escape but `\'`. Non-ASCII bytes are no longer re-encoded as UTF-8. On
+    `valkey-9.0` an argument continues past a closing quote (`"a"b` is `ab`),
+    under the new gate `protocol.inline-adjacent-quotes`.
+  - The 64KB cap now also bounds a multibulk request's header lines. With no
+    CR in sight, a `*<count>` line is refused with `Protocol error: too big
+    mbulk count string` and a `$<length>` line with `Protocol error: too big
+    bulk count string`. They used to buffer without limit.
+  - A header line ends at its first CR, and the byte after it is skipped
+    unchecked. The element's `$` is checked only once its line is complete,
+    so `*1\r\nX` waits instead of failing at once. A NUL byte before the CR
+    hides it, as with Redis' `strchr`, so the request waits (and trips the
+    cap). Valkey 8.1+ scans past it (new gate
+    `protocol.header-scan-past-nul`).
+  - Parsing is incremental. The decoder keeps its place in a partly received
+    multibulk instead of re-parsing it from the first byte on every chunk, and
+    no longer copies the whole buffer on each read. A 200,000-element request
+    in 16KB chunks took about 22 s and now takes about 0.3 s
+    (`scripts/bench-resp2-decoder.ts`).
 
 - MONITOR stamps `EVAL`, `EVALSHA`, `FCALL` and their `_RO` forms when they
   are dispatched, not after the script ran ([#433]). Real Redis feeds these
@@ -1350,6 +1438,7 @@ requests they contain.
 
 [#360]: https://github.com/fatal10110/js-redis-server/issues/360
 
+[#88]: https://github.com/fatal10110/js-redis-server/issues/88
 [#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
@@ -1400,11 +1489,15 @@ requests they contain.
 [#445]: https://github.com/fatal10110/js-redis-server/issues/445
 [#527]: https://github.com/fatal10110/js-redis-server/issues/527
 [#536]: https://github.com/fatal10110/js-redis-server/issues/536
+[#537]: https://github.com/fatal10110/js-redis-server/issues/537
 [#540]: https://github.com/fatal10110/js-redis-server/issues/540
 [#493]: https://github.com/fatal10110/js-redis-server/issues/493
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
+[#500]: https://github.com/fatal10110/js-redis-server/issues/500
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
+[#542]: https://github.com/fatal10110/js-redis-server/issues/542
+[#505]: https://github.com/fatal10110/js-redis-server/issues/505
 [#433]: https://github.com/fatal10110/js-redis-server/issues/433
 [#456]: https://github.com/fatal10110/js-redis-server/issues/456
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
