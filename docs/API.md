@@ -155,6 +155,8 @@ Current profile gates:
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `SET` with a deadline already past writes nothing and deletes an existing key (Redis writes the key with the past TTL and publishes `set` / `expire`) | never | `valkey-8.0+` |
+| A key deleted by a deadline already past (`SET`, `GETEX EXAT\|PXAT`, the `EXPIRE` family) publishes `expired` (class `x`), not `del` | never | `valkey-9.0+` |
 | `ZRANK`/`ZREVRANK` `WITHSCORE` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.2+` | `valkey-8.0+` |
 | `XSETID` `ENTRIESADDED`/`MAXDELETEDID` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `COMMAND GETKEYS`/`GETKEYSANDFLAGS` need an argument after the target command (arity -4; `COMMAND GETKEYS GET` is a `command\|getkeys` arity error) | `redis-7.0` only | never |
