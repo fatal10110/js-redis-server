@@ -55,6 +55,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
   // 7.0.15 / 8.0. Valkey forked after the change (7.2.14 accepts it).
   'protocol.multibulk-count-int-max': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis finds the end of a `*<count>` / `$<length>` header line with
+  // `strchr(querybuf, '\r')`, which stops at a NUL byte: a NUL before the CR
+  // reads as "no CR yet", so the request waits (or trips the 64KB `too big
+  // ... count string` cap) instead of failing `string2ll`. Verified on
+  // redis-server 7.0.15; the same `strchr` is in 6.2.14, 7.2.4, 7.4.4, 8.0.0
+  // and Valkey 7.2.4 / 8.0.x. Valkey 8.1.0 switched to `memchr` over the
+  // buffered length (networking.c, `parseMultibulk`), which scans past a NUL.
+  // Inline requests still use `strchr(querybuf, '\n')` on every version.
+  'protocol.header-scan-past-nul': { valkey: '8.1.0' },
+  // Valkey 9.0 rewrote `sdssplitargs` on top of `sdsparsearg`: a closing quote
+  // no longer ends the inline argument, so `"a"b` is one argument `ab`
+  // instead of `Protocol error: unbalanced quotes in request`. Every Redis
+  // version and Valkey up to 8.1.0 still require a separator after a closing
+  // quote (sds.c, checked in 6.2.14 through 8.0.0 and Valkey 7.2.4 / 8.0.0 /
+  // 8.1.0; the error verified on redis-server 7.0.15).
+  'protocol.inline-adjacent-quotes': { valkey: '9.0.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
