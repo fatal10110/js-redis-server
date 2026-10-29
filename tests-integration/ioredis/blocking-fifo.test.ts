@@ -7,6 +7,9 @@ import { errorWithMessage, randomKey } from '../utils'
 
 const testRunner = new TestRunner()
 
+// What a race against a still-unsettled reply resolves to.
+const PENDING = Symbol('pending')
+
 // The number of clients parked in blocking commands across the cluster: INFO
 // `blocked_clients`, summed over the masters.
 async function blockedClients(cluster: Cluster): Promise<number> {
@@ -254,7 +257,16 @@ describe(`Blocking waiters are served FIFO (${testRunner.getBackendName()})`, ()
 
       // Wakes B for k2, which is gone again by the time B looks.
       await c.create(feeder.multi(), k2).del(k2).exec()
-      await waitForBlocked(feeder, 2)
+      // B looked, found k2 gone and went back to waiting without a reply. Its
+      // `b` flag stays set through that, so blocked_clients cannot show it;
+      // what can is that B is still unanswered once the server has answered
+      // a later command (it settles a write's wakes before reading the next).
+      await expectBlocked(feeder, 2)
+      assert.strictEqual(
+        await Promise.race([b, delay(0, PENDING)]),
+        PENDING,
+        'the wake that found k2 gone answered B',
+      )
 
       await c.feed(feeder, k1)
       assert.deepStrictEqual(await b, c.expected(k1), 'B blocked first')

@@ -768,6 +768,15 @@ so the PR body is not a durable home for a breaking-change note.
   instead of a fixed 0 ([#496]). The blocking FIFO integration suites poll it
   instead of sleeping 80 ms per waiter.
 
+- A client that hangs up while parked in a blocking command is freed at once,
+  as real Redis frees it ([#496]). Its session used to stay in `CLIENT LIST`
+  until the key it waited on was written, because the connection stopped
+  reading the socket while a command ran, so the client's EOF was never seen.
+  The connection now keeps reading while a command is parked (Redis likewise
+  keeps reading a blocked client and only stops parsing its input), and an
+  EOF then aborts the wait. Commands read before the EOF still run and are
+  answered; a blocking one among them is aborted when it parks.
+
 - `CLIENT INFO` / `CLIENT LIST` lines match real Redis field for field
   ([#496]). Each profile prints its version's fields in its order (`db` after
   `flags`; 6.2 has no `ssub`, `multi-mem`, `rbs`, `rbp` or `resp`; `lib-name`
@@ -778,9 +787,10 @@ so the PR body is not a durable home for a breaking-change note.
   in-process transport, Redis's spelling for no socket), and `cmd` the
   client's last command by its command-table name, recorded at lookup:
   `client|info` from 7.0 (it was always `client`), `NULL` after an unknown
-  command or subcommand. `flags` shows `x` (MULTI), `b` (blocked), `d`
-  (a WATCHed key changed) and `r` (READONLY) and no longer prefixes `e` with
-  `N`; `multi` counts the queued commands, `watch` the WATCHed keys, and
+  command or subcommand. `flags` shows `O` (MONITOR), `x` (MULTI, still set
+  while EXEC runs the queue), `b` (blocked), `d` (a WATCHed key changed) and
+  `r` (READONLY) and no longer prefixes `e` with `N`; `multi` counts the
+  queued commands (also while EXEC runs them), `watch` the WATCHed keys, and
   `idle` the seconds since the last command. Verified against redis-server
   7.0.15 and the other versions' `catClientInfoString`.
 

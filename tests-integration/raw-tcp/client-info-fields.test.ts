@@ -3,7 +3,7 @@ import { after, before, describe, test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { TestRunner } from '../test-config'
 import { activeProfile, commandFrame, randomKey } from '../utils'
-import { RawRedisConnection } from './raw-connection'
+import { RawRedisConnection, respText } from './raw-connection'
 
 /**
  * CLIENT INFO / CLIENT LIST lines, INFO `blocked_clients` and the INFO
@@ -178,6 +178,126 @@ describe(`Raw TCP CLIENT INFO / LIST and INFO (${testRunner.getBackendName()}, $
     )
     assert.strictEqual(await blockedClients(observer), before)
     assert.strictEqual(field(await lineOf(observer, id), 'flags'), 'N')
+  })
+
+  for (const [how, hangUp] of [
+    ['half-closes (EOF)', (conn: RawRedisConnection) => conn.end()],
+    ['closes its socket', (conn: RawRedisConnection) => conn.close()],
+  ] as const) {
+    test(`a client blocked in BLPOP that ${how} is freed at once`, async () => {
+      const observer = await connect()
+      const subject = await connect()
+      const id = (await send(subject, 'CLIENT', 'ID')).toString().slice(1, -2)
+      const key = `client-info:${randomKey()}`
+
+      const before = await blockedClients(observer)
+      subject.write(commandFrame('BLPOP', key, '0'))
+      let deadline = Date.now() + 5000
+      while ((await blockedClients(observer)) !== before + 1) {
+        assert.ok(Date.now() < deadline, 'BLPOP never counted as blocked')
+        await delay(10)
+      }
+
+      // Real Redis reads the EOF of a blocked client and frees it: it leaves
+      // CLIENT LIST and stops counting in blocked_clients.
+      hangUp(subject)
+      deadline = Date.now() + 2000
+      for (;;) {
+        const list = bulkBody(await send(observer, 'CLIENT', 'LIST'))
+        const gone = !list.split('\n').some(l => l.startsWith(`id=${id} `))
+        if (gone && (await blockedClients(observer)) === before) break
+        assert.ok(
+          Date.now() < deadline,
+          `the disconnected client is still listed:\n${list}`,
+        )
+        await delay(10)
+      }
+
+      // Nobody is left to pop the element a push now hands to the list.
+      await send(observer, 'RPUSH', key, 'v')
+      assert.strictEqual(
+        (await send(observer, 'LLEN', key)).toString(),
+        ':1\r\n',
+      )
+      await send(observer, 'DEL', key)
+    })
+  }
+
+  test('a BLPOP sent together with EOF is freed, after the commands before it ran', async () => {
+    const observer = await connect()
+    const subject = await connect()
+    const id = (await send(subject, 'CLIENT', 'ID')).toString().slice(1, -2)
+    const key = `client-info:${randomKey()}`
+
+    // One write, then FIN: the RPUSH before the BLPOP is answered, the BLPOP
+    // blocks on another key, and the EOF behind it frees the client.
+    subject.write(
+      Buffer.concat([
+        commandFrame('RPUSH', `${key}:done`, 'x'),
+        commandFrame('BLPOP', key, '0'),
+      ]),
+    )
+    subject.end()
+    assert.strictEqual((await subject.readRawFrame()).toString(), ':1\r\n')
+
+    const deadline = Date.now() + 2000
+    for (;;) {
+      const list = bulkBody(await send(observer, 'CLIENT', 'LIST'))
+      if (!list.split('\n').some(l => l.startsWith(`id=${id} `))) break
+      assert.ok(
+        Date.now() < deadline,
+        `the disconnected client is still listed:\n${list}`,
+      )
+      await delay(10)
+    }
+    await send(observer, 'DEL', `${key}:done`)
+  })
+
+  test('CLIENT INFO run by EXEC still shows the MULTI flag and queue size', async () => {
+    const conn = await connect()
+    const key = `client-info:${randomKey()}`
+
+    // Redis keeps CLIENT_MULTI and the queued count until EXEC is done.
+    await send(conn, 'MULTI')
+    await send(conn, 'SET', key, '1')
+    await send(conn, 'CLIENT', 'INFO')
+    conn.write(commandFrame('EXEC'))
+    let reply = await conn.readFrame()
+    assert.ok(Array.isArray(reply))
+    let line = respText(reply[1])
+    assert.strictEqual(field(line, 'flags'), 'x')
+    assert.strictEqual(field(line, 'multi'), '2')
+    assert.strictEqual(field(line, 'cmd'), 'exec')
+
+    // EXEC unwatches before it runs the queue (`watch=0`).
+    await send(conn, 'WATCH', key)
+    await send(conn, 'MULTI')
+    await send(conn, 'CLIENT', 'INFO')
+    conn.write(commandFrame('EXEC'))
+    reply = await conn.readFrame()
+    assert.ok(Array.isArray(reply))
+    line = respText(reply[0])
+    assert.strictEqual(field(line, 'flags'), 'x')
+    assert.strictEqual(field(line, 'multi'), '1')
+    if (field(line, 'watch') !== undefined) {
+      assert.strictEqual(field(line, 'watch'), '0')
+    }
+
+    const after = bulkBody(await send(conn, 'CLIENT', 'INFO'))
+    assert.strictEqual(field(after, 'flags'), 'N')
+    assert.strictEqual(field(after, 'multi'), '-1')
+    await send(conn, 'DEL', key)
+  })
+
+  test('CLIENT LIST shows a MONITOR client with flags=O', async () => {
+    const observer = await connect()
+    const monitor = await connect()
+    const id = (await send(monitor, 'CLIENT', 'ID')).toString().slice(1, -2)
+    assert.strictEqual((await send(monitor, 'MONITOR')).toString(), '+OK\r\n')
+
+    const line = await lineOf(observer, id)
+    assert.strictEqual(field(line, 'flags'), 'O')
+    assert.strictEqual(field(line, 'cmd'), 'monitor')
   })
 
   test('INFO keyspace counts the keys with a TTL', async () => {

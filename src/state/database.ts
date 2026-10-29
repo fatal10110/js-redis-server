@@ -490,6 +490,11 @@ export class RedisDatabase {
    * Real Redis's `avg_ttl` is a running estimate, sampled by its active-expire
    * cycle (0 until the first cycle that sees a volatile key); this is the
    * exact mean the estimate converges to.
+   *
+   * The sweep reclaims every expired key first, so an expired key is never
+   * counted. Real Redis counts one in `keys` and `expires` until lazy or
+   * active expiry reclaims it, so right after a TTL runs out its counts can
+   * be higher than these.
    */
   keyspaceStats(now = Date.now()): {
     keys: number
@@ -502,12 +507,17 @@ export class RedisDatabase {
     let ttlSumMs = 0
     let hashesWithFieldTtl = 0
     for (const entry of this.entries.values()) {
-      if (entry.expiresAt !== undefined) {
-        expires += 1
-        ttlSumMs += Math.max(0, entry.expiresAt - now)
-      }
-      if (entry.value.type !== 'hash') continue
-      for (const field of entry.value.fields.values()) {
+      if (entry.expiresAt === undefined) continue
+      expires += 1
+      // Never negative: the sweep above evicted every key due by `now`.
+      ttlSumMs += entry.expiresAt - now
+    }
+    // Every hash with a field TTL is in `hashFieldExpiry` (the bound may be
+    // stale, so each candidate is still checked); other hashes are skipped.
+    for (const id of this.hashFieldExpiry.keys()) {
+      const value = this.entries.get(id)?.value
+      if (value?.type !== 'hash') continue
+      for (const field of value.fields.values()) {
         if (field.expiresAt === undefined) continue
         hashesWithFieldTtl += 1
         break

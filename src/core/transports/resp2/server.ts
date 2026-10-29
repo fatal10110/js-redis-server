@@ -98,8 +98,11 @@ export class Resp2Server {
 
 /**
  * The OS file descriptor behind an accepted socket, which real Redis reports
- * as CLIENT LIST's `fd=`. Node keeps it on the libuv handle (`TCPWrap.fd`,
- * not public API); it is -1 where the platform has none to expose (Windows).
+ * as CLIENT LIST's `fd=`. Node has no public API for it: this reads the
+ * private libuv handle (`socket._handle.fd`, a `TCPWrap`), which a Node
+ * release could rename. `undefined` when it is missing or negative (libuv
+ * reports -1 where the platform has none to expose, e.g. Windows); CLIENT
+ * LIST then prints `fd=-1`.
  */
 function socketFd(socket: Socket): number | undefined {
   const fd = (socket as unknown as { _handle?: { fd?: unknown } })._handle?.fd

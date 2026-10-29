@@ -213,6 +213,17 @@ export class ClientSession implements RedisClientSession {
   private unregisterClientSession?: Unsubscribe
   private lastCommandName: string | null = null
   private lastInteraction: number
+  /** Aborted by {@link endInput}; aborts every park from then on. */
+  private readonly inputEnd = new AbortController()
+  /** Commands of this session parked right now (see {@link onPark}). */
+  private parkedCommands = 0
+  private readonly parkListeners = new Set<() => void>()
+  /**
+   * While EXEC runs its queue: how many commands it holds. Redis keeps the
+   * client's `CLIENT_MULTI` flag and `mstate.count` until EXEC is done, so a
+   * queued CLIENT INFO / LIST sees `flags=x multi=<count>`; -1 otherwise.
+   */
+  private execQueuedCount = -1
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
@@ -270,7 +281,7 @@ export class ClientSession implements RedisClientSession {
   get queuedCommandCount(): number {
     return this.sessionMode === 'transaction'
       ? this.transactionPlans.length
-      : -1
+      : this.execQueuedCount
   }
 
   get watchedKeyCount(): number {
@@ -402,10 +413,6 @@ export class ClientSession implements RedisClientSession {
   async executeTransaction(
     plans: readonly CommandPlan[],
   ): Promise<RedisResult> {
-    const values: RedisValue[] = []
-    const encodedValues: Buffer[] = []
-    let preEncode = false
-
     // Blocking commands must not park while the EXEC turn is held — that would
     // deadlock because no other session could produce the wakeup write. Override
     // park so any blocking command queued in MULTI behaves non-blocking (returns
@@ -418,6 +425,22 @@ export class ClientSession implements RedisClientSession {
       undefined,
       true,
     )
+    this.execQueuedCount = plans.length
+    try {
+      return await this.runTransactionPlans(plans, noBlockCtx)
+    } finally {
+      this.execQueuedCount = -1
+    }
+  }
+
+  private async runTransactionPlans(
+    plans: readonly CommandPlan[],
+    noBlockCtx: RedisExecutionContext,
+  ): Promise<RedisResult> {
+    const values: RedisValue[] = []
+    const encodedValues: Buffer[] = []
+    let preEncode = false
+
     // The EXEC turn is server-wide, so a queued SELECT switching databases
     // mid-EXEC needs no turn handoff: later commands stay serialized (#94).
     for (const plan of plans) {
@@ -795,6 +818,32 @@ export class ClientSession implements RedisClientSession {
     }
   }
 
+  /** Whether one of this session's commands is parked (BLPOP, XREAD BLOCK, ...). */
+  get parked(): boolean {
+    return this.parkedCommands > 0
+  }
+
+  /**
+   * Call `listener` each time a command of this session parks. The transport
+   * adapter uses it to keep reading the socket while the client is blocked,
+   * as Redis keeps reading a blocked client's input (#554).
+   */
+  onPark(listener: () => void): Unsubscribe {
+    this.parkListeners.add(listener)
+    return () => this.parkListeners.delete(listener)
+  }
+
+  /**
+   * The client's input has ended (EOF, or the socket went away). Redis frees
+   * a blocked client as soon as its read returns 0, so a command parked now,
+   * or one that parks later from a frame read before the EOF, is aborted. A
+   * command that does not park still runs and is answered, as Redis answers
+   * the commands it read before the EOF.
+   */
+  endInput(): void {
+    this.inputEnd.abort()
+  }
+
   /** Tear down the session: abort in-flight work and reset all per-connection state. */
   close(): void {
     this.unregisterClientSession?.()
@@ -836,22 +885,33 @@ export class ClientSession implements RedisClientSession {
    */
   private createTurnAwareParkHandler(turnAccess: TurnAccess): ParkHandler {
     return async <TValue>(request: ParkRequest<TValue>) => {
-      const turn = turnAccess.get()
-      if (!turn) {
-        return this.parkHandler(request)
+      const parkRequest: ParkRequest<TValue> = {
+        ...request,
+        signal: AbortSignal.any([request.signal, this.inputEnd.signal]),
       }
+      this.parkedCommands += 1
+      try {
+        for (const listener of [...this.parkListeners]) listener()
 
-      let parkedValue: TValue | null = null
-      const parked = this.parkHandler(request).then(value => {
-        parkedValue = value
-      })
+        const turn = turnAccess.get()
+        if (!turn) {
+          return await this.parkHandler(parkRequest)
+        }
 
-      turnAccess.set(undefined)
-      const nextTurn = await turn.suspend(parked, resume =>
-        request.onWake?.(resume),
-      )
-      turnAccess.set(nextTurn)
-      return parkedValue
+        let parkedValue: TValue | null = null
+        const parked = this.parkHandler(parkRequest).then(value => {
+          parkedValue = value
+        })
+
+        turnAccess.set(undefined)
+        const nextTurn = await turn.suspend(parked, resume =>
+          request.onWake?.(resume),
+        )
+        turnAccess.set(nextTurn)
+        return parkedValue
+      } finally {
+        this.parkedCommands -= 1
+      }
     }
   }
 

@@ -291,9 +291,9 @@ function formatClientLine(
   if (redis7) {
     fields.push(`ssub=${session.pubsubShardChannelCount}`)
   }
-  fields.push(`multi=${session.queuedCommandCount ?? -1}`)
+  fields.push(`multi=${session.queuedCommandCount}`)
   if (profile.has('client.list.watch')) {
-    fields.push(`watch=${session.watchedKeyCount ?? 0}`)
+    fields.push(`watch=${session.watchedKeyCount}`)
   }
   fields.push('qbuf=0', 'qbuf-free=0', 'argv-mem=0')
   if (redis7) {
@@ -330,13 +330,15 @@ function formatClientLine(
 
 /**
  * The `flags=` letters, in `catClientInfoString`'s order, for the states this
- * server models: `P` subscribed, `x` in MULTI, `b` blocked, `d` a WATCHed key
- * changed, `r` READONLY (cluster), `e` CLIENT NO-EVICT; `N` for none.
+ * server models: `O` MONITOR, `P` subscribed, `x` in MULTI (until its EXEC
+ * has run), `b` blocked, `d` a WATCHed key changed, `r` READONLY (cluster),
+ * `e` CLIENT NO-EVICT; `N` for none.
  */
 function clientFlags(session: RedisClientSession): string {
   let flags = ''
+  if (session.monitoring) flags += 'O'
   if (session.pubsubSubscriptionCount > 0) flags += 'P'
-  if (session.mode === 'transaction') flags += 'x'
+  if (session.queuedCommandCount >= 0) flags += 'x'
   if (isClientBlocked(session)) flags += 'b'
   if (session.isWatchDirty()) flags += 'd'
   if (session.clusterReadOnly) flags += 'r'
@@ -355,8 +357,10 @@ function clientAgeSeconds(session: RedisClientSession): number {
 }
 
 function clientIdleSeconds(session: RedisClientSession): number {
-  const last = session.lastInteractionMs ?? session.connectedAtMs
-  return Math.max(0, Math.floor((Date.now() - last) / 1000))
+  return Math.max(
+    0,
+    Math.floor((Date.now() - session.lastInteractionMs) / 1000),
+  )
 }
 
 function parseClientKillOptions(

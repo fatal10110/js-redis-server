@@ -23,6 +23,13 @@ export class Resp2SessionAdapter {
   private readonly session: ClientSession
   private readonly logger?: Pick<Logger, 'error'>
   private writeChain: Promise<void> = Promise.resolve()
+  private input?: AsyncIterator<Buffer>
+  /** The read in flight, if any; {@link pull} shares it between callers. */
+  private pulling?: Promise<void>
+  /** The client's input is over: EOF, or the read loop failed. */
+  private inputEnded = false
+  private inputError: unknown
+  private readingWhileParked = false
 
   constructor(options: Resp2SessionAdapterOptions) {
     this.transport = options.transport
@@ -38,45 +45,63 @@ export class Resp2SessionAdapter {
 
   async run(): Promise<void> {
     const pushWriter = this.writeSessionPushes()
+    this.input = this.transport.read()[Symbol.asyncIterator]()
+    // Redis keeps reading a blocked client's socket (it only stops parsing
+    // it), so the EOF of a client that hangs up while blocked frees it at
+    // once. Between commands the loop below reads; while one is parked, this
+    // does, and buffers what arrives for the loop to parse afterwards.
+    const unsubscribePark = this.session.onPark(() => {
+      void this.readWhileParked()
+    })
 
     try {
-      for await (const chunk of this.transport.read()) {
-        this.decoder.push(chunk)
-
-        for (;;) {
-          let frame: Resp2CommandFrame | null
-          try {
-            // Pulled one at a time so each command has run — and any config it
-            // changed has landed — before the next frame is parsed.
-            frame = this.decoder.next()
-          } catch (err) {
-            if (!(err instanceof Resp2ParseError)) {
-              throw err
-            }
-            // Valid frames before the bad one were answered by earlier passes
-            // of this loop; now report the protocol error and close, matching
-            // real Redis.
-            await this.writeError(err)
-            this.transport.close('resp2 protocol error')
-            return
+      for (;;) {
+        let frame: Resp2CommandFrame | null
+        try {
+          // Pulled one at a time so each command has run — and any config it
+          // changed has landed — before the next frame is parsed.
+          frame = this.decoder.next()
+        } catch (err) {
+          if (!(err instanceof Resp2ParseError)) {
+            throw err
           }
+          // Valid frames before the bad one were answered by earlier passes
+          // of this loop; now report the protocol error and close, matching
+          // real Redis.
+          await this.writeError(err)
+          this.transport.close('resp2 protocol error')
+          return
+        }
 
-          if (!frame) {
-            break
-          }
-
+        if (frame) {
           await this.handleFrame(frame)
           if (this.transport.signal.aborted) {
             return
           }
+          continue
         }
+
+        if (this.inputEnded) {
+          if (this.inputError !== undefined) {
+            throw this.inputError
+          }
+          return
+        }
+
+        await this.pull()
       }
     } catch (err) {
-      if (!this.transport.signal.aborted) {
+      // A command aborted because the client hung up while it was parked
+      // has no one to answer.
+      if (!this.transport.signal.aborted && !this.inputEnded) {
         await this.writeError(err)
         this.transport.close('resp2 adapter error')
       }
     } finally {
+      unsubscribePark()
+      // Not awaited: a read still in flight settles once the stream ends.
+      // `destroyOnReturn: false` keeps this from destroying the stream.
+      void this.input.return?.().catch(() => {})
       try {
         this.session.close()
         await pushWriter
@@ -91,6 +116,45 @@ export class Resp2SessionAdapter {
         // cannot skip it.
         this.transport.close('session ended')
       }
+    }
+  }
+
+  /**
+   * Read the next chunk into the decoder, or note the end of input (which
+   * aborts a parked command, see {@link ClientSession.endInput}). Concurrent
+   * callers share one read, so every chunk is pushed exactly once.
+   */
+  private pull(): Promise<void> {
+    this.pulling ??= (async () => {
+      try {
+        const next = await this.input!.next()
+        if (!next.done) {
+          this.decoder.push(next.value)
+          return
+        }
+        this.inputEnded = true
+      } catch (err) {
+        this.inputEnded = true
+        this.inputError = err
+      } finally {
+        this.pulling = undefined
+      }
+      this.session.endInput()
+    })()
+    return this.pulling
+  }
+
+  private async readWhileParked(): Promise<void> {
+    if (this.readingWhileParked) {
+      return
+    }
+    this.readingWhileParked = true
+    try {
+      while (this.session.parked && !this.inputEnded) {
+        await this.pull()
+      }
+    } finally {
+      this.readingWhileParked = false
     }
   }
 
