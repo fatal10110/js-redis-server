@@ -299,10 +299,16 @@ flowchart TD
 
 [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts#L16) computes
 a slot for the plan's keys via
-[`RedisClusterTopology.calculateSlotForKeys`](../src/state/cluster-topology.ts#L25)
+[`RedisClusterTopology.calculateSlotForKeys`](../src/state/cluster-topology.ts#L81)
 and either lets the command through, redirects with `MOVED`, or rejects with
-`CROSSSLOT`/`CLUSTERDOWN`. Replicas never "own" a slot for routing purposes —
-a keyed command sent directly to a replica is redirected to its master. Inside
+`CROSSSLOT`/`CLUSTERDOWN`. Slots come from
+[`keyHashSlot`](../src/state/cluster-topology.ts#L54), a port of Redis's own
+function: a key with an empty first hash tag (`{}{foo}`) hashes whole. The
+`cluster-key-slot` package that ioredis and node-redis route with does not do
+that, so those clients get a `MOVED` for such keys, as from a real cluster
+([testing guide](TESTING.md#cluster-mocks)). Replicas never "own" a slot for
+routing purposes — a keyed command sent directly to a replica is redirected to
+its master. Inside
 a transaction, the slot of the _first_ keyed command is pinned per-session in a
 `WeakMap` so every subsequent queued command must hash to the same slot.
 
@@ -509,7 +515,7 @@ for the client-facing view of this negotiation.
 ## Cluster mode
 
 [`createRedisCluster`](../src/cluster.ts#L80) computes a slot-range topology
-([`RedisClusterTopology`](../src/state/cluster-topology.ts#L16), 16384 slots
+([`RedisClusterTopology`](../src/state/cluster-topology.ts#L68), 16384 slots
 split evenly across masters, with optional replicas), then spins up one
 `Resp2Server` per node — each with its **own** `RedisServerState` (so data is
 genuinely partitioned) but **sharing** the topology object, registered with:
