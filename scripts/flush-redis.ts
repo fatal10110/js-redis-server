@@ -45,7 +45,18 @@
  *    (default 30000-30005)
  *  - the standalone server, when REDIS_STANDALONE_PORT is set
  *  - the requirepass standalone, when REDIS_STANDALONE_AUTH_PORT is set
+ *
+ * Before it flushes anything, the script takes a run lock on every endpoint
+ * (see `flush-redis-lock.ts`) and refuses, without flushing, while another run
+ * holds any of them (#542). Called as `flush-redis.ts -- <command> [args...]`
+ * (what `test:integration:real*` do), it then runs the command and holds the
+ * lock until the command exits, exiting with the command's status; called
+ * with no arguments (`npm run clean:redis`), it releases the lock once the
+ * flush is verified.
  */
+import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
+import { constants, hostname } from 'node:os'
 import { Redis } from 'ioredis'
 import {
   realClusterPorts,
@@ -64,6 +75,13 @@ import {
   planCluster,
   replicaMasterProblem,
 } from './flush-redis-topology'
+import {
+  describeHolder,
+  exitCodeFor,
+  otherRunHolders,
+  parseCommandLine,
+  runLockName,
+} from './flush-redis-lock'
 
 const CONNECT_TIMEOUT_MS = 5000
 
@@ -420,7 +438,124 @@ async function verifyClusterHealthy(target: Target): Promise<string> {
   return `${target.note}, cluster_state:ok`
 }
 
-async function main(): Promise<void> {
+/**
+ * Take the run lock on every connected endpoint, or explain why not (#542).
+ * Every endpoint is named before any is listed, which is what makes two
+ * runs that share one see each other (see `flush-redis-lock.ts`). Returns
+ * false, having printed the refusal, when another run holds any endpoint or
+ * the lock cannot be checked on one: nothing has been flushed at that point,
+ * and nothing will be.
+ */
+async function claimRunLock(
+  targets: Target[],
+  lockName: string,
+): Promise<boolean> {
+  const named = await Promise.allSettled(
+    targets.map(target => target.client.client('SETNAME', lockName)),
+  )
+  const listed = await Promise.allSettled(
+    targets.map(target => target.client.client('LIST')),
+  )
+
+  const held: string[] = []
+  const unchecked: string[] = []
+  targets.forEach((target, index) => {
+    const naming = named[index]
+    const listing = listed[index]
+    if (naming.status === 'rejected') {
+      unchecked.push(
+        `${target.label}: cannot take the run lock (CLIENT SETNAME): ${describe(naming.reason)}`,
+      )
+    } else if (listing.status === 'rejected') {
+      unchecked.push(
+        `${target.label}: cannot check the run lock (CLIENT LIST): ${describe(listing.reason)}`,
+      )
+    } else {
+      for (const holder of otherRunHolders(listing.value as string, lockName)) {
+        held.push(`${target.label}: ${describeHolder(holder)}`)
+      }
+    }
+  })
+
+  if (held.length === 0 && unchecked.length === 0) {
+    return true
+  }
+
+  console.error(
+    held.length > 0
+      ? 'clean:redis refused to flush — another real-backend run holds this stack:'
+      : 'clean:redis refused to flush — the run lock could not be checked:',
+  )
+  for (const line of [...held, ...unchecked]) {
+    console.error(`  ${line}`)
+  }
+  if (held.length > 0) {
+    console.error('What to do:')
+    console.error(`  - ${HINT.locked}`)
+  }
+  return false
+}
+
+/**
+ * Run `command` while the lock connections stay open, and exit with its
+ * status. SIGTERM is passed on to the command. SIGINT and SIGHUP come from
+ * the terminal, which sends them to the command as well, so they are only
+ * kept from killing this process before the command is done: dying first
+ * would release the lock while the command still uses the stack.
+ */
+async function runHoldingLock(
+  command: string[],
+  targets: Target[],
+): Promise<void> {
+  let released = false
+  for (const target of targets) {
+    target.client.once('end', () => {
+      if (!released) {
+        console.error(
+          `clean:redis: lost the run lock on ${target.label} — its connection ` +
+            `closed, so another run could now flush this stack`,
+        )
+      }
+    })
+  }
+
+  console.log(
+    `clean:redis: holding the run lock on ${targets.length} endpoint(s) while ` +
+      `${command[0]} runs`,
+  )
+  const child = spawn(command[0], command.slice(1), { stdio: 'inherit' })
+  const forward = (signal: NodeJS.Signals) => child.kill(signal)
+  const ignore = () => {}
+  process.on('SIGTERM', forward)
+  process.on('SIGINT', ignore)
+  process.on('SIGHUP', ignore)
+
+  try {
+    const { code, signal } = await new Promise<{
+      code: number | null
+      signal: NodeJS.Signals | null
+    }>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('exit', (code, signal) => resolve({ code, signal }))
+    })
+    process.exitCode = exitCodeFor(code, signal, constants.signals)
+  } catch (err) {
+    console.error(`clean:redis: cannot run ${command[0]}: ${describe(err)}`)
+    process.exitCode = 1
+  } finally {
+    released = true
+    process.off('SIGTERM', forward)
+    process.off('SIGINT', ignore)
+    process.off('SIGHUP', ignore)
+  }
+}
+
+async function main(command: string[] | null): Promise<void> {
+  const lockName = runLockName(
+    hostname(),
+    process.pid,
+    randomBytes(4).toString('hex'),
+  )
   const configured = await openAll(configuredEndpoints(), HINT.unreachable)
   const seeds = configured.opened.filter(target => target.clustered)
   const { discovered, unreachable: lost } = await discoverCluster(seeds)
@@ -429,6 +564,11 @@ async function main(): Promise<void> {
   const unreachable = [...configured.unreachable, ...lost]
 
   try {
+    if (!(await claimRunLock(targets, lockName))) {
+      process.exitCode = 1
+      return
+    }
+
     // Masters first: a replica can only be verified once whatever feeds it has
     // been emptied, so these two steps cannot overlap.
     const masters = targets.filter(
@@ -469,12 +609,28 @@ async function main(): Promise<void> {
         console.log(`  ${target.label}: ${target.note}`)
       }
     }
+
+    if (!reportFailures(targets, unreachable)) {
+      process.exitCode = 1
+      return
+    }
+
+    if (command !== null) {
+      await runHoldingLock(command, targets)
+    }
   } finally {
+    // Closing the connections is what releases the lock.
     for (const target of targets) {
       target.client.disconnect()
     }
   }
+}
 
+/** Print every endpoint that is not verifiably empty; true when there is none. */
+function reportFailures(
+  targets: Target[],
+  unreachable: Unreachable[],
+): boolean {
   const failures: { label: string; failure: Failure }[] = [
     ...unreachable,
     ...targets
@@ -483,7 +639,7 @@ async function main(): Promise<void> {
   ]
 
   if (failures.length === 0) {
-    return
+    return true
   }
 
   const total = targets.length + unreachable.length
@@ -503,10 +659,18 @@ async function main(): Promise<void> {
       console.error(`  - ${hint}`)
     }
   }
-  process.exitCode = 1
+  return false
 }
 
-main().catch(err => {
+let command: string[] | null = null
+try {
+  command = parseCommandLine(process.argv.slice(2))
+} catch (err) {
+  console.error(describe(err))
+  process.exit(2)
+}
+
+main(command).catch(err => {
   console.error('clean:redis failed:', describe(err))
   process.exitCode = 1
 })

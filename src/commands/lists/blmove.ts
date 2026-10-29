@@ -6,7 +6,7 @@ import { RedisResult } from '../../core/redis-result'
 import { bulk } from '../helpers'
 import { parseMoveDirection, parseTimeout } from './helpers'
 import { tryListMove } from './move'
-import { blockOnKeys, blockingTimeoutMs } from '../blocking'
+import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
 
 type BlmoveArgs = {
   source: Buffer
@@ -16,22 +16,25 @@ type BlmoveArgs = {
   timeout: number
 }
 
-async function blockingListMove(
+function blockingListMove(
   source: Buffer,
   destination: Buffer,
   fromDirection: 'left' | 'right',
   toDirection: 'left' | 'right',
   timeoutSecs: number,
   ctx: RedisExecutionContext,
-): Promise<RedisResult> {
-  const result = await blockOnKeys(ctx, {
-    keys: [source],
-    type: 'list',
-    timeoutMs: blockingTimeoutMs(timeoutSecs),
-    attempt: () =>
-      tryListMove(source, destination, fromDirection, toDirection, ctx.db),
-  })
-  return result ?? bulk(null)
+): RedisResult | Promise<RedisResult> {
+  return blockOrTimeOut(
+    ctx,
+    {
+      keys: [source],
+      type: 'list',
+      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      attempt: () =>
+        tryListMove(source, destination, fromDirection, toDirection, ctx.db),
+    },
+    () => bulk(null),
+  )
 }
 
 const BLMOVE_LAYOUT = { min: 5, max: 5, keys: [0, 1] }
@@ -54,7 +57,7 @@ export const blmoveCommand = defineCommand({
       nextIndex: index + 5,
     }
   }),
-  flags: ['write', 'noscript'],
+  flags: ['write', 'blocking'],
   keys: args => [args.source, args.destination],
   execute: (args, ctx) => {
     const immediate = tryListMove(
