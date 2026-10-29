@@ -50,7 +50,6 @@ export type FeatureId =
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
   | 'geo.coord-d2string'
-  | 'script.per-subcommand-noscript'
   | 'command.quit-table-entry'
   | 'script.abort-error-suffix'
   | 'script.unknown-command-valkey-wording'

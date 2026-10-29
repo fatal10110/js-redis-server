@@ -379,6 +379,12 @@ with `GT` or `LT`.
 - [x] `LMPOP numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Pop from the first non-empty list
 - [x] `BLMPOP timeout numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Blocking variant of `LMPOP`
 
+> From a Lua script the blocking pops never block. Redis 7.2+ (and every
+> Valkey profile) runs `BLPOP`, `BRPOP`, `BLMOVE`, `BZPOPMIN` and `BZPOPMAX`
+> like their non-blocking forms: with nothing to pop they answer the timeout
+> reply at once, even with timeout 0. `BLMPOP` and `BZMPOP` do so from 7.0.
+> Redis 6.2 and 7.0 refuse the others as `noscript`.
+
 ## 7. Set Commands
 
 - [x] `SADD key member [member ...]` - Add one or more members to a set
@@ -556,7 +562,11 @@ flip its session into transaction mode or register a `WATCH`.
 
 `EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO` run via `executePlanSync` against the same command registry
 and policies as normal commands, so every command's `noscript`/`readonly`
-flags are enforced inside `redis.call`/`redis.pcall`.
+flags are enforced inside `redis.call`/`redis.pcall`. Whether a command is
+`noscript` comes from the real command table of the profile's version:
+`SPOP`, `SRANDMEMBER` and `HRANDFIELD` run from scripts on every profile, and
+the blocking pops run there without blocking from 7.2 (see
+[List Commands](#6-list-commands)).
 
 - [x] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
 - [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
