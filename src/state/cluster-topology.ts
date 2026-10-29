@@ -1,5 +1,3 @@
-import clusterKeySlot from 'cluster-key-slot'
-
 export type RedisClusterNodeRole = 'master' | 'replica'
 
 export type RedisClusterNode = {
@@ -13,21 +11,86 @@ export type RedisClusterNode = {
 
 export const REDIS_CLUSTER_SLOT_COUNT = 16384
 
+/**
+ * CRC16 lookup table for the XMODEM variant Redis Cluster uses (`crc16.c`):
+ * polynomial 0x1021, initial value 0, no input/output reflection, no final
+ * XOR. `crc16('123456789')` is 0x31c3.
+ */
+const CRC16_TABLE: readonly number[] = (() => {
+  const table = new Array<number>(256)
+  for (let byte = 0; byte < 256; byte++) {
+    let crc = byte << 8
+    for (let bit = 0; bit < 8; bit++) {
+      crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff
+    }
+    table[byte] = crc
+  }
+  return table
+})()
+
+function crc16(buf: Buffer, start: number, end: number): number {
+  let crc = 0
+  for (let i = start; i < end; i++) {
+    crc = ((crc << 8) & 0xffff) ^ CRC16_TABLE[((crc >> 8) ^ buf[i]) & 0xff]
+  }
+  return crc
+}
+
+/**
+ * Port of `keyHashSlot()` from Redis `cluster.c` (`cluster.h` from 8.0; the
+ * same code on every supported Redis and Valkey version).
+ *
+ * The hash tag is what lies between the first `{` and the first `}` after
+ * it. When there is no `{`, no `}` after it, or nothing between the two, the
+ * whole key is hashed; a later `{...}` never becomes the tag. So `{}{foo}`
+ * hashes as the whole key, slot 2263.
+ *
+ * This is inlined rather than taken from the `cluster-key-slot` package. That
+ * package keeps scanning after an empty `{}` and hashes `{}{foo}` as `{foo`
+ * (slot 13308), a slot real Redis never uses for this key (#88). ioredis and
+ * node-redis route with that package, so for such keys they reach the wrong
+ * node and get a `-MOVED`, exactly as against a real cluster.
+ */
+export function keyHashSlot(key: Buffer): number {
+  const start = key.indexOf(0x7b) // '{'
+  if (start === -1) {
+    return crc16(key, 0, key.length) & 0x3fff
+  }
+
+  const end = key.indexOf(0x7d, start + 1) // '}'
+  if (end === -1 || end === start + 1) {
+    return crc16(key, 0, key.length) & 0x3fff
+  }
+
+  return crc16(key, start + 1, end) & 0x3fff
+}
+
 export class RedisClusterTopology {
   constructor(public readonly nodes: readonly RedisClusterNode[] = []) {
     validateTopology(nodes)
   }
 
   calculateSlot(key: Buffer): number {
-    return clusterKeySlot(key)
+    return keyHashSlot(key)
   }
 
+  /**
+   * The slot every key hashes to, `null` for no keys, or `-1` when the keys
+   * span more than one slot.
+   */
   calculateSlotForKeys(keys: readonly Buffer[]): number | null {
     if (keys.length === 0) {
       return null
     }
 
-    return clusterKeySlot.generateMulti([...keys])
+    const slot = keyHashSlot(keys[0])
+    for (let i = 1; i < keys.length; i++) {
+      if (keyHashSlot(keys[i]) !== slot) {
+        return -1
+      }
+    }
+
+    return slot
   }
 
   getNode(id: string): RedisClusterNode | undefined {
