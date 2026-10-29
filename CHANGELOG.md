@@ -758,28 +758,41 @@ so the PR body is not a durable home for a breaking-change note.
   runs there and `#!notlua` is `Could not find scripting engine 'notlua'`
   (new gate `script.shebang-engine-lookup`). The flags are checked as in
   Redis's `scriptPrepareForRun`. `no-writes` refuses writes like `EVAL_RO`.
-  `EVAL_RO` / `EVALSHA_RO` refuse a shebang script without `no-writes`
+  Both now also refuse the commands Redis flags `may-replicate`, `PUBLISH`,
+  `SPUBLISH` and `PFCOUNT` (`Write commands are not allowed from read-only
+  scripts.`), as `FCALL_RO` and a `no-writes` function do; `EVAL_RO` used
+  to run them. On a cluster node a shebang script, and any function, keeps
+  to one slot: its declared keys' slot, else the slot of the first key a
+  command touches, pins it, declared in `KEYS` or not, and a command on
+  another slot fails with `Script attempted to access keys that do not hash
+  to the same slot`. `allow-cross-slot-keys` lifts that; a script without a
+  shebang is not checked, as before. `EVAL_RO` / `EVALSHA_RO` refuse a shebang script without `no-writes`
   (`Can not execute a script with write flag using *_ro command.`), and
   `EVAL_RO` still caches it. `no-cluster` refuses to run on a cluster node
   (`Can not run script on cluster, 'no-cluster' flag is set.`), for a
   function's `no-cluster` flag too. A function flagged `no-writes` now runs
   read-only under `FCALL` as well, not only under `FCALL_RO`. Known gaps:
-  `allow-oom`, `allow-stale` and `allow-cross-slot-keys` are accepted but
-  change nothing (no `maxmemory`, no stale replicas, no per-script
-  cross-slot check), and a `no-writes` script is still routed as a write
-  command. Checked against redis-server 7.0.15 and the transcripts in the
-  issue. `/core`: `renderScriptError` takes an optional `sha` to name.
+  `allow-oom` and `allow-stale` are accepted but change nothing (no
+  `maxmemory`, no stale replicas), and a `no-writes` script is still routed
+  as a write command. Checked against redis-server 7.0.15 and 7.2.1 and the
+  transcripts in the issue.
 
 - `FUNCTION LOAD` compiles the library before registering it ([#538]). A
   library that is not valid Lua replies `-ERR Error compiling function:
   user_function:<line>: <Lua's message>`, counting the metadata line, and
   registers nothing; under `REPLACE` the old library stays. It used to reply
   `No functions registered`, or register the library. Errors now come in
-  Redis's order: missing metadata, then `Library '<name>' already exists`
+  Redis's order: the metadata, then `Library '<name>' already exists`
   (before the code is compiled), then the compile error, then `No functions
-  registered`. Code that does not open with `#!` is `Missing library
-  metadata`, as in Redis, even if a later line holds the metadata. Checked
-  against redis-server 7.0.15. Known gap: the library is not run while it
+  registered`. The metadata is only the first line, read as Redis's
+  `functionExtractLibMetaData` reads it, with its errors: code that does not
+  open with `#!` is `Missing library metadata`, even if a later line holds
+  the metadata; a first line with no line feed (or a NUL before it) is
+  `Invalid library metadata`, where it used to be `No functions registered`;
+  and `Library name was not given`, `Invalid metadata value given: <part>`,
+  `Invalid metadata value, name argument was given multiple times`, the
+  library-name check and `Engine '<name>' not found` follow. The engine and
+  `name=` ignore case. Checked against redis-server 7.0.15 and 7.2.1. Known gap: the library is not run while it
   loads, so a load-time error (`Error registering functions: ...`) is not
   reproduced.
 
@@ -791,7 +804,8 @@ so the PR body is not a durable home for a breaking-change note.
   restarted. The command that hits the fault still gets an `ERR` reply; the
   next script command gets a fresh runtime, with the script cache and the
   function libraries kept. A runtime that failed to load is retried too.
-  `/core`: `RedisLuaRuntime` gained `usable` and `dispose()`.
+  `RedisServerState.close()` now disposes the runtime. `/core`:
+  `RedisLuaRuntime` gained `usable` and `dispose()`.
 
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a

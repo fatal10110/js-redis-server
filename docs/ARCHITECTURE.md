@@ -615,7 +615,9 @@ to scripts via a host callback
    at once (`blockOrTimeOut` in `src/commands/blocking.ts`), and
 3. runs the plan through [`executePlanSync`](../src/core/command-executor.ts#L116)
    — the same registry and policies as a client-issued command, so cluster
-   slot validation and transaction-flag rules apply _inside_ scripts too, and
+   slot validation and transaction-flag rules apply _inside_ scripts too
+   (a script that must keep to one slot carries a `scriptSlot` pin on its
+   context, which `ClusterPolicy` checks once the keys are known local), and
    any command/policy that tries to go async or stream is rejected outright
    (Lua cannot await).
 
@@ -644,10 +646,14 @@ skip it (fatal10110/lua-redis-wasm#98), so the host checks the shebang with
 Redis's wording, hands the engine the body with that line blanked (its line
 feed kept, so line numbers count it) and renders errors with the SHA of the
 script the client sent. The declared flags are checked like Redis's
-`scriptPrepareForRun`: `no-writes` runs the script read-only, `EVAL_RO`
-refuses a script without it, and `no-cluster` refuses to run on a cluster
-node. `FUNCTION LOAD` compiles a library the same way before registering it,
-naming the chunk `user_function` as Redis does.
+`scriptPrepareForRun`: `no-writes` runs the script read-only (refusing
+writes and Redis's `may-replicate` commands), `EVAL_RO` refuses a script
+without it, `no-cluster` refuses to run on a cluster node, and a shebang
+script or function keeps to one slot on a cluster node unless it declares
+`allow-cross-slot-keys`. `FUNCTION LOAD` reads the library's metadata line
+as Redis's `functionExtractLibMetaData` does and compiles the library the
+same way before registering it, naming the chunk `user_function` as Redis
+does.
 
 ## Adding a command
 

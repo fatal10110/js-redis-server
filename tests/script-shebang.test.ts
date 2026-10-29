@@ -354,6 +354,63 @@ describe('shebang scripts (#536)', () => {
     }
   })
 
+  test('a shebang script keeps to one slot on a cluster node', async () => {
+    const topology = new RedisClusterTopology([
+      {
+        id: 'local',
+        role: 'master',
+        host: '127.0.0.1',
+        port: 7000,
+        slots: [[0, 16383]],
+      },
+    ])
+    const server = new RedisServerState({ clusterTopology: topology })
+    const executor = createRedisCommandExecutor({
+      policies: [createClusterPolicy({ localNodeId: 'local' })],
+    })
+    const cluster = new ClientSession({ server, executor })
+    const run = (script: string, ...args: string[]) =>
+      cluster.execute(
+        'eval',
+        [script, ...args].map(arg => Buffer.from(arg)),
+      )
+    const twoKeys =
+      "#!lua\nreturn redis.call('set','a','1') and redis.call('set','b','1')"
+    const crossSlot = (script: string) =>
+      `ERR Script attempted to access keys that do not hash to the same slot script: ${sha1(script)}, on @user_script:2.`
+
+    assert.strictEqual(
+      errorText(await run(twoKeys, '1', 'a')),
+      crossSlot(twoKeys),
+    )
+    assert.strictEqual(errorText(await run(twoKeys, '0')), crossSlot(twoKeys))
+    const onlyB = "#!lua\nreturn redis.call('set','b','1')"
+    assert.strictEqual(errorText(await run(onlyB, '1', 'a')), crossSlot(onlyB))
+    // A keyless command pins nothing; one hash tag is one slot.
+    assert.deepStrictEqual(
+      await run(
+        "#!lua\nredis.call('ping') return redis.call('set','{a}x','1') and redis.call('set','{a}y','1')",
+        '0',
+      ),
+      RedisResult.create(RedisValue.simpleString('OK')),
+    )
+    for (const script of [
+      twoKeys.replace('#!lua', '#!lua flags=allow-cross-slot-keys'),
+      twoKeys.replace('#!lua\n', ''),
+    ]) {
+      assert.deepStrictEqual(
+        await run(script, '1', 'a'),
+        RedisResult.create(RedisValue.simpleString('OK')),
+      )
+    }
+    // A standalone server has no slots to keep to.
+    const { session } = createSession()
+    assert.deepStrictEqual(
+      await evalScript(session, 'eval', twoKeys),
+      RedisResult.create(RedisValue.simpleString('OK')),
+    )
+  })
+
   test('a no-writes function runs read-only under FCALL too', async () => {
     const { session, server } = createSession()
     await session.execute('function', [

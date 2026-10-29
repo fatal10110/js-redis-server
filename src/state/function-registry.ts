@@ -1,3 +1,6 @@
+import { asciiLowerCase } from '../core/ascii-case'
+import { shebangEnd, splitArgs } from '../core/script-shebang'
+
 export type RedisFunctionDefinition = {
   name: string
   libraryName: string
@@ -92,34 +95,67 @@ export class RedisFunctionRegistry {
 }
 
 /**
- * The library name in the code's `#!lua name=<name>` metadata line. Like
- * Redis, code that does not open with `#!` has no metadata.
+ * A library's metadata line, checked as Redis's `functionExtractLibMetaData`
+ * and `functionsCreateWithLibraryCtx` check it, in their order: the code must
+ * open with `#!`, the line must end in a line feed that strchr() finds (a NUL
+ * hides it), split like sdssplitargs, with one `name=` option (any case) and
+ * no other, a valid library name and a known engine (`lua`, any case).
+ * `body` is what Redis compiles: from the line feed on, so Lua's line
+ * numbers count the metadata line. Checked against redis-server 7.2.1.
  */
-export function parseFunctionLibraryName(code: Buffer): string {
-  const text = code.toString()
-  const libraryMatch = text.startsWith('#!')
-    ? text.match(/^#!lua\s+name=([^\s]+)\s*$/m)
-    : null
-  if (!libraryMatch) {
+export function parseFunctionLibraryMetadata(code: Buffer): {
+  name: string
+  body: Buffer
+} {
+  if (code[0] !== 0x23 /* # */ || code[1] !== 0x21 /* ! */) {
     throw new Error('Missing library metadata')
   }
+  const end = shebangEnd(code)
+  if (end === -1) {
+    throw new Error('Invalid library metadata')
+  }
+  const parts = splitArgs(code.subarray(0, end))
+  if (!parts || parts.length === 0) {
+    throw new Error('Invalid library metadata')
+  }
 
-  return libraryMatch[1]
+  let name: string | null = null
+  for (const part of parts.slice(1)) {
+    const text = part.toString()
+    if (asciiLowerCase(text.slice(0, NAME_OPTION.length)) === NAME_OPTION) {
+      if (name !== null) {
+        throw new Error(
+          'Invalid metadata value, name argument was given multiple times',
+        )
+      }
+      name = text.slice(NAME_OPTION.length)
+      continue
+    }
+    throw new Error(`Invalid metadata value given: ${text}`)
+  }
+  if (name === null) {
+    throw new Error('Library name was not given')
+  }
+  if (!/^[A-Za-z0-9_]+$/.test(name)) {
+    throw new Error(
+      'Library names can only contain letters, numbers, or underscores(_) and must be at least one character long',
+    )
+  }
+  const engine = parts[0].subarray(2).toString()
+  if (asciiLowerCase(engine) !== 'lua') {
+    throw new Error(`Engine '${engine}' not found`)
+  }
+
+  return { name, body: code.subarray(end) }
 }
 
-/**
- * The code Redis compiles for a library (`functionExtractLibMetaData`): from
- * the metadata line's line feed on, so Lua's line numbers count that line.
- */
-export function functionLibraryBody(code: Buffer): Buffer {
-  const lineFeed = code.indexOf(0x0a)
-  return lineFeed === -1 ? Buffer.alloc(0) : code.subarray(lineFeed)
-}
+const NAME_OPTION = 'name='
 
 export function parseFunctionLibrary(code: Buffer): RedisFunctionLibrary {
-  const text = code.toString()
-  const name = parseFunctionLibraryName(code)
-  const body = text.replace(/^#![^\n]*(?:\n|$)/, '')
+  const { name, body: compiled } = parseFunctionLibraryMetadata(code)
+  // The registrations are read without the metadata line's line feed;
+  // buildFunctionScript's own first line stands in for it.
+  const body = compiled.subarray(1).toString()
   const registrations = registeredFunctions(body)
   const functions = registrations.map(registration => ({
     name: registration.name,

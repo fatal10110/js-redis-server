@@ -1,3 +1,4 @@
+import { asciiLowerCase } from './ascii-case'
 import type { CompatibilityProfile } from './compatibility'
 import { RedisCommandError } from './redis-error'
 
@@ -82,9 +83,8 @@ export function parseScriptShebang(
       throw scriptError('Unknown lua shebang option: ', part)
     }
     for (const name of splitFlags(part.subarray(FLAGS_OPTION.length))) {
-      const flag = SCRIPT_SHEBANG_FLAGS.find(candidate =>
-        name.equals(Buffer.from(candidate)),
-      )
+      const text = name.toString('latin1')
+      const flag = SCRIPT_SHEBANG_FLAGS.find(candidate => candidate === text)
       if (!flag) {
         throw scriptError('Unexpected flag in script shebang: ', name)
       }
@@ -94,7 +94,7 @@ export function parseScriptShebang(
 
   if (engineLookup) {
     const name = engine.subarray(2)
-    if (name.toString('latin1').toLowerCase() !== 'lua') {
+    if (asciiLowerCase(name.toString('latin1')) !== 'lua') {
       throw scriptError(
         "Could not find scripting engine '",
         Buffer.concat([name, Buffer.from("'")]),
@@ -129,8 +129,11 @@ function splitFlags(value: Buffer): Buffer[] {
   return names
 }
 
-/** The index of the shebang's line feed, or -1 when a NUL or the end comes first. */
-function shebangEnd(script: Buffer): number {
+/**
+ * The index of the shebang's line feed, or -1 when a NUL or the end comes
+ * first: Redis finds it with strchr().
+ */
+export function shebangEnd(script: Buffer): number {
   for (let i = 0; i < script.length; i++) {
     if (script[i] === 0x0a) {
       return i
@@ -147,7 +150,7 @@ function shebangEnd(script: Buffer): number {
  * (C-style escapes) and `'...'` quoting. `null` for unbalanced quotes or a
  * closing quote not followed by a space, as Redis returns NULL there.
  */
-function splitArgs(line: Buffer): Buffer[] | null {
+export function splitArgs(line: Buffer): Buffer[] | null {
   const args: Buffer[] = []
   let p = 0
   const at = (index: number) => (index < line.length ? line[index] : 0)

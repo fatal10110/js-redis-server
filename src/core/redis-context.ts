@@ -81,6 +81,13 @@ export interface RedisClientSession {
   disconnect(reason?: string): void
 }
 
+/**
+ * The slot a running script keeps to: its declared keys' slot, else the
+ * first slot one of its commands touched, `null` until then. Redis keeps it
+ * on the calling client (`original_c->slot`).
+ */
+export type ScriptSlotPin = { slot: number | null }
+
 export interface RedisExecutionContext {
   readonly db: RedisDatabase
   readonly server: RedisServerState
@@ -93,6 +100,14 @@ export interface RedisExecutionContext {
    * reproducible across replicas — `SORT` over a set, today — branch on it.
    */
   readonly inScript?: boolean
+  /**
+   * Set on a cluster node while a script that must keep to one slot runs
+   * (Redis 7.0+: a shebang script or a function, unless it declares
+   * `allow-cross-slot-keys`). The cluster policy refuses a command whose
+   * keys hash to another slot than the pin's, and pins the first slot a
+   * command touches when the script declared no keys.
+   */
+  readonly scriptSlot?: ScriptSlotPin
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

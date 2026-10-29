@@ -7,6 +7,7 @@ import {
   setLuaWasmLoadOptions,
   type RedisLuaRuntime,
 } from '../src/internal'
+import { getLuaWasmLoadOptions } from '../src/core/lua-runtime'
 import { createRedisSessionHarness as createSession } from './core-session-test-helpers'
 
 // #539: since lua-redis-wasm 2.0 an exception that escapes the WASM module
@@ -189,11 +190,12 @@ describe('Lua runtime fault recovery (#539)', () => {
 
   test('a failed runtime creation is retried on the next call', async () => {
     const { session, server } = createSession()
+    const previous = getLuaWasmLoadOptions()
     setLuaWasmLoadOptions({ wasmPath: '/nonexistent/lua-redis.wasm' })
     try {
       await assert.rejects(server.getLuaRuntime())
     } finally {
-      setLuaWasmLoadOptions({})
+      setLuaWasmLoadOptions(previous)
     }
     assert.deepStrictEqual(
       await session.execute('eval', evalArgs('return 6')),

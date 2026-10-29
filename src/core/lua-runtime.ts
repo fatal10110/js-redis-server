@@ -25,13 +25,15 @@ import {
   UnknownSubcommandError,
   errors,
 } from './redis-error'
-import type { RedisExecutionContext } from './redis-context'
+import type { RedisExecutionContext, ScriptSlotPin } from './redis-context'
 import { RedisValue } from './redis-value'
 import type { RespVersion } from './resp-encoder'
 
 type LuaHostState = {
   ctx: RedisExecutionContext | null
   readOnly: boolean
+  /** The running script's slot pin, when it must keep to one slot. */
+  scriptSlot: ScriptSlotPin | null
   // The protocol the running script selected with `redis.setresp()`. It picks
   // the shape `redis.call` replies take in Lua — not the client's protocol.
   resp: RespVersion
@@ -45,6 +47,7 @@ export class RedisLuaRuntime {
   private readonly hostState: LuaHostState = {
     ctx: null,
     readOnly: false,
+    scriptSlot: null,
     resp: 2,
   }
   private readonly engine: LuaEngine
@@ -75,13 +78,16 @@ export class RedisLuaRuntime {
   /**
    * Runs a script. A script-aborting error comes back as the engine reports
    * it, with its `meta`; {@link renderScriptError} turns it into the reply.
+   *
+   * `scriptSlot`, on a cluster node, keeps the script to one slot: every
+   * `redis.call` runs with it on its context (`RedisExecutionContext.scriptSlot`).
    */
   eval(
     script: Buffer,
     keys: readonly Buffer[],
     args: readonly Buffer[],
     ctx: RedisExecutionContext,
-    options?: { readOnly?: boolean },
+    options?: { readOnly?: boolean; scriptSlot?: ScriptSlotPin },
   ): ReplyValue {
     if (this.hostState.ctx) {
       throw new RedisCommandError('Lua runtime is already executing a script')
@@ -89,6 +95,7 @@ export class RedisLuaRuntime {
 
     this.hostState.ctx = ctx
     this.hostState.readOnly = options?.readOnly ?? false
+    this.hostState.scriptSlot = options?.scriptSlot ?? null
     this.hostState.resp = 2
 
     try {
@@ -98,6 +105,7 @@ export class RedisLuaRuntime {
     } finally {
       this.hostState.ctx = null
       this.hostState.readOnly = false
+      this.hostState.scriptSlot = null
       this.hostState.resp = 2
     }
   }
@@ -242,7 +250,7 @@ export class RedisLuaRuntime {
     }
 
     // Read-only scripts (EVAL_RO) are 7.0+, so this has no 6.2 wording.
-    if (this.hostState.readOnly && definition.flags.includes('write')) {
+    if (this.hostState.readOnly && mayWrite(definition)) {
       return scriptRejection(
         'read-only-write',
         new RedisCommandError(
@@ -258,13 +266,38 @@ export class RedisLuaRuntime {
       return redisErrorToLuaReply(commandError as RedisCommandError)
     }
 
-    const result = ctx.executor.executePlanSync(plan, createLuaCallContext(ctx))
+    const result = ctx.executor.executePlanSync(
+      plan,
+      createLuaCallContext(ctx, this.hostState.scriptSlot),
+    )
     return redisValueToLuaReply(
       normalizeScriptCommandValue(result.value),
       this.hostState.resp,
       profile,
     )
   }
+}
+
+/**
+ * Commands Redis flags `may-replicate` that a script may call. A read-only
+ * script refuses them as it refuses writes (`CMD_WRITE|CMD_MAY_REPLICATE` in
+ * `scriptVerifyWriteCommandAllow`). From 7.0 the command table no longer
+ * reports the flag, so they are listed here; the other commands carrying it
+ * (EVAL, EVALSHA, FCALL, SCRIPT) are `noscript`. Checked against
+ * redis-server 7.2.1.
+ */
+const MAY_REPLICATE_COMMANDS: ReadonlySet<string> = new Set([
+  'publish',
+  'spublish',
+  'pfcount',
+])
+
+/** Whether a read-only script refuses the command. */
+function mayWrite(definition: CommandDefinition<unknown>): boolean {
+  return (
+    definition.flags.includes('write') ||
+    MAY_REPLICATE_COMMANDS.has(definition.name)
+  )
 }
 
 /**
@@ -276,7 +309,7 @@ export class RedisLuaRuntime {
  * (`lookupTableArity`): it differs between versions (#500). SPOP, SRANDMEMBER
  * and HRANDFIELD never carry it. BLPOP, BRPOP, BLMOVE, BZPOPMIN and BZPOPMAX
  * carry it up to 7.0 and run without blocking from 7.2; BLMPOP and BZMPOP
- * never carry it, so they run without blocking from 7.0 (see `blockOrNow`).
+ * never carry it, so they run without blocking from 7.0 (see `blockOrTimeOut`).
  * A name the table does not have keeps the definition's own flag: a command
  * added with `extraCommands`, or a real subcommand this server does not
  * implement (the captured table only has the ones it does).
@@ -315,6 +348,7 @@ function noscriptRefusal(
  */
 function createLuaCallContext(
   ctx: RedisExecutionContext,
+  scriptSlot: ScriptSlotPin | null,
 ): RedisExecutionContext {
   return {
     get db() {
@@ -328,6 +362,7 @@ function createLuaCallContext(
       ? { transactionReplay: ctx.transactionReplay }
       : {}),
     ...(ctx.nodeRole ? { nodeRole: ctx.nodeRole } : {}),
+    ...(scriptSlot ? { scriptSlot } : {}),
     monitor: {
       ...ctx.monitor,
       defer: true,
@@ -356,6 +391,11 @@ let luaWasmLoadOptions: LoadOptions = {}
  */
 export function setLuaWasmLoadOptions(options: LoadOptions): void {
   luaWasmLoadOptions = options
+}
+
+/** The options {@link setLuaWasmLoadOptions} last set. */
+export function getLuaWasmLoadOptions(): LoadOptions {
+  return luaWasmLoadOptions
 }
 
 export async function createRedisLuaRuntime(
@@ -571,9 +611,9 @@ export function renderScriptError(
     /**
      * The SHA to name, when the engine ran a rewritten body: a shebang
      * script runs with its shebang line blanked, but Redis names the SHA of
-     * the script the client sent.
+     * the script the client sent. Called only for an error it decorates.
      */
-    sha?: string
+    sha?: () => string
   },
 ): ReplyValue {
   if (!isErrorReply(value)) {
@@ -585,7 +625,6 @@ export function renderScriptError(
   }
 
   const { line, kind, name } = meta
-  const sha = options.sha ?? meta.sha
   if (kind === 'compile') {
     return {
       err: Buffer.concat([
@@ -596,6 +635,7 @@ export function renderScriptError(
     }
   }
 
+  const sha = options.sha?.() ?? meta.sha
   const legacy = !options.profile.has('script.abort-error-suffix')
   let body: Buffer
   switch (kind) {

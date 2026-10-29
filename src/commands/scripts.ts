@@ -24,13 +24,10 @@ import {
 } from '../core/script-shebang'
 import {
   parseFunctionLibrary,
+  parseFunctionLibraryMetadata,
   type RedisFunctionDefinition,
   type RedisFunctionLibrary,
 } from '../state'
-import {
-  functionLibraryBody,
-  parseFunctionLibraryName,
-} from '../state/function-registry'
 import { array, bulk, ok, unknownSubcommandError } from './helpers'
 import { commandSubcommandInfo } from './introspection'
 
@@ -141,7 +138,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
     }
 
     const { keys, argv } = splitEvalArgs(args)
-    return runLuaScript(script, keys, argv, ctx)
+    return runLuaScript(script, keys, argv, ctx, { sha: args.sha })
   },
 })
 
@@ -177,7 +174,10 @@ export const evalshaRoCommand = defineCommand<EvalShaArgs>({
     }
 
     const { keys, argv } = splitEvalArgs(args)
-    return runLuaScript(script, keys, argv, ctx, { readOnly: true })
+    return runLuaScript(script, keys, argv, ctx, {
+      readOnly: true,
+      sha: args.sha,
+    })
   },
 })
 
@@ -423,12 +423,23 @@ async function runLuaScript(
     /** EVAL / EVAL_RO: cache the script for EVALSHA once it compiles. */
     cache?: boolean
     readOnly?: boolean
+    /** EVALSHA / EVALSHA_RO: the script's SHA, as the client sent it. */
+    sha?: string
+    /**
+     * Whether the script keeps to one slot on a cluster node. A function
+     * says so from its flags; otherwise a shebang script does unless it
+     * declares `allow-cross-slot-keys`, and a script without one does not.
+     */
+    singleSlot?: boolean
   } = {},
 ): Promise<RedisResult> {
   // A shebang Redis refuses fails before anything is compiled or cached.
   const parsed = parseScriptShebang(script, ctx.server.profile)
   // The engine names the SHA of the body it ran; Redis names the script's.
-  const sha = parsed.body === script ? undefined : scriptSha(script)
+  const sha =
+    parsed.body === script
+      ? undefined
+      : () => asciiLowerCase(options.sha ?? scriptSha(script))
   const render = (value: LuaReplyValue) =>
     RedisResult.create(
       luaReplyToRedisValue(
@@ -453,9 +464,15 @@ async function runLuaScript(
       return RedisResult.fromError(refusal)
     }
 
+    const singleSlot =
+      options.singleSlot ??
+      (parsed.flags !== null && !parsed.flags.includes('allow-cross-slot-keys'))
     const result = runtime.eval(parsed.body, keys, argv, ctx, {
       readOnly:
         options.readOnly === true || parsed.flags?.includes('no-writes'),
+      ...(singleSlot && ctx.server.clusterEnabled
+        ? { scriptSlot: { slot: declaredSlot(keys, ctx) } }
+        : {}),
     })
     // Real Redis caches a script when it compiles, before it runs, so one
     // that fails at run time is cached and one that does not compile is not.
@@ -474,12 +491,25 @@ async function runLuaScript(
 }
 
 /**
+ * The slot a script's declared keys pin it to (Redis's `original_c->slot`),
+ * `null` when it declared none. The cluster policy has already refused
+ * declared keys of two slots.
+ */
+function declaredSlot(
+  keys: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): number | null {
+  const slot = ctx.server.clusterTopology.calculateSlotForKeys(keys)
+  return slot === -1 ? null : slot
+}
+
+/**
  * Redis's `scriptPrepareForRun` checks of a script's declared flags against
  * the call, or `null` when it may run. A script without a shebang (`flags`
- * `null`) declares nothing and is never refused here. `allow-oom`,
- * `allow-stale` and `allow-cross-slot-keys` are accepted but change nothing:
- * the server has no `maxmemory`, no stale replica and no per-script slot
- * check for them to relax.
+ * `null`) declares nothing and is never refused here. `allow-cross-slot-keys`
+ * is read by `runLuaScript`; `allow-oom` and `allow-stale` are accepted but
+ * change nothing: the server has no `maxmemory` and no stale replica for
+ * them to relax.
  */
 function scriptRunRefusal(
   flags: ParsedScript['flags'],
@@ -533,12 +563,12 @@ async function functionLoad(
 
   let library: RedisFunctionLibrary
   try {
-    const name = parseFunctionLibraryName(code)
+    const { name, body } = parseFunctionLibraryMetadata(code)
     if (!replace && ctx.server.functionRegistry.has(name)) {
       throw new Error(`Library '${name}' already exists`)
     }
     const runtime = await ctx.server.getLuaRuntime()
-    const compileError = runtime.compile(functionLibraryBody(code))
+    const compileError = runtime.compile(body)
     if (compileError) {
       throw new Error(functionCompileError(compileError.err))
     }
@@ -725,6 +755,7 @@ async function runFunction(
   // A no-writes function runs read-only under FCALL too.
   return runLuaScript(fn.script, keys, argv, ctx, {
     readOnly: readOnly || fn.flags.includes('no-writes'),
+    singleSlot: !fn.flags.includes('allow-cross-slot-keys'),
   })
 }
 

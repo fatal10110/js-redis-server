@@ -6,6 +6,7 @@ import clusterKeySlot from 'cluster-key-slot'
 import { keyHashSlot } from '../../src/state/cluster-topology'
 import { TestRunner } from '../test-config'
 import {
+  activeProfile,
   commandFrame,
   connectToEndpoint,
   connectToSlotOwner,
@@ -24,6 +25,7 @@ import {
 } from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
+const legacy = activeProfile === 'redis-6.2'
 
 describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -111,6 +113,114 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
       directClient.disconnect()
     }
   })
+
+  // From 7.0 a script that declares flags (a `#!lua` shebang, or any
+  // function) keeps to one slot: the first key it touches, declared in KEYS
+  // or not, pins the slot, unless it declares `allow-cross-slot-keys`. A
+  // script without a shebang runs in the compatibility mode and is not
+  // checked. Byte for byte against a redis-server 7.2.1 cluster node.
+  test(
+    'a shebang script refuses keys of another slot on the same node',
+    { skip: legacy && 'shebangs are 7.0+' },
+    async () => {
+      const { first, second } = await findSameNodeKeys(redisClient!)
+      const directClient = await connectToSlotOwner(redisClient!, first)
+      const sha1 = (script: string) =>
+        createHash('sha1').update(script).digest('hex')
+      const crossSlot = (script: string, line: number) =>
+        errorWithMessage(
+          `ERR Script attempted to access keys that do not hash to the same slot script: ${sha1(script)}, on @user_script:${line}.`,
+        )
+
+      try {
+        const declared =
+          "#!lua\nreturn redis.call('set', KEYS[1], '1') and redis.call('set', ARGV[1], '1')"
+        await assert.rejects(
+          () => directClient.eval(declared, 1, first, second),
+          crossSlot(declared, 2),
+        )
+
+        // The declared key pins the slot even when the script never reads it.
+        const onlySecond = "#!lua\nreturn redis.call('set', ARGV[1], '1')"
+        await assert.rejects(
+          () => directClient.eval(onlySecond, 1, first, second),
+          crossSlot(onlySecond, 2),
+        )
+
+        // Without declared keys the first key touched pins it.
+        const undeclared =
+          "#!lua flags=no-writes\nreturn {redis.call('get', ARGV[1]), redis.call('get', ARGV[2])}"
+        await assert.rejects(
+          () => directClient.eval(undeclared, 0, first, second),
+          crossSlot(undeclared, 2),
+        )
+
+        // redis.pcall gets the error undecorated.
+        await assert.rejects(
+          () =>
+            directClient.eval(
+              "#!lua\nreturn redis.pcall('get', ARGV[1])",
+              1,
+              first,
+              second,
+            ),
+          errorWithMessage(
+            'ERR Script attempted to access keys that do not hash to the same slot',
+          ),
+        )
+
+        assert.strictEqual(
+          await directClient.eval(
+            "#!lua flags=allow-cross-slot-keys\nreturn redis.call('set', KEYS[1], '1') and redis.call('set', ARGV[1], '1')",
+            1,
+            first,
+            second,
+          ),
+          'OK',
+        )
+        assert.strictEqual(
+          await directClient.eval(
+            "return redis.call('set', KEYS[1], '1') and redis.call('set', ARGV[1], '1')",
+            1,
+            first,
+            second,
+          ),
+          'OK',
+        )
+
+        // Functions declare flags too. The mock does not decorate a
+        // function's error (`script: <name>, on @user_function:<line>.`), so
+        // only the error is checked.
+        const library = `xslot_${randomKey().replace(/\W/g, '_')}`
+        await directClient.function(
+          'LOAD',
+          `#!lua name=${library}\n` +
+            `redis.register_function('${library}_f', function(keys, argv) return redis.call('set', keys[1], '1') and redis.call('set', argv[1], '1') end)\n` +
+            `redis.register_function{function_name='${library}_g', callback=function(keys, argv) return redis.call('set', keys[1], '1') and redis.call('set', argv[1], '1') end, flags={'allow-cross-slot-keys'}}`,
+        )
+        try {
+          await assert.rejects(
+            () => directClient.fcall(`${library}_f`, 1, first, second),
+            (error: unknown) =>
+              error instanceof Error &&
+              error.message.startsWith(
+                'ERR Script attempted to access keys that do not hash to the same slot script: ',
+              ),
+          )
+          assert.strictEqual(
+            await directClient.fcall(`${library}_g`, 1, first, second),
+            'OK',
+          )
+        } finally {
+          await directClient.function('DELETE', library)
+        }
+      } finally {
+        await directClient.del(first)
+        await directClient.del(second)
+        directClient.disconnect()
+      }
+    },
+  )
 
   test('direct replica connections redirect keyed commands to the master', async () => {
     const key = `{replica:${randomKey()}}:key`
@@ -428,6 +538,27 @@ async function findDifferentNodeKeys(cluster: Cluster): Promise<{
   }
 
   throw new Error('Could not find keys owned by different cluster nodes')
+}
+
+/** Two keys in different slots that the same master owns. */
+async function findSameNodeKeys(
+  cluster: Cluster,
+): Promise<{ first: string; second: string }> {
+  const first = `{xslot-a:${randomKey()}}:key`
+  const [host, port] = await findSlotOwner(cluster, first)
+
+  for (let index = 0; index < 10000; index++) {
+    const second = `{xslot-b:${randomKey()}:${index}}:key`
+    if (clusterKeySlot(second) === clusterKeySlot(first)) {
+      continue
+    }
+    const [secondHost, secondPort] = await findSlotOwner(cluster, second)
+    if (secondHost === host && secondPort === port) {
+      return { first, second }
+    }
+  }
+
+  throw new Error('Could not find two slots owned by the same cluster node')
 }
 
 function assertHelloEntry(

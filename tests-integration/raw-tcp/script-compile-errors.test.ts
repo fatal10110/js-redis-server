@@ -206,6 +206,80 @@ describe(`Lua compile errors (${testRunner.getBackendName()})`, () => {
     },
   )
 
+  // A read-only script refuses what Redis flags `may-replicate` as well as
+  // writes: PUBLISH, SPUBLISH and PFCOUNT. Byte for byte against
+  // redis-server 7.2.1.
+  test(
+    'a read-only script refuses PUBLISH, SPUBLISH and PFCOUNT',
+    { skip: legacy && 'read-only scripts are 7.0+' },
+    async () => {
+      const channel = `script-ro:${RUN}`
+      const key = `{script-ro}:${RUN}`
+      const refused = (script: string, line: number) =>
+        `-ERR Write commands are not allowed from read-only scripts. script: ${sha1(script)}, on @user_script:${line}.\r\n`
+
+      for (const command of ['publish', 'spublish']) {
+        const noWrites = `#!lua flags=no-writes\nreturn redis.call('${command}', ARGV[1], 'm')`
+        assert.strictEqual(
+          await send('EVAL', noWrites, '0', channel),
+          refused(noWrites, 2),
+        )
+        const ro = `return redis.call('${command}', ARGV[1], 'm')`
+        assert.strictEqual(
+          await send('EVAL_RO', ro, '0', channel),
+          refused(ro, 1),
+        )
+      }
+
+      const pfcount = "return redis.call('pfcount', KEYS[1])"
+      assert.strictEqual(
+        await send('EVAL_RO', pfcount, '1', key),
+        refused(pfcount, 1),
+      )
+      assert.strictEqual(
+        await send(
+          'EVAL_RO',
+          "return redis.pcall('pfcount', KEYS[1])",
+          '1',
+          key,
+        ),
+        '-ERR Write commands are not allowed from read-only scripts.\r\n',
+      )
+      // A script that may write runs it.
+      assert.strictEqual(
+        await send('EVAL', `#!lua\n${pfcount}`, '1', key),
+        ':0\r\n',
+      )
+
+      // So does a no-writes function, under FCALL and FCALL_RO. The mock
+      // does not decorate a function's error (`script: <name>, on
+      // @user_function:<line>.`), so only the error is checked.
+      const library = `ropub_${RUN}`
+      const fn = `ropub_${RUN}_f`
+      assert.strictEqual(
+        await send(
+          'FUNCTION',
+          'LOAD',
+          `#!lua name=${library}\nredis.register_function{function_name='${fn}', callback=function(keys, argv) return redis.call('publish', argv[1], 'm') end, flags={'no-writes'}}`,
+        ),
+        `$${library.length}\r\n${library}\r\n`,
+      )
+      try {
+        for (const command of ['FCALL', 'FCALL_RO']) {
+          const reply = await send(command, fn, '0', channel)
+          assert.ok(
+            reply.startsWith(
+              '-ERR Write commands are not allowed from read-only scripts. script: ',
+            ),
+            `${command}: ${reply}`,
+          )
+        }
+      } finally {
+        await send('FUNCTION', 'DELETE', library)
+      }
+    },
+  )
+
   test(
     'EVAL and SCRIPT LOAD refuse an invalid shebang and do not cache it',
     { skip: legacy && 'shebangs are 7.0+' },
@@ -296,6 +370,58 @@ describe(`Lua compile errors (${testRunner.getBackendName()})`, () => {
         assert.strictEqual(await send('FCALL', fn, '0'), ':1\r\n')
       } finally {
         await send('FUNCTION', 'DELETE', name)
+      }
+    },
+  )
+
+  // Redis's functionExtractLibMetaData: the metadata is the first line, up to
+  // a line feed that strchr() finds (a NUL hides it), split like
+  // sdssplitargs. Byte for byte against redis-server 7.2.1.
+  test(
+    'FUNCTION LOAD checks the metadata line as Redis does',
+    { skip: legacy && 'functions are 7.0+' },
+    async () => {
+      const library = `metalib_${RUN}`
+      const body = `\nredis.register_function('metafn_${RUN}', function() return 1 end)`
+      const cases: Array<[string, string]> = [
+        [`#!lua name=${library}`, 'Invalid library metadata'],
+        [`#!lua name=${library}\0${body}`, 'Invalid library metadata'],
+        [`#!lua name="${library}${body}`, 'Invalid library metadata'],
+        [`#!lua\n#!lua name=${library}${body}`, 'Library name was not given'],
+        [
+          `#!lua name=${library} name=other${body}`,
+          'Invalid metadata value, name argument was given multiple times',
+        ],
+        [
+          `#!lua name=${library} foo=bar${body}`,
+          'Invalid metadata value given: foo=bar',
+        ],
+        [
+          `#!lua name=${library}-x${body}`,
+          'Library names can only contain letters, numbers, or underscores(_) and must be at least one character long',
+        ],
+        [`#!notlua name=${library}${body}`, "Engine 'notlua' not found"],
+      ]
+      for (const [code, message] of cases) {
+        assert.strictEqual(
+          await send('FUNCTION', 'LOAD', code),
+          `-ERR ${message}\r\n`,
+          JSON.stringify(code),
+        )
+      }
+      assert.strictEqual(
+        await send('FUNCTION', 'LIST', 'LIBRARYNAME', library),
+        '*0\r\n',
+      )
+
+      // The engine and the option name ignore case.
+      try {
+        assert.strictEqual(
+          await send('FUNCTION', 'LOAD', `#!LUA NAME=${library}${body}`),
+          `$${library.length}\r\n${library}\r\n`,
+        )
+      } finally {
+        await send('FUNCTION', 'DELETE', library)
       }
     },
   )

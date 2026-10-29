@@ -207,6 +207,15 @@ export class RedisServerState {
       clearTimeout(this.activeExpiryTimer)
       this.activeExpiryTimer = null
     }
+    // Frees the engine's WASM heap. dispose() swallows the engine's own
+    // errors; the guard keeps any other from breaking close().
+    try {
+      this.luaRuntime?.dispose()
+    } catch {
+      // The runtime is dropped either way.
+    }
+    this.luaRuntime = null
+    this.luaRuntimePromise = null
   }
 
   private startActiveExpiry(intervalMs: number | false | undefined): void {
