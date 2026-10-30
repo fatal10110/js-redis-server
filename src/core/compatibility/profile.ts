@@ -115,6 +115,7 @@ export type FeatureId =
   | 'error.lpos-rank-zero-hint'
   | 'error.expire-time-quoted-wording'
   | 'error.no-multi-named-wording'
+  | 'zset.pop-count-positive'
   | 'pubsub.unsubscribe-nosub'
   | 'pubsub.unsubscribe-nosub-dropped'
   | 'transaction.refusal-empties-queue'

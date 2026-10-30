@@ -45,6 +45,16 @@ so the PR body is not a durable home for a breaking-change note.
   `ZUNIONSTORE`, `ZINTERSTORE` and `ZDIFFSTORE` are routed by their source
   keys first and the destination last, as Redis lists them. New `FeatureId`
   member `cluster.crossslot-before-unserved`.
+- LPOP, RPOP and SPOP now answer `value is out of range, must be positive`
+  for any count that is not an integer, as every Redis and Valkey version
+  does ([#610]); they used to answer `value is not an integer or out of
+  range`. The count is read as a C `long`, so counts up to
+  9223372036854775807 are accepted. ZPOPMIN and ZPOPMAX follow the profile:
+  from Redis 7.0 (and on every Valkey) a bad or negative count answers the
+  positive wording, while on Redis 6.2 a non-integer answers the integer
+  error and a count of 0 or less answers an empty array before the key's
+  type is checked. The new `zset.pop-count-positive` feature gate records
+  the change.
 
 ## [0.4.0] - 2026-10-30
 
@@ -2145,6 +2155,7 @@ requests they contain.
 [#586]: https://github.com/fatal10110/js-redis-server/issues/586
 [#583]: https://github.com/fatal10110/js-redis-server/issues/583
 [#604]: https://github.com/fatal10110/js-redis-server/issues/604
+[#610]: https://github.com/fatal10110/js-redis-server/issues/610
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

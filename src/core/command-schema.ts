@@ -140,6 +140,32 @@ export function isIntegerToken(raw: string): boolean {
   return INTEGER_TOKEN_PATTERN.test(raw)
 }
 
+const LONG_MIN = -(2n ** 63n)
+const LONG_MAX = 2n ** 63n - 1n
+const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER)
+const SAFE_MIN = BigInt(Number.MIN_SAFE_INTEGER)
+
+/**
+ * Reads a token the way Redis' `string2ll` reads a C `long` (no `+`, no
+ * leading zeros, no `-0`, no blanks, within LONG_MIN..LONG_MAX), or
+ * `undefined`. Values beyond the safe integer range are clamped to it: use it
+ * only where the number bounds a count, which no keyspace can reach.
+ */
+export function parseClampedLongToken(raw: string): number | undefined {
+  if (!isIntegerToken(raw)) {
+    return undefined
+  }
+
+  const value = BigInt(raw)
+  if (value < LONG_MIN || value > LONG_MAX) {
+    return undefined
+  }
+
+  if (value > SAFE_MAX) return Number.MAX_SAFE_INTEGER
+  if (value < SAFE_MIN) return Number.MIN_SAFE_INTEGER
+  return Number(value)
+}
+
 export function parseFiniteFloatToken(raw: string): number | undefined {
   if (!FLOAT_TOKEN_PATTERN.test(raw)) {
     return undefined
@@ -329,6 +355,22 @@ export const t = {
 
       if (options?.max !== undefined && value > options.max) {
         throw errors.expectedInteger()
+      }
+
+      return { value, nextIndex: index + 1 }
+    })
+  },
+
+  /**
+   * A count read with Redis' `getPositiveLongFromObjectOrReply` (LPOP, RPOP,
+   * SPOP): every token that is not an integer in 0..LONG_MAX answers `value
+   * is out of range, must be positive`. Counts past 2^53-1 are clamped.
+   */
+  positiveCount(): CommandSchema<number> {
+    return makeSchema((input, index) => {
+      const value = parseClampedLongToken(readToken(input, index).toString())
+      if (value === undefined || value < 0) {
+        throw errors.positiveCount()
       }
 
       return { value, nextIndex: index + 1 }

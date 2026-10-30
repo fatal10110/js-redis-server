@@ -1,5 +1,5 @@
 import { defineCommand } from '../../core/command-definition'
-import { t } from '../../core/command-schema'
+import { parseClampedLongToken, t } from '../../core/command-schema'
 import type { CompatibilityProfile } from '../../core/compatibility/profile'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -16,19 +16,11 @@ import {
 
 type ZsetPopSide = 'min' | 'max'
 
-function parsePopCountArg(s: string): number {
-  if (!/^-?\d+$/.test(s)) {
-    throw errors.positiveCount()
-  }
-
-  const count = Number(s)
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw errors.positiveCount()
-  }
-
-  return count
-}
-
+/**
+ * Redis 7.0 reads the ZPOPMIN / ZPOPMAX count with
+ * `getPositiveLongFromObjectOrReply`; 6.2 read any `long` with the integer
+ * error and let a count <= 0 through (see `zset.pop-count-positive`).
+ */
 function zpopCountSchema() {
   return t.custom<number>((input, index, ctx) => {
     const token = input[index]
@@ -36,11 +28,27 @@ function zpopCountSchema() {
       throw new WrongNumberOfArgumentsError(ctx.commandName)
     }
 
-    return {
-      value: parsePopCountArg(token.toString()),
-      nextIndex: index + 1,
+    const count = parseClampedLongToken(token.toString())
+    if (ctx.profile.has('zset.pop-count-positive')) {
+      if (count === undefined || count < 0) {
+        throw errors.positiveCount()
+      }
+    } else if (count === undefined) {
+      throw errors.expectedInteger()
     }
+
+    return { value: count, nextIndex: index + 1 }
   })
+}
+
+/** Redis 6.2 answers a count <= 0 with an empty array before the type check. */
+function legacyEmptyCount(
+  count: number | undefined,
+  profile: CompatibilityProfile,
+): boolean {
+  return (
+    count !== undefined && count <= 0 && !profile.has('zset.pop-count-positive')
+  )
 }
 
 export const zpopminCommand = defineCommand({
@@ -49,6 +57,7 @@ export const zpopminCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    if (legacyEmptyCount(args.count, ctx.server.profile)) return array([])
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const count = args.count ?? 1
@@ -70,6 +79,7 @@ export const zpopmaxCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    if (legacyEmptyCount(args.count, ctx.server.profile)) return array([])
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const count = args.count ?? 1
