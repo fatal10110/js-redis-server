@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -13,7 +14,7 @@ function moveDirection(): ReturnType<typeof t.custom<'left' | 'right'>> {
       throw new WrongNumberOfArgumentsError(ctx.commandName)
     }
 
-    const direction = token.toString().toUpperCase()
+    const direction = asciiUpperCase(token.toString())
     if (direction !== 'LEFT' && direction !== 'RIGHT') {
       throw errors.syntax()
     }

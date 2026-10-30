@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -40,7 +41,7 @@ function createZaddSchema() {
       let cursor = index + 1
 
       while (cursor < input.length) {
-        const option = input[cursor]!.toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor]!.toString())
         if (option === 'NX') nx = true
         else if (option === 'XX') xx = true
         else if (option === 'GT') gt = true

@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { setGetKeys } from '../core/key-specs'
 import {
@@ -547,7 +548,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
 
       let cursor = index + 2
       while (cursor < input.length) {
-        const option = input[cursor]!.toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor]!.toString())
 
         if (option === 'NX' || option === 'XX') {
           if (args.condition) {
@@ -782,7 +783,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
       let cursor = index + 1
 
       while (cursor < input.length) {
-        const option = input[cursor]!.toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor]!.toString())
 
         if (option === 'PERSIST') {
           if (args.persist || args.expire) {

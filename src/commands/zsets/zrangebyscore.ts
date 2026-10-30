@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -44,7 +45,7 @@ function createScoreRangeSchema() {
 
     let cursor = index + 3
     while (cursor < input.length) {
-      const option = input[cursor]!.toString().toUpperCase()
+      const option = asciiUpperCase(input[cursor]!.toString())
 
       if (option === 'WITHSCORES') {
         withScores = true

@@ -1,3 +1,4 @@
+import { asciiUpperCase, asciiUpperToken } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t, type ParseContext } from '../core/command-schema'
 import { formatIncrByFloatResult } from '../core/double-format'
@@ -125,7 +126,7 @@ function createHrandfieldSchema() {
 
       let withValues = false
       if (cursor < input.length) {
-        if (input[cursor].toString().toUpperCase() !== 'WITHVALUES') {
+        if (asciiUpperCase(input[cursor].toString()) !== 'WITHVALUES') {
           throw errors.syntax()
         }
 
@@ -152,7 +153,7 @@ function createHashFieldsSchema() {
       }
 
       const fieldsToken = input[index + 1]
-      if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+      if (asciiUpperCase(fieldsToken.toString()) !== 'FIELDS') {
         throw errors.fieldsArgumentMissing()
       }
 
@@ -186,7 +187,7 @@ function createHgetexSchema() {
       )
 
       const fieldsToken = input[nextIndex]
-      if (!fieldsToken || fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+      if (!fieldsToken || asciiUpperCase(fieldsToken.toString()) !== 'FIELDS') {
         throw errors.fieldsArgumentMissing()
       }
 
@@ -211,7 +212,7 @@ function parseHgetexExpiration(
   index: number,
   commandName: string,
 ): { expiration: HgetexExpiration; nextIndex: number } {
-  const token = input[index]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[index])
   if (token === 'PERSIST') {
     return { expiration: { kind: 'persist' }, nextIndex: index + 1 }
   }
@@ -257,7 +258,7 @@ function createHsetexSchema() {
       // FNX/FXX and the expiration clause may appear in either order, same
       // as real Redis — keep consuming recognized tokens until FIELDS.
       while (cursor < input.length) {
-        const token = input[cursor].toString().toUpperCase()
+        const token = asciiUpperCase(input[cursor].toString())
 
         if (token === 'FNX' || token === 'FXX') {
           if (condition) {
@@ -306,7 +307,7 @@ function createHsetexSchema() {
       if (!fieldsToken) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+      if (asciiUpperCase(fieldsToken.toString()) !== 'FIELDS') {
         throw new RedisCommandError(`unknown argument: ${fieldsToken}`)
       }
       cursor += 1
@@ -503,7 +504,7 @@ function parseHashExpireArgs(
   let cursor = 1
 
   let option: HashExpireOption | undefined
-  const maybeOption = rawArgs[cursor].toString().toUpperCase()
+  const maybeOption = asciiUpperCase(rawArgs[cursor].toString())
   if (isHashExpireOption(maybeOption)) {
     option = maybeOption
     cursor += 1
@@ -513,7 +514,7 @@ function parseHashExpireArgs(
   if (!fieldsToken) {
     throw new WrongNumberOfArgumentsError(commandName)
   }
-  if (fieldsToken.toString().toUpperCase() !== 'FIELDS') {
+  if (asciiUpperCase(fieldsToken.toString()) !== 'FIELDS') {
     throw errors.fieldsArgumentMissing()
   }
 

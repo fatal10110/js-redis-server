@@ -1,3 +1,4 @@
+import { asciiLowerCase, asciiUpperCase } from '../core/ascii-case'
 import {
   defineCommand,
   type CommandIntrospection,
@@ -236,7 +237,7 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
 
   while (cursor < input.length) {
     const token = input[cursor]!.toString()
-    const option = token.toUpperCase()
+    const option = asciiUpperCase(token)
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
@@ -344,7 +345,7 @@ const flushModeSchema = t.custom<'async' | 'sync' | undefined>(
     }
 
     if (remaining === 1) {
-      const token = input[index].toString().toLowerCase()
+      const token = asciiLowerCase(input[index].toString())
       if (token === 'async' || token === 'sync') {
         return { value: token, nextIndex: index + 1 }
       }
@@ -511,7 +512,7 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
   let replace = false
 
   while (cursor < input.length) {
-    const token = input[cursor].toString().toUpperCase()
+    const token = asciiUpperCase(input[cursor].toString())
 
     if (token === 'REPLACE') {
       replace = true
@@ -645,7 +646,7 @@ function scanSortOptions(
   }
 
   for (let j = 0; j < options.length; j++) {
-    const option = options[j]!.toString().toUpperCase()
+    const option = asciiUpperCase(options[j]!.toString())
     const remaining = options.length - j - 1
 
     if (option === 'ASC') {
@@ -1009,7 +1010,7 @@ function sortRoutingKeys(args: SortArgs): Buffer[] {
   let store: Buffer | undefined
 
   for (let i = 0; i < options.length; i++) {
-    const option = options[i]!.toString().toUpperCase()
+    const option = asciiUpperCase(options[i]!.toString())
     if (option === 'LIMIT') {
       i += 2
       continue

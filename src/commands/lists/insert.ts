@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -10,7 +11,7 @@ function insertPosition(): ReturnType<typeof t.custom<'before' | 'after'>> {
       throw new WrongNumberOfArgumentsError(ctx.commandName)
     }
 
-    const position = token.toString().toUpperCase()
+    const position = asciiUpperCase(token.toString())
     if (position !== 'BEFORE' && position !== 'AFTER') {
       throw errors.syntax()
     }

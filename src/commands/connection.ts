@@ -33,6 +33,8 @@ import {
   slowlogHelpLines,
 } from './container-help'
 import { isClientBlocked } from './blocking'
+import { resetClientReplyMode, setClientReplyMode } from '../core/client-reply'
+import type { ClientPauseMode } from '../state/client-pause'
 import {
   VALKEY_REDIS_COMPAT_VERSION,
   type CompatibilityProfile,
@@ -48,6 +50,7 @@ const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
 const noEvictClients = new WeakSet<RedisClientSession>()
+const noTouchClients = new WeakSet<RedisClientSession>()
 let nextClientId = 1
 const INVALID_CLIENT_NAME_MESSAGE =
   'Client names cannot contain spaces, newlines or special characters.'
@@ -118,7 +121,7 @@ function buildInfo(
   const requestedSections =
     sections.length === 0
       ? ['default']
-      : sections.map(section => section.toLowerCase())
+      : sections.map(section => asciiLowerCase(section))
   const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
@@ -331,7 +334,7 @@ function formatClientLine(
  * The `flags=` letters, in `catClientInfoString`'s order, for the states this
  * server models: `O` MONITOR, `P` subscribed, `x` in MULTI (until its EXEC
  * has run), `b` blocked, `d` a WATCHed key changed, `r` READONLY (cluster),
- * `e` CLIENT NO-EVICT; `N` for none.
+ * `e` CLIENT NO-EVICT, `T` CLIENT NO-TOUCH; `N` for none.
  */
 function clientFlags(session: RedisClientSession): string {
   let flags = ''
@@ -342,6 +345,7 @@ function clientFlags(session: RedisClientSession): string {
   if (session.isWatchDirty()) flags += 'd'
   if (session.clusterReadOnly) flags += 'r'
   if (noEvictClients.has(session)) flags += 'e'
+  if (noTouchClients.has(session)) flags += 'T'
   return flags === '' ? 'N' : flags
 }
 
@@ -406,6 +410,60 @@ function clientIdleSeconds(session: RedisClientSession): number {
     0,
     Math.floor((Date.now() - session.lastInteractionMs) / 1000),
   )
+}
+
+const LLONG_MAX = 2n ** 63n - 1n
+
+/**
+ * CLIENT PAUSE timeout [WRITE|ALL] (`clientPauseCommand` / the `pause`
+ * branch of `clientCommand`): the mode is checked before the timeout
+ * (`getTimeoutFromObjectOrReply` in milliseconds), and no mode means ALL.
+ */
+function clientPause(
+  subcommand: Buffer,
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): RedisResult {
+  const profile = ctx.server.profile
+  expectSubcommandArgCount('CLIENT', subcommand, args, { min: 1 }, profile)
+  if (args.length > 2 && !profile.has('client.pause.extra-args')) {
+    throw subcommandSyntaxError('CLIENT', subcommand, profile)
+  }
+
+  let mode: ClientPauseMode = 'all'
+  if (args.length === 2) {
+    const token = asciiLowerCase(args[1].toString())
+    if (token === 'write') {
+      mode = 'write'
+    } else if (token !== 'all') {
+      throw new RedisCommandError('CLIENT PAUSE mode must be WRITE or ALL')
+    }
+  }
+
+  const timeout = tryParseInt64(args[0])
+  if (timeout === undefined) {
+    throw new RedisCommandError('timeout is not an integer or out of range')
+  }
+  if (timeout < 0n) {
+    throw errors.timeoutNegative()
+  }
+
+  // A timeout of 0 is an end time of 0: already over.
+  let endMs = 0
+  if (timeout > 0n) {
+    const now = BigInt(Date.now())
+    if (timeout <= LLONG_MAX - now) {
+      endMs = Number(timeout + now)
+    } else if (profile.has('timeout.ms-overflow-check')) {
+      throw new RedisCommandError('timeout is out of range')
+    } else {
+      // 6.2 / 7.0: `tval + now` wraps negative, an end long past.
+      endMs = -1
+    }
+  }
+
+  ctx.server.clientPause.pause(endMs, mode)
+  return ok()
 }
 
 const CLIENT_ID_NOT_POSITIVE = 'client-id should be greater than 0'
@@ -624,7 +682,7 @@ function parseHelloOptions(
   let pendingName: Buffer | undefined
 
   for (let i = 0; i < args.length; i++) {
-    const option = args[i].toString().toLowerCase()
+    const option = asciiLowerCase(args[i].toString())
 
     if (option === 'auth') {
       if (i + 2 >= args.length) {
@@ -802,6 +860,10 @@ export const clientCommand = defineCommand({
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
       commandSubcommandInfo('client|no-evict', 3),
+      commandSubcommandInfo('client|no-touch', 3),
+      commandSubcommandInfo('client|pause', -3),
+      commandSubcommandInfo('client|unpause', 2),
+      commandSubcommandInfo('client|reply', 3),
       commandSubcommandInfo('client|setinfo', 4),
       commandSubcommandInfo('client|help', 2),
     ],
@@ -849,7 +911,7 @@ export const clientCommand = defineCommand({
         2,
         ctx.server.profile,
       )
-      const attribute = args.args[0].toString().toLowerCase()
+      const attribute = asciiLowerCase(args.args[0].toString())
       if (attribute === 'lib-name') {
         clientLibraryNames.set(ctx.session, args.args[1])
       } else if (attribute === 'lib-ver') {
@@ -874,7 +936,7 @@ export const clientCommand = defineCommand({
         1,
         ctx.server.profile,
       )
-      const mode = args.args[0].toString().toLowerCase()
+      const mode = asciiLowerCase(args.args[0].toString())
       if (mode === 'on') {
         noEvictClients.add(ctx.session)
         return ok()
@@ -885,6 +947,73 @@ export const clientCommand = defineCommand({
       }
 
       throw errors.syntax()
+    }
+
+    if (subcommand === 'no-touch') {
+      if (!ctx.server.profile.has('client.no-touch')) {
+        throw unknownSubcommandError(
+          'CLIENT',
+          args.subcommand,
+          ctx.server.profile,
+        )
+      }
+
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
+      const mode = asciiLowerCase(args.args[0].toString())
+      if (mode === 'on') {
+        noTouchClients.add(ctx.session)
+        return ok()
+      }
+      if (mode === 'off') {
+        noTouchClients.delete(ctx.session)
+        return ok()
+      }
+
+      throw errors.syntax()
+    }
+
+    if (subcommand === 'pause') {
+      return clientPause(args.subcommand, args.args, ctx)
+    }
+
+    if (subcommand === 'unpause') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      ctx.server.clientPause.unpause()
+      return ok()
+    }
+
+    if (subcommand === 'reply') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
+      const mode = asciiLowerCase(args.args[0].toString())
+      if (mode !== 'on' && mode !== 'off' && mode !== 'skip') {
+        throw errors.syntax()
+      }
+      setClientReplyMode(ctx.session, mode)
+      // OFF and SKIP add no reply at all. Inside EXEC real Redis then sends
+      // the array one element short; here the slot reads +OK (known gap).
+      return mode === 'on'
+        ? ok()
+        : RedisResult.create(RedisValue.simpleString('OK'), {
+            omitReply: true,
+          })
     }
 
     if (subcommand === 'kill') {
@@ -1107,6 +1236,8 @@ export const resetCommand = defineCommand({
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
     noEvictClients.delete(ctx.session)
+    noTouchClients.delete(ctx.session)
+    resetClientReplyMode(ctx.session)
     ctx.session.resetPushProducers()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
@@ -1332,7 +1463,7 @@ function parseShutdownOptions(
   let abort = false
 
   for (const arg of args) {
-    const option = arg.toString().toLowerCase()
+    const option = asciiLowerCase(arg.toString())
     if (option === 'save' || option === 'nosave') {
       continue
     }

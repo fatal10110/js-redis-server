@@ -102,6 +102,16 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // (`getClientTypeByName`); Redis and Valkey 7.2 answer `Unknown client type`.
   'client.kill.type-primary': { valkey: '8.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
+  'client.no-touch': { redis: '7.2.0', valkey: '7.2.0' },
+  // Valkey 8.1 gave CLIENT PAUSE its own handler (`clientPauseCommand`, arity
+  // -3): arguments past the timeout are accepted, and the mode is read only
+  // when it is the last one (`argc == 4`), so `CLIENT PAUSE 10 WRITE x` is an
+  // ALL pause. Redis and Valkey 8.0 answer the subcommand syntax error.
+  'client.pause.extra-args': { valkey: '8.1.0' },
+  // Millisecond timeouts (`getTimeoutFromObjectOrReply`, UNIT_MILLISECONDS:
+  // CLIENT PAUSE) refuse an end time past LLONG_MAX with `timeout is out of
+  // range` from Redis 7.2 (timeout.c); 6.2 / 7.0 let `tval + now` overflow.
+  'timeout.ms-overflow-check': { redis: '7.2.0', valkey: '7.2.0' },
   // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
   // per version; the order is fixed and every field is always printed. From
   // the format strings of redis 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
@@ -489,4 +499,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 7.0+ and Valkey 8.0 / 8.1 leave it out. Checked against redis-server
   // 7.0.15, 8.0.0 and valkey-server 8.0.0, 8.1.0, 9.0.0.
   'error.no-multi-named-wording': { valkey: '9.0.0' },
+  // Redis 7.0's config table (#506): the ziplist parameters renamed to
+  // listpack, the old names kept as aliases (`hash-max-ziplist-entries` ->
+  // `hash-max-listpack-entries`; 6.2 knows only the ziplist names), and new
+  // parameters such as `maxmemory-clients` and `bind-source-addr`
+  // (redis@7.0.15 config.c:3034-3132, absent from redis@6.2.14 config.c).
+  'config.redis7-table': { redis: '7.0.0', valkey: '7.2.0' },
+  // CONFIG GET takes several patterns from 7.0 and answers an exact (non-glob)
+  // name with the name as sent; 6.2 takes exactly one pattern
+  // (redis@6.2.14 config.c:2599-2602) and replies with the table spelling.
+  'config.get.multi-pattern': { redis: '7.0.0', valkey: '7.2.0' },
+  // `loglevel nothing` (LL_NOTHING): redis@7.2.0 config.c:78-84; absent from
+  // 7.0.15; in every Valkey (valkey@7.2.4 config.c:83).
+  'config.loglevel-nothing': { redis: '7.2.0', valkey: '7.2.0' },
+  // `maxmemory-samples` capped at 64 instead of INT_MAX: redis@7.4.0
+  // config.c:3163 (7.2.11 still INT_MAX), valkey@8.0.0 (7.2.4 INT_MAX).
+  'config.maxmemory-samples-max-64': { redis: '7.4.0', valkey: '8.0.0' },
 }

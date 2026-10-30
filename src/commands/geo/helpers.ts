@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../../core/ascii-case'
 import { errors } from '../../core/redis-error'
 
 const STEP = 26n
@@ -21,16 +22,18 @@ const UNIT_TO_METERS: Record<string, number> = {
   mi: 1609.34,
 }
 
+// Own keys only: `in` would also find `constructor` and friends on the
+// prototype, and the unit comes straight off the wire.
 export function isSupportedGeoUnit(unit: string): boolean {
-  return unit.toLowerCase() in UNIT_TO_METERS
+  return Object.hasOwn(UNIT_TO_METERS, asciiLowerCase(unit))
 }
 
 export function metersToUnit(meters: number, unit: string): number {
-  return meters / UNIT_TO_METERS[unit.toLowerCase()]!
+  return meters / UNIT_TO_METERS[asciiLowerCase(unit)]!
 }
 
 export function unitToMeters(value: number, unit: string): number {
-  return value * UNIT_TO_METERS[unit.toLowerCase()]!
+  return value * UNIT_TO_METERS[asciiLowerCase(unit)]!
 }
 
 export function assertValidCoordinates(lon: number, lat: number): void {

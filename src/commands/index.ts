@@ -13,6 +13,7 @@ import {
   createAuthPolicy,
   createNoMultiPolicy,
   createMonitorClientPolicy,
+  createClientPausePolicy,
   createSubscribedModePolicy,
   createTransactionPolicy,
 } from '../core/execution-policies'
@@ -102,6 +103,7 @@ export function createRedisCommandExecutor(options?: {
       createSubscribedModePolicy(),
       ...(options?.policies ?? []),
       createMonitorClientPolicy(),
+      createClientPausePolicy(),
       createTransactionPolicy(),
     ],
   })

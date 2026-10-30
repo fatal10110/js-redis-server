@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { bitfieldGetKeys } from '../core/key-specs'
 import type { RedisExecutionContext } from '../core/redis-context'
@@ -426,7 +427,7 @@ function parseRangeUnit(
   if (!ctx.profile.has('bit.byte-bit-range')) {
     throw errors.syntax()
   }
-  const unit = token!.toString().toUpperCase()
+  const unit = asciiUpperCase(token!.toString())
   if (unit === 'BYTE') return false
   if (unit === 'BIT') return true
   throw errors.syntax()
@@ -448,7 +449,7 @@ export const bitopCommand = defineCommand({
       if (!opToken || !destKey || sourceKeys.length === 0) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      const op = opToken.toString().toUpperCase()
+      const op = asciiUpperCase(opToken.toString())
       if (op !== 'AND' && op !== 'OR' && op !== 'XOR' && op !== 'NOT') {
         throw errors.syntax()
       }
@@ -611,7 +612,7 @@ function parseBitFieldOps(
   let cursor = 0
 
   while (cursor < input.length) {
-    const sub = input[cursor]!.toString().toUpperCase()
+    const sub = asciiUpperCase(input[cursor]!.toString())
     // Arguments left after the subcommand itself. Redis gates every
     // subcommand on this *before* parsing any of its arguments, so a short op
     // is a syntax error whatever its type token says: `BITFIELD k GET x9`
@@ -620,7 +621,7 @@ function parseBitFieldOps(
     const remaining = input.length - cursor - 1
 
     if (sub === 'OVERFLOW' && remaining >= 1) {
-      const mode = input[cursor + 1]!.toString().toUpperCase()
+      const mode = asciiUpperCase(input[cursor + 1]!.toString())
       if (mode !== 'WRAP' && mode !== 'SAT' && mode !== 'FAIL') {
         throw errors.bitfieldOverflowType()
       }

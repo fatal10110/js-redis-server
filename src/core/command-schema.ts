@@ -1,3 +1,4 @@
+import { asciiUpperCase } from './ascii-case'
 import {
   RedisCommandError,
   WrongNumberOfArgumentsError,
@@ -132,7 +133,7 @@ function readToken(input: readonly Buffer[], index: number): Buffer {
 }
 
 function keywordMatches(actual: Buffer, expected: string): boolean {
-  return actual.toString().toUpperCase() === expected.toUpperCase()
+  return asciiUpperCase(actual.toString()) === asciiUpperCase(expected)
 }
 
 export function isIntegerToken(raw: string): boolean {

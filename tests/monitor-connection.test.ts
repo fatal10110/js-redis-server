@@ -303,11 +303,7 @@ describe('MONITOR: commands sent on the monitoring connection (#456)', () => {
         ['GETREDIR'],
         ['TRACKING', 'off'],
         ['CACHING', 'yes'],
-        ['NO-TOUCH', 'off'],
-        ['UNPAUSE'],
         ['UNBLOCK', '99999'],
-        ['PAUSE', '1', 'WRITE'],
-        ['REPLY', 'ON'],
       ]) {
         const reply = await monitor.execute('client', buffers(...args))
         assert.match(

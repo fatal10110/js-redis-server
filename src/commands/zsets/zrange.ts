@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
@@ -60,7 +61,7 @@ function parseZrangeOptions(
   let limit: LexLimit | undefined
 
   while (cursor < input.length) {
-    const option = input[cursor]!.toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor]!.toString())
 
     if (option === 'BYSCORE') {
       if (by === 'lex') throw errors.syntax()

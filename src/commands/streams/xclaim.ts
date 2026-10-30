@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
@@ -90,7 +91,7 @@ function parseXclaimOptions(
   let deliveryTime: bigint | null = null
   for (; cursor < rest.length; cursor++) {
     const token = rest[cursor]
-    const option = token.toString().toUpperCase()
+    const option = asciiUpperCase(token.toString())
     const value = cursor + 1 < rest.length ? rest[cursor + 1] : undefined
     if (option === 'FORCE') {
       options.force = true

@@ -1,3 +1,4 @@
+import { asciiUpperCase, asciiUpperToken } from '../../core/ascii-case'
 import {
   formatGeoCoordinate,
   type DoubleFormatProfile,
@@ -112,7 +113,7 @@ export function parseGeoFrom(
   commandName: string,
   profile: CompatibilityProfile,
 ): [GeoFrom, number] {
-  const token = input[cursor]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[cursor])
   if (token === 'FROMMEMBER') {
     const member = input[cursor + 1]
     if (!member) throw new WrongNumberOfArgumentsError(commandName)
@@ -136,7 +137,7 @@ export function parseGeoBy(
   cursor: number,
   profile: CompatibilityProfile,
 ): [GeoBy, number] {
-  const token = input[cursor]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[cursor])
   if (token === 'BYRADIUS') {
     return [
       parseByRadius(input[cursor + 1], input[cursor + 2], profile),
@@ -165,7 +166,7 @@ export function tryParseOrderOrCount(
   cursor: number,
   acc: GeoOrderCount,
 ): number | null {
-  const token = input[cursor]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[cursor])
   if (token === 'ASC') {
     acc.order = 'ASC'
     return cursor + 1
@@ -181,7 +182,7 @@ export function tryParseOrderOrCount(
     if (count <= 0) throw errors.geoCountNotPositive()
     let next = cursor + 2
     let any = false
-    if (input[next]?.toString().toUpperCase() === 'ANY') {
+    if (asciiUpperToken(input[next]) === 'ANY') {
       any = true
       next++
     }
@@ -222,7 +223,7 @@ export function parseGeoRadiusFlags(
       cursor = advanced
       continue
     }
-    const token = input[cursor]!.toString().toUpperCase()
+    const token = asciiUpperCase(input[cursor]!.toString())
     if (token === 'WITHCOORD') {
       withCoord = true
       cursor++

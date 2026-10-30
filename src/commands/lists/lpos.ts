@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -27,7 +28,7 @@ export const lposCommand = defineCommand({
     let cursor = index + 2
 
     while (cursor < input.length) {
-      const option = input[cursor].toString().toUpperCase()
+      const option = asciiUpperCase(input[cursor].toString())
       const valueToken = input[cursor + 1]
       if (!valueToken) {
         throw errors.syntax()

@@ -702,6 +702,28 @@ so the PR body is not a durable home for a breaking-change note.
   lock is a named client connection on every endpoint, so the suites' own
   `FLUSHALL`s do not drop it and a crashed run releases it at once. The
   `test:integration:real*` scripts hold it until the test run exits.
+- `CLIENT PAUSE timeout [WRITE|ALL]` and `CLIENT UNPAUSE` (#250), with real
+  semantics: the pause is server-wide and postpones, rather than refuses, the
+  commands of every client but a MONITOR connection until the timeout or
+  UNPAUSE. `WRITE` holds back write and may-replicate commands (`SET`,
+  `PUBLISH`, `EVAL`, `PFCOUNT`, on 6.2 `SCRIPT`) and an `EXEC` whose
+  transaction queued one; `ALL` (the default) holds back every command,
+  `CLIENT UNPAUSE` included, while commands refused earlier (wrong arity,
+  unknown command, NOAUTH) are still answered at once. A second pause keeps
+  the later end time and the stricter mode. The mode is checked before the
+  timeout (`CLIENT PAUSE mode must be WRITE or ALL`); an end time past
+  `LLONG_MAX` is `timeout is out of range` from Redis 7.2 / Valkey 7.2 and a
+  no-op `+OK` before; Valkey 8.1+ ignores arguments after the mode.
+- `CLIENT REPLY ON|OFF|SKIP` (#251): `OFF` drops every reply, refused
+  commands included, until `CLIENT REPLY ON`; `SKIP` drops exactly the next
+  command's reply (and does nothing while `OFF`); `RESET` turns replies back
+  on but does not cancel a skip already armed for it. Pushes are still
+  delivered. Known gap: inside `EXEC` real Redis writes nothing for a queued
+  `OFF` / `SKIP` (the array comes one element short) and drops what follows
+  an `OFF`; here their slot reads `+OK` and an `OFF` drops the whole reply.
+- `CLIENT NO-TOUCH ON|OFF` (#251) on Redis 7.2+ / Valkey 7.2+: a per-connection
+  flag shown as `T` in `CLIENT INFO` / `CLIENT LIST` and cleared by `RESET`
+  (there is no LRU/LFU state for it to protect).
 
 - **`/core`** New `FeatureId` gates `error.subscribed-context-wording`
   (the 7.0 subscribed-mode refusal),
@@ -1812,6 +1834,33 @@ so the PR body is not a durable home for a breaking-change note.
   (`SET` / `SETEX` / `PSETEX` / `GETEX`) use 6.2's wording; the hint
   `... or use negative to start from the end of the list` starts at Redis
   7.0.1 and the quoted `in 'set' command` at 7.0 ([#517]).
+- `CONFIG SET` validates values the way each parameter's type does on the
+  real server, with 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'
+  - <detail>` or 7.0+'s `CONFIG SET failed (possibly related to argument
+  '<name>') - <detail>`: integers (`timeout abc` -> `argument couldn't be
+  parsed into an integer`, `timeout -1` -> `argument must be between 0 and
+  2147483647 inclusive`), `yes`/`no` booleans, memory values (`maxmemory 5q`),
+  enums (`maxmemory-policy`, `loglevel`; case-insensitive, read back in their
+  canonical case) and `save` pairs (`Invalid save parameters`). `CONFIG GET`
+  reads accepted values back normalized (`maxmemory 1gb` -> `1073741824`).
+  `loglevel nothing` is accepted on Redis 7.2+ and Valkey; `maxmemory-samples`
+  tops out at 64 on Redis 7.4+ and Valkey 8.0+. Immutable parameters
+  (`databases`, `daemonize`) answer `can't set immutable config` on 7.0+ and
+  `Unsupported CONFIG parameter` on 6.2 ([#506]).
+- The 7.0 config table: `hash-` / `zset-max-listpack-entries|value` and
+  `list-max-listpack-size` accept their `ziplist` names as aliases for `CONFIG
+  SET` and `CONFIG GET`, which echo the alias rather than the canonical name;
+  on 6.2 the `ziplist` names are the only ones. `maxmemory-clients` and
+  `bind-source-addr` exist from 7.0, `set-max-listpack-entries|value` from 7.2.
+  Defaults follow the real servers (`hash-max-listpack-entries` 512,
+  `list-max-listpack-size` -2). `CONFIG GET` of an exact name echoes it as sent
+  on 7.0+ (`MAXMEMORY`), and 6.2's `CONFIG GET` takes exactly one pattern,
+  answering more with its subcommand syntax error ([#506]).
+- Option keywords and parameter names fold ASCII only, as C `strcasecmp`
+  does: `WITH<U+017F>CORES` (long s), `<U+017F>tore` and a Kelvin-sign `CONFIG`
+  parameter are rejected like on real Redis instead of matching `WITHSCORES`,
+  `STORE` and `tcp-keepalive` ([#508]). `GEODIST ... constructor` no longer
+  passes as a unit.
 
 ## [0.3.0] and earlier
 
@@ -1906,5 +1955,7 @@ requests they contain.
 [#524]: https://github.com/fatal10110/js-redis-server/issues/524
 [#514]: https://github.com/fatal10110/js-redis-server/issues/514
 [#517]: https://github.com/fatal10110/js-redis-server/issues/517
+[#506]: https://github.com/fatal10110/js-redis-server/issues/506
+[#508]: https://github.com/fatal10110/js-redis-server/issues/508
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

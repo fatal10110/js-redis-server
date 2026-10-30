@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type {
@@ -91,7 +92,7 @@ export function createLexRangeSchema() {
     let cursor = index + 3
     let limit: LexLimit | undefined
     if (cursor < input.length) {
-      if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
+      if (asciiUpperCase(input[cursor]!.toString()) !== 'LIMIT') {
         throw errors.syntax()
       }
       const offsetTok = input[cursor + 1]

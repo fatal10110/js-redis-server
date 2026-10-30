@@ -1,5 +1,6 @@
 /**
- * ASCII-only case folding for command and subcommand names.
+ * ASCII-only case folding for command and subcommand names, option keywords
+ * and CONFIG parameter names: every protocol token the server compares (#508).
  *
  * Real Redis matches names byte by byte with C `tolower()`/`strcasecmp`, so
  * only `A-Z` (0x41-0x5A) is case-insensitive. `String.prototype.toLowerCase()`
@@ -31,4 +32,17 @@ export function asciiUpperCase(value: string): string {
  */
 export function equalsAscii(value: Buffer, expected: string): boolean {
   return asciiLowerCase(value.toString()) === expected
+}
+
+/**
+ * {@link asciiUpperCase} of an optional wire token (`input[cursor]` past the
+ * end of the arguments): `undefined` stays `undefined`.
+ */
+export function asciiUpperToken(value: Buffer | undefined): string | undefined {
+  return value === undefined ? undefined : asciiUpperCase(value.toString())
+}
+
+/** Lower-case counterpart of {@link asciiUpperToken}. */
+export function asciiLowerToken(value: Buffer | undefined): string | undefined {
+  return value === undefined ? undefined : asciiLowerCase(value.toString())
 }

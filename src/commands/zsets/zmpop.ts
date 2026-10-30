@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
@@ -51,7 +52,7 @@ function parseZsetPopCount(token: Buffer): number {
 
 function parseZsetPopSide(token: Buffer | undefined): ZsetMultiPopSide {
   if (!token) throw errors.syntax()
-  const side = token.toString().toUpperCase()
+  const side = asciiUpperCase(token.toString())
   if (side === 'MIN') return 'min'
   if (side === 'MAX') return 'max'
   throw errors.syntax()
@@ -115,7 +116,7 @@ function parseZsetMultiPopArgs(
 
   let count = 1
   if (cursor < input.length) {
-    const option = input[cursor].toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor].toString())
     if (option !== 'COUNT' || cursor + 2 !== input.length) {
       throw errors.syntax()
     }
