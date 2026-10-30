@@ -646,6 +646,15 @@ so the PR body is not a durable home for a breaking-change note.
   Valkey 9 cluster does), so an exhaustive `switch` over it stops
   type-checking; `'forbidden'` still means refused outright.
 
+- One profile-aware source says which commands a server flags may-replicate
+  ([#568]), shared by the MONITOR client's keyspace refusal and the
+  read-only script check (`mayReplicate` in
+  `src/core/compatibility/may-replicate.ts`). No reply changes. For
+  `js-redis-server/core` users, additions only: `CommandExecutor.plan()` takes
+  an optional `{ inScript }`, `ParseContext` has optional `rawCommand` /
+  `inScript`, and `RedisExecutionContext` has an optional `scriptDatabase`
+  (the database a running script selected, [#566]).
+
 ### Added
 
 - **`/core`** New `FeatureId` gates for the per-version `CLIENT LIST` /
@@ -1581,6 +1590,28 @@ so the PR body is not a durable home for a breaking-change note.
     range (`1e400`, `0x1p1024`) are still refused, because the arithmetic is
     `double` ([#512]).
 
+- A script's `SELECT` no longer changes the caller's database ([#566]). Real
+  Redis runs a script's commands on the script's own client, which starts
+  each run on the caller's database. `EVAL`, `EVALSHA` and `FCALL` with
+  `redis.call('select', n)` now leave the caller's `CLIENT INFO` `db=`, its
+  next commands and the next script on the caller's database, also inside
+  `MULTI`; the script's later commands use the database it selected. MONITOR
+  shows the script's lines with the script's database and the caller's next
+  command with the caller's. The same on every Redis and Valkey version.
+- `XREAD` / `XREADGROUP` with `BLOCK` from a script no longer wedges the
+  server (`BLOCK n`) or crashes the process when the caller disconnects
+  (`BLOCK 0`) ([#563]):
+  - Redis 6.2 - 7.2 (and Valkey 7.2) refuse the option while parsing, before
+    the timeout, the key or the group are looked at: `ERR xread command is not
+    allowed with BLOCK option from scripts`, naming the command as the script
+    sent it (`XREAD`, `xreadgroup`), even when the stream has data.
+  - Redis 7.4+ and Valkey 8.0+ run the command: the entries when there are
+    any, else the timeout reply at once (`$-1` / RESP3 `_`), even with
+    `BLOCK 0`.
+  - A command that tries to park from a script is refused instead of
+    releasing the caller's turn, and a promise a script's command returns is
+    no longer left to reject unhandled.
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -1656,5 +1687,8 @@ requests they contain.
 [#501]: https://github.com/fatal10110/js-redis-server/issues/501
 [#433]: https://github.com/fatal10110/js-redis-server/issues/433
 [#456]: https://github.com/fatal10110/js-redis-server/issues/456
+[#563]: https://github.com/fatal10110/js-redis-server/issues/563
+[#566]: https://github.com/fatal10110/js-redis-server/issues/566
+[#568]: https://github.com/fatal10110/js-redis-server/issues/568
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

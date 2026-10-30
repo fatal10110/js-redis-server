@@ -618,6 +618,15 @@ export const selectCommand = defineCommand({
   capabilities: { clusterMode: 'singleDb' },
   keys: () => [],
   execute: (args, ctx) => {
+    // A script runs its commands on its own client: SELECT there moves the
+    // script's later commands, never the caller (#566).
+    if (ctx.scriptDatabase) {
+      if (args.database >= ctx.server.databases.length) {
+        throw errors.dbIndexOutOfRange()
+      }
+      ctx.scriptDatabase.selected = args.database
+      return ok()
+    }
     ctx.session.selectDatabase(args.database)
     return ok()
   },

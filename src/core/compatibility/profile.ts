@@ -76,6 +76,10 @@ export type FeatureId =
   | 'set.union-diff-hashtable'
   | 'set.past-deadline-deletes'
   | 'notify.past-deadline-expired-event'
+  | 'script.stream-block-allowed'
+  | 'may-replicate.redis7-table'
+  | 'may-replicate.cluster-setslot'
+  | 'may-replicate.cluster-syncslots'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor
