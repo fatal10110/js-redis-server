@@ -416,7 +416,7 @@ function parseSetIdTarget(rawId: string): StreamId | null {
 function parseXgroupOptions(
   command: XgroupIdCommand,
   profile: CompatibilityProfile,
-): { mkstream: boolean; entriesRead: number | null } {
+): { mkstream: boolean; entriesRead: bigint | null } {
   const create = command.subcommand === 'create'
   const options = command.options
 
@@ -431,7 +431,7 @@ function parseXgroupOptions(
   }
 
   let mkstream = false
-  let entriesRead: number | null = null
+  let entriesRead: bigint | null = null
   for (let i = 0; i < options.length; i++) {
     const option = asciiUpperCase(options[i].toString())
     if (create && option === 'MKSTREAM') {
@@ -450,12 +450,7 @@ function parseXgroupOptions(
           'value for ENTRIESREAD must be positive or -1',
         )
       }
-      // Counters are numbers here, so like XSETID ENTRIESADDED a value past
-      // 2^53 - 1 is refused (real Redis takes any int64).
-      if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw errors.expectedInteger()
-      }
-      entriesRead = value === -1n ? null : Number(value)
+      entriesRead = value === -1n ? null : value
       i++
       continue
     }

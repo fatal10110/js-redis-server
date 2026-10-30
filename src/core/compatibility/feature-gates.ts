@@ -208,7 +208,31 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 9.0: checked against redis-server 6.2.24, 7.2, 7.4.0, 7.4.4, 8.0.6 and
   // valkey-server 7.2.14 (refuses), 8.0.0, 8.0.11, 8.1 and 9.0.6 (#214).
   'hscan.novalues': { redis: '7.4.0', valkey: '8.0.0' },
-  'xread.plus-id': { redis: '7.4.0' },
+  // `XREAD ... +` reads the last entry (and XREADGROUP answers `The + ID is
+  // meaningless ...` for it, after its NOGROUP check); before, `+` is an
+  // invalid stream id. Valkey took it in 8.0.0 (valkey 8.0.0 t_stream.c;
+  // 7.2.5 has no `+` branch). Verified against redis-server 7.2.4, 7.4.4,
+  // 8.0.0 and valkey-server 8.0.0 / 9.0.0.
+  'xread.plus-id': { redis: '7.4.0', valkey: '8.0.0' },
+  // XREADGROUP / XCLAIM / XAUTOCLAIM announce a consumer they create
+  // implicitly as `xgroup-createconsumer` from Redis 7.0
+  // (`streamCreateConsumer(..., SCC_DEFAULT)`); 6.2 creates it silently
+  // (`streamLookupConsumer(..., SLC_NONE)`) and only XGROUP CREATECONSUMER
+  // publishes the event (redis 6.2.14 / 7.0.15 / 7.2.4 t_stream.c).
+  'stream.implicit-consumer-event': { redis: '7.0.0', valkey: '7.2.0' },
+  // The consumer-group lag port (`streamReplyWithCGLag`). Redis 7.4 (7.2.7 /
+  // 7.4.2 patch releases, after the pinned 7.2.4) made the counter estimate
+  // refuse an id behind the last tombstone, dropped the tombstone helper's
+  // `first_id > max_deleted_entry_id` shortcut, and made XREADGROUP keep
+  // counting only while the group's last id is not behind the first entry
+  // and nothing was deleted after it. Valkey took the same in 9.0.0; valkey
+  // 8.0.0 has the 7.2.4 form (redis 7.2.4 / 7.4.4 / 8.0.0, valkey 8.0.0 /
+  // 9.0.0 t_stream.c).
+  'stream.group-lag-tombstone-check': { redis: '7.4.0', valkey: '9.0.0' },
+  // Redis 7.4 also answers the lag directly for an emptied stream (0) and
+  // when both the group's last id and the last tombstone are behind the
+  // first entry (the stream length). Valkey 9.0.0 has not taken these.
+  'stream.group-lag-shortcuts': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
   // A standalone (`cluster-enabled no`) server refuses READONLY with `This
   // instance has cluster support disabled` on every version up to Valkey 8.0;

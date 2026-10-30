@@ -119,3 +119,18 @@ export function parseNonNegativeInteger(token: Buffer): number {
 
   return value
 }
+
+// parseNonNegativeInteger for a counter real Redis keeps as an int64 (XSETID
+// ENTRIESADDED): any value up to 2^63 - 1.
+export function parseNonNegativeInt64(token: Buffer): bigint {
+  const raw = token.toString()
+  if (!/^\d+$/.test(raw)) {
+    throw errors.expectedInteger()
+  }
+
+  const value = BigInt(raw)
+  if (value > INT64_MAX) {
+    throw errors.expectedInteger()
+  }
+  return value
+}

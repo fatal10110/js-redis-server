@@ -1652,6 +1652,26 @@ so the PR body is not a durable home for a breaking-change note.
   at most 32KB is kept once everything is parsed, a bulk of 32KB or more gets
   a buffer of exactly its size and is handed over without a copy, and inline
   arguments no longer share the request line's buffer.
+- Stream replies match real Redis and Valkey per version ([#528], [#495],
+  [#519]):
+  - An empty XREAD / XREADGROUP (nothing new, a BLOCK timeout, inside MULTI)
+    is a null array, `*-1` on RESP2 (it was `$-1`).
+  - Consumer-group `lag` and the `entries-read` counter XREADGROUP keeps
+    follow real Redis' algorithm, including deleted entries, and its 7.4 form
+    (Redis 7.4+, Valkey 9.0 in part). `ENTRIESREAD` (XGROUP CREATE / SETID)
+    and XSETID `ENTRIESADDED` take any int64, not only values up to 2^53 - 1.
+  - XINFO CONSUMERS, XINFO GROUPS, XINFO STREAM FULL and the XPENDING summary
+    list consumers and groups by name. The XPENDING summary sends each
+    consumer's count as a bulk string, and `*-1` for the consumer list of an
+    empty PEL.
+  - XINFO STREAM FULL lists each consumer's `seen-time`, `active-time` (7.2+),
+    `pel-count` and `pending`, and gives every PEL row its last delivery as a
+    Unix time in milliseconds.
+  - On 6.2, a consumer that XREADGROUP / XCLAIM / XAUTOCLAIM create
+    implicitly no longer publishes `xgroup-createconsumer`.
+  - Valkey 8.0+ accepts `XREAD ... +`. XREADGROUP answers `$` (and `+` on
+    Redis 7.4+ / Valkey 8.0+) with the `ID is meaningless` error, after the
+    NOGROUP check, as real servers do.
 
 ## [0.3.0] and earlier
 
@@ -1735,5 +1755,8 @@ requests they contain.
 [#509]: https://github.com/fatal10110/js-redis-server/issues/509
 [#564]: https://github.com/fatal10110/js-redis-server/issues/564
 [#565]: https://github.com/fatal10110/js-redis-server/issues/565
+[#528]: https://github.com/fatal10110/js-redis-server/issues/528
+[#495]: https://github.com/fatal10110/js-redis-server/issues/495
+[#519]: https://github.com/fatal10110/js-redis-server/issues/519
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

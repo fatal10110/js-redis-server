@@ -1,11 +1,13 @@
+import type { CompatibilityProfile } from '../../core/compatibility'
 import { errors } from '../../core/redis-error'
 import type { RedisDatabase } from '../../state/database'
+import type { StreamLagRules } from '../../state/stream-groups'
 import type {
   RedisStreamConsumerGroup,
   RedisStreamData,
   StreamId,
 } from '../../state/data-types'
-import { bufferId, cloneStreamId, compareStreamId, maxStreamId } from './ids'
+import { bufferId, cloneStreamId, maxStreamId } from './ids'
 
 // Pure consumer-group lookups moved to the state layer (so TrackedStreamData can
 // use them); re-exported here for the streams command modules.
@@ -13,7 +15,21 @@ export {
   findEntry,
   pendingEntriesSorted,
   ensureConsumer,
+  streamGroupLag,
 } from '../../state/stream-groups'
+
+/** The profile's form of the consumer-group lag bookkeeping. */
+export function streamLagRules(profile: CompatibilityProfile): StreamLagRules {
+  return {
+    tombstoneCheck: profile.has('stream.group-lag-tombstone-check'),
+    shortcuts: profile.has('stream.group-lag-shortcuts'),
+  }
+}
+
+/** Buffers in byte order, the order of real Redis' rax-keyed listings. */
+export function byName<T extends { name: Buffer }>(items: Iterable<T>): T[] {
+  return Array.from(items).sort((a, b) => Buffer.compare(a.name, b.name))
+}
 
 export function updateMaxDeletedId(
   stream: RedisStreamData,
@@ -45,11 +61,12 @@ export function requireStreamGroup(
 }
 
 /**
- * Create `consumerName` in the group if it does not exist yet, as its own
- * mutation published as `xgroup-createconsumer` — what real Redis announces
- * when XREADGROUP / XCLAIM / XAUTOCLAIM create a consumer implicitly (their
- * own work publishes nothing). Like XGROUP CREATECONSUMER it leaves a WATCH on
- * the stream intact. The caller has already validated that the group exists.
+ * Create `consumerName` in the group if it does not exist yet, for XREADGROUP
+ * / XCLAIM / XAUTOCLAIM. From Redis 7.0 that is its own mutation published as
+ * `xgroup-createconsumer` (their own work publishes nothing); 6.2 creates the
+ * consumer silently (`stream.implicit-consumer-event`). Like XGROUP
+ * CREATECONSUMER it leaves a WATCH on the stream intact. The caller has
+ * already validated that the group exists.
  */
 export function createConsumerIfMissing(
   db: RedisDatabase,
@@ -57,7 +74,22 @@ export function createConsumerIfMissing(
   groupName: Buffer,
   consumerName: Buffer,
   now: number,
+  profile: CompatibilityProfile,
 ): void {
+  if (!profile.has('stream.implicit-consumer-event')) {
+    db.updateStream(key, stream => {
+      const group = streamGroup(stream.value, groupName)
+      const consumerId = bufferId(consumerName)
+      if (!group || group.consumers.has(consumerId)) return
+      group.consumers.set(consumerId, {
+        name: Buffer.from(consumerName),
+        seenAt: now,
+        activeAt: null,
+      })
+    })
+    return
+  }
+
   db.withOrigin('xgroup-createconsumer').updateStream(key, stream => {
     const group = streamGroup(stream.value, groupName)
     if (!group) return
@@ -67,19 +99,6 @@ export function createConsumerIfMissing(
       activeAt: null,
     })
   })
-}
-
-export function streamLag(
-  stream: RedisStreamData,
-  group: RedisStreamConsumerGroup,
-): number {
-  let lag = 0
-  for (const entry of stream.entries) {
-    if (compareStreamId(entry.id, group.lastDeliveredId) > 0) {
-      lag++
-    }
-  }
-  return lag
 }
 
 export function consumerPendingCount(

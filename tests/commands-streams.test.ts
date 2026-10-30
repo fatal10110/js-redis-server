@@ -214,31 +214,31 @@ describe('stream commands (unit)', () => {
     assert.strictEqual(streamEntries.length, 1)
   })
 
-  test('XREAD returns null when no new entries', async () => {
+  test('XREAD returns a null array when no new entries', async () => {
     const { session } = createSession()
     await session.execute('xadd', buf('s', '1-1', 'f', '1'))
 
     assert.deepStrictEqual(
       await session.execute('xread', buf('STREAMS', 's', '1-1')),
-      bulkResult(null),
+      RedisResult.create(RedisValue.nullArray()),
     )
   })
 
-  test('XREAD with $ returns null on same call', async () => {
+  test('XREAD with $ returns a null array on same call', async () => {
     const { session } = createSession()
     await session.execute('xadd', buf('s', '1-1', 'f', '1'))
 
     assert.deepStrictEqual(
       await session.execute('xread', buf('STREAMS', 's', '$')),
-      bulkResult(null),
+      RedisResult.create(RedisValue.nullArray()),
     )
   })
 
-  test('XREAD on missing key returns null', async () => {
+  test('XREAD on missing key returns a null array', async () => {
     const { session } = createSession()
     assert.deepStrictEqual(
       await session.execute('xread', buf('STREAMS', 's', '0-0')),
-      bulkResult(null),
+      RedisResult.create(RedisValue.nullArray()),
     )
   })
 
