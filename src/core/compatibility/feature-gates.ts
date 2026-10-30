@@ -533,6 +533,15 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `maxmemory-samples` capped at 64 instead of INT_MAX: redis@7.4.0
   // config.c:3163 (7.2.11 still INT_MAX), valkey@8.0.0 (7.2.4 INT_MAX).
   'config.maxmemory-samples-max-64': { redis: '7.4.0', valkey: '8.0.0' },
+  // Valkey 8.0.0 and 8.0.1 refuse (P|S)UNSUBSCRIBE on a connection with no
+  // subscription of any kind: `-NOSUB '<name>' command executed not in
+  // subscribed mode` (valkey@8.0.0 server.c:4076-4081, absent from valkey
+  // 7.2.4 and 8.0.2, and from every Redis). A window: the check holds from
+  // the first gate until the second (#594). Checked against valkey-server
+  // 8.0.0, 8.0.1, 8.0.2, 9.0.0 and redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4,
+  // 8.0.0.
+  'pubsub.unsubscribe-nosub': { valkey: '8.0.0' },
+  'pubsub.unsubscribe-nosub-dropped': { valkey: '8.0.2' },
   // Blocking timeouts in seconds round up to whole milliseconds
   // (`ceill(ftval * 1000.0)`) from redis@7.0.8 timeout.c:174; redis@7.0.7 and
   // 6.2.14 truncate, so a timeout under 1 ms (`0.0001`) blocks forever there.

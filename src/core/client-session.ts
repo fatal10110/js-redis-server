@@ -746,6 +746,10 @@ export class ClientSession implements RedisClientSession {
   }
 
   deferPushesUntilAfterReply(): () => void {
+    // The command's own hold (see execute) already delivers after the reply.
+    if (this.deferredPushes) {
+      return () => {}
+    }
     const deferred: RedisResult[] = []
     this.deferredPushes = deferred
     return () => {
@@ -769,7 +773,7 @@ export class ClientSession implements RedisClientSession {
    * `call()` adds the line after the command's reply, so a line from this
    * connection's own command waits in {@link ownMonitorLines} until the
    * reply is out, and every other line waits behind it
-   * ({@link holdMonitorPushes}).
+   * ({@link holdPushesUntilReply}).
    */
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
     if (this.stopMonitor) {
@@ -855,6 +859,29 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
+   * Resolves true once a push is queued, false once the queue is closed or a
+   * signal aborts. A transport pairs it with {@link takePushes} to move every
+   * queued push onto its output at once.
+   */
+  async waitForPushes(signal: AbortSignal): Promise<boolean> {
+    while (!signal.aborted && !this.signal.aborted) {
+      if (this.pushQueue.length > 0) {
+        return true
+      }
+      if (this.pushQueueClosed) {
+        return false
+      }
+      await this.waitForPush(signal)
+    }
+    return false
+  }
+
+  /** Every push queued so far, oldest first, removed from the queue. */
+  takePushes(): RedisResult[] {
+    return this.pushQueue.splice(0)
+  }
+
+  /**
    * Public entry point for executing one client command.
    *
    * Acquires a turn on the server's turn queue before running, guaranteeing
@@ -876,11 +903,47 @@ export class ClientSession implements RedisClientSession {
     // overlapping calls (one parked, another running) never swap lines.
     const ownLines: RedisResult[] | null = this.monitoring ? [] : null
     this.ownMonitorLines = ownLines
+    // Redis 7.2+ and valkey 8.0+ hold every push for the calling connection
+    // made while its command runs (a keyspace notification, its own PUBLISH,
+    // a script's inner calls) until the reply is out
+    // (`server.pending_push_messages`, joined after the outermost call).
+    // Older servers write each push as it is made.
+    const holdsOwnPushes = this.server.profile.has(
+      'pubsub.resp3-publish-reply-first',
+    )
+    let ownPushes: RedisResult[] | null = null
+    const holdOwnPushes = () => {
+      if (holdsOwnPushes && !this.deferredPushes) {
+        ownPushes = []
+        this.deferredPushes = ownPushes
+      }
+    }
+    // A blocked command's call returns before it has a reply: what it held
+    // so far goes out then, and pushes others make meanwhile are not held.
+    const flushOwnPushes = () => {
+      const held = ownPushes
+      ownPushes = null
+      if (!held) {
+        return
+      }
+      if (this.deferredPushes === held) {
+        this.deferredPushes = null
+      }
+      for (const push of held) {
+        this.enqueuePush(push)
+      }
+    }
+    holdOwnPushes()
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {
         turn = nextTurn
         this.ownMonitorLines = nextTurn ? ownLines : null
+        if (nextTurn) {
+          holdOwnPushes()
+        } else {
+          flushOwnPushes()
+        }
       },
     }
     let result: RedisResult | undefined
@@ -904,7 +967,7 @@ export class ClientSession implements RedisClientSession {
     } finally {
       this.lastInteraction = Date.now()
       this.ownMonitorLines = null
-      releaseHeld = this.holdMonitorPushes(ownLines)
+      releaseHeld = this.holdPushesUntilReply(ownPushes, ownLines)
       turn?.release()
       // A throw has no reply to wait for.
       if (!result) {
@@ -916,17 +979,47 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * On a monitoring connection, hold every push from here until the reply is
-   * written: real Redis appends to one output buffer, so the reply comes
-   * first, then the command's own monitor lines, then whatever other clients
-   * run once the turn is released. Returns the release (deliver or drop), or
-   * nothing when there is no hold to take: not monitoring, or a hold is
-   * already up (MONITOR's own, or an overlapping call's), which its
-   * `afterReply` releases and the own lines join.
+   * Keep holding every push from here until the reply is written: real Redis
+   * appends to one output buffer, so the reply comes first, then the pushes
+   * the command made (`ownPushes`, the hold {@link execute} took), then its
+   * own monitor lines, then whatever other clients run once the turn is
+   * released. Returns the release (deliver or drop), or nothing when there
+   * is no hold to take: no own hold and not monitoring, or a hold is already
+   * up (MONITOR's own, or an overlapping call's), which its `afterReply`
+   * releases and the own lines join.
    */
-  private holdMonitorPushes(
+  private holdPushesUntilReply(
+    ownPushes: RedisResult[] | null,
     ownLines: readonly RedisResult[] | null,
   ): ((deliver: boolean) => void) | undefined {
+    // Nothing held and nothing to receive: let go (the monitor hold below
+    // still applies).
+    if (
+      ownPushes &&
+      this.deferredPushes === ownPushes &&
+      ownPushes.length === 0 &&
+      this.pubsubSubscriptionCount === 0
+    ) {
+      this.deferredPushes = null
+    }
+
+    if (ownPushes && this.deferredPushes === ownPushes) {
+      const held = ownPushes
+      const madeByCommand = held.length
+      held.push(...(ownLines ?? []))
+      return deliver => {
+        if (this.deferredPushes === held) {
+          this.deferredPushes = null
+        }
+        // A closing command's pending pushes still join its reply
+        // (`listJoin` skips the CLIENT_CLOSE_AFTER_REPLY check); later
+        // output is dropped.
+        for (const push of deliver ? held : held.slice(0, madeByCommand)) {
+          this.enqueuePush(push)
+        }
+      }
+    }
+
     if (!this.monitoring) {
       return undefined
     }
@@ -952,7 +1045,7 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * Release {@link holdMonitorPushes}'s hold once the reply is written. A
+   * Release {@link holdPushesUntilReply}'s hold once the reply is written. A
    * command that closes the connection (QUIT) drops it: Redis discards output
    * added after `CLIENT_CLOSE_AFTER_REPLY` is set.
    */
@@ -970,9 +1063,11 @@ export class ClientSession implements RedisClientSession {
       result.value,
       {
         ...result.options,
+        // Released first: the command's `afterReply` (EXEC's held pushes)
+        // goes out after what the command itself made.
         afterReply: () => {
-          afterReply?.()
           releaseHeld(deliver)
+          afterReply?.()
         },
       },
       result.encoded,

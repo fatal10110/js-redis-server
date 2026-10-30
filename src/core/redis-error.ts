@@ -243,6 +243,17 @@ export const errors = Object.freeze({
         : `Can't execute '${name}': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`,
     ),
 
+  /**
+   * (P|S)UNSUBSCRIBE on a connection with no subscription of any kind, on
+   * valkey 8.0.0 / 8.0.1 only (`pubsub.unsubscribe-nosub`). `name` is the
+   * lowercase command name.
+   */
+  notSubscribed: (name: string) =>
+    new RedisCommandError(
+      `'${name}' command executed not in subscribed mode`,
+      'NOSUB',
+    ),
+
   // Numbers
   expectedInteger: () =>
     new RedisCommandError('value is not an integer or out of range'),

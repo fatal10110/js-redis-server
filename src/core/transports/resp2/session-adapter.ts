@@ -169,6 +169,27 @@ export class Resp2SessionAdapter {
   }
 
   private async writeRedisResult(result: RedisResult): Promise<void> {
+    await this.chainWrites(result)
+  }
+
+  /**
+   * Appends to the write chain every push the session has queued, then
+   * `result` if given, all synchronously. Redis has one output buffer per
+   * client, so a push queued before a reply (another client's keyspace
+   * notification while this one's BLPOP was parked) goes out before it; taking
+   * pushes one per awaited write would let a reply slip between two of them.
+   */
+  private chainWrites(result?: RedisResult): Promise<void> {
+    for (const push of this.session.takePushes()) {
+      this.chainWrite(push)
+    }
+    if (result) {
+      this.chainWrite(result)
+    }
+    return this.writeChain
+  }
+
+  private chainWrite(result: RedisResult): void {
     const write = async () => {
       if (!result.options?.omitReply) {
         await this.transport.write(
@@ -187,15 +208,12 @@ export class Resp2SessionAdapter {
     }
 
     this.writeChain = this.writeChain.catch(() => {}).then(write)
-    await this.writeChain
   }
 
   private async writeSessionPushes(): Promise<void> {
     try {
-      for await (const frame of this.session.readPushes(
-        this.transport.signal,
-      )) {
-        await this.writeRedisResult(frame)
+      while (await this.session.waitForPushes(this.transport.signal)) {
+        await this.chainWrites()
       }
     } catch (err) {
       if (!this.transport.signal.aborted) {
