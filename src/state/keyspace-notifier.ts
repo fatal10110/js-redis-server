@@ -125,6 +125,8 @@ const WRITE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
   hmset: 'hset',
   hsetnx: 'hset',
   zincrby: 'zincr',
+  // GEOADD rewrites itself into ZADD (geo.c), which publishes the event.
+  geoadd: 'zadd',
   rename: 'rename_to',
   renamenx: 'rename_to',
   copy: 'copy_to',

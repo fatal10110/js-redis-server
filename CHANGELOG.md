@@ -1747,6 +1747,14 @@ so the PR body is not a durable home for a breaking-change note.
   ACL from 7.0, CLIENT through Redis 7.4 and Valkey 8.0 / 9.0, SCRIPT SHOW on
   Valkey, FUNCTION's dropped `Library description` from Redis 7.4 / Valkey
   8.0). `CONFIG HELP` is new: it was an unknown-subcommand error ([#491]).
+- `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE`, `ZUNIONSTORE`, `ZINTERSTORE` and
+  `ZDIFFSTORE` replace a destination of any type in one write, as real Redis's
+  `setKey()` does on every profile: a string, list, hash, stream or other
+  collection is overwritten (it was `-WRONGTYPE`), the destination's TTL is
+  cleared, a WATCH on it fires and only the command's own event is published.
+  `GEOSEARCHSTORE` and `GEORADIUS` / `GEORADIUSBYMEMBER ... STORE|STOREDIST` no
+  longer publish a `del` before their event, which the `GEORADIUS` forms now
+  name `georadiusstore`, and `GEOADD` publishes `zadd` ([#524]).
 
 ## [0.3.0] and earlier
 
@@ -1838,5 +1846,6 @@ requests they contain.
 [#495]: https://github.com/fatal10110/js-redis-server/issues/495
 [#519]: https://github.com/fatal10110/js-redis-server/issues/519
 [#249]: https://github.com/fatal10110/js-redis-server/issues/249
+[#524]: https://github.com/fatal10110/js-redis-server/issues/524
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
