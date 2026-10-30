@@ -307,10 +307,8 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
         Buffer.from('2'),
         Buffer.from('only-one-key'),
       ]),
-      RedisResult.error(
-        `Number of keys can't be greater than number of args`,
-        'ERR',
-      ),
+      // The function lookup comes first (functions.c fcallCommandGeneric).
+      RedisResult.error('Function not found', 'ERR'),
     )
 
     await session.execute('function', [Buffer.from('load'), library])

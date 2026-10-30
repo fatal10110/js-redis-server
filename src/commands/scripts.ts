@@ -5,6 +5,7 @@ import {
   asciiUpperCase,
   asciiUpperToken,
 } from '../core/ascii-case'
+import { redisGlobMatch } from '../core/glob'
 import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
@@ -35,7 +36,10 @@ import {
   bulk,
   expectSubcommandArgCount,
   helpReply,
+  INT64_MAX,
+  INT64_MIN,
   ok,
+  parseInt64Token,
   subcommandArityError,
   subcommandSyntaxError,
   unknownSubcommandError,
@@ -50,13 +54,13 @@ type ScriptArgs = {
 
 type EvalArgs = {
   script: Buffer
-  numKeys: number
+  numKeys: bigint
   rest: Buffer[]
 }
 
 type EvalShaArgs = {
   sha: string
-  numKeys: number
+  numKeys: bigint
   rest: Buffer[]
 }
 
@@ -67,7 +71,8 @@ type FunctionArgs = {
 
 type FcallArgs = {
   functionName: string
-  numKeys: number
+  // Raw: FCALL reads it only once it has found the function (runFunction).
+  numKeys: Buffer
   rest: Buffer[]
 }
 
@@ -120,7 +125,7 @@ export const evalCommand = defineCommand<EvalArgs>({
   rawKeys: numkeysGetKeys(0, 2, 3),
   schema: t.object({
     script: t.bulk(),
-    numKeys: t.integer({ min: 0 }),
+    numKeys: evalNumKeysSchema(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
@@ -137,7 +142,7 @@ export const evalshaCommand = defineCommand<EvalShaArgs>({
   rawKeys: numkeysGetKeys(0, 2, 3),
   schema: t.object({
     sha: t.string(),
-    numKeys: t.integer({ min: 0 }),
+    numKeys: evalNumKeysSchema(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
@@ -253,7 +258,7 @@ export const fcallCommand = defineCommand<FcallArgs>({
   since: { redis: '7.0.0', valkey: '7.2.0' },
   schema: t.object({
     functionName: t.string(),
-    numKeys: t.integer({ min: 0 }),
+    numKeys: t.bulk(),
     rest: t.variadic(t.bulk()),
   }),
   flags: ['write', 'movablekeys', 'noscript'],
@@ -397,26 +402,50 @@ function expectRestLength(
   )
 }
 
+/**
+ * EVAL's numkeys: any int64 (`getLongLongFromObjectOrReply`), so a value past
+ * the range or `-0` is `value is not an integer or out of range` while a
+ * negative one reaches {@link evalNumKeys}.
+ */
+function evalNumKeysSchema() {
+  return t.bigInteger({ min: INT64_MIN, max: INT64_MAX })
+}
+
 function evalKeys(args: Pick<EvalArgs, 'numKeys' | 'rest'>): readonly Buffer[] {
-  validateNumberOfKeys(args)
-  return args.rest.slice(0, args.numKeys)
+  return args.rest.slice(0, evalNumKeys(args))
 }
 
 function splitEvalArgs(args: EvalArgs | EvalShaArgs): {
   keys: Buffer[]
   argv: Buffer[]
 } {
-  validateNumberOfKeys(args)
-  return {
-    keys: args.rest.slice(0, args.numKeys),
-    argv: args.rest.slice(args.numKeys),
-  }
+  return splitScriptArgs(args.rest, evalNumKeys(args))
 }
 
-function validateNumberOfKeys(args: Pick<EvalArgs, 'numKeys' | 'rest'>): void {
-  if (args.numKeys > args.rest.length) {
+/**
+ * The key count, checked as evalGenericCommand and fcallCommandGeneric do
+ * (redis@7.0.15 eval.c:498-501, functions.c:642-648): more than the
+ * arguments, then negative (#519).
+ */
+function checkedNumKeys(numKeys: bigint, rest: readonly Buffer[]): number {
+  if (numKeys > BigInt(rest.length)) {
     throw errors.wrongNumberOfKeys()
   }
+  if (numKeys < 0n) {
+    throw errors.negativeNumberOfKeys()
+  }
+  return Number(numKeys)
+}
+
+function evalNumKeys(args: Pick<EvalArgs, 'numKeys' | 'rest'>): number {
+  return checkedNumKeys(args.numKeys, args.rest)
+}
+
+function splitScriptArgs(
+  rest: readonly Buffer[],
+  numKeys: number,
+): { keys: Buffer[]; argv: Buffer[] } {
+  return { keys: rest.slice(0, numKeys), argv: rest.slice(numKeys) }
 }
 
 async function runLuaScript(
@@ -616,11 +645,15 @@ function functionList(
   ctx: RedisExecutionContext,
 ): RedisResult {
   const { libraryName, withCode } = parseFunctionListOptions(args.rest)
-  const libraries = ctx.server.functionRegistry
-    .list()
-    .filter(
-      library => libraryName === undefined || library.name === libraryName,
-    )
+  // LIBRARYNAME is a case-insensitive glob (`stringmatchlen(..., 1)`,
+  // redis@7.0.15 functions.c:543, #583).
+  const libraries = ctx.server.functionRegistry.list().filter(
+    library =>
+      libraryName === undefined ||
+      redisGlobMatch(libraryName, Buffer.from(library.name), {
+        nocase: true,
+      }),
+  )
   return array(
     libraries.map(library => functionLibraryReply(library, withCode)),
   )
@@ -731,6 +764,10 @@ async function runFunction(
     throw new RedisCommandError('Function not found')
   }
 
+  // FCALL reads numkeys after it finds the function, and before the
+  // function's flags are checked (functions.c fcallCommandGeneric).
+  const numKeys = fcallNumKeys(args)
+
   // A function always declares its flags (it never runs in the shebang-less
   // compatibility mode), so they are checked like a shebang's.
   const refusal = scriptRunRefusal(
@@ -742,7 +779,7 @@ async function runFunction(
     throw refusal
   }
 
-  const { keys, argv } = splitFcallArgs(args)
+  const { keys, argv } = splitScriptArgs(args.rest, numKeys)
   // A no-writes function runs read-only under FCALL too.
   return runLuaScript(fn.script, keys, argv, ctx, {
     readOnly: readOnly || fn.flags.includes('no-writes'),
@@ -750,27 +787,40 @@ async function runFunction(
   })
 }
 
+const fcallGetKeys = numkeysGetKeys(0, 2, 3)
+
+/**
+ * FCALL's keys, read as Redis's getkeys proc reads them (`atoi`) for routing
+ * and the keyspace. The numkeys errors come from {@link runFunction}, after
+ * the function lookup: `FCALL nosuch -1` is `Function not found`.
+ */
 function fcallKeys(args: FcallArgs): readonly Buffer[] {
-  validateNumberOfKeys(args)
-  return args.rest.slice(0, args.numKeys)
+  return fcallGetKeys([
+    FCALL_NAME,
+    Buffer.from(args.functionName),
+    args.numKeys,
+    ...args.rest,
+  ]).map(entry => entry.key)
 }
 
-function splitFcallArgs(args: FcallArgs): {
-  keys: Buffer[]
-  argv: Buffer[]
-} {
-  validateNumberOfKeys(args)
-  return {
-    keys: args.rest.slice(0, args.numKeys),
-    argv: args.rest.slice(args.numKeys),
+const FCALL_NAME = Buffer.from('fcall')
+
+/** FCALL's numkeys: `Bad number of keys provided` when it is not an int64. */
+function fcallNumKeys(args: FcallArgs): number {
+  let numKeys: bigint
+  try {
+    numKeys = parseInt64Token(args.numKeys)
+  } catch {
+    throw errors.badNumberOfKeys()
   }
+  return checkedNumKeys(numKeys, args.rest)
 }
 
 function parseFunctionListOptions(args: readonly Buffer[]): {
-  libraryName?: string
+  libraryName?: Buffer
   withCode: boolean
 } {
-  let libraryName: string | undefined
+  let libraryName: Buffer | undefined
   let withCode = false
 
   // Each option once; a repeat is an unknown argument (functions.c
@@ -786,7 +836,7 @@ function parseFunctionListOptions(args: readonly Buffer[]): {
       if (index + 1 >= args.length) {
         throw new RedisCommandError('library name argument was not given')
       }
-      libraryName = args[++index].toString()
+      libraryName = args[++index]
       continue
     }
 

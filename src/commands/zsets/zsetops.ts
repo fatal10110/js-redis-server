@@ -17,7 +17,7 @@ import type {
   RedisSortedSetMember,
 } from '../../state'
 import { array, integer, parseIntegerToken, scorePairs } from '../helpers'
-import { getSortedMembers } from './helpers'
+import { getSortedMembers, listpackScores } from './helpers'
 
 // ZUNIONSTORE/ZINTERSTORE/ZUNION/ZINTER/ZDIFF/ZDIFFSTORE/ZINTERCARD.
 // Source keys may be sorted sets OR plain sets (a set is treated as a zset with
@@ -275,7 +275,13 @@ export const zunionstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeUnion(sources, args.weights, args.aggregate)
-    return integer(storeResult(ctx.db, args.destination!, result))
+    return integer(
+      storeResult(
+        ctx.db,
+        args.destination!,
+        listpackScores(result, ctx.server),
+      ),
+    )
   },
 })
 
@@ -288,7 +294,13 @@ export const zinterstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeIntersection(sources, args.weights, args.aggregate)
-    return integer(storeResult(ctx.db, args.destination!, result))
+    return integer(
+      storeResult(
+        ctx.db,
+        args.destination!,
+        listpackScores(result, ctx.server),
+      ),
+    )
   },
 })
 
@@ -301,7 +313,13 @@ export const zdiffstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeDifference(sources)
-    return integer(storeResult(ctx.db, args.destination!, result))
+    return integer(
+      storeResult(
+        ctx.db,
+        args.destination!,
+        listpackScores(result, ctx.server),
+      ),
+    )
   },
 })
 

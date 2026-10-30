@@ -22,22 +22,21 @@ export function integer(value: number | bigint): RedisResult {
 }
 
 // A score as text, for replies that carry it as a plain bulk string (ZSCAN).
-// Same profile-aware spelling as a `double` reply (#451); `-0` is normalized
-// to `0` like scoreValue.
+// Same profile-aware spelling as a `double` reply (#451), `-0` included.
 export function scoreBuffer(
   score: number,
   profile: DoubleFormatProfile,
 ): Buffer {
-  return Buffer.from(
-    formatRedisDouble(Object.is(score, -0) ? 0 : score, profile),
-  )
+  return Buffer.from(formatRedisDouble(score, profile))
 }
 
 // A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching
 // scoreBuffer) and a `,double` on RESP3 — the shape real Redis uses for
-// ZSCORE/ZINCRBY/WITHSCORES scores. `-0` is normalized to `0` like Redis.
+// ZSCORE/ZINCRBY/WITHSCORES scores. A stored `-0` is spelled `-0`, as Redis
+// does; whether a sorted set keeps one is up to its writers
+// (listpackScores in zsets/helpers.ts, #512).
 export function scoreValue(score: number): RedisValue {
-  return RedisValue.double(Object.is(score, -0) ? 0 : score)
+  return RedisValue.double(score)
 }
 
 // member/score pairs for WITHSCORES-style replies: flat [m, s, ...] on RESP2,

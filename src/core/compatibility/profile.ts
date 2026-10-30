@@ -76,6 +76,7 @@ export type FeatureId =
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
+  | 'zset.listpack-integer-scores'
   | 'geo.coord-d2string'
   | 'command.quit-table-entry'
   | 'script.abort-error-suffix'

@@ -5,7 +5,11 @@ import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { RedisResult } from '../../core/redis-result'
 import { bulk, integer, scoreValue } from '../helpers'
-import { assertValidResultingScore, parseFloatArg } from './helpers'
+import {
+  assertValidResultingScore,
+  parseFloatArg,
+  storeListpackScores,
+} from './helpers'
 
 type ZaddPair = { score: number; member: Buffer }
 type ZaddCondition = 'NX' | 'XX'
@@ -102,14 +106,20 @@ export const zaddCommand = defineCommand({
       const [{ score, member }] = args.pairs
       const newScore = ctx.db.updateSortedSet(args.key, zset => {
         const existing = zset.getMember(member)
-        const nextScore = (existing?.score ?? 0) + score
+        // A new member takes the increment as is (zsetAdd), so INCR -0
+        // replies -0.
+        const nextScore = existing ? existing.score + score : score
         assertValidResultingScore(nextScore)
 
         if (!shouldApplyZaddUpdate(existing, nextScore, args.options)) {
           return null
         }
 
-        zset.setScore(member, nextScore)
+        // An equal score is no change (zsetAdd), so a stored -0 stays.
+        if (!existing || existing.score !== nextScore) {
+          zset.setScore(member, nextScore)
+          storeListpackScores(zset, [member], ctx.server)
+        }
         return nextScore
       })
       return newScore === null
@@ -119,6 +129,7 @@ export const zaddCommand = defineCommand({
 
     const replyCount = ctx.db.updateSortedSet(args.key, zset => {
       let count = 0
+      const zeroes: Buffer[] = []
       for (const { score, member } of args.pairs) {
         const existing = zset.getMember(member)
 
@@ -130,8 +141,12 @@ export const zaddCommand = defineCommand({
           if (!existing || existing.score !== score) count++
         }
 
-        zset.setScore(member, score)
+        if (!existing || existing.score !== score) {
+          zset.setScore(member, score)
+          if (Object.is(score, -0)) zeroes.push(member)
+        }
       }
+      storeListpackScores(zset, zeroes, ctx.server)
       return count
     })
     return integer(replyCount)

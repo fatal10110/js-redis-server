@@ -1918,6 +1918,28 @@ so the PR body is not a durable home for a breaking-change note.
   'client|reply' not allowed inside a transaction` and EXEC answers
   EXECABORT: the `no_multi` check reads the subcommand's command-table entry
   ([#590]).
+- EVAL, EVALSHA, EVAL_RO and EVALSHA_RO answer a negative numkeys with
+  `Number of keys can't be negative` (they answered `value is not an integer
+  or out of range`), down to -9223372036854775808. FCALL and FCALL_RO look the
+  function up first, so `FCALL nosuch -1` or `FCALL nosuch 2 a` is `Function
+  not found`, then answer `Bad number of keys provided` for a numkeys that is
+  not an integer and `Number of keys can't be negative` for a negative one
+  ([#519]).
+- MONITOR shows a command that fails its own argument check, such as `EVAL s
+  -1 a`, `SET k v EX abc` or `XREAD COUNT x STREAMS s 0`, as Redis does: the
+  check runs when the command is called. An unknown command or a wrong number
+  of arguments is still not shown ([#519]).
+- FUNCTION LIST LIBRARYNAME takes a glob pattern, matched without regard to
+  case like Redis and Valkey: `my*`, `[lm]ylib` and `MY*` all list `mylib`.
+  It used to list only a library named exactly as the pattern ([#583]).
+- A sorted-set score of -0 is kept as Redis keeps it ([#512]). On Redis 6.2
+  `ZADD z -0 m` stores -0, so ZSCORE, ZMSCORE, WITHSCORES, ZPOPMIN, ZSCAN and
+  ZUNIONSTORE show `-0`. From Redis 7.0 and on Valkey a small sorted set stores
+  0, but one past `zset-max-listpack-entries` (128) or with a member longer
+  than `zset-max-listpack-value` (64) keeps -0. `ZADD z INCR -0 n` and `ZINCRBY
+  z -0 n` for a new member reply `-0` on every version, and ZUNION ... WEIGHTS
+  -1 replies `-0` for a score of 0. A score set to the value it already has is
+  left as it is, so `ZADD z 0 m` keeps a stored -0.
 
 ## [0.3.0] and earlier
 
@@ -2020,5 +2042,6 @@ requests they contain.
 [#592]: https://github.com/fatal10110/js-redis-server/issues/592
 [#589]: https://github.com/fatal10110/js-redis-server/issues/589
 [#571]: https://github.com/fatal10110/js-redis-server/issues/571
+[#583]: https://github.com/fatal10110/js-redis-server/issues/583
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
