@@ -143,6 +143,7 @@ export const xautoclaimCommand = defineCommand({
         command.group,
         command.consumer,
         now,
+        ctx.server.profile,
       )
     }
     const result = ctx.db.updateStream(command.key, stream => {
@@ -169,6 +170,7 @@ export const xautoclaimCommand = defineCommand({
         command.group,
         command.consumer,
         now,
+        ctx.server.profile,
       )
     }
 

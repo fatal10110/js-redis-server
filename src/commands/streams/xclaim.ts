@@ -162,6 +162,7 @@ export const xclaimCommand = defineCommand({
         command.group,
         command.consumer,
         now,
+        ctx.server.profile,
       )
     }
     const claimed = ctx.db.updateStream(command.key, stream => {
@@ -191,6 +192,7 @@ export const xclaimCommand = defineCommand({
         command.group,
         command.consumer,
         now,
+        ctx.server.profile,
       )
     }
 

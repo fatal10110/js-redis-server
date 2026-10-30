@@ -160,7 +160,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
       stream.addGroup('g', {
         name: Buffer.from('g'),
         lastDeliveredId: { ms: 0, seq: 0 },
-        entriesRead: 0,
+        entriesRead: 0n,
         consumers: new Map(),
         pending: new Map(),
       })
@@ -192,7 +192,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
       stream.addGroup('g', {
         name: Buffer.from('g'),
         lastDeliveredId: { ms: 0, seq: 0 },
-        entriesRead: 0,
+        entriesRead: 0n,
         consumers: new Map(),
         pending: new Map(),
       })

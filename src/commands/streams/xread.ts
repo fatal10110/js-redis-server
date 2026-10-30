@@ -5,7 +5,6 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
-import { bulk } from '../helpers'
 import { compareStreamId, MIN_ID, parseExactId } from './ids'
 import { entryToReply } from './replies'
 import { blockOrTimeOut } from '../blocking'
@@ -113,7 +112,8 @@ export const xreadCommand = defineCommand({
     })
 
     const immediate = readStreamEntries(resolved, count, ctx)
-    if (immediate || blockMs === null) return immediate ?? bulk(null)
+    if (immediate || blockMs === null)
+      return immediate ?? RedisResult.create(RedisValue.nullArray())
 
     // From a script (7.4+; earlier ones are refused while parsing) this is
     // the timeout reply at once, even with BLOCK 0 (#563).
@@ -125,7 +125,7 @@ export const xreadCommand = defineCommand({
         timeoutMs: blockMs === 0 ? undefined : blockMs,
         attempt: () => readStreamEntries(resolved, count, ctx),
       },
-      () => bulk(null),
+      () => RedisResult.create(RedisValue.nullArray()),
     )
   },
 })

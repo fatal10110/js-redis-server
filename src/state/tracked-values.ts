@@ -23,6 +23,8 @@ import {
   ensureConsumer,
   findEntry,
   pendingEntriesSorted,
+  streamEntriesReadAfterDelivery,
+  type StreamLagRules,
 } from './stream-groups'
 import {
   cloneStreamId,
@@ -484,7 +486,7 @@ export class TrackedStreamData {
   appendEntry(id: StreamId, fields: Buffer[]): void {
     this.stream.entries.push({ id, fields })
     this.stream.lastId = id
-    this.stream.entriesAdded++
+    this.stream.entriesAdded += 1n
     this.tracker.markChanged()
   }
 
@@ -535,7 +537,7 @@ export class TrackedStreamData {
   // WATCH on the stream key, so markCommitted(), not markChanged().
   setId(
     id: StreamId,
-    options: { entriesAdded: number | null; maxDeletedId: StreamId | null },
+    options: { entriesAdded: bigint | null; maxDeletedId: StreamId | null },
   ): void {
     this.stream.lastId = cloneStreamId(id)
     if (options.entriesAdded !== null) {
@@ -553,7 +555,7 @@ export class TrackedStreamData {
   setGroupId(
     group: RedisStreamConsumerGroup,
     lastDeliveredId: StreamId,
-    entriesRead: number | null,
+    entriesRead: bigint | null,
   ): void {
     group.lastDeliveredId = cloneStreamId(lastDeliveredId)
     group.entriesRead = entriesRead
@@ -568,7 +570,11 @@ export class TrackedStreamData {
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
     id: StreamId | '>',
-    options: { count: number | null; noack: boolean },
+    options: {
+      count: number | null
+      noack: boolean
+      lagRules: StreamLagRules
+    },
     now: number,
   ): StreamDelivery[] {
     // Every read refreshes the consumer's seen time (XINFO `idle`); only
@@ -585,8 +591,13 @@ export class TrackedStreamData {
         if (compareStreamId(entry.id, group.lastDeliveredId) <= 0) continue
 
         delivered.push({ id: entry.id, fields: entry.fields })
+        group.entriesRead = streamEntriesReadAfterDelivery(
+          this.stream,
+          group,
+          entry.id,
+          options.lagRules,
+        )
         group.lastDeliveredId = cloneStreamId(entry.id)
-        group.entriesRead = (group.entriesRead ?? 0) + 1
 
         if (!noack) {
           group.pending.set(streamIdKey(entry.id), {

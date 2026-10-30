@@ -23,10 +23,12 @@ import {
   unknownSubcommandError,
 } from '../helpers'
 import {
+  byName,
   consumerPendingCount,
   pendingEntriesSorted,
   streamGroup,
-  streamLag,
+  streamGroupLag,
+  streamLagRules,
 } from './groups'
 import type { CompatibilityProfile } from '../../core/compatibility'
 import { parseLongLong } from './ids'
@@ -259,8 +261,10 @@ export const xinfoCommand = defineCommand({
     }
 
     if (command.subcommand === 'groups') {
+      // Groups and consumers are listed by name, in byte order (real Redis
+      // keeps them in a rax).
       return array(
-        Array.from(stream.groups.values(), group =>
+        byName(stream.groups.values()).map(group =>
           groupInfoReply(stream, group, profile),
         ),
       )
@@ -271,7 +275,7 @@ export const xinfoCommand = defineCommand({
     if (!group) throw errors.xgroupNoSuchGroup(command.key, command.group)
     const now = Date.now()
     return array(
-      Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
+      consumersByName(group).map(([consumerId, consumer]) =>
         consumerInfoReply(group, consumerId, consumer, now, profile),
       ),
     )
@@ -293,16 +297,27 @@ function limited<T>(items: T[], count: number): T[] {
   return count === 0 ? items : items.slice(0, count)
 }
 
-// A group's `entries-read` / `lag` pair (Redis 7.0+).
+function consumersByName(
+  group: RedisStreamConsumerGroup,
+): [string, RedisStreamConsumer][] {
+  return Array.from(group.consumers.entries()).sort(([, a], [, b]) =>
+    Buffer.compare(a.name, b.name),
+  )
+}
+
+// A group's `entries-read` / `lag` pair (Redis 7.0+); either is nil when
+// unknown.
 function groupLagFields(
   stream: RedisStreamData,
   group: RedisStreamConsumerGroup,
+  profile: CompatibilityProfile,
 ): RedisValue[] {
+  const lag = streamGroupLag(stream, group, streamLagRules(profile))
   return [
     bulkString('entries-read'),
     group.entriesRead === null ? nullBulk() : integerValue(group.entriesRead),
     bulkString('lag'),
-    integerValue(streamLag(stream, group)),
+    lag === null ? nullBulk() : integerValue(lag),
   ]
 }
 
@@ -357,7 +372,7 @@ function streamInfoReply(
     ),
     bulkString('groups'),
     RedisValue.array(
-      Array.from(stream.groups.values(), group =>
+      byName(stream.groups.values()).map(group =>
         fullGroupInfoReply(stream, group, options.count, profile),
       ),
     ),
@@ -380,7 +395,7 @@ function groupInfoReply(
     bulkString('last-delivered-id'),
     streamIdValue(group.lastDeliveredId),
     ...(profile.has('stream.consumer-group-lag')
-      ? groupLagFields(stream, group)
+      ? groupLagFields(stream, group, profile)
       : []),
   ])
 }
@@ -397,7 +412,7 @@ function fullGroupInfoReply(
     bulkString('last-delivered-id'),
     streamIdValue(group.lastDeliveredId),
     ...(profile.has('stream.consumer-group-lag')
-      ? groupLagFields(stream, group)
+      ? groupLagFields(stream, group, profile)
       : []),
     bulkString('pel-count'),
     integerValue(group.pending.size),
@@ -410,18 +425,60 @@ function fullGroupInfoReply(
             group.consumers.get(pending.consumerId)?.name ??
               Buffer.from(pending.consumerId, 'hex'),
           ),
-          integerValue(Math.max(0, Date.now() - pending.deliveredAt)),
+          // The last delivery, as a Unix time in milliseconds.
+          integerValue(pending.deliveredAt),
           integerValue(pending.deliveryCount),
         ]),
       ),
     ),
     bulkString('consumers'),
     RedisValue.array(
-      Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
-        consumerInfoReply(group, consumerId, consumer, Date.now(), profile),
+      consumersByName(group).map(([consumerId, consumer]) =>
+        fullConsumerInfoReply(group, consumerId, consumer, count, profile),
       ),
     ),
   ])
+}
+
+// A consumer in XINFO STREAM FULL: its seen (and, 7.2+, active) time as Unix
+// times in milliseconds, and its own PEL as [id, delivery time, count] rows.
+function fullConsumerInfoReply(
+  group: RedisStreamConsumerGroup,
+  consumerId: string,
+  consumer: RedisStreamConsumer,
+  count: number,
+  profile: CompatibilityProfile,
+): RedisValue {
+  const pending = pendingEntriesSorted(group).filter(
+    entry => entry.consumerId === consumerId,
+  )
+  const fields: RedisValue[] = [
+    bulkString('name'),
+    bulkString(consumer.name),
+    bulkString('seen-time'),
+    integerValue(consumer.seenAt),
+  ]
+  if (profile.has('stream.consumer-active-time')) {
+    fields.push(
+      bulkString('active-time'),
+      integerValue(consumer.activeAt ?? -1),
+    )
+  }
+  fields.push(
+    bulkString('pel-count'),
+    integerValue(pending.length),
+    bulkString('pending'),
+    RedisValue.array(
+      limited(pending, count).map(entry =>
+        RedisValue.array([
+          streamIdValue(entry.id),
+          integerValue(entry.deliveredAt),
+          integerValue(entry.deliveryCount),
+        ]),
+      ),
+    ),
+  )
+  return kvMap(fields)
 }
 
 function consumerInfoReply(
