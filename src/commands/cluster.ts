@@ -352,8 +352,9 @@ function clusterInfo(
     local?.role === 'replica' ? (local.masterId ?? localNodeId) : localNodeId
   const myEpoch = masterList.findIndex(master => master.id === myMasterId) + 1
 
+  // Real CLUSTER INFO has no cluster_enabled line (INFO's cluster section
+  // does).
   const lines = [
-    'cluster_enabled:1',
     'cluster_state:ok',
     `cluster_slots_assigned:${REDIS_CLUSTER_SLOT_COUNT}`,
     `cluster_slots_ok:${REDIS_CLUSTER_SLOT_COUNT}`,

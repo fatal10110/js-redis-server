@@ -322,6 +322,13 @@ its master. Inside
 a transaction, the slot of the _first_ keyed command is pinned per-session in a
 `WeakMap` so every subsequent queued command must hash to the same slot.
 
+On a cluster node every command is planned the way MULTI queues one
+(`CommandExecutor.planForQueue`, a script's `redis.call` included): Redis routes
+a command after the arity check and before the command checks its own
+arguments, so `EVAL s 1x k` with `k` on another node is `MOVED`, and a parse
+error waits in the plan behind the policy chain. MOVE's "not allowed in cluster
+mode" refusal comes after routing too, as it lives in Redis's `moveCommand`.
+
 ## State & data model
 
 ```mermaid
@@ -544,7 +551,8 @@ for the client-facing view of this negotiation.
 
 [`createRedisCluster`](../src/cluster.ts#L80) computes a slot-range topology
 ([`RedisClusterTopology`](../src/state/cluster-topology.ts#L68), 16384 slots
-split evenly across masters, with optional replicas), then spins up one
+split across masters as `redis-cli --cluster create` does, with optional
+replicas), then spins up one
 `Resp2Server` per node — each with its **own** `RedisServerState` (so data is
 genuinely partitioned) but **sharing** the topology object, registered with:
 

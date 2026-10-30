@@ -211,10 +211,10 @@ export class CommandExecutor {
    * network client.
    *
    * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Inside MULTI, and on a
-   * MONITOR connection, a command is planned the way Redis's `processCommand`
-   * queues it (see {@link planForQueue}). Execution-time errors are handled inside
-   * {@link executePlan}.
+   * caught here and converted into a RESP error reply. Inside MULTI, on a
+   * MONITOR connection, and in a cluster, a command is planned the way Redis's
+   * `processCommand` queues it (see {@link planForQueue}). Execution-time errors
+   * are handled inside {@link executePlan}.
    */
   async executeRaw(
     rawCommand: Buffer | string,
@@ -225,8 +225,13 @@ export class CommandExecutor {
       // A MONITOR connection is refused the keyspace in processCommand, after
       // the arity check but before the command parses its arguments, so its
       // parse errors wait behind the policy chain as a queued command's do.
+      // A cluster routes the command there too (getNodeByQuery: MOVED,
+      // CROSSSLOT, CLUSTERDOWN), so `EVAL s 1x k` with `k` on another node is
+      // MOVED, not the numkeys error (#519).
       const plan =
-        ctx.session.mode === 'transaction' || ctx.session.monitoring
+        ctx.session.mode === 'transaction' ||
+        ctx.session.monitoring ||
+        ctx.server.clusterEnabled
           ? this.planForQueue(rawCommand, rawArgs)
           : this.plan(rawCommand, rawArgs)
       return await this.executePlan(plan, ctx)
@@ -254,15 +259,20 @@ export class CommandExecutor {
    * raw arguments ({@link rawCommandKeys}), as Redis routes a queued command
    * without running its parser. The transaction commands themselves (EXEC,
    * DISCARD, ...) run at once, so their parse errors are answered now.
+   *
+   * A cluster plans every command this way, a script's `redis.call` included
+   * (`options.inScript`, as for {@link plan}): Redis routes it by these keys
+   * before the command checks its arguments.
    */
-  private planForQueue(
+  planForQueue(
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
+    options: { inScript?: boolean } = {},
   ): CommandPlan {
     const definition = this.lookup(rawCommand, rawArgs)
 
     try {
-      return this.createPlan(definition, rawCommand, rawArgs)
+      return this.createPlan(definition, rawCommand, rawArgs, options)
     } catch (err) {
       if (
         !(err instanceof RedisCommandError) ||

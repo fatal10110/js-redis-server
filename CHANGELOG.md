@@ -1883,6 +1883,17 @@ so the PR body is not a durable home for a breaking-change note.
   is WRONGTYPE. LPOS RANK / COUNT / MAXLEN take int64; RANK
   -9223372036854775808 is out of range from Redis 7.2 and acts as RANK -1
   before ([#592]).
+- Cluster mode: a keyed command is routed before it checks its own
+  arguments, as Redis's `processCommand` does, so `EVAL s 1x k`, `SET k 1 EX
+  x` or `BLPOP k x` with `k` on another node answer `MOVED` (or `CROSSSLOT` /
+  `CLUSTERDOWN`) instead of the argument error, outside MULTI and from a
+  script's `redis.call` alike. MOVE routes first too: `MOVE k 1` for a key on
+  another node is `MOVED`, and `MOVE k x` for a local key answers `MOVE is not
+  allowed in cluster mode` (Valkey 9's cluster databases still parse it).
+  `createRedisCluster` and `computeSlotRange` split the slots as `redis-cli
+  --cluster create` does (3 masters: 0-5460, 5461-10922, 10923-16383, was
+  10921 / 10922), and CLUSTER INFO no longer sends a `cluster_enabled` line
+  ([#519]).
 
 ## [0.3.0] and earlier
 
