@@ -90,6 +90,8 @@ describe('compatibility profiles', () => {
     const redis72 = resolveCompatibilityProfile('redis-7.2')
     assert.strictEqual(redis72.has('pubsub.resp3-publish-reply-first'), true)
     assert.strictEqual(redis72.has('client.kill.maxage'), false)
+    assert.strictEqual(redis72.has('client.kill.id-positive'), true)
+    assert.strictEqual(redis72.has('client.kill.type-primary'), false)
 
     const redis74 = resolveCompatibilityProfile('redis-7.4')
     assert.strictEqual(redis74.has('client.kill.maxage'), true)
@@ -108,5 +110,12 @@ describe('compatibility profiles', () => {
     assert.strictEqual(valkey9.has('pubsub.resp3-publish-reply-first'), true)
     assert.strictEqual(valkey9.has('cluster.multi-db'), true)
     assert.strictEqual(valkey9.has('client.kill.maxage'), true)
+    assert.strictEqual(valkey9.has('client.kill.id-list'), true)
+    assert.strictEqual(redis62.has('client.kill.id-positive'), false)
+
+    const valkey8 = resolveCompatibilityProfile('valkey-8.0')
+    assert.strictEqual(valkey8.has('client.kill.maxage'), true)
+    assert.strictEqual(valkey8.has('client.kill.type-primary'), true)
+    assert.strictEqual(valkey8.has('client.kill.id-list'), false)
   })
 })

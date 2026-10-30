@@ -50,7 +50,7 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
   unknown command), and `flags`, `multi`, `watch`, `idle` follow the
   connection (`P`, `x`, `b`, `d`, `r`, `e`). Buffer, memory and network
   counters read 0. On RESP3 both replies are `txt` verbatim strings.
-- [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
+- [x] `CLIENT KILL ip:port | [ID client-id] [ADDR ip:port] [LADDR ip:port] [USER username] [TYPE type] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 8.0+ profiles, `TYPE primary` and Valkey 9.0's id list (`ID id [id ...]`) on Valkey only. Valkey 9.0's `NOT-*`, `FLAGS`, `NAME`, `IDLE`, `LIB-NAME`, `LIB-VER`, `DB`, `CAPA` and `IP` filters are not modelled
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
 

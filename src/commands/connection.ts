@@ -19,7 +19,7 @@ import {
   bulk,
   integer,
   ok,
-  parseIntegerToken,
+  parseInt64Token,
   simpleString,
   unknownSubcommandError,
 } from './helpers'
@@ -272,8 +272,8 @@ function formatClientLine(
   const redis7 = profile.has('client.list.redis7-fields')
   const fields = [
     `id=${getClientId(session)}`,
-    `addr=${session.clientAddress ?? '127.0.0.1:0'}`,
-    `laddr=${session.localAddress ?? session.clientAddress ?? '127.0.0.1:0'}`,
+    `addr=${clientPeerAddress(session)}`,
+    `laddr=${clientLocalAddress(session)}`,
     `fd=${session.fd ?? -1}`,
     `name=${name}`,
     `age=${clientAgeSeconds(session)}`,
@@ -346,10 +346,56 @@ function clientFlags(session: RedisClientSession): string {
   return flags === '' ? 'N' : flags
 }
 
-type ClientKillOptions = {
-  id?: number
-  maxAgeSeconds?: number
+/** The CLIENT KILL filter; an unset field matches every client. */
+type ClientKillFilter = {
+  /** `undefined` matches any id; an empty set (Valkey 9.0 `ID` with no ids) none. */
+  ids?: Set<bigint>
+  addr?: string
+  laddr?: string
+  type?: ClientType
+  maxAgeSeconds?: bigint
   skipMe: boolean
+}
+
+/**
+ * `getClientType`: master links and replicas have their own types, then a
+ * subscribed client is `pubsub`. A MONITOR client is `normal`. This server
+ * has neither replication links nor replicas.
+ */
+type ClientType = 'normal' | 'master' | 'replica' | 'pubsub'
+
+function clientType(session: RedisClientSession): ClientType {
+  return session.pubsubSubscriptionCount > 0 ? 'pubsub' : 'normal'
+}
+
+/** `getClientTypeByName`, case-insensitive; Valkey 8.0 added `primary`. */
+function clientTypeByName(
+  name: string,
+  profile: CompatibilityProfile,
+): ClientType | undefined {
+  switch (asciiLowerCase(name)) {
+    case 'normal':
+      return 'normal'
+    case 'slave':
+    case 'replica':
+      return 'replica'
+    case 'pubsub':
+      return 'pubsub'
+    case 'master':
+      return 'master'
+    case 'primary':
+      return profile.has('client.kill.type-primary') ? 'master' : undefined
+    default:
+      return undefined
+  }
+}
+
+function clientPeerAddress(session: RedisClientSession): string {
+  return session.clientAddress ?? '127.0.0.1:0'
+}
+
+function clientLocalAddress(session: RedisClientSession): string {
+  return session.localAddress ?? clientPeerAddress(session)
 }
 
 function clientAgeSeconds(session: RedisClientSession): number {
@@ -363,84 +409,163 @@ function clientIdleSeconds(session: RedisClientSession): number {
   )
 }
 
-function parseClientKillOptions(
-  args: readonly Buffer[],
-  ctx: RedisExecutionContext,
-): ClientKillOptions {
-  if (args.length === 0) {
-    throw new WrongNumberOfArgumentsError('client|kill')
+const CLIENT_ID_NOT_POSITIVE = 'client-id should be greater than 0'
+
+/** A signed 64-bit integer token (`string2ll`), or `undefined`. */
+function tryParseInt64(token: Buffer): bigint | undefined {
+  try {
+    return parseInt64Token(token)
+  } catch {
+    return undefined
   }
+}
 
-  const options: ClientKillOptions = { skipMe: true }
+/**
+ * The filter form of CLIENT KILL (`clientKillCommand` in networking.c), the
+ * options parsed left to right and the first bad one answered. An option
+ * without a value is a syntax error, except Valkey 9.0's `ID`, which takes
+ * every integer after it (and none) and leaves the first non-integer to be
+ * read as the next option. NOT-* and Valkey 9.0's other new filters are not
+ * modelled and stay syntax errors.
+ */
+function parseClientKillFilter(
+  args: readonly Buffer[],
+  profile: CompatibilityProfile,
+): ClientKillFilter {
+  const filter: ClientKillFilter = { skipMe: true }
 
-  for (let i = 0; i < args.length; i++) {
-    const option = args[i].toString().toLowerCase()
+  for (let i = 0; i < args.length; i += 2) {
+    const option = asciiLowerCase(args[i].toString())
 
-    if (option === 'id') {
-      const value = args[++i]
-      if (!value) {
-        throw errors.syntax()
+    if (option === 'id' && profile.has('client.kill.id-list')) {
+      const ids = (filter.ids ??= new Set())
+      for (i++; i < args.length; i++) {
+        const id = tryParseInt64(args[i])
+        if (id === undefined) {
+          break
+        }
+        if (id < 1n) {
+          throw new RedisCommandError(CLIENT_ID_NOT_POSITIVE)
+        }
+        ids.add(id)
       }
-      options.id = parseIntegerToken(value)
+      // `args[i]` is the next option; the loop step adds 2.
+      i -= 2
       continue
     }
 
-    if (option === 'maxage') {
-      if (!ctx.server.profile.has('client.kill.maxage')) {
-        throw errors.syntax()
-      }
+    const value = args[i + 1]
+    if (value === undefined) {
+      throw errors.syntax()
+    }
 
-      const value = args[++i]
-      if (!value) {
-        throw errors.syntax()
+    if (option === 'id') {
+      if (profile.has('client.kill.id-positive')) {
+        const id = tryParseInt64(value)
+        if (id === undefined || id < 1n) {
+          throw new RedisCommandError(CLIENT_ID_NOT_POSITIVE)
+        }
+        filter.ids = new Set([id])
+      } else {
+        // 6.2 takes any long long; 0 means "no id filter".
+        const id = parseInt64Token(value)
+        filter.ids = id === 0n ? undefined : new Set([id])
       }
+      continue
+    }
 
-      options.maxAgeSeconds = parseIntegerToken(value)
-      if (options.maxAgeSeconds < 0) {
-        throw new RedisCommandError('value is out of range')
+    if (option === 'maxage' && profile.has('client.kill.maxage')) {
+      const maxAge = tryParseInt64(value)
+      if (maxAge === undefined) {
+        throw new RedisCommandError('maxage is not an integer or out of range')
+      }
+      if (maxAge <= 0n) {
+        throw new RedisCommandError('maxage should be greater than 0')
+      }
+      filter.maxAgeSeconds = maxAge
+      continue
+    }
+
+    if (option === 'type') {
+      const name = value.toString()
+      const type = clientTypeByName(name, profile)
+      if (type === undefined) {
+        throw new RedisCommandError(`Unknown client type '${name}'`)
+      }
+      filter.type = type
+      continue
+    }
+
+    if (option === 'addr') {
+      filter.addr = value.toString()
+      continue
+    }
+
+    if (option === 'laddr') {
+      filter.laddr = value.toString()
+      continue
+    }
+
+    if (option === 'user') {
+      // `default` is the only user (see DEFAULT_ACL_USER), so every client
+      // is logged in as it and the filter matches them all.
+      const user = value.toString()
+      if (user !== DEFAULT_ACL_USER) {
+        throw new RedisCommandError(`No such user '${user}'`)
       }
       continue
     }
 
     if (option === 'skipme') {
-      const value = args[++i]?.toString().toLowerCase()
-      if (value === 'yes') {
-        options.skipMe = true
+      const skipMe = asciiLowerCase(value.toString())
+      if (skipMe === 'yes') {
+        filter.skipMe = true
         continue
       }
-      if (value === 'no') {
-        options.skipMe = false
+      if (skipMe === 'no') {
+        filter.skipMe = false
         continue
       }
-      throw errors.syntax()
     }
 
     throw errors.syntax()
   }
 
-  return options
+  return filter
 }
 
 function matchesClientKillFilter(
   session: RedisClientSession,
   currentSession: RedisClientSession,
-  options: ClientKillOptions,
+  filter: ClientKillFilter,
 ): boolean {
-  if (options.skipMe && session === currentSession) {
+  if (filter.addr !== undefined && clientPeerAddress(session) !== filter.addr) {
     return false
   }
-
-  if (options.id !== undefined && getClientId(session) !== options.id) {
-    return false
-  }
-
   if (
-    options.maxAgeSeconds !== undefined &&
-    clientAgeSeconds(session) < options.maxAgeSeconds
+    filter.laddr !== undefined &&
+    clientLocalAddress(session) !== filter.laddr
   ) {
     return false
   }
-
+  if (filter.type !== undefined && clientType(session) !== filter.type) {
+    return false
+  }
+  if (
+    filter.ids !== undefined &&
+    !filter.ids.has(BigInt(getClientId(session)))
+  ) {
+    return false
+  }
+  if (filter.skipMe && session === currentSession) {
+    return false
+  }
+  if (
+    filter.maxAgeSeconds !== undefined &&
+    BigInt(clientAgeSeconds(session)) < filter.maxAgeSeconds
+  ) {
+    return false
+  }
   return true
 }
 
@@ -740,12 +865,26 @@ export const clientCommand = defineCommand({
     }
 
     if (subcommand === 'kill') {
-      const options = parseClientKillOptions(args.args, ctx)
+      const killArgs = args.args
+      if (killArgs.length === 0) {
+        // Only 6.2 gets here: 7.0+ answer the `client|kill` arity error first.
+        throw errors.syntax()
+      }
+      // One argument is always the legacy `CLIENT KILL <ip:port>`, which may
+      // kill the caller and answers +OK or `No such client`.
+      const legacy = killArgs.length === 1
+      const filter: ClientKillFilter = legacy
+        ? { addr: killArgs[0].toString(), skipMe: false }
+        : parseClientKillFilter(killArgs, ctx.server.profile)
       const victims = ctx.server
         .getConnectedClients()
         .filter(session =>
-          matchesClientKillFilter(session, ctx.session, options),
+          matchesClientKillFilter(session, ctx.session, filter),
         )
+
+      if (legacy && victims.length === 0) {
+        throw new RedisCommandError('No such client')
+      }
 
       for (const victim of victims) {
         if (victim !== ctx.session) {
@@ -753,11 +892,14 @@ export const clientCommand = defineCommand({
         }
       }
 
+      const reply = legacy
+        ? RedisValue.simpleString('OK')
+        : RedisValue.integer(victims.length)
       if (!victims.includes(ctx.session)) {
-        return integer(victims.length)
+        return RedisResult.create(reply)
       }
 
-      return RedisResult.create(RedisValue.integer(victims.length), {
+      return RedisResult.create(reply, {
         afterReply: () => ctx.session.disconnect('client kill'),
       })
     }

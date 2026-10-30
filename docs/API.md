@@ -143,7 +143,10 @@ Current profile gates:
 | `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |
 | `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
 | `COMMAND INFO` flags, ACL categories, tips and key specs: the real command table of the profile's version (captured from redis-server 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.6 and valkey 8.0.11 / 9.0.6; Valkey 7.2 reads Redis 7.2's), for example `variable_flags` on the `GEORADIUS` `STORE` / `STOREDIST` key specs. A preset versioned below its captured patch answers as that patch: `redis-6.2` (6.2.14) reports 6.2.24's `denyoom` on `SUBSCRIBE` / `PSUBSCRIBE`, which 6.2.14 lacks | per version | per version |
-| `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
+| `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-8.0+` |
+| `CLIENT KILL ID` `client-id should be greater than 0` (6.2: any integer, `ID 0` is no filter) | `redis-7.0+` | all |
+| `CLIENT KILL TYPE primary` | never | `valkey-8.0+` |
+| `CLIENT KILL ID id [id ...]` (several ids after one `ID`) | never | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
