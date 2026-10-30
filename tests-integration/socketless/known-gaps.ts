@@ -808,6 +808,12 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'ZRANGEBYLEX validates LIMIT clause',
     'lex commands reject wrong arity',
   ]),
+  todo('node-redis/zset/limit-int64.test.ts', CAUSE.clusterSendCommand, [
+    'LIMIT refuses values outside int64 and non-canonical integers',
+    'ZRANGE BYSCORE|BYLEX and ZRANGESTORE LIMIT take int64 bounds',
+    'ZRANGEBYLEX and ZREVRANGEBYLEX LIMIT take int64 bounds',
+    'ZRANGEBYSCORE and ZREVRANGEBYSCORE LIMIT take int64 bounds',
+  ]),
   todo(
     'node-redis/zset/modern-range.test.ts',
     missing(

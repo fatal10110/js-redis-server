@@ -275,6 +275,12 @@ export const errors = Object.freeze({
   timeoutNotFloat: () =>
     new RedisCommandError('timeout is not a float or out of range'),
   timeoutNegative: () => new RedisCommandError('timeout is negative'),
+  timeoutOutOfRange: () => new RedisCommandError('timeout is out of range'),
+  /** `getRangeLongFromObjectOrReply(-LONG_MAX, LONG_MAX)`, Redis 7.2+. */
+  lposRankOutOfRange: () =>
+    new RedisCommandError(
+      'value is out of range, value must between -9223372036854775807 and 9223372036854775807',
+    ),
   indexOutOfRange: () => new RedisCommandError('index out of range'),
   noSuchKey: () => new RedisCommandError('no such key'),
 

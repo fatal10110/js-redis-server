@@ -455,7 +455,7 @@ function clientPause(
     if (timeout <= LLONG_MAX - now) {
       endMs = Number(timeout + now)
     } else if (profile.has('timeout.ms-overflow-check')) {
-      throw new RedisCommandError('timeout is out of range')
+      throw errors.timeoutOutOfRange()
     } else {
       // 6.2 / 7.0: `tval + now` wraps negative, an end long past.
       endMs = -1

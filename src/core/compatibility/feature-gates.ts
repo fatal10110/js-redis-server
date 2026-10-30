@@ -108,9 +108,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // when it is the last one (`argc == 4`), so `CLIENT PAUSE 10 WRITE x` is an
   // ALL pause. Redis and Valkey 8.0 answer the subcommand syntax error.
   'client.pause.extra-args': { valkey: '8.1.0' },
-  // Millisecond timeouts (`getTimeoutFromObjectOrReply`, UNIT_MILLISECONDS:
-  // CLIENT PAUSE) refuse an end time past LLONG_MAX with `timeout is out of
-  // range` from Redis 7.2 (timeout.c); 6.2 / 7.0 let `tval + now` overflow.
+  // Timeouts (`getTimeoutFromObjectOrReply`: CLIENT PAUSE and XREAD BLOCK in
+  // milliseconds, BLPOP and the other blocking commands in seconds) refuse an
+  // end time past LLONG_MAX with `timeout is out of range` from Redis 7.2
+  // (timeout.c); 6.2 / 7.0 let `tval + now` overflow, and cast a seconds
+  // timeout of LLONG_MAX ms or more (`inf`, `1e400`) to a negative one.
   'timeout.ms-overflow-check': { redis: '7.2.0', valkey: '7.2.0' },
   // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
   // per version; the order is fixed and every field is always printed. From
@@ -515,4 +517,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `maxmemory-samples` capped at 64 instead of INT_MAX: redis@7.4.0
   // config.c:3163 (7.2.11 still INT_MAX), valkey@8.0.0 (7.2.4 INT_MAX).
   'config.maxmemory-samples-max-64': { redis: '7.4.0', valkey: '8.0.0' },
+  // Blocking timeouts in seconds round up to whole milliseconds
+  // (`ceill(ftval * 1000.0)`) from redis@7.0.8 timeout.c:174; redis@7.0.7 and
+  // 6.2.14 truncate, so a timeout under 1 ms (`0.0001`) blocks forever there.
+  'timeout.ceil-ms': { redis: '7.0.8', valkey: '7.2.0' },
+  // LPOS RANK is read with `getRangeLongFromObjectOrReply(-LONG_MAX,
+  // LONG_MAX)` from redis@7.2.0 t_list.c:974 (valkey@7.2.4 the same):
+  // RANK -9223372036854775808 is out of range. redis@7.0.15 takes it, and its
+  // negation wraps to itself, so it acts as RANK -1.
+  'lpos.rank-range-check': { redis: '7.2.0', valkey: '7.2.0' },
 }

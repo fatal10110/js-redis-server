@@ -172,17 +172,63 @@ export function parseInt64Token(token: Buffer): bigint {
   return value
 }
 
-export function parsePositiveExpireToken(
+export type ExpireUnit = 'EX' | 'PX' | 'EXAT' | 'PXAT'
+
+/**
+ * The EX / PX / EXAT / PXAT time of SET, SETEX, PSETEX and GETEX as an
+ * absolute deadline in ms, checked as `getExpireMillisecondsOrReply`
+ * (t_string.c) does (#592): any int64, but `invalid expire time` when it is
+ * not positive, when seconds overflow on the way to ms, or when the deadline
+ * passes LLONG_MAX. A deadline past the safe-integer range is kept as the
+ * nearest double.
+ */
+export function stringExpireDeadlineMs(
   token: Buffer,
+  unit: ExpireUnit,
   commandName: string,
   profile: CompatibilityProfile,
+  now = Date.now(),
 ): number {
-  const value = parseIntegerToken(token)
-  if (value <= 0) {
+  const value = parseInt64Token(token)
+  const seconds = unit === 'EX' || unit === 'EXAT'
+  if (value <= 0n || (seconds && value > INT64_MAX / 1000n)) {
     throw errors.invalidExpireTime(commandName, profile)
   }
 
-  return value
+  let ms = seconds ? value * 1000n : value
+  if (unit === 'EX' || unit === 'PX') ms += BigInt(now)
+  if (ms > INT64_MAX) {
+    throw errors.invalidExpireTime(commandName, profile)
+  }
+  return Number(ms)
+}
+
+/**
+ * The time of EXPIRE / PEXPIRE / EXPIREAT / PEXPIREAT as an absolute deadline
+ * in ms, checked as `expireGenericCommand` (expire.c) does (#592): any int64,
+ * negative included, but `invalid expire time` when seconds overflow on the
+ * way to ms or adding `basetime` (now, or 0 for the *AT forms) would.
+ */
+export function keyExpireDeadlineMs(
+  token: Buffer,
+  seconds: boolean,
+  basetime: number,
+  commandName: string,
+  profile: CompatibilityProfile,
+): number {
+  let when = parseInt64Token(token)
+  if (seconds) {
+    if (when > INT64_MAX / 1000n || when < INT64_MIN / 1000n) {
+      throw errors.invalidExpireTime(commandName, profile)
+    }
+    when *= 1000n
+  }
+
+  const base = BigInt(basetime)
+  if (when > INT64_MAX - base) {
+    throw errors.invalidExpireTime(commandName, profile)
+  }
+  return Number(when + base)
 }
 
 export {

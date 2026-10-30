@@ -1861,6 +1861,28 @@ so the PR body is not a durable home for a breaking-change note.
   parameter are rejected like on real Redis instead of matching `WITHSCORES`,
   `STORE` and `tcp-keepalive` ([#508]). `GEODIST ... constructor` no longer
   passes as a unit.
+- `LIMIT offset count` of ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZRANGEBYLEX,
+  ZREVRANGEBYLEX, ZRANGE ... BYSCORE|BYLEX and ZRANGESTORE takes the full int64
+  range (`LIMIT 0 9223372036854775807`, `LIMIT -9223372036854775808 1`) and
+  refuses leading zeros (`LIMIT 00 01`), as real Redis does ([#576]).
+- Blocking timeouts in seconds (BLPOP, BRPOP, BLMOVE, BLMPOP, BZPOPMIN,
+  BZPOPMAX, BZMPOP) are parsed like `string2ld()`: a leading or trailing
+  space, an empty token or `0b11` is `timeout is not a float or out of range`,
+  hex floats (`0x1.8p1`) are accepted, and a bad timeout beats WRONGTYPE.
+  `inf` / `1e400` / `1e19` answer `timeout is out of range` from Redis 7.2 and
+  `timeout is negative` on 6.2 / 7.0; `-0.0001` blocks forever; on 6.2 a
+  timeout under 1 ms blocks forever (Redis 7.0.8 rounds up). XREAD /
+  XREADGROUP BLOCK takes any int64 (`BLOCK 9223372036854775807` is out of
+  range from 7.2). A timeout past 24.8 days no longer fires at once ([#577]).
+- SET / SETEX / PSETEX / GETEX and EXPIRE / PEXPIRE / EXPIREAT / PEXPIREAT
+  take int64 times and answer `invalid expire time` where the end time
+  overflows (`SET k v EX 9223372036854775807`, `EXPIRE k
+  -9223372036854775808`), instead of `value is not an integer or out of
+  range`; `PXAT 9223372036854775807` is accepted. GETEX checks its time only
+  after finding a string, so `GETEX missing EX 0` is nil and `GETEX list EX 0`
+  is WRONGTYPE. LPOS RANK / COUNT / MAXLEN take int64; RANK
+  -9223372036854775808 is out of range from Redis 7.2 and acts as RANK -1
+  before ([#592]).
 
 ## [0.3.0] and earlier
 
@@ -1957,5 +1979,8 @@ requests they contain.
 [#517]: https://github.com/fatal10110/js-redis-server/issues/517
 [#506]: https://github.com/fatal10110/js-redis-server/issues/506
 [#508]: https://github.com/fatal10110/js-redis-server/issues/508
+[#576]: https://github.com/fatal10110/js-redis-server/issues/576
+[#577]: https://github.com/fatal10110/js-redis-server/issues/577
+[#592]: https://github.com/fatal10110/js-redis-server/issues/592
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

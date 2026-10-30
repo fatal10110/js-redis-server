@@ -14,6 +14,7 @@ import {
   type LexLimit,
   parseLexBoundArg,
   parseLexLimitInt,
+  parseRangeLimitInt,
 } from './lex'
 import { getSortedMembers } from './helpers'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
@@ -95,8 +96,8 @@ function parseZrangeOptions(
       const countTok = input[cursor + 2]
       if (!offsetTok || !countTok) throw errors.syntax()
       limit = {
-        offset: parseLexLimitInt(offsetTok),
-        count: parseLexLimitInt(countTok),
+        offset: parseRangeLimitInt(offsetTok),
+        count: parseRangeLimitInt(countTok),
       }
       cursor += 3
       continue
