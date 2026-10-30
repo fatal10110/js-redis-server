@@ -15,6 +15,7 @@ import {
   type CompatibilityProfile,
 } from './compatibility/profile'
 import { commandTableEntry } from './compatibility/command-table'
+import { mayReplicate } from './compatibility/may-replicate'
 import type { CommandDefinition, CommandPlan } from './command-definition'
 import { failsTableArity, lookupTableArity } from './command-arity'
 import { formatRedisDouble, type DoubleFormatProfile } from './double-format'
@@ -25,7 +26,12 @@ import {
   UnknownSubcommandError,
   errors,
 } from './redis-error'
-import type { RedisExecutionContext, ScriptSlotPin } from './redis-context'
+import type {
+  ParkHandler,
+  RedisExecutionContext,
+  ScriptDatabase,
+  ScriptSlotPin,
+} from './redis-context'
 import { RedisValue } from './redis-value'
 import type { RespVersion } from './resp-encoder'
 
@@ -34,6 +40,8 @@ type LuaHostState = {
   readOnly: boolean
   /** The running script's slot pin, when it must keep to one slot. */
   scriptSlot: ScriptSlotPin | null
+  /** The database the running script has selected (#566). */
+  database: ScriptDatabase
   // The protocol the running script selected with `redis.setresp()`. It picks
   // the shape `redis.call` replies take in Lua — not the client's protocol.
   resp: RespVersion
@@ -48,6 +56,7 @@ export class RedisLuaRuntime {
     ctx: null,
     readOnly: false,
     scriptSlot: null,
+    database: { selected: null },
     resp: 2,
   }
   private readonly engine: LuaEngine
@@ -96,6 +105,8 @@ export class RedisLuaRuntime {
     this.hostState.ctx = ctx
     this.hostState.readOnly = options?.readOnly ?? false
     this.hostState.scriptSlot = options?.scriptSlot ?? null
+    // Each run starts on the caller's database (#566).
+    this.hostState.database = { selected: null }
     this.hostState.resp = 2
 
     try {
@@ -191,7 +202,7 @@ export class RedisLuaRuntime {
     let plan: CommandPlan | null = null
     let commandError: RedisCommandError | null = null
     try {
-      plan = ctx.executor.plan(args[0], args.slice(1))
+      plan = ctx.executor.plan(args[0], args.slice(1), { inScript: true })
     } catch (err) {
       // From 7.0 an unknown container subcommand fails the same command
       // lookup as an unknown command (#439). Only `plan()`'s lookup throws it
@@ -250,7 +261,7 @@ export class RedisLuaRuntime {
     }
 
     // Read-only scripts (EVAL_RO) are 7.0+, so this has no 6.2 wording.
-    if (this.hostState.readOnly && mayWrite(definition)) {
+    if (this.hostState.readOnly && mayWrite(definition, lookup.name, profile)) {
       return scriptRejection(
         'read-only-write',
         new RedisCommandError(
@@ -268,7 +279,11 @@ export class RedisLuaRuntime {
 
     const result = ctx.executor.executePlanSync(
       plan,
-      createLuaCallContext(ctx, this.hostState.scriptSlot),
+      createLuaCallContext(
+        ctx,
+        this.hostState.scriptSlot,
+        this.hostState.database,
+      ),
     )
     return redisValueToLuaReply(
       normalizeScriptCommandValue(result.value),
@@ -279,25 +294,19 @@ export class RedisLuaRuntime {
 }
 
 /**
- * Commands Redis flags `may-replicate` that a script may call. A read-only
- * script refuses them as it refuses writes (`CMD_WRITE|CMD_MAY_REPLICATE` in
- * `scriptVerifyWriteCommandAllow`). From 7.0 the command table no longer
- * reports the flag, so they are listed here; the other commands carrying it
- * (EVAL, EVALSHA, FCALL, SCRIPT) are `noscript`. Checked against
- * redis-server 7.2.1.
+ * Whether a read-only script refuses the command: a write, or a command
+ * flagged may-replicate (`CMD_WRITE|CMD_MAY_REPLICATE` in
+ * `scriptVerifyWriteCommandAllow`), looked up as `tableName`. Of the
+ * may-replicate commands a script reaches only PUBLISH, SPUBLISH and PFCOUNT
+ * (and Valkey's CLUSTER SETSLOT / SYNCSLOTS): EVAL, EVALSHA, FCALL and 6.2's
+ * SCRIPT are `noscript`, refused before this check.
  */
-const MAY_REPLICATE_COMMANDS: ReadonlySet<string> = new Set([
-  'publish',
-  'spublish',
-  'pfcount',
-])
-
-/** Whether a read-only script refuses the command. */
-function mayWrite(definition: CommandDefinition<unknown>): boolean {
-  return (
-    definition.flags.includes('write') ||
-    MAY_REPLICATE_COMMANDS.has(definition.name)
-  )
+function mayWrite(
+  definition: CommandDefinition<unknown>,
+  tableName: string,
+  profile: CompatibilityProfile,
+): boolean {
+  return definition.flags.includes('write') || mayReplicate(tableName, profile)
 }
 
 /**
@@ -342,22 +351,40 @@ function noscriptRefusal(
 }
 
 /**
+ * The park handler of a script's commands. A command called from a script
+ * never blocks (real Redis sets `CLIENT_DENY_BLOCKING` on the script client),
+ * so blocking commands answer their timeout reply instead of parking (see
+ * `blockOrTimeOut`). One that reaches `park` anyway is refused here, never
+ * handed the caller's turn-aware park: that would release the EVAL's turn
+ * while the script still runs (#563).
+ */
+const refuseScriptPark: ParkHandler = () =>
+  Promise.reject(
+    new RedisCommandError('a command called from a script cannot block'),
+  )
+
+/**
  * The execution context every `redis.call`/`redis.pcall` runs under: the
- * caller's context with the script's own monitor sink and the `inScript`
- * flag, which commands whose reply must be reproducible branch on.
+ * caller's context with the script's own monitor sink, its own selected
+ * database (#566) and the `inScript` flag, which commands whose reply must
+ * be reproducible branch on.
  */
 function createLuaCallContext(
   ctx: RedisExecutionContext,
   scriptSlot: ScriptSlotPin | null,
+  database: ScriptDatabase,
 ): RedisExecutionContext {
   return {
     get db() {
-      return ctx.db
+      return database.selected === null
+        ? ctx.db
+        : ctx.server.getDatabase(database.selected)
     },
     server: ctx.server,
     session: ctx.session,
     executor: ctx.executor,
     inScript: true,
+    scriptDatabase: database,
     ...(ctx.transactionReplay
       ? { transactionReplay: ctx.transactionReplay }
       : {}),
@@ -369,7 +396,7 @@ function createLuaCallContext(
       clientAddress: 'lua',
     },
     signal: ctx.signal,
-    park: ctx.park,
+    park: refuseScriptPark,
   }
 }
 

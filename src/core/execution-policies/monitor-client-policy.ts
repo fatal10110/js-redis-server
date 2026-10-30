@@ -3,31 +3,16 @@ import type { CommandPlan } from '../command-definition'
 import { lookupSubcommandEntry } from '../command-arity'
 import type { CompatibilityProfile } from '../compatibility'
 import { commandTableEntry } from '../compatibility/command-table'
+import { mayReplicate } from '../compatibility/may-replicate'
 import { errors } from '../redis-error'
 import { RedisResult } from '../redis-result'
 
-/** The command-table flags that make `processCommand` refuse a replica. */
-const KEYSPACE_FLAGS = ['readonly', 'write', 'may_replicate']
-
 /**
- * The commands flagged `CMD_MAY_REPLICATE` and neither readonly nor write.
- * From 7.0 `COMMAND INFO` no longer reports `may_replicate`, so the captured
- * table cannot tell; these come from the 7.0.15 commands.c and the 7.2.4 /
- * 7.4.4 / 8.0.0 commands.def (Redis 6.2's table still reports the flag).
+ * The command-table flags that make `processCommand` refuse a replica. Only
+ * 6.2's table and a custom command's declared entry still report
+ * `may_replicate`; the real set is {@link mayReplicate}.
  */
-const MAY_REPLICATE_COMMANDS = new Set([
-  'eval',
-  'evalsha',
-  'fcall',
-  'publish',
-  'spublish',
-])
-
-/** Valkey 8.0 / 9.0 commands.def add these to {@link MAY_REPLICATE_COMMANDS}. */
-const VALKEY_MAY_REPLICATE_COMMANDS = new Set([
-  'cluster|setslot',
-  'cluster|syncslots',
-])
+const KEYSPACE_FLAGS = ['readonly', 'write', 'may_replicate']
 
 /**
  * A MONITOR connection is a replica to real Redis (`CLIENT_SLAVE`), and
@@ -76,10 +61,9 @@ function touchesKeyspace(
     return false
   }
 
-  if (
-    MAY_REPLICATE_COMMANDS.has(name) ||
-    (profile.flavor === 'valkey' && VALKEY_MAY_REPLICATE_COMMANDS.has(name))
-  ) {
+  // Every may-replicate command, EVAL / EVALSHA / FCALL included: unlike a
+  // script, a client reaches them all. PFCOUNT is readonly as well.
+  if (mayReplicate(name, profile)) {
     return true
   }
 

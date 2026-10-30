@@ -9,7 +9,7 @@ import { bulk } from '../helpers'
 import { createConsumerIfMissing, requireStreamGroup } from './groups'
 import { compareStreamId, parseExactId } from './ids'
 import { bulkString, deletedEntryToReply, entryToReply } from './replies'
-import { blockOnKeys } from '../blocking'
+import { blockOrTimeOut } from '../blocking'
 import { parseXreadOptions } from './xread-options'
 
 type XreadGroupStream = { key: Buffer; id: StreamId | '>' }
@@ -112,7 +112,7 @@ function hasUndelivered(
   )
 }
 
-async function blockingXreadGroup(
+function blockingXreadGroup(
   groupName: Buffer,
   consumerName: Buffer,
   streams: XreadGroupStream[],
@@ -120,18 +120,23 @@ async function blockingXreadGroup(
   noack: boolean,
   blockMs: number,
   ctx: RedisExecutionContext,
-): Promise<RedisResult> {
-  const result = await blockOnKeys(ctx, {
-    keys: streams.map(s => s.key),
-    // No `type`: every change to the keys wakes XREADGROUP, as in real Redis.
-    // A stream overwritten with another type unblocks it with WRONGTYPE; one
-    // deleted (DEL, expiry, RENAME, FLUSHDB) or whose group is destroyed
-    // unblocks it with NOGROUP.
-    timeoutMs: blockMs === 0 ? undefined : blockMs,
-    attempt: () =>
-      readGroupEntries(groupName, consumerName, streams, count, noack, ctx),
-  })
-  return result ?? bulk(null)
+): RedisResult | Promise<RedisResult> {
+  // From a script (7.4+; earlier ones are refused while parsing) this is the
+  // timeout reply at once, even with BLOCK 0 (#563).
+  return blockOrTimeOut(
+    ctx,
+    {
+      keys: streams.map(s => s.key),
+      // No `type`: every change to the keys wakes XREADGROUP, as in real Redis.
+      // A stream overwritten with another type unblocks it with WRONGTYPE; one
+      // deleted (DEL, expiry, RENAME, FLUSHDB) or whose group is destroyed
+      // unblocks it with NOGROUP.
+      timeoutMs: blockMs === 0 ? undefined : blockMs,
+      attempt: () =>
+        readGroupEntries(groupName, consumerName, streams, count, noack, ctx),
+    },
+    () => bulk(null),
+  )
 }
 
 export const xreadgroupCommand = defineCommand({

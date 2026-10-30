@@ -23,7 +23,8 @@ export type XreadOptions = {
  * range`), `BLOCK` a non-negative integer timeout; `GROUP` and `NOACK` belong
  * to XREADGROUP; an odd number of arguments after `STREAMS` is the
  * `Unbalanced ... list of streams` error; anything else, or no `STREAMS`, is
- * `syntax error`. Verified against redis-server 6.2.24, 7.0.15, 7.2, 8.0.6
+ * `syntax error`. From a script up to 7.2, BLOCK is refused
+ * (`script.stream-block-allowed`). Verified against redis-server 6.2.24, 7.0.15, 7.2, 8.0.6
  * and valkey 8.0 / 9.0.
  */
 export function parseXreadOptions(
@@ -46,6 +47,12 @@ export function parseXreadOptions(
     const token = input[i]
     const moreArgs = input.length - i - 1
     if (equalsAscii(token, 'block') && moreArgs > 0) {
+      // Up to 7.2 a script may not block here at all: the refusal comes
+      // before the timeout is read (#563). From 7.4 the command runs and
+      // answers its timeout reply at once (`blockOrTimeOut`).
+      if (ctx.inScript && !ctx.profile.has('script.stream-block-allowed')) {
+        throw errors.scriptStreamBlock(ctx.rawCommand ?? ctx.commandName)
+      }
       i++
       options.blockMs = parseBlockTimeout(input[i])
     } else if (equalsAscii(token, 'count') && moreArgs > 0) {

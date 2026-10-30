@@ -79,12 +79,21 @@ export class CommandExecutor {
    * @throws {UnknownRedisCommandError} if no command is registered under the name.
    * @throws {UnknownSubcommandError} if a container's subcommand fails lookup
    *   (see {@link resolveTableEntry}).
+   *
+   * `options.inScript` plans a script's `redis.call`/`redis.pcall`: the
+   * parser of a command that refuses an option from scripts sees it (XREAD
+   * BLOCK up to 7.2, #563).
    */
-  plan(rawCommand: Buffer | string, rawArgs: readonly Buffer[]): CommandPlan {
+  plan(
+    rawCommand: Buffer | string,
+    rawArgs: readonly Buffer[],
+    options: { inScript?: boolean } = {},
+  ): CommandPlan {
     return this.createPlan(
       this.lookup(rawCommand, rawArgs),
       rawCommand,
       rawArgs,
+      options,
     )
   }
 
@@ -445,12 +454,14 @@ export class CommandExecutor {
     definition: CommandDefinition<TArgs>,
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
+    options: { inScript?: boolean } = {},
   ): CommandPlan<TArgs> {
     const args = parseCommandArgs(
       definition.schema,
       rawArgs,
       definition.name,
       this.profile,
+      { rawCommand: Buffer.from(rawCommand), inScript: options.inScript },
     )
     const keys = definition.keys(args)
 
@@ -480,7 +491,9 @@ function createMonitorEvent(
 ): RedisMonitorCommandEvent {
   return {
     timestampMicros: monitorTimestampMicros(),
-    database: ctx.session.selectedDatabase,
+    // A script's own commands carry the database the script selected
+    // (#566).
+    database: ctx.scriptDatabase?.selected ?? ctx.session.selectedDatabase,
     clientId: ctx.session.id,
     clientAddress: ctx.monitor?.clientAddress ?? ctx.session.clientAddress,
     command: Buffer.from(plan.rawCommand),
@@ -693,13 +706,16 @@ function executionErrorResult(
 /**
  * Guard for the synchronous (Lua) path: a command's result must be a ready
  * {@link RedisResult}. Async commands are not callable from scripts, so a
- * promise is surfaced as a script-facing {@link RedisCommandError}.
+ * promise is surfaced as a script-facing {@link RedisCommandError}. The
+ * promise itself is dropped, so its rejection is consumed here: an unhandled
+ * one would take the process down (#563).
  */
 function assertSyncCommandResult(
   plan: CommandPlan,
   result: ReturnType<CommandDefinition['execute']>,
 ): RedisResult {
   if (isThenable(result)) {
+    result.then(undefined, () => {})
     throw new RedisCommandError(
       `${plan.definition.name.toUpperCase()} cannot run asynchronously from scripts`,
     )
