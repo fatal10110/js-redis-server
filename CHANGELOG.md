@@ -81,6 +81,40 @@ so the PR body is not a durable home for a breaking-change note.
   inside the `long double` one are accepted: `INCRBYFLOAT k 1e400` replies
   its 401 digits (it was `value is not a valid float`) and `1e308` + `1e308`
   is a 309-digit number (it was `increment would produce NaN or Infinity`).
+- GEOSEARCH and GEOSEARCHSTORE accept FROMMEMBER / FROMLONLAT, BYRADIUS /
+  BYBOX and their options in any order, as every Redis and Valkey version
+  does ([#607]); they used to answer `syntax error` unless FROM came first
+  and BY second. Each clause is read where it stands: FROMMEMBER is looked
+  up at its position (only when the key exists), and a repeated FROM or BY
+  clause is allowed, the last one winning. After the arguments come, in
+  order, the GEOSEARCHSTORE WITH* error, `exactly one of FROMMEMBER or
+  FROMLONLAT can be specified for <command>`, `exactly one of BYRADIUS and
+  BYBOX can be specified for <command>` (the command named as sent) and the
+  ANY check. ANY is now a flag anywhere in GEOSEARCH, GEOSEARCHSTORE,
+  GEORADIUS and GEORADIUSBYMEMBER (`ANY COUNT 1` is valid), and an
+  incomplete FROM clause answers `syntax error` instead of a
+  wrong-number-of-arguments error.
+- Cluster replicas now receive in-place stream consumer-group and last-id
+  changes, as real Redis propagates them ([#495]): XGROUP CREATE, DESTROY,
+  CREATECONSUMER, DELCONSUMER and SETID, XSETID, XACK, XREADGROUP, XCLAIM and
+  XAUTOCLAIM on an existing stream, and the consumer XREADGROUP / XCLAIM /
+  XAUTOCLAIM create implicitly (on redis 6.2 too). A replica used to see the
+  group's last-delivered id, consumers and pending entries only after the
+  next XADD, XDEL or XTRIM. Replies, keyspace notifications and WATCH are
+  unchanged.
+
+### Changed
+
+- **BREAKING (`/core`)** `RedisMutationEvent` has a new `propagate` variant
+  (`{ type: 'propagate', database, key, value, valueType, expiresAt? }`)
+  ([#495]): the replication signal on its own, as real Redis'
+  `alsoPropagate` without `signalModifiedKey` or a keyspace notification. It
+  is emitted for in-place stream consumer-group / pending / last-id changes
+  (after the `notify` of the ones that are announced), carries the key's whole
+  new value (cloned lazily, like a `write`'s), and `RedisMutationBus` delivers
+  it to `subscribe()` listeners only, never to `subscribeKey()` ones. An
+  exhaustive `switch (event.type)` stops type-checking; a replicating listener
+  applies it like a `write`, any other ignores it.
 
 ## [0.4.0] - 2026-10-30
 
@@ -2182,6 +2216,7 @@ requests they contain.
 [#583]: https://github.com/fatal10110/js-redis-server/issues/583
 [#604]: https://github.com/fatal10110/js-redis-server/issues/604
 [#610]: https://github.com/fatal10110/js-redis-server/issues/610
+[#607]: https://github.com/fatal10110/js-redis-server/issues/607
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

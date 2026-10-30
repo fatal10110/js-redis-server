@@ -264,8 +264,10 @@ export class RedisDatabase {
    * The mutator gets the value plus a tracker, and must mark what it did:
    * `markChanged` for a WATCH-dirtying write, `markCommitted` to persist an
    * in-place change to an **already-existing** key that is announced (a
-   * `notify` event) without dirtying. Creating the key dirties either way — see
-   * `if (dirty || !existing)` below. An unmarked mutation emits no event.
+   * `notify` event) without dirtying, `markPropagated` to persist an in-place
+   * change to an existing key that is neither announced nor dirtying but still
+   * replicated (a `propagate` event). Creating the key dirties either way —
+   * see `if (dirty || !existing)` below. An unmarked mutation emits no event.
    *
    * Sharp edge (pre-existing): only a **brand-new** key is rolled back on a
    * throw. For an existing key the mutator writes straight through the stored
@@ -295,6 +297,7 @@ export class RedisDatabase {
 
     let dirty = false
     let committed = false
+    let propagated = false
     const tracker: KeyspaceMutationTracker = {
       markChanged: () => {
         dirty = true
@@ -302,12 +305,19 @@ export class RedisDatabase {
       markCommitted: () => {
         committed = true
       },
+      markPropagated: () => {
+        propagated = true
+      },
     }
 
     const result = mutator(entry.value as TValue, tracker)
     const id = keyId(key)
 
     if (!dirty && !committed) {
+      // A propagate-only change mutated the existing entry in place.
+      if (propagated && existing) {
+        this.emitPropagate(existing)
+      }
       return result
     }
 
@@ -340,7 +350,9 @@ export class RedisDatabase {
     if (dirty || !existing) {
       this.emitWrite(entry)
     } else {
+      // Announced in place: the replica still needs the new value.
       this.emitNotify(entry)
+      this.emitPropagate(entry)
     }
     return result
   }
@@ -679,6 +691,17 @@ export class RedisDatabase {
     this.mutations.emit(
       this.origin === undefined ? event : { ...event, command: this.origin },
     )
+  }
+
+  private emitPropagate(entry: KeyspaceEntry): void {
+    this.emit({
+      type: 'propagate',
+      database: this.id,
+      key: entry.key,
+      value: entry.value,
+      valueType: entry.value.type,
+      expiresAt: entry.expiresAt,
+    })
   }
 
   private emitNotify(entry: KeyspaceEntry): void {

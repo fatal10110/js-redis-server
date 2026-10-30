@@ -829,6 +829,9 @@ GEO units fold case from Redis 7.0 (and in every Valkey); the `redis-6.2`
 profile matches `m`, `km`, `ft`, `mi` exactly and lists them in lower case in
 the unsupported-unit error (`geo.unit-case-folding`).
 
+`GEOSEARCH` and `GEOSEARCHSTORE` take the FROM, BY and option clauses in any
+order, as Redis does; a repeated clause is allowed and the last one wins.
+
 ## 20. Vector Set Commands (Redis 8.0+)
 
 Vector sets store elements with an associated embedding vector for

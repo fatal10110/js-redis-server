@@ -410,7 +410,7 @@ the master's replicated deletion. `getLiveEntry` still calls
 [`evictIfExpired`](../src/state/database.ts) on reads that encounter an
 expired key before the next sweep. Either path deletes the entry and emits an
 `evict` mutation event so `WATCH` observes expiry exactly like a real delete.
-Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`/`notify`)
+Every mutation (`write`/`delete`/`expire`/`persist`/`evict`/`flush`/`notify`/`propagate`)
 flows through [`RedisMutationBus.emit`](../src/state/mutation-events.ts#L102),
 which gives each subscriber its own copy of the event — a `write`'s value is
 cloned on the subscriber's first read of it (most never read it; each write
@@ -419,7 +419,11 @@ unread value costs nothing.
 `notify` is the odd one out: it is the keyspace-notification signal on its own
 (real Redis' `notifyKeyspaceEvent` without `signalModifiedKey`), so the bus
 delivers it only to global listeners, never to the per-key listeners `WATCH`
-and blocked clients use (#379). The
+and blocked clients use (#379). `propagate` is its replication counterpart
+(real Redis' `alsoPropagate` without `signalModifiedKey` or a notification):
+it carries the key's whole new value, cloned lazily like a `write`'s, goes to
+global listeners only, publishes nothing, and the cluster replication link
+stores it on the replica like a `write` (#495). The
 [`KeyspaceNotifier`](../src/state/keyspace-notifier.ts) subscribes to this
 bus and republishes mutations as Redis keyspace/keyevent notifications through
 the `RedisPubSubBroker` when `notify-keyspace-events` is enabled. Lifecycle
@@ -464,7 +468,12 @@ commit through `markCommitted()`, which persists the value, dirties `WATCH`
 only when the key is brand-new (coming into existence is itself a write), and
 otherwise emits a `notify` so the change is still announced as a keyspace
 notification — matching real Redis, which fires `notifyKeyspaceEvent` for
-these without calling `signalModifiedKey`. When `XREADGROUP`/`XCLAIM`/
+these without calling `signalModifiedKey` — followed by a `propagate` that
+carries the new value to replicas. `XACK`/`XREADGROUP`/`XCLAIM`/`XAUTOCLAIM`
+call `markPropagated()` instead when they change the PEL, the last-delivered
+id or create a consumer: no notification, no `WATCH` dirtying, only the
+`propagate` (real Redis propagates them as `XACK` and idempotent `XCLAIM` /
+`XGROUP SETID` / `XGROUP CREATECONSUMER`). When `XREADGROUP`/`XCLAIM`/
 `XAUTOCLAIM` name a consumer that does not exist yet, they create it the same
 way, as its own `xgroup-createconsumer` notification: up front from Redis 7.2,
 and on 6.2 / 7.0 only once there is something to deliver or claim, or on

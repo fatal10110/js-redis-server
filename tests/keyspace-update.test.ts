@@ -201,9 +201,22 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
       })
     })
 
-    assert.deepStrictEqual(events, [
-      { type: 'notify', database: 0, key, valueType: 'stream' },
-    ])
+    // ...and still replicates the new value, through the replication-only
+    // `propagate` that follows the notification.
+    assert.deepStrictEqual(
+      events.map(event => event.type),
+      ['notify', 'propagate'],
+    )
+    assert.deepStrictEqual(events[0], {
+      type: 'notify',
+      database: 0,
+      key,
+      valueType: 'stream',
+    })
+    const propagated = events[1]
+    assert.ok(propagated?.type === 'propagate')
+    assert.strictEqual(propagated.value.type, 'stream')
+    assert.strictEqual(propagated.value.groups.size, 1)
     assert.deepStrictEqual(keyEvents, [])
     assert.strictEqual(db.getStream(key)!.groups.size, 1)
   })

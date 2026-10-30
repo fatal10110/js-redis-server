@@ -613,6 +613,11 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XCLAIM parses ids up to the first non-id, then options',
     'XINFO CONSUMERS inactive stays -1 until a consumer gets entries',
   ]),
+  todo(
+    'node-redis/stream/cluster-group-replication.test.ts',
+    CAUSE.clusterSendCommand,
+    ['replicas receive in-place consumer-group and last-id changes'],
+  ),
   todo('node-redis/stream/group.test.ts', CAUSE.clusterTopology, [
     'XCLAIM and XAUTOCLAIM transfer pending stream entries',
     'XGROUP MKSTREAM and SETID control group delivery position',

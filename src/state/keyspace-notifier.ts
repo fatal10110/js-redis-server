@@ -259,7 +259,10 @@ export class KeyspaceNotifier {
           event: 'keymiss',
           eventClass: 'm',
         }
+      // `propagate` is replication-only: real Redis propagates these changes
+      // without announcing them.
       case 'flush':
+      case 'propagate':
         return null
     }
   }

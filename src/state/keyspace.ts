@@ -52,4 +52,11 @@ export type KeyspaceMutationTracker = {
   // notification-only `notify` event only for in-place changes to an
   // already-existing key.
   markCommitted(): void
+  // An in-place change to an already-existing key that real Redis propagates
+  // to its replicas without announcing it or dirtying a WATCH: stream
+  // pending / last-delivered-id / consumer changes made by XACK, XREADGROUP,
+  // XCLAIM and XAUTOCLAIM. `RedisDatabase.update` emits a replication-only
+  // `propagate` event for it (as it also does for a `markCommitted` change to
+  // an existing key).
+  markPropagated(): void
 }
