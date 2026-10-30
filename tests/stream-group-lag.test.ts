@@ -13,9 +13,26 @@ import {
   type StreamLagRules,
 } from '../src/state/stream-groups'
 
-const REDIS_7_2: StreamLagRules = { tombstoneCheck: false, shortcuts: false }
-const VALKEY_9_0: StreamLagRules = { tombstoneCheck: true, shortcuts: false }
-const REDIS_7_4: StreamLagRules = { tombstoneCheck: true, shortcuts: true }
+const REDIS_7_2: StreamLagRules = {
+  tombstoneCheck: false,
+  readFirstIdCheck: false,
+  shortcuts: false,
+}
+const VALKEY_9_0: StreamLagRules = {
+  tombstoneCheck: true,
+  readFirstIdCheck: true,
+  shortcuts: false,
+}
+const REDIS_7_4_2: StreamLagRules = {
+  tombstoneCheck: true,
+  readFirstIdCheck: false,
+  shortcuts: true,
+}
+const REDIS_7_4: StreamLagRules = {
+  tombstoneCheck: true,
+  readFirstIdCheck: true,
+  shortcuts: true,
+}
 
 function id(ms: number): StreamId {
   return { ms: BigInt(ms), seq: 1n }
@@ -79,5 +96,18 @@ describe('consumer-group lag port (real t_stream.c)', () => {
     assert.strictEqual(streamGroupLag(s, g, REDIS_7_2), -9223372036854775805n)
     assert.strictEqual(streamGroupLag(s, g, VALKEY_9_0), -9223372036854775805n)
     assert.strictEqual(streamGroupLag(s, g, REDIS_7_4), 2n)
+  })
+
+  test('a read after XTRIM moved the first entry past the group', () => {
+    // 1..3 added, group read 1-1, XTRIM MAXLEN 1 (no tombstone recorded);
+    // the next read delivers 3-1.
+    const s = stream([1, 2, 3], [3])
+    const g = group(1, 1n)
+    for (const rules of [REDIS_7_2, REDIS_7_4_2]) {
+      assert.strictEqual(streamEntriesReadAfterDelivery(s, g, id(3), rules), 2n)
+    }
+    for (const rules of [VALKEY_9_0, REDIS_7_4]) {
+      assert.strictEqual(streamEntriesReadAfterDelivery(s, g, id(3), rules), 3n)
+    }
   })
 })

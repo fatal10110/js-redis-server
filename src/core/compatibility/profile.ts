@@ -55,6 +55,7 @@ export type FeatureId =
   | 'xread.plus-id'
   | 'stream.implicit-consumer-event'
   | 'stream.group-lag-tombstone-check'
+  | 'stream.group-lag-read-first-id-check'
   | 'stream.group-lag-shortcuts'
   | 'cluster.multi-db'
   | 'cluster.standalone-readwrite-refused'

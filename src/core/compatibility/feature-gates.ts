@@ -220,19 +220,25 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // (`streamLookupConsumer(..., SLC_NONE)`) and only XGROUP CREATECONSUMER
   // publishes the event (redis 6.2.14 / 7.0.15 / 7.2.4 t_stream.c).
   'stream.implicit-consumer-event': { redis: '7.0.0', valkey: '7.2.0' },
-  // The consumer-group lag port (`streamReplyWithCGLag`). Redis 7.4 (7.2.7 /
-  // 7.4.2 patch releases, after the pinned 7.2.4) made the counter estimate
-  // refuse an id behind the last tombstone, dropped the tombstone helper's
-  // `first_id > max_deleted_entry_id` shortcut, and made XREADGROUP keep
-  // counting only while the group's last id is not behind the first entry
-  // and nothing was deleted after it. Valkey took the same in 9.0.0; valkey
-  // 8.0.0 has the 7.2.4 form (redis 7.2.4 / 7.4.4 / 8.0.0, valkey 8.0.0 /
-  // 9.0.0 t_stream.c).
-  'stream.group-lag-tombstone-check': { redis: '7.4.0', valkey: '9.0.0' },
-  // Redis 7.4 also answers the lag directly for an emptied stream (0) and
+  // The consumer-group lag port (`streamReplyWithCGLag`). Redis 7.4.2 made
+  // the counter estimate refuse an id behind the last tombstone, dropped the
+  // tombstone helper's `first_id > max_deleted_entry_id` shortcut, and made
+  // XREADGROUP check for tombstones after the group's last id instead of the
+  // delivered one (redis 7.4.1 / 7.4.2 t_stream.c). Valkey took it in 8.0.3.
+  // Backports one minimum version cannot express: redis 7.2.7+ has it too
+  // (7.2.4, the pinned 7.2, does not), and valkey 8.1.0 lacks it (8.1.1 has
+  // it).
+  'stream.group-lag-tombstone-check': { redis: '7.4.2', valkey: '8.0.3' },
+  // Redis 7.4.4 also stopped XREADGROUP counting while the group's last id
+  // is behind the first entry (`streamCompareID(&group->last_id,
+  // &s->first_id) >= 0`; absent from 7.4.2 / 7.4.3). Valkey took it with the
+  // tombstone check in 8.0.3 (and 8.1.1, not 8.1.0).
+  'stream.group-lag-read-first-id-check': { redis: '7.4.4', valkey: '8.0.3' },
+  // Redis 7.4.2 also answers the lag directly for an emptied stream (0) and
   // when both the group's last id and the last tombstone are behind the
-  // first entry (the stream length). Valkey 9.0.0 has not taken these.
-  'stream.group-lag-shortcuts': { redis: '7.4.0' },
+  // first entry (the stream length); 7.4.0 / 7.4.1 do not, and redis 7.2.7+
+  // backported it. Valkey 9.0.0 has not taken these.
+  'stream.group-lag-shortcuts': { redis: '7.4.2' },
   'cluster.multi-db': { valkey: '9.0.0' },
   // A standalone (`cluster-enabled no`) server refuses READONLY with `This
   // instance has cluster support disabled` on every version up to Valkey 8.0;

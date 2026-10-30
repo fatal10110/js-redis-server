@@ -52,16 +52,20 @@ export function ensureConsumer(
 /**
  * Which form of real Redis' consumer-group lag bookkeeping to follow
  * (`streamReplyWithCGLag` and its helpers in t_stream.c):
- * - `tombstoneCheck`: the Redis 7.4 / Valkey 9.0 estimate and tombstone
- *   helper, and the XREADGROUP counter update that checks the group's last id
- *   (`stream.group-lag-tombstone-check`);
- * - `shortcuts`: Redis 7.4's direct lag answers for an emptied stream and for
- *   a group and last tombstone both behind the first entry
+ * - `tombstoneCheck`: the Redis 7.4.2 / Valkey 8.0.3 estimate and tombstone
+ *   helper, and the XREADGROUP counter update that checks for tombstones
+ *   after the group's last id (`stream.group-lag-tombstone-check`);
+ * - `readFirstIdCheck`: Redis 7.4.4's XREADGROUP counter update that also
+ *   needs the group's last id not behind the first entry
+ *   (`stream.group-lag-read-first-id-check`; only with `tombstoneCheck`);
+ * - `shortcuts`: Redis 7.4.2's direct lag answers for an emptied stream and
+ *   for a group and last tombstone both behind the first entry
  *   (`stream.group-lag-shortcuts`).
- * Both off is the Redis 7.0 - 7.2.4 / Valkey 8.0 form.
+ * All off is the Redis 7.0 - 7.2.4 / Valkey 8.0.0 form.
  */
 export type StreamLagRules = {
   tombstoneCheck: boolean
+  readFirstIdCheck: boolean
   shortcuts: boolean
 }
 
@@ -185,7 +189,8 @@ export function streamEntriesReadAfterDelivery(
 ): bigint | null {
   const counting = rules.tombstoneCheck
     ? group.entriesRead !== null &&
-      compareStreamId(group.lastDeliveredId, streamFirstId(stream)) >= 0 &&
+      (!rules.readFirstIdCheck ||
+        compareStreamId(group.lastDeliveredId, streamFirstId(stream)) >= 0) &&
       !streamRangeHasTombstones(stream, group.lastDeliveredId, rules)
     : group.entriesRead !== null && !streamRangeHasTombstones(stream, id, rules)
   if (counting) return (group.entriesRead as bigint) + 1n

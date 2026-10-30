@@ -1658,7 +1658,7 @@ so the PR body is not a durable home for a breaking-change note.
     is a null array, `*-1` on RESP2 (it was `$-1`).
   - Consumer-group `lag` and the `entries-read` counter XREADGROUP keeps
     follow real Redis' algorithm, including deleted entries, and its 7.4 form
-    (Redis 7.4+, Valkey 9.0 in part). `ENTRIESREAD` (XGROUP CREATE / SETID)
+    (Redis 7.4.2+ / 7.4.4+, Valkey 8.0.3+ in part). `ENTRIESREAD` (XGROUP CREATE / SETID)
     and XSETID `ENTRIESADDED` take any int64, not only values up to 2^53 - 1.
   - XINFO CONSUMERS, XINFO GROUPS, XINFO STREAM FULL and the XPENDING summary
     list consumers and groups by name. The XPENDING summary sends each

@@ -22,6 +22,7 @@ export {
 export function streamLagRules(profile: CompatibilityProfile): StreamLagRules {
   return {
     tombstoneCheck: profile.has('stream.group-lag-tombstone-check'),
+    readFirstIdCheck: profile.has('stream.group-lag-read-first-id-check'),
     shortcuts: profile.has('stream.group-lag-shortcuts'),
   }
 }
