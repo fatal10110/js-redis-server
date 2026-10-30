@@ -35,23 +35,14 @@ export function createClusterPolicy(
 
       const capabilities = plan.definition.capabilities
 
-      // Both checks below are the command's own, so inside MULTI the command
-      // is queued and the check runs when EXEC replays it (the session is no
-      // longer in 'transaction' mode then): `MULTI; MOVE k 1; EXEC` answers
+      // The cluster refusals below are the command's own, so inside MULTI the
+      // command is queued and the check runs when EXEC replays it (the session
+      // is no longer in 'transaction' mode then): `MULTI; MOVE k 1; EXEC` answers
       // `MOVE is not allowed in cluster mode` in its EXEC slot. A Valkey 9
       // cluster has databases, so there the command runs and its own
       // `DB index is out of range` answers instead.
       const queueing = ctx.session.mode === 'transaction'
       const multiDb = ctx.server.profile.has('cluster.multi-db')
-
-      const forbidden =
-        capabilities?.clusterMode === 'forbidden' ||
-        (capabilities?.clusterMode === 'multiDbOnly' && !multiDb)
-      if (forbidden && !queueing) {
-        throw new RedisCommandError(
-          `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
-        )
-      }
 
       // Cluster mode has a single logical database (0). DB 0 is a no-op and
       // accepted; any non-zero index is rejected like real Redis unless the
@@ -105,6 +96,18 @@ export function createClusterPolicy(
 
       if (slot !== null && ctx.scriptSlot) {
         pinScriptSlot(ctx.scriptSlot, slot)
+      }
+
+      // MOVE refuses the cluster in its own command proc, so a key on
+      // another node is MOVED first, and a local `MOVE k x` is refused before
+      // its database argument is parsed (a parse error waits in the plan).
+      const forbidden =
+        capabilities?.clusterMode === 'forbidden' ||
+        (capabilities?.clusterMode === 'multiDbOnly' && !multiDb)
+      if (forbidden && !queueing) {
+        throw new RedisCommandError(
+          `${plan.definition.name.toUpperCase()} is not allowed in cluster mode`,
+        )
       }
 
       if (slot === null || ctx.session.mode !== 'transaction') {

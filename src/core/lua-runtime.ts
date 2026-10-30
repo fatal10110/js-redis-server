@@ -202,7 +202,12 @@ export class RedisLuaRuntime {
     let plan: CommandPlan | null = null
     let commandError: RedisCommandError | null = null
     try {
-      plan = ctx.executor.plan(args[0], args.slice(1), { inScript: true })
+      // A cluster routes the call before the command checks its arguments
+      // (scriptVerifyClusterState), so a parse error waits in the plan
+      // behind the cluster policy (#519).
+      plan = ctx.server.clusterEnabled
+        ? ctx.executor.planForQueue(args[0], args.slice(1), { inScript: true })
+        : ctx.executor.plan(args[0], args.slice(1), { inScript: true })
     } catch (err) {
       // From 7.0 an unknown container subcommand fails the same command
       // lookup as an unknown command (#439). Only `plan()`'s lookup throws it
