@@ -394,7 +394,14 @@ mirrors `t_set.c`'s conversions (an intset gaining a non-integer or passing
 built per command by `setEncodingRules()` in
 [`src/commands/sets.ts`](../src/commands/sets.ts); the
 `set.union-diff-hashtable` gate, which only decides how a non-`STORE`
-`SUNION` / `SDIFF` result starts, is read there too. Stream values store ordered entries plus consumer groups, per-group
+`SUNION` / `SDIFF` result starts, is read there too. Sorted-set values carry
+an `encoding` field, `listpack` or `skiplist`, kept by
+[`src/state/zset-encoding.ts`](../src/state/zset-encoding.ts) the way
+`t_zset.c` converts (ZADD's size and member-length hints, a 129th or a long
+member, SORT, the STORE commands' convert-if-it-fits); `ZSCAN` reads it for
+its order and score spelling, and a listpack stores `-0` as `0` from 7.0.
+Its `ZsetEncodingRules` come from `zsetEncodingRules()` in
+[`src/commands/zsets/helpers.ts`](../src/commands/zsets/helpers.ts). Stream values store ordered entries plus consumer groups, per-group
 pending-entry lists, and consumer idle metadata. Key (and hash-field) expiration is handled by
 both an active sweep and a lazy fallback. `RedisServerState` runs a
 background active-expiry pass that sweeps every database under one turn of

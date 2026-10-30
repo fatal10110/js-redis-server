@@ -34,9 +34,18 @@ export type RedisSetData = {
   intset?: boolean
 }
 
+/** How a real server would hold a sorted set (`zset-encoding.ts`, #512). */
+export type ZsetEncoding = 'listpack' | 'skiplist'
+
 export type RedisSortedSetData = {
   type: 'zset'
   members: Map<string, RedisSortedSetMember>
+  /**
+   * Whether a real server would hold this set as a listpack (a ziplist on
+   * 6.2) or a skiplist; absent means listpack. Kept by the helpers in
+   * `zset-encoding.ts`.
+   */
+  encoding?: ZsetEncoding
 }
 
 export type RedisSortedSetMember = {
@@ -142,6 +151,7 @@ export function cloneRedisDataValue(value: RedisDataValue): RedisDataValue {
             },
           ]),
         ),
+        encoding: value.encoding,
       }
     case 'stream':
       return {

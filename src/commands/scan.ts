@@ -7,6 +7,8 @@ import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { CompatibilityProfile } from '../core/compatibility'
 import type { RedisDataTypeName } from '../state'
+import { formatLongDoubleAuto } from '../core/double-format'
+import { zsetEncoding, zsetScanOrder } from '../state/zset-encoding'
 import { array, scoreBuffer } from './helpers'
 
 type ScanOptions = {
@@ -153,13 +155,20 @@ export const zscanCommand = defineCommand({
       'zscan',
       ctx.server.profile,
     )
+    // A listpack is walked in (score, member) order and spells a score like
+    // any score reply; a skiplist's scanCallback() spells it with
+    // ld2string(…, LD_STR_AUTO), `%.17Lg`, on every version (#512).
+    const skiplist = zsetEncoding(zset) === 'skiplist'
     const items: ScanItem[] = []
-    for (const entry of zset.members.values()) {
+    for (const entry of zsetScanOrder(zset)) {
+      const score = skiplist
+        ? Buffer.from(formatLongDoubleAuto(entry.score))
+        : scoreBuffer(entry.score, ctx.server.profile)
       items.push({
         matchValue: entry.member,
         values: [
           RedisValue.bulkString(entry.member),
-          RedisValue.bulkString(scoreBuffer(entry.score, ctx.server.profile)),
+          RedisValue.bulkString(score),
         ],
       })
     }

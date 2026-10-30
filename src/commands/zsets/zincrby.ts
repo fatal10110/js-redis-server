@@ -5,7 +5,7 @@ import { scoreValue } from '../helpers'
 import {
   assertValidResultingScore,
   parseFloatArg,
-  storeListpackScores,
+  zsetEncodingRules,
 } from './helpers'
 
 export const zincrbyCommand = defineCommand({
@@ -15,15 +15,16 @@ export const zincrbyCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const inc = parseFloatArg(args.increment, ctx.server.profile)
+    const rules = zsetEncodingRules(ctx.server)
     const newScore = ctx.db.updateSortedSet(args.key, zset => {
+      zset.prepareForAdd([args.member], rules)
       const existing = zset.getMember(args.member)
       // A new member takes the increment as is (zsetAdd): ZINCRBY -0 is -0.
       const score = existing ? existing.score + inc : inc
       assertValidResultingScore(score)
       // An equal score is no change (zsetAdd), so a stored -0 stays.
       if (!existing || existing.score !== score) {
-        zset.setScore(args.member, score)
-        storeListpackScores(zset, [args.member], ctx.server)
+        zset.addScore(args.member, score, rules)
       }
       return score
     })

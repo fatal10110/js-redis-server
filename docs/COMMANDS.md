@@ -324,9 +324,9 @@ with `GT` or `LT`.
 - `SORT` loads a set in the order Redis stores it, like every other set
   reader (see the set notes below). With `BY` plus a `LIMIT` that
   does not cover every element, Redis' partial quicksort can reorder elements
-  that tie under `ALPHA`; the mock keeps them in load order. `SORT` converting
-  a small zset to the `skiplist` encoding is not observable until
-  `OBJECT ENCODING` exists (#117).
+  that tie under `ALPHA`; the mock keeps them in load order. `SORT` (and
+  `SORT_RO`) converts a small zset to the `skiplist` encoding, as Redis does,
+  which `ZSCAN`'s score spelling and a later `-0` score show (#512).
 
 #### Not implemented
 
@@ -516,6 +516,7 @@ with `GT` or `LT`.
 #### Notes / gaps vs. real Redis
 
 - Score replies from `ZSCORE`, `ZINCRBY`, `ZRANK WITHSCORE`, `ZREVRANK WITHSCORE`, `ZRANGE WITHSCORES`, `ZREVRANGE WITHSCORES`, `ZRANGEBYSCORE WITHSCORES`, `ZREVRANGEBYSCORE WITHSCORES`, `ZPOPMIN`, `ZPOPMAX`, `ZMPOP`, `BZMPOP`, `BZPOPMIN`, `BZPOPMAX`, and `ZSCAN` serialize infinite scores as `inf` / `-inf`.
+- A sorted set is a listpack or a skiplist as on Redis (#512): `ZSCAN` walks a listpack in (score, member) order and spells scores like `ZSCORE`, and walks a skiplist in insertion order (Redis' hash order is undefined) spelling every score `%.17Lg` (`0.10000000000000001`) on every version. From 7.0 a listpack stores `-0` as `0`; a skiplist keeps it.
 - `ZREVRANGE` is intentionally limited to `key start stop [WITHSCORES]`, matching real Redis: the command was deprecated in 6.2 in favor of `ZRANGE ... REV` and never gained `BYSCORE`/`BYLEX`/`REV`/`LIMIT` itself (verified against live Redis 7.2.5, which also rejects those tokens with `ERR syntax error`). Use `ZRANGE ... REV` for the unified syntax.
 
 ## 9. Stream Commands

@@ -2,7 +2,11 @@ import { asciiUpperCase, asciiUpperToken } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t, type ParseContext } from '../core/command-schema'
 import { formatIncrByFloatResult } from '../core/double-format'
-import { parseLongDoubleToken } from '../core/long-double-token'
+import {
+  addLongDoubles,
+  parseLongDouble,
+  type LongDouble,
+} from '../core/long-double-token'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
   RedisCommandError,
@@ -1190,29 +1194,30 @@ export const hincrbyfloatCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     // Redis' order (t_hash.c): the increment is parsed with string2ld() (see
-    // parseLongDoubleToken) and refused if infinite *before* the type check.
+    // parseLongDouble) and refused if infinite *before* the type check.
     // The stored value is parsed the same way, so a stored "inf" or "0x10" is
     // a valid operand; only the sum is then checked for NaN/Infinity.
-    const increment = parseLongDoubleToken(args.increment)
+    const increment = parseLongDouble(args.increment)
     if (increment === undefined) {
       throw errors.expectedFloat()
     }
-    if (!Number.isFinite(increment)) {
+    if (increment.infinite) {
       throw new RedisCommandError('value is NaN or Infinity')
     }
 
     const result = ctx.db.updateHash(args.key, hash => {
       const entry = hash.getField(args.field)
-      let current = 0
+      let current: LongDouble = { negative: false, mantissa: 0n, exponent: 0 }
       if (entry) {
-        const parsed = parseLongDoubleToken(entry.value)
+        const parsed = parseLongDouble(entry.value)
         if (parsed === undefined) {
           throw errors.hashValueNotFloat()
         }
         current = parsed
       }
-      const next = current + increment
-      if (!Number.isFinite(next)) {
+      // The sum is a `long double`, like the operands (#512).
+      const next = addLongDoubles(current, increment)
+      if (next === undefined) {
         throw errors.incrByFloatNanOrInfinity()
       }
       // ld2string(…, LD_STR_HUMAN): the reply and the stored value (#543).

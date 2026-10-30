@@ -124,7 +124,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const key = Buffer.from('z')
 
     db.updateSortedSet(key, zset => {
-      zset.setScore(Buffer.from('m'), 1)
+      zset.addScore(Buffer.from('m'), 1)
     })
     assert.strictEqual(db.getType(key), 'zset')
     events.length = 0

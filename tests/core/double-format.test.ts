@@ -9,6 +9,7 @@ import {
   formatRedisDouble,
 } from '../../src/core/double-format'
 import { resolveCompatibilityProfile } from '../../src/core/compatibility'
+import { parseLongDouble } from '../../src/core/long-double-token'
 import type { RedisFlavor } from '../../src/core/compatibility/profile'
 import { RedisValue, encodeRedisValue } from '../../src/internal'
 
@@ -188,6 +189,11 @@ describe('formatGeoCoordinate (#451)', () => {
 })
 
 describe('formatIncrByFloatResult (#543)', () => {
+  // `INCRBYFLOAT missing-key <value>`: the token parsed to a long double, then
+  // printed.
+  const incrFromZero = (value: number): string =>
+    formatIncrByFloatResult(parseLongDouble(String(value))!)
+
   // Read back from INCRBYFLOAT on real redis 6.2.14 … 8.0.0 and valkey 8.0.0 /
   // 9.0.0: ld2string(…, LD_STR_HUMAN), i.e. %.17Lf trimmed, on every profile.
   test('%.17Lf trimmed, never an exponent', () => {
@@ -217,7 +223,7 @@ describe('formatIncrByFloatResult (#543)', () => {
       [1e21, '1000000000000000000000'],
       [-1e21, '-1000000000000000000000'],
     ] as const) {
-      assert.strictEqual(formatIncrByFloatResult(value), expected, `${value}`)
+      assert.strictEqual(incrFromZero(value), expected, `${value}`)
     }
   })
 
@@ -230,12 +236,7 @@ describe('formatIncrByFloatResult (#543)', () => {
       [4.5e-17, '0.00000000000000004'],
       [1.25e-16, '0.00000000000000012'],
     ] as const) {
-      assert.strictEqual(formatIncrByFloatResult(value), expected, `${value}`)
+      assert.strictEqual(incrFromZero(value), expected, `${value}`)
     }
-  })
-
-  test('inf and nan keep the double spelling', () => {
-    assert.strictEqual(formatIncrByFloatResult(Infinity), 'inf')
-    assert.strictEqual(formatIncrByFloatResult(-Infinity), '-inf')
   })
 })

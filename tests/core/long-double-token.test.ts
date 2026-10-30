@@ -165,7 +165,8 @@ describe('parseLongDoubleToken', () => {
   })
 
   test('refuses values past the double range, which it cannot hold (#512)', () => {
-    // Real Redis accepts these as long doubles; a double cannot represent them.
+    // Real Redis accepts these as long doubles; a double cannot represent them,
+    // so INCRBYFLOAT / HINCRBYFLOAT read them with parseLongDouble instead.
     for (const token of ['1e400', '0x1p1024', '0x1p16383']) {
       assert.strictEqual(parseLongDoubleToken(token), undefined, token)
     }

@@ -1,3 +1,4 @@
+import type { LongDouble } from './long-double-token'
 import {
   resolveCompatibilityProfile,
   type CompatibilityProfile,
@@ -49,6 +50,19 @@ export function formatRedisDouble(
   return profile.has('reply.double-fpconv')
     ? formatD2string(value)
     : formatPercentG17(value)
+}
+
+/**
+ * `ld2string(…, LD_STR_AUTO)` of a double, the score text ZSCAN gives for a
+ * skiplist on every version (#512): `%.17Lg` of the double promoted exactly
+ * to `long double`, which prints the same digits as `%.17g`; `inf`, `-inf`,
+ * `nan` and `-0` as {@link formatRedisDouble} spells them.
+ */
+export function formatLongDoubleAuto(value: number): string {
+  if (Number.isNaN(value) || !Number.isFinite(value) || value === 0) {
+    return formatRedisDouble(value)
+  }
+  return formatPercentG17(value)
 }
 
 // ---------------------------------------------------------------------------
@@ -206,29 +220,31 @@ function formatHumanLongDouble(value: number): string {
  * dropped, `-0` shown as `0` — so `1e-17` is `0.00000000000000001`, `1e-18`
  * and `-1e-18` are `0`, and `1e21` prints every integer digit (#543).
  *
- * The mock computes in a `double`, which stands in for the `long double` Redis
- * holds, so the decimal rounded here is the double's shortest round-trip
- * spelling, not its exact binary expansion: `1.5 + 2.3` is `3.8` as on Redis,
- * where the exact double would print `3.79999999999999982`. A tie at the 17th
- * decimal goes to even, which is where the `long double` nearest the decimal
- * lands on the probed servers (`1.5e-17` → `…02`, `5e-18` → `0`). What a
- * double cannot hold — the 64-bit mantissa's extra digits and its own rounding
- * noise (`1234.5678` → `1234.56779999999999997`) — stays a known limit (#512).
+ * glibc prints the exact binary value of the 80-bit `long double`, rounded at
+ * the 17th decimal with ties to even: `0.1 + 0.2` is `0.3`, `1234.5678 + 0`
+ * is `1234.56779999999999997`, and `1e400` prints its 401 digits (#512).
  */
-export function formatIncrByFloatResult(value: number): string {
-  if (!Number.isFinite(value)) {
-    return formatRedisDouble(value)
-  }
-  if (value === 0) {
+export function formatIncrByFloatResult(value: LongDouble): string {
+  if (value.mantissa === 0n) {
     return '0'
   }
-  // `toExponential()` with no argument keeps the shortest round-trip digits.
-  const [mantissa, exponent] = Math.abs(value).toExponential().split('e')
-  const digits = BigInt(mantissa!.replace('.', ''))
-  const scale = mantissa!.replace('.', '').length - 1 - Number(exponent)
-  return scale >= 0
-    ? humanFromScaled(value < 0, digits, scale)
-    : humanFromScaled(value < 0, digits * 10n ** BigInt(-scale), 0)
+  if (value.exponent >= 0) {
+    return humanFromScaled(
+      value.negative,
+      value.mantissa << BigInt(value.exponent),
+      0,
+    )
+  }
+  // mantissa / 2^shift, rounded to 17 decimals, ties to even.
+  const shift = BigInt(-value.exponent)
+  const numerator = value.mantissa * 10n ** BigInt(HUMAN_LONG_DOUBLE_DECIMALS)
+  let scaled = numerator >> shift
+  const twiceRest = (numerator - (scaled << shift)) * 2n
+  const divisor = 1n << shift
+  if (twiceRest > divisor || (twiceRest === divisor && (scaled & 1n) === 1n)) {
+    scaled += 1n
+  }
+  return humanFromScaled(value.negative, scaled, HUMAN_LONG_DOUBLE_DECIMALS)
 }
 
 /**

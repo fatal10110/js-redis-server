@@ -8,7 +8,7 @@ import { bulk, integer, scoreValue } from '../helpers'
 import {
   assertValidResultingScore,
   parseFloatArg,
-  storeListpackScores,
+  zsetEncodingRules,
 } from './helpers'
 
 type ZaddPair = { score: number; member: Buffer }
@@ -102,9 +102,11 @@ export const zaddCommand = defineCommand({
   flags: ['write', 'denyoom', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    const rules = zsetEncodingRules(ctx.server)
     if (args.options.incr) {
       const [{ score, member }] = args.pairs
       const newScore = ctx.db.updateSortedSet(args.key, zset => {
+        zset.prepareForAdd([member], rules)
         const existing = zset.getMember(member)
         // A new member takes the increment as is (zsetAdd), so INCR -0
         // replies -0.
@@ -117,8 +119,7 @@ export const zaddCommand = defineCommand({
 
         // An equal score is no change (zsetAdd), so a stored -0 stays.
         if (!existing || existing.score !== nextScore) {
-          zset.setScore(member, nextScore)
-          storeListpackScores(zset, [member], ctx.server)
+          zset.addScore(member, nextScore, rules)
         }
         return nextScore
       })
@@ -128,8 +129,11 @@ export const zaddCommand = defineCommand({
     }
 
     const replyCount = ctx.db.updateSortedSet(args.key, zset => {
+      zset.prepareForAdd(
+        args.pairs.map(pair => pair.member),
+        rules,
+      )
       let count = 0
-      const zeroes: Buffer[] = []
       for (const { score, member } of args.pairs) {
         const existing = zset.getMember(member)
 
@@ -142,11 +146,9 @@ export const zaddCommand = defineCommand({
         }
 
         if (!existing || existing.score !== score) {
-          zset.setScore(member, score)
-          if (Object.is(score, -0)) zeroes.push(member)
+          zset.addScore(member, score, rules)
         }
       }
-      storeListpackScores(zset, zeroes, ctx.server)
       return count
     })
     return integer(replyCount)

@@ -55,6 +55,32 @@ so the PR body is not a durable home for a breaking-change note.
   error and a count of 0 or less answers an empty array before the key's
   type is checked. The new `zset.pop-count-positive` feature gate records
   the change.
+- Sorted sets track whether a real server would hold them as a listpack or a
+  skiplist ([#512]), and the replies that depend on it match. `ZSCAN` on a
+  skiplist spells every score `%.17Lg` on every version (`0.1` is
+  `0.10000000000000001`, `-0` stays `-0`) and on a listpack walks the set in
+  (score, member) order, as Redis does, instead of insertion order. A set
+  becomes a skiplist past `zset-max-listpack-entries` or with a member longer
+  than `zset-max-listpack-value`, and stays one when it shrinks, so a `-0`
+  added to a shrunk skiplist is kept from 7.0 as well. `SORT` and `SORT_RO`
+  convert a zset to a skiplist in place, as Redis does. From 7.2 a `ZADD` (or
+  `GEOADD`) of more pairs than the entry limit makes a skiplist up front, and
+  on Valkey 8.0+ a `ZADD` member longer than the value limit does too, even
+  one `XX` skips. `ZRANGESTORE` builds its result member by member (a
+  listpack to start with for `BYSCORE` / `BYLEX`, always a skiplist on Redis
+  7.2.0-7.2.4) and `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE` and the GEO
+  `STORE` forms make it a listpack when it fits. New `FeatureId` members
+  `zset.add-size-hint`, `zset.add-longest-member-hint`,
+  `zset.rangestore-unknown-length-skiplist` and
+  `zset.rangestore-unknown-length-listpack`; the encoding is the `encoding` field of
+  `RedisSortedSetData`, for a later `OBJECT ENCODING` (#117).
+- `INCRBYFLOAT` and `HINCRBYFLOAT` add in an x86-64 80-bit `long double`, as
+  Redis does on amd64 ([#512]): `0.1` + `0.2` is `0.3` (it was
+  `0.30000000000000004`), `1234.5678` + `0` is `1234.56779999999999997`, and
+  integers above 2^53 keep their digits. Values past the `double` range and
+  inside the `long double` one are accepted: `INCRBYFLOAT k 1e400` replies
+  its 401 digits (it was `value is not a valid float`) and `1e308` + `1e308`
+  is a 309-digit number (it was `increment would produce NaN or Infinity`).
 - GEOSEARCH and GEOSEARCHSTORE accept FROMMEMBER / FROMLONLAT, BYRADIUS /
   BYBOX and their options in any order, as every Redis and Valkey version
   does ([#607]); they used to answer `syntax error` unless FROM came first
