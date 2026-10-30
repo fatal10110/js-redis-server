@@ -37,6 +37,10 @@ everything the issues ask, without breaking anything else". Every finding carrie
    the changed files, the unit suite, the changed integration files under each gated profile.
    Never the full integration suites (CI).
 
+Parity first: the library stands in for Redis/Valkey in CI and tests. A memory, throughput or
+other production-hardening concern is at most a [nit] unless it makes a test run hang, crash or
+become impractically slow; never block a parity fix on it.
+
 Tags: [blocker] wrong behavior or crash; [must-fix] acceptance gap, missing test, wrong gate,
 test that would pass on the base; [should-fix] real defect of lower impact; [nit] style
 (non-optional only if a project rule says so); [question] when you cannot decide. Only

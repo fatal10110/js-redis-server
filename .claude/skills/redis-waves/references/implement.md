@@ -4,6 +4,11 @@ The project goal is a mock that answers exactly like the real server of the sele
 compatibility profile, byte for byte on the wire. Every behavior claim is settled by a real
 server, never by memory of Redis or by what the issue text says.
 
+Priorities: the library stands in for Redis/Valkey in CI and tests. Functional parity and
+per-version compatibility come first. Memory use, buffer retention, throughput and other
+production hardening come last: do them only when cheap or when they would make a test run hang
+or blow up, and never trade parity for them.
+
 ## 1. Pin the target behavior
 
 - Read each issue and its comments once (`gh issue view <n> -R fatal10110/js-redis-server --comments`).
