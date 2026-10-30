@@ -704,9 +704,10 @@ so the PR body is not a durable home for a breaking-change note.
   `test:integration:real*` scripts hold it until the test run exits.
 
 - **`/core`** New `FeatureId` gates `error.subscribed-context-wording`
-  (the 7.0 subscribed-mode refusal) and
+  (the 7.0 subscribed-mode refusal),
   `notify.keyspace.keymiss-store-sources` (7.0's read lookups of store
-  sources), and a `subscribedContext` factory on `errors` ([#514]).
+  sources) and `notify.keyspace.keymiss-hgetex` (Valkey 9.0's read lookup in
+  `HGETEX`), and a `subscribedContext` factory on `errors` ([#514]).
   **BREAKING** for `RedisDatabase.subscribe` listeners that switch over
   every `RedisMutationEvent` type: the union gains the notification-only
   `new` and `keymiss` events (they never reach per-key listeners), and
@@ -1779,16 +1780,21 @@ so the PR body is not a durable home for a breaking-change note.
   `keymiss` comes from each read lookup of a missing key, on every profile:
   readonly commands (`GET`, `MGET` per key, `EXISTS`, `TYPE`, `TTL`, `HGET`,
   `XREAD` twice per stream, ...), `GETSET` / `GETDEL` / `GETEX` / `SET ...
-  GET`, `BITOP` / `PFMERGE` / `GEOSEARCHSTORE` / `GEORADIUS` sources, scripts'
+  GET`, `BITOP` / `PFMERGE` / `GEOSEARCHSTORE` / `GEORADIUS` sources,
+  `BITFIELD` with only `GET` / `OVERFLOW`, `XACK` / `XCLAIM` / `XAUTOCLAIM`,
+  `SORT`'s `BY` and `GET` pattern keys, Valkey 9.0's `HGETEX`, scripts'
   `redis.call` and commands run by `EXEC`, but not write lookups (`DEL`,
   `EXPIRE`, `LPOP`, `LMOVE`, `HSET`, ...), `WATCH` or scripts' keys. From
-  7.0 the store commands' sources, `SORT ... STORE`'s key, `COPY`'s source
-  and a single-key `PFCOUNT` are read lookups too (6.2 looks them up for
-  writing). `new` (7.0+) is published when a key is added, before the
+  7.0 the store commands' sources, `SORT ... STORE`'s key and pattern keys,
+  `COPY`'s source and a single-key `PFCOUNT` are read lookups too (6.2 looks
+  them up for writing). `new` (7.0+) is published when a key is added, before the
   command's own event, never for an overwrite: `SET`, `HSET`, `MSET` per key,
   a collection re-created after it emptied, and `RENAME` / `COPY` /
   `MOVE` destinations, which `RENAME` and `COPY ... REPLACE` announce even
   over an existing key ([#514]).
+- `SORT` / `SORT_RO` `BY` and `GET` patterns of the form `key*->field` read
+  `field` of the hash `key<element>`, as real `lookupKeyByPattern` does; the
+  mock looked up a key named `key<element>->field` and found nothing ([#514]).
 
 ## [0.3.0] and earlier
 

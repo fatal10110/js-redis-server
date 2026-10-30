@@ -59,6 +59,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Verified against redis-server 6.2.14, 7.0.15, 7.2.4, 8.0.0 and Valkey
   // 8.0 / 9.0 (#514).
   'notify.keyspace.keymiss-store-sources': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0's HGETEX looks its hash up with `lookupKeyRead`, so a missing
+  // one publishes `keymiss`; Redis 8.0's uses `lookupKeyWrite` (8.0.0
+  // t_hash.c:2788) and publishes nothing. Probed on valkey 9.0.0 and redis
+  // 8.0.0 (#514).
+  'notify.keyspace.keymiss-hgetex': { valkey: '9.0.0' },
   // Redis 7.0 relaxed the RESP multibulk element-count bound in
   // `processMultibulkBuffer` from `ll > 1024*1024` to `ll > INT_MAX`: `*1048577`
   // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on

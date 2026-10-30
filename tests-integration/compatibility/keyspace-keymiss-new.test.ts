@@ -211,6 +211,101 @@ describe(`keymiss and new keyspace notifications (${testRunner.getBackendName()}
     ])
   })
 
+  test('BITFIELD reads, the XACK family, SORT patterns and HGETEX', async () => {
+    const hgetex = profile === 'redis-8.0' || profile === 'valkey-9.0'
+    const events = await capture('Em', async key => {
+      // Only GET / OVERFLOW operations: a read lookup.
+      assert.strictEqual(
+        await send('BITFIELD', key('bf'), 'GET', 'u8', '0'),
+        '*1\r\n:0\r\n',
+      )
+      assert.strictEqual(
+        await send(
+          'BITFIELD',
+          key('bf-wrap'),
+          'OVERFLOW',
+          'WRAP',
+          'GET',
+          'u8',
+          '0',
+        ),
+        '*1\r\n:0\r\n',
+      )
+      assert.strictEqual(
+        await send('BITFIELD', key('bf-set'), 'SET', 'u8', '0', '1'),
+        '*1\r\n:0\r\n',
+      )
+      // The XACK reply on a missing stream is #589; only the event is checked.
+      await send('XACK', key('xack'), 'g', '0-1')
+      assert.match(
+        await send('XCLAIM', key('xclaim'), 'g', 'c', '0', '0-1'),
+        /^-NOGROUP /,
+      )
+      assert.match(
+        await send('XAUTOCLAIM', key('xautoclaim'), 'g', 'c', '0', '0'),
+        /^-NOGROUP /,
+      )
+      assert.strictEqual(
+        await send('RPUSH', key('list'), '3', '1', '2'),
+        ':3\r\n',
+      )
+      assert.strictEqual(await send('HSET', key('h_1'), 'f', 'one'), ':1\r\n')
+      // BY keys in the list's order, then GET keys in the sorted order.
+      assert.strictEqual(
+        await send('SORT', key('list'), 'BY', key('w_*'), 'GET', key('g_*')),
+        '*3\r\n$-1\r\n$-1\r\n$-1\r\n',
+      )
+      // No lookup for BY nosort or GET #; `->f` reads the hash key.
+      assert.strictEqual(
+        await send(
+          'SORT',
+          key('list'),
+          'BY',
+          'nosort',
+          'GET',
+          key('g_*'),
+          'GET',
+          '#',
+          'GET',
+          `${key('h_*')}->f`,
+        ),
+        '*9\r\n$-1\r\n$1\r\n3\r\n$-1\r\n$-1\r\n$1\r\n1\r\n$3\r\none\r\n$-1\r\n$1\r\n2\r\n$-1\r\n',
+      )
+      // 6.2 looks the patterns up for writing under STORE.
+      assert.strictEqual(
+        await send('SORT', key('list'), 'BY', key('w_*'), 'STORE', key('dst')),
+        ':3\r\n',
+      )
+      if (hgetex) {
+        assert.strictEqual(
+          await send('HGETEX', key('hgetex'), 'FIELDS', '1', 'f'),
+          '*1\r\n$-1\r\n',
+        )
+      }
+    })
+    assert.deepStrictEqual(events, [
+      'keymiss bf',
+      'keymiss bf-wrap',
+      'keymiss xack',
+      'keymiss xclaim',
+      'keymiss xautoclaim',
+      'keymiss w_3',
+      'keymiss w_1',
+      'keymiss w_2',
+      'keymiss g_1',
+      'keymiss g_2',
+      'keymiss g_3',
+      'keymiss g_3',
+      'keymiss h_3',
+      'keymiss g_1',
+      'keymiss g_2',
+      'keymiss h_2',
+      ...(legacy ? [] : ['keymiss w_3', 'keymiss w_1', 'keymiss w_2']),
+      // Redis 8.0's HGETEX looks the hash up for writing.
+      ...(hgetex && profile === 'valkey-9.0' ? ['keymiss hgetex'] : []),
+    ])
+  })
+
   test('store commands read their sources from 7.0', async () => {
     const events = await capture(legacy ? 'Em' : 'Emn', async key => {
       assert.strictEqual(await send('SADD', key('set'), 'a'), ':1\r\n')

@@ -94,6 +94,15 @@ const WRITE_READ_KEYS: Readonly<Record<string, ReadKeys>> = {
   getset: first,
   getdel: first,
   getex: first,
+  // BITFIELD with only GET and OVERFLOW operations takes
+  // `bitfieldGeneric`'s read-only branch (`lookupKeyRead`); a SET or INCRBY
+  // looks the key up for writing, and a syntax error looks nothing up.
+  bitfield: (keys, _profile, rawArgs) =>
+    bitfieldReadsOnly(rawArgs.slice(1)) ? keys.slice(0, 1) : [],
+  // Valkey 9.0's HGETEX looks the hash up with `lookupKeyRead`; Redis 8.0's
+  // with `lookupKeyWrite` (t_hash.c).
+  hgetex: (keys, profile) =>
+    profile.has('notify.keyspace.keymiss-hgetex') ? keys.slice(0, 1) : [],
   set: (keys, _profile, rawArgs) =>
     rawArgs.slice(2).some(arg => equalsAscii(arg, 'get')) ? keys : [],
   // Every source; PFMERGE's loop starts at the destination.
@@ -120,4 +129,29 @@ const WRITE_READ_KEYS: Readonly<Record<string, ReadKeys>> = {
       : keys.slice(0, 1),
   // Up to the first missing stream (see announceKeyMisses).
   xreadgroup: keys => keys,
+  // Each looks the stream up with `lookupKeyRead` (t_stream.c), on 6.2 too.
+  xack: first,
+  xclaim: first,
+  xautoclaim: first,
+}
+
+/**
+ * Whether BITFIELD's operations (the arguments after the key) are all GET or
+ * OVERFLOW and complete, as `bitfieldGeneric` parses them before its lookup.
+ */
+function bitfieldReadsOnly(ops: readonly Buffer[]): boolean {
+  let i = 0
+  while (i < ops.length) {
+    const op = ops[i]
+    const width = equalsAscii(op, 'get')
+      ? 3
+      : equalsAscii(op, 'overflow')
+        ? 2
+        : 0
+    if (width === 0 || i + width > ops.length) {
+      return false
+    }
+    i += width
+  }
+  return true
 }

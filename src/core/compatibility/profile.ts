@@ -21,6 +21,7 @@ export type FeatureId =
   | 'config.memory-value.reject-overflow'
   | 'notify.keyspace.new-key-class'
   | 'notify.keyspace.keymiss-store-sources'
+  | 'notify.keyspace.keymiss-hgetex'
   | 'protocol.multibulk-count-int-max'
   | 'protocol.header-scan-past-nul'
   | 'protocol.inline-adjacent-quotes'

@@ -98,6 +98,19 @@ describe('compatibility profiles', () => {
     const redis74 = resolveCompatibilityProfile('redis-7.4')
     assert.strictEqual(redis74.has('client.kill.maxage'), true)
 
+    assert.strictEqual(
+      resolveCompatibilityProfile('redis-8.0').has(
+        'notify.keyspace.keymiss-hgetex',
+      ),
+      false,
+    )
+    assert.strictEqual(
+      resolveCompatibilityProfile('valkey-9.0').has(
+        'notify.keyspace.keymiss-hgetex',
+      ),
+      true,
+    )
+
     const valkey72 = resolveCompatibilityProfile({
       flavor: 'valkey',
       version: '7.2.4',
