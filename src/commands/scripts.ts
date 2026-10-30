@@ -20,6 +20,7 @@ import { RedisValue } from '../core/redis-value'
 import {
   isScriptShebangFlag,
   parseScriptShebang,
+  SCRIPT_SHEBANG_FLAGS,
   type ParsedScript,
 } from '../core/script-shebang'
 import {
@@ -822,12 +823,15 @@ function functionLibraryReply(
 }
 
 // The flags are status strings in a set (`addReplySetLen` + `addReplyStatus`):
-// `~N +flag` on RESP3, `*N +flag` on RESP2.
+// `~N +flag` on RESP3, `*N +flag` on RESP2. Real Redis keeps them as a
+// bitmask and walks `scripts_flags_def` (functions.c `functionListReplyFlags`),
+// so they come in that fixed order, each once, whatever the library declared.
 function functionReply(fn: RedisFunctionDefinition): RedisValue {
+  const flags = SCRIPT_SHEBANG_FLAGS.filter(flag => fn.flags.includes(flag))
   return RedisValue.map([
     [field('name'), RedisValue.bulkString(Buffer.from(fn.name))],
     [field('description'), RedisValue.bulkString(null)],
-    [field('flags'), RedisValue.set(fn.flags.map(RedisValue.simpleString))],
+    [field('flags'), RedisValue.set(flags.map(RedisValue.simpleString))],
   ])
 }
 

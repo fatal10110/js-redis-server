@@ -281,8 +281,10 @@ describe(`set replies by protocol (${testRunner.getBackendName()})`, () => {
 
       const flagged = `lib_${randomKey()}`
       const plain = `lib_${randomKey()}`
+      const mixed = `lib_${randomKey()}`
       const fn = `f_${randomKey()}`
       const gn = `g_${randomKey()}`
+      const hn = `h_${randomKey()}`
       await load(
         flagged,
         `redis.register_function{function_name='${fn}', callback=function() return 1 end, flags={'no-writes'}}`,
@@ -291,7 +293,28 @@ describe(`set replies by protocol (${testRunner.getBackendName()})`, () => {
         plain,
         `redis.register_function('${gn}', function() return 1 end)`,
       )
+      // Declared out of order with a duplicate: real Redis keeps a bitmask
+      // and lists it in `scripts_flags_def` order (script.c), each flag once.
+      await load(
+        mixed,
+        `redis.register_function{function_name='${hn}', callback=function() return 1 end, flags={'allow-cross-slot-keys','allow-stale','no-cluster','no-writes','allow-stale','allow-oom'}}`,
+      )
+      const canonical = [
+        'no-writes',
+        'allow-oom',
+        'allow-stale',
+        'no-cluster',
+        'allow-cross-slot-keys',
+      ]
       try {
+        assert.strictEqual(
+          await list(resp3, mixed),
+          reply(3, mixed, hn, canonical),
+        )
+        assert.strictEqual(
+          await list(resp2, mixed),
+          reply(2, mixed, hn, canonical),
+        )
         assert.strictEqual(
           await list(resp3, flagged),
           reply(3, flagged, fn, ['no-writes']),
@@ -305,6 +328,7 @@ describe(`set replies by protocol (${testRunner.getBackendName()})`, () => {
       } finally {
         await send(resp2, 'FUNCTION', 'DELETE', flagged)
         await send(resp2, 'FUNCTION', 'DELETE', plain)
+        await send(resp2, 'FUNCTION', 'DELETE', mixed)
       }
     },
   )
