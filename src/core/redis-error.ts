@@ -484,6 +484,11 @@ export const errors = Object.freeze({
     new RedisCommandError(
       `Number of keys can't be greater than number of args`,
     ),
+  /** EVAL / EVALSHA / FCALL family when numkeys < 0 (eval.c, functions.c). */
+  negativeNumberOfKeys: () =>
+    new RedisCommandError(`Number of keys can't be negative`),
+  /** FCALL / FCALL_RO when numkeys is not an int64 (functions.c). */
+  badNumberOfKeys: () => new RedisCommandError('Bad number of keys provided'),
   numKeysGreaterThanZero: () =>
     new RedisCommandError('numkeys should be greater than 0'),
   /** ZUNION/ZINTER/ZDIFF family when numkeys <= 0. */

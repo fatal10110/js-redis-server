@@ -182,7 +182,7 @@ describe('new foundation commands', () => {
     const line = await first
     assert.strictEqual(line.done, false)
     assert.match(
-      String((line.value as RedisResult).value.value),
+      String(((line.value as RedisResult).value as { value: unknown }).value),
       /"ping" "early"$/,
     )
 

@@ -45,7 +45,8 @@ function assertStandIn(err: unknown, className: string, message: string) {
   assert.ok(err instanceof Error)
   const RealClass = realClasses[className] as new () => Error
   assert.strictEqual(typeof RealClass, 'function')
-  assert.ok(!(err instanceof RealClass))
+  // `!(err instanceof RealClass)` would narrow `err` to never.
+  assert.strictEqual(err instanceof RealClass, false)
   assert.strictEqual(err.constructor.name, className)
   assert.strictEqual(err.name, 'Error')
   assert.strictEqual(err.message, message)

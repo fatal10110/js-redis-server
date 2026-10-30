@@ -7,8 +7,11 @@ import { RedisResult } from '../redis-result'
  * Refuses, inside MULTI, a command the profile's command table flags
  * `no_multi`, as `processCommand` does right after the NOAUTH check: SHUTDOWN
  * from Redis 7.0, and on Valkey 8.0+ also MULTI and WATCH (whose own nesting
- * errors are then never reached). Like any queue-time refusal it dirties the
- * transaction, so EXEC answers EXECABORT. Redis 6.2 flags nothing `no_multi`.
+ * errors are then never reached), and on Valkey 9.0 `CLIENT REPLY`. The flag is
+ * read from the entry the command resolves to, `container|subcommand` from
+ * 7.0 (`client|reply`), which also names the command in Valkey 9.0's error.
+ * Like any queue-time refusal it dirties the transaction, so EXEC answers
+ * EXECABORT. Redis 6.2 flags nothing `no_multi`.
  */
 export function createNoMultiPolicy(): ExecutionPolicy {
   return {
@@ -20,8 +23,11 @@ export function createNoMultiPolicy(): ExecutionPolicy {
       }
 
       const profile = ctx.executor.profile
-      const { name } = plan.definition
-      if (!commandTableEntry(name, profile)?.flags.includes('no_multi')) {
+      const name = ctx.executor.lookupCommandName(plan.rawCommand, plan.rawArgs)
+      if (
+        name === null ||
+        !commandTableEntry(name, profile)?.flags.includes('no_multi')
+      ) {
         return
       }
 

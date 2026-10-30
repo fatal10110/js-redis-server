@@ -1,9 +1,15 @@
 import assert from 'node:assert'
-import { createHash } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
 import { errorWithMessage, randomKey } from '../utils'
+import {
+  ERROR_REPLY_FOO,
+  SCRIPT_LIB,
+  legacy,
+  libCallAbort,
+  luaRuntimeAbort,
+} from '../profile-wording'
 
 const testRunner = new TestRunner()
 // Unique per run: the real-backend suites share one Redis that is never
@@ -99,12 +105,11 @@ describe(`Redis commands (${testRunner.getBackendName()})`, () => {
 
     test('matches Redis script error format', async () => {
       const script = "return redis.set('x', 1)"
-      const sha = createHash('sha1').update(script).digest('hex')
 
       await assert.rejects(
         () => redisClient?.eval(script, 0),
         errorWithMessage(
-          `ERR user_script:1: attempt to call field 'set' (a nil value) script: ${sha}, on @user_script:1.`,
+          luaRuntimeAbort(script, "attempt to call field 'set' (a nil value)"),
         ),
       )
     })
@@ -143,7 +148,7 @@ describe(`Redis commands (${testRunner.getBackendName()})`, () => {
     test('redis.error_reply prepends ERR only when there is no code', async () => {
       await assert.rejects(
         () => redisClient!.eval("return redis.error_reply('foo')", 0),
-        errorWithMessage('ERR foo'),
+        errorWithMessage(ERROR_REPLY_FOO),
       )
       await assert.rejects(
         () => redisClient!.eval("return redis.error_reply('WRONGTYPE x')", 0),
@@ -160,23 +165,27 @@ describe(`Redis commands (${testRunner.getBackendName()})`, () => {
 
     test('accessing a nonexistent global errors like Redis', async () => {
       const script = "print('a')"
-      const sha = createHash('sha1').update(script).digest('hex')
+      // Redis 6.2 does not guard the global table: print is a no-op there.
+      if (legacy) {
+        assert.strictEqual(await redisClient!.eval(script, 0), null)
+        return
+      }
       await assert.rejects(
         () => redisClient!.eval(script, 0),
         errorWithMessage(
-          `ERR user_script:1: Script attempted to access nonexistent global variable 'print' script: ${sha}, on @user_script:1.`,
+          luaRuntimeAbort(
+            script,
+            "Script attempted to access nonexistent global variable 'print'",
+          ),
         ),
       )
     })
 
     test('boolean redis.call argument is rejected like Redis', async () => {
       const script = "return redis.call('set', 'k', true)"
-      const sha = createHash('sha1').update(script).digest('hex')
       await assert.rejects(
         () => redisClient!.eval(script, 0),
-        errorWithMessage(
-          `ERR Lua redis lib command arguments must be strings or integers script: ${sha}, on @user_script:1.`,
-        ),
+        errorWithMessage(libCallAbort(script, SCRIPT_LIB.badArgument)),
       )
     })
   })

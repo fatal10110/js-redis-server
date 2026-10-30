@@ -209,7 +209,7 @@ describe('blocking commands inside MULTI/EXEC (unit)', () => {
     const result = await session.execute('exec', buf())
     // EXEC array has one entry: nil array from non-blocking BLPOP
     assert.strictEqual(result.value.kind, 'array')
-    const execItems = (result.value as { kind: 'array'; items: RedisResult[] })
+    const execItems = (result.value as { kind: 'array'; items: RedisValue[] })
       .items
     assert.strictEqual(execItems.length, 1)
     assert.deepStrictEqual(
@@ -228,7 +228,7 @@ describe('blocking commands inside MULTI/EXEC (unit)', () => {
     )
     const result = await session.execute('exec', buf())
     assert.strictEqual(result.value.kind, 'array')
-    const execItems = (result.value as { kind: 'array'; items: RedisResult[] })
+    const execItems = (result.value as { kind: 'array'; items: RedisValue[] })
       .items
     assert.strictEqual(execItems.length, 1)
     assert.deepStrictEqual(

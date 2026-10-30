@@ -98,8 +98,11 @@ a server-level command event feed. A repeated `MONITOR` gets no reply, and
 `MONITOR` inside `MULTI` fails with `MONITOR isn't allowed for DENY BLOCKING
 client`, as in Redis. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
-arguments. Unknown commands and arity/syntax failures are not emitted; commands
-that parse successfully but return execution errors are emitted, matching Redis.
+arguments. A command that fails its own argument check is emitted (for example
+`EVAL s -1 a` or `SET k v EX abc`), as are commands that return execution
+errors. Only an unknown command, a wrong argument count or, from 7.0 (where the
+subcommand is looked up before the command runs), an unknown subcommand is not
+emitted, matching Redis.
 Cluster redirects and pre-execution cluster errors are not emitted because the
 command is not executed on that node. Commands with monitor skip metadata are
 skipped, authentication credentials are redacted, commands replayed by `EXEC` are
@@ -622,7 +625,7 @@ script is still routed as a write command (a cluster replica with
 - [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
 - [x] `FUNCTION LOAD [REPLACE] function-code` - Load a Lua function library
 - [x] `FUNCTION DELETE library-name` - Delete a function library
-- [x] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries (RESP3 maps with a status-string `flags` set / RESP2 flat arrays)
+- [x] `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]` - List function libraries; `pattern` is a case-insensitive glob matched against the library name (RESP3 maps with a status-string `flags` set / RESP2 flat arrays)
 - [x] `FUNCTION STATS` - Return loaded-library/function counts
 - [x] `FUNCTION DUMP` - Dump loaded libraries to a mock-local serialized payload
 - [x] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
