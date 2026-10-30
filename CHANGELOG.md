@@ -1694,6 +1694,17 @@ so the PR body is not a durable home for a breaking-change note.
   - Valkey 8.0+ accepts `XREAD ... +`. XREADGROUP answers `$` (and `+` on
     Redis 7.4+ / Valkey 8.0+) with the `ID is meaningless` error, after the
     NOGROUP check, as real servers do.
+- INCRBYFLOAT and HINCRBYFLOAT spell their result, and the value they store,
+  like Redis' `ld2string(…, LD_STR_HUMAN)` on every Redis and Valkey version
+  ([#543]): `%.17Lf` with trailing zeros dropped, never an exponent.
+  `INCRBYFLOAT n 1e-17` is `0.00000000000000001` (it was `1e-17`), `1e-18`,
+  `-1e-18` and `5e-324` are `0` (HINCRBYFLOAT gave `-0` for `-1e-18`), and
+  `1e21` prints every digit (it was `1e+21`). A stored `1e-17` read back
+  after `INCRBYFLOAT k 0` is `0.00000000000000001`, as on Redis.
+  - Known limit ([#512]): the mock still adds in a double, not a `long
+    double`, so results whose digits need the 64-bit mantissa still differ:
+    `0.1` + `0.2` is `0.30000000000000004` (Redis `0.3`), `1234.5678` is not
+    Redis' `1234.56779999999999997`, and integers above 2^53 lose their tail.
 
 ## [0.3.0] and earlier
 
@@ -1764,6 +1775,7 @@ requests they contain.
 [#500]: https://github.com/fatal10110/js-redis-server/issues/500
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
 [#542]: https://github.com/fatal10110/js-redis-server/issues/542
+[#543]: https://github.com/fatal10110/js-redis-server/issues/543
 [#505]: https://github.com/fatal10110/js-redis-server/issues/505
 [#32]: https://github.com/fatal10110/js-redis-server/issues/32
 [#496]: https://github.com/fatal10110/js-redis-server/issues/496

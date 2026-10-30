@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 
 import {
   formatGeoCoordinate,
+  formatIncrByFloatResult,
   formatRedisDouble,
 } from '../../src/core/double-format'
 import { resolveCompatibilityProfile } from '../../src/core/compatibility'
@@ -183,5 +184,58 @@ describe('formatGeoCoordinate (#451)', () => {
       formatGeoCoordinate(4.9427062607109546e-5, modern),
       '4.9427062607109546e-5',
     )
+  })
+})
+
+describe('formatIncrByFloatResult (#543)', () => {
+  // Read back from INCRBYFLOAT on real redis 6.2.14 … 8.0.0 and valkey 8.0.0 /
+  // 9.0.0: ld2string(…, LD_STR_HUMAN), i.e. %.17Lf trimmed, on every profile.
+  test('%.17Lf trimmed, never an exponent', () => {
+    for (const [value, expected] of [
+      [1e-17, '0.00000000000000001'],
+      [-1e-17, '-0.00000000000000001'],
+      [1e-18, '0'],
+      [-1e-18, '0'],
+      [1.49e-18, '0'],
+      [5e-324, '0'],
+      [-0, '0'],
+      [0, '0'],
+      [1e-7, '0.0000001'],
+      [2e-7, '0.0000002'],
+      [1.5e-8, '0.000000015'],
+      [2e-17, '0.00000000000000002'],
+      [1e-5, '0.00001'],
+      [0.5, '0.5'],
+      [3, '3'],
+      [1.6, '1.6'],
+      [3.8, '3.8'],
+      [-15, '-15'],
+      [2749.870849609375, '2749.870849609375'],
+      [1.2345678901234567e-3, '0.00123456789012346'],
+      [1e17, '100000000000000000'],
+      [1e20, '100000000000000000000'],
+      [1e21, '1000000000000000000000'],
+      [-1e21, '-1000000000000000000000'],
+    ] as const) {
+      assert.strictEqual(formatIncrByFloatResult(value), expected, `${value}`)
+    }
+  })
+
+  test('a tie at the 17th decimal goes to even', () => {
+    for (const [value, expected] of [
+      [5e-18, '0'],
+      [1.5e-17, '0.00000000000000002'],
+      [2.5e-17, '0.00000000000000002'],
+      [3.5e-17, '0.00000000000000004'],
+      [4.5e-17, '0.00000000000000004'],
+      [1.25e-16, '0.00000000000000012'],
+    ] as const) {
+      assert.strictEqual(formatIncrByFloatResult(value), expected, `${value}`)
+    }
+  })
+
+  test('inf and nan keep the double spelling', () => {
+    assert.strictEqual(formatIncrByFloatResult(Infinity), 'inf')
+    assert.strictEqual(formatIncrByFloatResult(-Infinity), '-inf')
   })
 })

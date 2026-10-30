@@ -701,6 +701,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'INCRBYFLOAT parses operands like strtold: hex floats and long double limits (#234)',
   ]),
   todo(
+    'node-redis/string/incrbyfloat-format.test.ts',
+    missing('incrByFloat', 'hIncrByFloat'),
+    [
+      'incrByFloat replies and stores %.17Lf trimmed (#543)',
+      'hIncrByFloat replies and stores %.17Lf trimmed (#543)',
+    ],
+  ),
+  todo(
     'node-redis/string/proto-max-bulk-len.test.ts',
     missing('append', 'configGet', 'configSet', 'getRange', 'setRange'),
     [
