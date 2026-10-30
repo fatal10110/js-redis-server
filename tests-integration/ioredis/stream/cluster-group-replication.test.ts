@@ -101,6 +101,28 @@ describe(`Stream group replication (ioredis, ${testRunner.getBackendName()})`, (
       await masterClient.xclaim(key, 'g', 'c1', 0, '2-1')
       await masterClient.xreadgroup('GROUP', 'g', 'c3', 'STREAMS', key, '>')
       await masterClient.xautoclaim(key, 'g', 'c4', 0, '3-1')
+      await eventually(async () => {
+        assert.deepStrictEqual(await replicaGroupState(replicaClient, key), {
+          lastId: '3-1',
+          groups: {
+            g: {
+              lastDeliveredId: '3-1',
+              pending: 2,
+              consumers: [
+                ['c1', 1],
+                ['c2', 0],
+                ['c3', 0],
+                ['c4', 1],
+              ],
+              pel: [
+                ['2-1', 'c1', 2],
+                ['3-1', 'c4', 2],
+              ],
+            },
+          },
+        })
+      })
+
       assert.strictEqual(
         await masterClient.xgroup('DELCONSUMER', key, 'g', 'c2'),
         0,

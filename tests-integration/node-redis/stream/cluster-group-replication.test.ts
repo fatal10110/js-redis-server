@@ -74,6 +74,28 @@ describe(`Stream group replication (node-redis, ${testRunner.getBackendName()})`
       await masterClient.xClaim(key, 'g', 'c1', 0, '2-1')
       await masterClient.xReadGroup('g', 'c3', { key, id: '>' })
       await masterClient.xAutoClaim(key, 'g', 'c4', 0, '3-1')
+      await eventually(async () => {
+        assert.deepStrictEqual(await replicaGroupState(replicaClient, key), {
+          lastId: '3-1',
+          groups: {
+            g: {
+              lastDeliveredId: '3-1',
+              pending: 2,
+              consumers: [
+                ['c1', 1],
+                ['c2', 0],
+                ['c3', 0],
+                ['c4', 1],
+              ],
+              pel: [
+                ['2-1', 'c1', 2],
+                ['3-1', 'c4', 2],
+              ],
+            },
+          },
+        })
+      })
+
       assert.strictEqual(
         await masterClient.xGroupDelConsumer(key, 'g', 'c2'),
         0,
