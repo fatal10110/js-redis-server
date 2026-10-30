@@ -10,7 +10,11 @@ export type ScriptShebangFlag =
   | 'no-cluster'
   | 'allow-cross-slot-keys'
 
-const SCRIPT_SHEBANG_FLAGS: readonly ScriptShebangFlag[] = [
+/**
+ * Every flag in Redis's `scripts_flags_def` order (script.c), the order
+ * FUNCTION LIST reports a function's flags in.
+ */
+export const SCRIPT_SHEBANG_FLAGS: readonly ScriptShebangFlag[] = [
   'no-writes',
   'allow-oom',
   'allow-stale',

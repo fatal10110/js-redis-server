@@ -1,7 +1,7 @@
 import { defineCommand } from '../core/command-definition'
 import { numkeysGetKeys } from '../core/key-specs'
 import { t } from '../core/command-schema'
-import { integer, bulk, array } from './helpers'
+import { integer, bulk, array, setReply } from './helpers'
 import { RedisValue } from '../core/redis-value'
 import {
   WrongNumberOfArgumentsError,
@@ -165,6 +165,12 @@ function bulkMembers(members: Iterable<Buffer>) {
   return array(Array.from(members, member => RedisValue.bulkString(member)))
 }
 
+// SMEMBERS, SINTER, SUNION, SDIFF and SPOP with a count reply through
+// `addReplySetLen` in Redis (t_set.c): a RESP3 set (`~`), an array on RESP2.
+function setMembers(members: Iterable<Buffer>) {
+  return setReply(Array.from(members, member => RedisValue.bulkString(member)))
+}
+
 function parseSintercardCount(token: Buffer): number {
   const count = Number(token.toString())
   if (!Number.isSafeInteger(count) || count <= 0) {
@@ -297,10 +303,8 @@ export const smembersCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const set = ctx.db.getSet(args.key)
-    if (!set) return array([])
-    return array(
-      Array.from(set.members.values()).map(m => RedisValue.bulkString(m)),
-    )
+    if (!set) return setMembers([])
+    return setMembers(set.members.values())
   },
 })
 
@@ -374,7 +378,8 @@ export const spopCommand = defineCommand({
     }
 
     const type = ctx.db.getType(args.key)
-    if (type === null) return args.count === undefined ? bulk(null) : array([])
+    if (type === null)
+      return args.count === undefined ? bulk(null) : setMembers([])
     if (type !== 'set') throw new WrongTypeRedisError()
 
     if (args.count === undefined) {
@@ -389,7 +394,7 @@ export const spopCommand = defineCommand({
     }
 
     const count = args.count
-    if (count === 0) return array([])
+    if (count === 0) return setMembers([])
 
     const rules = setEncodingRules(ctx.server)
     const popped = ctx.db.updateSet(args.key, set => {
@@ -423,7 +428,7 @@ export const spopCommand = defineCommand({
       }
       return members
     })
-    return bulkMembers(popped)
+    return setMembers(popped)
   },
 })
 
@@ -479,7 +484,7 @@ export const sdiffCommand = defineCommand({
   keys: args => args.keys,
   execute: (args, ctx) => {
     const diff = unionOrDiff(ctx, args.keys, 'diff', false)
-    return bulkMembers(diff.members.values())
+    return setMembers(diff.members.values())
   },
 })
 
@@ -492,7 +497,7 @@ export const sinterCommand = defineCommand({
   schema: t.object({ keys: t.variadic(t.key(), { min: 1 }) }),
   flags: ['readonly'],
   keys: args => args.keys,
-  execute: (args, ctx) => bulkMembers(intersectInOrder(ctx.db, args.keys)),
+  execute: (args, ctx) => setMembers(intersectInOrder(ctx.db, args.keys)),
 })
 
 // ---------------------------------------------------------------------------
@@ -525,7 +530,7 @@ export const sunionCommand = defineCommand({
   keys: args => args.keys,
   execute: (args, ctx) => {
     const union = unionOrDiff(ctx, args.keys, 'union', false)
-    return bulkMembers(union.members.values())
+    return setMembers(union.members.values())
   },
 })
 

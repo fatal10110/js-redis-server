@@ -305,10 +305,9 @@ as Redis 6.2 does. After `redis.setresp(3)`, `redis.call` also
 hands the script RESP3 replies — `HGETALL` as a `{map=…}` table, `ZSCORE` as a
 `{double=…}` table — so returning one gives the client a map or a double.
 
-One known mock gap here, not Redis behaviour: the mock's `SMEMBERS` replies
-with an array, not a RESP3 set (`~`), so after `redis.setresp(3)` the script
-sees a plain list instead of a `{set=…}` table. The script gaps that still
-need Lua engine work (6.2's error handler, `redis.call` number arguments on
+After `redis.setresp(3)` a set reply (`SMEMBERS`, `SINTER`, `SUNION`,
+`SDIFF`, `SPOP` with a count) reaches the script as a `{set=…}` table, as in
+Redis. The script gaps that still need Lua engine work (6.2's error handler, `redis.call` number arguments on
 6.2 / 7.0, `set_repl` / `replicate_commands`) are tracked in
 [#540](https://github.com/fatal10110/js-redis-server/issues/540).
 

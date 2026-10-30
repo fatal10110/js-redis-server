@@ -61,6 +61,11 @@ export function array(items: RedisValue[]): RedisResult {
   return RedisResult.create(RedisValue.array(items))
 }
 
+/** A RESP3 set (`~`); a plain array (`*`) on RESP2. */
+export function setReply(items: RedisValue[]): RedisResult {
+  return RedisResult.create(RedisValue.set(items))
+}
+
 /**
  * A container's HELP reply, as real Redis' `addReplyHelp` builds it: the
  * container's own lines followed by the `HELP` entry every container appends,

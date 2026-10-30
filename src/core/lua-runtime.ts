@@ -804,10 +804,10 @@ export function redisValueToLuaReply(
  * `encodeResp3`; `undefined` for every kind both protocols convert alike. (A
  * null reaches Lua as `nil` at either protocol, as in Redis.)
  *
- * Through `redis.call` only `double`, `map`, `map-pairs` and `flat-pairs` are
- * reachable today. No command emits `set`, `boolean`, `big-number` or
- * `verbatim` yet (real Redis sends SMEMBERS as a set and INFO as a verbatim
- * string), so those branches just mirror `encodeResp3` for when one does.
+ * Through `redis.call`, `double`, `map`, `map-pairs`, `flat-pairs`, `set`
+ * (SMEMBERS, SINTER, SUNION, SDIFF, SPOP with a count) and `verbatim` (INFO)
+ * are reachable. No command a script may call emits `boolean` or `big-number`
+ * yet, so those branches just mirror `encodeResp3` for when one does.
  */
 function resp3TypedLuaReply(
   value: RedisValue,
