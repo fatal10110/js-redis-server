@@ -40,7 +40,9 @@ import {
 // LTRIM). Stream consumer-group / pending / last-id mutations deliberately do
 // NOT mark the key dirty: real Redis leaves a WATCH on the stream key intact for
 // those, only entry-set changes (XADD/XDEL/…) touch it. The ones real Redis
-// still announces (XGROUP subcommands, XSETID) call markCommitted() instead.
+// still announces (XGROUP subcommands, XSETID) call markCommitted() instead;
+// the rest (XACK, XREADGROUP, XCLAIM, XAUTOCLAIM) call markPropagated(), since
+// real Redis still propagates them to its replicas.
 
 export class TrackedHashData {
   /**
@@ -522,13 +524,14 @@ export class TrackedStreamData {
   }
 
   // XACK. Clearing pending entries mutates the live group in place (the stream
-  // key already exists), so no commit is needed; real Redis does not dirty a
-  // WATCH on the stream key for a PEL change, so no markChanged().
+  // key already exists); real Redis neither announces a PEL change nor dirties
+  // a WATCH on the stream key for it, but propagates it: markPropagated().
   ack(group: RedisStreamConsumerGroup, ids: readonly StreamId[]): number {
     let count = 0
     for (const id of ids) {
       if (group.pending.delete(streamIdKey(id))) count++
     }
+    if (count > 0) this.tracker.markPropagated()
     return count
   }
 
@@ -565,7 +568,8 @@ export class TrackedStreamData {
   // XREADGROUP for a single stream. Returns the delivered entries (fields === null
   // marks a history entry that was deleted from the stream) for the command to
   // shape into a reply. Delivering messages / advancing the PEL does not dirty a
-  // WATCH on the stream key in real Redis.
+  // WATCH on the stream key in real Redis, but is propagated (as XCLAIM /
+  // XGROUP SETID), and so is creating the consumer (XGROUP CREATECONSUMER).
   readGroup(
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
@@ -580,8 +584,9 @@ export class TrackedStreamData {
     // Every read refreshes the consumer's seen time (XINFO `idle`); only
     // delivering new entries (`>`) refreshes its active time (`inactive`),
     // as in real Redis 7.2+. A history read or an empty read does not.
-    const consumer = ensureConsumer(group, consumerName, now)
     const consumerId = consumerName.toString('hex')
+    if (!group.consumers.has(consumerId)) this.tracker.markPropagated()
+    const consumer = ensureConsumer(group, consumerName, now)
     const { count, noack } = options
     const delivered: StreamDelivery[] = []
     const limited = count !== null && count > 0
@@ -610,7 +615,10 @@ export class TrackedStreamData {
 
         if (limited && delivered.length >= count) break
       }
-      if (delivered.length > 0) consumer.activeAt = now
+      if (delivered.length > 0) {
+        consumer.activeAt = now
+        this.tracker.markPropagated()
+      }
       return delivered
     }
 
@@ -633,7 +641,7 @@ export class TrackedStreamData {
   // XCLAIM. Returns the claimed entries for the command to shape into a reply
   // (justId vs full; fields === null is a deleted entry claimed on 6.2).
   // Reassigning pending ownership does not dirty a WATCH on the stream key in
-  // real Redis.
+  // real Redis; it is propagated (markPropagated()) like XREADGROUP's.
   claim(
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
@@ -656,16 +664,20 @@ export class TrackedStreamData {
     },
     now: number,
   ): ClaimedEntry[] {
+    const consumerId = consumerName.toString('hex')
+    if (options.eagerConsumer && !group.consumers.has(consumerId)) {
+      this.tracker.markPropagated()
+    }
     let consumer = options.eagerConsumer
       ? ensureConsumer(group, consumerName, now)
       : null
-    const consumerId = consumerName.toString('hex')
     // A LASTID behind the group's last-delivered id is ignored.
     if (
       options.lastId &&
       compareStreamId(options.lastId, group.lastDeliveredId) > 0
     ) {
       group.lastDeliveredId = cloneStreamId(options.lastId)
+      this.tracker.markPropagated()
     }
 
     const claimed: ClaimedEntry[] = []
@@ -675,7 +687,7 @@ export class TrackedStreamData {
       let pending = group.pending.get(pendingId)
 
       if (!entry && options.dropDeleted) {
-        group.pending.delete(pendingId)
+        if (group.pending.delete(pendingId)) this.tracker.markPropagated()
         continue
       }
 
@@ -712,7 +724,10 @@ export class TrackedStreamData {
 
       claimed.push({ id: cloneStreamId(id), fields: entry?.fields ?? null })
     }
-    if (claimed.length > 0 && consumer) consumer.activeAt = now
+    if (claimed.length > 0) {
+      if (consumer) consumer.activeAt = now
+      this.tracker.markPropagated()
+    }
     return claimed
   }
 
@@ -721,7 +736,7 @@ export class TrackedStreamData {
   // Returns the next cursor (the pending entry after the last one examined,
   // 0-0 at the end), the claimed entries, and the ids of pending entries
   // dropped because their stream entry was gone. Does not dirty a WATCH on the
-  // stream key in real Redis.
+  // stream key in real Redis, but is propagated (markPropagated()).
   autoClaim(
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
@@ -741,10 +756,13 @@ export class TrackedStreamData {
     },
     now: number,
   ): AutoClaimResult {
+    const consumerId = consumerName.toString('hex')
+    if (options.eagerConsumer && !group.consumers.has(consumerId)) {
+      this.tracker.markPropagated()
+    }
     let consumer = options.eagerConsumer
       ? ensureConsumer(group, consumerName, now)
       : null
-    const consumerId = consumerName.toString('hex')
     const claimed: AutoClaimedEntry[] = []
     const deleted: StreamId[] = []
     const candidates = pendingEntriesSorted(group).filter(
@@ -783,6 +801,9 @@ export class TrackedStreamData {
     const next = candidates[index]
     const nextStartId = next ? cloneStreamId(next.id) : MIN_ID
     if (claimed.length > 0 && consumer) consumer.activeAt = now
+    if (claimed.length > 0 || deleted.length > 0) {
+      this.tracker.markPropagated()
+    }
     return { nextStartId, claimed, deleted }
   }
 
@@ -820,6 +841,23 @@ export class TrackedStreamData {
 
     group.consumers.set(consumerId, consumer)
     this.tracker.markCommitted()
+    return true
+  }
+
+  // A consumer XREADGROUP / XCLAIM / XAUTOCLAIM create on a profile that does
+  // not announce it (6.2, see `stream.implicit-consumer-event`): still
+  // propagated to replicas, as XGROUP CREATECONSUMER, but published nowhere.
+  addConsumerSilently(
+    group: RedisStreamConsumerGroup,
+    consumerId: string,
+    consumer: RedisStreamConsumer,
+  ): boolean {
+    if (group.consumers.has(consumerId)) {
+      return false
+    }
+
+    group.consumers.set(consumerId, consumer)
+    this.tracker.markPropagated()
     return true
   }
 

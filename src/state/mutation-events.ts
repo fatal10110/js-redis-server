@@ -1,11 +1,13 @@
 import { cloneRedisDataValue, type RedisDataValue } from './data-types'
 
 /**
- * A keyspace mutation. Every kind except `notify` is a *modified-key* signal
- * (real Redis' `signalModifiedKey`): it dirties a WATCH, can wake a blocked
- * client, and is replicated. `notify` is the keyspace-notification signal on
- * its own (`notifyKeyspaceEvent` without `signalModifiedKey`) — see
- * {@link RedisMutationBus.emit} for how the two are routed.
+ * A keyspace mutation. Every kind except `notify`, `new`, `keymiss` and
+ * `propagate` is a *modified-key* signal (real Redis' `signalModifiedKey`): it
+ * dirties a WATCH, can wake a blocked client, and is replicated. `notify` is
+ * the keyspace-notification signal on its own (`notifyKeyspaceEvent` without
+ * `signalModifiedKey`), and `propagate` the replication signal on its own
+ * (`alsoPropagate`) — see {@link RedisMutationBus.emit} for how they are
+ * routed.
  *
  * `command` is the name of the command the event was emitted on behalf of
  * (see `RedisDatabase.withOrigin`); keyspace notifications name write events
@@ -62,6 +64,21 @@ export type RedisMutationEvent = (
       valueType: RedisDataValue['type']
     }
   | {
+      // Replication-only: an existing key changed in place in a way real
+      // Redis propagates to its replicas but does not treat as modifying it,
+      // and may not announce at all — stream consumer-group / pending /
+      // last-id metadata (XACK, XREADGROUP, XCLAIM, ... propagate their
+      // effect; XGROUP and XSETID announce it too, in a `notify` emitted
+      // before this). Carries the whole new value, cloned lazily like a
+      // `write`'s, for the replica to store. Emits no keyspace notification.
+      type: 'propagate'
+      database: number
+      key: Buffer
+      value: RedisDataValue
+      valueType: RedisDataValue['type']
+      expiresAt?: number
+    }
+  | {
       // Notification-only, like `notify`: a key was added to the database
       // (real Redis' `dbAdd`, which publishes `new`). Emitted before the
       // write that stores it, so `new` precedes the command's own event.
@@ -114,7 +131,7 @@ export class RedisMutationBus {
    * Fan `event` out. Global listeners (keyspace notifications, replication)
    * see every event. Per-key listeners — WATCH and blocked clients — see only
    * modified-key signals, never the notification-only `notify`, `new` and
-   * `keymiss`.
+   * `keymiss`, nor the replication-only `propagate`.
    */
   emit(event: RedisMutationEvent): void {
     for (const listener of Array.from(this.globalListeners)) {
@@ -123,6 +140,7 @@ export class RedisMutationBus {
 
     if (
       event.type === 'notify' ||
+      event.type === 'propagate' ||
       event.type === 'new' ||
       event.type === 'keymiss'
     ) {
@@ -155,7 +173,8 @@ function keyId(key: Buffer): string {
 
 function cloneMutationEvent(event: RedisMutationEvent): RedisMutationEvent {
   switch (event.type) {
-    case 'write': {
+    case 'write':
+    case 'propagate': {
       // Most listeners (WATCH, blocked clients, keyspace notifications) never
       // read the value, and cloning a whole collection for every listener on
       // every write made filling one hash element by element quadratic. So

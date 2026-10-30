@@ -68,6 +68,27 @@ so the PR body is not a durable home for a breaking-change note.
   GEORADIUS and GEORADIUSBYMEMBER (`ANY COUNT 1` is valid), and an
   incomplete FROM clause answers `syntax error` instead of a
   wrong-number-of-arguments error.
+- Cluster replicas now receive in-place stream consumer-group and last-id
+  changes, as real Redis propagates them ([#495]): XGROUP CREATE, DESTROY,
+  CREATECONSUMER, DELCONSUMER and SETID, XSETID, XACK, XREADGROUP, XCLAIM and
+  XAUTOCLAIM on an existing stream, and the consumer XREADGROUP / XCLAIM /
+  XAUTOCLAIM create implicitly (on redis 6.2 too). A replica used to see the
+  group's last-delivered id, consumers and pending entries only after the
+  next XADD, XDEL or XTRIM. Replies, keyspace notifications and WATCH are
+  unchanged.
+
+### Changed
+
+- **BREAKING (`/core`)** `RedisMutationEvent` has a new `propagate` variant
+  (`{ type: 'propagate', database, key, value, valueType, expiresAt? }`)
+  ([#495]): the replication signal on its own, as real Redis'
+  `alsoPropagate` without `signalModifiedKey` or a keyspace notification. It
+  is emitted for in-place stream consumer-group / pending / last-id changes
+  (after the `notify` of the ones that are announced), carries the key's whole
+  new value (cloned lazily, like a `write`'s), and `RedisMutationBus` delivers
+  it to `subscribe()` listeners only, never to `subscribeKey()` ones. An
+  exhaustive `switch (event.type)` stops type-checking; a replicating listener
+  applies it like a `write`, any other ignores it.
 
 ## [0.4.0] - 2026-10-30
 
