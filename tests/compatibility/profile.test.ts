@@ -134,4 +134,22 @@ describe('compatibility profiles', () => {
     assert.strictEqual(valkey8.has('client.kill.type-primary'), true)
     assert.strictEqual(valkey8.has('client.kill.id-list'), false)
   })
+
+  test('(P|S)UNSUBSCRIBE NOSUB holds on valkey 8.0.0 and 8.0.1 only (#594)', () => {
+    const window = (
+      spec: Parameters<typeof resolveCompatibilityProfile>[0],
+    ) => {
+      const profile = resolveCompatibilityProfile(spec)
+      return (
+        profile.has('pubsub.unsubscribe-nosub') &&
+        !profile.has('pubsub.unsubscribe-nosub-dropped')
+      )
+    }
+    assert.strictEqual(window('valkey-8.0'), true)
+    assert.strictEqual(window({ flavor: 'valkey', version: '8.0.1' }), true)
+    assert.strictEqual(window({ flavor: 'valkey', version: '8.0.2' }), false)
+    assert.strictEqual(window({ flavor: 'valkey', version: '7.2.4' }), false)
+    assert.strictEqual(window('valkey-9.0'), false)
+    assert.strictEqual(window('redis-8.0'), false)
+  })
 })

@@ -97,29 +97,11 @@ export const publishCommand = defineCommand({
   }),
   flags: ['pubsub', 'fast'],
   keys: () => [],
-  execute: (args, ctx) => {
-    // Inside EXEC the transaction holds or inlines this connection's own
-    // pushes for every queued command (see ClientSession.executeTransaction).
-    if (
-      ctx.transactionReplay ||
-      ctx.session.mode !== 'subscribed' ||
-      ctx.session.protocolVersion !== 3 ||
-      !ctx.server.profile.has('pubsub.resp3-publish-reply-first')
-    ) {
-      return integer(
-        ctx.server.pubsubBroker.publish(args.channel, args.message),
-      )
-    }
-
-    const flushPushes = ctx.session.deferPushesUntilAfterReply()
-    const delivered = ctx.server.pubsubBroker.publish(
-      args.channel,
-      args.message,
-    )
-    return RedisResult.create(RedisValue.integer(delivered), {
-      afterReply: flushPushes,
-    })
-  },
+  // A message for the publishing connection itself goes out after this reply
+  // on Redis 7.2+ / valkey 8.0+ (ClientSession.execute holds it), and inside
+  // EXEC as the transaction decides (ClientSession.executeTransaction).
+  execute: (args, ctx) =>
+    integer(ctx.server.pubsubBroker.publish(args.channel, args.message)),
 })
 
 export const spublishCommand = defineCommand({

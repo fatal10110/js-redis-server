@@ -507,29 +507,10 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     )
   })
 
-  test('handles empty unsubscribe commands and unknown PUBSUB subcommands', async () => {
+  // Bare (P|S)UNSUBSCRIBE on a fresh connection is profile-dependent (valkey
+  // 8.0.0 refuses it with -NOSUB): see unsubscribe-nosub.test.ts.
+  test('handles unknown PUBSUB subcommands', async () => {
     const conn = await connect()
-
-    conn.write(commandFrame('UNSUBSCRIBE'))
-    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
-      'unsubscribe',
-      null,
-      0,
-    ])
-
-    conn.write(commandFrame('PUNSUBSCRIBE'))
-    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
-      'punsubscribe',
-      null,
-      0,
-    ])
-
-    conn.write(commandFrame('SUNSUBSCRIBE'))
-    assert.deepStrictEqual(normalizeFrame(await conn.readFrame()), [
-      'sunsubscribe',
-      null,
-      0,
-    ])
 
     conn.write(commandFrame('PUBSUB', 'BOGUS'))
     assert.strictEqual(

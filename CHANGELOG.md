@@ -1861,6 +1861,20 @@ so the PR body is not a durable home for a breaking-change note.
   parameter are rejected like on real Redis instead of matching `WITHSCORES`,
   `STORE` and `tcp-keepalive` ([#508]). `GEODIST ... constructor` no longer
   passes as a unit.
+- Redis 7.2+ / Valkey 8.0+ profiles: a push for the connection that runs the
+  command (a keyspace notification on its own `__keyspace@` / `__keyevent@`
+  subscription, keymiss included, or one made by a script's inner calls) goes
+  out after the command's reply, as real Redis holds it
+  (`server.pending_push_messages`). Before, the first push of a command could
+  overtake the reply. Redis 6.2 / 7.0 still write them as they are made; their
+  per-command order (some before the reply, some after) is not modeled
+  ([#587]).
+- Valkey 8.0 profile (8.0.0): `UNSUBSCRIBE` / `PUNSUBSCRIBE` / `SUNSUBSCRIBE`
+  on a connection with no subscription of any kind answer `-NOSUB '<name>'
+  command executed not in subscribed mode`, in RESP2 and RESP3, and inside
+  `MULTI` they are refused while queuing (`EXECABORT` at `EXEC`), as on valkey
+  8.0.0 and 8.0.1. Valkey 8.0.2+ and every Redis still answer the
+  confirmation frames ([#594]).
 
 ## [0.3.0] and earlier
 
@@ -1957,5 +1971,7 @@ requests they contain.
 [#517]: https://github.com/fatal10110/js-redis-server/issues/517
 [#506]: https://github.com/fatal10110/js-redis-server/issues/506
 [#508]: https://github.com/fatal10110/js-redis-server/issues/508
+[#587]: https://github.com/fatal10110/js-redis-server/issues/587
+[#594]: https://github.com/fatal10110/js-redis-server/issues/594
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
