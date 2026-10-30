@@ -55,9 +55,41 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
   // 7.0.15 / 8.0. Valkey forked after the change (7.2.14 accepts it).
   'protocol.multibulk-count-int-max': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis finds the end of a `*<count>` / `$<length>` header line with
+  // `strchr(querybuf, '\r')`, which stops at a NUL byte: a NUL before the CR
+  // reads as "no CR yet", so the request waits (or trips the 64KB `too big
+  // ... count string` cap) instead of failing `string2ll`. Verified on
+  // redis-server 7.0.15; the same `strchr` is in 6.2.14, 7.2.4, 7.4.4, 8.0.0
+  // and Valkey 7.2.4 / 8.0.x. Valkey 8.1.0 switched to `memchr` over the
+  // buffered length (networking.c, `parseMultibulk`), which scans past a NUL.
+  // Inline requests still use `strchr(querybuf, '\n')` on every version.
+  'protocol.header-scan-past-nul': { valkey: '8.1.0' },
+  // Valkey 9.0 rewrote `sdssplitargs` on top of `sdsparsearg`: a closing quote
+  // no longer ends the inline argument, so `"a"b` is one argument `ab`
+  // instead of `Protocol error: unbalanced quotes in request`. Every Redis
+  // version and Valkey up to 8.1.0 still require a separator after a closing
+  // quote (sds.c, checked in 6.2.14 through 8.0.0 and Valkey 7.2.4 / 8.0.0 /
+  // 8.1.0; the error verified on redis-server 7.0.15).
+  'protocol.inline-adjacent-quotes': { valkey: '9.0.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
   'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
+  // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
+  // per version; the order is fixed and every field is always printed. From
+  // the format strings of redis 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
+  // Valkey 7.2.4, 8.0.0, 8.1.0, 9.0.0, and redis-server 7.0.15's own output:
+  //  - 7.0 added `ssub`, `multi-mem`, `rbs`, `rbp` and `resp` (Valkey forked
+  //    with them). `lib-name` / `lib-ver` arrived with CLIENT SETINFO
+  //    (`client.setinfo`) and are printed, empty, before any SETINFO.
+  //  - `watch` (after `multi`): Redis 7.4, Valkey 8.0.
+  //  - `io-thread` (last): Redis 8.0 only.
+  //  - `tot-net-in`, `tot-net-out`, `tot-cmds` (last): Valkey 8.0.
+  //  - `capa` (after `flags`): Valkey 8.1.
+  'client.list.redis7-fields': { redis: '7.0.0', valkey: '7.2.0' },
+  'client.list.watch': { redis: '7.4.0', valkey: '8.0.0' },
+  'client.list.io-thread': { redis: '8.0.0' },
+  'client.list.net-stats': { valkey: '8.0.0' },
+  'client.list.capa': { valkey: '8.1.0' },
   // Redis 7.0 moved container commands into the command table, which replaced
   // `Unknown subcommand or wrong number of arguments for '%s'. Try %s HELP.`
   // with `unknown subcommand '%.128s'. Try %s HELP.` — a new template, a
@@ -126,7 +158,19 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // command`). Verified against redis-server 6.2.24, 7.0.15 and 8.0.6, and
   // Valkey 8.0 / 9.0 (#492).
   'error.odd-pairs-arity-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // A MONITOR connection is a replica to `processCommand`, which refuses it
+  // any command flagged readonly, write or may_replicate. 6.2 misspells the
+  // refusal (`Replica can't interract with the keyspace`, 6.2.14 / 6.2.24
+  // server.c); 7.0 fixed it to `interact` (7.0.15 server.c and a live
+  // redis-server 7.0.15, 7.2.4 / 7.4.4 / 8.0.0 and Valkey 8.0 / 9.0 server.c).
+  'error.replica-keyspace-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
+  // The INFO keyspace line counts the hashes with field expirations after
+  // `avg_ttl`: `subexpiry=` from Redis 7.4 (the release that added HEXPIRE),
+  // `keys_with_volatile_items=` on Valkey 9.0. 7.2.4 / Valkey 8.0.0 print
+  // neither (their `genRedisInfoString` / `genValkeyInfoString`).
+  'info.keyspace.subexpiry': { redis: '7.4.0' },
+  'info.keyspace.volatile-items': { valkey: '9.0.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.resp3-publish-reply-first': { redis: '7.2.0', valkey: '8.0.0' },
@@ -162,6 +206,15 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'hscan.novalues': { redis: '7.4.0', valkey: '8.0.0' },
   'xread.plus-id': { redis: '7.4.0' },
   'cluster.multi-db': { valkey: '9.0.0' },
+  // A standalone (`cluster-enabled no`) server refuses READONLY with `This
+  // instance has cluster support disabled` on every version up to Valkey 8.0;
+  // READWRITE skipped that check until Redis 7.0 added it (6.2 answers +OK).
+  // Valkey 8.0 dropped the check from both, so they answer +OK there.
+  // Verified against the redis 6.2.24, 7.0.15 (local), 8.0.6 and valkey
+  // 7.2.5, 8.0.0, 8.0.6, 9.0.0 sources (`readonlyCommand` /
+  // `readwriteCommand` in cluster.c) and the transcripts in #537.
+  'cluster.standalone-readwrite-refused': { redis: '7.0.0', valkey: '7.2.0' },
+  'cluster.standalone-readonly-allowed': { valkey: '8.0.0' },
   // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
   // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
   // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.
@@ -185,12 +238,6 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0, 8.0.6 and valkey-server
   // 8.0.0 / 9.0.0.
   'geo.coord-d2string': { redis: '8.0.0' },
-  // Redis 7.0 moved `noscript` from the container to each subcommand, and no
-  // container's HELP subcommand carries it: `redis.pcall('CLIENT','HELP')`
-  // (likewise CONFIG/ACL/SCRIPT/FUNCTION) returns the help text on 7.0+, where
-  // 6.2 refuses the whole container. Verified against redis-server 6.2, 7.0,
-  // 8.0 and valkey 7.2/8.0/9.0.
-  'script.per-subcommand-noscript': { redis: '7.0.0', valkey: '7.2.0' },
   // QUIT got a command-table entry in Redis 7.0; 6.2 special-cases it in the
   // connection loop, so a 6.2 script calling QUIT fails command lookup
   // (unknown command) instead of hitting its 7.0+ `noscript` refusal.
@@ -248,6 +295,14 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis-server 6.2.24, 7.0.15, 8.0.6 and valkey-server 7.2.14, 8.0.11,
   // 9.0.6.
   'script.shebang': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 8.1 made the shebang name a scripting engine: it reads the
+  // `flags=` options first, then looks the engine up by name, ignoring case,
+  // so `#!LUA` runs and `#!notlua` is `Could not find scripting engine
+  // 'notlua'`. Redis and Valkey up to 8.0 check the engine first and accept
+  // only `#!lua` (`Unexpected engine in script shebang: #!notlua`). Checked
+  // against redis-server 7.0.15, the #536 transcripts (valkey-server 8.0.11
+  // and 9.0.6) and the Valkey 8.1.0 / 9.0.0 sources (`evalRegisterNewScript`).
+  'script.shebang-engine-lookup': { valkey: '8.1.0' },
   // COMMAND GETKEYS / GETKEYSANDFLAGS took arity -4 in 7.0 (a command and at
   // least one argument: `COMMAND GETKEYS GET` is a `command|getkeys` arity
   // error); 7.2 relaxed it to -3 and answers a short target with `Invalid
@@ -280,4 +335,19 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // dict order is undefined. Verified against redis-server 7.2.16, 7.4,
   // 8.0.6 and Valkey 7.2.14 / 8.0 / 8.1 / 9.0.
   'set.union-diff-hashtable': { redis: '8.0.0', valkey: '8.0.0' },
+  // Valkey 8.0: a SET whose EX / PX / EXAT / PXAT deadline is already past
+  // (`checkAlreadyExpired`) writes nothing. It deletes a key that exists,
+  // and creates none, so no `set` / `expire` is published. Redis (6.2-8.0)
+  // and Valkey 7.2 write the key with the past TTL and publish `set` and
+  // `expire`, and the key expires on its next access (#527). Verified against
+  // the Valkey 7.2.14, 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources
+  // (`setGenericCommand`).
+  'set.past-deadline-deletes': { valkey: '8.0.0' },
+  // Valkey 8.1: a key deleted because a command gave it a deadline already
+  // past (SET, GETEX EXAT / PXAT, the EXPIRE family) is published as
+  // `expired` (class `x`), not `del` (class `g`):
+  // `deleteExpiredKeyFromOverwriteAndPropagate` switched notifications in
+  // 8.1.0. Redis and Valkey 7.2 / 8.0 publish `del` (#527). Verified against
+  // the Valkey 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources.
+  'notify.past-deadline-expired-event': { valkey: '8.1.0' },
 }

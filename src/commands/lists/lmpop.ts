@@ -7,7 +7,7 @@ import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { listPopEvent, parseMoveDirection, parseTimeout } from './helpers'
-import { blockOnKeys, blockingTimeoutMs } from '../blocking'
+import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
 
 type ListMultiPopArgs = {
   keys: Buffer[]
@@ -140,20 +140,23 @@ export function tryListMultiPop(
   return null
 }
 
-async function blockingListMultiPop(
+function blockingListMultiPop(
   keys: readonly Buffer[],
   timeoutSecs: number,
   side: 'left' | 'right',
   count: number,
   ctx: RedisExecutionContext,
-): Promise<RedisResult> {
-  const result = await blockOnKeys(ctx, {
-    keys,
-    type: 'list',
-    timeoutMs: blockingTimeoutMs(timeoutSecs),
-    attempt: () => tryListMultiPop(keys, side, count, ctx.db),
-  })
-  return result ?? RedisResult.create(RedisValue.nullArray())
+): RedisResult | Promise<RedisResult> {
+  return blockOrTimeOut(
+    ctx,
+    {
+      keys,
+      type: 'list',
+      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      attempt: () => tryListMultiPop(keys, side, count, ctx.db),
+    },
+    () => RedisResult.create(RedisValue.nullArray()),
+  )
 }
 
 export const lmpopCommand = defineCommand({
@@ -182,7 +185,7 @@ export const blmpopCommand = defineCommand({
       nextIndex: input.length,
     }),
   ),
-  flags: ['write', 'noscript'],
+  flags: ['write', 'blocking'],
   keys: args => args.keys,
   execute: (args, ctx) => {
     const immediate = tryListMultiPop(args.keys, args.side, args.count, ctx.db)

@@ -40,6 +40,16 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT ID` - Return the connection's ID
 - [x] `CLIENT INFO` - Return a single `key=value` line for the current connection
 - [x] `CLIENT LIST` - Return one `key=value` line per active client connected to the current server node
+
+  Both lines carry the profile version's fields in its order (for example
+  `ssub`, `resp` from 7.0, `lib-name` / `lib-ver` from 7.2, `watch` from 7.4,
+  `io-thread` on Redis 8.0, `tot-net-in` / `tot-net-out` / `tot-cmds` on
+  Valkey, `capa` on Valkey 9.0). `laddr` is the listening address, `fd` the
+  socket's descriptor (`-1` on the in-process transport), `cmd` the last
+  command by its command-table name (`client|info` from 7.0, `NULL` after an
+  unknown command), and `flags`, `multi`, `watch`, `idle` follow the
+  connection (`P`, `x`, `b`, `d`, `r`, `e`). Buffer, memory and network
+  counters read 0. On RESP3 both replies are `txt` verbatim strings.
 - [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT HELP` - Return subcommand help
@@ -68,14 +78,17 @@ unknown-command error.
 #### INFO
 
 - [x] `INFO [section ...]` - Get information and statistics about the server; Redis 7.0+ profiles accept multiple sections
-  - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry)
+  - [x] `server`, `clients`, `memory`, `persistence`, `stats`, `replication`, `cpu`, `cluster`, `keyspace` - populated with static/zeroed placeholder values (sufficient for client-library handshakes, not real telemetry), except:
+    - `blocked_clients` counts the clients parked in a blocking command (`BLPOP`, `XREAD BLOCK`, ...)
+    - each keyspace line counts the keys with a TTL (`expires`) and gives their exact mean remaining TTL in milliseconds (`avg_ttl`; real Redis reports a sampled estimate that starts at 0), plus the hashes with field TTLs as `subexpiry` on Redis 7.4+ / `keys_with_volatile_items` on Valkey 9.0
+  - [x] On RESP3 the reply is a `txt` verbatim string (`=<len>\r\ntxt:...`), as on every real version
   - [x] `commandstats`, `latencystats`, `errorstats`, `modules`, `sentinel` - return empty sections
   - [x] `default` / `all` - returns the default section set
   - [ ] Real per-command/error/latency stats are not tracked
 
 #### MONITOR
 
-- [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for commands from other connections
+- [x] `MONITOR` - Return `OK` and stream Redis-style command event lines as simple string replies for every connection's commands, the monitoring connection's own included
 
 `MONITOR` replies `OK` and then delivers lines as session push frames, fed by
 a server-level command event feed. A repeated `MONITOR` gets no reply, and
@@ -88,8 +101,23 @@ Cluster redirects and pre-execution cluster errors are not emitted because the
 command is not executed on that node. Commands with monitor skip metadata are
 skipped, authentication credentials are redacted, commands replayed by `EXEC` are
 emitted once when the transaction runs, and Lua `redis.call` / `redis.pcall`
-commands are emitted with the `lua` source. `MONITOR` is flagged `noscript` and
-is rejected from Lua.
+commands are emitted with the `lua` source. `EVAL`, `EVALSHA`, `FCALL` and
+their `_RO` forms are stamped when dispatched, before their script runs (Redis
+feeds them from inside the command), so their line reads no later than its
+`lua` lines; every other command is stamped after it ran. Commands refused
+before they run (`NOAUTH`, the subscribed-context refusal) are not emitted.
+`MONITOR` is flagged `noscript` and is rejected from Lua.
+
+The monitoring connection is fed its own commands too, each line right after
+the command's reply (`QUIT` closes with `+OK` alone). Redis treats a monitor
+as a replica, so on it every command flagged readonly, write or may_replicate
+(`GET`, `SET`, `KEYS`, `PUBLISH`, `EVAL`, ...) fails with `ERR Replica can't
+interact with the keyspace` (`interract` on 6.2) and is not emitted, while
+`PING`, `ECHO`, `SELECT`, `CLIENT`, `INFO`, `MULTI` and the like still run.
+The refusal comes after the arity check and before the command's own argument
+errors (`SET k v EX 0` is refused). Lines from other connections that run
+before the reply is written wait behind the reply and the connection's own
+lines, so the feed never goes back in time.
 
 #### COMMAND
 
@@ -379,6 +407,12 @@ with `GT` or `LT`.
 - [x] `LMPOP numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Pop from the first non-empty list
 - [x] `BLMPOP timeout numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Blocking variant of `LMPOP`
 
+> From a Lua script the blocking pops never block. Redis 7.2+ (and every
+> Valkey profile) runs `BLPOP`, `BRPOP`, `BLMOVE`, `BZPOPMIN` and `BZPOPMAX`
+> like their non-blocking forms: with nothing to pop they answer the timeout
+> reply at once, even with timeout 0. `BLMPOP` and `BZMPOP` do so from 7.0.
+> Redis 6.2 and 7.0 refuse the others as `noscript`.
+
 ## 7. Set Commands
 
 - [x] `SADD key member [member ...]` - Add one or more members to a set
@@ -556,7 +590,28 @@ flip its session into transaction mode or register a `WATCH`.
 
 `EVAL`/`EVALSHA`/`EVAL_RO`/`EVALSHA_RO` run via `executePlanSync` against the same command registry
 and policies as normal commands, so every command's `noscript`/`readonly`
-flags are enforced inside `redis.call`/`redis.pcall`.
+flags are enforced inside `redis.call`/`redis.pcall`. Whether a command is
+`noscript` comes from the real command table of the profile's version:
+`SPOP`, `SRANDMEMBER` and `HRANDFIELD` run from scripts on every profile, and
+the blocking pops run there without blocking from 7.2 (see
+[List Commands](#6-list-commands)).
+
+From 7.0 (and on Valkey) a script may open with a `#!lua [flags=...]`
+shebang. `EVAL`, `EVALSHA`, `EVAL_RO`, `EVALSHA_RO` and `SCRIPT LOAD` check
+it with Redis's errors, and line numbers and the SHA in errors are those of
+the script as sent. `no-writes` refuses writes and the commands Redis flags
+`may-replicate` (`PUBLISH`, `SPUBLISH`, `PFCOUNT`), as `EVAL_RO` does, a
+shebang script without it is refused by the `_RO` variants, and `no-cluster`
+(also a function flag) refuses to run on a cluster node. On a cluster node a
+shebang script, and any function, keeps to one slot: the slot of its
+declared keys, else of the first key a command touches, pins it, and a
+command on another slot fails with `Script attempted to access keys that do
+not hash to the same slot`, unless the script declares
+`allow-cross-slot-keys`. A script without a shebang is not checked.
+`allow-oom` and `allow-stale` are accepted but change nothing: the server
+has no `maxmemory` and no stale replicas for them to relax. A `no-writes`
+script is still routed as a write command (a cluster replica with
+`READONLY` does not serve it).
 
 - [x] `FCALL function numkeys [key ...] [arg ...]` - Call a Redis Function (Redis 7.0+)
 - [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
@@ -571,7 +626,14 @@ flags are enforced inside `redis.call`/`redis.pcall`.
 
 Redis Functions support plain Lua libraries that declare `#!lua name=<library>`
 and register functions with `redis.register_function("name", function(keys, args)
-...)`. Advanced Redis function metadata and flags are not modeled.
+...)`. `FUNCTION LOAD` checks the metadata line with Redis's errors (`Invalid
+library metadata`, `Library name was not given`, `Engine '<name>' not
+found`, ...), then compiles the library and refuses one that is not
+valid Lua (`Error compiling function: user_function:<line>: ...`), leaving an
+existing library in place under `REPLACE`. The library is not run when it is
+loaded, so an error raised at load time (Redis's `Error registering
+functions: ...`) is not reproduced. Function flags `no-writes` and
+`no-cluster` are enforced; other function metadata is not modeled.
 
 ## 13. Cluster Commands
 
@@ -582,6 +644,15 @@ and register functions with `redis.register_function("name", function(keys, args
 - [x] `CLUSTER MYID` - Return the node's own ID
 - [x] `READONLY` - Allow read-only commands against a direct replica connection for slots served by its master
 - [x] `READWRITE` - Disable replica read mode on the current connection
+
+A standalone server registers `CLUSTER`, `READONLY` and `READWRITE` too, as a
+real `cluster-enabled no` server does. `COMMAND` lists them. They answer
+`ERR This instance has cluster support disabled`, with these exceptions:
+
+- From Redis 7.0 / Valkey 7.2, an unknown `CLUSTER` subcommand gets the
+  unknown-subcommand error.
+- `READWRITE` answers `+OK` on Redis 6.2.
+- `READONLY` and `READWRITE` answer `+OK` from Valkey 8.0.
 
 > Cluster topology is fixed at startup (config-driven), so dynamic
 > reconfiguration commands are out of scope by design:
@@ -621,7 +692,11 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
       PXAT`, `SETEX`, `PSETEX`; not `KEEPTTL`). `GETEX EX|PX|EXAT|PXAT`
       publishes `expire`, or `del` for an `EXAT|PXAT` time already past;
       `GETEX PERSIST` publishes `persist`. A relative `EX|PX` queued in
-      `MULTI` counts from `EXEC`.
+      `MULTI` counts from `EXEC`. A deadline already past differs on Valkey
+      (#527): from 8.0, `SET` never writes the key, and deletes it if it
+      exists (`del`); from 8.1 (the `valkey-9.0` profile), that deletion and
+      the one by `GETEX` or the `EXPIRE` family publish `expired` (class `x`)
+      instead of `del`.
 - [x] Write events named after the originating command, matching real Redis:
       `set` (and `setnx`/`setex`/`getset`/`mset` → `set`), `incrby`
       (`incr`/`decr`/`decrby` → `incrby`), `append`, `setrange`, `lpush`/`rpush`

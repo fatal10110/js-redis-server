@@ -155,12 +155,21 @@ Current profile gates:
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
+| `SET` with a deadline already past writes nothing and deletes an existing key (Redis writes the key with the past TTL and publishes `set` / `expire`) | never | `valkey-8.0+` |
+| A key deleted by a deadline already past (`SET`, `GETEX EXAT\|PXAT`, the `EXPIRE` family) publishes `expired` (class `x`), not `del` | never | `valkey-9.0+` |
 | `ZRANK`/`ZREVRANK` `WITHSCORE` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.2+` | `valkey-8.0+` |
 | `XSETID` `ENTRIESADDED`/`MAXDELETEDID` (before it: arity 3, and a trailing token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `COMMAND GETKEYS`/`GETKEYSANDFLAGS` need an argument after the target command (arity -4; `COMMAND GETKEYS GET` is a `command\|getkeys` arity error) | `redis-7.0` only | never |
 | `GEOSEARCH`, `GEOSEARCHSTORE` | `redis-6.2+` | `valkey-8.0+` |
 | `SET NX GET` | `redis-7.0+` | `valkey-8.0+` |
 | `CLIENT SETINFO` | `redis-7.2+` | `valkey-8.0+` |
+| `ssub`, `multi-mem`, `rbs`, `rbp` and `resp` in `CLIENT LIST` / `CLIENT INFO`, and `cmd` naming `container\|subcommand` (6.2: the container); `lib-name` / `lib-ver` follow `CLIENT SETINFO` | `redis-7.0+` | `valkey-8.0+` |
+| `watch` in `CLIENT LIST` / `CLIENT INFO` | `redis-7.4+` | `valkey-8.0+` |
+| `io-thread` in `CLIENT LIST` / `CLIENT INFO` | `redis-8.0+` | never |
+| `tot-net-in`, `tot-net-out`, `tot-cmds` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-8.0+` |
+| `capa` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-9.0+` |
+| `subexpiry` (hashes with field TTLs) on the `INFO keyspace` line | `redis-7.4+` | never |
+| `keys_with_volatile_items` (the same count) on the `INFO keyspace` line | never | `valkey-9.0+` |
 | Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |
 | RESP3 subscribed `PUBLISH` self-reply before pushed message | `redis-7.2+` | `valkey-8.0+` |
 | `XAUTOCLAIM` deleted-entry ID reply shape, `XCLAIM` / `XAUTOCLAIM` dropping a deleted entry from the PEL (6.2 claims it and replies nil for it), and `XAUTOCLAIM COUNT` capped at `LONG_MAX / 16` (6.2: `LONG_MAX`) | `redis-7.0+` | `valkey-8.0+` |
@@ -188,11 +197,13 @@ Current profile gates:
 | Double reply text (`ZSCORE`, `ZINCRBY`, `ZMSCORE`, `WITHSCORES`, RESP3 `,` doubles, scores read by `redis.call`, `ZSCAN`) spelled by `d2string()` / `fpconv_dtoa` (`0.1`, `1.23e-5`, `4611686018427387904`) instead of 6.2 / 7.0's `%.17g` (`0.10000000000000001`, `1.2300000000000001e-05`, `4.6116860184273879e+18`) | `redis-7.2+` | `valkey-8.0+` |
 | Lua scripts resolve a `noscript` container's (`CLIENT`, `ACL`, `SCRIPT`, `CONFIG`, `FUNCTION`) subcommand before refusing it: `<container> HELP` runs, and an unknown subcommand fails lookup (see the container-subcommand row). 6.2 refuses every subcommand. (The mock has no `CONFIG HELP` yet, so that one call still errors.) | `redis-7.0+` | `valkey-8.0+` |
 | `QUIT` from a Lua script is refused as `noscript` (6.2 has no `QUIT` table entry: unknown command) | `redis-7.0+` | `valkey-8.0+` |
+| `BLPOP` / `BRPOP` / `BLMOVE` / `BZPOPMIN` / `BZPOPMAX` callable from a Lua script, without blocking: with nothing to pop they answer the timeout reply at once, even with timeout 0 (6.2 / 7.0 refuse them as `noscript`; `BLMPOP` / `BZMPOP` run this way from 7.0) | `redis-7.2+` | `valkey-8.0+` |
 | Listpack sets' encoding rules: `SADD` creates an intset only when its member count fits `set-max-intset-entries` (so with the limit at 2, `SADD s 3 1 3` keeps `3 1`; 6.2 / 7.0 sort it), and `SPOP`'s rebuild of a large pop keeps a non-intset set out of the intset encoding (6.2 / 7.0 turn all-integer survivors into a sorted intset) | `redis-7.2+` | `valkey-8.0+` |
 | A non-`STORE` `SUNION` / `SDIFF` (and `SPOP` with a count that covers the set) with a non-intset source builds its result as a hashtable, so a listpack's integers keep their order (`SADD u x 3 1`, `SREM u x`, then `SUNION u` replies `3 1`; 7.4 and earlier sort it to `1 3`) | `redis-8.0+` | `valkey-8.0+` |
 | `redis.REDIS_VERSION` / `redis.REDIS_VERSION_NUM` in scripts (Valkey reports `7.2.4` there and adds `SERVER_NAME`, `VALKEY_VERSION` and `VALKEY_VERSION_NUM`; 6.2 has none of them) | `redis-7.0+` | `valkey-8.0+` |
 | A script's returned `{big_number=...}` / `{verbatim_string=...}` table converts to a big number / verbatim string (a bulk string on RESP2), at any depth; 6.2 sends it as an empty array (`*0`) | `redis-7.0+` | `valkey-8.0+` |
-| `SCRIPT LOAD` skips a leading `#!` shebang line before its compile check, keeping the line feed so line numbers count it (6.2 compiles it as Lua: `unexpected symbol near '#'`). The shebang itself is not checked, and `EVAL` of a shebang script is not supported yet ([#536](https://github.com/fatal10110/js-redis-server/issues/536)) | `redis-7.0+` | `valkey-8.0+` |
+| `#!lua [flags=...]` shebang scripts: `EVAL` / `EVALSHA` / `EVAL_RO` / `SCRIPT LOAD` check the shebang (`Unexpected flag in script shebang: ...`, `Unknown lua shebang option: ...`, `Invalid script shebang`, ...) and run the body with the shebang line blanked, so line numbers count it; `no-writes`, `no-cluster` and, on a cluster node, the one-slot rule `allow-cross-slot-keys` lifts are enforced (6.2 compiles the shebang as Lua: `unexpected symbol near '#'`) | `redis-7.0+` | `valkey-8.0+` |
+| Shebang engine looked up by name, ignoring case, after the options (`#!LUA` runs; `#!notlua` is `Could not find scripting engine 'notlua'`, vs. `Unexpected engine in script shebang: #!notlua`) | never | `valkey-9.0+` (8.1) |
 | `EVALSHA` miss worded `-NOSCRIPT No matching script.`, without ` Please use EVAL.` | never | `valkey-8.0+` |
 
 ## Package Entry Points

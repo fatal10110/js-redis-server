@@ -26,6 +26,13 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Removed
 
+- **BREAKING** The `script.per-subcommand-noscript` member of `FeatureId` was
+  removed ([#500]). Whether a script may call a command is now read from the
+  real command table of the profile's version, which already knows that 7.0
+  moved `noscript` from the container to each subcommand, so no code asks for
+  the gate any more. A caller that tested it with `profile.has(...)` should
+  compare `profile.flavor` / `profile.versionNum` instead.
+
 - **BREAKING** The `geo.store-keyspec-variable-flags` member of `FeatureId`
   was removed ([#494]). `variable_flags` on Valkey's GEORADIUS STORE key
   specs is now one of the many per-version facts the real command table
@@ -418,6 +425,14 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Changed
 
+- `INFO`, `CLIENT INFO` and `CLIENT LIST` reply with a `txt` verbatim
+  string, as real Redis does on every version ([#501]). RESP3 clients now get
+  `=<len>\r\ntxt:...` instead of a bulk string; RESP2 is unchanged, and a
+  script's `redis.call('INFO')` after `redis.setresp(3)` gets a
+  `{verbatim_string=...}` table. For `/core` users who read the `RedisValue`
+  directly, its `kind` is now `'verbatim'` (the text is in `value`, as
+  before).
+
 - Scripts run on **lua-redis-wasm 2.1** (was 1.5) ([#449], [#502], [#503]).
   What a script sees changes to match real Redis, byte for byte against
   redis-server 6.2.24 to 8.0.6 and valkey-server 7.2.14 to 9.0.6, except for
@@ -633,6 +648,22 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Added
 
+- **`/core`** New `FeatureId` gates for the per-version `CLIENT LIST` /
+  `CLIENT INFO` fields and the `INFO keyspace` line ([#496], [#32]):
+  `client.list.redis7-fields`, `client.list.watch`, `client.list.io-thread`,
+  `client.list.net-stats`, `client.list.capa`, `info.keyspace.subexpiry` and
+  `info.keyspace.volatile-items`. `RedisClientSession` gains optional
+  `localAddress`, `fd`, `lastCommand`, `lastInteractionMs`,
+  `queuedCommandCount` and `watchedKeyCount` (`ClientSession` implements
+  them; `ClientSessionOptions` and `AttachSessionOptions` take `localAddress`
+  and `fd`), `CommandExecutor` gains `lookupCommandName(rawCommand, rawArgs)`
+  and `RedisDatabase` gains `keyspaceStats()`.
+- **`/core`** `ExecutionPolicy` takes an optional `rejectsBeforeCall` flag
+  ([#456]): set it when every short-circuit of the policy stands for a
+  rejection real Redis makes in `processCommand`, and the executor keeps the
+  refused command off the MONITOR feed. New `FeatureId`
+  `error.replica-keyspace-wording`.
+
 - **`/core`** A `CommandDefinition` can declare `rawKeys(argv)`, its getkeys
   procedure: the keys it finds in the raw arguments, each with its flags
   (`KeyWithFlags`, now exported), for commands whose keys the key specs or
@@ -664,6 +695,239 @@ so the PR body is not a durable home for a breaking-change note.
   `test:integration:real*` scripts hold it until the test run exits.
 
 ### Fixed
+
+- A key whose first hash tag is empty now hashes to the slot real Redis uses
+  ([#88]). The hash tag is what lies between the first `{` and the first `}`
+  after it; when that is empty, the whole key is hashed. So `{}{foo}` is
+  slot 2263 on every supported Redis and Valkey version; the server used to
+  put it in slot 13308. That slot came from the `cluster-key-slot` package,
+  which keeps scanning after an empty `{}` and hashes `{foo`. The
+  server now uses its own port of Redis's `keyHashSlot()`, and
+  `cluster-key-slot` is no longer a runtime dependency.
+  - ioredis and node-redis still route with `cluster-key-slot`, so they send
+    such a key to the master owning the package's slot, which now answers
+    `-MOVED` like a real cluster does. ioredis follows the redirect.
+    node-redis looks the slot up again after each `-MOVED`, reaches the same
+    wrong master every time, and fails with the `-MOVED` error once it runs
+    out of redirections. Keys whose two slots fall on the same master are
+    unaffected.
+  - The socketless node-redis cluster facade (`createNodeRedisMock`) routes
+    by the server's slot, so it does not reproduce that node-redis failure.
+- A standalone server now has `CLUSTER`, `READONLY` and `READWRITE`, as a
+  real `cluster-enabled no` server does ([#537]). They used to be unknown
+  commands outside cluster mode. Now `COMMAND`, `COMMAND COUNT`,
+  `COMMAND INFO` and `COMMAND GETKEYS` list and describe them from the real
+  command table. `CLUSTER <subcommand>` answers `ERR This instance has
+  cluster support disabled`. From Redis 7.0 / Valkey 7.2, an unknown
+  subcommand gets `unknown subcommand '<name>'. Try CLUSTER HELP.` instead,
+  and a wrong argument count gets the `cluster|<sub>` arity error. Redis 6.2
+  answers the disabled error for both. `READONLY` is refused the same way
+  until Valkey 8.0, which answers `+OK`. `READWRITE` answers `+OK` on 6.2
+  and Valkey 8.0+ and is refused on Redis 7.0+ / Valkey 7.2. Two new gates
+  carry this: `cluster.standalone-readwrite-refused` and
+  `cluster.standalone-readonly-allowed`. Cluster nodes are unchanged. An
+  `extraCommands` entry named `cluster`, `readonly` or `readwrite` replaces
+  the standalone one in `createRedisCommandRegistry` /
+  `createRedisCommandExecutor`.
+- Scripts may call the commands real Redis lets them call ([#500]). The
+  `noscript` refusal used the mock's own flags, which refused `SPOP`,
+  `SRANDMEMBER` and `HRANDFIELD` and every blocking pop on every profile. It
+  now reads the real command table of the profile's version, so those three
+  run from scripts everywhere, `BLPOP` / `BRPOP` / `BLMOVE` / `BZPOPMIN` /
+  `BZPOPMAX` run from 7.2 (6.2 and 7.0 still refuse them) and `BLMPOP` /
+  `BZMPOP` from 7.0. A blocking command called from a script never blocks, as
+  under real Redis's `CLIENT_DENY_BLOCKING`: with nothing to pop it answers
+  its timeout reply at once, even with timeout 0, where it used to fail with
+  `... cannot run asynchronously from scripts`. The command-table arity is
+  checked before the refusal, as before (`redis.pcall('CLIENT','GETNAME','x')`
+  is the arity error on 7.0+). Checked against redis-server 7.0.15 and the
+  6.2.14, 7.2.4, 8.0.6 and valkey 9.0.0 sources. The profile tests now also
+  pin the `xinfo|help` / `xgroup|help` arity error from scripts ([#492]).
+- The RESP2 request decoder frames requests the way Redis'
+  `processInputBuffer` does ([#505]):
+  - Inline requests are split like `sdssplitargs`, byte for byte. A `\r`
+    inside the line separates arguments, and `\v` / `\f` are skipped between
+    arguments but kept inside one. A quote opens a quoted section anywhere in
+    an argument (`foo"bar baz"` is `foobar baz`), and single quotes take no
+    escape but `\'`. Non-ASCII bytes are no longer re-encoded as UTF-8. On
+    `valkey-9.0` an argument continues past a closing quote (`"a"b` is `ab`),
+    under the new gate `protocol.inline-adjacent-quotes`.
+  - The 64KB cap now also bounds a multibulk request's header lines. With no
+    CR in sight, a `*<count>` line is refused with `Protocol error: too big
+    mbulk count string` and a `$<length>` line with `Protocol error: too big
+    bulk count string`. They used to buffer without limit.
+  - A header line ends at its first CR, and the byte after it is skipped
+    unchecked. The element's `$` is checked only once its line is complete,
+    so `*1\r\nX` waits instead of failing at once. A NUL byte before the CR
+    hides it, as with Redis' `strchr`, so the request waits (and trips the
+    cap). Valkey 8.1+ scans past it (new gate
+    `protocol.header-scan-past-nul`).
+  - Parsing is incremental. The decoder keeps its place in a partly received
+    multibulk instead of re-parsing it from the first byte on every chunk, and
+    no longer copies the whole buffer on each read. A 200,000-element request
+    in 16KB chunks took about 22 s and now takes about 0.3 s
+    (`scripts/bench-resp2-decoder.ts`).
+- On the `valkey-8.0` and `valkey-9.0` profiles, a deadline that is already
+  past now behaves as it does on Valkey ([#527]). Before, every profile
+  followed Redis. With `notify-keyspace-events KEA`, keyevent channel shown:
+
+  ```
+  SET k v EXAT 1   (k absent)
+    redis 6.2-8.0, valkey 7.2:  set k | expire k   (then expired k on access)
+    valkey 8.0, 9.0:            nothing; k is never created
+  SET k w EXAT 1   (k exists)
+    redis 6.2-8.0, valkey 7.2:  set k | expire k   (then expired k on access)
+    valkey 8.0:                 del k
+    valkey 9.0:                 expired k
+  EXPIREAT k 1 / PEXPIRE k -5 / GETEX k EXAT 1   (k exists)
+    redis 6.2-8.0, valkey 7.2-8.0:  del k
+    valkey 9.0:                     expired k
+  ```
+
+  SET still replies `OK` (or the old value with `GET`), and the EXPIRE family
+  still replies `1`. Valkey 9.0's `expired` belongs to the `x` class, not
+  `g`. Deleting an existing key dirties a `WATCH` on it; a SET that creates
+  nothing leaves a `WATCH` clean. Two members are added to `FeatureId`:
+  `set.past-deadline-deletes` (Valkey 8.0+) and
+  `notify.past-deadline-expired-event` (Valkey 8.1+, from the Valkey 8.1.0
+  source). `RedisDatabase.expireNow(key)` deletes a key as an expiry (an
+  `evict` mutation).
+
+- `INFO clients` reports `blocked_clients` as the number of clients parked
+  in a blocking command (`BLPOP`, `BLMOVE`, `BZPOPMIN`, `XREAD BLOCK`, ...)
+  instead of a fixed 0 ([#496]). The blocking FIFO integration suites poll it
+  instead of sleeping 80 ms per waiter.
+
+- A client that hangs up while parked in a blocking command is freed at once,
+  as real Redis frees it ([#496]). Its session used to stay in `CLIENT LIST`
+  until the key it waited on was written, because the connection stopped
+  reading the socket while a command ran, so the client's EOF was never seen.
+  The connection now keeps reading while a command is parked (Redis likewise
+  keeps reading a blocked client and only stops parsing its input), and an
+  EOF then aborts the wait. Commands read before the EOF still run and are
+  answered; a blocking one among them is aborted when it parks.
+
+- `CLIENT INFO` / `CLIENT LIST` lines match real Redis field for field
+  ([#496]). Each profile prints its version's fields in its order (`db` after
+  `flags`; 6.2 has no `ssub`, `multi-mem`, `rbs`, `rbp` or `resp`; `lib-name`
+  / `lib-ver` are always printed from 7.2; `watch` from Redis 7.4 / Valkey
+  8.0; `io-thread` on Redis 8.0; `tot-net-in` / `tot-net-out` / `tot-cmds` on
+  Valkey; `capa` on Valkey 9.0). `laddr` is the server's listening address
+  (it was always `:6379`), `fd` the socket's descriptor (it was 0; `-1` on the
+  in-process transport, Redis's spelling for no socket), and `cmd` the
+  client's last command by its command-table name, recorded at lookup:
+  `client|info` from 7.0 (it was always `client`), `NULL` after an unknown
+  command or subcommand. `flags` shows `O` (MONITOR), `x` (MULTI, still set
+  while EXEC runs the queue), `b` (blocked), `d` (a WATCHed key changed) and
+  `r` (READONLY) and no longer prefixes `e` with `N`; `multi` counts the
+  queued commands (also while EXEC runs them), `watch` the WATCHed keys, and
+  `idle` the seconds since the last command. Verified against redis-server
+  7.0.15 and the other versions' `catClientInfoString`.
+
+- `INFO keyspace` reports `expires` (keys with a TTL) and `avg_ttl` (their
+  mean remaining TTL in milliseconds) instead of 0 ([#32]). Real Redis's
+  `avg_ttl` is an estimate its active-expire cycle samples; the mock reports
+  the exact mean it converges to. Redis 7.4+ profiles add `subexpiry=` and
+  Valkey 9.0 `keys_with_volatile_items=` (hashes with field TTLs), as those
+  versions do.
+
+- MONITOR stamps `EVAL`, `EVALSHA`, `FCALL` and their `_RO` forms when they
+  are dispatched, not after the script ran ([#433]). Real Redis feeds these
+  from inside the command, before the script runs (the reason the real
+  command table flags exactly them `skip_monitor`), so their line read later
+  than the `[0 lua]` lines it produced; it now reads no later, on every
+  profile. The line also carries the database selected at dispatch. Every
+  other command is still stamped after it ran, as `call()` does.
+
+- A MONITOR connection's own commands behave as in real Redis ([#456]). The
+  connection is fed its own command's line, right after the reply (it used
+  to see only other connections' commands); `QUIT` still closes with just
+  `+OK`. And since Redis treats a monitor as a replica, any command flagged
+  readonly, write or may_replicate (`GET`, `SET`, `KEYS`, `DBSIZE`,
+  `PUBLISH`, `EVAL`, `FCALL`, ...) is refused with `ERR Replica can't
+  interact with the keyspace` (6.2: `interract`, its spelling; gate
+  `error.replica-keyspace-wording`) and not fed, while `PING`, `ECHO`,
+  `SELECT`, `CLIENT`, `INFO`, `MULTI` and the like still run. The flags are
+  the resolved `container|subcommand` entry's from 7.0 (`SCRIPT EXISTS` runs,
+  `XINFO STREAM` is refused); on 6.2 the container's (`SCRIPT` is refused
+  whole). A subcommand this server does not implement is never refused
+  (`CLIENT TRACKINGINFO` gets CLIENT's unknown-subcommand reply). The refusal
+  comes after the arity check and before the command's own argument errors,
+  so `SET k v EX 0`, `EXPIRE k abc` and `SCAN x` are refused too, and a
+  non-keyspace command's argument error (`SELECT abc`) is fed like any other
+  error. Other connections' lines that arrive before the reply is written
+  wait behind it and the connection's own lines. Inside `MULTI` the refusal
+  dirties the transaction, so `EXEC` answers `EXECABORT`. Captured from
+  redis-server 7.0.15 and 7.2.1 and checked against the 6.2.14 - 8.0.0 and
+  Valkey 8.0 / 9.0 sources.
+
+- Commands that a policy refuses the way Redis's `processCommand` does
+  (`NOAUTH`, the subscribed-context `Can't execute`, the monitor refusal
+  above) are no longer fed to MONITOR: real Redis never reaches `call()` for
+  them ([#456]).
+
+- From 7.0 (and on Valkey) `EVAL`, `EVALSHA`, `EVAL_RO` and `EVALSHA_RO` run
+  a script that opens with a `#!lua [flags=...]` shebang ([#536]). It used to
+  be a compile error near `#`. The engine does not skip the shebang yet
+  (fatal10110/lua-redis-wasm#98, tracked in [#540]), so the server hands it
+  the body with the shebang line blanked: line numbers still count that line,
+  and errors name the SHA of the script as sent. `EVAL` and `SCRIPT LOAD`
+  check the shebang with Redis's errors and cache nothing when it is refused:
+  `Invalid script shebang`, `Invalid engine in script shebang`, `Unexpected
+  engine in script shebang: #!notlua`, `Unknown lua shebang option: name=x`
+  and `Unexpected flag in script shebang: bogus`. Valkey 8.1+ reads the
+  options first and looks the engine up by name, ignoring case, so `#!LUA`
+  runs there and `#!notlua` is `Could not find scripting engine 'notlua'`
+  (new gate `script.shebang-engine-lookup`). The flags are checked as in
+  Redis's `scriptPrepareForRun`. `no-writes` refuses writes like `EVAL_RO`.
+  Both now also refuse the commands Redis flags `may-replicate`, `PUBLISH`,
+  `SPUBLISH` and `PFCOUNT` (`Write commands are not allowed from read-only
+  scripts.`), as `FCALL_RO` and a `no-writes` function do; `EVAL_RO` used
+  to run them. On a cluster node a shebang script, and any function, keeps
+  to one slot: its declared keys' slot, else the slot of the first key a
+  command touches, pins it, declared in `KEYS` or not, and a command on
+  another slot fails with `Script attempted to access keys that do not hash
+  to the same slot`. `allow-cross-slot-keys` lifts that; a script without a
+  shebang is not checked, as before. `EVAL_RO` / `EVALSHA_RO` refuse a shebang script without `no-writes`
+  (`Can not execute a script with write flag using *_ro command.`), and
+  `EVAL_RO` still caches it. `no-cluster` refuses to run on a cluster node
+  (`Can not run script on cluster, 'no-cluster' flag is set.`), for a
+  function's `no-cluster` flag too. A function flagged `no-writes` now runs
+  read-only under `FCALL` as well, not only under `FCALL_RO`. Known gaps:
+  `allow-oom` and `allow-stale` are accepted but change nothing (no
+  `maxmemory`, no stale replicas), and a `no-writes` script is still routed
+  as a write command. Checked against redis-server 7.0.15 and 7.2.1 and the
+  transcripts in the issue.
+
+- `FUNCTION LOAD` compiles the library before registering it ([#538]). A
+  library that is not valid Lua replies `-ERR Error compiling function:
+  user_function:<line>: <Lua's message>`, counting the metadata line, and
+  registers nothing; under `REPLACE` the old library stays. It used to reply
+  `No functions registered`, or register the library. Errors now come in
+  Redis's order: the metadata, then `Library '<name>' already exists`
+  (before the code is compiled), then the compile error, then `No functions
+  registered`. The metadata is only the first line, read as Redis's
+  `functionExtractLibMetaData` reads it, with its errors: code that does not
+  open with `#!` is `Missing library metadata`, even if a later line holds
+  the metadata; a first line with no line feed (or a NUL before it) is
+  `Invalid library metadata`, where it used to be `No functions registered`;
+  and `Library name was not given`, `Invalid metadata value given: <part>`,
+  `Invalid metadata value, name argument was given multiple times`, the
+  library-name check and `Engine '<name>' not found` follow. The engine and
+  `name=` ignore case. Checked against redis-server 7.0.15 and 7.2.1. Known gap: the library is not run while it
+  loads, so a load-time error (`Error registering functions: ...`) is not
+  reproduced.
+
+- A Lua engine that faulted is replaced ([#539]). Since lua-redis-wasm 2.0
+  an exception that escapes the WASM module (a `WasmFault`, an Emscripten
+  abort, a trap) leaves the engine unusable, and every later `EVAL`,
+  `EVALSHA`, `EVAL_RO`, `SCRIPT LOAD`, `FUNCTION LOAD` and `FCALL` on that
+  server replied `-ERR LuaEngine is unusable: ...` until the process
+  restarted. The command that hits the fault still gets an `ERR` reply; the
+  next script command gets a fresh runtime, with the script cache and the
+  function libraries kept. A runtime that failed to load is retried too.
+  `RedisServerState.close()` now disposes the runtime. `/core`:
+  `RedisLuaRuntime` gained `usable` and `dispose()`.
 
 - The node-redis facade's `zRange(key, min, max, options)` no longer ignores
   its options ([#488]). It used to drop `BY`, `REV` and `LIMIT` and run a
@@ -745,7 +1009,7 @@ so the PR body is not a durable home for a breaking-change note.
   `RedisDatabase.set` takes a new `SetOptions.expireEvent` flag, which follows
   the write with an `expire` mutation. On Valkey 8.0 and 9.0, a deadline that is
   already past behaves differently (Valkey 9.0 publishes `expired k` for the
-  `GETEX` row). That is tracked in [#527].
+  `GETEX` row); see the [#527] entry above.
 
 - `SET … EX|PX` and `GETEX … EX|PX` queued in `MULTI` count the TTL from
   `EXEC`, as real Redis does, not from the moment they were queued. Before, a
@@ -760,9 +1024,9 @@ so the PR body is not a durable home for a breaking-change note.
   same error (it returned a SHA), and neither `EVAL` nor `SCRIPT LOAD` caches
   a script that does not compile. From 7.0 (and on Valkey) the check skips a
   leading `#!lua` shebang line, keeping its line feed, so `SCRIPT LOAD
-  "#!lua\nreturn 1"` still returns the SHA (new gate `script.shebang`); the
-  shebang itself is not checked, and `EVAL` of a shebang script is still a
-  compile error ([#536]). `/core`: `RedisLuaRuntime.compile(script)` returns
+  "#!lua\nreturn 1"` still returns the SHA (new gate `script.shebang`; the
+  shebang itself and `EVAL` of a shebang script are covered by the [#536]
+  entry above). `/core`: `RedisLuaRuntime.compile(script)` returns
   the compile error or `null`.
 
 - On `redis-6.2` a `redis.pcall` rejected by the scripting layer (an unknown
@@ -1325,6 +1589,7 @@ requests they contain.
 
 [#360]: https://github.com/fatal10110/js-redis-server/issues/360
 
+[#88]: https://github.com/fatal10110/js-redis-server/issues/88
 [#359]: https://github.com/fatal10110/js-redis-server/issues/359
 [#374]: https://github.com/fatal10110/js-redis-server/pull/374
 [#375]: https://github.com/fatal10110/js-redis-server/pull/375
@@ -1375,11 +1640,21 @@ requests they contain.
 [#445]: https://github.com/fatal10110/js-redis-server/issues/445
 [#527]: https://github.com/fatal10110/js-redis-server/issues/527
 [#536]: https://github.com/fatal10110/js-redis-server/issues/536
+[#537]: https://github.com/fatal10110/js-redis-server/issues/537
+[#538]: https://github.com/fatal10110/js-redis-server/issues/538
+[#539]: https://github.com/fatal10110/js-redis-server/issues/539
 [#540]: https://github.com/fatal10110/js-redis-server/issues/540
 [#493]: https://github.com/fatal10110/js-redis-server/issues/493
 [#494]: https://github.com/fatal10110/js-redis-server/issues/494
 [#499]: https://github.com/fatal10110/js-redis-server/issues/499
+[#500]: https://github.com/fatal10110/js-redis-server/issues/500
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
 [#542]: https://github.com/fatal10110/js-redis-server/issues/542
+[#505]: https://github.com/fatal10110/js-redis-server/issues/505
+[#32]: https://github.com/fatal10110/js-redis-server/issues/32
+[#496]: https://github.com/fatal10110/js-redis-server/issues/496
+[#501]: https://github.com/fatal10110/js-redis-server/issues/501
+[#433]: https://github.com/fatal10110/js-redis-server/issues/433
+[#456]: https://github.com/fatal10110/js-redis-server/issues/456
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

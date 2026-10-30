@@ -3,8 +3,10 @@ import assert from 'node:assert'
 import { createHash } from 'node:crypto'
 import { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
+import { keyHashSlot } from '../../src/state/cluster-topology'
 import { TestRunner } from '../test-config'
 import {
+  activeProfile,
   commandFrame,
   connectToEndpoint,
   connectToSlotOwner,
@@ -13,6 +15,7 @@ import {
   findSlotMasterAndReplica,
   findSlotOwner,
   randomKey,
+  type RedisEndpoint,
 } from '../utils'
 import {
   RawRedisConnection,
@@ -22,6 +25,7 @@ import {
 } from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
+const legacy = activeProfile === 'redis-6.2'
 
 describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => {
   let redisClient: Cluster | undefined
@@ -58,6 +62,33 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
     }
   })
 
+  test('an empty first hash tag hashes the whole key; ioredis follows the MOVED (#88)', async () => {
+    // ioredis routes with cluster-key-slot, which hashes `{}{x}` as `{x`.
+    // The server hashes the whole key, so the client's first try lands on
+    // the wrong master and is redirected — against real Redis too.
+    const { key, fullKey, serverSlot, serverOwner, clientOwner } =
+      await findEmptyTagKeyOnTwoMasters(redisClient!)
+    const clientOwnerClient = await connectToEndpoint(clientOwner)
+    const serverOwnerClient = await connectToEndpoint(serverOwner)
+
+    try {
+      await assert.rejects(
+        () => clientOwnerClient.get(fullKey),
+        errorWithMessage(
+          `MOVED ${serverSlot} ${serverOwner.host}:${serverOwner.port}`,
+        ),
+      )
+
+      assert.strictEqual(await redisClient!.set(key, 'value'), 'OK')
+      assert.strictEqual(await redisClient!.get(key), 'value')
+      assert.strictEqual(await serverOwnerClient.get(fullKey), 'value')
+    } finally {
+      await serverOwnerClient.del(fullKey)
+      clientOwnerClient.disconnect()
+      serverOwnerClient.disconnect()
+    }
+  })
+
   test('Lua redis.call and redis.pcall non-local key errors match Redis', async () => {
     const { localKey, remoteKey } = await findDifferentNodeKeys(redisClient!)
     const directClient = await connectToSlotOwner(redisClient!, localKey)
@@ -82,6 +113,114 @@ describe(`Cluster protocol integration (${testRunner.getBackendName()})`, () => 
       directClient.disconnect()
     }
   })
+
+  // From 7.0 a script that declares flags (a `#!lua` shebang, or any
+  // function) keeps to one slot: the first key it touches, declared in KEYS
+  // or not, pins the slot, unless it declares `allow-cross-slot-keys`. A
+  // script without a shebang runs in the compatibility mode and is not
+  // checked. Byte for byte against a redis-server 7.2.1 cluster node.
+  test(
+    'a shebang script refuses keys of another slot on the same node',
+    { skip: legacy && 'shebangs are 7.0+' },
+    async () => {
+      const { first, second } = await findSameNodeKeys(redisClient!)
+      const directClient = await connectToSlotOwner(redisClient!, first)
+      const sha1 = (script: string) =>
+        createHash('sha1').update(script).digest('hex')
+      const crossSlot = (script: string, line: number) =>
+        errorWithMessage(
+          `ERR Script attempted to access keys that do not hash to the same slot script: ${sha1(script)}, on @user_script:${line}.`,
+        )
+
+      try {
+        const declared =
+          "#!lua\nreturn redis.call('set', KEYS[1], '1') and redis.call('set', ARGV[1], '1')"
+        await assert.rejects(
+          () => directClient.eval(declared, 1, first, second),
+          crossSlot(declared, 2),
+        )
+
+        // The declared key pins the slot even when the script never reads it.
+        const onlySecond = "#!lua\nreturn redis.call('set', ARGV[1], '1')"
+        await assert.rejects(
+          () => directClient.eval(onlySecond, 1, first, second),
+          crossSlot(onlySecond, 2),
+        )
+
+        // Without declared keys the first key touched pins it.
+        const undeclared =
+          "#!lua flags=no-writes\nreturn {redis.call('get', ARGV[1]), redis.call('get', ARGV[2])}"
+        await assert.rejects(
+          () => directClient.eval(undeclared, 0, first, second),
+          crossSlot(undeclared, 2),
+        )
+
+        // redis.pcall gets the error undecorated.
+        await assert.rejects(
+          () =>
+            directClient.eval(
+              "#!lua\nreturn redis.pcall('get', ARGV[1])",
+              1,
+              first,
+              second,
+            ),
+          errorWithMessage(
+            'ERR Script attempted to access keys that do not hash to the same slot',
+          ),
+        )
+
+        assert.strictEqual(
+          await directClient.eval(
+            "#!lua flags=allow-cross-slot-keys\nreturn redis.call('set', KEYS[1], '1') and redis.call('set', ARGV[1], '1')",
+            1,
+            first,
+            second,
+          ),
+          'OK',
+        )
+        assert.strictEqual(
+          await directClient.eval(
+            "return redis.call('set', KEYS[1], '1') and redis.call('set', ARGV[1], '1')",
+            1,
+            first,
+            second,
+          ),
+          'OK',
+        )
+
+        // Functions declare flags too. The mock does not decorate a
+        // function's error (`script: <name>, on @user_function:<line>.`), so
+        // only the error is checked.
+        const library = `xslot_${randomKey().replace(/\W/g, '_')}`
+        await directClient.function(
+          'LOAD',
+          `#!lua name=${library}\n` +
+            `redis.register_function('${library}_f', function(keys, argv) return redis.call('set', keys[1], '1') and redis.call('set', argv[1], '1') end)\n` +
+            `redis.register_function{function_name='${library}_g', callback=function(keys, argv) return redis.call('set', keys[1], '1') and redis.call('set', argv[1], '1') end, flags={'allow-cross-slot-keys'}}`,
+        )
+        try {
+          await assert.rejects(
+            () => directClient.fcall(`${library}_f`, 1, first, second),
+            (error: unknown) =>
+              error instanceof Error &&
+              error.message.startsWith(
+                'ERR Script attempted to access keys that do not hash to the same slot script: ',
+              ),
+          )
+          assert.strictEqual(
+            await directClient.fcall(`${library}_g`, 1, first, second),
+            'OK',
+          )
+        } finally {
+          await directClient.function('DELETE', library)
+        }
+      } finally {
+        await directClient.del(first)
+        await directClient.del(second)
+        directClient.disconnect()
+      }
+    },
+  )
 
   test('direct replica connections redirect keyed commands to the master', async () => {
     const key = `{replica:${randomKey()}}:key`
@@ -338,6 +477,49 @@ async function findKeyOwnedByDifferentMaster(
   throw new Error('Could not find key owned by a different master')
 }
 
+/**
+ * A `{}{...}` key whose real slot (the whole key, #88) and the slot the
+ * clients compute with cluster-key-slot belong to different masters.
+ * `fullKey` carries the cluster client's `keyPrefix`, which ioredis hashes
+ * as part of the key; direct node clients must use it.
+ */
+async function findEmptyTagKeyOnTwoMasters(cluster: Cluster): Promise<{
+  key: string
+  fullKey: string
+  serverSlot: number
+  serverOwner: RedisEndpoint
+  clientOwner: RedisEndpoint
+}> {
+  const prefix = cluster.options.keyPrefix ?? ''
+  const ranges = (await cluster.cluster('SLOTS')) as Array<
+    [number, number, [string, number]]
+  >
+  const ownerOf = (slot: number): RedisEndpoint => {
+    for (const [min, max, [host, port]] of ranges) {
+      if (slot >= min && slot <= max) {
+        return { host, port }
+      }
+    }
+    throw new Error(`No Redis Cluster slot owner found for slot ${slot}`)
+  }
+
+  for (let index = 0; index < 10000; index++) {
+    const key = `{}{empty-tag:${randomKey()}:${index}}`
+    const fullKey = `${prefix}${key}`
+    const serverSlot = keyHashSlot(Buffer.from(fullKey))
+    const serverOwner = ownerOf(serverSlot)
+    const clientOwner = ownerOf(clusterKeySlot(fullKey))
+    if (
+      serverOwner.host !== clientOwner.host ||
+      serverOwner.port !== clientOwner.port
+    ) {
+      return { key, fullKey, serverSlot, serverOwner, clientOwner }
+    }
+  }
+
+  throw new Error('Could not find an empty-tag key routed to the wrong master')
+}
+
 async function findDifferentNodeKeys(cluster: Cluster): Promise<{
   localKey: string
   remoteKey: string
@@ -356,6 +538,27 @@ async function findDifferentNodeKeys(cluster: Cluster): Promise<{
   }
 
   throw new Error('Could not find keys owned by different cluster nodes')
+}
+
+/** Two keys in different slots that the same master owns. */
+async function findSameNodeKeys(
+  cluster: Cluster,
+): Promise<{ first: string; second: string }> {
+  const first = `{xslot-a:${randomKey()}}:key`
+  const [host, port] = await findSlotOwner(cluster, first)
+
+  for (let index = 0; index < 10000; index++) {
+    const second = `{xslot-b:${randomKey()}:${index}}:key`
+    if (clusterKeySlot(second) === clusterKeySlot(first)) {
+      continue
+    }
+    const [secondHost, secondPort] = await findSlotOwner(cluster, second)
+    if (secondHost === host && secondPort === port) {
+      return { first, second }
+    }
+  }
+
+  throw new Error('Could not find two slots owned by the same cluster node')
 }
 
 function assertHelloEntry(
