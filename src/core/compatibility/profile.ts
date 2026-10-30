@@ -110,6 +110,8 @@ export type FeatureId =
   | 'error.lpos-rank-zero-hint'
   | 'error.expire-time-quoted-wording'
   | 'error.no-multi-named-wording'
+  | 'timeout.ceil-ms'
+  | 'lpos.rank-range-check'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor
