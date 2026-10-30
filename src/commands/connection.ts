@@ -603,7 +603,14 @@ export const quitCommand = defineCommand({
   schema: t.object({ ignored: t.variadic(t.bulk()) }),
   // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
   // entry at all, so its script sees an unknown command instead).
-  flags: ['readonly', 'fast', 'subscribed', 'noscript'],
+  // transaction: every version answers QUIT inside MULTI instead of queueing
+  // it (7.0+ excludes it from queueMultiCommand, 6.2 answers it before
+  // command lookup), and the close drops the queued commands (#567).
+  flags: ['readonly', 'fast', 'subscribed', 'transaction', 'noscript'],
+  // 6.2 answers QUIT in the connection loop, before call() feeds MONITOR.
+  monitor: {
+    skip: profile => !profile.has('command.quit-table-entry'),
+  },
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),

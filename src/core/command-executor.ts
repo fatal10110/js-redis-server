@@ -597,8 +597,13 @@ function monitorFeedActive(
   return (
     !ctx.monitor?.disabled &&
     ctx.server.monitorFeed.subscriberCount > 0 &&
-    !plan.definition.monitor?.skip
+    !skipsMonitor(plan, ctx)
   )
+}
+
+function skipsMonitor(plan: CommandPlan, ctx: RedisExecutionContext): boolean {
+  const skip = plan.definition.monitor?.skip
+  return typeof skip === 'function' ? skip(ctx.server.profile) : !!skip
 }
 
 function isQueuedTransactionCommand(

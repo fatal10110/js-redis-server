@@ -109,7 +109,8 @@ before they run (`NOAUTH`, the subscribed-context refusal) are not emitted.
 `MONITOR` is flagged `noscript` and is rejected from Lua.
 
 The monitoring connection is fed its own commands too, each line right after
-the command's reply (`QUIT` closes with `+OK` alone). Redis treats a monitor
+the command's reply (`QUIT` closes with `+OK` alone; Redis 6.2 never feeds
+`QUIT`, which it answers before the command runs). Redis treats a monitor
 as a replica, so on it every command flagged readonly, write or may_replicate
 (`GET`, `SET`, `KEYS`, `PUBLISH`, `EVAL`, ...) fails with `ERR Replica can't
 interact with the keyspace` (`interract` on 6.2) and is not emitted, while

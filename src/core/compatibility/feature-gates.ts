@@ -173,6 +173,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'info.keyspace.volatile-items': { valkey: '9.0.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.2 holds a push for the calling connection (its own PUBLISH to a
+  // channel it subscribes to) until the command's reply is out, and inside
+  // EXEC until the EXEC reply is (`server.pending_push_messages`); older
+  // versions write it as it happens, so inside the EXEC array.
   'pubsub.resp3-publish-reply-first': { redis: '7.2.0', valkey: '8.0.0' },
   // Redis 7.0 made XCLAIM / XAUTOCLAIM drop a pending entry whose stream
   // entry was deleted (XAUTOCLAIM lists it in a third reply element). 6.2
