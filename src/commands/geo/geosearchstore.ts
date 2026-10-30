@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -59,7 +60,7 @@ function createGeoSearchStoreSchema() {
           cursor = advanced
           continue
         }
-        const token = input[cursor]!.toString().toUpperCase()
+        const token = asciiUpperCase(input[cursor]!.toString())
         if (token === 'STOREDIST') {
           storeDist = true
           cursor++

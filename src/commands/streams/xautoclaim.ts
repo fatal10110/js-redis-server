@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import {
@@ -53,7 +54,7 @@ function createXautoclaimSchema() {
       let count = 100n
       let justId = false
       while (cursor < input.length) {
-        const option = input[cursor].toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor].toString())
         const hasValue = cursor + 1 < input.length
         if (option === 'COUNT' && hasValue) {
           count = parseXautoclaimCount(input[cursor + 1], ctx.profile)

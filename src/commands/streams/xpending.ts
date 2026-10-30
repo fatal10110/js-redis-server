@@ -1,3 +1,4 @@
+import { asciiUpperToken } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
@@ -48,7 +49,7 @@ function createXpendingSchema() {
 
       let cursor = index + 2
       let minIdleMs: number | null = null
-      if (input[cursor]?.toString().toUpperCase() === 'IDLE') {
+      if (asciiUpperToken(input[cursor]) === 'IDLE') {
         const raw = input[cursor + 1]
         if (!raw) throw new WrongNumberOfArgumentsError(ctx.commandName)
         minIdleMs = parseNonNegativeInteger(raw)

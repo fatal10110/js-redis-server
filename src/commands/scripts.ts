@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
-import { asciiLowerCase } from '../core/ascii-case'
+import {
+  asciiLowerCase,
+  asciiLowerToken,
+  asciiUpperCase,
+  asciiUpperToken,
+} from '../core/ascii-case'
 import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
@@ -339,7 +344,7 @@ function scriptFlush(
     throw errors.scriptFlushOption()
   }
 
-  const mode = args.rest[0]?.toString().toUpperCase()
+  const mode = asciiUpperToken(args.rest[0])
   if (mode !== undefined && mode !== 'ASYNC' && mode !== 'SYNC') {
     throw errors.scriptFlushOption()
   }
@@ -358,7 +363,7 @@ function scriptDebug(
   ctx: RedisExecutionContext,
 ): RedisResult {
   expectRestLength(args, 'SCRIPT', 1, ctx)
-  const mode = args.rest[0].toString().toUpperCase()
+  const mode = asciiUpperCase(args.rest[0].toString())
   if (mode !== 'YES' && mode !== 'SYNC' && mode !== 'NO') {
     throw errors.scriptDebugMode()
   }
@@ -668,7 +673,7 @@ function functionRestore(
     throw subcommandSyntaxError('FUNCTION', args.subcommand, ctx.server.profile)
   }
 
-  const mode = args.rest[1]?.toString().toLowerCase() ?? 'append'
+  const mode = asciiLowerToken(args.rest[1]) ?? 'append'
   if (mode !== 'append' && mode !== 'flush' && mode !== 'replace') {
     throw new RedisCommandError(
       'Wrong restore policy given, value should be either FLUSH, APPEND or REPLACE.',
@@ -691,7 +696,7 @@ function functionFlush(
     throw subcommandSyntaxError('FUNCTION', args.subcommand, ctx.server.profile)
   }
 
-  const mode = args.rest[0]?.toString().toUpperCase()
+  const mode = asciiUpperToken(args.rest[0])
   if (mode !== undefined && mode !== 'ASYNC' && mode !== 'SYNC') {
     throw errors.functionFlushOption()
   }

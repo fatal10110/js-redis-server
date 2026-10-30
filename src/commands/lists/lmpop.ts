@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
@@ -97,7 +98,7 @@ function parseListMultiPopArgs(
 
   let count = 1
   if (cursor < input.length) {
-    const option = input[cursor].toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor].toString())
     if (option !== 'COUNT' || cursor + 2 !== input.length) {
       throw errors.syntax()
     }
