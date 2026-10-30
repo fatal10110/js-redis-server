@@ -217,7 +217,7 @@ describe('unserved first key vs CROSSSLOT (#604)', () => {
       ]
       for (const [command, reply] of rows) {
         assert.strictEqual(
-          await send(...command),
+          await send(command[0], ...command.slice(1)),
           reply,
           `${profile}: ${command.join(' ')}`,
         )
