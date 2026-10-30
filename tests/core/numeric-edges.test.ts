@@ -73,6 +73,32 @@ describe('parseBlockingTimeout', () => {
     assert.strictEqual(parse('0'), 0)
   })
 
+  test('computes the milliseconds in long double arithmetic', () => {
+    // ld(0.001) * 1000 = 1 - 5.4e-20: rounded up to 1, truncated to 0.
+    assert.strictEqual(parse('0.001'), 1)
+    assert.strictEqual(parse('0.001', redis70), 1)
+    assert.strictEqual(parse('0.001', redis62), 0)
+    for (const profile of [redis62, redis70, redis80]) {
+      assert.strictEqual(parse('-0.001', profile), 0)
+      assert.strictEqual(parse('-1e-3', profile), 0)
+      assert.strictEqual(
+        message(() => parse('-0.002', profile)),
+        'timeout is negative',
+      )
+    }
+    // 9223372036854775000 ms fits a long long; the end time wraps on 6.2.
+    assert.strictEqual(parse('9223372036854775', redis62), 1)
+    assert.strictEqual(parse('9223372036854775', redis70), 1)
+    assert.strictEqual(
+      message(() => parse('9223372036854775')),
+      'timeout is out of range',
+    )
+    assert.strictEqual(parse('0x1p-1000', redis62), 0)
+    assert.strictEqual(parse('0x1p-1000'), 1)
+    assert.strictEqual(parse('1e-400'), 1)
+    assert.strictEqual(parse('-1e-400'), 0)
+  })
+
   test('refuses an end time past LLONG_MAX per profile', () => {
     for (const token of ['inf', '1e400', '1e19', '9223372036854775807']) {
       assert.strictEqual(

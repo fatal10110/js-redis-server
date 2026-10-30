@@ -188,16 +188,41 @@ describe(`Numeric edge profile rows (${testRunner.getBackendName()}, ${profile})
     )
   })
 
-  test('a timeout under 1 ms blocks forever only on 6.2', async () => {
-    const blocked = await connect()
-    const writer = await connect()
+  for (const timeout of ['0.0001', '0.001']) {
+    test(`a timeout of ${timeout} s blocks forever only on 6.2`, async () => {
+      const blocked = await connect()
+      const writer = await connect()
+      const key = randomKey()
+      blocked.write(commandFrame('BLPOP', key, timeout))
+      await delay(300)
+      await expectReply(writer, ['RPUSH', key, 'x'], ':1\r\n')
+      assert.strictEqual(
+        (await blocked.readRawFrame()).toString(),
+        legacy ? `*2\r\n${bulk(key)}${bulk('x')}` : '*-1\r\n',
+      )
+    })
+  }
+
+  test('the milliseconds come from long double arithmetic', async () => {
+    // Inside MULTI a timeout of 0 answers a null array instead of blocking.
+    const conn = await connect()
     const key = randomKey()
-    blocked.write(commandFrame('BLPOP', key, '0.0001'))
-    await delay(300)
-    await expectReply(writer, ['RPUSH', key, 'x'], ':1\r\n')
-    assert.strictEqual(
-      (await blocked.readRawFrame()).toString(),
-      legacy ? `*2\r\n${bulk(key)}${bulk('x')}` : '*-1\r\n',
+    await expectReply(conn, ['MULTI'], '+OK\r\n')
+    const timeouts = [
+      '-0.001',
+      '-1e-3',
+      '-0.002',
+      '9223372036854775',
+      '9223372036854775.807',
+    ]
+    for (const timeout of timeouts) {
+      await expectReply(conn, ['BLPOP', key, timeout], '+QUEUED\r\n')
+    }
+    const wrapped = pre72 ? '*-1\r\n' : OUT_OF_RANGE
+    await expectReply(
+      conn,
+      ['EXEC'],
+      `*5\r\n*-1\r\n*-1\r\n${NEGATIVE}${wrapped}${wrapped}`,
     )
   })
 

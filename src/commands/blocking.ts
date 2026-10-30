@@ -3,7 +3,11 @@ import type {
   RedisExecutionContext,
 } from '../core/redis-context'
 import type { CompatibilityProfile } from '../core/compatibility/profile'
-import { parseLongDoubleMagnitude } from '../core/long-double-token'
+import {
+  type BinaryFloat,
+  longDoubleTimesThousand,
+  parseLongDoubleMagnitude,
+} from '../core/long-double-token'
 import { errors } from '../core/redis-error'
 import type { RedisDataValue } from '../state/data-types'
 
@@ -185,8 +189,33 @@ export function blockingTimeoutMs(timeoutMs: number): number | undefined {
   return timeoutMs === 0 ? undefined : timeoutMs
 }
 
-/** LLONG_MAX as a double: 2^63. */
-const LLONG_MAX_DOUBLE = 2 ** 63
+const LLONG_MAX = (1n << 63n) - 1n
+
+/** `value > LLONG_MAX` for a binary float. */
+function exceedsLlongMax(value: BinaryFloat): boolean {
+  if (value.negative || value.mantissa === 0n) return false
+  if (value.exponent >= 0) {
+    return (
+      value.exponent > 64 ||
+      value.mantissa << BigInt(value.exponent) > LLONG_MAX
+    )
+  }
+  return value.mantissa > LLONG_MAX << BigInt(-value.exponent)
+}
+
+/** `ceill(value)` or a truncating cast, as an exact integer. */
+function wholeMilliseconds(value: BinaryFloat, roundUp: boolean): bigint {
+  const { negative, mantissa, exponent } = value
+  if (exponent >= 0) {
+    const magnitude = mantissa << BigInt(exponent)
+    return negative ? -magnitude : magnitude
+  }
+  const shift = BigInt(-exponent)
+  const floor = mantissa >> shift
+  const hasFraction = (mantissa & ((1n << shift) - 1n)) !== 0n
+  if (negative) return -floor
+  return roundUp && hasFraction ? floor + 1n : floor
+}
 
 /**
  * A blocking command's timeout in seconds (BLPOP, BLMOVE, BZMPOP, ...), read
@@ -196,11 +225,14 @@ const LLONG_MAX_DOUBLE = 2 ** 63
  * - The token goes through `string2ld()`: no leading or trailing space, no
  *   empty token, no NaN, hex floats welcome; else `timeout is not a float or
  *   out of range`.
- * - LLONG_MAX ms or more (`inf`, `1e400`, `1e19`) is `timeout is out of
+ * - The milliseconds are `ftval * 1000.0` in an 80-bit `long double`
+ *   ({@link longDoubleTimesThousand}), so `0.001` is a hair under 1 ms and
+ *   `-0.001` a hair above -1 ms.
+ * - More than LLONG_MAX ms (`inf`, `1e400`, `1e19`) is `timeout is out of
  *   range` from Redis 7.2 (`timeout.ms-overflow-check`); 6.2 / 7.0 cast it to
  *   LLONG_MIN, `timeout is negative`.
  * - The milliseconds round up from Redis 7.0.8 (`timeout.ceil-ms`) and are
- *   truncated before, so `-0.0001` is no timeout everywhere and `0.0001` is
+ *   truncated before, so `-0.001` is no timeout everywhere and `0.001` is
  *   no timeout on 6.2; below that, `timeout is negative`.
  * - From 7.2 an end time past LLONG_MAX is out of range; 6.2 / 7.0 let it wrap
  *   into the past, a timeout that expires at once (1 ms here).
@@ -209,25 +241,25 @@ export function parseBlockingTimeout(
   token: Buffer,
   profile: CompatibilityProfile,
 ): number {
-  const seconds = parseLongDoubleMagnitude(token)
-  if (seconds === undefined) throw errors.timeoutNotFloat()
+  if (parseLongDoubleMagnitude(token) === undefined) {
+    throw errors.timeoutNotFloat()
+  }
 
-  const ms = seconds * 1000
-  if (ms >= LLONG_MAX_DOUBLE) {
-    if (profile.has('timeout.ms-overflow-check')) {
-      throw errors.timeoutOutOfRange()
-    }
+  const ms = longDoubleTimesThousand(token)
+  const overflowCheck = profile.has('timeout.ms-overflow-check')
+  if (overflowCheck && exceedsLlongMax(ms)) {
+    throw errors.timeoutOutOfRange()
+  }
+
+  const whole = wholeMilliseconds(ms, profile.has('timeout.ceil-ms'))
+  // Out of the long long range, the x87 cast gives LLONG_MIN.
+  if (whole < 0n || whole > LLONG_MAX) {
     throw errors.timeoutNegative()
   }
-
-  const whole = profile.has('timeout.ceil-ms') ? Math.ceil(ms) : Math.trunc(ms)
-  if (whole < 0) throw errors.timeoutNegative()
-  if (whole <= 0) return 0
-  if (whole > LLONG_MAX_DOUBLE - Date.now()) {
-    if (profile.has('timeout.ms-overflow-check')) {
-      throw errors.timeoutOutOfRange()
-    }
+  if (whole === 0n) return 0
+  if (whole > LLONG_MAX - BigInt(Date.now())) {
+    if (overflowCheck) throw errors.timeoutOutOfRange()
     return 1
   }
-  return whole
+  return Number(whole)
 }
