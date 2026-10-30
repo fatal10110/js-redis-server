@@ -18,6 +18,9 @@ const checksTimeoutOverflow = !['redis-6.2', 'redis-7.0'].includes(
  */
 const ignoresExtraPauseArgs = activeProfile === 'valkey-9.0'
 
+/** Redis 6.2 answers QUIT in processCommand, ahead of the pause check. */
+const quitBeforePause = activeProfile === 'redis-6.2'
+
 describe(`Raw TCP CLIENT PAUSE / UNPAUSE (${testRunner.getBackendName()})`, () => {
   let port: number
   const connections: RawRedisConnection[] = []
@@ -229,6 +232,19 @@ describe(`Raw TCP CLIENT PAUSE / UNPAUSE (${testRunner.getBackendName()})`, () =
     assert.strictEqual(await own.reply, '+PONG\r\n')
     assert.strictEqual(await unpause.reply, '+OK\r\n')
     assert.ok(Date.now() - started >= 500, 'an ALL pause ended early')
+  })
+
+  test('ALL postpones QUIT from 7.0; Redis 6.2 answers it at once', async () => {
+    const issuer = await connect()
+    const quitter = await connect()
+
+    assert.strictEqual(
+      await reply(issuer, 'CLIENT', 'PAUSE', '500', 'ALL'),
+      '+OK\r\n',
+    )
+    const quit = await sendPending(quitter, ['QUIT'])
+    assert.strictEqual(quit.pending, !quitBeforePause)
+    assert.strictEqual(await quit.reply, '+OK\r\n')
   })
 
   test('a later pause keeps the longer end time and the stricter mode', async () => {

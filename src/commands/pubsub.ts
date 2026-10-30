@@ -273,8 +273,15 @@ function confirmations(
   ctx: RedisExecutionContext,
   frames: RedisResult[],
 ): RedisResult {
+  // Written as pushes (pubsub.c `CLIENT_PUSHING`): CLIENT REPLY OFF / SKIP
+  // never drop them.
   if (frames.length === 1) {
-    return frames[0]
+    const [frame] = frames
+    return new RedisResult(
+      frame.value,
+      { ...frame.options, push: true },
+      frame.encoded,
+    )
   }
 
   const version = ctx.session.protocolVersion
@@ -288,7 +295,10 @@ function confirmations(
         }),
       ),
     ),
-    { trailingFrames: frames.slice(1).map(frame => frame.value) },
+    {
+      trailingFrames: frames.slice(1).map(frame => frame.value),
+      push: true,
+    },
   )
 }
 

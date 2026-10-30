@@ -1,7 +1,7 @@
 import { after, afterEach, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { activeProfile, commandFrame } from '../utils'
+import { activeProfile, commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 
 const testRunner = new TestRunner()
@@ -207,4 +207,68 @@ describe(`Raw TCP CLIENT REPLY / NO-TOUCH (${testRunner.getBackendName()})`, () 
       assert.strictEqual(await flags(), 'N')
     },
   )
+
+  test('OFF still delivers the (un)subscribe confirmations', async () => {
+    const client = await connect()
+    const channels = [randomKey(), randomKey()]
+    client.write(
+      Buffer.concat([
+        commandFrame('CLIENT', 'REPLY', 'OFF'),
+        commandFrame('SUBSCRIBE', ...channels),
+      ]),
+    )
+    for (const [index, channel] of channels.entries()) {
+      assert.strictEqual(
+        (await client.readRawFrame()).toString(),
+        subscribed('subscribe', channel, index + 1),
+      )
+    }
+
+    client.write(
+      Buffer.concat([
+        commandFrame('UNSUBSCRIBE', channels[0]),
+        commandFrame('PUNSUBSCRIBE'),
+        // Refused in RESP2 subscribed mode, and that error is dropped too.
+        commandFrame('CLIENT', 'REPLY', 'ON'),
+        commandFrame('UNSUBSCRIBE'),
+        commandFrame('CLIENT', 'REPLY', 'ON'),
+      ]),
+    )
+    assert.strictEqual(
+      (await client.readRawFrame()).toString(),
+      subscribed('unsubscribe', channels[0], 1),
+    )
+    assert.strictEqual(
+      (await client.readRawFrame()).toString(),
+      '*3\r\n$12\r\npunsubscribe\r\n$-1\r\n:1\r\n',
+    )
+    assert.strictEqual(
+      (await client.readRawFrame()).toString(),
+      subscribed('unsubscribe', channels[1], 0),
+    )
+    assert.strictEqual((await client.readRawFrame()).toString(), '+OK\r\n')
+  })
+
+  test('SKIP is used up by a SUBSCRIBE, whose confirmation still arrives', async () => {
+    const client = await connect()
+    const channel = randomKey()
+    assert.strictEqual(
+      await pipeline(
+        client,
+        ['CLIENT', 'REPLY', 'SKIP'],
+        ['SUBSCRIBE', channel],
+      ),
+      subscribed('subscribe', channel, 1),
+    )
+    assert.strictEqual(
+      await pipeline(client, ['UNSUBSCRIBE', channel]),
+      subscribed('unsubscribe', channel, 0),
+    )
+    await assertDrained(client)
+  })
 })
+
+/** A RESP2 (un)subscribe confirmation frame. */
+function subscribed(kind: string, channel: string, count: number): string {
+  return `*3\r\n$${kind.length}\r\n${kind}\r\n$${channel.length}\r\n${channel}\r\n:${count}\r\n`
+}

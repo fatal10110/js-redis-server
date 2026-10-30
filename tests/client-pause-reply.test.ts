@@ -78,9 +78,65 @@ describe('ClientPauseState', () => {
     assert.ok(Date.now() - started >= 30)
     assert.strictEqual(pause.mode, null)
   })
+
+  test('its timer only keeps the process alive while a waiter remains', async () => {
+    const pause = new ClientPauseState()
+    const timer = () =>
+      (pause as unknown as { timer?: NodeJS.Timeout }).timer?.hasRef()
+    pause.pause(Date.now() + 600_000, 'write')
+    assert.strictEqual(timer(), false, 'an idle pause holds the process')
+
+    const first = new AbortController()
+    const second = new AbortController()
+    void pause.whenUnpaused(first.signal)
+    void pause.whenUnpaused(second.signal)
+    assert.strictEqual(timer(), true)
+    first.abort()
+    assert.strictEqual(timer(), true, 'a waiter still remains')
+    second.abort()
+    assert.strictEqual(timer(), false, 'aborted waiters hold the process')
+    pause.unpause()
+  })
 })
 
 describe('CLIENT PAUSE / UNPAUSE', () => {
+  test('closing the server lifts the pause', async () => {
+    const { server, connect } = createServer()
+    const issuer = connect()
+    const writer = connect()
+
+    assert.strictEqual(
+      await run(issuer, 'client', 'pause', '600000', 'write'),
+      '+OK',
+    )
+    const set = writer.execute('set', buf('k', 'v'))
+    assert.ok(await isPending(set))
+    writer.close()
+    issuer.close()
+    server.close()
+    assert.strictEqual(server.clientPause.mode, null)
+    await set.catch(() => undefined)
+  })
+
+  test('Redis 6.2 answers QUIT during a pause, 7.0 postpones it', async () => {
+    for (const [compatibility, postponed] of [
+      ['redis-6.2', false],
+      ['redis-7.0', true],
+    ] as const) {
+      const { connect } = createServer(compatibility)
+      const issuer = connect()
+      const quitter = connect()
+      // An ALL pause holds back UNPAUSE too: let a short one lapse.
+      assert.strictEqual(
+        await run(issuer, 'client', 'pause', '150', 'all'),
+        '+OK',
+      )
+      const quit = run(quitter, 'quit')
+      assert.strictEqual(await isPending(quit), postponed, compatibility)
+      assert.strictEqual(await quit, '+OK')
+    }
+  })
+
   test('a WRITE pause holds back writes of every client until UNPAUSE', async () => {
     const { connect } = createServer()
     const issuer = connect()

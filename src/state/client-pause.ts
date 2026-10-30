@@ -16,6 +16,8 @@ export class ClientPauseState {
   private pausedMode: ClientPauseMode | null = null
   private timer: ReturnType<typeof setTimeout> | undefined
   private unpaused: { promise: Promise<void>; resolve: () => void } | undefined
+  /** Postponed commands still waiting (their session not aborted). */
+  private waiters = 0
 
   /** The active pause's mode, or `null` when nothing is paused. */
   get mode(): ClientPauseMode | null {
@@ -44,13 +46,19 @@ export class ClientPauseState {
     this.endMs = 0
     clearTimeout(this.timer)
     this.timer = undefined
+    this.waiters = 0
     const unpaused = this.unpaused
     this.unpaused = undefined
     unpaused?.resolve()
   }
 
-  /** Settles once the current pause is lifted. */
-  whenUnpaused(): Promise<void> {
+  /**
+   * Settles once the current pause is lifted. A postponed command keeps the
+   * process alive until then, like any pending reply; an idle pause does not,
+   * nor does one whose waiters all gave up (`signal` aborted: the session
+   * closed).
+   */
+  whenUnpaused(signal?: AbortSignal): Promise<void> {
     if (!this.unpaused) {
       let resolve!: () => void
       const promise = new Promise<void>(done => {
@@ -58,10 +66,25 @@ export class ClientPauseState {
       })
       this.unpaused = { promise, resolve }
     }
-    // A postponed command keeps the process alive until the pause ends,
-    // like any pending reply; an idle pause does not.
+    const unpaused = this.unpaused
+    if (signal?.aborted) {
+      return unpaused.promise
+    }
+
+    this.waiters++
     this.timer?.ref?.()
-    return this.unpaused.promise
+    if (signal) {
+      const onAbort = () => {
+        if (this.unpaused === unpaused && --this.waiters === 0) {
+          this.timer?.unref?.()
+        }
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      void unpaused.promise.then(() =>
+        signal.removeEventListener('abort', onAbort),
+      )
+    }
+    return unpaused.promise
   }
 
   private armTimer(): void {
@@ -77,7 +100,7 @@ export class ClientPauseState {
         this.armTimer()
       }
     }, delay)
-    if (!this.unpaused) {
+    if (this.waiters === 0) {
       this.timer.unref?.()
     }
   }

@@ -31,7 +31,12 @@ export function createClientPausePolicy(): ExecutionPolicy {
   return {
     name: 'client-pause',
     beforeExecute(plan, ctx) {
-      if (ctx.inScript || ctx.transactionReplay || ctx.session.monitoring) {
+      if (
+        ctx.inScript ||
+        ctx.transactionReplay ||
+        ctx.session.monitoring ||
+        answeredBeforePause(plan, ctx.executor.profile)
+      ) {
         return
       }
 
@@ -45,13 +50,29 @@ export function createClientPausePolicy(): ExecutionPolicy {
   }
 }
 
+/**
+ * Before 7.0 (`command.quit-table-entry`) processCommand answers QUIT itself,
+ * ahead of every check, the pause included.
+ */
+function answeredBeforePause(
+  plan: CommandPlan,
+  profile: CompatibilityProfile,
+): boolean {
+  return (
+    plan.definition.name === 'quit' && !profile.has('command.quit-table-entry')
+  )
+}
+
 async function waitForUnpause(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
 ): Promise<void> {
   const pause = ctx.server.clientPause
   do {
-    await ctx.park({ waitFor: pause.whenUnpaused(), signal: ctx.signal })
+    await ctx.park({
+      waitFor: pause.whenUnpaused(ctx.signal),
+      signal: ctx.signal,
+    })
   } while (isPostponed(plan, ctx))
   trackQueuedWrite(plan, ctx)
 }

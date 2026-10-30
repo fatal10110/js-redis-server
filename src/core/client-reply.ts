@@ -55,8 +55,9 @@ export function resetClientReplyMode(session: RedisClientSession): void {
 /**
  * Called once per processed command with its result (`resetClient` after
  * every command): drops the reply while OFF or skipping, then arms a skip
- * CLIENT REPLY SKIP asked for. Pushes never come through here; real Redis
- * delivers them regardless (`CLIENT_PUSHING`).
+ * CLIENT REPLY SKIP asked for. Pushes are delivered regardless
+ * (`CLIENT_PUSHING`): the (un)subscribe confirmations, marked `push`, still
+ * use up a skip; the others never come through here.
  */
 export function applyClientReplyMode(
   session: RedisClientSession,
@@ -70,7 +71,7 @@ export function applyClientReplyMode(
   const suppress = state.off || state.skip
   state.skip = state.skipNext
   state.skipNext = false
-  if (!suppress || result.options?.omitReply) {
+  if (!suppress || result.options?.omitReply || result.options?.push) {
     return result
   }
   return new RedisResult(

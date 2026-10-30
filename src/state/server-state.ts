@@ -209,6 +209,8 @@ export class RedisServerState {
 
   close(): void {
     this.closed = true
+    // Lifts a CLIENT PAUSE so its timer cannot keep the process alive.
+    this.clientPause.unpause()
     if (this.activeExpiryTimer) {
       clearTimeout(this.activeExpiryTimer)
       this.activeExpiryTimer = null
