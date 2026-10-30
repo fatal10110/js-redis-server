@@ -84,17 +84,22 @@ describe('RESP2 decoder memory retention (#564)', () => {
   })
 
   test('retained capacity is released once the decoder goes idle', () => {
-    // 600KB of small pipelined commands, then nothing left to parse.
+    // About 170KB of small pipelined commands, then nothing left to parse.
+    // The storage stays below 1MB, so only the 32KB idle cap can release it.
     const one = Buffer.from('*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n')
-    const pipeline = Buffer.concat(new Array<Buffer>(20_000).fill(one))
+    const pipeline = Buffer.concat(new Array<Buffer>(5_000).fill(one))
     const d = decoder()
     d.push(pipeline)
     assert.ok(storageLength(d) > RETAINED)
+    assert.ok(
+      storageLength(d) < 1024 * 1024,
+      `grew to ${storageLength(d)} bytes`,
+    )
     let frames = 0
     while (d.next()) {
       frames += 1
     }
-    assert.strictEqual(frames, 20_000)
+    assert.strictEqual(frames, 5_000)
     assert.ok(storageLength(d) <= RETAINED, `kept ${storageLength(d)} bytes`)
   })
 
