@@ -187,6 +187,9 @@ function cString(value: Buffer, precision: number): Buffer {
  * Redis and are compat-tested byte for byte, so change them only against a
  * real server.
  */
+const GEO_STORE_WITH_OPTIONS_6_2 =
+  'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORDS options'
+
 export const errors = Object.freeze({
   syntax: () => new RedisCommandError('syntax error'),
   /**
@@ -335,12 +338,27 @@ export const errors = Object.freeze({
     new RedisCommandError(
       `invalid longitude,latitude pair ${formatCFixed6(lon)},${formatCFixed6(lat)}`,
     ),
-  geoUnsupportedUnit: () =>
+  geoUnsupportedUnit: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      'unsupported unit provided. please use M, KM, FT, MI',
+      profile.has('geo.unit-case-folding')
+        ? 'unsupported unit provided. please use M, KM, FT, MI'
+        : 'unsupported unit provided. please use m, km, ft, mi',
     ),
-  geoMissingMember: () =>
-    new RedisCommandError('could not decode requested zset member'),
+  // Valkey 9.0 names the member (valkey@9.0.0 geo.c:125-131
+  // longLatFromMemberOrReply, `%s`: cut at a NUL, CR / LF turned into spaces
+  // by addReplyErrorFormat); Redis and Valkey 8.x say `could not decode`.
+  geoMissingMember: (member: Buffer, profile: CompatibilityProfile) =>
+    profile.has('geo.missing-member-wording')
+      ? new RedisCommandError(
+          Buffer.concat([
+            Buffer.from('member '),
+            Buffer.from(cString(member, member.length)).map(byte =>
+              byte === 0x0d || byte === 0x0a ? 0x20 : byte,
+            ),
+            Buffer.from(' does not exist'),
+          ]),
+        )
+      : new RedisCommandError('could not decode requested zset member'),
   geoCountNotPositive: () => new RedisCommandError('COUNT must be > 0'),
   geoAnyRequiresCount: () =>
     new RedisCommandError('the ANY argument requires COUNT argument'),
@@ -350,13 +368,18 @@ export const errors = Object.freeze({
   geoHeightNotNumeric: () => new RedisCommandError('need numeric height'),
   geoBoxNegative: () =>
     new RedisCommandError('height or width cannot be negative'),
-  geoRadiusStoreWithOptions: () =>
+  geoRadiusStoreWithOptions: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
+      profile.has('geo.store-with-options-wording')
+        ? 'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
+        : GEO_STORE_WITH_OPTIONS_6_2,
     ),
-  geoSearchStoreWithOptions: () =>
+  // Redis 6.2 uses the GEORADIUS wording for GEOSEARCHSTORE too.
+  geoSearchStoreWithOptions: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      'GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
+      profile.has('geo.store-with-options-wording')
+        ? 'GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
+        : GEO_STORE_WITH_OPTIONS_6_2,
     ),
 
   // Strings / bits

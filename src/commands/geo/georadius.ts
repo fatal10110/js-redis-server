@@ -2,13 +2,18 @@ import { defineCommand } from '../../core/command-definition'
 import { georadiusGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
-import { WrongNumberOfArgumentsError } from '../../core/redis-error'
+import {
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+} from '../../core/redis-error'
 import { integer } from '../helpers'
 import { assertValidCoordinates } from './helpers'
 import {
   buildSearchReply,
   buildStoreMembers,
   collectMatches,
+  deferGeoParseError,
+  georadiusRawKeys,
   orderAndLimit,
   parseByRadius,
   parseGeoFloatToken,
@@ -24,8 +29,11 @@ type GeoRadiusArgs = GeoRadiusFlags & {
   by: GeoBy
 }
 
+type GeoRadiusParsed =
+  GeoRadiusArgs | { key: Buffer; failed: RedisCommandError; rawKeys: Buffer[] }
+
 function createGeoRadiusSchema(allowStore: boolean) {
-  return t.custom<GeoRadiusArgs>(
+  return t.custom<GeoRadiusParsed>(
     { min: 5, keys: [0] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const key = input[index]
@@ -37,27 +45,41 @@ function createGeoRadiusSchema(allowStore: boolean) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
 
-      const lon = parseGeoFloatToken(lonTok, ctx.profile)
-      const lat = parseGeoFloatToken(latTok, ctx.profile)
-      assertValidCoordinates(lon, lat)
-      const by = parseByRadius(radiusTok, unitTok, ctx.profile)
-      const [flags, nextIndex] = parseGeoRadiusFlags(
-        input,
-        index + 5,
-        allowStore,
-      )
+      try {
+        const lon = parseGeoFloatToken(lonTok, ctx.profile)
+        const lat = parseGeoFloatToken(latTok, ctx.profile)
+        assertValidCoordinates(lon, lat)
+        const by = parseByRadius(radiusTok, unitTok, ctx.profile)
+        const [flags, nextIndex] = parseGeoRadiusFlags(
+          input,
+          index + 5,
+          allowStore,
+          ctx.profile,
+        )
 
-      return { value: { key, lon, lat, by, ...flags }, nextIndex }
+        return { value: { key, lon, lat, by, ...flags }, nextIndex }
+      } catch (err) {
+        return {
+          value: {
+            key,
+            failed: deferGeoParseError(err),
+            rawKeys: georadiusRawKeys(ctx.commandName, input),
+          },
+          nextIndex: input.length,
+        }
+      }
     },
   )
 }
 
-function executeGeoRadius(args: GeoRadiusArgs, ctx: RedisExecutionContext) {
+function executeGeoRadius(args: GeoRadiusParsed, ctx: RedisExecutionContext) {
   const zset = ctx.db.getSortedSet(args.key)
+  if ('failed' in args) throw args.failed
   const matches = collectMatches(
     zset,
     { lon: args.lon, lat: args.lat },
     args.by,
+    ctx.server.profile,
   )
   const ordered = orderAndLimit(matches, {
     order: args.order,
@@ -98,10 +120,11 @@ export const georadiusCommand = defineCommand({
   rawKeys: georadiusGetKeys,
   schema: createGeoRadiusSchema(true),
   flags: ['write', 'denyoom'],
-  keys: args =>
-    (args.store ?? args.storeDist)
-      ? [args.key, (args.store ?? args.storeDist)!]
-      : [args.key],
+  keys: args => {
+    if ('failed' in args) return args.rawKeys
+    const dest = args.store ?? args.storeDist
+    return dest ? [args.key, dest] : [args.key]
+  },
   execute: executeGeoRadius,
 })
 
