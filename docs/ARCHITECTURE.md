@@ -228,11 +228,15 @@ Order matters: `AuthPolicy` rejects unauthenticated clients with `NOAUTH`
 before any routing or queueing happens (only `AUTH`/`HELLO`/`RESET`/`QUIT` pass
 when `requirepass` is set and the session is unauthenticated), then
 [`NoMultiPolicy`](../src/core/execution-policies/no-multi-policy.ts) refuses,
-inside MULTI, a command the profile's command table flags `no_multi`
-(dirtying the transaction), and cluster
+inside MULTI, a command the profile's command table flags `no_multi` (the
+entry it resolves to, `container|subcommand` from 7.0, such as Valkey 9.0's
+`client|reply`; dirtying the transaction), and cluster
 routing must validate (and possibly redirect/reject) **before** a command is
-queued into a transaction — exactly like real Redis Cluster validates
-`CROSSSLOT` at queue time.
+queued into a transaction — exactly like real Redis Cluster refuses a `MOVED`
+key, or a command whose own keys span slots, at queue time. Queued commands
+in different slots are each `+QUEUED`; `EXEC` refuses the queue as a whole
+with a bare `-CROSSSLOT` and discards the transaction, as Redis's
+`getNodeByQuery` does for `EXEC`.
 
 ### Transactions — MULTI / EXEC / WATCH
 
@@ -266,8 +270,10 @@ While a session is in `'transaction'` mode,
 [`TransactionPolicy`](../src/core/execution-policies/transaction-policy.ts)
 intercepts every non-control command in `beforeExecute`, queues its
 already-parsed `CommandPlan` on the session, and replies `+QUEUED` — so parsing
-and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at
-queue time, not at `EXEC` time. Only what Redis refuses at queue time dirties
+and key-extraction (and therefore a command's own `CROSSSLOT`/`MOVED` errors)
+happen at queue time, not at `EXEC` time; in a cluster, `EXEC` then refuses a
+queue whose commands touch different slots (`-CROSSSLOT`, transaction
+discarded). Only what Redis refuses at queue time dirties
 the transaction there (an unknown command or subcommand, or a count the command
 table's arity rejects); a command whose own argument check fails is queued as
 a plan carrying the error as `deferredError`, which `executePlan` raises after
