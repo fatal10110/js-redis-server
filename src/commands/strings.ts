@@ -6,6 +6,7 @@ import {
   type ParseContext,
 } from '../core/command-schema'
 import { parseLongDoubleToken } from '../core/long-double-token'
+import { formatIncrByFloatResult } from '../core/double-format'
 import type { RedisDatabase } from '../state'
 import {
   WrongTypeRedisError,
@@ -266,7 +267,8 @@ export const incrbyfloatCommand = defineCommand({
       throw errors.incrByFloatNanOrInfinity()
     }
 
-    const valueBuf = Buffer.from(next.toString())
+    // ld2string(…, LD_STR_HUMAN): the reply and the stored value (#543).
+    const valueBuf = Buffer.from(formatIncrByFloatResult(next))
     ctx.db.setString(args.key, valueBuf, { keepTtl: true })
     return bulk(valueBuf)
   },

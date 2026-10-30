@@ -1,5 +1,6 @@
 import { defineCommand } from '../core/command-definition'
 import { isIntegerToken, t, type ParseContext } from '../core/command-schema'
+import { formatIncrByFloatResult } from '../core/double-format'
 import { parseLongDoubleToken } from '../core/long-double-token'
 import type { RedisExecutionContext } from '../core/redis-context'
 import {
@@ -1213,12 +1214,8 @@ export const hincrbyfloatCommand = defineCommand({
       if (!Number.isFinite(next)) {
         throw errors.incrByFloatNanOrInfinity()
       }
-      // Format like Redis: strip trailing zeros, use fixed notation for small values
-      let formatted = String(next)
-      if (formatted.includes('e') || formatted.includes('E')) {
-        formatted = next.toFixed(17).replace(/\.?0+$/, '')
-      }
-      const valueBuf = Buffer.from(formatted)
+      // ld2string(…, LD_STR_HUMAN): the reply and the stored value (#543).
+      const valueBuf = Buffer.from(formatIncrByFloatResult(next))
       hash.setField(args.field, valueBuf, { forceDirty: true, keepTtl: true })
       return valueBuf
     })
