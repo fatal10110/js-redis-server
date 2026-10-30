@@ -111,6 +111,9 @@ export function createClusterPolicy(
           allowReplicaRead:
             ctx.session.clusterReadOnly &&
             plan.definition.flags.includes('readonly'),
+          crossSlotFirst: ctx.server.profile.has(
+            'cluster.crossslot-before-unserved',
+          ),
         },
       )
 
@@ -177,14 +180,22 @@ function validateClusterSlot(
   topology: RedisClusterTopology,
   localNodeId: string,
   keys: readonly Buffer[],
-  options: { allowReplicaRead?: boolean } = {},
+  options: { allowReplicaRead?: boolean; crossSlotFirst?: boolean } = {},
 ): number | null {
-  const slot = topology.calculateSlotForKeys(keys)
-  if (slot === null) {
+  if (keys.length === 0) {
     return null
   }
 
-  if (slot === -1) {
+  // Redis's getNodeByQuery walks the keys in order and looks the first key's
+  // slot up before it compares the others, so an unserved first key answers
+  // CLUSTERDOWN even when a later key is in another slot. Valkey 9.0 checks
+  // that every key shares one slot first (CROSSSLOT wins there).
+  const slot = topology.calculateSlot(keys[0])
+  if (!options.crossSlotFirst && !topology.getSlotOwner(slot)) {
+    throw new RedisClusterDownError()
+  }
+
+  if (topology.calculateSlotForKeys(keys) === -1) {
     throw new RedisCrossSlotError()
   }
 

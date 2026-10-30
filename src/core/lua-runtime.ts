@@ -290,10 +290,9 @@ export class RedisLuaRuntime {
         this.hostState.database,
       ),
     )
-    return redisValueToLuaReply(
-      normalizeScriptCommandValue(result.value),
-      this.hostState.resp,
-      profile,
+    return (
+      scriptClusterRejection(result.value, profile, call) ??
+      redisValueToLuaReply(result.value, this.hostState.resp, profile)
     )
   }
 }
@@ -852,17 +851,48 @@ function resp3TypedLuaReply(
   }
 }
 
-// A command run from a script cannot redirect the client, so a MOVED reply is
-// surfaced to the script as a generic error instead of a cluster redirect.
-function normalizeScriptCommandValue(value: RedisValue): RedisValue {
-  if (value.kind === 'error' && value.code === 'MOVED') {
-    return RedisValue.error(
-      'Script attempted to access a non local key in a cluster node',
-      'ERR',
+/**
+ * A command run from a script cannot redirect the client, so a MOVED or
+ * unserved-slot (CLUSTERDOWN) routing reply reaches the script as the
+ * scripting layer's own error (`scriptVerifyClusterState`): `Script attempted
+ * to access a slot not served` for an unserved slot from redis 7.4 / valkey
+ * 8.0, `Script attempted to access a non local key in a cluster node`
+ * otherwise, and on 6.2 the `luaPushError` form `<source>: <line>: Lua script
+ * attempted to access a non local key in a cluster node` with no code.
+ */
+function scriptClusterRejection(
+  value: RedisValue,
+  profile: CompatibilityProfile,
+  call: RedisCallContext | undefined,
+): ReplyValue | undefined {
+  if (
+    value.kind !== 'error' ||
+    (value.code !== 'MOVED' && value.code !== 'CLUSTERDOWN')
+  ) {
+    return undefined
+  }
+
+  if (
+    value.code === 'CLUSTERDOWN' &&
+    profile.has('script.cluster-slot-not-served')
+  ) {
+    return redisErrorToLuaReply(
+      new RedisCommandError('Script attempted to access a slot not served'),
     )
   }
 
-  return value
+  if (profile.has('script.abort-error-suffix')) {
+    return redisErrorToLuaReply(
+      new RedisCommandError(
+        'Script attempted to access a non local key in a cluster node',
+      ),
+    )
+  }
+
+  return legacyScriptError(
+    'Lua script attempted to access a non local key in a cluster node',
+    call,
+  )
 }
 
 // Errors the scripting layer itself raises before a command runs (no command
@@ -913,7 +943,15 @@ function scriptRejection(
     return redisErrorToLuaReply(current)
   }
 
-  const message = Buffer.from(LEGACY_SCRIPT_REJECTIONS[kind])
+  return legacyScriptError(LEGACY_SCRIPT_REJECTIONS[kind], call)
+}
+
+/** A 6.2 `luaPushError` reply: no code, the calling frame's position first. */
+function legacyScriptError(
+  text: string,
+  call: RedisCallContext | undefined,
+): ReplyValue {
+  const message = Buffer.from(text)
   const source = call?.source
   return {
     err:
