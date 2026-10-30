@@ -358,7 +358,7 @@ export const errors = Object.freeze({
   scriptFlushOption: () =>
     new RedisCommandError('SCRIPT FLUSH only support SYNC|ASYNC option'),
   functionFlushOption: () =>
-    new RedisCommandError('FUNCTION FLUSH only support SYNC|ASYNC option'),
+    new RedisCommandError('FUNCTION FLUSH only supports SYNC|ASYNC option'),
   scriptDebugMode: () => new RedisCommandError('Use SCRIPT DEBUG YES/SYNC/NO'),
   /**
    * A script's `redis.call` named a command (or, from 7.0, a container

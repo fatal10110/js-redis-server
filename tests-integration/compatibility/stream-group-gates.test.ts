@@ -479,6 +479,85 @@ describe(`stream consumer-group error paths and version gates (${testRunner.getB
     })
   })
 
+  describe('6.2 checks the key and group before the argument count (#437)', () => {
+    /** 7.0+: the subcommand's table arity; 6.2: `on62`. */
+    function countError(container: string, sub: string, on62: string): string {
+      return profile === 'redis-6.2'
+        ? on62
+        : `-ERR wrong number of arguments for '${container.toLowerCase()}|${sub.toLowerCase()}' command\r\n`
+    }
+
+    test('XGROUP', async () => {
+      const s = await streamWithGroup('count', 1)
+      const missing = key('missing')
+      const string = key('string')
+      await send(conn, ['SET', string, 'x'])
+
+      const rows: [string[], string][] = [
+        [['CREATE', missing, 'g'], XGROUP_MISSING_KEY],
+        [['SETID', missing, 'g'], XGROUP_MISSING_KEY],
+        [['CREATECONSUMER', missing, 'g'], XGROUP_MISSING_KEY],
+        [['DESTROY', missing, 'g', 'extra'], XGROUP_MISSING_KEY],
+        [['DELCONSUMER', missing, 'g', 'c', 'extra'], XGROUP_MISSING_KEY],
+        [['CREATE', string, 'g'], WRONGTYPE],
+        [['DESTROY', string, 'g', 'extra'], WRONGTYPE],
+        [['SETID', s, 'nog'], noGroup(s, 'nog')],
+        [['DELCONSUMER', s, 'nog', 'c', 'extra'], noGroup(s, 'nog')],
+        [['CREATE', s, 'g2'], syntaxError('XGROUP', 'CREATE')],
+        [['DESTROY', missing], syntaxError('XGROUP', 'DESTROY')],
+        [['destroy', s], syntaxError('XGROUP', 'destroy')],
+        [['SETID', s, 'g'], syntaxError('XGROUP', 'SETID')],
+        [['CREATECONSUMER', s, 'g'], syntaxError('XGROUP', 'CREATECONSUMER')],
+        [
+          ['CREATECONSUMER', s, 'g', 'c', 'extra'],
+          syntaxError('XGROUP', 'CREATECONSUMER'),
+        ],
+        [['DELCONSUMER', s, 'g'], syntaxError('XGROUP', 'DELCONSUMER')],
+      ]
+      for (const [args, on62] of rows) {
+        await expectReply(
+          conn,
+          ['XGROUP', ...args],
+          countError('XGROUP', args[0], on62),
+        )
+      }
+
+      // 7.0+ reads SETID's lone option before the key: the syntax error.
+      await expectReply(
+        conn,
+        ['XGROUP', 'SETID', s, 'nog', '0', 'extra'],
+        profile === 'redis-6.2'
+          ? noGroup(s, 'nog')
+          : syntaxError('XGROUP', 'SETID'),
+      )
+    })
+
+    test('XINFO', async () => {
+      const s = await streamWithGroup('count', 1)
+      const missing = key('missing')
+      const string = key('string')
+      await send(conn, ['SET', string, 'x'])
+
+      const rows: [string[], string][] = [
+        [['STREAM'], syntaxError('XINFO', 'STREAM')],
+        [['GROUPS'], syntaxError('XINFO', 'GROUPS')],
+        [['groups', s, 'extra'], syntaxError('XINFO', 'groups')],
+        [['CONSUMERS', s], syntaxError('XINFO', 'CONSUMERS')],
+        [['CONSUMERS', s, 'nog', 'extra'], syntaxError('XINFO', 'CONSUMERS')],
+        [['GROUPS', missing, 'extra'], NO_SUCH_KEY],
+        [['CONSUMERS', missing, 'g', 'extra'], NO_SUCH_KEY],
+        [['GROUPS', string, 'extra'], WRONGTYPE],
+      ]
+      for (const [args, on62] of rows) {
+        await expectReply(
+          conn,
+          ['XINFO', ...args],
+          countError('XINFO', args[0], on62),
+        )
+      }
+    })
+  })
+
   describe('XGROUP ENTRIESREAD (#507)', () => {
     test(
       '7.0+: -1 is accepted as "unknown", below -1 is refused',

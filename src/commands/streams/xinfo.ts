@@ -114,9 +114,26 @@ function createXinfoSchema() {
       // Redis 7.0+ does (#438). An option list the subcommand cannot use is
       // real Redis' `addReplySubcommandSyntaxError`, not an arity error.
 
+      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
+      // 6.2 has no `xinfo|<sub>` entries: past HELP it answers fewer than one
+      // argument with the subcommand syntax error, then looks the key up, and
+      // only then rejects a wrong count, the same way. That is the `unknown`
+      // variant's path, run in execute (#437).
+      const wrongCount = (name: string) => {
+        if (lookup) throw new WrongNumberOfArgumentsError(`xinfo|${name}`)
+        return {
+          value: {
+            subcommand: 'unknown' as const,
+            name: rawSubcommand,
+            key: input[index + 1],
+          },
+          nextIndex: input.length,
+        }
+      }
+
       if (subcommand === 'STREAM') {
         const key = input[index + 1]
-        if (!key) throw new WrongNumberOfArgumentsError('xinfo|stream')
+        if (!key) return wrongCount('stream')
 
         // The options are read only after the key (#507): see
         // parseStreamOptions.
@@ -133,9 +150,7 @@ function createXinfoSchema() {
 
       if (subcommand === 'GROUPS') {
         const key = input[index + 1]
-        if (!key || input.length !== index + 2) {
-          throw new WrongNumberOfArgumentsError('xinfo|groups')
-        }
+        if (!key || input.length !== index + 2) return wrongCount('groups')
         return {
           value: { subcommand: 'groups', key },
           nextIndex: input.length,
@@ -146,7 +161,7 @@ function createXinfoSchema() {
         const key = input[index + 1]
         const group = input[index + 2]
         if (!key || !group || input.length !== index + 3) {
-          throw new WrongNumberOfArgumentsError('xinfo|consumers')
+          return wrongCount('consumers')
         }
         return {
           value: { subcommand: 'consumers', key, group },
@@ -158,7 +173,6 @@ function createXinfoSchema() {
       // 6.2 answers HELP before it counts arguments or looks a key up, but
       // its key spec still names the third argument, so it keeps routing on
       // it (and COMMAND GETKEYS reports it).
-      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
       if (subcommand === 'HELP') {
         if (lookup && input.length !== index + 1) {
           throw new WrongNumberOfArgumentsError('xinfo|help')
@@ -240,6 +254,10 @@ export const xinfoCommand = defineCommand({
       // the subcommand.
       if (command.key && !ctx.db.getStream(command.key)) {
         throw errors.noSuchKey()
+      }
+      const name = asciiUpperCase(command.name.toString())
+      if (name === 'STREAM' || name === 'GROUPS' || name === 'CONSUMERS') {
+        throw subcommandSyntaxError('XINFO', command.name, profile)
       }
       throw unknownSubcommandError('XINFO', command.name, profile)
     }

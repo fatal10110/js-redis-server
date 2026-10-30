@@ -3,11 +3,7 @@ import { asciiLowerCase } from '../core/ascii-case'
 import { numkeysGetKeys } from '../core/key-specs'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import {
-  RedisCommandError,
-  WrongNumberOfArgumentsError,
-  errors,
-} from '../core/redis-error'
+import { RedisCommandError, errors } from '../core/redis-error'
 import {
   isCompileError,
   luaReplyToRedisValue,
@@ -29,7 +25,17 @@ import {
   type RedisFunctionDefinition,
   type RedisFunctionLibrary,
 } from '../state'
-import { array, bulk, ok, unknownSubcommandError } from './helpers'
+import {
+  array,
+  bulk,
+  expectSubcommandArgCount,
+  helpReply,
+  ok,
+  subcommandArityError,
+  subcommandSyntaxError,
+  unknownSubcommandError,
+} from './helpers'
+import { functionHelpLines, scriptHelpLines } from './container-help'
 import { commandSubcommandInfo } from './introspection'
 
 type ScriptArgs = {
@@ -89,11 +95,11 @@ export const scriptCommand = defineCommand({
       case 'flush':
         return scriptFlush(args, ctx)
       case 'kill':
-        return scriptKill(args)
+        return scriptKill(args, ctx)
       case 'debug':
         return scriptDebug(args, ctx)
       case 'help':
-        return scriptHelp(args)
+        return scriptHelp(args, ctx)
       default:
         throw unknownSubcommandError(
           'SCRIPT',
@@ -223,9 +229,9 @@ export const functionCommand = defineCommand<FunctionArgs>({
       case 'flush':
         return functionFlush(args, ctx)
       case 'kill':
-        return functionKill(args)
+        return functionKill(args, ctx)
       case 'help':
-        return functionHelp(args)
+        return functionHelp(args, ctx)
       default:
         throw unknownSubcommandError(
           'FUNCTION',
@@ -283,7 +289,7 @@ async function scriptLoad(
   args: ScriptArgs,
   ctx: RedisExecutionContext,
 ): Promise<RedisResult> {
-  expectRestLength(args, 'script|load', 1)
+  expectRestLength(args, 'SCRIPT', 1, ctx)
   const script = args.rest[0]
   const parsed = parseScriptShebang(script, ctx.server.profile)
   const runtime = await ctx.server.getLuaRuntime()
@@ -310,8 +316,12 @@ function scriptExists(
   args: ScriptArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
-  if (args.rest.length === 0) {
-    throw new WrongNumberOfArgumentsError('script|exists')
+  // 6.2 has no `script|exists` arity check: no sha is an empty answer.
+  if (
+    args.rest.length === 0 &&
+    ctx.server.profile.has('error.unknown-subcommand-dispatch-timing')
+  ) {
+    throw subcommandArityError('SCRIPT', args.subcommand, ctx.server.profile)
   }
 
   return array(
@@ -338,8 +348,8 @@ function scriptFlush(
   return ok()
 }
 
-function scriptKill(args: ScriptArgs): RedisResult {
-  expectRestLength(args, 'script|kill', 0)
+function scriptKill(args: ScriptArgs, ctx: RedisExecutionContext): RedisResult {
+  expectRestLength(args, 'SCRIPT', 0, ctx)
   return RedisResult.error('No scripts in execution right now.', 'NOTBUSY')
 }
 
@@ -347,7 +357,7 @@ function scriptDebug(
   args: ScriptArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
-  expectRestLength(args, 'script|debug', 1)
+  expectRestLength(args, 'SCRIPT', 1, ctx)
   const mode = args.rest[0].toString().toUpperCase()
   if (mode !== 'YES' && mode !== 'SYNC' && mode !== 'NO') {
     throw errors.scriptDebugMode()
@@ -362,35 +372,24 @@ function scriptDebug(
   return ok()
 }
 
-function scriptHelp(args: ScriptArgs): RedisResult {
-  expectRestLength(args, 'script|help', 0)
-  return array(
-    [
-      'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-      'DEBUG <YES|SYNC|NO>',
-      '    Set the debug mode for subsequent scripts executed.',
-      'EXISTS <sha1> [<sha1> ...]',
-      '    Check if scripts exist in the script cache by SHA1 digest.',
-      'FLUSH [ASYNC|SYNC]',
-      '    Flush the Lua scripts cache. Very dangerous on replicas.',
-      'HELP',
-      '    Prints this help.',
-      'KILL',
-      '    Kill the currently executing Lua script.',
-      'LOAD <script>',
-      '    Load a script into the scripts cache without executing it.',
-    ].map(line => RedisValue.bulkString(Buffer.from(line))),
-  )
+function scriptHelp(args: ScriptArgs, ctx: RedisExecutionContext): RedisResult {
+  expectRestLength(args, 'SCRIPT', 0, ctx)
+  return helpReply(scriptHelpLines(ctx.server.profile), ctx.server.profile)
 }
 
 function expectRestLength(
   args: ScriptArgs,
-  commandName: string,
+  container: 'SCRIPT' | 'FUNCTION',
   expected: number,
+  ctx: RedisExecutionContext,
 ): void {
-  if (args.rest.length !== expected) {
-    throw new WrongNumberOfArgumentsError(commandName)
-  }
+  expectSubcommandArgCount(
+    container,
+    args.subcommand,
+    args.rest,
+    expected,
+    ctx.server.profile,
+  )
 }
 
 function evalKeys(args: Pick<EvalArgs, 'numKeys' | 'rest'>): readonly Buffer[] {
@@ -547,19 +546,18 @@ async function functionLoad(
   args: FunctionArgs,
   ctx: RedisExecutionContext,
 ): Promise<RedisResult> {
+  // Every argument before the code is an option, and REPLACE the only one
+  // (functions.c functionLoadCommand); it may repeat.
   let replace = false
-  let code: Buffer
-
-  if (args.rest.length === 1) {
-    code = args.rest[0]
-  } else if (
-    args.rest.length === 2 &&
-    args.rest[0].toString().toLowerCase() === 'replace'
-  ) {
+  for (const option of args.rest.slice(0, -1)) {
+    if (asciiLowerCase(option.toString()) !== 'replace') {
+      throw new RedisCommandError(`Unknown option given: ${option.toString()}`)
+    }
     replace = true
-    code = args.rest[1]
-  } else {
-    throw new WrongNumberOfArgumentsError('function|load')
+  }
+  const code = args.rest.at(-1)
+  if (!code) {
+    throw subcommandArityError('FUNCTION', args.subcommand, ctx.server.profile)
   }
 
   let library: RedisFunctionLibrary
@@ -600,7 +598,7 @@ function functionDelete(
   args: FunctionArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
-  expectRestLength(args, 'function|delete', 1)
+  expectRestLength(args, 'FUNCTION', 1, ctx)
   if (!ctx.server.functionRegistry.delete(args.rest[0].toString())) {
     throw new RedisCommandError(`Library not found`)
   }
@@ -627,7 +625,7 @@ function functionStats(
   args: FunctionArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
-  expectRestLength(args, 'function|stats', 0)
+  expectRestLength(args, 'FUNCTION', 0, ctx)
   const libraries = ctx.server.functionRegistry.list()
   const functionCount = libraries.reduce(
     (count, library) => count + library.functions.length,
@@ -663,8 +661,11 @@ function functionRestore(
   args: FunctionArgs,
   ctx: RedisExecutionContext,
 ): RedisResult {
-  if (args.rest.length < 1 || args.rest.length > 2) {
-    throw new WrongNumberOfArgumentsError('function|restore')
+  if (args.rest.length < 1) {
+    throw subcommandArityError('FUNCTION', args.subcommand, ctx.server.profile)
+  }
+  if (args.rest.length > 2) {
+    throw subcommandSyntaxError('FUNCTION', args.subcommand, ctx.server.profile)
   }
 
   const mode = args.rest[1]?.toString().toLowerCase() ?? 'append'
@@ -687,7 +688,7 @@ function functionFlush(
   ctx: RedisExecutionContext,
 ): RedisResult {
   if (args.rest.length > 1) {
-    throw errors.functionFlushOption()
+    throw subcommandSyntaxError('FUNCTION', args.subcommand, ctx.server.profile)
   }
 
   const mode = args.rest[0]?.toString().toUpperCase()
@@ -699,36 +700,20 @@ function functionFlush(
   return ok()
 }
 
-function functionKill(args: FunctionArgs): RedisResult {
-  expectRestLength(args, 'function|kill', 0)
+function functionKill(
+  args: FunctionArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
+  expectRestLength(args, 'FUNCTION', 0, ctx)
   return RedisResult.error('No scripts in execution right now.', 'NOTBUSY')
 }
 
-function functionHelp(args: FunctionArgs): RedisResult {
-  expectRestLength(args, 'function|help', 0)
-  return array(
-    [
-      'FUNCTION <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-      'LOAD [REPLACE] <FUNCTION CODE>',
-      '    Create a library with the functions in the given code.',
-      'DELETE <LIBRARY NAME>',
-      '    Delete the given library and all its functions.',
-      'LIST [LIBRARYNAME <LIBRARY NAME>] [WITHCODE]',
-      '    Return information about the functions and libraries.',
-      'STATS',
-      '    Return information about the current function execution.',
-      'DUMP',
-      '    Return a serialized payload representing the loaded libraries.',
-      'RESTORE <PAYLOAD> [FLUSH|APPEND|REPLACE]',
-      '    Restore libraries from a serialized payload.',
-      'FLUSH [ASYNC|SYNC]',
-      '    Delete all the libraries.',
-      'KILL',
-      '    Kill the currently executing function.',
-      'HELP',
-      '    Prints this help.',
-    ].map(line => RedisValue.bulkString(Buffer.from(line))),
-  )
+function functionHelp(
+  args: FunctionArgs,
+  ctx: RedisExecutionContext,
+): RedisResult {
+  expectRestLength(args, 'FUNCTION', 0, ctx)
+  return helpReply(functionHelpLines(ctx.server.profile), ctx.server.profile)
 }
 
 async function runFunction(
@@ -783,19 +768,24 @@ function parseFunctionListOptions(args: readonly Buffer[]): {
   let libraryName: string | undefined
   let withCode = false
 
+  // Each option once; a repeat is an unknown argument (functions.c
+  // functionListCommand).
   for (let index = 0; index < args.length; index++) {
-    const option = args[index].toString().toLowerCase()
-    if (option === 'withcode') {
+    const option = asciiLowerCase(args[index].toString())
+    if (!withCode && option === 'withcode') {
       withCode = true
       continue
     }
 
-    if (option === 'libraryname' && index + 1 < args.length) {
+    if (libraryName === undefined && option === 'libraryname') {
+      if (index + 1 >= args.length) {
+        throw new RedisCommandError('library name argument was not given')
+      }
       libraryName = args[++index].toString()
       continue
     }
 
-    throw errors.syntax()
+    throw new RedisCommandError(`Unknown argument ${args[index].toString()}`)
   }
 
   return { libraryName, withCode }

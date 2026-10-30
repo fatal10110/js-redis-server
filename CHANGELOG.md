@@ -1730,6 +1730,23 @@ so the PR body is not a durable home for a breaking-change note.
   function and a set of `flags`, and the flags are status strings (`+no-writes`)
   on both protocols, as on Redis 7.0+ and Valkey; it sent nested arrays and
   bulk-string flags. The RESP2 layout is otherwise unchanged ([#501]).
+- A known container subcommand given the wrong number of arguments answers
+  Redis 6.2's `Unknown subcommand or wrong number of arguments for '<SUB>'. Try
+  <CONTAINER> HELP.` on the `redis-6.2` profile (echoing the subcommand as
+  typed) in CONFIG, CLIENT, ACL, SLOWLOG, PUBSUB and SCRIPT, through one shared
+  helper; 7.0+ profiles keep the `<container>|<sub>` arity error. 6.2's
+  `SCRIPT EXISTS` with no sha answers an empty array, and `SLOWLOG GET a b` is
+  the subcommand syntax error on every profile. On 6.2, XGROUP and XINFO look
+  the key (and XGROUP SETID / CREATECONSUMER / DELCONSUMER the group) up
+  before they count the arguments, so a missing key, WRONGTYPE or NOGROUP wins
+  over the count error, as on real 6.2 ([#437]).
+- `CONFIG`, `CLIENT`, `PUBSUB`, `SLOWLOG`, `ACL`, `SCRIPT` and `FUNCTION HELP`
+  answer real Redis / Valkey's text byte for byte per profile: status lines
+  (they were bulk strings with made-up text), the `Prints this help.` /
+  `Print this help.` (7.2+) footer, and each version's additions (PUBSUB and
+  ACL from 7.0, CLIENT through Redis 7.4 and Valkey 8.0 / 9.0, SCRIPT SHOW on
+  Valkey, FUNCTION's dropped `Library description` from Redis 7.4 / Valkey
+  8.0). `CONFIG HELP` is new: it was an unknown-subcommand error ([#491]).
 
 ## [0.3.0] and earlier
 
@@ -1753,6 +1770,7 @@ requests they contain.
 
 [#430]: https://github.com/fatal10110/js-redis-server/pull/430
 [#437]: https://github.com/fatal10110/js-redis-server/issues/437
+[#491]: https://github.com/fatal10110/js-redis-server/issues/491
 [#442]: https://github.com/fatal10110/js-redis-server/issues/442
 [#439]: https://github.com/fatal10110/js-redis-server/issues/439
 
