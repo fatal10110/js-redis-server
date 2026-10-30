@@ -84,6 +84,7 @@ export class RedisServerState {
   private readonly clientSessions = new Set<RedisClientSession>()
   private activeExpiryTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
+  private readonly activeExpiryIntervalMs: number | false | undefined
   private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
   private luaRuntime: RedisLuaRuntime | null = null
 
@@ -117,7 +118,8 @@ export class RedisServerState {
       )
     }
 
-    this.startActiveExpiry(options?.activeExpiryIntervalMs)
+    this.activeExpiryIntervalMs = options?.activeExpiryIntervalMs
+    this.startActiveExpiry(this.activeExpiryIntervalMs)
   }
 
   /**
@@ -226,6 +228,21 @@ export class RedisServerState {
     this.luaRuntimePromise = null
   }
 
+  /**
+   * Undo {@link close}: re-arm active expiry with the interval the state was
+   * built with. Data, scripts and functions survived the close, and the Lua
+   * runtime is rebuilt on first use, so nothing else needs restoring. A no-op
+   * on an open state. Used when a client facade that owns the state is
+   * re-opened by `connect()`.
+   */
+  reopen(): void {
+    if (!this.closed) {
+      return
+    }
+    this.closed = false
+    this.startActiveExpiry(this.activeExpiryIntervalMs)
+  }
+
   private startActiveExpiry(intervalMs: number | false | undefined): void {
     if (intervalMs === false) {
       return
@@ -240,6 +257,11 @@ export class RedisServerState {
   }
 
   private scheduleActiveExpiry(intervalMs: number): void {
+    // A tick still in flight across a close() + reopen() reschedules itself
+    // too; keep only one timer either way.
+    if (this.activeExpiryTimer) {
+      clearTimeout(this.activeExpiryTimer)
+    }
     const timer = setTimeout(() => {
       this.activeExpiryTimer = null
       void this.runActiveExpiryTick(intervalMs)
