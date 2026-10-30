@@ -173,7 +173,7 @@ describe('new Redis state core', () => {
     const server = new RedisServerState()
     const db = server.getDatabase(0)
     const key = Buffer.from('hash')
-    let eventValue: RedisDataValue | null = null
+    let eventValue = null as RedisDataValue | null
     db.subscribeKey(key, event => {
       if (event.type === 'write') {
         eventValue = event.value

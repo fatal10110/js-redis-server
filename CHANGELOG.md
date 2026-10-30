@@ -1940,6 +1940,21 @@ so the PR body is not a durable home for a breaking-change note.
   z -0 n` for a new member reply `-0` on every version, and ZUNION ... WEIGHTS
   -1 replies `-0` for a score of 0. A score set to the value it already has is
   left as it is, so `ZADD z 0 m` keeps a stored -0.
+- `MONITOR` no longer shows administrative commands on Redis 6.2: `call()`
+  hides every command whose table entry is flagged `admin`, and 6.2 flags the
+  whole `CLIENT` command, so no `CLIENT` subcommand (`CLIENT GETNAME`, ...)
+  reached a monitor there. From 7.0 the flag is per subcommand, so `CLIENT
+  KILL` is hidden and `CLIENT GETNAME` shown, as before. Checked against live
+  redis-server 6.2.14 to 8.0.0 and Valkey 8.0 / 9.0 (#511).
+- Test and tooling (#511): the ioredis and node-redis `scripts` and
+  `command-integration` suites, `raw-tcp/command-errors-subcommand` and
+  `raw-tcp/monitor-protocol` now follow `REDIS_COMPAT` (Lua error wording,
+  `COMMAND` and container-subcommand errors, `NOSCRIPT`, the 6.2 forms), pass on
+  every profile and run once per profile in the new `profile-suites-mock` CI
+  job (`npm run test:integration:profiles:mock`). `npm test` also type-checks
+  `scripts/` and `tests/` (`tsconfig.check.json`), and the container
+  subcommand table takes the versions of `acl.dryrun`, `client.no-evict`,
+  `client.no-touch` and `client.setinfo` from `FEATURE_GATES`.
 
 ## [0.3.0] and earlier
 

@@ -35,7 +35,7 @@ describe('Lua runtime fault recovery (#539)', () => {
     const sha = server.scriptCache.load(Buffer.from('return 7'))
     const faulty = await server.getLuaRuntime()
     engineOf(faulty).evalWithArgs = () => {
-      throw new WasmFault('injected fault')
+      throw new WasmFault('injected fault', { cause: undefined })
     }
 
     assert.strictEqual(
@@ -67,7 +67,11 @@ describe('Lua runtime fault recovery (#539)', () => {
     const instance = (engineOf(faulty) as { instance: Record<string, unknown> })
       .instance
     instance._eval_with_args = () => {
-      throw new WebAssembly.RuntimeError('unreachable')
+      throw new (
+        globalThis as unknown as {
+          WebAssembly: { RuntimeError: new (message: string) => Error }
+        }
+      ).WebAssembly.RuntimeError('unreachable')
     }
 
     assert.strictEqual(
@@ -100,7 +104,7 @@ describe('Lua runtime fault recovery (#539)', () => {
 
     const faulty = await server.getLuaRuntime()
     engineOf(faulty).compile = () => {
-      throw new WasmFault('compile fault')
+      throw new WasmFault('compile fault', { cause: undefined })
     }
     assert.strictEqual(
       errorMessage(
@@ -131,7 +135,7 @@ describe('Lua runtime fault recovery (#539)', () => {
 
     const second = await server.getLuaRuntime()
     engineOf(second).compile = () => {
-      throw new WasmFault('compile fault')
+      throw new WasmFault('compile fault', { cause: undefined })
     }
     assert.strictEqual(
       errorMessage(
