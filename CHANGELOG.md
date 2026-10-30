@@ -24,6 +24,8 @@ so the PR body is not a durable home for a breaking-change note.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
 ### Removed
 
 - **BREAKING** The `script.per-subcommand-noscript` member of `FeatureId` was
@@ -2120,5 +2122,6 @@ requests they contain.
 [#596]: https://github.com/fatal10110/js-redis-server/issues/596
 [#586]: https://github.com/fatal10110/js-redis-server/issues/586
 [#583]: https://github.com/fatal10110/js-redis-server/issues/583
-[unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
