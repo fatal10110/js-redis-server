@@ -39,10 +39,10 @@ For the ioredis examples, also install its supported major version:
 npm install --save-dev ioredis@5
 ```
 
-The upcoming `0.3.0` release adds `js-valkey-server` as an alternative package
-name and `createValkeyMock` as an alias of `createRedisMock`. Publication is
-pending; use `js-redis-server` for now. The existing package and GitHub repository
-are not being renamed or deprecated.
+The same package is also published as `js-valkey-server` (with a
+`js-valkey-server` CLI and `createValkeyMock` as an alias of `createRedisMock`).
+Install either name; they share source, version and API. The existing package
+and GitHub repository are not being renamed or deprecated.
 
 ## 1. Run from the CLI
 
