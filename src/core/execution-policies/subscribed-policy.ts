@@ -6,7 +6,10 @@ export function createSubscribedModePolicy(): ExecutionPolicy {
     name: 'subscribed-mode',
     rejectsBeforeCall: true,
     beforeExecute(plan, ctx) {
-      if (!ctx.session.usesSubscribedReplyMode) {
+      // Redis checks the subscribed context when it reads a command, not for
+      // the commands EXEC runs: `MULTI; SUBSCRIBE a; PUBLISH a x; EXEC` runs
+      // the PUBLISH.
+      if (!ctx.session.usesSubscribedReplyMode || ctx.transactionReplay) {
         return
       }
 

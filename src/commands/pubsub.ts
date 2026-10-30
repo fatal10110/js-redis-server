@@ -96,7 +96,10 @@ export const publishCommand = defineCommand({
   flags: ['pubsub', 'fast'],
   keys: () => [],
   execute: (args, ctx) => {
+    // Inside EXEC the transaction holds or inlines this connection's own
+    // pushes for every queued command (see ClientSession.executeTransaction).
     if (
+      ctx.transactionReplay ||
       ctx.session.mode !== 'subscribed' ||
       ctx.session.protocolVersion !== 3 ||
       !ctx.server.profile.has('pubsub.resp3-publish-reply-first')

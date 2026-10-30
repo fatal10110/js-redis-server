@@ -1581,6 +1581,34 @@ so the PR body is not a durable home for a breaking-change note.
     range (`1e400`, `0x1p1024`) are still refused, because the arithmetic is
     `double` ([#512]).
 
+- `QUIT` inside `MULTI` is answered `+OK` and closes the connection on every
+  profile, dropping the queued commands ([#567]). It used to be queued
+  (`+QUEUED`) and the connection stayed open. MONITOR shows `QUIT` on Redis
+  7.0+ / Valkey only, in `MULTI` or not: Redis 6.2 answers it before the
+  command runs, so it never reaches the feed.
+
+- `EXEC` hands every queued command's after-reply work to its own reply
+  ([#509]):
+  - A push the transaction makes for its own connection (a `PUBLISH` to a
+    channel it subscribes to, RESP3 or RESP2) follows the `EXEC` reply on
+    Redis 7.2+ / Valkey 8.0+, and sits inside the `EXEC` array ahead of the
+    item that made it on Redis 6.2 / 7.0. Before, it was written ahead of the
+    `EXEC` reply, and a `MULTI; SUBSCRIBE a; PUBLISH a x; EXEC` held its
+    message, and every later push, forever.
+  - The in-memory client delivers the other confirmations of a queued
+    multi-target `SUBSCRIBE` (`MULTI; SUBSCRIBE a b; EXEC`) through
+    `pushes()`.
+  - A RESP3 connection stays subscribed after `MULTI` / `EXEC` or `DISCARD`,
+    so its next `PUBLISH` to its own channel keeps the profile's reply order.
+  - A queued `PUBLISH` (or any command) after a queued `SUBSCRIBE` on a RESP2
+    connection runs inside `EXEC` instead of failing with `only (P|S)SUBSCRIBE
+    / ... are allowed in this context`: Redis checks that when it reads a
+    command, not for the ones `EXEC` runs.
+
+- An `onReset` hook that throws no longer cuts `RESET` or connection close
+  short ([#509]): every other hook runs, the rest of the teardown completes
+  and `RESET` still answers `+RESET`. The hook's error is dropped.
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -1656,5 +1684,7 @@ requests they contain.
 [#501]: https://github.com/fatal10110/js-redis-server/issues/501
 [#433]: https://github.com/fatal10110/js-redis-server/issues/433
 [#456]: https://github.com/fatal10110/js-redis-server/issues/456
+[#567]: https://github.com/fatal10110/js-redis-server/issues/567
+[#509]: https://github.com/fatal10110/js-redis-server/issues/509
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

@@ -44,7 +44,8 @@ export type CommandCapabilities = {
 }
 
 export type CommandMonitorMetadata = {
-  skip?: boolean
+  /** Never feed MONITOR; a predicate decides per profile. */
+  skip?: boolean | ((profile: CompatibilityProfile) => boolean)
   redactArgs?: (rawArgs: readonly Buffer[]) => readonly Buffer[]
 }
 

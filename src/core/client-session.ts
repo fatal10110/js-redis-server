@@ -12,7 +12,7 @@ import {
   type RedisMonitorContext,
 } from './redis-context'
 import { RedisCommandError, errors } from './redis-error'
-import { RedisResult } from './redis-result'
+import { RedisResult, type RedisResultOptions } from './redis-result'
 import { RedisValue } from './redis-value'
 import { encodeRedisValue, type RespVersion } from './resp-encoder'
 import { type RedisTurnHandle } from './turn-queue'
@@ -205,6 +205,8 @@ export class ClientSession implements RedisClientSession {
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
   private deferredPushes: RedisResult[] | null = null
+  /** Pushes for this connection made by the command EXEC is running. */
+  private transactionPushes: RedisResult[] | null = null
   private pushQueueClosed = false
   /** Teardown for push producers (MONITOR); run on RESET and close. */
   private readonly resetHooks = new Set<() => void>()
@@ -382,7 +384,7 @@ export class ClientSession implements RedisClientSession {
 
     const plans = [...this.transactionPlans]
     this.transactionPlans = []
-    this.sessionMode = 'normal'
+    this.leaveTransactionMode()
     this.transactionDirty = false
     this.unwatch()
     return plans
@@ -391,9 +393,20 @@ export class ClientSession implements RedisClientSession {
   /** DISCARD: drop the queued commands and leave transaction mode. */
   discardTransaction(): void {
     this.transactionPlans = []
-    this.sessionMode = 'normal'
+    this.leaveTransactionMode()
     this.transactionDirty = false
     this.unwatch()
+  }
+
+  /**
+   * Back to normal mode, or to subscribed mode: a RESP3 connection may
+   * MULTI while subscribed and stays subscribed after EXEC / DISCARD.
+   */
+  private leaveTransactionMode(): void {
+    if (this.sessionMode === 'transaction') {
+      this.sessionMode = 'normal'
+    }
+    this.refreshPubSubMode()
   }
 
   /** Flag the transaction as poisoned (a queued command failed). No-op outside MULTI. */
@@ -413,8 +426,16 @@ export class ClientSession implements RedisClientSession {
    *
    * The reply is pre-encoded item by item whenever an item's wire bytes cannot
    * be rebuilt from the array value alone: a queued `HELLO` switched the
-   * protocol partway, or a command pre-encoded its own reply (a multi-channel
-   * `SUBSCRIBE`, whose extra confirmations Redis appends inside the array).
+   * protocol partway, a command pre-encoded its own reply (a multi-channel
+   * `SUBSCRIBE`, whose extra confirmations Redis appends inside the array),
+   * or a push for this connection is written inline (below).
+   *
+   * Pushes a queued command produces for this connection (its PUBLISH to a
+   * channel it subscribes to) follow the EXEC reply on Redis 7.2+ / valkey
+   * 8.0+ (`server.pending_push_messages`, flushed after the outermost call);
+   * older versions write them into the output buffer as they happen, inside
+   * the array ahead of the item that produced them. Each item's `afterReply`
+   * and `trailingFrames` move to the EXEC reply (#509).
    */
   async executeTransaction(
     plans: readonly CommandPlan[],
@@ -445,6 +466,12 @@ export class ClientSession implements RedisClientSession {
   ): Promise<RedisResult> {
     const values: RedisValue[] = []
     const encodedValues: Buffer[] = []
+    const trailingFrames: RedisValue[] = []
+    const heldPushes: RedisResult[] = []
+    const afterReplies: (() => void)[] = []
+    const pushesAfterReply = this.server.profile.has(
+      'pubsub.resp3-publish-reply-first',
+    )
     let preEncode = false
 
     // The EXEC turn is server-wide, so a queued SELECT switching databases
@@ -459,19 +486,17 @@ export class ClientSession implements RedisClientSession {
       // the failure into this command's slot and keep running the rest (#83).
       let result: RedisResult
       const versionBefore = this.protocolVersion
+      const pushes: RedisResult[] = []
+      this.transactionPushes = pushes
       try {
         result = await this.executor.executePlan(plan, noBlockCtx)
       } catch (err) {
         if (this.signal.aborted) {
           throw err
         }
-        this.appendTransactionValue(
-          RedisValue.error((err as Error).message),
-          values,
-          encodedValues,
-        )
-        preEncode ||= this.protocolVersion !== versionBefore
-        continue
+        result = RedisResult.error((err as Error).message)
+      } finally {
+        this.transactionPushes = null
       }
 
       this.appendTransactionValue(
@@ -482,14 +507,75 @@ export class ClientSession implements RedisClientSession {
       )
       preEncode ||=
         this.protocolVersion !== versionBefore || result.encoded !== undefined
+
+      if (pushes.length > 0 && pushesAfterReply) {
+        heldPushes.push(...pushes)
+      } else if (pushes.length > 0) {
+        const last = encodedValues.length - 1
+        encodedValues[last] = Buffer.concat([
+          ...pushes.map(push => this.encodePush(push)),
+          encodedValues[last],
+        ])
+        trailingFrames.push(...pushes.map(push => push.value))
+        preEncode = true
+      }
+
+      trailingFrames.push(...(result.options?.trailingFrames ?? []))
+      if (result.options?.afterReply) {
+        afterReplies.push(result.options.afterReply)
+      }
     }
 
     const value = RedisValue.array(values)
+    const options = this.transactionReplyOptions(
+      trailingFrames,
+      heldPushes,
+      afterReplies,
+    )
     if (!preEncode) {
-      return RedisResult.create(value)
+      return RedisResult.create(value, options)
     }
 
-    return RedisResult.preEncoded(value, encodeTransactionArray(encodedValues))
+    return RedisResult.preEncoded(
+      value,
+      encodeTransactionArray(encodedValues),
+      options,
+    )
+  }
+
+  private transactionReplyOptions(
+    trailingFrames: readonly RedisValue[],
+    heldPushes: readonly RedisResult[],
+    afterReplies: readonly (() => void)[],
+  ): RedisResultOptions | undefined {
+    if (
+      trailingFrames.length === 0 &&
+      heldPushes.length === 0 &&
+      afterReplies.length === 0
+    ) {
+      return undefined
+    }
+
+    return {
+      ...(trailingFrames.length > 0 ? { trailingFrames } : {}),
+      afterReply: () => {
+        for (const push of heldPushes) {
+          this.enqueuePush(push)
+        }
+        for (const afterReply of afterReplies) {
+          afterReply()
+        }
+      },
+    }
+  }
+
+  private encodePush(push: RedisResult): Buffer {
+    return push.encoded
+      ? Buffer.from(push.encoded)
+      : encodeRedisValue(push.value, {
+          version: this.protocolVersion,
+          profile: this.server.profile,
+        })
   }
 
   private appendTransactionValue(
@@ -707,7 +793,9 @@ export class ClientSession implements RedisClientSession {
   /**
    * Register teardown for something that keeps producing pushes for this
    * connection. It runs once, on RESET or close, unless the returned function
-   * runs it first.
+   * runs it first. A cleanup that throws there cannot stop the rest of the
+   * teardown: RESET and close run every other hook and finish, and the error
+   * is dropped (#509).
    */
   onReset(cleanup: () => void): () => void {
     const hook = () => {
@@ -722,12 +810,21 @@ export class ClientSession implements RedisClientSession {
   /** RESET / close: tear down every producer registered with {@link onReset}. */
   resetPushProducers(): void {
     for (const hook of Array.from(this.resetHooks)) {
-      hook()
+      try {
+        hook()
+      } catch {
+        // Teardown must complete; see onReset.
+      }
     }
   }
 
   enqueuePush(result: RedisResult): void {
     if (this.pushQueueClosed || this.signal.aborted) {
+      return
+    }
+
+    if (this.transactionPushes) {
+      this.transactionPushes.push(result)
       return
     }
 
