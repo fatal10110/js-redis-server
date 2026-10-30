@@ -1894,6 +1894,24 @@ so the PR body is not a durable home for a breaking-change note.
   read the index as a C int like real Redis: outside int32 they answer `value
   is out of range, value must between -2147483648 and 2147483647` instead of
   `DB index is out of range` ([#571]).
+- GEO units are case-sensitive on Redis 6.2 (`Km` is refused) and its
+  unsupported-unit error lists them in lower case (`please use m, km, ft, mi`);
+  7.0+ and Valkey fold case and list `M, KM, FT, MI` as before. On 6.2 a STORE
+  combined with WITHDIST / WITHHASH / WITHCOORD answers the 6.2 wording
+  (`STORE option in GEORADIUS ... WITHCOORDS options`, for GEOSEARCHSTORE too),
+  and on Valkey 9.0 a FROMMEMBER / GEORADIUSBYMEMBER member the key lacks
+  answers `member <name> does not exist` ([#596]).
+- GEO distances are computed like Redis' `geohashGetDistance()` (`deg_rad()`
+  as `a * (M_PI / 180)` and the same-longitude shortcut of Redis 7.0.6+ /
+  Valkey), so STOREDIST scores have the same digits as the real server
+  (`166.27415156960032`, was `166.2741515696005`), and BYBOX measures the
+  longitude distance at the point's latitude, not the center's ([#586]).
+- GEORADIUSBYMEMBER(_RO), GEOSEARCH FROMMEMBER and GEOSEARCHSTORE FROMMEMBER on
+  a missing source key answer `*0`, or `:0` after deleting the STORE
+  destination, without looking up the member or parsing the radius and unit
+  (they answered `could not decode requested zset member` or a radius / unit
+  error). GEORADIUSBYMEMBER on a wrong-typed key answers WRONGTYPE before any
+  radius or unit error ([#519]).
 
 ## [0.3.0] and earlier
 
@@ -1995,5 +2013,7 @@ requests they contain.
 [#592]: https://github.com/fatal10110/js-redis-server/issues/592
 [#589]: https://github.com/fatal10110/js-redis-server/issues/589
 [#571]: https://github.com/fatal10110/js-redis-server/issues/571
+[#596]: https://github.com/fatal10110/js-redis-server/issues/596
+[#586]: https://github.com/fatal10110/js-redis-server/issues/586
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

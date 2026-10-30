@@ -2,6 +2,7 @@ import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import { array } from '../helpers'
 import {
   buildSearchReply,
   collectMatches,
@@ -94,12 +95,14 @@ export const geosearchCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const zset = ctx.db.getSortedSet(args.key)
+    // A missing key replies `*0` without looking up the FROMMEMBER member.
+    if (!zset) return array([])
     const center =
       args.from.type === 'member'
-        ? resolveCenterFromMember(zset, args.from.member)
+        ? resolveCenterFromMember(zset, args.from.member, ctx.server.profile)
         : { lon: args.from.lon, lat: args.from.lat }
 
-    const matches = collectMatches(zset, center, args.by)
+    const matches = collectMatches(zset, center, args.by, ctx.server.profile)
     const ordered = orderAndLimit(matches, {
       order: args.order,
       count: args.count,

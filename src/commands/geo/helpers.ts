@@ -1,4 +1,5 @@
 import { asciiLowerCase } from '../../core/ascii-case'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
 import { errors } from '../../core/redis-error'
 
 const STEP = 26n
@@ -23,11 +24,19 @@ const UNIT_TO_METERS: Record<string, number> = {
 }
 
 // Own keys only: `in` would also find `constructor` and friends on the
-// prototype, and the unit comes straight off the wire.
-export function isSupportedGeoUnit(unit: string): boolean {
-  return Object.hasOwn(UNIT_TO_METERS, asciiLowerCase(unit))
+// prototype, and the unit comes straight off the wire. Redis 6.2 compares
+// with `strcmp`, 7.0+ with `strcasecmp` (`geo.unit-case-folding`).
+export function isSupportedGeoUnit(
+  unit: string,
+  profile: CompatibilityProfile,
+): boolean {
+  return Object.hasOwn(
+    UNIT_TO_METERS,
+    profile.has('geo.unit-case-folding') ? asciiLowerCase(unit) : unit,
+  )
 }
 
+// `unit` has passed isSupportedGeoUnit(): folding is a no-op on 6.2.
 export function metersToUnit(meters: number, unit: string): number {
   return meters / UNIT_TO_METERS[asciiLowerCase(unit)]!
 }
@@ -155,24 +164,42 @@ export function geohashString(score: number): string {
   return out + '0'
 }
 
-function toRadians(degrees: number): number {
-  return (degrees * Math.PI) / 180
+// geohash_helper.c `deg_rad(a) = a * D_R` with `D_R = M_PI / 180.0`. Not
+// `a * M_PI / 180`, which rounds differently and changes STOREDIST digits.
+const D_R = Math.PI / 180.0
+
+function degRad(degrees: number): number {
+  return degrees * D_R
 }
 
-// Haversine great-circle distance in meters, matching Redis' geohashGetDistance.
-export function haversineMeters(
+/** geohashGetLatDistance(): the distance between two latitudes on a meridian. */
+export function geoLatDistanceMeters(lat1: number, lat2: number): number {
+  return EARTH_RADIUS_M * Math.abs(degRad(lat2) - degRad(lat1))
+}
+
+/**
+ * Haversine great-circle distance in meters, ported from Redis'
+ * geohashGetDistance() operation for operation so the doubles match: a
+ * same-longitude pair takes the latitude-only shortcut where the profile's
+ * server has it (`geo.distance-same-lon-shortcut`, `geo.distance-lon-epsilon`).
+ */
+export function geoDistanceMeters(
   lon1: number,
   lat1: number,
   lon2: number,
   lat2: number,
+  profile: CompatibilityProfile,
 ): number {
-  const lat1r = toRadians(lat1)
-  const lat2r = toRadians(lat2)
-  const u = Math.sin((toRadians(lat2) - toRadians(lat1)) / 2)
-  const v = Math.sin((toRadians(lon2) - toRadians(lon1)) / 2)
-  return (
-    2.0 *
-    EARTH_RADIUS_M *
-    Math.asin(Math.sqrt(u * u + Math.cos(lat1r) * Math.cos(lat2r) * v * v))
-  )
+  const lon1r = degRad(lon1)
+  const lon2r = degRad(lon2)
+  const v = Math.sin((lon2r - lon1r) / 2)
+  const sameLon = profile.has('geo.distance-lon-epsilon')
+    ? Math.abs(v) <= 1e-15
+    : profile.has('geo.distance-same-lon-shortcut') && v === 0
+  if (sameLon) return geoLatDistanceMeters(lat1, lat2)
+  const lat1r = degRad(lat1)
+  const lat2r = degRad(lat2)
+  const u = Math.sin((lat2r - lat1r) / 2)
+  const a = u * u + Math.cos(lat1r) * Math.cos(lat2r) * v * v
+  return 2.0 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a))
 }

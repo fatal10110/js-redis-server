@@ -112,6 +112,11 @@ export type FeatureId =
   | 'error.no-multi-named-wording'
   | 'timeout.ceil-ms'
   | 'lpos.rank-range-check'
+  | 'geo.unit-case-folding'
+  | 'geo.store-with-options-wording'
+  | 'geo.distance-same-lon-shortcut'
+  | 'geo.distance-lon-epsilon'
+  | 'geo.missing-member-wording'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

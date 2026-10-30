@@ -71,7 +71,7 @@ function createGeoSearchStoreSchema() {
           token === 'WITHDIST' ||
           token === 'WITHHASH'
         ) {
-          throw errors.geoSearchStoreWithOptions()
+          throw errors.geoSearchStoreWithOptions(ctx.profile)
         }
         throw errors.syntax()
       }
@@ -92,12 +92,18 @@ export const geosearchstoreCommand = defineCommand({
   keys: args => [args.destination, args.source],
   execute: (args, ctx) => {
     const zset = ctx.db.getSortedSet(args.source)
+    // A missing source deletes the destination and replies `:0` without
+    // looking up the FROMMEMBER member.
+    if (!zset) {
+      ctx.db.delete(args.destination)
+      return integer(0)
+    }
     const center =
       args.from.type === 'member'
-        ? resolveCenterFromMember(zset, args.from.member)
+        ? resolveCenterFromMember(zset, args.from.member, ctx.server.profile)
         : { lon: args.from.lon, lat: args.from.lat }
 
-    const matches = collectMatches(zset, center, args.by)
+    const matches = collectMatches(zset, center, args.by, ctx.server.profile)
     const ordered = orderAndLimit(matches, {
       order: args.order,
       count: args.count,

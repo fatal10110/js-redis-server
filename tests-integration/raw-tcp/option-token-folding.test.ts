@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
-import { randomKey } from '../utils'
+import { activeProfile, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -23,9 +23,10 @@ import { expectReply } from './helpers'
  * GEODIST g a b <U+212A>M                 -> -ERR unsupported unit provided. please use M, KM, FT, MI
  * ```
  *
- * The lower-case ASCII spellings still work. The GEODIST rows pin the 7.0+
- * wording of this default-profile suite: 6.2 matches units case-sensitively
- * and lists them in lower case. The CONFIG parameter-name case
+ * The lower-case ASCII spellings still work. On 6.2 GEO units are matched
+ * case-sensitively and listed in lower case (#596; see
+ * `tests-integration/compatibility/geo-gates.test.ts`), so the GEODIST rows
+ * follow the active profile. The CONFIG parameter-name case
  * (`tcp-<U+212A>eepalive`), whose wording differs per version, is in
  * `tests-integration/compatibility/config-fidelity-gates.test.ts`.
  */
@@ -127,17 +128,17 @@ describe(`Raw TCP option token folding (${testRunner.getBackendName()})`, () => 
       ],
       ':2\r\n',
     )
+    const redis62 = activeProfile === 'redis-6.2'
+    const unitError = redis62
+      ? '-ERR unsupported unit provided. please use m, km, ft, mi\r\n'
+      : '-ERR unsupported unit provided. please use M, KM, FT, MI\r\n'
     for (const unit of [`${KELVIN}M`, 'constructor']) {
-      await expectReply(
-        conn,
-        ['GEODIST', key, 'a', 'b', unit],
-        '-ERR unsupported unit provided. please use M, KM, FT, MI\r\n',
-      )
+      await expectReply(conn, ['GEODIST', key, 'a', 'b', unit], unitError)
     }
     await expectReply(
       conn,
       ['GEODIST', key, 'a', 'b', 'Km'],
-      '$8\r\n166.2742\r\n',
+      redis62 ? unitError : '$8\r\n166.2742\r\n',
     )
   })
 })

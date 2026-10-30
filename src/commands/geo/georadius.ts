@@ -45,6 +45,7 @@ function createGeoRadiusSchema(allowStore: boolean) {
         input,
         index + 5,
         allowStore,
+        ctx.profile,
       )
 
       return { value: { key, lon, lat, by, ...flags }, nextIndex }
@@ -58,6 +59,7 @@ function executeGeoRadius(args: GeoRadiusArgs, ctx: RedisExecutionContext) {
     zset,
     { lon: args.lon, lat: args.lat },
     args.by,
+    ctx.server.profile,
   )
   const ordered = orderAndLimit(matches, {
     order: args.order,

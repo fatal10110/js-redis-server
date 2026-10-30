@@ -2,8 +2,11 @@ import { defineCommand } from '../../core/command-definition'
 import { georadiusGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
-import { WrongNumberOfArgumentsError } from '../../core/redis-error'
-import { integer } from '../helpers'
+import {
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+} from '../../core/redis-error'
+import { array, integer } from '../helpers'
 import {
   buildSearchReply,
   buildStoreMembers,
@@ -13,13 +16,24 @@ import {
   parseGeoRadiusFlags,
   resolveCenterFromMember,
   type GeoBy,
+  type GeoCenter,
   type GeoRadiusFlags,
 } from './search-core'
 
-type GeoRadiusByMemberArgs = GeoRadiusFlags & {
+type GeoRadiusByMemberArgs = {
   key: Buffer
   member: Buffer
-  by: GeoBy
+  radiusTok: Buffer
+  unitTok: Buffer
+  // The option tail, or the error it raised. Real Redis reports that error
+  // only after the WRONGTYPE check, the member lookup and the radius parse.
+  flags: GeoRadiusFlags | Error
+}
+
+function storeDestination(args: GeoRadiusByMemberArgs): Buffer | undefined {
+  return args.flags instanceof Error
+    ? undefined
+    : (args.flags.store ?? args.flags.storeDist)
 }
 
 function createGeoRadiusByMemberSchema(allowStore: boolean) {
@@ -34,36 +48,64 @@ function createGeoRadiusByMemberSchema(allowStore: boolean) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
 
-      const by = parseByRadius(radiusTok, unitTok, ctx.profile)
-      const [flags, nextIndex] = parseGeoRadiusFlags(
-        input,
-        index + 4,
-        allowStore,
-      )
+      let flags: GeoRadiusFlags | Error
+      try {
+        flags = parseGeoRadiusFlags(
+          input,
+          index + 4,
+          allowStore,
+          ctx.profile,
+        )[0]
+      } catch (err) {
+        if (!(err instanceof RedisCommandError)) throw err
+        flags = err
+      }
 
-      return { value: { key, member, by, ...flags }, nextIndex }
+      return {
+        value: { key, member, radiusTok, unitTok, flags },
+        nextIndex: input.length,
+      }
     },
   )
 }
 
+// Real georadiusGeneric() order: WRONGTYPE, then (only when the key exists)
+// the member lookup and the radius / unit, then the options. A missing key
+// skips the member and the radius / unit entirely and replies `*0`, or
+// deletes the STORE destination and replies `:0`.
 function executeGeoRadiusByMember(
   args: GeoRadiusByMemberArgs,
   ctx: RedisExecutionContext,
 ) {
+  const profile = ctx.server.profile
   const zset = ctx.db.getSortedSet(args.key)
-  const center = resolveCenterFromMember(zset, args.member)
-  const matches = collectMatches(zset, center, args.by)
+  let center: GeoCenter | undefined
+  let by: GeoBy | undefined
+  if (zset) {
+    center = resolveCenterFromMember(zset, args.member, profile)
+    by = parseByRadius(args.radiusTok, args.unitTok, profile)
+  }
+  if (args.flags instanceof Error) throw args.flags
+  const flags = args.flags
+  if (!center || !by) {
+    const dest = flags.store ?? flags.storeDist
+    if (!dest) return array([])
+    ctx.db.delete(dest)
+    return integer(0)
+  }
+
+  const matches = collectMatches(zset, center, by, profile)
   const ordered = orderAndLimit(matches, {
-    order: args.order,
-    count: args.count,
+    order: flags.order,
+    count: flags.count,
   })
 
-  const dest = args.store ?? args.storeDist
+  const dest = flags.store ?? flags.storeDist
   if (dest) {
     const members = buildStoreMembers(
       ordered,
-      args.storeDist !== undefined,
-      args.by.unit,
+      flags.storeDist !== undefined,
+      by.unit,
     )
     if (members.size === 0) {
       ctx.db.delete(dest)
@@ -78,12 +120,12 @@ function executeGeoRadiusByMember(
   return buildSearchReply(
     ordered,
     {
-      withCoord: args.withCoord,
-      withDist: args.withDist,
-      withHash: args.withHash,
+      withCoord: flags.withCoord,
+      withDist: flags.withDist,
+      withHash: flags.withHash,
     },
-    args.by.unit,
-    ctx.server.profile,
+    by.unit,
+    profile,
   )
 }
 
@@ -92,10 +134,10 @@ export const georadiusbymemberCommand = defineCommand({
   rawKeys: georadiusGetKeys,
   schema: createGeoRadiusByMemberSchema(true),
   flags: ['write', 'denyoom'],
-  keys: args =>
-    (args.store ?? args.storeDist)
-      ? [args.key, (args.store ?? args.storeDist)!]
-      : [args.key],
+  keys: args => {
+    const dest = storeDestination(args)
+    return dest ? [args.key, dest] : [args.key]
+  },
   execute: executeGeoRadiusByMember,
 })
 

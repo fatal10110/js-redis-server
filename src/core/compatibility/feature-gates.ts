@@ -526,4 +526,27 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // RANK -9223372036854775808 is out of range. redis@7.0.15 takes it, and its
   // negation wraps to itself, so it acts as RANK -1.
   'lpos.rank-range-check': { redis: '7.2.0', valkey: '7.2.0' },
+  // GEO units (`m`, `km`, `ft`, `mi`) fold case with `strcasecmp` from
+  // redis@7.0.0 geo.c:131-138, and the bad-unit error lists them in upper
+  // case (`please use M, KM, FT, MI`). redis@6.2.14 geo.c:122-141 compares
+  // with `strcmp` (`Km` is refused) and lists `m, km, ft, mi`. Every Valkey
+  // folds (valkey@7.2.4 geo.c:147).
+  'geo.unit-case-folding': { redis: '7.0.0', valkey: '7.2.0' },
+  // STORE / STOREDIST / GEOSEARCHSTORE with WITHDIST, WITHHASH or WITHCOORD:
+  // redis@6.2.14 geo.c:664-668 always says `STORE option in GEORADIUS is not
+  // compatible with WITHDIST, WITHHASH and WITHCOORDS options`; redis@7.0.0
+  // geo.c:665 names GEOSEARCHSTORE for that command and spells `WITHCOORD`.
+  'geo.store-with-options-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // geohashGetDistance() returns the latitude-only distance
+  // (`EARTH_RADIUS * fabs(deg_rad(lat2) - deg_rad(lat1))`) when
+  // `sin(dlon / 2) == 0.0`: from redis@7.0.6 geohash_helper.c:235 (absent in
+  // 7.0.5 and 6.2.14), in every Valkey (valkey@7.2.4).
+  'geo.distance-same-lon-shortcut': { redis: '7.0.6', valkey: '7.2.0' },
+  // ... and from valkey@9.0.0 geohash_helper.c:298-300 when
+  // `fabs(sin(dlon / 2)) <= 1e-15` (valkey@8.1.0 still compares with 0.0).
+  'geo.distance-lon-epsilon': { valkey: '9.0.0' },
+  // GEORADIUSBYMEMBER / GEOSEARCH FROMMEMBER on a member the key lacks:
+  // `member <name> does not exist` from valkey@9.0.0 geo.c:129; Redis through
+  // 8.0 and valkey@8.1.0 geo.c:539 say `could not decode requested zset member`.
+  'geo.missing-member-wording': { valkey: '9.0.0' },
 }
