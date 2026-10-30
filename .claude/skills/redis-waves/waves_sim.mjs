@@ -319,6 +319,23 @@ const count = (w, prefix) => w.labels.filter(l => l === prefix || l.startsWith(p
   assert.ok(!r.c, 'wave 2 never starts')
 }
 
+// 6b. merge: false and helpers: false reach the prompts: the reviewer ends the lane approved
+//     instead of asking for a merge, and no prompt offers helper agents.
+{
+  const one = { tracks: ['A'], waves: [{ name: '1', lanes: [lane('a', 'A')] }] }
+  const sa = {}
+  const { res, w } = await run({ run: 'sim', track: 'A', plan: one, merge: false, helpers: false }, { a: sa })
+  assert.ok(res[0])
+  assert.ok(sa.prompts[0].includes('No helper agents run in this launch') && !sa.prompts[0].includes('--type <type>'))
+  const rp = w.rev.a.prompts[0]
+  assert.ok(rp.includes('NO MERGES in this launch') && rp.includes('4. Approved (no merges in this launch)'))
+  const on = {}
+  await run({ run: 'sim', track: 'A', plan: one }, { a: on })
+  assert.ok(on.prompts[0].includes('--type <type>') && !on.prompts[0].includes('No helper agents'))
+  const r2 = await run({ run: 'sim', track: 'A', plan: one }, {})
+  assert.ok(!r2.w.rev.a.prompts[0].includes('NO MERGES'))
+}
+
 // 10. Lane brief runs once before a fresh implementation agent (not on resume); checkpoints hand
 //     the lane to fresh agents without using the restart budget; per-lane models apply.
 {

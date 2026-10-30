@@ -201,12 +201,18 @@ the first, and a new value for every relaunch of the whole run. Optional args:
 | `retry` | [] | slugs to run again even though saved state says they finished; a retried lane gets a fresh `maxRounds` budget |
 | `brief` | true | a `wave-brief` agent writes `lanes/<slug>/brief.md` before a fresh lane's implementation agent starts |
 | `maxCheckpoints` | 6 | hand-overs per lane (implementation agent returns `checkpoint`; a fresh agent continues from the worklog) |
+| `merge` | true | `false`: no merger workflow; a clean review comments "ready for a human merge" on the PR and ends the lane `merge_blocked` with the approved head (dependents are then skipped) |
+| `helpers` | true | `false`: no helper broker; prompts offer no helper agents |
 | `repo`, `worktrees`, `wavesRoot` | this machine's paths | the main checkout, the worktree root, and the run-state root |
 | `sessionModel` | `Claude Opus 5.5` | the name in the commit trailer of agents on the session model |
 
 The slim agent types live in `.claude/agents/wave-*.md`. A session loads that directory at
 start, so in the session that first adds them the roles fall back to the default subagent (the
 script notices once per role and logs it); they apply from the next session on.
+
+When the permission system will not run the merger workflow (an auto-mode classifier may refuse
+an agent that merges without a human), launch only the tracks with `merge: false` and
+`helpers: false`; the PRs come out reviewed and approved, and a human merges them.
 
 ## Step 4: monitor, intervene, resume
 

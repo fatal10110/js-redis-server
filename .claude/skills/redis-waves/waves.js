@@ -72,6 +72,10 @@ const MAX_CHECKPOINTS = A.maxCheckpoints === undefined ? 6 : A.maxCheckpoints
 const EPOCH = String(A.epoch || '1')
 const RESEARCHER_LIMIT = A.researcherPerLane === undefined ? 2 : A.researcherPerLane
 const RETRY = A.retry || []
+// merge: false — no merger workflow: a clean review ends the lane merge_blocked ("approved, merge
+// by hand") instead of asking for a merge. helpers: false — no helper broker: prompts offer none.
+const MERGE = A.merge !== false
+const USE_HELPERS = A.helpers !== false
 const SATISFIED = ['merged', 'no_change']
 const DONE_BEFORE = ['merged', 'no_change', 'blocked', 'unresolved', 'stalled', 'merge_blocked', 'failed', 'skipped']
 // Set once any lane of this track has seen STOP: lanes not started yet then return without starting.
@@ -112,7 +116,9 @@ const TESTRULE = `TEST SCOPE (HIGHEST PRIORITY — overrides every procedure and
 - REAL SERVERS ARE THE ORACLE. Real behavior is checked with ${PROBE} (throwaway docker containers per profile, kept running and shared). Every new or changed integration test that runs standalone (raw-tcp, compatibility, standalone client tests) must also pass against the real server of each profile it covers: \`${PROBE} up -p <profiles>\` prints ports, then ${HEAVY} env TEST_BACKEND=real REDIS_COMPAT=<profile> REDIS_STANDALONE_PORT=<port> ${NODE_TEST} <file>. Cluster suites against real servers run in CI (redis 8.0) only.
 - Report in the PR body (and in review "Checks"): the probes (profiles and versions), the scoped tests you ran, the real-server runs with their profiles, and "full suite: CI".
 `
-const HELPERS = (slug, role) => `
+const HELPERS = (slug, role) => !USE_HELPERS ? `
+No helper agents run in this launch: do every lookup, probe and test run yourself.
+` : `
 Cheap helper agents: you cannot spawn subagents, so a broker workflow runs them for you on cheaper models. One Bash call (timeout 600000):
   ${MB} ask --run ${RUN} --from ${slug}/${role} --type <type> --worktree <your worktree or ''> --question - <<'EOF_ASK'
   <self-contained question: what you need, the leads you already have (paths, symbols, commands), the answer shape you want>
@@ -296,7 +302,7 @@ Cost rules: Read the review procedure ONCE (round 1) with the Read tool and keep
 MAILBOX (each command in its own Bash call, timeout 600000):
 - Wait for the implementation agent: ${MB} recv --run ${RUN} --lane ${L.slug} --box review --wait 570 ; run it again while it prints "timeout": true. You get ready {"reason","pr","head","semantic"}, or rarely no_change/blocked (then return that status).
 - To the implementation agent: ${MB} send --run ${RUN} --lane ${L.slug} --box impl --kind <review|ci|conflict|final> --data '<json object>' [--set key=value ...]
-- Merge requests go to the merge agent (cheap model) through the merger broker:
+${MERGE ? '' : `- NO MERGES in this launch: a human merges the PRs. Step 4 below ends the lane instead of asking for a merge.\n`}- Merge requests go to the merge agent (cheap model) through the merger broker:
   ${MB} ask --run ${RUN} --from ${L.slug}/review --type merge --question '{"pr":<n>,"head":"<sha>"}' --wait 570
   The merge takes a while (CI): while it prints "pending": true, run ${MB} answer-wait --run ${RUN} --id <id> --wait 570 again, always with the same id (a pending request is still being served; never ask again while one is pending). The answer is a JSON object {"status":"merged|conflict|ci_failed|head_moved|merge_blocked|retry","merge_sha","file","head","notes"}. "stop": true: return status stopped. An "error" (the merge broker is not running): ${MB} pause --secs 300, then ask again; after 6 such errors, send final {"reason":"failed"} --set status=failed and return status failed.
 
@@ -309,7 +315,7 @@ LOOP:
 3. On ready (round N+1), by reason:
    - review-fix${REVIEW_CI_FIXES ? ', ci-fix' : ''}, or conflict with "semantic": true: a DELTA re-review. Diff your last reviewed head to the new head in the review worktree; verify each earlier item is fixed; review the delta in full and other code only where the delta reaches. Read the author's thread replies; do not re-raise a finding rebutted with concrete probe/source evidence unless you can show the rebuttal wrong with better evidence, and do not add nits you could have raised earlier unless they are real defects. Submit the re-review on GitHub, then step 2.
    - ${REVIEW_CI_FIXES ? '' : 'ci-fix, or '}conflict with "semantic": false: no review; go to step 4.
-4. Merge: ${MB} state --run ${RUN} --lane ${L.slug} --set stage=merge , then ask for the merge with head = the head of the latest ready you accepted (the head you reviewed, or for a ready you took to merge without review, the head it names), and act on the answer:
+${MERGE ? '' : `4. Approved (no merges in this launch): comment on the PR (gh pr comment <n> -R ${GH} --body '<body>') that the review loop is clean at <head> and it is ready for a human merge, with one line per round; then send final {"reason":"merge_blocked","note":"approved at <head>; merge by hand"} --set status=merge_blocked --set approved_head=<head> and return status merge_blocked with that note in the summary. Ignore the merge rules below.\n`}4. Merge: ${MB} state --run ${RUN} --lane ${L.slug} --set stage=merge , then ask for the merge with head = the head of the latest ready you accepted (the head you reviewed, or for a ready you took to merge without review, the head it names), and act on the answer:
    - merged: send final {"reason":"merged","merge_sha":"<sha>"} --set status=merged; return status merged.
    - ci_failed: send ci {"file":"<file>","head":"<head>"} --set stage=ci-fix; wait (step 3).
    - conflict: send conflict {"notes":"<notes>"} --set stage=conflict; wait (step 3).
