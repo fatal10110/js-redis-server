@@ -24,6 +24,10 @@ const REDIS_7_0: ZsetEncodingRules = {
   sizeHint: false,
 }
 const REDIS_7_2 = DEFAULT_ZSET_ENCODING_RULES
+const REDIS_7_2_4: ZsetEncodingRules = {
+  ...DEFAULT_ZSET_ENCODING_RULES,
+  unknownStoreLengthSkiplist: true,
+}
 const VALKEY_8_0: ZsetEncodingRules = {
   ...DEFAULT_ZSET_ENCODING_RULES,
   longestMemberHint: true,
@@ -172,9 +176,35 @@ describe('zset encoding model (#512)', () => {
         { member: LONG, score: 1 },
       ],
       REDIS_7_0,
+      2,
     )
     assert.equal(zsetEncoding(ranged), 'skiplist')
     assert.ok(Object.is(scoreOf(ranged, 'a'), 0))
+  })
+
+  test('ZRANGESTORE BYSCORE / BYLEX starts a listpack, except on 7.2.0-7.2.4', () => {
+    const entries = [{ member: Buffer.from('z'), score: -0 }]
+    for (let i = 0; i < 129; i++) {
+      entries.push({ member: Buffer.from(`m${i}`), score: 1 })
+    }
+    // The rank form knows its 130 members: a skiplist up front, -0 kept.
+    const ranked = storedZsetByInsertion(entries, REDIS_7_2, entries.length)
+    assert.equal(zsetEncoding(ranked), 'skiplist')
+    assert.ok(Object.is(scoreOf(ranked, 'z'), -0))
+
+    // BYSCORE: a listpack stores -0 as 0, then the 129th member converts.
+    const byScore = storedZsetByInsertion(entries, REDIS_7_2, null)
+    assert.equal(zsetEncoding(byScore), 'skiplist')
+    assert.ok(Object.is(scoreOf(byScore, 'z'), 0))
+
+    // Redis 7.2.0-7.2.4: always a skiplist, even for one member.
+    const small = storedZsetByInsertion(
+      [{ member: Buffer.from('z'), score: -0 }],
+      REDIS_7_2_4,
+      null,
+    )
+    assert.equal(zsetEncoding(small), 'skiplist')
+    assert.ok(Object.is(scoreOf(small, 'z'), -0))
   })
 
   test('ZSCAN walks a listpack in (score, member) order', () => {

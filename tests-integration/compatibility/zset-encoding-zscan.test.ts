@@ -30,6 +30,8 @@ const legacy = profile === 'redis-6.2'
 const sizeHint = profile !== 'redis-6.2' && profile !== 'redis-7.0'
 const fpconv = sizeHint
 const longestMemberHint = /^valkey-(8|9)/.test(profile)
+/** Redis 7.2.0-7.2.4: ZRANGESTORE BYSCORE / BYLEX always stores a skiplist. */
+const rangestoreSkiplist = profile === 'redis-7.2'
 
 const LONG = 'a'.repeat(65)
 const ZERO = '$1\r\n0\r\n'
@@ -230,5 +232,60 @@ describe(`Sorted-set encoding (${testRunner.getBackendName()}, ${profile})`, () 
     const small = `${source}:small`
     await expectReply(conn, ['ZUNIONSTORE', small, '1', source], ':1\r\n')
     await expectReply(conn, ['ZSCORE', small, 'a'], LISTPACK_ZERO)
+  })
+
+  test('ZRANGESTORE BYSCORE / BYLEX starts a listpack, the rank form a skiplist past the limit', async () => {
+    const conn = await connect()
+    const source = randomKey()
+    // 130 members, -0 first: a skiplist holding -0.
+    await addMany(conn, source)
+    await expectReply(conn, ['ZADD', source, '-0', 'z'], ':1\r\n')
+
+    // The rank form knows its 130 members: a skiplist up front, -0 kept.
+    const ranked = `${source}:rank`
+    await expectReply(
+      conn,
+      ['ZRANGESTORE', ranked, source, '0', '-1'],
+      ':130\r\n',
+    )
+    await expectReply(conn, ['ZSCORE', ranked, 'z'], NEGATIVE_ZERO)
+
+    // BYSCORE / BYLEX do not: a listpack stores -0 before the 129th member
+    // converts it (always a skiplist on 7.2.0-7.2.4).
+    const unknownZero = rangestoreSkiplist ? NEGATIVE_ZERO : LISTPACK_ZERO
+    const forms = [
+      ['-inf', '+inf', 'BYSCORE'],
+      ['-inf', '+inf', 'BYSCORE', 'LIMIT', '0', '200'],
+      ['-', '+', 'BYLEX'],
+    ]
+    for (const [i, form] of forms.entries()) {
+      const stored = `${source}:by${i}`
+      await expectReply(
+        conn,
+        ['ZRANGESTORE', stored, source, ...form],
+        ':130\r\n',
+      )
+      await expectReply(conn, ['ZSCORE', stored, 'z'], unknownZero)
+    }
+
+    // A small BYSCORE result: a listpack, spelled like ZSCORE, or a skiplist
+    // (%.17Lg) on 7.2.0-7.2.4. The source is a listpack, so `b` is stored
+    // as a listpack keeps -0.
+    const pair = randomKey()
+    await send(conn, ['ZADD', pair, '0.1', 'a', '-0', 'b'])
+    const small = `${pair}:small`
+    await expectReply(
+      conn,
+      ['ZRANGESTORE', small, pair, '-inf', '+inf', 'BYSCORE'],
+      ':2\r\n',
+    )
+    const tenth = rangestoreSkiplist || !fpconv ? G17_TENTH : '0.1'
+    assert.deepStrictEqual(
+      await zscanAll(conn, small),
+      new Map([
+        ['a', tenth],
+        ['b', legacy ? '-0' : '0'],
+      ]),
+    )
   })
 })

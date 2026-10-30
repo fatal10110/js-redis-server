@@ -256,10 +256,12 @@ export const zrangestoreCommand = defineCommand({
 
     // One write replacing whatever the destination held, like real Redis:
     // a single `zrangestore`, not `del` followed by it. The members go in
-    // one by one, as zsetAdd() would (#512).
+    // one by one, as zsetAdd() would (#512). Only the rank form tells
+    // zsetTypeCreate() its length.
     const zset = storedZsetByInsertion(
       Array.from(buildStoredMembers(entries).values()),
       zsetEncodingRules(ctx.server),
+      args.by === 'index' ? entries.length : null,
     )
     ctx.db.set(args.destination, zset)
     return integer(zset.members.size)

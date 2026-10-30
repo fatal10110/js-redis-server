@@ -66,10 +66,13 @@ so the PR body is not a durable home for a breaking-change note.
   convert a zset to a skiplist in place, as Redis does. From 7.2 a `ZADD` (or
   `GEOADD`) of more pairs than the entry limit makes a skiplist up front, and
   on Valkey 8.0+ a `ZADD` member longer than the value limit does too, even
-  one `XX` skips. `ZRANGESTORE` builds its result member by member and
-  `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE` and the GEO `STORE` forms make
-  it a listpack when it fits. New `FeatureId` members `zset.add-size-hint`
-  and `zset.add-longest-member-hint`; the encoding is the `encoding` field of
+  one `XX` skips. `ZRANGESTORE` builds its result member by member (a
+  listpack to start with for `BYSCORE` / `BYLEX`, always a skiplist on Redis
+  7.2.0-7.2.4) and `ZUNIONSTORE`, `ZINTERSTORE`, `ZDIFFSTORE` and the GEO
+  `STORE` forms make it a listpack when it fits. New `FeatureId` members
+  `zset.add-size-hint`, `zset.add-longest-member-hint`,
+  `zset.rangestore-unknown-length-skiplist` and
+  `zset.rangestore-unknown-length-listpack`; the encoding is the `encoding` field of
   `RedisSortedSetData`, for a later `OBJECT ENCODING` (#117).
 - `INCRBYFLOAT` and `HINCRBYFLOAT` add in an x86-64 80-bit `long double`, as
   Redis does on amd64 ([#512]): `0.1` + `0.2` is `0.3` (it was

@@ -455,21 +455,6 @@ export class TrackedSortedSetData {
     this.zset.encoding = 'skiplist'
   }
 
-  setScore(
-    member: Buffer,
-    score: number,
-    options: { forceDirty?: boolean } = {},
-  ): { added: boolean; scoreChanged: boolean } {
-    const hex = member.toString('hex')
-    const existing = this.zset.members.get(hex)
-    const scoreChanged = !existing || existing.score !== score
-    this.zset.members.set(hex, { member, score })
-    if (options.forceDirty || scoreChanged) {
-      this.tracker.markChanged()
-    }
-    return { added: existing === undefined, scoreChanged }
-  }
-
   deleteMember(member: Buffer): boolean {
     return this.deleteMemberId(member.toString('hex'))
   }
@@ -484,28 +469,6 @@ export class TrackedSortedSetData {
 
   entries(): IterableIterator<[string, RedisSortedSetMember]> {
     return this.zset.members.entries()
-  }
-
-  replaceMembers(
-    members: Map<string, RedisSortedSetMember>,
-    options: { forceDirty?: boolean } = {},
-  ): void {
-    const changed =
-      options.forceDirty ||
-      this.zset.members.size !== members.size ||
-      Array.from(members).some(([hex, member]) => {
-        const current = this.zset.members.get(hex)
-        return !current || current.score !== member.score
-      })
-
-    this.zset.members.clear()
-    for (const [hex, member] of members) {
-      this.zset.members.set(hex, member)
-    }
-
-    if (changed) {
-      this.tracker.markChanged()
-    }
   }
 }
 

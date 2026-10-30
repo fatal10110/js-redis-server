@@ -49,5 +49,8 @@ export function zsetEncodingRules(
     sizeHint: server.profile.has('zset.add-size-hint'),
     longestMemberHint: server.profile.has('zset.add-longest-member-hint'),
     integerScores: server.profile.has('zset.listpack-integer-scores'),
+    unknownStoreLengthSkiplist:
+      server.profile.has('zset.rangestore-unknown-length-skiplist') &&
+      !server.profile.has('zset.rangestore-unknown-length-listpack'),
   }
 }

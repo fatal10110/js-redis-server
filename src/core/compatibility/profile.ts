@@ -83,6 +83,8 @@ export type FeatureId =
   | 'zset.listpack-integer-scores'
   | 'zset.add-size-hint'
   | 'zset.add-longest-member-hint'
+  | 'zset.rangestore-unknown-length-skiplist'
+  | 'zset.rangestore-unknown-length-listpack'
   | 'geo.coord-d2string'
   | 'command.quit-table-entry'
   | 'script.abort-error-suffix'

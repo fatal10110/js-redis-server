@@ -43,6 +43,14 @@ export type ZsetEncodingRules = {
   readonly longestMemberHint: boolean
   /** Redis 7.0+: a listpack stores an integral score as an integer. */
   readonly integerScores: boolean
+  /**
+   * Redis 7.2.0-7.2.4 / Valkey 7.2.0-7.2.5: ZRANGESTORE BYSCORE / BYLEX
+   * hands its unknown length (-1) to `zsetTypeCreate()` as a `size_t`
+   * (redis@7.2.4 t_zset.c:3004), so the result is always a skiplist. Before
+   * and after that window an unknown length makes a listpack (redis@7.0.15
+   * t_zset.c:2955-2958, redis@7.2.5 t_zset.c:3005).
+   */
+  readonly unknownStoreLengthSkiplist: boolean
 }
 
 export const DEFAULT_ZSET_ENCODING_RULES: ZsetEncodingRules = {
@@ -51,6 +59,7 @@ export const DEFAULT_ZSET_ENCODING_RULES: ZsetEncodingRules = {
   sizeHint: true,
   longestMemberHint: false,
   integerScores: true,
+  unknownStoreLengthSkiplist: false,
 }
 
 /** The encoding a real server would hold `zset` in. */
@@ -161,18 +170,25 @@ export function storedZsetConvertedIfFits(
 }
 
 /**
- * The value ZRANGESTORE writes: `zsetTypeCreate(length, 0)` (a listpack
- * when the result count fits the entry limit, on every version), then
- * `zsetAdd()` for each member in range order.
+ * The value ZRANGESTORE writes: `zsetTypeCreate(length, 0)`, then
+ * `zsetAdd()` for each member in range order. The rank form knows its
+ * `length` up front (a listpack when it fits the entry limit); BYSCORE and
+ * BYLEX pass -1 (`lengthHint` null), a listpack except on Redis 7.2.0-7.2.4
+ * and Valkey 7.2.0-7.2.5, where it is a skiplist.
  */
 export function storedZsetByInsertion(
   entries: readonly RedisSortedSetMember[],
   rules: ZsetEncodingRules,
+  lengthHint: number | null,
 ): RedisSortedSetData {
+  const skiplist =
+    lengthHint === null
+      ? rules.unknownStoreLengthSkiplist
+      : lengthHint > rules.maxEntries
   const zset: RedisSortedSetData = {
     type: 'zset',
     members: new Map(),
-    encoding: entries.length > rules.maxEntries ? 'skiplist' : 'listpack',
+    encoding: skiplist ? 'skiplist' : 'listpack',
   }
   for (const entry of entries) {
     writeZsetScore(zset, entry.member, entry.score, rules)

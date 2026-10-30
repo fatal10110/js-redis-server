@@ -615,6 +615,21 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // creation only (redis@8.0.0 t_zset.c:1841-1844) and valkey@7.2.5 the same
   // as Redis (#512).
   'zset.add-longest-member-hint': { valkey: '8.0.0' },
+  // ZRANGESTORE BYSCORE / BYLEX starts its result with an unknown length
+  // (-1). Redis 7.2.0-7.2.4 and Valkey 7.2.0-7.2.5 hand it to
+  // `zsetTypeCreate()` as a `size_t` (redis@7.2.4 t_zset.c:3004), so the
+  // result is always a skiplist; before (redis@7.0.15 t_zset.c:2955-2958) and
+  // after (redis@7.2.5 t_zset.c:3005, valkey@7.2.6 t_zset.c:3005) it is a
+  // listpack that converts at the 129th member. A window: from the first gate
+  // until the second (#512).
+  'zset.rangestore-unknown-length-skiplist': {
+    redis: '7.2.0',
+    valkey: '7.2.0',
+  },
+  'zset.rangestore-unknown-length-listpack': {
+    redis: '7.2.5',
+    valkey: '7.2.6',
+  },
   // Redis 7.0.0 reads the ZPOPMIN / ZPOPMAX count with
   // `getPositiveLongFromObjectOrReply` (redis@7.0.0 t_zset.c:3960): a bad or
   // negative count answers `value is out of range, must be positive`, and a
