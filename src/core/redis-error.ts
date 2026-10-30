@@ -552,6 +552,11 @@ export const errors = Object.freeze({
     new RedisCommandError('source and destination objects are the same'),
   /** A database index outside `0 .. databaseCount - 1` (e.g. `COPY ... DB 99`, `SELECT 99`). */
   dbIndexOutOfRange: () => new RedisCommandError('DB index is out of range'),
+  /** `getIntFromObjectOrReply` on an int64 outside the C int range (SELECT, MOVE, COPY ... DB). */
+  int32OutOfRange: () =>
+    new RedisCommandError(
+      'value is out of range, value must between -2147483648 and 2147483647',
+    ),
 
   // Streams
   streamLimitRequiresApprox: () =>

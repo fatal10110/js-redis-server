@@ -39,6 +39,7 @@ import {
   VALKEY_REDIS_COMPAT_VERSION,
   type CompatibilityProfile,
 } from '../core/compatibility/profile'
+import { dbIndexSchema } from './db-index'
 
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
@@ -801,7 +802,7 @@ export const quitCommand = defineCommand({
 export const selectCommand = defineCommand({
   name: 'select',
   schema: t.object({
-    database: t.integer({ min: 0 }),
+    database: dbIndexSchema,
   }),
   flags: ['fast'],
   capabilities: { clusterMode: 'singleDb' },
@@ -810,7 +811,7 @@ export const selectCommand = defineCommand({
     // A script runs its commands on its own client: SELECT there moves the
     // script's later commands, never the caller (#566).
     if (ctx.scriptDatabase) {
-      if (args.database >= ctx.server.databases.length) {
+      if (args.database < 0 || args.database >= ctx.server.databases.length) {
         throw errors.dbIndexOutOfRange()
       }
       ctx.scriptDatabase.selected = args.database

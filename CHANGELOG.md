@@ -1883,6 +1883,17 @@ so the PR body is not a durable home for a breaking-change note.
   is WRONGTYPE. LPOS RANK / COUNT / MAXLEN take int64; RANK
   -9223372036854775808 is out of range from Redis 7.2 and acts as RANK -1
   before ([#592]).
+- XACK on a missing key, or on a stream without that group, answers `:0` (it
+  answered `NOGROUP`), even when an id is invalid: the key and group are looked
+  up before the ids are parsed. LINDEX looks the key up before it reads the
+  index, so a missing key answers nil and a wrong type `WRONGTYPE` whatever the
+  index, and the index is a full int64 (`LINDEX list 9223372036854775807` is
+  nil, not the integer error) ([#589]).
+- `SELECT -1` answers `DB index is out of range` (it answered the integer
+  error) from a client, a script and inside MULTI. SELECT, MOVE and COPY ... DB
+  read the index as a C int like real Redis: outside int32 they answer `value
+  is out of range, value must between -2147483648 and 2147483647` instead of
+  `DB index is out of range` ([#571]).
 - Cluster mode: a keyed command is routed before it checks its own
   arguments, as Redis's `processCommand` does, so `EVAL s 1x k`, `SET k 1 EX
   x` or `BLPOP k x` with `k` on another node answer `MOVED` (or `CROSSSLOT` /
@@ -1993,5 +2004,7 @@ requests they contain.
 [#576]: https://github.com/fatal10110/js-redis-server/issues/576
 [#577]: https://github.com/fatal10110/js-redis-server/issues/577
 [#592]: https://github.com/fatal10110/js-redis-server/issues/592
+[#589]: https://github.com/fatal10110/js-redis-server/issues/589
+[#571]: https://github.com/fatal10110/js-redis-server/issues/571
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
