@@ -80,9 +80,8 @@ export function createConsumerIfMissing(
   if (!profile.has('stream.implicit-consumer-event')) {
     db.updateStream(key, stream => {
       const group = streamGroup(stream.value, groupName)
-      const consumerId = bufferId(consumerName)
-      if (!group || group.consumers.has(consumerId)) return
-      group.consumers.set(consumerId, {
+      if (!group) return
+      stream.addConsumerSilently(group, bufferId(consumerName), {
         name: Buffer.from(consumerName),
         seenAt: now,
         activeAt: null,

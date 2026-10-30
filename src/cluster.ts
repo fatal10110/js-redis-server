@@ -297,8 +297,9 @@ class DatabaseReplicationLink implements ReplicationLink {
       return
     }
 
-    // A write's value is cloned on first read; read it now, so the replica
-    // later applies this write's value rather than the key's state by then.
+    // A write's (or propagate's) value is cloned on first read; read it now,
+    // so the replica later applies this write's value rather than the key's
+    // state by then.
     const snapshot = { ...event }
     const timer = setTimeout(() => {
       this.timers.delete(timer)
@@ -314,6 +315,7 @@ function applyReplicationEvent(
 ): void {
   switch (event.type) {
     case 'write':
+    case 'propagate':
       replica.set(event.key, event.value, { expiresAt: event.expiresAt })
       return
     case 'delete':
