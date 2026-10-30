@@ -26,10 +26,10 @@
  * on amd64: its smallest subnormal is 2^-16445, so under round-to-nearest-even
  * a nonzero value of at most 2^-16446 becomes zero and is refused.
  *
- * Known limit: the arithmetic here is JavaScript `double`, not `long double`
- * (#512). A value inside the `long double` range but beyond the `double` one
- * (`1e400`, `0x1p1024`), which real Redis accepts, cannot be represented and
- * is refused as an invalid float instead.
+ * {@link parseLongDoubleToken} returns a JavaScript number, for callers that
+ * only need a `double`; INCRBYFLOAT and HINCRBYFLOAT use
+ * {@link parseLongDouble}, the exact 80-bit value, which also covers the
+ * range past the `double` one (`1e400`, `0x1p1024`) (#512).
  */
 
 /** `MAX_LONG_DOUBLE_CHARS` in Redis' util.h: a token must be shorter. */
@@ -430,4 +430,110 @@ export function longDoubleTimesThousand(raw: Buffer | string): BinaryFloat {
 
   const product = roundToLongDouble(value.mantissa * 1000n, 1n, value.exponent)
   return { negative, ...product }
+}
+
+/**
+ * An 80-bit `long double` as `strtold` holds it:
+ * `(negative ? -1 : 1) * mantissa * 2^exponent`, the mantissa 0 or a 64-bit
+ * significand (`2^63 <= mantissa < 2^64`). `infinite` marks an infinity
+ * literal, whose mantissa and exponent mean nothing.
+ */
+export interface LongDouble extends BinaryFloat {
+  infinite?: boolean
+}
+
+/**
+ * `string2ld()` (see {@link parseLongDoubleToken}) returning the exact
+ * `long double`: the token rounded to a 64-bit significand, ties to even,
+ * like glibc's `strtold`. `undefined` for a token Redis refuses.
+ *
+ * Values in the subnormal range (below 2^-16382) keep 64 significant bits
+ * instead of the fewer a subnormal holds; nothing that small survives the
+ * 17 decimals INCRBYFLOAT prints, so the difference never shows.
+ */
+export function parseLongDouble(raw: Buffer | string): LongDouble | undefined {
+  if (parseLongDoubleMagnitude(raw) === undefined) {
+    return undefined
+  }
+
+  const text = typeof raw === 'string' ? raw : raw.toString('latin1')
+  const infinity = INFINITY_PATTERN.exec(text)
+  if (infinity) {
+    return {
+      negative: infinity[1] === '-',
+      mantissa: 0n,
+      exponent: 0,
+      infinite: true,
+    }
+  }
+
+  const hex = HEX_PATTERN.exec(text)
+  if (hex) {
+    const negative = hex[1] === '-'
+    const fracDigits = hex[3] ?? ''
+    const mantissa = BigInt(`0x${hex[2]! + fracDigits || '0'}`)
+    if (mantissa === 0n) {
+      return { negative, mantissa: 0n, exponent: 0 }
+    }
+    const exponent = clampExponent(hex[4]) - 4 * fracDigits.length
+    return { negative, ...roundToLongDouble(mantissa, 1n, exponent) }
+  }
+
+  // Accepted, not infinite and not hex: a decimal.
+  const decimal = DECIMAL_PATTERN.exec(text)!
+  const negative = decimal[1] === '-'
+  const fracDigits = decimal[3] ?? ''
+  const digits = (decimal[2]! + fracDigits).replace(/^0+/, '')
+  if (digits.length === 0) {
+    return { negative, mantissa: 0n, exponent: 0 }
+  }
+  const exponent = clampExponent(decimal[4]) - fracDigits.length
+  return {
+    negative,
+    ...roundToLongDouble(
+      BigInt(digits) * 10n ** BigInt(Math.max(exponent, 0)),
+      10n ** BigInt(Math.max(-exponent, 0)),
+      0,
+    ),
+  }
+}
+
+/**
+ * The largest binary exponent of a finite `long double` with a 64-bit
+ * mantissa: (2^64 - 1) * 2^16320 is the largest finite value.
+ */
+const LONG_DOUBLE_MAX_EXPONENT = 16320
+
+/**
+ * `a + b` in x86-64 80-bit `long double` arithmetic: the exact sum rounded to
+ * a 64-bit significand, ties to even. `undefined` when the sum is NaN or
+ * infinite (an infinite operand, or a finite sum that rounds past the largest
+ * `long double`): INCRBYFLOAT's "increment would produce NaN or Infinity".
+ */
+export function addLongDoubles(
+  a: LongDouble,
+  b: LongDouble,
+): LongDouble | undefined {
+  if (a.infinite || b.infinite) {
+    return undefined
+  }
+  if (a.mantissa === 0n) return b
+  if (b.mantissa === 0n) return a
+
+  const exponent = Math.min(a.exponent, b.exponent)
+  const signed = (value: LongDouble): bigint => {
+    const scaled = value.mantissa << BigInt(value.exponent - exponent)
+    return value.negative ? -scaled : scaled
+  }
+  const sum = signed(a) + signed(b)
+  if (sum === 0n) {
+    return { negative: false, mantissa: 0n, exponent: 0 }
+  }
+
+  const negative = sum < 0n
+  const rounded = roundToLongDouble(negative ? -sum : sum, 1n, exponent)
+  if (rounded.exponent > LONG_DOUBLE_MAX_EXPONENT) {
+    return undefined
+  }
+  return { negative, ...rounded }
 }

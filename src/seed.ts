@@ -1,7 +1,7 @@
 import type { RedisCluster } from './cluster-server'
 import { setEncodingRules } from './commands/sets'
+import { zsetEncodingRules } from './commands/zsets/helpers'
 import type { RedisDatabase, RedisServerState } from './state'
-import type { SetEncodingRules } from './state/set-encoding'
 
 /**
  * Public seeding contract for {@link RedisMock}. Callers describe data with
@@ -57,7 +57,7 @@ function toBuffer(value: string | number): Buffer {
 function writeEntry(
   db: RedisDatabase,
   entry: SeedEntry,
-  rules: SetEncodingRules,
+  server: RedisServerState,
 ): void {
   const key = Buffer.from(entry.key)
 
@@ -81,6 +81,7 @@ function writeEntry(
       // Seeded like `SADD key ...members`, so an integer set is an intset.
       const members = entry.value.map(toBuffer)
       if (members.length === 0) break
+      const rules = setEncodingRules(server)
       db.updateSet(key, set => {
         set.prepareForAdd(members[0], members.length, rules)
         for (const member of members) {
@@ -89,13 +90,22 @@ function writeEntry(
       })
       break
     }
-    case 'zset':
+    case 'zset': {
+      // Seeded like `ZADD key ...pairs`, so a large one is a skiplist (#512).
+      const pairs = Object.entries(entry.value)
+      if (pairs.length === 0) break
+      const rules = zsetEncodingRules(server)
       db.updateSortedSet(key, zset => {
-        for (const [member, score] of Object.entries(entry.value)) {
-          zset.setScore(Buffer.from(member), score)
+        zset.prepareForAdd(
+          pairs.map(([member]) => Buffer.from(member)),
+          rules,
+        )
+        for (const [member, score] of pairs) {
+          zset.addScore(Buffer.from(member), score, rules)
         }
       })
       break
+    }
   }
 
   if (entry.ttlMs !== undefined) {
@@ -130,11 +140,7 @@ export async function seedStandalone(
   // client observes a half-applied seed.
   await withServerTurn(state, () => {
     for (const entry of entries) {
-      writeEntry(
-        state.getDatabase(entry.db ?? 0),
-        entry,
-        setEncodingRules(state),
-      )
+      writeEntry(state.getDatabase(entry.db ?? 0), entry, state)
     }
   })
 }
@@ -176,7 +182,7 @@ export async function seedCluster(
       writeEntry(
         handle.server.getDatabase(entry.db ?? 0),
         entry,
-        setEncodingRules(handle.server),
+        handle.server,
       ),
     )
   }

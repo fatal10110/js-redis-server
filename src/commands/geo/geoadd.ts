@@ -4,6 +4,7 @@ import { t, type ParseContext } from '../../core/command-schema'
 import { parseString2dToken } from '../../core/double-token'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { integer } from '../helpers'
+import { zsetEncodingRules } from '../zsets/helpers'
 import { assertValidCoordinates, encodeGeoScore } from './helpers'
 
 type GeoPoint = { lon: number; lat: number; member: Buffer }
@@ -75,7 +76,14 @@ export const geoaddCommand = defineCommand({
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
   execute: (args, ctx) => {
+    // Real GEOADD rewrites itself into a ZADD, so it shares ZADD's encoding
+    // rules (#512).
+    const rules = zsetEncodingRules(ctx.server)
     const replyCount = ctx.db.updateSortedSet(args.key, zset => {
+      zset.prepareForAdd(
+        args.points.map(point => point.member),
+        rules,
+      )
       let count = 0
       for (const { lon, lat, member } of args.points) {
         const score = encodeGeoScore(lon, lat)
@@ -84,7 +92,7 @@ export const geoaddCommand = defineCommand({
         if (!existing && args.options.xx) continue
         if (existing && args.options.nx) continue
 
-        const { added, scoreChanged } = zset.setScore(member, score)
+        const { added, scoreChanged } = zset.addScore(member, score, rules)
         if (added || (args.options.ch && scoreChanged)) count++
       }
       return count

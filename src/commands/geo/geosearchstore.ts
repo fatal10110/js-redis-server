@@ -20,6 +20,8 @@ import {
   type GeoFrom,
   type GeoOrderCount,
 } from './search-core'
+import { storedZsetConvertedIfFits } from '../../state/zset-encoding'
+import { zsetEncodingRules } from '../zsets/helpers'
 
 type GeoSearchStoreArgs = GeoOrderCount & {
   destination: Buffer
@@ -152,7 +154,10 @@ export const geosearchstoreCommand = defineCommand({
 
     // One write replacing whatever the destination held: a single
     // `geosearchstore`, not `del` followed by it.
-    ctx.db.set(args.destination, { type: 'zset', members })
+    ctx.db.set(
+      args.destination,
+      storedZsetConvertedIfFits(members, zsetEncodingRules(ctx.server)),
+    )
     return integer(members.size)
   },
 })

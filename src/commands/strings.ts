@@ -6,7 +6,11 @@ import {
   type CommandSchema,
   type ParseContext,
 } from '../core/command-schema'
-import { parseLongDoubleToken } from '../core/long-double-token'
+import {
+  addLongDoubles,
+  parseLongDouble,
+  type LongDouble,
+} from '../core/long-double-token'
 import { formatIncrByFloatResult } from '../core/double-format'
 import type { RedisDatabase } from '../state'
 import {
@@ -260,15 +264,18 @@ export const incrbyfloatCommand = defineCommand({
   execute: (args, ctx) => {
     // Redis' order (t_string.c): the type check, then the stored value, then
     // the increment, so a wrong-type key wins over a bad increment. Both go
-    // through string2ld() (see parseLongDoubleToken): an infinity literal is a
+    // through string2ld() (see parseLongDouble): an infinity literal is a
     // valid operand that only fails the post-arithmetic NaN/Infinity check,
     // while "nan", "abc", "1e5000" or " 3.5" are parse errors.
     const existing = ensureStringOrMissing(ctx.db, args.key)
-    const current = existing ? parseIncrByFloatValue(existing) : 0
+    const current = existing
+      ? parseIncrByFloatValue(existing)
+      : LONG_DOUBLE_ZERO
     const increment = parseIncrByFloatValue(args.amount)
 
-    const next = current + increment
-    if (!Number.isFinite(next)) {
+    // The sum is a `long double`, like the operands (#512).
+    const next = addLongDoubles(current, increment)
+    if (next === undefined) {
       throw errors.incrByFloatNanOrInfinity()
     }
 
@@ -279,8 +286,14 @@ export const incrbyfloatCommand = defineCommand({
   },
 })
 
-function parseIncrByFloatValue(raw: Buffer): number {
-  const value = parseLongDoubleToken(raw)
+const LONG_DOUBLE_ZERO: LongDouble = {
+  negative: false,
+  mantissa: 0n,
+  exponent: 0,
+}
+
+function parseIncrByFloatValue(raw: Buffer): LongDouble {
+  const value = parseLongDouble(raw)
   if (value === undefined) {
     throw errors.expectedFloat()
   }

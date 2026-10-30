@@ -20,6 +20,14 @@ import {
   type SetEncodingRules,
 } from './set-encoding'
 import {
+  DEFAULT_ZSET_ENCODING_RULES,
+  prepareZsetForAdd,
+  writeZsetScore,
+  zsetEncoding,
+  type ZsetEncoding,
+  type ZsetEncodingRules,
+} from './zset-encoding'
+import {
   ensureConsumer,
   findEntry,
   pendingEntriesSorted,
@@ -402,6 +410,49 @@ export class TrackedSortedSetData {
 
   getMember(member: Buffer): RedisSortedSetMember | undefined {
     return this.zset.members.get(member.toString('hex'))
+  }
+
+  /** The encoding a real server would hold this set in (#512). */
+  get encoding(): ZsetEncoding {
+    return zsetEncoding(this.zset)
+  }
+
+  /**
+   * ZADD's set-up before adding one pair per entry of `members`: settles a
+   * new set's encoding and converts a listpack the pairs will not fit.
+   */
+  prepareForAdd(
+    members: readonly Buffer[],
+    rules: ZsetEncodingRules = DEFAULT_ZSET_ENCODING_RULES,
+  ): void {
+    prepareZsetForAdd(this.zset, members, rules)
+  }
+
+  /**
+   * `zsetAdd()`: write `score` for `member`, converting a listpack that
+   * cannot take a new member, and storing what that encoding keeps (-0 is
+   * 0 in a listpack from 7.0).
+   */
+  addScore(
+    member: Buffer,
+    score: number,
+    rules: ZsetEncodingRules = DEFAULT_ZSET_ENCODING_RULES,
+  ): { added: boolean; scoreChanged: boolean } {
+    const existing = this.zset.members.get(member.toString('hex'))
+    const stored = writeZsetScore(this.zset, member, score, rules)
+    const scoreChanged = !existing || existing.score !== stored
+    if (scoreChanged) {
+      this.tracker.markChanged()
+    }
+    return { added: existing === undefined, scoreChanged }
+  }
+
+  /**
+   * SORT's in-place `zsetConvert(…, OBJ_ENCODING_SKIPLIST)`: no keyspace
+   * change, only the encoding.
+   */
+  convertToSkiplist(): void {
+    this.zset.encoding = 'skiplist'
   }
 
   setScore(

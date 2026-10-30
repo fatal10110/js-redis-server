@@ -18,6 +18,8 @@ import {
   type GeoCenter,
   type GeoRadiusFlags,
 } from './search-core'
+import { storedZsetConvertedIfFits } from '../../state/zset-encoding'
+import { zsetEncodingRules } from '../zsets/helpers'
 
 type GeoRadiusByMemberArgs = {
   key: Buffer
@@ -109,7 +111,12 @@ function executeGeoRadiusByMember(
     }
     // One write replacing whatever the destination held, published as
     // `georadiusstore` like real Redis — not `del` followed by the command.
-    ctx.db.withOrigin('georadiusstore').set(dest, { type: 'zset', members })
+    ctx.db
+      .withOrigin('georadiusstore')
+      .set(
+        dest,
+        storedZsetConvertedIfFits(members, zsetEncodingRules(ctx.server)),
+      )
     return integer(members.size)
   }
 

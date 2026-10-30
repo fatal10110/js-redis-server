@@ -16,7 +16,8 @@ import {
   parseLexLimitInt,
   parseRangeLimitInt,
 } from './lex'
-import { getSortedMembers, listpackScores } from './helpers'
+import { storedZsetByInsertion } from '../../state/zset-encoding'
+import { getSortedMembers, zsetEncodingRules } from './helpers'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
 // Modern ZRANGE (Redis 6.2+):
@@ -247,19 +248,21 @@ export const zrangestoreCommand = defineCommand({
   flags: ['write'],
   keys: args => [args.destination, args.key],
   execute: (args, ctx) => {
-    const members = listpackScores(
-      buildStoredMembers(selectZrangeMembers(args, ctx)),
-      ctx.server,
-    )
-    if (members.size === 0) {
+    const entries = selectZrangeMembers(args, ctx)
+    if (entries.length === 0) {
       ctx.db.delete(args.destination)
       return integer(0)
     }
 
     // One write replacing whatever the destination held, like real Redis:
-    // a single `zrangestore`, not `del` followed by it.
-    ctx.db.set(args.destination, { type: 'zset', members })
-    return integer(members.size)
+    // a single `zrangestore`, not `del` followed by it. The members go in
+    // one by one, as zsetAdd() would (#512).
+    const zset = storedZsetByInsertion(
+      Array.from(buildStoredMembers(entries).values()),
+      zsetEncodingRules(ctx.server),
+    )
+    ctx.db.set(args.destination, zset)
+    return integer(zset.members.size)
   },
 })
 

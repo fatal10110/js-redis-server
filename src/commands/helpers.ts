@@ -33,8 +33,8 @@ export function scoreBuffer(
 // A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching
 // scoreBuffer) and a `,double` on RESP3 — the shape real Redis uses for
 // ZSCORE/ZINCRBY/WITHSCORES scores. A stored `-0` is spelled `-0`, as Redis
-// does; whether a sorted set keeps one is up to its writers
-// (listpackScores in zsets/helpers.ts, #512).
+// does; whether a sorted set keeps one is up to its encoding
+// (state/zset-encoding.ts, #512).
 export function scoreValue(score: number): RedisValue {
   return RedisValue.double(score)
 }

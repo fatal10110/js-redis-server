@@ -3,6 +3,7 @@ import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import type { RedisExecutionContext } from '../../core/redis-context'
 import { parseString2dToken } from '../../core/double-token'
 import {
   WrongNumberOfArgumentsError,
@@ -17,7 +18,8 @@ import type {
   RedisSortedSetMember,
 } from '../../state'
 import { array, integer, parseIntegerToken, scorePairs } from '../helpers'
-import { getSortedMembers, listpackScores } from './helpers'
+import { storedZsetConvertedIfFits } from '../../state/zset-encoding'
+import { getSortedMembers, zsetEncodingRules } from './helpers'
 
 // ZUNIONSTORE/ZINTERSTORE/ZUNION/ZINTER/ZDIFF/ZDIFFSTORE/ZINTERCARD.
 // Source keys may be sorted sets OR plain sets (a set is treated as a zset with
@@ -163,17 +165,21 @@ function buildScoredResult(
 }
 
 function storeResult(
-  db: RedisDatabase,
+  ctx: RedisExecutionContext,
   destination: Buffer,
   members: Map<string, RedisSortedSetMember>,
 ): number {
   if (members.size === 0) {
-    db.delete(destination)
+    ctx.db.delete(destination)
     return 0
   }
   // One write replacing whatever the destination held, like real Redis's
   // setKey(): any type, its TTL cleared, a single `<command>store` event.
-  db.set(destination, { type: 'zset', members })
+  // The result is a listpack again when it fits (#512).
+  ctx.db.set(
+    destination,
+    storedZsetConvertedIfFits(members, zsetEncodingRules(ctx.server)),
+  )
   return members.size
 }
 
@@ -277,13 +283,7 @@ export const zunionstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeUnion(sources, args.weights, args.aggregate)
-    return integer(
-      storeResult(
-        ctx.db,
-        args.destination!,
-        listpackScores(result, ctx.server),
-      ),
-    )
+    return integer(storeResult(ctx, args.destination!, result))
   },
 })
 
@@ -296,13 +296,7 @@ export const zinterstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeIntersection(sources, args.weights, args.aggregate)
-    return integer(
-      storeResult(
-        ctx.db,
-        args.destination!,
-        listpackScores(result, ctx.server),
-      ),
-    )
+    return integer(storeResult(ctx, args.destination!, result))
   },
 })
 
@@ -315,13 +309,7 @@ export const zdiffstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeDifference(sources)
-    return integer(
-      storeResult(
-        ctx.db,
-        args.destination!,
-        listpackScores(result, ctx.server),
-      ),
-    )
+    return integer(storeResult(ctx, args.destination!, result))
   },
 })
 

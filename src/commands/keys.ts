@@ -728,8 +728,11 @@ function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
     return { type: 'set', elements: Array.from(value.members.values()) }
   }
   if (value.type === 'zset') {
-    // sortCommand() walks the skiplist, so a zset source is read in rank
-    // order — the same order ZRANGE reports, not insertion order (#418).
+    // sortCommand() converts the zset to a skiplist in place, for good
+    // (`zsetConvert`, redis@7.2.4 sort.c:320) — SORT_RO too (#512) — and
+    // walks it, so a zset source is read in rank order — the same order
+    // ZRANGE reports, not insertion order (#418).
+    db.updateSortedSet(key, zset => zset.convertToSkiplist())
     const members = getSortedMembers(value)
     return { type: 'zset', elements: members.map(entry => entry.member) }
   }

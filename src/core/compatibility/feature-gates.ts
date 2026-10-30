@@ -604,6 +604,17 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `-0`, and keeps the sign (redis@6.2.14 t_zset.c:1034-1055). A skiplist
   // keeps -0 on every version (#512).
   'zset.listpack-integer-scores': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.2 / Valkey 7.2: ZADD hands its pair count to zsetTypeCreate() /
+  // zsetTypeMaybeConvert() (redis@7.2.4 t_zset.c:1794-1797), so a ZADD of more
+  // pairs than zset-max-listpack-entries makes a skiplist up front, duplicate
+  // members included; 6.2 / 7.0 decide member by member (redis@7.0.15
+  // t_zset.c:1747) (#512).
+  'zset.add-size-hint': { redis: '7.2.0', valkey: '7.2.0' },
+  // Valkey 8.0 also hands ZADD's longest member to both (valkey@8.0.0
+  // t_zset.c:1805-1808), where Redis passes the first member's length on
+  // creation only (redis@8.0.0 t_zset.c:1841-1844) and valkey@7.2.5 the same
+  // as Redis (#512).
+  'zset.add-longest-member-hint': { valkey: '8.0.0' },
   // Redis 7.0.0 reads the ZPOPMIN / ZPOPMAX count with
   // `getPositiveLongFromObjectOrReply` (redis@7.0.0 t_zset.c:3960): a bad or
   // negative count answers `value is out of range, must be positive`, and a

@@ -10,9 +10,8 @@ import { expectBulk, expectReply, send } from './helpers'
  * dropped, `-0` shown as `0` — and store that same text (#543). Identical on
  * redis 6.2.14 … 8.0.0 and valkey 8.0.0 / 9.0.0, so no profile gate.
  *
- * Rows whose digits need the 64-bit `long double` mantissa (`0.1 + 0.2`,
- * integers above 2^53, `1e25`, ties at the 17th decimal) are a known limit of
- * the double arithmetic (#512) and stay out of this file.
+ * Rows whose digits need the 64-bit `long double` arithmetic (`0.1 + 0.2`,
+ * values past the double range) are in incrbyfloat-long-double.test.ts (#512).
  */
 const testRunner = new TestRunner()
 
