@@ -35,7 +35,7 @@ export const lposCommand = defineCommand({
 
       if (option === 'RANK') {
         rank = parseIntegerToken(valueToken)
-        if (rank === 0) throw errors.lposRankZero()
+        if (rank === 0) throw errors.lposRankZero(ctx.profile)
       } else if (option === 'COUNT') {
         count = parseIntegerToken(valueToken)
         if (count < 0) throw errors.lposCountNegative()

@@ -175,10 +175,11 @@ export function parseInt64Token(token: Buffer): bigint {
 export function parsePositiveExpireToken(
   token: Buffer,
   commandName: string,
+  profile: CompatibilityProfile,
 ): number {
   const value = parseIntegerToken(token)
   if (value <= 0) {
-    throw errors.invalidExpireTime(commandName)
+    throw errors.invalidExpireTime(commandName, profile)
   }
 
   return value

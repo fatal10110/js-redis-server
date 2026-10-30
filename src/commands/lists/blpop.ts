@@ -1,11 +1,11 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
-import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { listPopEvent } from './helpers'
+import { listPopEvent, parseTimeout } from './helpers'
 import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
 
 export function tryListPop(
@@ -56,8 +56,7 @@ export const blpopCommand = defineCommand({
     (input, index, ctx) => {
       if (input.length - index < 2)
         throw new WrongNumberOfArgumentsError(ctx.commandName)
-      const timeout = Number(input[input.length - 1].toString())
-      if (isNaN(timeout) || timeout < 0) throw errors.syntax()
+      const timeout = parseTimeout(input[input.length - 1])
       const keys = Array.from(input.slice(index, input.length - 1))
       return { value: { keys, timeout }, nextIndex: input.length }
     },
@@ -78,8 +77,7 @@ export const brpopCommand = defineCommand({
     (input, index, ctx) => {
       if (input.length - index < 2)
         throw new WrongNumberOfArgumentsError(ctx.commandName)
-      const timeout = Number(input[input.length - 1].toString())
-      if (isNaN(timeout) || timeout < 0) throw errors.syntax()
+      const timeout = parseTimeout(input[input.length - 1])
       const keys = Array.from(input.slice(index, input.length - 1))
       return { value: { keys, timeout }, nextIndex: input.length }
     },

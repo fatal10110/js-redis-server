@@ -473,4 +473,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'help.acl-setuser-rules': { valkey: '9.0.0' },
   'help.script-valkey-text': { valkey: '8.0.0' },
   'help.function-no-library-description': { redis: '7.4.0', valkey: '8.0.0' },
+  // Redis 7.0.1 appended `... or use negative to start from the end of the
+  // list` to LPOS's `RANK can't be zero` (redis@7.0.0 vs 7.0.1 t_list.c);
+  // 6.2 and 7.0.0 end at `2 from the second, ...`. Checked against
+  // redis-server 6.2.14, 6.2.24, 7.0.0, 7.0.1, 7.0.15, 8.0.0 and valkey-server
+  // 8.0.0, 9.0.0.
+  'error.lpos-rank-zero-hint': { redis: '7.0.1', valkey: '7.2.0' },
+  // Redis 7.0 quotes the command in `invalid expire time in 'set' command`;
+  // 6.2 writes `invalid expire time in set` (SET / SETEX / PSETEX / GETEX).
+  // Checked against redis-server 6.2.14, 6.2.24, 7.0.0, 7.0.15, 8.0.0 and
+  // valkey-server 8.0.0, 9.0.0.
+  'error.expire-time-quoted-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0 names the refused command in `Command 'multi' not allowed
+  // inside a transaction` (a `no_multi` command sent inside MULTI); Redis
+  // 7.0+ and Valkey 8.0 / 8.1 leave it out. Checked against redis-server
+  // 7.0.15, 8.0.0 and valkey-server 8.0.0, 8.1.0, 9.0.0.
+  'error.no-multi-named-wording': { valkey: '9.0.0' },
 }
