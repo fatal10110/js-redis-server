@@ -1705,6 +1705,19 @@ so the PR body is not a durable home for a breaking-change note.
     double`, so results whose digits need the 64-bit mantissa still differ:
     `0.1` + `0.2` is `0.30000000000000004` (Redis `0.3`), `1234.5678` is not
     Redis' `1234.56779999999999997`, and integers above 2^53 lose their tail.
+- CLIENT KILL answers like real Redis and Valkey on every profile ([#249]):
+  - `CLIENT KILL <ip:port>` (exactly one argument) is the legacy form: `+OK`
+    when it closed a client, the caller included, else `No such client`.
+  - The `ADDR`, `LADDR`, `USER` and `TYPE` (`normal`, `master`, `replica`,
+    `slave`, `pubsub`; Valkey 8.0+ also `primary`) filters, ANDed with `ID`,
+    `MAXAGE` and `SKIPME`. An unknown user or type is `No such user '<u>'` /
+    `Unknown client type '<t>'`.
+  - A bad `ID` is `client-id should be greater than 0` on Redis 7.0+ and
+    Valkey. 6.2 takes any integer (`ID 0` means no id filter). Valkey 9.0
+    takes a list of ids after one `ID`, so `ID abc` is a syntax error there.
+  - `MAXAGE` 0, negative or non-integer values are rejected with Redis'
+    `maxage ...` errors, and Valkey 8.0 accepts `MAXAGE` (it was 9.0+ only).
+  - A bare `CLIENT KILL` on 6.2 is a syntax error.
 
 ## [0.3.0] and earlier
 
@@ -1794,5 +1807,6 @@ requests they contain.
 [#528]: https://github.com/fatal10110/js-redis-server/issues/528
 [#495]: https://github.com/fatal10110/js-redis-server/issues/495
 [#519]: https://github.com/fatal10110/js-redis-server/issues/519
+[#249]: https://github.com/fatal10110/js-redis-server/issues/249
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
