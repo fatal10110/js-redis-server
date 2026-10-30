@@ -381,6 +381,25 @@ export const errors = Object.freeze({
         ? 'GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
         : GEO_STORE_WITH_OPTIONS_6_2,
     ),
+  // GEOSEARCH / GEOSEARCHSTORE without a FROM* or a BY* clause, naming the
+  // command as sent (`%s` of argv[0], redis@8.0.0 geo.c:678-690). Valkey 9.0
+  // adds BYPOLYGON to the BY wording, which comes with BYPOLYGON itself.
+  geoSearchNoFrom: (command: Buffer | string) =>
+    new RedisCommandError(
+      Buffer.concat([
+        Buffer.from(
+          'exactly one of FROMMEMBER or FROMLONLAT can be specified for ',
+        ),
+        Buffer.from(command),
+      ]),
+    ),
+  geoSearchNoBy: (command: Buffer | string) =>
+    new RedisCommandError(
+      Buffer.concat([
+        Buffer.from('exactly one of BYRADIUS and BYBOX can be specified for '),
+        Buffer.from(command),
+      ]),
+    ),
 
   // Strings / bits
   /**
