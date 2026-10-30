@@ -1,0 +1,26 @@
+{
+  "tracks": ["A", "B"],
+  "exclusions": "decision issues #390 and #521 (owner decisions); engine-blocked #540; refactor epics #367 #368 #372 #373",
+  "waves": [
+    {
+      "name": "1",
+      "lanes": [
+        {"slug": "script-ctx", "track": "A", "issues": [563, 566, 568],
+         "note": "One PR: the Lua call context gets its own db and a refusing park (#566, #563 defence), XREAD/XREADGROUP BLOCK go through blockOrTimeOut with the 7.4/8.0 gate (#563), one may-replicate source (#568).",
+         "hot": ["lua-runtime", "streams"]},
+        {"slug": "decoder-mem", "track": "B", "issues": [564, 565],
+         "note": "RESP2 decoder: buffer release and exact bulk reservation (#564), unauthenticated multibulk/bulk caps with requirepass (#565).",
+         "hot": ["decoder"]}
+      ]
+    },
+    {
+      "name": "2",
+      "lanes": [
+        {"slug": "streams-fidelity", "track": "A", "issues": [528, 495],
+         "note": "#528 all items; #495 items 1-2 only (Part of #495).", "hot": ["streams"], "deps": ["script-ctx"]},
+        {"slug": "multi-quit", "track": "B", "issues": [567, 509],
+         "note": "QUIT inside MULTI answers and closes; EXEC runs inner afterReply hooks; onReset teardown always completes.", "hot": ["transactions"]}
+      ]
+    }
+  ]
+}
