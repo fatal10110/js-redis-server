@@ -114,6 +114,15 @@ export interface RedisClientSession {
  */
 export type ScriptSlotPin = { slot: number | null }
 
+/**
+ * The database a running script has selected (#566). Real Redis runs a
+ * script's commands on its own client, which starts each run on the caller's
+ * database, so a SELECT inside the script moves only the script's later
+ * commands, never the caller. `selected` is `null` until the script's first
+ * SELECT, meaning the caller's database.
+ */
+export type ScriptDatabase = { selected: number | null }
+
 export interface RedisExecutionContext {
   readonly db: RedisDatabase
   readonly server: RedisServerState
@@ -134,6 +143,11 @@ export interface RedisExecutionContext {
    * command touches when the script declared no keys.
    */
   readonly scriptSlot?: ScriptSlotPin
+  /**
+   * Set while the command runs inside a Lua script: the database the script
+   * has selected. SELECT changes it instead of the session's (#566).
+   */
+  readonly scriptDatabase?: ScriptDatabase
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

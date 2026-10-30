@@ -354,4 +354,24 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.1.0. Redis and Valkey 7.2 / 8.0 publish `del` (#527). Verified against
   // the Valkey 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources.
   'notify.past-deadline-expired-event': { valkey: '8.1.0' },
+  // XREAD / XREADGROUP with BLOCK from a script: up to Redis 7.2 / Valkey 7.2
+  // `xreadCommand` refuses it while parsing its options, as soon as it sees
+  // BLOCK (before the timeout, the key and the group are looked at), with
+  // `<command as sent> command is not allowed with BLOCK option from scripts`
+  // (redis@7.2.4 and valkey@7.2.5 src/t_stream.c). Redis 7.4 / Valkey 8.0
+  // dropped the check: the script client's `CLIENT_DENY_BLOCKING` turns the
+  // block into the timeout reply at once, even with BLOCK 0 (#563). Verified
+  // against redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
+  // valkey-server 7.2.5, 8.0.0, 9.0.0.
+  'script.stream-block-allowed': { redis: '7.4.0', valkey: '8.0.0' },
+  // The commands flagged CMD_MAY_REPLICATE (see src/core/compatibility/
+  // may-replicate.ts, #568). Redis 7.0 made SCRIPT a container whose
+  // subcommands lack the flag, and flagged its new SPUBLISH and FCALL
+  // (7.0.15 commands.c, 7.2.4 / 7.4.4 / 8.0.0 and valkey 7.2.5 commands.def).
+  'may-replicate.redis7-table': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 8.0 flags CLUSTER SETSLOT (valkey@8.0.0 src/commands.def).
+  'may-replicate.cluster-setslot': { valkey: '8.0.0' },
+  // Valkey 9.0 adds CLUSTER SYNCSLOTS, flagged too (valkey@9.0.0
+  // src/commands.def).
+  'may-replicate.cluster-syncslots': { valkey: '9.0.0' },
 }

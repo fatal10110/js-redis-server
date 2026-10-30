@@ -371,6 +371,18 @@ export const errors = Object.freeze({
         ? 'Unknown command called from script'
         : 'Unknown Redis command called from script',
     ),
+  /**
+   * XREAD / XREADGROUP BLOCK from a script, up to Redis 7.2 / Valkey 7.2
+   * (`script.stream-block-allowed`, #563). It names the command as the
+   * script sent it, case and all.
+   */
+  scriptStreamBlock: (command: Buffer | string) =>
+    new RedisCommandError(
+      Buffer.concat([
+        Buffer.from(command),
+        Buffer.from(' command is not allowed with BLOCK option from scripts'),
+      ]),
+    ),
   /** A `noscript` command from a script. Valkey 9.0+ names itself. */
   scriptNotAllowedCommand: (profile?: CompatibilityProfile) =>
     new RedisCommandError(
