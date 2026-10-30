@@ -79,12 +79,14 @@ describe('compatibility profiles', () => {
     assert.strictEqual(redis62.has('error.unknown-subcommand-wording'), false)
     assert.strictEqual(redis62.has('protocol.multibulk-count-int-max'), false)
     assert.strictEqual(redis62.has('notify.keyspace.new-key-class'), false)
+    assert.strictEqual(redis62.has('error.subscribed-context-wording'), false)
 
     const redis70 = resolveCompatibilityProfile('redis-7.0')
     assert.strictEqual(redis70.has('client.setinfo'), false)
     assert.strictEqual(redis70.has('error.unknown-subcommand-wording'), true)
     assert.strictEqual(redis70.has('protocol.multibulk-count-int-max'), true)
     assert.strictEqual(redis70.has('notify.keyspace.new-key-class'), true)
+    assert.strictEqual(redis70.has('error.subscribed-context-wording'), true)
     assert.strictEqual(redis70.has('pubsub.resp3-publish-reply-first'), false)
 
     const redis72 = resolveCompatibilityProfile('redis-7.2')
@@ -103,6 +105,7 @@ describe('compatibility profiles', () => {
     assert.strictEqual(valkey72.has('command.docs'), true)
     assert.strictEqual(valkey72.has('protocol.multibulk-count-int-max'), true)
     assert.strictEqual(valkey72.has('notify.keyspace.new-key-class'), true)
+    assert.strictEqual(valkey72.has('error.subscribed-context-wording'), true)
     assert.strictEqual(valkey72.has('pubsub.resp3-publish-reply-first'), false)
     assert.strictEqual(valkey72.has('cluster.multi-db'), false)
 

@@ -703,6 +703,16 @@ so the PR body is not a durable home for a breaking-change note.
   `FLUSHALL`s do not drop it and a crashed run releases it at once. The
   `test:integration:real*` scripts hold it until the test run exits.
 
+- **`/core`** New `FeatureId` gates `error.subscribed-context-wording`
+  (the 7.0 subscribed-mode refusal) and
+  `notify.keyspace.keymiss-store-sources` (7.0's read lookups of store
+  sources), and a `subscribedContext` factory on `errors` ([#514]).
+  **BREAKING** for `RedisDatabase.subscribe` listeners that switch over
+  every `RedisMutationEvent` type: the union gains the notification-only
+  `new` and `keymiss` events (they never reach per-key listeners), and
+  `RedisDatabase` gains `announceNew` / `announceKeyMiss` and the
+  `announceNew` `SetOptions` flag ([#514]).
+
 ### Fixed
 
 - A key whose first hash tag is empty now hashes to the slot real Redis uses
@@ -1756,6 +1766,30 @@ so the PR body is not a durable home for a breaking-change note.
   longer publish a `del` before their event, which the `GEORADIUS` forms now
   name `georadiusstore`, and `GEOADD` publishes `zadd` ([#524]).
 
+- The subscribed-mode refusal on a RESP2 connection matches real Redis per
+  profile: from 7.0 it names the table entry the command was looked up as
+  (`Can't execute 'config|get'`, `'client|id'`, `'xinfo|stream'`, ...; it
+  named the container), and on `redis-6.2` it lists `(P)SUBSCRIBE /
+  (P)UNSUBSCRIBE / PING / QUIT / RESET`, without the sharded commands 6.2 does
+  not have ([#384], [#514]).
+- `INFO cluster` on a cluster node prints only `cluster_enabled:1`, as real
+  Redis and Valkey do; `cluster_state` and `cluster_slots_assigned` belong to
+  `CLUSTER INFO` ([#514]).
+- The `m` (keymiss) and `n` (new) `notify-keyspace-events` classes publish.
+  `keymiss` comes from each read lookup of a missing key, on every profile:
+  readonly commands (`GET`, `MGET` per key, `EXISTS`, `TYPE`, `TTL`, `HGET`,
+  `XREAD` twice per stream, ...), `GETSET` / `GETDEL` / `GETEX` / `SET ...
+  GET`, `BITOP` / `PFMERGE` / `GEOSEARCHSTORE` / `GEORADIUS` sources, scripts'
+  `redis.call` and commands run by `EXEC`, but not write lookups (`DEL`,
+  `EXPIRE`, `LPOP`, `LMOVE`, `HSET`, ...), `WATCH` or scripts' keys. From
+  7.0 the store commands' sources, `SORT ... STORE`'s key, `COPY`'s source
+  and a single-key `PFCOUNT` are read lookups too (6.2 looks them up for
+  writing). `new` (7.0+) is published when a key is added, before the
+  command's own event, never for an overwrite: `SET`, `HSET`, `MSET` per key,
+  a collection re-created after it emptied, and `RENAME` / `COPY` /
+  `MOVE` destinations, which `RENAME` and `COPY ... REPLACE` announce even
+  over an existing key ([#514]).
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -1847,5 +1881,6 @@ requests they contain.
 [#519]: https://github.com/fatal10110/js-redis-server/issues/519
 [#249]: https://github.com/fatal10110/js-redis-server/issues/249
 [#524]: https://github.com/fatal10110/js-redis-server/issues/524
+[#514]: https://github.com/fatal10110/js-redis-server/issues/514
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

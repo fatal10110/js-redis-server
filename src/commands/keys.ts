@@ -424,12 +424,12 @@ export const renameCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // Real Redis adds the destination (`new`) before deleting the source
+    // (`rename_from`), then announces `rename_to`; an existing destination
+    // is deleted and added again, so it is `new` too.
+    ctx.db.announceNew(args.newKey)
     ctx.db.delete(args.key)
-    ctx.db.set(
-      args.newKey,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    ctx.db.set(args.newKey, value, { expiresAt, announceNew: false })
 
     return ok()
   },
@@ -450,12 +450,12 @@ export const renamenxCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // Real Redis adds the destination (`new`) before deleting the source
+    // (`rename_from`), then announces `rename_to`; an existing destination
+    // is deleted and added again, so it is `new` too.
+    ctx.db.announceNew(args.newKey)
     ctx.db.delete(args.key)
-    ctx.db.set(
-      args.newKey,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    ctx.db.set(args.newKey, value, { expiresAt, announceNew: false })
 
     return integer(1)
   },
@@ -488,11 +488,12 @@ export const moveCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
-    // move_from on the source, then move_to on the target (#445).
+    // `new` on the target, move_from on the source, then move_to on the
+    // target (#445).
+    const target = targetDb.withOrigin('move')
+    target.announceNew(args.key)
     ctx.db.delete(args.key)
-    targetDb
-      .withOrigin('move')
-      .set(args.key, value, expiresAt !== undefined ? { expiresAt } : undefined)
+    target.set(args.key, value, { expiresAt, announceNew: false })
 
     return integer(1)
   },
@@ -577,11 +578,9 @@ export const copyCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
-    targetDb.set(
-      destination,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    // REPLACE deletes an existing destination and adds it again, so the
+    // destination is announced `new` either way.
+    targetDb.set(destination, value, { expiresAt, announceNew: true })
 
     return integer(1)
   },

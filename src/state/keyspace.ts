@@ -29,6 +29,15 @@ export type SetOptions = {
    * Ignored without `expiresAt`, or with `keepTtl`.
    */
   expireEvent?: boolean
+  /**
+   * Whether the write announces the key as new (the `new` event, real
+   * Redis' `dbAdd`). By default only a key that did not exist is: SET over
+   * an existing key overwrites it (`dbOverwrite`). `true` for a destination
+   * real Redis deletes and adds again (`dbDelete` + `dbAdd`: COPY ...
+   * REPLACE, RENAME onto an existing key); `false` when the caller has
+   * announced it already ({@link RedisDatabase.announceNew}).
+   */
+  announceNew?: boolean
 }
 
 export type KeyspaceMutationTracker = {

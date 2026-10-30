@@ -1,4 +1,6 @@
 import type { ExecutionPolicy } from './index'
+import { lookupTableArity } from '../command-arity'
+import { errors } from '../redis-error'
 import { RedisResult } from '../redis-result'
 
 export function createSubscribedModePolicy(): ExecutionPolicy {
@@ -17,10 +19,11 @@ export function createSubscribedModePolicy(): ExecutionPolicy {
         return
       }
 
-      return RedisResult.error(
-        `Can't execute '${plan.definition.name}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`,
-        'ERR',
-      )
+      // Named after the table entry the call was looked up as: from 7.0 a
+      // container's `config|get`, on 6.2 (no subcommand lookup) `config`.
+      const profile = ctx.executor.profile
+      const { name } = lookupTableArity(plan.definition, plan.rawArgs, profile)
+      return RedisResult.fromError(errors.subscribedContext(name, profile))
     },
   }
 }

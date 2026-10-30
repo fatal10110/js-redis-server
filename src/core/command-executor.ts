@@ -4,6 +4,7 @@ import { CommandRegistry } from './command-registry'
 import { failsTableArity, lookupTableArity } from './command-arity'
 import { parseCommandArgs } from './command-schema'
 import { rawCommandKeys } from './key-specs'
+import { announceKeyMisses } from './keyspace-read-lookups'
 import type { ExecutionPolicy } from './execution-policies'
 import {
   ExecCommandAbortError,
@@ -349,6 +350,7 @@ export class CommandExecutor {
         throw plan.deferredError
       }
 
+      announceKeyMisses(plan, ctx)
       return await plan.definition.execute(
         plan.args,
         withMutationOrigin(plan, ctx),
@@ -406,6 +408,7 @@ export class CommandExecutor {
       }
 
       assertSyncCommandDefinition(plan)
+      announceKeyMisses(plan, ctx)
 
       return assertSyncCommandResult(
         plan,

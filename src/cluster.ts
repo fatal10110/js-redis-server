@@ -315,6 +315,8 @@ function applyReplicationEvent(
       replica.flush()
       return
     case 'notify':
+    case 'new':
+    case 'keymiss':
       // Notification-only: carries no value to replicate.
       return
   }
