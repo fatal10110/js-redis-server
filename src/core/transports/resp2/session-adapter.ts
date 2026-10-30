@@ -40,6 +40,11 @@ export class Resp2SessionAdapter {
       // proto-max-bulk-len` moves the ceiling for every connection immediately.
       maxBulkLength: () => this.session.server.protoMaxBulkLen,
       profile: this.session.server.profile,
+      // Live as well: AUTH lifts the unauthenticated request caps and RESET
+      // puts them back, from the very next request header.
+      authRequired: () =>
+        Boolean(this.session.server.requirepass) &&
+        !this.session.isAuthenticated,
     })
   }
 

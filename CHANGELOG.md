@@ -1640,6 +1640,19 @@ so the PR body is not a durable home for a breaking-change note.
   short ([#509]): every other hook runs, the rest of the teardown completes
   and `RESET` still answers `+RESET`. The hook's error is dropped.
 
+- With `requirepass` set, a connection that has not authenticated is refused a
+  multibulk count above 10 (`-ERR Protocol error: unauthenticated multibulk
+  length`) and a bulk length above 16384 (`-ERR Protocol error:
+  unauthenticated bulk length`), then closed, as on every Redis and Valkey
+  version ([#565]). The auth state is read per request header, so AUTH lifts
+  the caps and RESET restores them. The version's own bound is checked first:
+  on 6.2 `*2000000` is still `invalid multibulk length`.
+- The RESP2 decoder no longer holds on to large buffers ([#564]): a large
+  buffer is compacted once only the start of the next command is left in it,
+  at most 32KB is kept once everything is parsed, a bulk of 32KB or more gets
+  a buffer of exactly its size and is handed over without a copy, and inline
+  arguments no longer share the request line's buffer.
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -1720,5 +1733,7 @@ requests they contain.
 [#568]: https://github.com/fatal10110/js-redis-server/issues/568
 [#567]: https://github.com/fatal10110/js-redis-server/issues/567
 [#509]: https://github.com/fatal10110/js-redis-server/issues/509
+[#564]: https://github.com/fatal10110/js-redis-server/issues/564
+[#565]: https://github.com/fatal10110/js-redis-server/issues/565
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
