@@ -10,7 +10,7 @@ export const zincrbyCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const inc = parseFloatArg(args.increment)
+    const inc = parseFloatArg(args.increment, ctx.server.profile)
     const newScore = ctx.db.updateSortedSet(args.key, zset => {
       const existing = zset.getMember(args.member)
       const score = (existing?.score ?? 0) + inc

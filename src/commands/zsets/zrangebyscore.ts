@@ -100,8 +100,8 @@ export const zrangebyscoreCommand = defineCommand({
   flags: ['readonly'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseScoreBoundArg(args.first.toString())
-    const max = parseScoreBoundArg(args.second.toString())
+    const min = parseScoreBoundArg(args.first, ctx.server.profile)
+    const max = parseScoreBoundArg(args.second, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const matched = getSortedMembers(zset).filter(m =>
@@ -121,8 +121,8 @@ export const zrevrangebyscoreCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     // ZREVRANGEBYSCORE takes bounds as `max min`.
-    const max = parseScoreBoundArg(args.first.toString())
-    const min = parseScoreBoundArg(args.second.toString())
+    const max = parseScoreBoundArg(args.first, ctx.server.profile)
+    const min = parseScoreBoundArg(args.second, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const matched = getSortedMembers(zset)
@@ -141,8 +141,8 @@ export const zremrangebyscoreCommand = defineCommand({
   flags: ['write'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseScoreBoundArg(args.min)
-    const max = parseScoreBoundArg(args.max)
+    const min = parseScoreBoundArg(args.min, ctx.server.profile)
+    const max = parseScoreBoundArg(args.max, ctx.server.profile)
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
       for (const [hex, entry] of zset.entries()) {
@@ -189,8 +189,8 @@ export const zcountCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseScoreBoundArg(args.min)
-    const max = parseScoreBoundArg(args.max)
+    const min = parseScoreBoundArg(args.min, ctx.server.profile)
+    const max = parseScoreBoundArg(args.max, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return integer(0)
     let count = 0

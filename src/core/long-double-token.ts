@@ -159,7 +159,7 @@ function parseHexFloat(
  * binade allows (53 bits, fewer in the subnormal range), then scale it by
  * powers of two, which is exact.
  */
-function binaryToDouble(
+export function binaryToDouble(
   mantissa: bigint,
   exponent: number,
   bits: number,
@@ -214,7 +214,7 @@ function scaleByPowerOfTwo(value: number, exponent: number): number {
  * 5119 bytes, so its digits shift the value by fewer than 5119 decimal (or
  * 20476 binary) places, well inside the clamp.
  */
-function clampExponent(exponentText: string | undefined): number {
+export function clampExponent(exponentText: string | undefined): number {
   if (exponentText === undefined) {
     return 0
   }
