@@ -322,11 +322,15 @@ its master. Inside
 a transaction, the slot of the _first_ keyed command is pinned per-session in a
 `WeakMap` so every subsequent queued command must hash to the same slot.
 
-On a cluster node every command is planned the way MULTI queues one
-(`CommandExecutor.planForQueue`, a script's `redis.call` included): Redis routes
-a command after the arity check and before the command checks its own
-arguments, so `EVAL s 1x k` with `k` on another node is `MOVED`, and a parse
-error waits in the plan behind the policy chain. MOVE's "not allowed in cluster
+A client's command is always planned the way MULTI queues one
+(`CommandExecutor.planForQueue` from `executeRaw`): Redis's `processCommand`
+refuses only an unknown command or a bad argument count before `call()`, and
+the command checks its own arguments inside `call()`, after the policies. So a
+parse error waits in the plan behind the policy chain, and MONITOR shows the
+command (`EVAL s -1 a`). On a cluster node a script's `redis.call` is planned
+that way too: Redis routes a command after the arity check and before the
+command checks its own arguments, so `EVAL s 1x k` with `k` on another node is
+`MOVED`. MOVE's "not allowed in cluster
 mode" refusal comes after routing too, as it lives in Redis's `moveCommand`.
 
 ## State & data model

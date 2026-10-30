@@ -540,6 +540,25 @@ export function configuredSetMaxIntsetEntries(server: object): number {
   return Number(raw)
 }
 
+/**
+ * The live `zset-max-listpack-entries` / `zset-max-listpack-value`, which
+ * decide whether a sorted set is a listpack (#512).
+ */
+export function configuredZsetListpackLimits(server: object): {
+  maxEntries: number
+  maxValue: number
+} {
+  const store = configStoreFor(server)
+  const read = (name: string, fallback: number): number => {
+    const raw = store.get(name) ?? ''
+    return /^[0-9]+$/.test(raw) ? Number(raw) : fallback
+  }
+  return {
+    maxEntries: read('zset-max-listpack-entries', 128),
+    maxValue: read('zset-max-listpack-value', 64),
+  }
+}
+
 function configValue(ctx: RedisExecutionContext, param: ConfigParam): string {
   switch (param.kind.type) {
     case 'notify-keyspace-events':

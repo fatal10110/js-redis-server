@@ -16,7 +16,7 @@ import {
   parseLexLimitInt,
   parseRangeLimitInt,
 } from './lex'
-import { getSortedMembers } from './helpers'
+import { getSortedMembers, listpackScores } from './helpers'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
 // Modern ZRANGE (Redis 6.2+):
@@ -247,7 +247,10 @@ export const zrangestoreCommand = defineCommand({
   flags: ['write'],
   keys: args => [args.destination, args.key],
   execute: (args, ctx) => {
-    const members = buildStoredMembers(selectZrangeMembers(args, ctx))
+    const members = listpackScores(
+      buildStoredMembers(selectZrangeMembers(args, ctx)),
+      ctx.server,
+    )
     if (members.size === 0) {
       ctx.db.delete(args.destination)
       return integer(0)

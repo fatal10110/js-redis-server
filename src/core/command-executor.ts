@@ -210,11 +210,12 @@ export class CommandExecutor {
    * Plan and execute a raw command in one step — the normal entry point for a
    * network client.
    *
-   * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Inside MULTI, on a
-   * MONITOR connection, and in a cluster, a command is planned the way Redis's
-   * `processCommand` queues it (see {@link planForQueue}). Execution-time errors
-   * are handled inside {@link executePlan}.
+   * Errors thrown during *planning* (unknown command, arity) are caught here
+   * and converted into a RESP error reply. Every command is planned the way
+   * Redis's `processCommand` sees it (see {@link planForQueue}): the
+   * command's own argument check runs in `call()`, after the policy chain,
+   * so its error is the plan's `deferredError`. Execution-time errors are
+   * handled inside {@link executePlan}.
    */
   async executeRaw(
     rawCommand: Buffer | string,
@@ -222,18 +223,13 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
-      // A MONITOR connection is refused the keyspace in processCommand, after
-      // the arity check but before the command parses its arguments, so its
-      // parse errors wait behind the policy chain as a queued command's do.
-      // A cluster routes the command there too (getNodeByQuery: MOVED,
-      // CROSSSLOT, CLUSTERDOWN), so `EVAL s 1x k` with `k` on another node is
-      // MOVED, not the numkeys error (#519).
-      const plan =
-        ctx.session.mode === 'transaction' ||
-        ctx.session.monitoring ||
-        ctx.server.clusterEnabled
-          ? this.planForQueue(rawCommand, rawArgs)
-          : this.plan(rawCommand, rawArgs)
+      // processCommand refuses a command before its parser runs: a queued
+      // command waits for EXEC, a MONITOR connection is refused the keyspace,
+      // a cluster routes it (getNodeByQuery: MOVED, CROSSSLOT, CLUSTERDOWN),
+      // so `EVAL s 1x k` with `k` on another node is MOVED, not the numkeys
+      // error. A command that fails its own argument check still reaches
+      // call(), which feeds it to MONITOR (`EVAL s -1 a`, #519).
+      const plan = this.planForQueue(rawCommand, rawArgs)
       return await this.executePlan(plan, ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {

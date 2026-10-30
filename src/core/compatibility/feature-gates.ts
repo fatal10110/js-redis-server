@@ -526,4 +526,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // RANK -9223372036854775808 is out of range. redis@7.0.15 takes it, and its
   // negation wraps to itself, so it acts as RANK -1.
   'lpos.rank-range-check': { redis: '7.2.0', valkey: '7.2.0' },
+  // A small sorted set (a listpack) stores an integral score as a listpack
+  // integer (`double2ll`, redis@7.0.15 t_zset.c:1028-1053 zzlInsertAt), so a
+  // score of -0 reads back as 0. Redis 6.2's ziplist stores d2string()'s text,
+  // `-0`, and keeps the sign (redis@6.2.14 t_zset.c:1034-1055). A skiplist
+  // keeps -0 on every version (#512).
+  'zset.listpack-integer-scores': { redis: '7.0.0', valkey: '7.2.0' },
 }
