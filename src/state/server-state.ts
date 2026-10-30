@@ -7,6 +7,7 @@ import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
 import { RedisFunctionRegistry } from './function-registry'
 import { SerialTurnQueue } from '../core/turn-queue'
+import { ClientPauseState } from './client-pause'
 import type { RedisClientSession } from '../core/redis-context'
 import {
   createRedisLuaRuntime,
@@ -61,6 +62,11 @@ export class RedisServerState {
    * Each cluster node has its own `RedisServerState`, hence its own queue.
    */
   readonly turnQueue = new SerialTurnQueue()
+  /**
+   * CLIENT PAUSE: server-wide, like real Redis. The client-pause execution
+   * policy postpones commands while it is active.
+   */
+  readonly clientPause = new ClientPauseState()
   /**
    * Parsed `notify-keyspace-events` flags; empty disables keyspace
    * notifications. Parsed once by CONFIG SET (and rendered back to Redis'

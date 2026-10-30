@@ -48,13 +48,16 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
   socket's descriptor (`-1` on the in-process transport), `cmd` the last
   command by its command-table name (`client|info` from 7.0, `NULL` after an
   unknown command), and `flags`, `multi`, `watch`, `idle` follow the
-  connection (`P`, `x`, `b`, `d`, `r`, `e`). Buffer, memory and network
+  connection (`P`, `x`, `b`, `d`, `r`, `e`, `T`). Buffer, memory and network
   counters read 0. On RESP3 both replies are `txt` verbatim strings.
 - [x] `CLIENT KILL ip:port | [ID client-id] [ADDR ip:port] [LADDR ip:port] [USER username] [TYPE type] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 8.0+ profiles, `TYPE primary` and Valkey 9.0's id list (`ID id [id ...]`) on Valkey only. Valkey 9.0's `NOT-*`, `FLAGS`, `NAME`, `IDLE`, `LIB-NAME`, `LIB-VER`, `DB`, `CAPA` and `IP` filters are not modelled
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
+- [x] `CLIENT NO-TOUCH ON|OFF` - Toggle the current connection's no-touch flag (`T` in `CLIENT INFO`); Redis 7.2+ / Valkey 7.2+. There is no LRU/LFU state, so it has no other effect
+- [x] `CLIENT PAUSE timeout [WRITE|ALL]` / `CLIENT UNPAUSE` - Server-wide pause: commands of every client but a MONITOR connection are postponed (not refused) until the timeout or UNPAUSE; `WRITE` holds back write and may-replicate commands (and an `EXEC` that queued one), `ALL` (the default) every command, `CLIENT UNPAUSE` included. A new pause keeps the later end time and the stricter mode
+- [x] `CLIENT REPLY ON|OFF|SKIP` - `OFF` drops every reply until `ON`, `SKIP` drops the next command's reply; pushes (pub/sub messages, MONITOR lines) are still delivered. Known gap inside `EXEC`: real Redis writes nothing for a queued `OFF`/`SKIP` (the array comes one element short) and drops what follows an `OFF`; here their slot reads `+OK` and an `OFF` drops the whole `EXEC` reply
 - [x] `CLIENT HELP` - Return subcommand help
 
-- [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT TRACKING` - not implemented
 - [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
 - [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
 

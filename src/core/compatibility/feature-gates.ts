@@ -88,6 +88,16 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // (`getClientTypeByName`); Redis and Valkey 7.2 answer `Unknown client type`.
   'client.kill.type-primary': { valkey: '8.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
+  'client.no-touch': { redis: '7.2.0', valkey: '7.2.0' },
+  // Valkey 8.1 gave CLIENT PAUSE its own handler (`clientPauseCommand`, arity
+  // -3): arguments past the timeout are accepted, and the mode is read only
+  // when it is the last one (`argc == 4`), so `CLIENT PAUSE 10 WRITE x` is an
+  // ALL pause. Redis and Valkey 8.0 answer the subcommand syntax error.
+  'client.pause.extra-args': { valkey: '8.1.0' },
+  // Millisecond timeouts (`getTimeoutFromObjectOrReply`, UNIT_MILLISECONDS:
+  // CLIENT PAUSE) refuse an end time past LLONG_MAX with `timeout is out of
+  // range` from Redis 7.2 (timeout.c); 6.2 / 7.0 let `tval + now` overflow.
+  'timeout.ms-overflow-check': { redis: '7.2.0', valkey: '7.2.0' },
   // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
   // per version; the order is fixed and every field is always printed. From
   // the format strings of redis 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
