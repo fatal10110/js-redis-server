@@ -54,7 +54,7 @@ export function parseXreadOptions(
         throw errors.scriptStreamBlock(ctx.rawCommand ?? ctx.commandName)
       }
       i++
-      options.blockMs = parseBlockTimeout(input[i])
+      options.blockMs = parseBlockTimeout(input[i], ctx)
     } else if (equalsAscii(token, 'count') && moreArgs > 0) {
       i++
       const raw = input[i].toString()
@@ -100,17 +100,29 @@ export function parseXreadOptions(
   return options
 }
 
-/** `getTimeoutFromObjectOrReply` in milliseconds. */
-function parseBlockTimeout(raw: Buffer): number {
+const LLONG_MAX = 9223372036854775807n
+
+/**
+ * `getTimeoutFromObjectOrReply` in milliseconds: any int64. From 7.2 an end
+ * time past LLONG_MAX is out of range; 6.2 / 7.0 let `tval + now` wrap into
+ * the past, a timeout that expires at once (1 ms here).
+ */
+function parseBlockTimeout(raw: Buffer, ctx: ParseContext): number {
   const text = raw.toString()
-  if (!isIntegerToken(text) || !Number.isSafeInteger(Number(text))) {
+  const ms = isIntegerToken(text) ? BigInt(text) : undefined
+  if (ms === undefined || ms > LLONG_MAX || ms < -LLONG_MAX - 1n) {
     throw new RedisCommandError('timeout is not an integer or out of range')
   }
-  const ms = Number(text)
-  if (ms < 0) {
+  if (ms < 0n) {
     throw errors.timeoutNegative()
   }
-  return ms
+  if (ms > LLONG_MAX - BigInt(Date.now())) {
+    if (ctx.profile.has('timeout.ms-overflow-check')) {
+      throw errors.timeoutOutOfRange()
+    }
+    return 1
+  }
+  return Number(ms)
 }
 
 /**

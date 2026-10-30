@@ -3,7 +3,36 @@ import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
-import { array, bulk, integer, parseIntegerToken } from '../helpers'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import { INT64_MIN, array, bulk, integer, parseInt64Token } from '../helpers'
+
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER)
+
+/**
+ * An int64 option value (`getLongFromObjectOrReply`), clamped to the safe
+ * integer range: no list is long enough to tell the difference.
+ */
+function parseLposInt(token: Buffer): number {
+  const value = parseInt64Token(token)
+  if (value > MAX_SAFE) return Number.MAX_SAFE_INTEGER
+  if (value < -MAX_SAFE) return -Number.MAX_SAFE_INTEGER
+  return Number(value)
+}
+
+/**
+ * RANK -9223372036854775808 is out of range from 7.2 (`lpos.rank-range-check`);
+ * before that LPOS negates it into itself, still negative, and the first match
+ * from the tail wins: RANK -1.
+ */
+function parseLposRank(token: Buffer, profile: CompatibilityProfile): number {
+  if (parseInt64Token(token) === INT64_MIN) {
+    if (profile.has('lpos.rank-range-check')) {
+      throw errors.lposRankOutOfRange()
+    }
+    return -1
+  }
+  return parseLposInt(token)
+}
 
 type LposArgs = {
   key: Buffer
@@ -35,13 +64,13 @@ export const lposCommand = defineCommand({
       }
 
       if (option === 'RANK') {
-        rank = parseIntegerToken(valueToken)
+        rank = parseLposRank(valueToken, ctx.profile)
         if (rank === 0) throw errors.lposRankZero(ctx.profile)
       } else if (option === 'COUNT') {
-        count = parseIntegerToken(valueToken)
+        count = parseLposInt(valueToken)
         if (count < 0) throw errors.lposCountNegative()
       } else if (option === 'MAXLEN') {
-        maxlen = parseIntegerToken(valueToken)
+        maxlen = parseLposInt(valueToken)
         if (maxlen < 0) throw errors.lposMaxlenNegative()
       } else {
         throw errors.syntax()

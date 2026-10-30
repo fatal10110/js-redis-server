@@ -1028,8 +1028,8 @@ describe('createNodeRedisMock (cluster)', () => {
   // command whose first argument is NOT a key still reaches the key's owner —
   // a mis-route surfaces as -MOVED from the node that does not own it.
   //
-  // With 3 masters the slot space splits into [0,5460] / [5461,10921] /
-  // [10922,16383]; `alpha` (865), `abc` (7638) and `k1` (12706) sit one per
+  // With 3 masters the slot space splits into [0,5460] / [5461,10922] /
+  // [10923,16383]; `alpha` (865), `abc` (7638) and `k1` (12706) sit one per
   // range. Whatever slot a command's first argument hashes to, it can cover at
   // most one of the three — so a first-argument router mis-routes at least two
   // runs of every case below, whatever the literal happens to be.

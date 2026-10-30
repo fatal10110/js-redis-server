@@ -221,3 +221,213 @@ export function clampExponent(exponentText: string | undefined): number {
   const value = Number(exponentText)
   return Math.max(-1e6, Math.min(1e6, value))
 }
+
+/**
+ * The smallest value an 80-bit `long double` rounds to infinity:
+ * (2^65 - 1) * 2^16319, halfway between the largest finite one,
+ * (2^64 - 1) * 2^16320, and 2^16384. `strtold` reports it as a range error,
+ * which `string2ld()` refuses.
+ */
+const LONG_DOUBLE_OVERFLOW_MANTISSA = (1n << 65n) - 1n
+const LONG_DOUBLE_OVERFLOW_EXPONENT = 16319
+
+/**
+ * {@link parseLongDoubleToken}, except that a finite `long double` beyond the
+ * `double` range (`1e400`, `-0x1p1024`) comes back as `+/-Infinity` instead of
+ * being refused. For callers that only compare the value against a bound:
+ * blocking timeouts (#577), where real Redis takes `1e400` and then answers
+ * that it is out of range (or negative, before 7.2).
+ */
+export function parseLongDoubleMagnitude(
+  raw: Buffer | string,
+): number | undefined {
+  const value = parseLongDoubleToken(raw)
+  if (value !== undefined) {
+    return value
+  }
+
+  const text = typeof raw === 'string' ? raw : raw.toString('latin1')
+  const length = typeof raw === 'string' ? Buffer.byteLength(raw) : raw.length
+  if (length === 0 || length >= MAX_LONG_DOUBLE_CHARS) {
+    return undefined
+  }
+
+  const hex = HEX_PATTERN.exec(text)
+  if (hex) {
+    const fracDigits = hex[3] ?? ''
+    const digits = hex[2]! + fracDigits
+    if (digits.length === 0) {
+      return undefined
+    }
+    const mantissa = BigInt(`0x${digits}`)
+    if (mantissa === 0n) {
+      return undefined
+    }
+    const exponent = clampExponent(hex[4]) - 4 * fracDigits.length
+    const bits = mantissa.toString(2).length
+    // Finite as a double: refused for underflow, not overflow.
+    if (Number.isFinite(binaryToDouble(mantissa, exponent, bits))) {
+      return undefined
+    }
+    const top = bits - 1 + exponent
+    const overflows =
+      top > LONG_DOUBLE_OVERFLOW_EXPONENT + 64 ||
+      (top === LONG_DOUBLE_OVERFLOW_EXPONENT + 64 &&
+        mantissa << BigInt(exponent - LONG_DOUBLE_OVERFLOW_EXPONENT) >=
+          LONG_DOUBLE_OVERFLOW_MANTISSA)
+    if (overflows) {
+      return undefined
+    }
+    return hex[1] === '-' ? -Infinity : Infinity
+  }
+
+  const decimal = DECIMAL_PATTERN.exec(text)
+  if (!decimal) {
+    return undefined
+  }
+  const fracDigits = decimal[3] ?? ''
+  const digits = (decimal[2]! + fracDigits).replace(/^0+/, '')
+  // Finite as a double (or no digits at all): refused for another reason.
+  if (digits.length === 0 || Number.isFinite(Number(text))) {
+    return undefined
+  }
+  // value = digits * 10^exponent, and 10^order <= value < 10^(order + 1)
+  const exponent = clampExponent(decimal[4]) - fracDigits.length
+  const order = digits.length - 1 + exponent
+  // The overflow bound is about 1.19e4932.
+  if (order > 4932) {
+    return undefined
+  }
+  if (order === 4932) {
+    const scaledValue =
+      BigInt(digits) * (exponent > 0 ? 10n ** BigInt(exponent) : 1n)
+    const scaledBound =
+      (LONG_DOUBLE_OVERFLOW_MANTISSA << BigInt(LONG_DOUBLE_OVERFLOW_EXPONENT)) *
+      (exponent < 0 ? 10n ** BigInt(-exponent) : 1n)
+    if (scaledValue >= scaledBound) {
+      return undefined
+    }
+  }
+  return decimal[1] === '-' ? -Infinity : Infinity
+}
+
+/** A binary float: `(negative ? -1 : 1) * mantissa * 2^exponent`. */
+export interface BinaryFloat {
+  negative: boolean
+  mantissa: bigint
+  exponent: number
+}
+
+/**
+ * Stand-ins far outside the range a timeout cares about: any value this
+ * small times 1000 is strictly between 0 and 1, any value this large times
+ * 1000 is past LLONG_MAX. They keep absurd exponents out of BigInt powers.
+ */
+const TINY_EXPONENT = -400
+const HUGE_EXPONENT = 1000
+
+/** Round the positive `num / den * 2^exp2` to a 64-bit significand, ties to even. */
+function roundToLongDouble(
+  num: bigint,
+  den: bigint,
+  exp2: number,
+): { mantissa: bigint; exponent: number } {
+  let exponent = num.toString(2).length - den.toString(2).length - 64 + exp2
+  for (;;) {
+    const shift = exp2 - exponent
+    const scaledNum = shift > 0 ? num << BigInt(shift) : num
+    const scaledDen = shift < 0 ? den << BigInt(-shift) : den
+    let mantissa = scaledNum / scaledDen
+    if (mantissa >= 1n << 64n) {
+      exponent += 1
+      continue
+    }
+    if (mantissa < 1n << 63n) {
+      exponent -= 1
+      continue
+    }
+    const twiceRest = (scaledNum % scaledDen) * 2n
+    if (
+      twiceRest > scaledDen ||
+      (twiceRest === scaledDen && (mantissa & 1n) === 1n)
+    ) {
+      mantissa += 1n
+      if (mantissa === 1n << 64n) {
+        return { mantissa: 1n << 63n, exponent: exponent + 1 }
+      }
+    }
+    return { mantissa, exponent }
+  }
+}
+
+/**
+ * `strtold(raw) * 1000.0` the way an x86 80-bit `long double` computes it:
+ * the token rounds to a 64-bit significand, then the product rounds again.
+ * This is how `getTimeoutFromObjectOrReply` turns seconds into milliseconds,
+ * so `0.001` comes out a hair under 1 (`ceill` 1, a cast 0) and `-0.001` a
+ * hair above -1 (0 either way) (#577).
+ *
+ * Call it only on a token {@link parseLongDoubleMagnitude} accepts. Values
+ * whose product is far below 1 or far past LLONG_MAX (infinity included)
+ * come back as stand-ins of the same sign that compare the same way.
+ */
+export function longDoubleTimesThousand(raw: Buffer | string): BinaryFloat {
+  const text = typeof raw === 'string' ? raw : raw.toString('latin1')
+  const infinity = INFINITY_PATTERN.exec(text)
+  if (infinity) {
+    return {
+      negative: infinity[1] === '-',
+      mantissa: 1n,
+      exponent: HUGE_EXPONENT,
+    }
+  }
+
+  let negative: boolean
+  let value: { mantissa: bigint; exponent: number }
+  const hex = HEX_PATTERN.exec(text)
+  const decimal = hex ? null : DECIMAL_PATTERN.exec(text)
+  if (hex) {
+    negative = hex[1] === '-'
+    const fracDigits = hex[3] ?? ''
+    const mantissa = BigInt(`0x${hex[2]! + fracDigits || '0'}`)
+    if (mantissa === 0n) {
+      return { negative, mantissa: 0n, exponent: 0 }
+    }
+    const exponent = clampExponent(hex[4]) - 4 * fracDigits.length
+    const top = mantissa.toString(2).length - 1 + exponent
+    if (top < TINY_EXPONENT || top > HUGE_EXPONENT) {
+      return {
+        negative,
+        mantissa: 1n,
+        exponent: top < TINY_EXPONENT ? TINY_EXPONENT : HUGE_EXPONENT,
+      }
+    }
+    value = roundToLongDouble(mantissa, 1n, exponent)
+  } else if (decimal) {
+    negative = decimal[1] === '-'
+    const fracDigits = decimal[3] ?? ''
+    const digits = (decimal[2]! + fracDigits).replace(/^0+/, '')
+    if (digits.length === 0) {
+      return { negative, mantissa: 0n, exponent: 0 }
+    }
+    const exponent = clampExponent(decimal[4]) - fracDigits.length
+    const order = digits.length - 1 + exponent
+    if (order < -100 || order > 100) {
+      return {
+        negative,
+        mantissa: 1n,
+        exponent: order < -100 ? TINY_EXPONENT : HUGE_EXPONENT,
+      }
+    }
+    value = roundToLongDouble(
+      BigInt(digits) * 10n ** BigInt(Math.max(exponent, 0)),
+      10n ** BigInt(Math.max(-exponent, 0)),
+      0,
+    )
+  } else {
+    throw new TypeError(`not a long double token: ${text}`)
+  }
+
+  const product = roundToLongDouble(value.mantissa * 1000n, 1n, value.exponent)
+  return { negative, ...product }
+}

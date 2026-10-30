@@ -76,6 +76,7 @@ export type FeatureId =
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
+  | 'zset.listpack-integer-scores'
   | 'geo.coord-d2string'
   | 'command.quit-table-entry'
   | 'script.abort-error-suffix'
@@ -112,6 +113,10 @@ export type FeatureId =
   | 'error.no-multi-named-wording'
   | 'pubsub.unsubscribe-nosub'
   | 'pubsub.unsubscribe-nosub-dropped'
+  | 'transaction.refusal-empties-queue'
+  | 'transaction.watch-dirty-stops-queue'
+  | 'timeout.ceil-ms'
+  | 'lpos.rank-range-check'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

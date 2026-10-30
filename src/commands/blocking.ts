@@ -2,7 +2,17 @@ import type {
   RedisClientSession,
   RedisExecutionContext,
 } from '../core/redis-context'
+import type { CompatibilityProfile } from '../core/compatibility/profile'
+import {
+  type BinaryFloat,
+  longDoubleTimesThousand,
+  parseLongDoubleMagnitude,
+} from '../core/long-double-token'
+import { errors } from '../core/redis-error'
 import type { RedisDataValue } from '../state/data-types'
+
+/** `setTimeout` takes at most a signed 32-bit delay. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
 
 /**
  * Sessions inside {@link blockOnKeys}, with how many of their commands are:
@@ -103,6 +113,12 @@ export async function blockOnKeys<TResult>(
       const remaining =
         deadline === undefined ? undefined : Math.max(0, deadline - Date.now())
       if (remaining === 0) return null
+      // A longer wait is parked in timer-sized steps (Node fires a longer
+      // delay at once).
+      const parkMs =
+        remaining === undefined
+          ? undefined
+          : Math.min(remaining, MAX_TIMER_DELAY_MS)
 
       const wakeListeners: Array<() => void> = []
       const waitFor = new Promise<true>(resolve => {
@@ -113,6 +129,7 @@ export async function blockOnKeys<TResult>(
         }
       })
 
+      const parkedAt = Date.now()
       let woken: true | null
       try {
         woken = await ctx.park({
@@ -120,14 +137,22 @@ export async function blockOnKeys<TResult>(
           onWake: listener => {
             wakeListeners.push(listener)
           },
-          timeoutMs: remaining,
+          timeoutMs: parkMs,
           signal: ctx.signal,
         })
       } finally {
         wake = undefined
       }
 
-      if (woken === null) return null
+      if (woken === null) {
+        if (parkMs === remaining) return null
+        // A park that gave up long before its step (the non-blocking park
+        // of MULTI / EXEC) is a timeout too: parking again would spin.
+        if (parkMs !== undefined && Date.now() - parkedAt < parkMs / 2) {
+          return null
+        }
+        continue
+      }
 
       const result = attempt()
       if (result !== null) return result
@@ -165,7 +190,82 @@ export function blockOrTimeOut<TResult>(
   return blockOnKeys(ctx, options).then(result => result ?? timedOut())
 }
 
-/** A blocking timeout in seconds (`0` = forever) as park milliseconds. */
-export function blockingTimeoutMs(timeoutSecs: number): number | undefined {
-  return timeoutSecs === 0 ? undefined : Math.ceil(timeoutSecs * 1000)
+/** A parsed blocking timeout (`0` = forever) as park milliseconds. */
+export function blockingTimeoutMs(timeoutMs: number): number | undefined {
+  return timeoutMs === 0 ? undefined : timeoutMs
+}
+
+const LLONG_MAX = (1n << 63n) - 1n
+
+/** `value > LLONG_MAX` for a binary float. */
+function exceedsLlongMax(value: BinaryFloat): boolean {
+  if (value.negative || value.mantissa === 0n) return false
+  if (value.exponent >= 0) {
+    return (
+      value.exponent > 64 ||
+      value.mantissa << BigInt(value.exponent) > LLONG_MAX
+    )
+  }
+  return value.mantissa > LLONG_MAX << BigInt(-value.exponent)
+}
+
+/** `ceill(value)` or a truncating cast, as an exact integer. */
+function wholeMilliseconds(value: BinaryFloat, roundUp: boolean): bigint {
+  const { negative, mantissa, exponent } = value
+  if (exponent >= 0) {
+    const magnitude = mantissa << BigInt(exponent)
+    return negative ? -magnitude : magnitude
+  }
+  const shift = BigInt(-exponent)
+  const floor = mantissa >> shift
+  const hasFraction = (mantissa & ((1n << shift) - 1n)) !== 0n
+  if (negative) return -floor
+  return roundUp && hasFraction ? floor + 1n : floor
+}
+
+/**
+ * A blocking command's timeout in seconds (BLPOP, BLMOVE, BZMPOP, ...), read
+ * the way `getTimeoutFromObjectOrReply` (timeout.c, UNIT_SECONDS) does, as
+ * whole milliseconds (`0` = block forever) (#577).
+ *
+ * - The token goes through `string2ld()`: no leading or trailing space, no
+ *   empty token, no NaN, hex floats welcome; else `timeout is not a float or
+ *   out of range`.
+ * - The milliseconds are `ftval * 1000.0` in an 80-bit `long double`
+ *   ({@link longDoubleTimesThousand}), so `0.001` is a hair under 1 ms and
+ *   `-0.001` a hair above -1 ms.
+ * - More than LLONG_MAX ms (`inf`, `1e400`, `1e19`) is `timeout is out of
+ *   range` from Redis 7.2 (`timeout.ms-overflow-check`); 6.2 / 7.0 cast it to
+ *   LLONG_MIN, `timeout is negative`.
+ * - The milliseconds round up from Redis 7.0.8 (`timeout.ceil-ms`) and are
+ *   truncated before, so `-0.001` is no timeout everywhere and `0.001` is
+ *   no timeout on 6.2; below that, `timeout is negative`.
+ * - From 7.2 an end time past LLONG_MAX is out of range; 6.2 / 7.0 let it wrap
+ *   into the past, a timeout that expires at once (1 ms here).
+ */
+export function parseBlockingTimeout(
+  token: Buffer,
+  profile: CompatibilityProfile,
+): number {
+  if (parseLongDoubleMagnitude(token) === undefined) {
+    throw errors.timeoutNotFloat()
+  }
+
+  const ms = longDoubleTimesThousand(token)
+  const overflowCheck = profile.has('timeout.ms-overflow-check')
+  if (overflowCheck && exceedsLlongMax(ms)) {
+    throw errors.timeoutOutOfRange()
+  }
+
+  const whole = wholeMilliseconds(ms, profile.has('timeout.ceil-ms'))
+  // Out of the long long range, the x87 cast gives LLONG_MIN.
+  if (whole < 0n || whole > LLONG_MAX) {
+    throw errors.timeoutNegative()
+  }
+  if (whole === 0n) return 0
+  if (whole > LLONG_MAX - BigInt(Date.now())) {
+    if (overflowCheck) throw errors.timeoutOutOfRange()
+    return 1
+  }
+  return Number(whole)
 }

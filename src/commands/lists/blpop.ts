@@ -5,8 +5,12 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { listPopEvent, parseTimeout } from './helpers'
-import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
+import { listPopEvent } from './helpers'
+import {
+  blockOrTimeOut,
+  blockingTimeoutMs,
+  parseBlockingTimeout,
+} from '../blocking'
 
 export function tryListPop(
   keys: readonly Buffer[],
@@ -33,7 +37,7 @@ export function tryListPop(
 
 function blockingListPop(
   keys: readonly Buffer[],
-  timeoutSecs: number,
+  timeoutMs: number,
   side: 'left' | 'right',
   ctx: RedisExecutionContext,
 ): RedisResult | Promise<RedisResult> {
@@ -42,7 +46,7 @@ function blockingListPop(
     {
       keys,
       type: 'list',
-      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      timeoutMs: blockingTimeoutMs(timeoutMs),
       attempt: () => tryListPop(keys, side, ctx.db),
     },
     () => RedisResult.create(RedisValue.nullArray()),
@@ -56,7 +60,7 @@ export const blpopCommand = defineCommand({
     (input, index, ctx) => {
       if (input.length - index < 2)
         throw new WrongNumberOfArgumentsError(ctx.commandName)
-      const timeout = parseTimeout(input[input.length - 1])
+      const timeout = parseBlockingTimeout(input[input.length - 1], ctx.profile)
       const keys = Array.from(input.slice(index, input.length - 1))
       return { value: { keys, timeout }, nextIndex: input.length }
     },
@@ -77,7 +81,7 @@ export const brpopCommand = defineCommand({
     (input, index, ctx) => {
       if (input.length - index < 2)
         throw new WrongNumberOfArgumentsError(ctx.commandName)
-      const timeout = parseTimeout(input[input.length - 1])
+      const timeout = parseBlockingTimeout(input[input.length - 1], ctx.profile)
       const keys = Array.from(input.slice(index, input.length - 1))
       return { value: { keys, timeout }, nextIndex: input.length }
     },

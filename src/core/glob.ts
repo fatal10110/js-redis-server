@@ -1,5 +1,14 @@
-export function redisGlobMatch(pattern: Buffer, value: Buffer): boolean {
-  return matchGlob(pattern, 0, value, 0)
+/**
+ * Redis's `stringmatchlen()`. `nocase` folds ASCII letters as its `nocase`
+ * argument does (`tolower()` on both sides, ranges included): FUNCTION LIST
+ * LIBRARYNAME matches that way (redis@7.0.15 functions.c:543, #583).
+ */
+export function redisGlobMatch(
+  pattern: Buffer,
+  value: Buffer,
+  options: { nocase?: boolean } = {},
+): boolean {
+  return matchGlob(pattern, 0, value, 0, options.nocase === true)
 }
 
 function matchGlob(
@@ -7,7 +16,10 @@ function matchGlob(
   patternIndex: number,
   value: Buffer,
   valueIndex: number,
+  nocase: boolean,
 ): boolean {
+  const fold = nocase ? asciiToLower : identity
+
   let patternCursor = patternIndex
   let valueCursor = valueIndex
 
@@ -28,7 +40,9 @@ function matchGlob(
         nextValueCursor < value.length;
         nextValueCursor++
       ) {
-        if (matchGlob(pattern, patternCursor + 1, value, nextValueCursor)) {
+        if (
+          matchGlob(pattern, patternCursor + 1, value, nextValueCursor, nocase)
+        ) {
           return true
         }
       }
@@ -47,6 +61,7 @@ function matchGlob(
         pattern,
         patternCursor,
         value[valueCursor],
+        fold,
       )
 
       if (!characterClass.matches) {
@@ -62,7 +77,7 @@ function matchGlob(
       patternCursor++
     }
 
-    if (pattern[patternCursor] !== value[valueCursor]) {
+    if (fold(pattern[patternCursor]) !== fold(value[valueCursor])) {
       return false
     }
 
@@ -81,6 +96,7 @@ function matchCharacterClass(
   pattern: Buffer,
   openBracketIndex: number,
   value: number,
+  fold: (byte: number) => number,
 ): { matches: boolean; nextPatternIndex: number } {
   let patternCursor = openBracketIndex + 1
   let negated = false
@@ -107,7 +123,7 @@ function matchCharacterClass(
       patternCursor + 1 < pattern.length
     ) {
       patternCursor++
-      if (pattern[patternCursor] === value) {
+      if (fold(pattern[patternCursor]) === fold(value)) {
         matches = true
       }
     } else if (
@@ -123,12 +139,16 @@ function matchCharacterClass(
         end = previousStart
       }
 
-      if (value >= start && value <= end) {
+      // Swapped before folding, as stringmatchlen() does.
+      start = fold(start)
+      end = fold(end)
+      const folded = fold(value)
+      if (folded >= start && folded <= end) {
         matches = true
       }
 
       patternCursor += 2
-    } else if (pattern[patternCursor] === value) {
+    } else if (fold(pattern[patternCursor]) === fold(value)) {
       matches = true
     }
 
@@ -139,6 +159,14 @@ function matchCharacterClass(
     matches: negated ? !matches : matches,
     nextPatternIndex: patternCursor + 1,
   }
+}
+
+function asciiToLower(byte: number): number {
+  return byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte
+}
+
+function identity(byte: number): number {
+  return byte
 }
 
 const BACKSLASH = '\\'.charCodeAt(0)

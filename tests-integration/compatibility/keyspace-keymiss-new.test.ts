@@ -235,8 +235,7 @@ describe(`keymiss and new keyspace notifications (${testRunner.getBackendName()}
         await send('BITFIELD', key('bf-set'), 'SET', 'u8', '0', '1'),
         '*1\r\n:0\r\n',
       )
-      // The XACK reply on a missing stream is #589; only the event is checked.
-      await send('XACK', key('xack'), 'g', '0-1')
+      assert.strictEqual(await send('XACK', key('xack'), 'g', '0-1'), ':0\r\n')
       assert.match(
         await send('XCLAIM', key('xclaim'), 'g', 'c', '0', '0-1'),
         /^-NOGROUP /,

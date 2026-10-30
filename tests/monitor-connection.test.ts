@@ -54,7 +54,9 @@ async function queuedPushes(session: ClientSession): Promise<string[]> {
     if (next === null || next.done) {
       break
     }
-    lines.push(String((next.value as RedisResult).value.value))
+    lines.push(
+      String(((next.value as RedisResult).value as { value: unknown }).value),
+    )
   }
   reader.abort()
   return lines
@@ -80,7 +82,13 @@ describe('MONITOR: script commands are stamped at dispatch (#433)', () => {
 
     const calls: Array<[string, Buffer[]]> = [
       ['EVAL', buffers(body, '1', 'k')],
-      ['EVALSHA', [sha.value.value as Buffer, ...buffers('1', 'k')]],
+      [
+        'EVALSHA',
+        [
+          (sha.value as { value: unknown }).value as Buffer,
+          ...buffers('1', 'k'),
+        ],
+      ],
       ['FCALL', buffers('monfn', '1', 'k')],
     ]
     for (const [command, args] of calls) {

@@ -43,8 +43,8 @@ describe('createIoredisMock — standalone', () => {
 
   test('sorted-set round-trip with WITHSCORES', async () => {
     await redis.zadd('z', 1, 'a', 2, 'b', 3, 'c')
-    assert.deepStrictEqual(await redis.zrange('z', 0, -1), ['a', 'b', 'c'])
-    assert.deepStrictEqual(await redis.zrange('z', 0, -1, 'WITHSCORES'), [
+    assert.deepStrictEqual(await redis.zrange('z', 0, '-1'), ['a', 'b', 'c'])
+    assert.deepStrictEqual(await redis.zrange('z', 0, '-1', 'WITHSCORES'), [
       'a',
       '1',
       'b',

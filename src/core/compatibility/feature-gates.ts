@@ -108,9 +108,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // when it is the last one (`argc == 4`), so `CLIENT PAUSE 10 WRITE x` is an
   // ALL pause. Redis and Valkey 8.0 answer the subcommand syntax error.
   'client.pause.extra-args': { valkey: '8.1.0' },
-  // Millisecond timeouts (`getTimeoutFromObjectOrReply`, UNIT_MILLISECONDS:
-  // CLIENT PAUSE) refuse an end time past LLONG_MAX with `timeout is out of
-  // range` from Redis 7.2 (timeout.c); 6.2 / 7.0 let `tval + now` overflow.
+  // Timeouts (`getTimeoutFromObjectOrReply`: CLIENT PAUSE and XREAD BLOCK in
+  // milliseconds, BLPOP and the other blocking commands in seconds) refuse an
+  // end time past LLONG_MAX with `timeout is out of range` from Redis 7.2
+  // (timeout.c); 6.2 / 7.0 let `tval + now` overflow, and cast a seconds
+  // timeout of LLONG_MAX ms or more (`inf`, `1e400`) to a negative one.
   'timeout.ms-overflow-check': { redis: '7.2.0', valkey: '7.2.0' },
   // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
   // per version; the order is fixed and every field is always printed. From
@@ -499,6 +501,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 7.0+ and Valkey 8.0 / 8.1 leave it out. Checked against redis-server
   // 7.0.15, 8.0.0 and valkey-server 8.0.0, 8.1.0, 9.0.0.
   'error.no-multi-named-wording': { valkey: '9.0.0' },
+  // Valkey 8.0 empties the MULTI queue when a queued command is refused
+  // (`flagTransaction` calls `resetClientMultiState`, valkey@8.0.0
+  // multi.c:113-117); Redis only flags the transaction and keeps the queue
+  // (redis@8.0.0 multi.c:86-90). In a cluster, EXEC's slot check then sees
+  // no commands, so a refused transaction whose earlier commands span slots
+  // answers EXECABORT on Valkey and CROSSSLOT on Redis (#519). Checked against
+  // redis-server 7.0.15, 7.2.4, 7.4.4, 8.0.0 and valkey-server 8.0.0, 9.0.0.
+  'transaction.refusal-empties-queue': { valkey: '8.0.0' },
+  // Redis 7.0 stops queueing MULTI commands once a WATCHed key was touched
+  // (`queueMultiCommand` returns on CLIENT_DIRTY_CAS as well as
+  // CLIENT_DIRTY_EXEC, redis@7.0.0 multi.c:66; 6.2 checks only DIRTY_EXEC,
+  // redis@6.2.14 multi.c:66). In a cluster, EXEC's slot check then sees only
+  // what was queued before the touch, so a dirty WATCH whose later commands
+  // span slots answers `*-1` from 7.0 and CROSSSLOT on 6.2 (#519). Checked
+  // against redis-server 6.2.14, 7.0.15, 8.0.0 and valkey-server 8.0.0.
+  'transaction.watch-dirty-stops-queue': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0's config table (#506): the ziplist parameters renamed to
   // listpack, the old names kept as aliases (`hash-max-ziplist-entries` ->
   // `hash-max-listpack-entries`; 6.2 knows only the ziplist names), and new
@@ -524,4 +542,19 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.0.0.
   'pubsub.unsubscribe-nosub': { valkey: '8.0.0' },
   'pubsub.unsubscribe-nosub-dropped': { valkey: '8.0.2' },
+  // Blocking timeouts in seconds round up to whole milliseconds
+  // (`ceill(ftval * 1000.0)`) from redis@7.0.8 timeout.c:174; redis@7.0.7 and
+  // 6.2.14 truncate, so a timeout under 1 ms (`0.0001`) blocks forever there.
+  'timeout.ceil-ms': { redis: '7.0.8', valkey: '7.2.0' },
+  // LPOS RANK is read with `getRangeLongFromObjectOrReply(-LONG_MAX,
+  // LONG_MAX)` from redis@7.2.0 t_list.c:974 (valkey@7.2.4 the same):
+  // RANK -9223372036854775808 is out of range. redis@7.0.15 takes it, and its
+  // negation wraps to itself, so it acts as RANK -1.
+  'lpos.rank-range-check': { redis: '7.2.0', valkey: '7.2.0' },
+  // A small sorted set (a listpack) stores an integral score as a listpack
+  // integer (`double2ll`, redis@7.0.15 t_zset.c:1028-1053 zzlInsertAt), so a
+  // score of -0 reads back as 0. Redis 6.2's ziplist stores d2string()'s text,
+  // `-0`, and keeps the sign (redis@6.2.14 t_zset.c:1034-1055). A skiplist
+  // keeps -0 on every version (#512).
+  'zset.listpack-integer-scores': { redis: '7.0.0', valkey: '7.2.0' },
 }

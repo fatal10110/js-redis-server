@@ -224,10 +224,10 @@ describe('schema layout composition (#370 review)', () => {
     assert.deepStrictEqual(range(ranges), [1, -1, 1])
     assert.strictEqual(schemaArity(ranges), -2)
 
-    const differentRanges = t.union([
+    const differentRanges = t.union<unknown>([
       t.variadic(t.key()),
       t.variadic(t.object({ key: t.key(), value: t.bulk() })),
-    ])
+    ] as never[])
     assert.deepStrictEqual(range(differentRanges), [0, 0, 0])
     assert.deepStrictEqual(schemaLayout(t.union([])), {
       min: 0,

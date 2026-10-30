@@ -228,11 +228,15 @@ Order matters: `AuthPolicy` rejects unauthenticated clients with `NOAUTH`
 before any routing or queueing happens (only `AUTH`/`HELLO`/`RESET`/`QUIT` pass
 when `requirepass` is set and the session is unauthenticated), then
 [`NoMultiPolicy`](../src/core/execution-policies/no-multi-policy.ts) refuses,
-inside MULTI, a command the profile's command table flags `no_multi`
-(dirtying the transaction), and cluster
+inside MULTI, a command the profile's command table flags `no_multi` (the
+entry it resolves to, `container|subcommand` from 7.0, such as Valkey 9.0's
+`client|reply`; dirtying the transaction), and cluster
 routing must validate (and possibly redirect/reject) **before** a command is
-queued into a transaction — exactly like real Redis Cluster validates
-`CROSSSLOT` at queue time.
+queued into a transaction — exactly like real Redis Cluster refuses a `MOVED`
+key, or a command whose own keys span slots, at queue time. Queued commands
+in different slots are each `+QUEUED`; `EXEC` refuses the queue as a whole
+with a bare `-CROSSSLOT` and discards the transaction, as Redis's
+`getNodeByQuery` does for `EXEC`.
 
 ### Transactions — MULTI / EXEC / WATCH
 
@@ -266,8 +270,10 @@ While a session is in `'transaction'` mode,
 [`TransactionPolicy`](../src/core/execution-policies/transaction-policy.ts)
 intercepts every non-control command in `beforeExecute`, queues its
 already-parsed `CommandPlan` on the session, and replies `+QUEUED` — so parsing
-and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at
-queue time, not at `EXEC` time. Only what Redis refuses at queue time dirties
+and key-extraction (and therefore a command's own `CROSSSLOT`/`MOVED` errors)
+happen at queue time, not at `EXEC` time; in a cluster, `EXEC` then refuses a
+queue whose commands touch different slots (`-CROSSSLOT`, transaction
+discarded). Only what Redis refuses at queue time dirties
 the transaction there (an unknown command or subcommand, or a count the command
 table's arity rejects); a command whose own argument check fails is queued as
 a plan carrying the error as `deferredError`, which `executePlan` raises after
@@ -321,6 +327,17 @@ routing purposes — a keyed command sent directly to a replica is redirected to
 its master. Inside
 a transaction, the slot of the _first_ keyed command is pinned per-session in a
 `WeakMap` so every subsequent queued command must hash to the same slot.
+
+A client's command is always planned the way MULTI queues one
+(`CommandExecutor.planForQueue` from `executeRaw`): Redis's `processCommand`
+refuses only an unknown command or a bad argument count before `call()`, and
+the command checks its own arguments inside `call()`, after the policies. So a
+parse error waits in the plan behind the policy chain, and MONITOR shows the
+command (`EVAL s -1 a`). On a cluster node a script's `redis.call` is planned
+that way too: Redis routes a command after the arity check and before the
+command checks its own arguments, so `EVAL s 1x k` with `k` on another node is
+`MOVED`. MOVE's "not allowed in cluster
+mode" refusal comes after routing too, as it lives in Redis's `moveCommand`.
 
 ## State & data model
 
@@ -544,7 +561,8 @@ for the client-facing view of this negotiation.
 
 [`createRedisCluster`](../src/cluster.ts#L80) computes a slot-range topology
 ([`RedisClusterTopology`](../src/state/cluster-topology.ts#L68), 16384 slots
-split evenly across masters, with optional replicas), then spins up one
+split across masters as `redis-cli --cluster create` does, with optional
+replicas), then spins up one
 `Resp2Server` per node — each with its **own** `RedisServerState` (so data is
 genuinely partitioned) but **sharing** the topology object, registered with:
 

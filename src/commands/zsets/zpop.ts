@@ -1,5 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { RedisResult } from '../../core/redis-result'
@@ -7,7 +8,11 @@ import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { array, scorePairs, scoreValue } from '../helpers'
 import { getSortedMembers } from './helpers'
-import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
+import {
+  blockOrTimeOut,
+  blockingTimeoutMs,
+  parseBlockingTimeout,
+} from '../blocking'
 
 type ZsetPopSide = 'min' | 'max'
 
@@ -102,6 +107,7 @@ function parseBlockingZsetPopArgs(
   input: readonly Buffer[],
   index: number,
   commandName: string,
+  profile: CompatibilityProfile,
 ): BlockingZsetPopArgs {
   // BZPOPMIN/BZPOPMAX take `key [key ...] timeout` — at least one key plus the
   // trailing timeout, so fewer than two remaining tokens is an arity error.
@@ -109,9 +115,7 @@ function parseBlockingZsetPopArgs(
     throw new WrongNumberOfArgumentsError(commandName)
   }
 
-  const timeout = Number(input[input.length - 1].toString())
-  if (isNaN(timeout)) throw errors.timeoutNotFloat()
-  if (timeout < 0) throw errors.timeoutNegative()
+  const timeout = parseBlockingTimeout(input[input.length - 1], profile)
 
   const keys = Array.from(input.slice(index, input.length - 1))
   return { keys, timeout }
@@ -155,7 +159,7 @@ function tryBlockingZsetPop(
 
 function blockingZsetPop(
   keys: readonly Buffer[],
-  timeoutSecs: number,
+  timeoutMs: number,
   side: ZsetPopSide,
   ctx: RedisExecutionContext,
 ): RedisResult | Promise<RedisResult> {
@@ -164,7 +168,7 @@ function blockingZsetPop(
     {
       keys,
       type: 'zset',
-      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      timeoutMs: blockingTimeoutMs(timeoutMs),
       attempt: () => tryBlockingZsetPop(keys, side, ctx.db),
     },
     () => RedisResult.create(RedisValue.nullArray()),
@@ -177,7 +181,12 @@ function defineBlockingZsetPop(name: string, side: ZsetPopSide) {
     schema: t.custom<BlockingZsetPopArgs>(
       { min: 2, keyRange: { start: 0, step: 1, last: -2 } },
       (input, index, ctx) => ({
-        value: parseBlockingZsetPopArgs(input, index, ctx.commandName),
+        value: parseBlockingZsetPopArgs(
+          input,
+          index,
+          ctx.commandName,
+          ctx.profile,
+        ),
         nextIndex: input.length,
       }),
     ),
