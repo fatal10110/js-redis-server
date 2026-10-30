@@ -836,17 +836,6 @@ describe('createNodeRedisMock (standalone)', () => {
     }
   })
 
-  test('connect() on a closed client fails loudly (known gap)', async () => {
-    // KNOWN GAP (#440), pinned so it cannot regress silently: real node-redis re-opens
-    // a closed client — it reconnects, serves commands and emits a second
-    // 'end'. This facade cannot, because the owning client closes its
-    // RedisServerState and that is terminal. Until it can, connect() refuses
-    // rather than handing back a dead client that looks alive.
-    const client = await makeClient()
-    await client.quit()
-    await assert.rejects(() => client.connect(), ClientClosedError)
-  })
-
   test("disconnect() and destroy() emit 'end' before they return", async () => {
     // Real destroy() runs destroySocket() → emit('end') in-line, and
     // disconnect() is `Promise.resolve(this.destroy())`.

@@ -1861,6 +1861,24 @@ so the PR body is not a durable home for a breaking-change note.
   parameter are rejected like on real Redis instead of matching `WITHSCORES`,
   `STORE` and `tcp-keepalive` ([#508]). `GEODIST ... constructor` no longer
   passes as a unit.
+- node-redis mock: `multi().exec()` with a command that failed to queue
+  rejects with that command's own error (`ERR wrong number of arguments for
+  'evalsha' command`), as real node-redis does, instead of `EXECABORT
+  Transaction discarded because of previous errors.`; the session still sends
+  EXEC, so it leaves MULTI. An error nested in an array or map reply (`EVAL
+  "return {1, redis.error_reply('x')}" 0`) comes back as a `SimpleError` in
+  place instead of rejecting the whole call, so `NodeRedisReply` now includes
+  `Error` ([#510]). The decoder gains an additive `nestedErrors` option
+  (default `'throw'`, the in-memory client's behavior).
+- node-redis mock: `connect()` re-opens a closed client — after `quit()`,
+  `destroy()` or `disconnect()` — instead of rejecting `ClientClosedError`:
+  commands work again on the same keyspace, `'connect'` and `'ready'` are
+  emitted, and the next close emits `'end'` again. A `watch()` from before the
+  reconnect fails the next `exec()` with `WatchError('Client reconnected after
+  WATCH')`, as on node-redis. `RedisServerState` gains `reopen()`, which re-arms
+  active expiry after `close()` ([#440]). Commands issued in the same tick as
+  `quit()` or after it are pinned to reject `ClientClosedError` like the real
+  client ([#457]).
 - Redis 7.2+ / Valkey 8.0+ profiles: a push for the connection that runs the
   command (a keyspace notification on its own `__keyspace@` / `__keyevent@`
   subscription, keymiss included, or one made by a script's inner calls) goes
@@ -2089,6 +2107,9 @@ requests they contain.
 [#517]: https://github.com/fatal10110/js-redis-server/issues/517
 [#506]: https://github.com/fatal10110/js-redis-server/issues/506
 [#508]: https://github.com/fatal10110/js-redis-server/issues/508
+[#510]: https://github.com/fatal10110/js-redis-server/issues/510
+[#440]: https://github.com/fatal10110/js-redis-server/issues/440
+[#457]: https://github.com/fatal10110/js-redis-server/issues/457
 [#587]: https://github.com/fatal10110/js-redis-server/issues/587
 [#594]: https://github.com/fatal10110/js-redis-server/issues/594
 [#576]: https://github.com/fatal10110/js-redis-server/issues/576

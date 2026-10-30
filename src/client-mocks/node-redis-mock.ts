@@ -11,6 +11,7 @@ import {
   redisErrorText,
   type ClientDecodeOptions,
   type NativeRedisReply,
+  type ReturnNestedErrors,
 } from '../core/decode-redis-value'
 import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
@@ -220,8 +221,11 @@ function loadDefaultResp(): NodeRedisRespVersion {
 /** A command argument node-redis accepts on the wire. */
 export type NodeRedisCommandArgument = string | Buffer
 
-/** Native JS value a reply decodes to. */
-export type NodeRedisReply = NativeRedisReply
+/**
+ * Native JS value a reply decodes to. An error nested in an array or map is an
+ * `Error` (node-redis' `SimpleError`) in place; a top-level one is thrown.
+ */
+export type NodeRedisReply = NativeRedisReply<Error>
 
 export type NodeRedisMockClusterOptions = {
   masters: number
@@ -546,7 +550,8 @@ export class NodeRedisMockClient extends CommandRunner {
   private readonly ownsState: boolean
   /** The `RESP` this client was configured with — what `duplicate()` copies. */
   private readonly resp: NodeRedisRespVersion
-  private readonly session: ClientSession
+  /** Replaced by a fresh one each time {@link connect} re-opens the client. */
+  private session: ClientSession
   /**
    * Serializes commands on this client the way a real single node-redis
    * connection does, so a concurrent (un-awaited) call cannot interleave between
@@ -576,6 +581,25 @@ export class NodeRedisMockClient extends CommandRunner {
   private rejectPendingQuit?: (err: Error) => void
   /** Guards {@link teardown}; see its note on why {@link closed} cannot. */
   private tornDown = false
+  /** Settles once the last {@link teardown} has released everything. Never rejects. */
+  private teardownDone: Promise<void> = Promise.resolve()
+  /** Settles once the last graceful {@link quit} (`'end'` included) is over. Never rejects. */
+  private quitDone: Promise<void> = Promise.resolve()
+  /** Present while a {@link connect} is re-opening the client. */
+  private reopening?: Promise<this>
+  /**
+   * Bumped by every `quit()` / `destroy()`, so a re-open that a close
+   * overtook (closed again before its turn came) knows to give up.
+   */
+  private closeCount = 0
+  /**
+   * node-redis' `socketEpoch`: bumped on each (re)connect. {@link watch}
+   * records the epoch it ran in, and a transaction executed after a reconnect
+   * throws `WatchError('Client reconnected after WATCH')`, since the server
+   * forgot the WATCH with the old connection.
+   */
+  private socketEpoch = 1
+  private watchEpoch?: number
 
   constructor(init: NodeRedisMockClientInit) {
     super()
@@ -583,14 +607,7 @@ export class NodeRedisMockClient extends CommandRunner {
     this.database = init.database
     this.ownsState = init.ownsState ?? false
     this.resp = init.RESP ?? nodeRedisDefaultResp()
-    this.session = new ClientSession({
-      server: init.state,
-      executor: init.executor,
-      database: init.database,
-    })
-    // The connect-time handshake: node-redis opens a RESP3 client with
-    // `HELLO 3` before anything else, and a RESP2 one with no HELLO at all.
-    this.session.setProtocolVersion(this.resp)
+    this.session = this.openSession()
     // node-redis emits 'connect' then 'ready' once the handshake completes.
     queueMicrotask(() => {
       this.emit('connect')
@@ -600,19 +617,68 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /**
    * node-redis clients require an explicit connect(); on an open client it is a
-   * no-op here.
+   * no-op here (real node-redis rejects `Socket already opened`).
    *
-   * KNOWN GAP: real node-redis re-opens a *closed* client — it reconnects,
-   * serves commands again and emits a second `'end'` on the next close. This
-   * facade cannot yet, because the client that owns its `RedisServerState`
-   * closes it during teardown and `RedisServerState.close()` is terminal.
-   * Rather than hand back a silently dead client, reconnection fails loudly
-   * with the same `ClientClosedError` every other call on a closed client
-   * throws. Tracked in #440; see docs/TESTING.md.
+   * On a closed client it re-opens, as real node-redis does (#440): a fresh
+   * connection to the same server — the keyspace is untouched, the selected
+   * database and protocol are the configured ones — then `'connect'` and
+   * `'ready'`, and the next close emits `'end'` again. Like the real client the
+   * client counts as open as soon as connect() is called, so commands issued
+   * right after it (without awaiting) run on the new connection. Called while a
+   * `quit()` is still draining, it waits for that close to finish first.
+   *
+   * Not reproduced: real node-redis re-subscribes the channels the client was
+   * subscribed to; here a re-opened client starts with no subscriptions.
    */
   async connect(): Promise<this> {
-    this.assertOpen()
-    return this
+    if (!this.closed) {
+      return this.reopening ?? this
+    }
+    this.closed = false
+    const closeCount = this.closeCount
+    const closing = Promise.all([this.quitDone, this.teardownDone])
+    const reopening = this.runExclusive(async () => {
+      await closing
+      if (this.closeCount !== closeCount) {
+        // Closed again before the re-open got its turn.
+        throw clientClosedError()
+      }
+      this.reopen()
+      return this
+    })
+    this.reopening = reopening
+    try {
+      return await reopening
+    } finally {
+      if (this.reopening === reopening) {
+        this.reopening = undefined
+      }
+    }
+  }
+
+  /** The connect-time handshake: a fresh session, then 'connect' + 'ready'. */
+  private reopen(): void {
+    if (this.ownsState) {
+      this.backend.state.reopen()
+    }
+    this.session = this.openSession()
+    this.tornDown = false
+    this.flushPendingWith = undefined
+    this.socketEpoch += 1
+    this.emit('connect')
+    this.emit('ready')
+  }
+
+  private openSession(): ClientSession {
+    const session = new ClientSession({
+      server: this.backend.state,
+      executor: this.backend.executor,
+      database: this.database,
+    })
+    // node-redis opens a RESP3 client with `HELLO 3` before anything else, and
+    // a RESP2 one with no HELLO at all.
+    session.setProtocolVersion(this.resp)
+    return session
   }
 
   /**
@@ -769,19 +835,30 @@ export class NodeRedisMockClient extends CommandRunner {
   // --- transactions --------------------------------------------------------
 
   async watch(...keys: string[]): Promise<string> {
-    return asString(await this.run(['WATCH', ...keys]))
+    const reply = asString(await this.run(['WATCH', ...keys]))
+    this.watchEpoch ??= this.socketEpoch
+    return reply
   }
 
   async unwatch(): Promise<string> {
-    return asString(await this.run(['UNWATCH']))
+    const reply = asString(await this.run(['UNWATCH']))
+    this.watchEpoch = undefined
+    return reply
   }
 
   /** Begin a MULTI transaction. Commands are queued, then replayed on exec(). */
   multi(): NodeRedisMockMulti {
     return new NodeRedisMockMulti(queued => {
+      // node-redis' `_executeMulti`: a transaction consumes the WATCH, and one
+      // set before a reconnect cannot hold — the server dropped it.
+      const watchEpoch = this.watchEpoch
+      this.watchEpoch = undefined
       // Same issue-time gate as run(): a transaction handed to exec() before a
       // close drains with the rest of the queue.
       this.assertOpen()
+      if (watchEpoch !== undefined && watchEpoch !== this.socketEpoch) {
+        throw new (redisErrors().WatchError)('Client reconnected after WATCH')
+      }
       return this.runExclusive(() =>
         this.flushable(() =>
           this.followingProtocol(() => this.runTransactionSpan(queued)),
@@ -790,18 +867,27 @@ export class NodeRedisMockClient extends CommandRunner {
     })
   }
 
-  /** Replay MULTI → queued commands → EXEC on the shared session as one span. */
+  /**
+   * Replay MULTI → queued commands → EXEC on the shared session as one span.
+   * EXEC is sent even after a command failed to queue, so the session leaves
+   * MULTI (it answers `EXECABORT`), exactly as node-redis pipelines it.
+   */
   private async runTransactionSpan(
     queued: NodeRedisCommandArgument[][],
   ): Promise<TransactionSpan> {
     await runOnSession(this.session, ['MULTI'], false)
+    let queueError: RedisErrorValue | undefined
     for (const args of queued) {
-      await runOnSession(this.session, args, false)
+      const reply = await runOnSession(this.session, args, false)
+      if (reply.kind === 'error') {
+        queueError ??= reply
+      }
     }
     const before = this.session.protocolVersion
     const value = await runOnSession(this.session, ['EXEC'], false)
     return {
       value,
+      queueError,
       respVersion: this.session.protocolVersion,
       profile: this.backend.state.profile,
       replyVersions: replayProtocolSwitches(queued, before, value),
@@ -837,18 +923,25 @@ export class NodeRedisMockClient extends CommandRunner {
     // Claim the closed flag synchronously so commands issued *after* this point
     // are refused (assertOpen in run()) while the ones before it still drain.
     this.closed = true
+    this.closeCount += 1
     const forced = new Promise<never>((_, reject) => {
       this.rejectPendingQuit = reject
     })
-    try {
-      // A drain can block indefinitely (a BLPOP 0 ahead of it), so it races the
-      // escalation rather than waiting on it.
-      await Promise.race([this.runExclusive(async () => undefined), forced])
-    } finally {
-      this.rejectPendingQuit = undefined
-    }
-    await this.teardown()
-    this.emit('end')
+    const closing = (async () => {
+      try {
+        // A drain can block indefinitely (a BLPOP 0 ahead of it), so it races
+        // the escalation rather than waiting on it.
+        await Promise.race([this.runExclusive(async () => undefined), forced])
+      } finally {
+        this.rejectPendingQuit = undefined
+      }
+      await this.teardown()
+      this.emit('end')
+    })()
+    // A connect() issued meanwhile re-opens only once this close — its 'end'
+    // included — is over.
+    this.quitDone = closing.then(noop, noop)
+    await closing
     return 'OK'
   }
 
@@ -890,6 +983,7 @@ export class NodeRedisMockClient extends CommandRunner {
     // Flush first. Both flags go up synchronously, so nothing queued slips
     // past, and anything executing is rejected when it settles.
     this.closed = true
+    this.closeCount += 1
     this.flushPendingWith = disconnectsClientError
     this.rejectPendingQuit = undefined
     rejectQuit?.(disconnectsClientError())
@@ -910,14 +1004,21 @@ export class NodeRedisMockClient extends CommandRunner {
    * Releases the session, pub/sub and (when owned) the state. Guarded by its
    * own flag rather than {@link closed}, which the close methods claim earlier
    * — `quit()` sets it before draining, so it is already true by the time
-   * teardown runs.
+   * teardown runs. It never sets {@link closed} itself: a `connect()` issued
+   * while a `quit()` drained has already flipped it back to open, and its
+   * re-open waits for this release ({@link teardownDone}) before it runs.
    */
-  private async teardown(): Promise<void> {
+  private teardown(): Promise<void> {
     if (this.tornDown) {
-      return
+      return this.teardownDone
     }
     this.tornDown = true
-    this.closed = true
+    const released = this.releaseResources()
+    this.teardownDone = released.then(noop, noop)
+    return released
+  }
+
+  private async releaseResources(): Promise<void> {
     try {
       this.session.close()
       if (this.pubsub) {
@@ -1036,10 +1137,14 @@ export class NodeRedisMockClient extends CommandRunner {
   }
 }
 
+type RedisErrorValue = Extract<RedisValue, { kind: 'error' }>
+
 /** One replayed MULTI → … → EXEC span, with what each reply must decode under. */
 type TransactionSpan = {
   /** EXEC's reply. */
   value: RedisValue
+  /** The first command that failed to queue (EXEC then answered `EXECABORT`). */
+  queueError?: RedisErrorValue
   /** The protocol in force once the transaction finished. */
   respVersion: RespVersion
   /** The served profile, which spells a RESP2 `double`. */
@@ -1223,18 +1328,25 @@ export class NodeRedisMockMulti {
 
     const {
       value: result,
+      queueError,
       respVersion,
       profile,
       replyVersions,
     } = await this.runTransaction(this.queued)
     const errors = redisErrors()
 
+    if (queueError) {
+      // node-redis pipelines MULTI, the queued commands and EXEC and awaits
+      // them together, so the first command that failed to queue rejects the
+      // whole exec() with its own error, ahead of EXEC's `EXECABORT` (#510).
+      throw new errors.SimpleError(redisErrorText(queueError))
+    }
     if (result.kind === 'null' || result.kind === 'null-array') {
       // RESP2 `*-1` (a watched key changed). node-redis throws, never null.
       throw new errors.WatchError()
     }
     if (result.kind !== 'array' && result.kind !== 'set') {
-      // Defensive: any non-array EXEC reply (shouldn't happen) → decode as-is.
+      // Any other EXEC reply — an error — rejects as decoded.
       return [decodeReply(result, respVersion, profile)]
     }
 
@@ -1671,7 +1783,8 @@ function notify(
  * the divergences are deliberate, and a silent re-convergence is the failure
  * mode worth catching.
  */
-export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions = {
+export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions &
+  ReturnNestedErrors = {
   // node-redis decodes a RESP2 `:` integer with plain JS number arithmetic, so
   // it is always a `number` (precision loss past 2^53 included) — never a
   // bigint. Only the RESP3 `(` BIG_NUMBER type yields a bigint.
@@ -1683,7 +1796,13 @@ export const NODE_REDIS_DECODE_OPTIONS: ClientDecodeOptions = {
   // `ErrorReply`, on v5+ — so both `instanceof ErrorReply` (the documented
   // idiom) and the concrete class match real node-redis.
   error: text => new (redisErrors().SimpleError)(text),
+  // node-redis decodes an error element of an array or map in place — so
+  // `EVAL "return {1, redis.error_reply('x')}" 0` resolves
+  // `[1, SimpleError('ERR x')]` — and only a top-level error rejects (#510).
+  nestedErrors: 'return',
 }
+
+function noop(): void {}
 
 /**
  * Decode a reply the caller hands back whole. `respVersion` is the version the
