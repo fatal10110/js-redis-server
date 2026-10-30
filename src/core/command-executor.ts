@@ -22,7 +22,10 @@ import {
   type CompatibilityProfile,
 } from './compatibility'
 import { commandTableEntry } from './compatibility/command-table'
-import { containerSubcommandExists } from './compatibility/subcommand-gates'
+import {
+  containerSubcommandExists,
+  containerSubcommandIsAdmin,
+} from './compatibility/subcommand-gates'
 import { unknownSubcommandError } from './subcommand-errors'
 
 export type CommandExecutorOptions = {
@@ -617,7 +620,9 @@ function monitorFeedActive(
  * (`CLIENT KILL` is hidden, `CLIENT GETNAME` shown) and the whole container's
  * on 6.2, where every CLIENT and CONFIG subcommand is hidden. Verified
  * against `call()` of 6.2.14 - 8.0.0 and Valkey 8.0 / 9.0 and a live
- * redis-server 6.2.14. A definition can hide itself on top of the table.
+ * redis-server 6.2.14. A definition can hide itself on top of the table;
+ * CLUSTER and CONFIG do not, so their non-admin subcommands (CLUSTER INFO,
+ * CONFIG HELP) are shown from 7.0, as on real servers.
  */
 function skipsMonitor(plan: CommandPlan, ctx: RedisExecutionContext): boolean {
   const skip = plan.definition.monitor?.skip
@@ -630,8 +635,19 @@ function skipsMonitor(plan: CommandPlan, ctx: RedisExecutionContext): boolean {
     plan.rawArgs,
     ctx.server.profile,
   )
-  const entry = commandTableEntry(name, ctx.server.profile)
-  return entry?.flags.includes('admin') === true
+  if (commandTableEntry(name, ctx.server.profile)?.flags.includes('admin')) {
+    return true
+  }
+  // A real subcommand this server captured no table entry for (CLUSTER
+  // MEET, ACL SETUSER) still carries the real table's admin flag.
+  const separator = name.indexOf('|')
+  return (
+    separator > 0 &&
+    containerSubcommandIsAdmin(
+      name.slice(0, separator),
+      name.slice(separator + 1),
+    )
+  )
 }
 
 function isQueuedTransactionCommand(

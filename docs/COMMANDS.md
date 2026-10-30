@@ -105,7 +105,9 @@ subcommand is looked up before the command runs), an unknown subcommand is not
 emitted, matching Redis.
 Cluster redirects and pre-execution cluster errors are not emitted because the
 command is not executed on that node. Commands with monitor skip metadata are
-skipped, authentication credentials are redacted, commands replayed by `EXEC` are
+skipped, as are commands whose command-table entry is flagged `admin` (the
+subcommand's entry from 7.0, so CLUSTER INFO and CONFIG HELP are shown while
+CLUSTER MEET and CONFIG GET are not; the whole container's on 6.2), authentication credentials are redacted, commands replayed by `EXEC` are
 emitted once when the transaction runs, and Lua `redis.call` / `redis.pcall`
 commands are emitted with the `lua` source. `EVAL`, `EVALSHA`, `FCALL` and
 their `_RO` forms are stamped when dispatched, before their script runs (Redis
