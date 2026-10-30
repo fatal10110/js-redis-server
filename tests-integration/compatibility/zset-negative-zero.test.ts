@@ -15,6 +15,7 @@ import { expectReply } from '../raw-tcp/helpers'
  * - ZADD INCR / ZINCRBY reply with the new score before it is stored, and a
  *   new member takes the increment as is: -0 everywhere.
  * - ZUNION replies from the computed set: -0 everywhere.
+ * - ZUNIONSTORE, ZINTERSTORE and ZRANGESTORE store -0 as ZADD does.
  */
 const testRunner = new TestRunner()
 const profile = activeProfile
@@ -87,6 +88,32 @@ describe(`Sorted-set -0 scores (${testRunner.getBackendName()}, ${profile})`, ()
       ':1\r\n',
     )
     await expectReply(conn, ['ZSCORE', destination, 'a'], stored)
+
+    const intersection = randomKey()
+    await expectReply(
+      conn,
+      ['ZINTERSTORE', intersection, '1', source, 'WEIGHTS', '-1'],
+      ':1\r\n',
+    )
+    await expectReply(conn, ['ZSCORE', intersection, 'a'], stored)
+  })
+
+  test('ZRANGESTORE stores -0 from a skiplist source like ZADD', async () => {
+    const conn = await connect()
+    const source = randomKey()
+    const destination = randomKey()
+    const members: string[] = []
+    for (let index = 1; index <= 129; index++) {
+      members.push(String(index), `m${index}`)
+    }
+    await expectReply(conn, ['ZADD', source, ...members], ':129\r\n')
+    await expectReply(conn, ['ZADD', source, '-0', 'neg'], ':1\r\n')
+    await expectReply(
+      conn,
+      ['ZRANGESTORE', destination, source, '0', '0'],
+      ':1\r\n',
+    )
+    await expectReply(conn, ['ZSCORE', destination, 'neg'], stored)
   })
 
   test('a sorted set past zset-max-listpack-entries keeps -0', async () => {

@@ -68,18 +68,20 @@ export function storeListpackScores(
   written: readonly Buffer[],
   server: ZsetEncodingServer,
 ): void {
+  if (!server.profile.has('zset.listpack-integer-scores')) return
+  // Most writes store no -0: skip the walk over the set for them.
+  const negativeZero = written.filter(member =>
+    Object.is(zset.getMember(member)?.score, -0),
+  )
   if (
-    written.length === 0 ||
-    !server.profile.has('zset.listpack-integer-scores') ||
+    negativeZero.length === 0 ||
     !fitsListpack(zset.size, membersOf(zset), server)
   ) {
     return
   }
 
-  for (const member of written) {
-    if (Object.is(zset.getMember(member)?.score, -0)) {
-      zset.setScore(member, 0)
-    }
+  for (const member of negativeZero) {
+    zset.setScore(member, 0)
   }
 }
 
