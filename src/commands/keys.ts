@@ -35,6 +35,7 @@ import {
   typeName,
 } from './helpers'
 import { getSortedMembers } from './zsets/helpers'
+import { dbIndexSchema, parseDbIndexToken } from './db-index'
 
 export const delCommand = defineCommand({
   name: 'del',
@@ -479,7 +480,7 @@ export const renamenxCommand = defineCommand({
 
 export const moveCommand = defineCommand({
   name: 'move',
-  schema: t.object({ key: t.key(), database: t.integer() }),
+  schema: t.object({ key: t.key(), database: dbIndexSchema }),
   flags: ['write'],
   capabilities: { clusterMode: 'multiDbOnly' },
   keys: args => [args.key],
@@ -539,13 +540,7 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
       const raw = input[cursor + 1]
       if (!raw) throw errors.syntax()
 
-      const text = raw.toString()
-      if (!/^-?\d+$/.test(text)) throw errors.expectedInteger()
-
-      const value = Number(text)
-      if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
-
-      db = value
+      db = parseDbIndexToken(raw)
       cursor += 2
       continue
     }
