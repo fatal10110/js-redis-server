@@ -72,7 +72,21 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.1.0; the error verified on redis-server 7.0.15).
   'protocol.inline-adjacent-quotes': { valkey: '9.0.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
-  'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
+  // CLIENT KILL MAXAGE <seconds> (`maxage should be greater than 0`). Valkey
+  // 8.0.0 already parses it (networking.c clientKillCommand), Redis since 7.4.
+  'client.kill.maxage': { redis: '7.4.0', valkey: '8.0.0' },
+  // Redis 7.0 range checks CLIENT KILL ID to 1..LONG_MAX with `client-id
+  // should be greater than 0` (getRangeLongFromObjectOrReply), a non-integer
+  // included; 6.2 takes any long long, `value is not an integer or out of
+  // range` otherwise, and ID 0 means no id filter. Valkey forked with 7.0's.
+  'client.kill.id-positive': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0 takes a list of ids after one CLIENT KILL ID and stops at the
+  // first non-integer (`parseClientFiltersOrReply`): `ID 1 2` kills both,
+  // `ID abc` is a syntax error and a trailing `ID` matches nothing.
+  'client.kill.id-list': { valkey: '9.0.0' },
+  // Valkey 8.0 accepts `primary` as a client type name next to `master`
+  // (`getClientTypeByName`); Redis and Valkey 7.2 answer `Unknown client type`.
+  'client.kill.type-primary': { valkey: '8.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
   // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
   // per version; the order is fixed and every field is always printed. From

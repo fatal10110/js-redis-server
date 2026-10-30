@@ -2,14 +2,19 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { setTimeout as delay } from 'node:timers/promises'
 import { TestRunner } from '../test-config'
-import { commandFrame } from '../utils'
+import { activeProfile, commandFrame } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 
 const testRunner = new TestRunner()
 
+/** MAXAGE is a CLIENT KILL filter from Redis 7.4 and Valkey 8.0. */
+const supportsMaxAge = !['redis-6.2', 'redis-7.0', 'redis-7.2'].includes(
+  activeProfile,
+)
+
 describe(
   `Raw TCP CLIENT KILL (${testRunner.getBackendName()})`,
-  { skip: testRunner.backend === 'real' && 'real Redis backend is 7.2.1' },
+  { skip: !supportsMaxAge && `no MAXAGE filter on ${activeProfile}` },
   () => {
     let port: number
     const connections: RawRedisConnection[] = []
@@ -40,7 +45,7 @@ describe(
       await delay(1100)
 
       killer.write(
-        commandFrame('CLIENT', 'KILL', 'ID', victimId, 'MAXAGE', '0'),
+        commandFrame('CLIENT', 'KILL', 'ID', victimId, 'MAXAGE', '1'),
       )
       assert.deepStrictEqual(await killer.readRawFrame(), Buffer.from(':1\r\n'))
       await assertCloses(victim)

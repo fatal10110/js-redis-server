@@ -1634,7 +1634,9 @@ function supportsClientSetinfo(): boolean {
 }
 
 function supportsClientKillMaxAge(): boolean {
-  return ['redis-7.4', 'redis-8.0', 'valkey-9.0'].includes(profile)
+  return ['redis-7.4', 'redis-8.0', 'valkey-8.0', 'valkey-9.0'].includes(
+    profile,
+  )
 }
 
 function supportsShardedPubSub(): boolean {
