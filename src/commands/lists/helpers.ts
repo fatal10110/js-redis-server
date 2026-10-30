@@ -62,10 +62,6 @@ export function popList(
   side: 'left' | 'right',
 ): RedisResult {
   const count = args.count
-  if (count !== undefined && count < 0) {
-    throw errors.positiveCount()
-  }
-
   const list = ctx.db.getList(args.key)
   if (!list || list.values.length === 0) {
     return count === undefined
