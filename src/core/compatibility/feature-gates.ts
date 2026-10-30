@@ -115,10 +115,7 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.0.6. Valkey forked at 7.2, so every Valkey profile has the newer wording.
   //
   // This gates the *wording* only; *when* the subcommand is resolved is
-  // `error.unknown-subcommand-dispatch-timing` below. Still not modelled:
-  //  - Arity errors, `redis-6.2`. `addReplySubcommandSyntaxError` reaches only
-  //    PUBSUB, 1 of 11 containers; the rest answer the 7.0-era `wrong number
-  //    of arguments for '<c>|<sub>'` arity error on every profile (#437).
+  // `error.unknown-subcommand-dispatch-timing` below.
   'error.unknown-subcommand-wording': { redis: '7.0.0', valkey: '7.2.0' },
   // The same 7.0 change resolves `container|subcommand` at command-lookup
   // time, so an unknown subcommand fails before anything else looks at the
@@ -135,8 +132,8 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
     valkey: '7.2.0',
   },
   // The last line of a container's HELP reply: `Prints this help.` through
-  // 7.0, `Print this help.` from Redis 7.2 / Valkey 7.2. Only XINFO/XGROUP HELP
-  // read it so far; the other containers still say `Prints` on every profile.
+  // 7.0, `Print this help.` from Redis 7.2 / Valkey 7.2, for every container
+  // (`helpReply`, src/commands/helpers.ts).
   // Verified against redis-server 6.2.24, 7.0.15, 7.2, 7.4, 8.0.6 and Valkey
   // 7.2 / 8.0 / 8.1 / 9.0.
   'reply.help-print-wording': { redis: '7.2.0', valkey: '7.2.0' },
@@ -434,4 +431,23 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // keeps the fallback (redis@8.0.0 util.c:660-681). valkey@8.1.0
   // util.c:599-609, sort.c:484-485; checked against valkey-server 9.0.0.
   'double.valkey-strtod': { valkey: '8.1.0' },
+  // Container HELP texts (#491), from the real servers' help arrays. Redis
+  // 7.0 rewrote CLIENT HELP's KILL TYPE as upper case, fixed `<timout>` and
+  // added TRACKING's `[NOLOOP]` (redis@7.0.0 networking.c clientCommand), and
+  // reworded SLOWLOG GET for `-1 mean all` (slowlog.c). Valkey 8.0 added CLIENT
+  // CAPA and SCRIPT SHOW and re-wrapped SCRIPT FLUSH (valkey@8.0.0 eval.c);
+  // Valkey 8.1 the CLIENT LIST filters, the CLIENT KILL ID list and
+  // IMPORT-SOURCE; Valkey 9.0 the remaining CLIENT KILL / LIST filters, CLIENT
+  // HELP punctuation and ACL SETUSER's `<rule>` (valkey@9.0.0 acl.c). Redis
+  // 7.4 / Valkey 8.0 dropped FUNCTION LIST's `* Library description` line
+  // (absent in redis@7.4.0 functions.c). Captured from redis-server 6.2.14 ..
+  // 8.0.0 and valkey-server 8.0.0, 8.1 and 9.0.0.
+  'help.client-redis7-text': { redis: '7.0.0', valkey: '7.2.0' },
+  'help.client-capa': { valkey: '8.0.0' },
+  'help.client-valkey81-filters': { valkey: '8.1.0' },
+  'help.client-valkey90-filters': { valkey: '9.0.0' },
+  'help.slowlog-get-all': { redis: '7.0.0', valkey: '7.2.0' },
+  'help.acl-setuser-rules': { valkey: '9.0.0' },
+  'help.script-valkey-text': { valkey: '8.0.0' },
+  'help.function-no-library-description': { redis: '7.4.0', valkey: '8.0.0' },
 }

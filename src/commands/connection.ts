@@ -22,8 +22,16 @@ import {
   parseInt64Token,
   simpleString,
   unknownSubcommandError,
+  expectSubcommandArgCount,
+  helpReply,
+  subcommandSyntaxError,
 } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
+import {
+  aclHelpLines,
+  clientHelpLines,
+  slowlogHelpLines,
+} from './container-help'
 import { isClientBlocked } from './blocking'
 import {
   VALKEY_REDIS_COMPAT_VERSION,
@@ -812,13 +820,25 @@ export const clientCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'setname') {
-      expectArgCount('client|setname', args.args, 1)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
       setClientName(ctx.session, args.args[0])
       return ok()
     }
 
     if (subcommand === 'getname') {
-      expectArgCount('client|getname', args.args, 0)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return bulk(clientNames.get(ctx.session) ?? null)
     }
 
@@ -831,7 +851,13 @@ export const clientCommand = defineCommand({
         )
       }
 
-      expectArgCount('client|setinfo', args.args, 2)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        2,
+        ctx.server.profile,
+      )
       const attribute = args.args[0].toString().toLowerCase()
       if (attribute === 'lib-name') {
         clientLibraryNames.set(ctx.session, args.args[1])
@@ -850,7 +876,13 @@ export const clientCommand = defineCommand({
         )
       }
 
-      expectArgCount('client|no-evict', args.args, 1)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
       const mode = args.args[0].toString().toLowerCase()
       if (mode === 'on') {
         noEvictClients.add(ctx.session)
@@ -905,12 +937,24 @@ export const clientCommand = defineCommand({
     }
 
     if (subcommand === 'id') {
-      expectArgCount('client|id', args.args, 0)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return integer(getClientId(ctx.session))
     }
 
     if (subcommand === 'info') {
-      expectArgCount('client|info', args.args, 0)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return verbatimText(formatClientLine(ctx.session, ctx.server.profile))
     }
 
@@ -923,29 +967,14 @@ export const clientCommand = defineCommand({
     }
 
     if (subcommand === 'help') {
-      expectArgCount('client|help', args.args, 0)
-      const lines = [
-        value(
-          'CLIENT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-        ),
-        value('ID'),
-        value('INFO'),
-        value('LIST'),
-        value(
-          ctx.server.profile.has('client.kill.maxage')
-            ? 'KILL [ID <client-id>] [MAXAGE <seconds>] [SKIPME <YES|NO>]'
-            : 'KILL [ID <client-id>] [SKIPME <YES|NO>]',
-        ),
-        value('GETNAME'),
-        value('SETNAME <connection-name>'),
-      ]
-      if (ctx.server.profile.has('client.setinfo')) {
-        lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
-      }
-      if (ctx.server.profile.has('client.no-evict')) {
-        lines.push(value('NO-EVICT <ON|OFF>'))
-      }
-      return array(lines)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(clientHelpLines(ctx.server.profile), ctx.server.profile)
     }
 
     throw unknownSubcommandError('CLIENT', args.subcommand, ctx.server.profile)
@@ -1144,7 +1173,13 @@ export const aclCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'whoami') {
-      expectArgCount('acl|whoami', args.args, 0)
+      expectSubcommandArgCount(
+        'ACL',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return bulk(Buffer.from(DEFAULT_ACL_USER))
     }
 
@@ -1153,9 +1188,13 @@ export const aclCommand = defineCommand({
         throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
       }
 
-      if (args.args.length < 2) {
-        throw new WrongNumberOfArgumentsError('acl|dryrun')
-      }
+      expectSubcommandArgCount(
+        'ACL',
+        args.subcommand,
+        args.args,
+        { min: 2 },
+        ctx.server.profile,
+      )
 
       const username = args.args[0].toString()
       if (username !== DEFAULT_ACL_USER) {
@@ -1182,20 +1221,14 @@ export const aclCommand = defineCommand({
     }
 
     if (subcommand === 'help') {
-      expectArgCount('acl|help', args.args, 0)
-      const lines = [
-        value('ACL <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'),
-        value('WHOAMI'),
-        value('    Return the current ACL username.'),
-      ]
-      if (ctx.server.profile.has('acl.dryrun')) {
-        lines.push(
-          value('DRYRUN <username> <command> [<arg> ...]'),
-          value('    Check whether a user can run a command.'),
-        )
-      }
-      lines.push(value('HELP'), value('    Prints this help.'))
-      return array(lines)
+      expectSubcommandArgCount(
+        'ACL',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(aclHelpLines(ctx.server.profile), ctx.server.profile)
     }
 
     throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
@@ -1224,8 +1257,14 @@ export const slowlogCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
+      // `slowlog|get` is -2 in the table: lookup lets any count through, and
+      // more than one argument is the subcommand syntax error everywhere.
       if (args.args.length > 1) {
-        throw new WrongNumberOfArgumentsError('slowlog|get')
+        throw subcommandSyntaxError(
+          'SLOWLOG',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
       if (args.args.length === 1) {
         const count = args.args[0].toString()
@@ -1239,30 +1278,36 @@ export const slowlogCommand = defineCommand({
     }
 
     if (subcommand === 'len') {
-      expectArgCount('slowlog|len', args.args, 0)
+      expectSubcommandArgCount(
+        'SLOWLOG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return integer(0)
     }
 
     if (subcommand === 'reset') {
-      expectArgCount('slowlog|reset', args.args, 0)
+      expectSubcommandArgCount(
+        'SLOWLOG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return ok()
     }
 
     if (subcommand === 'help') {
-      expectArgCount('slowlog|help', args.args, 0)
-      return array([
-        value(
-          'SLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-        ),
-        value('GET [<count>]'),
-        value('    Return slow log entries.'),
-        value('LEN'),
-        value('    Return the slow log length.'),
-        value('RESET'),
-        value('    Reset the slow log.'),
-        value('HELP'),
-        value('    Prints this help.'),
-      ])
+      expectSubcommandArgCount(
+        'SLOWLOG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(slowlogHelpLines(ctx.server.profile), ctx.server.profile)
     }
 
     throw unknownSubcommandError('SLOWLOG', args.subcommand, ctx.server.profile)

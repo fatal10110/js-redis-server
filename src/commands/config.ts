@@ -19,9 +19,12 @@ import {
 import {
   INT64_MAX,
   ok,
+  expectSubcommandArgCount,
+  helpReply,
   subcommandSyntaxError,
   unknownSubcommandError,
 } from './helpers'
+import { configHelpLines } from './container-help'
 import { commandSubcommandInfo } from './introspection'
 
 // Behavior-driving parameters whose authoritative value lives on the server
@@ -244,12 +247,17 @@ function globMatches(pattern: string, value: string): boolean {
 }
 
 function configGet(
+  subcommand: Buffer,
   args: readonly Buffer[],
   ctx: RedisExecutionContext,
 ): RedisResult {
-  if (args.length === 0) {
-    throw new WrongNumberOfArgumentsError('config|get')
-  }
+  expectSubcommandArgCount(
+    'CONFIG',
+    subcommand,
+    args,
+    { min: 1 },
+    ctx.server.profile,
+  )
 
   const store = getConfigStore(ctx)
   // Overlay server-backed params so CONFIG GET reflects their live values.
@@ -412,18 +420,21 @@ function configSet(
   return ok()
 }
 
-function configResetStat(args: readonly Buffer[]): RedisResult {
-  if (args.length !== 0) {
-    throw new WrongNumberOfArgumentsError('config|resetstat')
-  }
-
+function configResetStat(
+  subcommand: Buffer,
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): RedisResult {
+  expectSubcommandArgCount('CONFIG', subcommand, args, 0, ctx.server.profile)
   return ok()
 }
 
-function configRewrite(args: readonly Buffer[]): RedisResult {
-  if (args.length !== 0) {
-    throw new WrongNumberOfArgumentsError('config|rewrite')
-  }
+function configRewrite(
+  subcommand: Buffer,
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): RedisResult {
+  expectSubcommandArgCount('CONFIG', subcommand, args, 0, ctx.server.profile)
 
   throw new RedisCommandError('The server is running without a config file')
 }
@@ -454,7 +465,7 @@ export const configCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
-      return configGet(args.args, ctx)
+      return configGet(args.subcommand, args.args, ctx)
     }
 
     if (subcommand === 'set') {
@@ -462,11 +473,22 @@ export const configCommand = defineCommand({
     }
 
     if (subcommand === 'resetstat') {
-      return configResetStat(args.args)
+      return configResetStat(args.subcommand, args.args, ctx)
     }
 
     if (subcommand === 'rewrite') {
-      return configRewrite(args.args)
+      return configRewrite(args.subcommand, args.args, ctx)
+    }
+
+    if (subcommand === 'help') {
+      expectSubcommandArgCount(
+        'CONFIG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(configHelpLines(), ctx.server.profile)
     }
 
     // Version-specific wording: Redis 7.0 moved container commands into the

@@ -1,5 +1,10 @@
+import { asciiLowerCase } from './ascii-case'
 import type { CompatibilityProfile } from './compatibility'
-import { RedisCommandError, UnknownSubcommandError } from './redis-error'
+import {
+  RedisCommandError,
+  UnknownSubcommandError,
+  WrongNumberOfArgumentsError,
+} from './redis-error'
 
 // The two container-error templates, kept in src/core so that
 // `CommandExecutor.plan()` (the 7.0+ subcommand lookup) and the containers
@@ -71,6 +76,49 @@ export function subcommandSyntaxError(
   return new RedisCommandError(
     subcommandErrorBody(container, subcommand, profile, 'syntax'),
   )
+}
+
+/**
+ * A *known* container subcommand given an argument count it cannot take
+ * (#437). From Redis 7.0 the subcommand has its own command-table entry, so
+ * the reply is the plain arity error for `<container>|<sub>` (lookup usually
+ * raises it before the container runs). 6.2 has no such entry: the container
+ * itself answers {@link subcommandSyntaxError}, echoing the subcommand as
+ * typed. Captured from real servers:
+ *
+ * ```
+ * 6.2.14  CONFIG resetstat x -> Unknown subcommand or wrong number of arguments for 'resetstat'. Try CONFIG HELP.
+ * 7.0.15  CONFIG resetstat x -> wrong number of arguments for 'config|resetstat' command
+ * ```
+ */
+export function subcommandArityError(
+  container: string,
+  subcommand: Buffer | string,
+  profile: CompatibilityProfile,
+): RedisCommandError {
+  if (!profile.has('error.unknown-subcommand-dispatch-timing')) {
+    return subcommandSyntaxError(container, subcommand, profile)
+  }
+  return new WrongNumberOfArgumentsError(
+    `${asciiLowerCase(container)}|${asciiLowerCase(subcommand.toString())}`,
+  )
+}
+
+/**
+ * Throws {@link subcommandArityError} unless the subcommand got exactly
+ * `count` arguments (`{ min }`: at least that many), not counting the
+ * container and subcommand names.
+ */
+export function expectSubcommandArgCount(
+  container: string,
+  subcommand: Buffer | string,
+  args: readonly unknown[],
+  count: number | { min: number },
+  profile: CompatibilityProfile,
+): void {
+  const ok =
+    typeof count === 'number' ? args.length === count : args.length >= count.min
+  if (!ok) throw subcommandArityError(container, subcommand, profile)
 }
 
 /**

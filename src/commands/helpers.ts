@@ -185,6 +185,8 @@ export function parsePositiveExpireToken(
 }
 
 export {
+  expectSubcommandArgCount,
+  subcommandArityError,
   subcommandSyntaxError,
   unknownSubcommandError,
 } from '../core/subcommand-errors'

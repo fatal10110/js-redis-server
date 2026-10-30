@@ -89,6 +89,14 @@ export type FeatureId =
   | 'may-replicate.cluster-syncslots'
   | 'double.fast-float'
   | 'double.valkey-strtod'
+  | 'help.client-redis7-text'
+  | 'help.client-capa'
+  | 'help.client-valkey81-filters'
+  | 'help.client-valkey90-filters'
+  | 'help.slowlog-get-all'
+  | 'help.acl-setuser-rules'
+  | 'help.script-valkey-text'
+  | 'help.function-no-library-description'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

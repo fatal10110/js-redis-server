@@ -330,7 +330,10 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
         Buffer.from('flush'),
         Buffer.from('invalid'),
       ]),
-      RedisResult.error('FUNCTION FLUSH only support SYNC|ASYNC option', 'ERR'),
+      RedisResult.error(
+        'FUNCTION FLUSH only supports SYNC|ASYNC option',
+        'ERR',
+      ),
     )
     assert.deepStrictEqual(
       await session.execute('function', [
@@ -593,8 +596,8 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
     assert.ok(
       help.value.items.some(
         item =>
-          item.kind === 'bulk-string' &&
-          item.value?.toString().includes('SCRIPT <subcommand>'),
+          item.kind === 'simple-string' &&
+          item.value.includes('SCRIPT <subcommand>'),
       ),
     )
   })
