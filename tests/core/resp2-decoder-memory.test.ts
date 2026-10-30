@@ -171,8 +171,16 @@ describe('RESP2 decoder memory retention (#564)', () => {
     d.push(Buffer.from(`SET k ${value}\r\n`))
     const frame = d.next()
     assert.deepStrictEqual(frame?.args[0], Buffer.from('k'))
+    // A copied small argument may live in Node's shared allocation pool (8KB
+    // on Node 22, 64KB on Node 24), so check that it no longer shares memory
+    // with the request line instead of comparing sizes.
+    assert.notStrictEqual(
+      frame.args[0]!.buffer,
+      frame.args[1]!.buffer,
+      'the arguments share one backing buffer',
+    )
     assert.ok(
-      frame.args[0]!.buffer.byteLength < 60 * 1024,
+      frame.args[0]!.buffer.byteLength <= Math.max(Buffer.poolSize, 8192),
       `a 1-byte argument holds a ${frame.args[0]!.buffer.byteLength}-byte buffer`,
     )
     assert.strictEqual(frame.args[1]!.toString(), value)
