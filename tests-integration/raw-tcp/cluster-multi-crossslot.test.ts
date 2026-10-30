@@ -20,11 +20,16 @@ import {
  * queued, so EXEC still answers CROSSSLOT for the earlier commands; Valkey 8.0
  * empties the queue on that refusal, so EXEC answers EXECABORT.
  *
+ * From 7.0 a touched WATCH stops queueing as well (CLIENT_DIRTY_CAS), so
+ * EXEC answers nil for later commands that span slots; 6.2 keeps queueing and
+ * answers CROSSSLOT.
+ *
  * Checked against single-node clusters of redis-server 7.0.15, 7.2.4, 7.4.4,
  * 8.0.0 and valkey-server 8.0.0, 9.0.0.
  */
 const testRunner = new TestRunner()
 const valkey = activeProfile.startsWith('valkey')
+const legacy = activeProfile === 'redis-6.2'
 
 const QUEUED = '+QUEUED\r\n'
 const CROSSSLOT = "-CROSSSLOT Keys in request don't hash to the same slot\r\n"
@@ -143,5 +148,18 @@ describe(`Raw TCP cluster MULTI across slots (${testRunner.getBackendName()}, ${
     await expectReplyPrefix(conn, ['NOTACOMMAND'], '-ERR unknown command')
     await expectReply(conn, ['EXEC'], valkey ? EXECABORT : CROSSSLOT)
     await expectReply(conn, ['EXEC'], EXEC_WITHOUT_MULTI)
+  })
+
+  test('a touched WATCH stops queueing from 7.0: EXEC answers nil, CROSSSLOT on 6.2', async () => {
+    const { conn, first, second } = await setup()
+    const sibling = `${first}:sibling`
+    await expectReply(conn, ['WATCH', first], '+OK\r\n')
+    await expectReply(conn, ['SET', first, 'touched'], '+OK\r\n')
+    await expectReply(conn, ['MULTI'], '+OK\r\n')
+    await expectReply(conn, ['SET', sibling, '1'], QUEUED)
+    await expectReply(conn, ['SET', second, '2'], QUEUED)
+    await expectReply(conn, ['EXEC'], legacy ? CROSSSLOT : '*-1\r\n')
+    await expectReply(conn, ['EXEC'], EXEC_WITHOUT_MULTI)
+    await expectReply(conn, ['GET', second], '$-1\r\n')
   })
 })

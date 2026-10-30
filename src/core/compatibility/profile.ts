@@ -111,6 +111,7 @@ export type FeatureId =
   | 'error.expire-time-quoted-wording'
   | 'error.no-multi-named-wording'
   | 'transaction.refusal-empties-queue'
+  | 'transaction.watch-dirty-stops-queue'
   | 'timeout.ceil-ms'
   | 'lpos.rank-range-check'
 

@@ -133,12 +133,15 @@ export function createClusterPolicy(
       // Inside MULTI, remember which slot the queue touches; EXEC refuses a
       // queue that spans slots. A refused command, or any command after it,
       // is not queued by Redis (`queueMultiCommand` stops once the
-      // transaction is dirty), so it takes no part.
+      // transaction is dirty), so it takes no part. From 7.0 a touched WATCH
+      // stops queueing too (CLIENT_DIRTY_CAS), so EXEC answers nil.
       if (
         slot === null ||
         !queueing ||
         plan.definition.flags.includes('transaction') ||
-        ctx.session.isTransactionDirty()
+        ctx.session.isTransactionDirty() ||
+        (ctx.session.isWatchDirty() &&
+          ctx.server.profile.has('transaction.watch-dirty-stops-queue'))
       ) {
         return
       }
