@@ -118,9 +118,11 @@ issue or say it was fixed). Load only the issues the user put in scope. Rules:
   validator refuses a hot group split across tracks. CHANGELOG.md and feature-gates.ts are touched
   by nearly every lane and resolve mechanically: do not make them hot groups. Balance tracks by
   expected size.
-- Rank parity issues (replies, errors, protocol, per-version behavior) first. The library is a
-  CI/test stand-in, so production-only concerns (memory retention, throughput, hardening) go
-  last or are left out unless they make test runs hang or blow up.
+- Order the backlog: (1) fixes to existing functionality that diverges from real Redis/Valkey
+  (wrong replies, errors, per-version behavior of commands the mock already has, client-mock
+  gaps); (2) only then new commands or features; (3) production-only concerns (memory retention,
+  throughput, hardening) last or left out, unless they make test runs hang or blow up. The
+  library is a CI/test stand-in.
 - Leave out issues that need an owner decision, are blocked on another repo (lua-redis-wasm
   engine issues), belong to another session's uncommitted work, or are epics/trackers. Put them in
   `exclusions` where agents must not touch them, and list them for the user.
