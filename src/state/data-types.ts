@@ -71,7 +71,8 @@ export type RedisStreamPendingEntry = {
 export type RedisStreamConsumerGroup = {
   name: Buffer
   lastDeliveredId: StreamId
-  entriesRead: number | null
+  // The group's logical read counter (int64 in real Redis); null is unknown.
+  entriesRead: bigint | null
   consumers: Map<string, RedisStreamConsumer>
   pending: Map<string, RedisStreamPendingEntry>
 }
@@ -82,7 +83,7 @@ export type RedisStreamData = {
   entries: RedisStreamEntry[]
   // Highest id ever added; drives `*` / `ms-*` id generation. 0-0 when empty.
   lastId: StreamId
-  entriesAdded: number
+  entriesAdded: bigint
   maxDeletedEntryId: StreamId
   groups: Map<string, RedisStreamConsumerGroup>
 }
@@ -224,7 +225,7 @@ export function createStreamData(): RedisStreamData {
     type: 'stream',
     entries: [],
     lastId: { ms: 0n, seq: 0n },
-    entriesAdded: 0,
+    entriesAdded: 0n,
     maxDeletedEntryId: { ms: 0n, seq: 0n },
     groups: new Map(),
   }

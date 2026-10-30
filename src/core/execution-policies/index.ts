@@ -31,7 +31,9 @@ export interface ExecutionPolicy {
 
 export { createTransactionPolicy } from './transaction-policy'
 export { createAuthPolicy } from './auth-policy'
+export { createNoMultiPolicy } from './no-multi-policy'
 export { createSubscribedModePolicy } from './subscribed-policy'
 export { createMonitorClientPolicy } from './monitor-client-policy'
+export { createClientPausePolicy } from './client-pause-policy'
 export type { ClusterPolicyOptions } from './cluster-policy'
 export { createClusterPolicy } from './cluster-policy'

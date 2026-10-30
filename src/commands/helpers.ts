@@ -22,22 +22,21 @@ export function integer(value: number | bigint): RedisResult {
 }
 
 // A score as text, for replies that carry it as a plain bulk string (ZSCAN).
-// Same profile-aware spelling as a `double` reply (#451); `-0` is normalized
-// to `0` like scoreValue.
+// Same profile-aware spelling as a `double` reply (#451), `-0` included.
 export function scoreBuffer(
   score: number,
   profile: DoubleFormatProfile,
 ): Buffer {
-  return Buffer.from(
-    formatRedisDouble(Object.is(score, -0) ? 0 : score, profile),
-  )
+  return Buffer.from(formatRedisDouble(score, profile))
 }
 
 // A sorted-set score reply. Protocol-aware: a bulk string on RESP2 (matching
 // scoreBuffer) and a `,double` on RESP3 — the shape real Redis uses for
-// ZSCORE/ZINCRBY/WITHSCORES scores. `-0` is normalized to `0` like Redis.
+// ZSCORE/ZINCRBY/WITHSCORES scores. A stored `-0` is spelled `-0`, as Redis
+// does; whether a sorted set keeps one is up to its writers
+// (listpackScores in zsets/helpers.ts, #512).
 export function scoreValue(score: number): RedisValue {
-  return RedisValue.double(Object.is(score, -0) ? 0 : score)
+  return RedisValue.double(score)
 }
 
 // member/score pairs for WITHSCORES-style replies: flat [m, s, ...] on RESP2,
@@ -59,6 +58,11 @@ export function simpleString(value: string): RedisResult {
 
 export function array(items: RedisValue[]): RedisResult {
   return RedisResult.create(RedisValue.array(items))
+}
+
+/** A RESP3 set (`~`); a plain array (`*`) on RESP2. */
+export function setReply(items: RedisValue[]): RedisResult {
+  return RedisResult.create(RedisValue.set(items))
 }
 
 /**
@@ -167,19 +171,68 @@ export function parseInt64Token(token: Buffer): bigint {
   return value
 }
 
-export function parsePositiveExpireToken(
+export type ExpireUnit = 'EX' | 'PX' | 'EXAT' | 'PXAT'
+
+/**
+ * The EX / PX / EXAT / PXAT time of SET, SETEX, PSETEX and GETEX as an
+ * absolute deadline in ms, checked as `getExpireMillisecondsOrReply`
+ * (t_string.c) does (#592): any int64, but `invalid expire time` when it is
+ * not positive, when seconds overflow on the way to ms, or when the deadline
+ * passes LLONG_MAX. A deadline past the safe-integer range is kept as the
+ * nearest double.
+ */
+export function stringExpireDeadlineMs(
   token: Buffer,
+  unit: ExpireUnit,
   commandName: string,
+  profile: CompatibilityProfile,
+  now = Date.now(),
 ): number {
-  const value = parseIntegerToken(token)
-  if (value <= 0) {
-    throw errors.invalidExpireTime(commandName)
+  const value = parseInt64Token(token)
+  const seconds = unit === 'EX' || unit === 'EXAT'
+  if (value <= 0n || (seconds && value > INT64_MAX / 1000n)) {
+    throw errors.invalidExpireTime(commandName, profile)
   }
 
-  return value
+  let ms = seconds ? value * 1000n : value
+  if (unit === 'EX' || unit === 'PX') ms += BigInt(now)
+  if (ms > INT64_MAX) {
+    throw errors.invalidExpireTime(commandName, profile)
+  }
+  return Number(ms)
+}
+
+/**
+ * The time of EXPIRE / PEXPIRE / EXPIREAT / PEXPIREAT as an absolute deadline
+ * in ms, checked as `expireGenericCommand` (expire.c) does (#592): any int64,
+ * negative included, but `invalid expire time` when seconds overflow on the
+ * way to ms or adding `basetime` (now, or 0 for the *AT forms) would.
+ */
+export function keyExpireDeadlineMs(
+  token: Buffer,
+  seconds: boolean,
+  basetime: number,
+  commandName: string,
+  profile: CompatibilityProfile,
+): number {
+  let when = parseInt64Token(token)
+  if (seconds) {
+    if (when > INT64_MAX / 1000n || when < INT64_MIN / 1000n) {
+      throw errors.invalidExpireTime(commandName, profile)
+    }
+    when *= 1000n
+  }
+
+  const base = BigInt(basetime)
+  if (when > INT64_MAX - base) {
+    throw errors.invalidExpireTime(commandName, profile)
+  }
+  return Number(when + base)
 }
 
 export {
+  expectSubcommandArgCount,
+  subcommandArityError,
   subcommandSyntaxError,
   unknownSubcommandError,
 } from '../core/subcommand-errors'

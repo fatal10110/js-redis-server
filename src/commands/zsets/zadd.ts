@@ -1,10 +1,15 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { RedisResult } from '../../core/redis-result'
 import { bulk, integer, scoreValue } from '../helpers'
-import { assertValidResultingScore, parseFloatArg } from './helpers'
+import {
+  assertValidResultingScore,
+  parseFloatArg,
+  storeListpackScores,
+} from './helpers'
 
 type ZaddPair = { score: number; member: Buffer }
 type ZaddCondition = 'NX' | 'XX'
@@ -33,98 +38,50 @@ function createZaddSchema() {
       }
 
       const options: ZaddOptions = { ch: false, incr: false }
+      let nx = false
+      let xx = false
+      let gt = false
+      let lt = false
       let cursor = index + 1
 
       while (cursor < input.length) {
-        const option = input[cursor]!.toString().toUpperCase()
-
-        if (option === 'NX') {
-          if (options.condition === 'XX') throw errors.zaddNxXxConflict()
-          options.condition = 'NX'
-          cursor++
-          continue
-        }
-
-        if (option === 'XX') {
-          if (options.condition === 'NX') throw errors.zaddNxXxConflict()
-          options.condition = 'XX'
-          cursor++
-          continue
-        }
-
-        if (option === 'GT') {
-          if (options.comparison === 'LT') {
-            throw errors.zaddGtLtNxConflict()
-          }
-          options.comparison = 'GT'
-          cursor++
-          continue
-        }
-
-        if (option === 'LT') {
-          if (options.comparison === 'GT') {
-            throw errors.zaddGtLtNxConflict()
-          }
-          options.comparison = 'LT'
-          cursor++
-          continue
-        }
-
-        if (option === 'CH') {
-          options.ch = true
-          cursor++
-          continue
-        }
-
-        if (option === 'INCR') {
-          options.incr = true
-          cursor++
-          continue
-        }
-
-        break
+        const option = asciiUpperCase(input[cursor]!.toString())
+        if (option === 'NX') nx = true
+        else if (option === 'XX') xx = true
+        else if (option === 'GT') gt = true
+        else if (option === 'LT') lt = true
+        else if (option === 'CH') options.ch = true
+        else if (option === 'INCR') options.incr = true
+        else break
+        cursor++
       }
 
-      if (options.condition === 'NX' && options.comparison) {
+      // Real Redis (zaddGenericCommand) checks the score/member parity before
+      // the option conflicts and before parsing any score.
+      const elements = input.length - cursor
+      if (elements === 0 || elements % 2 !== 0) {
+        throw errors.syntax()
+      }
+      if (nx && xx) throw errors.zaddNxXxConflict()
+      if ((gt && nx) || (lt && nx) || (gt && lt)) {
         throw errors.zaddGtLtNxConflict()
       }
+      if (options.incr && elements > 2) throw errors.zaddIncrPair()
 
-      const pairs = parseZaddPairs(input, cursor, ctx)
-      if (options.incr && pairs.length !== 1) {
-        throw errors.zaddIncrPair()
+      if (nx) options.condition = 'NX'
+      else if (xx) options.condition = 'XX'
+      if (gt) options.comparison = 'GT'
+      else if (lt) options.comparison = 'LT'
+
+      const pairs: ZaddPair[] = []
+      for (; cursor < input.length; cursor += 2) {
+        const score = parseFloatArg(input[cursor]!, ctx.profile)
+        pairs.push({ score, member: input[cursor + 1]! })
       }
 
       return { value: { key, options, pairs }, nextIndex: input.length }
     },
   )
-}
-
-function parseZaddPairs(
-  input: readonly Buffer[],
-  index: number,
-  ctx: ParseContext,
-): ZaddPair[] {
-  const pairs: ZaddPair[] = []
-  let cursor = index
-
-  if (cursor >= input.length) {
-    throw new WrongNumberOfArgumentsError(ctx.commandName)
-  }
-
-  while (cursor < input.length) {
-    const scoreToken = input[cursor]
-    const memberToken = input[cursor + 1]
-    if (!scoreToken || !memberToken) {
-      throw new WrongNumberOfArgumentsError(ctx.commandName)
-    }
-
-    const score = parseFloatArg(scoreToken.toString())
-
-    pairs.push({ score, member: memberToken })
-    cursor += 2
-  }
-
-  return pairs
 }
 
 function shouldApplyZaddUpdate(
@@ -149,14 +106,20 @@ export const zaddCommand = defineCommand({
       const [{ score, member }] = args.pairs
       const newScore = ctx.db.updateSortedSet(args.key, zset => {
         const existing = zset.getMember(member)
-        const nextScore = (existing?.score ?? 0) + score
+        // A new member takes the increment as is (zsetAdd), so INCR -0
+        // replies -0.
+        const nextScore = existing ? existing.score + score : score
         assertValidResultingScore(nextScore)
 
         if (!shouldApplyZaddUpdate(existing, nextScore, args.options)) {
           return null
         }
 
-        zset.setScore(member, nextScore)
+        // An equal score is no change (zsetAdd), so a stored -0 stays.
+        if (!existing || existing.score !== nextScore) {
+          zset.setScore(member, nextScore)
+          storeListpackScores(zset, [member], ctx.server)
+        }
         return nextScore
       })
       return newScore === null
@@ -166,6 +129,7 @@ export const zaddCommand = defineCommand({
 
     const replyCount = ctx.db.updateSortedSet(args.key, zset => {
       let count = 0
+      const zeroes: Buffer[] = []
       for (const { score, member } of args.pairs) {
         const existing = zset.getMember(member)
 
@@ -177,8 +141,12 @@ export const zaddCommand = defineCommand({
           if (!existing || existing.score !== score) count++
         }
 
-        zset.setScore(member, score)
+        if (!existing || existing.score !== score) {
+          zset.setScore(member, score)
+          if (Object.is(score, -0)) zeroes.push(member)
+        }
       }
+      storeListpackScores(zset, zeroes, ctx.server)
       return count
     })
     return integer(replyCount)

@@ -195,9 +195,51 @@ function formatHumanLongDouble(value: number): string {
   if (value === 0) {
     return '0'
   }
+  const { integer, scale } = exactScaled(Math.abs(value))
+  return humanFromScaled(value < 0, integer, scale)
+}
 
-  const sign = value < 0 ? '-' : ''
-  let { integer, scale } = exactScaled(Math.abs(value))
+/**
+ * The text of an INCRBYFLOAT / HINCRBYFLOAT result (and the value it stores):
+ * Redis computes in `long double` and spells the sum with
+ * `ld2string(…, LD_STR_HUMAN)` — `%.17Lf`, trailing zeros (and a bare `.`)
+ * dropped, `-0` shown as `0` — so `1e-17` is `0.00000000000000001`, `1e-18`
+ * and `-1e-18` are `0`, and `1e21` prints every integer digit (#543).
+ *
+ * The mock computes in a `double`, which stands in for the `long double` Redis
+ * holds, so the decimal rounded here is the double's shortest round-trip
+ * spelling, not its exact binary expansion: `1.5 + 2.3` is `3.8` as on Redis,
+ * where the exact double would print `3.79999999999999982`. A tie at the 17th
+ * decimal goes to even, which is where the `long double` nearest the decimal
+ * lands on the probed servers (`1.5e-17` → `…02`, `5e-18` → `0`). What a
+ * double cannot hold — the 64-bit mantissa's extra digits and its own rounding
+ * noise (`1234.5678` → `1234.56779999999999997`) — stays a known limit (#512).
+ */
+export function formatIncrByFloatResult(value: number): string {
+  if (!Number.isFinite(value)) {
+    return formatRedisDouble(value)
+  }
+  if (value === 0) {
+    return '0'
+  }
+  // `toExponential()` with no argument keeps the shortest round-trip digits.
+  const [mantissa, exponent] = Math.abs(value).toExponential().split('e')
+  const digits = BigInt(mantissa!.replace('.', ''))
+  const scale = mantissa!.replace('.', '').length - 1 - Number(exponent)
+  return scale >= 0
+    ? humanFromScaled(value < 0, digits, scale)
+    : humanFromScaled(value < 0, digits * 10n ** BigInt(-scale), 0)
+}
+
+/**
+ * `integer / 10^scale` rounded to 17 decimals (ties to even) and trimmed like
+ * `LD_STR_HUMAN`: trailing zeros and a bare `.` dropped, `-0` shown as `0`.
+ */
+function humanFromScaled(
+  negative: boolean,
+  integer: bigint,
+  scale: number,
+): string {
   if (scale > HUMAN_LONG_DOUBLE_DECIMALS) {
     const divisor = 10n ** BigInt(scale - HUMAN_LONG_DOUBLE_DECIMALS)
     const quotient = integer / divisor
@@ -212,7 +254,7 @@ function formatHumanLongDouble(value: number): string {
   const whole = text.slice(0, text.length - scale)
   const fraction = text.slice(text.length - scale).replace(/0+$/, '')
   const out = fraction ? `${whole}.${fraction}` : whole
-  return out === '0' ? '0' : sign + out
+  return out === '0' ? '0' : (negative ? '-' : '') + out
 }
 
 function stripFraction(text: string): string {

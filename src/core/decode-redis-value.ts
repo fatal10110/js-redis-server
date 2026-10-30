@@ -6,15 +6,21 @@ import type { RespVersion } from './resp-encoder'
  * Native JS value a {@link RedisValue} decodes to — the shape a real client
  * hands back to application code.
  */
-export type NativeRedisReply =
+/**
+ * A decoded reply. `E` is what an error *nested* in a container decodes to:
+ * `never` by default (the decoder throws), or the error class when
+ * {@link ClientDecodeOptions.nestedErrors} is `'return'`.
+ */
+export type NativeRedisReply<E = never> =
   | string
   | number
   | bigint
   | boolean
   | Buffer
   | null
-  | NativeRedisReply[]
-  | { [key: string]: NativeRedisReply }
+  | E
+  | NativeRedisReply<E>[]
+  | { [key: string]: NativeRedisReply<E> }
 
 /**
  * Everything {@link decodeRedisValue} needs: the points where two socketless
@@ -94,7 +100,21 @@ export type ClientDecodeOptions = {
   error: (text: string, code?: string) => Error
   /** Return `Buffer`s for bulk-string/verbatim replies instead of utf8 strings. */
   returnBuffers?: boolean
+  /**
+   * What an `error` *inside* an array, set, map or push becomes. A top-level
+   * error reply is always thrown.
+   *  - `'throw'` (the default): the first nested error is thrown too, failing
+   *    the whole reply.
+   *  - `'return'`: it is decoded in place to the {@link error} object, as
+   *    node-redis does: `EVAL "return {1, redis.error_reply('x')}" 0`
+   *    resolves `[1, SimpleError('ERR x')]` (verified against Redis 8.0 with
+   *    node-redis 6.0, at RESP2 and RESP3, map values included).
+   */
+  nestedErrors?: 'throw' | 'return'
 }
+
+/** Options that decode nested errors in place; see {@link ClientDecodeOptions.nestedErrors}. */
+export type ReturnNestedErrors = { nestedErrors: 'return' }
 
 /**
  * The full on-the-wire error text a real client sees — `<CODE> <message>`
@@ -109,14 +129,24 @@ export function redisErrorText(value: {
 
 /**
  * Decode a {@link RedisValue} into the native JS reply a client would surface.
- * `error` replies are thrown, not returned, because that is what a client does
- * with them; {@link DecodeRedisValueOptions.error} decides the class.
+ * A top-level `error` reply is thrown, not returned, because that is what a
+ * client does with it; {@link DecodeRedisValueOptions.error} decides the class,
+ * and {@link ClientDecodeOptions.nestedErrors} whether one inside a container
+ * throws too or is decoded in place.
  */
 export function decodeRedisValue(
   value: RedisValue,
+  options: DecodeRedisValueOptions & ReturnNestedErrors,
+): NativeRedisReply<Error>
+export function decodeRedisValue(
+  value: RedisValue,
   options: DecodeRedisValueOptions,
-): NativeRedisReply {
-  const decode = (item: RedisValue) => decodeRedisValue(item, options)
+): NativeRedisReply
+export function decodeRedisValue(
+  value: RedisValue,
+  options: DecodeRedisValueOptions,
+): NativeRedisReply<Error> {
+  const decode = (item: RedisValue) => decodeNested(item, options)
 
   switch (value.kind) {
     case 'simple-string':
@@ -210,13 +240,32 @@ export function decodeRedisValue(
  */
 export function decodeRedisMapEntries(
   entries: readonly [RedisValue, RedisValue][],
+  options: DecodeRedisValueOptions & ReturnNestedErrors,
+): { [key: string]: NativeRedisReply<Error> }
+export function decodeRedisMapEntries(
+  entries: readonly [RedisValue, RedisValue][],
   options: DecodeRedisValueOptions,
-): { [key: string]: NativeRedisReply } {
-  const out: { [key: string]: NativeRedisReply } = {}
+): { [key: string]: NativeRedisReply }
+export function decodeRedisMapEntries(
+  entries: readonly [RedisValue, RedisValue][],
+  options: DecodeRedisValueOptions,
+): { [key: string]: NativeRedisReply<Error> } {
+  const out: { [key: string]: NativeRedisReply<Error> } = {}
   for (const [key, value] of entries) {
-    out[decodeRedisKey(key)] = decodeRedisValue(value, options)
+    out[decodeRedisKey(key)] = decodeNested(value, options)
   }
   return out
+}
+
+/** Decode one element of a container, honouring {@link ClientDecodeOptions.nestedErrors}. */
+function decodeNested(
+  item: RedisValue,
+  options: DecodeRedisValueOptions,
+): NativeRedisReply<Error> {
+  if (item.kind === 'error' && options.nestedErrors === 'return') {
+    return options.error(redisErrorText(item), item.code)
+  }
+  return decodeRedisValue(item, options)
 }
 
 /** Map keys are always plain strings, regardless of `returnBuffers`. */

@@ -187,6 +187,9 @@ function cString(value: Buffer, precision: number): Buffer {
  * Redis and are compat-tested byte for byte, so change them only against a
  * real server.
  */
+const GEO_STORE_WITH_OPTIONS_6_2 =
+  'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORDS options'
+
 export const errors = Object.freeze({
   syntax: () => new RedisCommandError('syntax error'),
   /**
@@ -225,6 +228,31 @@ export const errors = Object.freeze({
         ? "Replica can't interact with the keyspace"
         : "Replica can't interract with the keyspace",
     ),
+  /**
+   * A command other than (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT /
+   * RESET sent on a RESP2 connection in subscribed mode. `name` is the
+   * command-table entry the call was looked up as: `config|get` from 7.0,
+   * the parent `config` on 6.2. 6.2 has no sharded Pub/Sub, so its list
+   * reads `(P)SUBSCRIBE / (P)UNSUBSCRIBE`; see
+   * `error.subscribed-context-wording`.
+   */
+  subscribedContext: (name: string, profile: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile.has('error.subscribed-context-wording')
+        ? `Can't execute '${name}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`
+        : `Can't execute '${name}': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`,
+    ),
+
+  /**
+   * (P|S)UNSUBSCRIBE on a connection with no subscription of any kind, on
+   * valkey 8.0.0 / 8.0.1 only (`pubsub.unsubscribe-nosub`). `name` is the
+   * lowercase command name.
+   */
+  notSubscribed: (name: string) =>
+    new RedisCommandError(
+      `'${name}' command executed not in subscribed mode`,
+      'NOSUB',
+    ),
 
   // Numbers
   expectedInteger: () =>
@@ -249,15 +277,24 @@ export const errors = Object.freeze({
   hashValueNotFloat: () => new RedisCommandError('hash value is not a float'),
 
   // Lists / blocking
-  lposRankZero: () =>
+  /** Redis 7.0.1 added the negative-rank hint; see `error.lpos-rank-zero-hint`. */
+  lposRankZero: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      "RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list",
+      profile.has('error.lpos-rank-zero-hint')
+        ? "RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list"
+        : "RANK can't be zero: use 1 to start from the first match, 2 from the second, ...",
     ),
   lposCountNegative: () => new RedisCommandError("COUNT can't be negative"),
   lposMaxlenNegative: () => new RedisCommandError("MAXLEN can't be negative"),
   timeoutNotFloat: () =>
     new RedisCommandError('timeout is not a float or out of range'),
   timeoutNegative: () => new RedisCommandError('timeout is negative'),
+  timeoutOutOfRange: () => new RedisCommandError('timeout is out of range'),
+  /** `getRangeLongFromObjectOrReply(-LONG_MAX, LONG_MAX)`, Redis 7.2+. */
+  lposRankOutOfRange: () =>
+    new RedisCommandError(
+      'value is out of range, value must between -9223372036854775807 and 9223372036854775807',
+    ),
   indexOutOfRange: () => new RedisCommandError('index out of range'),
   noSuchKey: () => new RedisCommandError('no such key'),
 
@@ -284,20 +321,44 @@ export const errors = Object.freeze({
     new RedisCommandError(
       'INCR option supports a single increment-element pair',
     ),
-  invalidExpireTime: (commandName: string) =>
-    new RedisCommandError(`invalid expire time in '${commandName}' command`),
+  /**
+   * Redis 6.2 names the command bare (`in set`); 7.0 quotes it, see
+   * `error.expire-time-quoted-wording`. Without a profile (commands newer
+   * than 7.0, such as HEXPIRE) the quoted form.
+   */
+  invalidExpireTime: (commandName: string, profile?: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile && !profile.has('error.expire-time-quoted-wording')
+        ? `invalid expire time in ${commandName}`
+        : `invalid expire time in '${commandName}' command`,
+    ),
 
   // Geo
   invalidLongitudeLatitude: (lon: number, lat: number) =>
     new RedisCommandError(
-      `invalid longitude,latitude pair ${lon.toFixed(6)},${lat.toFixed(6)}`,
+      `invalid longitude,latitude pair ${formatCFixed6(lon)},${formatCFixed6(lat)}`,
     ),
-  geoUnsupportedUnit: () =>
+  geoUnsupportedUnit: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      'unsupported unit provided. please use M, KM, FT, MI',
+      profile.has('geo.unit-case-folding')
+        ? 'unsupported unit provided. please use M, KM, FT, MI'
+        : 'unsupported unit provided. please use m, km, ft, mi',
     ),
-  geoMissingMember: () =>
-    new RedisCommandError('could not decode requested zset member'),
+  // Valkey 9.0 names the member (valkey@9.0.0 geo.c:125-131
+  // longLatFromMemberOrReply, `%s`: cut at a NUL, CR / LF turned into spaces
+  // by addReplyErrorFormat); Redis and Valkey 8.x say `could not decode`.
+  geoMissingMember: (member: Buffer, profile: CompatibilityProfile) =>
+    profile.has('geo.missing-member-wording')
+      ? new RedisCommandError(
+          Buffer.concat([
+            Buffer.from('member '),
+            Buffer.from(cString(member, member.length)).map(byte =>
+              byte === 0x0d || byte === 0x0a ? 0x20 : byte,
+            ),
+            Buffer.from(' does not exist'),
+          ]),
+        )
+      : new RedisCommandError('could not decode requested zset member'),
   geoCountNotPositive: () => new RedisCommandError('COUNT must be > 0'),
   geoAnyRequiresCount: () =>
     new RedisCommandError('the ANY argument requires COUNT argument'),
@@ -307,13 +368,18 @@ export const errors = Object.freeze({
   geoHeightNotNumeric: () => new RedisCommandError('need numeric height'),
   geoBoxNegative: () =>
     new RedisCommandError('height or width cannot be negative'),
-  geoRadiusStoreWithOptions: () =>
+  geoRadiusStoreWithOptions: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
+      profile.has('geo.store-with-options-wording')
+        ? 'STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
+        : GEO_STORE_WITH_OPTIONS_6_2,
     ),
-  geoSearchStoreWithOptions: () =>
+  // Redis 6.2 uses the GEORADIUS wording for GEOSEARCHSTORE too.
+  geoSearchStoreWithOptions: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      'GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
+      profile.has('geo.store-with-options-wording')
+        ? 'GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
+        : GEO_STORE_WITH_OPTIONS_6_2,
     ),
 
   // Strings / bits
@@ -358,7 +424,7 @@ export const errors = Object.freeze({
   scriptFlushOption: () =>
     new RedisCommandError('SCRIPT FLUSH only support SYNC|ASYNC option'),
   functionFlushOption: () =>
-    new RedisCommandError('FUNCTION FLUSH only support SYNC|ASYNC option'),
+    new RedisCommandError('FUNCTION FLUSH only supports SYNC|ASYNC option'),
   scriptDebugMode: () => new RedisCommandError('Use SCRIPT DEBUG YES/SYNC/NO'),
   /**
    * A script's `redis.call` named a command (or, from 7.0, a container
@@ -370,6 +436,18 @@ export const errors = Object.freeze({
       profile?.has('script.unknown-command-valkey-wording')
         ? 'Unknown command called from script'
         : 'Unknown Redis command called from script',
+    ),
+  /**
+   * XREAD / XREADGROUP BLOCK from a script, up to Redis 7.2 / Valkey 7.2
+   * (`script.stream-block-allowed`, #563). It names the command as the
+   * script sent it, case and all.
+   */
+  scriptStreamBlock: (command: Buffer | string) =>
+    new RedisCommandError(
+      Buffer.concat([
+        Buffer.from(command),
+        Buffer.from(' command is not allowed with BLOCK option from scripts'),
+      ]),
     ),
   /** A `noscript` command from a script. Valkey 9.0+ names itself. */
   scriptNotAllowedCommand: (profile?: CompatibilityProfile) =>
@@ -417,6 +495,11 @@ export const errors = Object.freeze({
     new RedisCommandError(
       `Number of keys can't be greater than number of args`,
     ),
+  /** EVAL / EVALSHA / FCALL family when numkeys < 0 (eval.c, functions.c). */
+  negativeNumberOfKeys: () =>
+    new RedisCommandError(`Number of keys can't be negative`),
+  /** FCALL / FCALL_RO when numkeys is not an int64 (functions.c). */
+  badNumberOfKeys: () => new RedisCommandError('Bad number of keys provided'),
   numKeysGreaterThanZero: () =>
     new RedisCommandError('numkeys should be greater than 0'),
   /** ZUNION/ZINTER/ZDIFF family when numkeys <= 0. */
@@ -475,6 +558,19 @@ export const errors = Object.freeze({
   discardWithoutMulti: () => new RedisCommandError('DISCARD without MULTI'),
   watchInsideMulti: () =>
     new RedisCommandError('WATCH inside MULTI is not allowed'),
+  /**
+   * A command flagged `no_multi` sent inside MULTI. Valkey 9.0 names it
+   * (`fullname` in lower case); see `error.no-multi-named-wording`.
+   */
+  commandNotAllowedInTransaction: (
+    name: string,
+    profile: CompatibilityProfile,
+  ) =>
+    new RedisCommandError(
+      profile.has('error.no-multi-named-wording')
+        ? `Command '${name}' not allowed inside a transaction`
+        : 'Command not allowed inside a transaction',
+    ),
   transactionDiscarded: () =>
     new RedisCommandError(
       'Transaction discarded because of previous errors.',
@@ -495,6 +591,11 @@ export const errors = Object.freeze({
     new RedisCommandError('source and destination objects are the same'),
   /** A database index outside `0 .. databaseCount - 1` (e.g. `COPY ... DB 99`, `SELECT 99`). */
   dbIndexOutOfRange: () => new RedisCommandError('DB index is out of range'),
+  /** `getIntFromObjectOrReply` on an int64 outside the C int range (SELECT, MOVE, COPY ... DB). */
+  int32OutOfRange: () =>
+    new RedisCommandError(
+      'value is out of range, value must between -2147483648 and 2147483647',
+    ),
 
   // Streams
   streamLimitRequiresApprox: () =>
@@ -542,3 +643,13 @@ export const errors = Object.freeze({
       'The stream has exhausted the last possible ID, unable to add more items',
     ),
 })
+
+/**
+ * C's `%f` for the GEO coordinate errors: six decimals, `inf` / `-inf` for
+ * an infinity, and plain digits (no exponent) however large the value.
+ */
+function formatCFixed6(value: number): string {
+  if (!Number.isFinite(value)) return value > 0 ? 'inf' : '-inf'
+  if (Math.abs(value) < 1e21) return value.toFixed(6)
+  return `${BigInt(value)}.000000`
+}

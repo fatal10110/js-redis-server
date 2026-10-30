@@ -1,6 +1,11 @@
 .vscode
 .cursor
-.claude/
+# Session worktrees and local settings stay untracked; the shared agent
+# definitions and skills are part of the repo.
+.claude/*
+!.claude/agents/
+!.claude/skills/
+__pycache__/
 dump.rdb
 .DS_Store
 dist

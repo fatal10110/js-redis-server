@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -50,7 +51,7 @@ function createCountSchema() {
       if (index >= input.length) {
         return { value: null, nextIndex: index }
       }
-      if (input[index].toString().toUpperCase() !== 'COUNT') {
+      if (asciiUpperCase(input[index].toString()) !== 'COUNT') {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
       const raw = input[index + 1]

@@ -5,10 +5,9 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { StreamId } from '../../state/data-types'
-import { bulk } from '../helpers'
 import { compareStreamId, MIN_ID, parseExactId } from './ids'
 import { entryToReply } from './replies'
-import { blockOnKeys } from '../blocking'
+import { blockOrTimeOut } from '../blocking'
 import { parseXreadOptions } from './xread-options'
 
 // XREAD [COUNT count] STREAMS key [key ...] id [id ...]
@@ -86,21 +85,6 @@ function readStreamEntries(
     : null
 }
 
-async function blockingXread(
-  streams: ResolvedXreadStream[],
-  count: number | null,
-  blockMs: number,
-  ctx: RedisExecutionContext,
-): Promise<RedisResult> {
-  const result = await blockOnKeys(ctx, {
-    keys: streams.map(s => s.key),
-    type: 'stream',
-    timeoutMs: blockMs === 0 ? undefined : blockMs,
-    attempt: () => readStreamEntries(streams, count, ctx),
-  })
-  return result ?? bulk(null)
-}
-
 export const xreadCommand = defineCommand({
   name: 'xread',
   rawKeys: xreadGetKeys,
@@ -128,8 +112,20 @@ export const xreadCommand = defineCommand({
     })
 
     const immediate = readStreamEntries(resolved, count, ctx)
-    if (immediate || blockMs === null) return immediate ?? bulk(null)
+    if (immediate || blockMs === null)
+      return immediate ?? RedisResult.create(RedisValue.nullArray())
 
-    return blockingXread(resolved, count, blockMs, ctx)
+    // From a script (7.4+; earlier ones are refused while parsing) this is
+    // the timeout reply at once, even with BLOCK 0 (#563).
+    return blockOrTimeOut(
+      ctx,
+      {
+        keys: resolved.map(s => s.key),
+        type: 'stream',
+        timeoutMs: blockMs === 0 ? undefined : blockMs,
+        attempt: () => readStreamEntries(resolved, count, ctx),
+      },
+      () => RedisResult.create(RedisValue.nullArray()),
+    )
   },
 })

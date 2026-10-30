@@ -1,6 +1,9 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import { parseString2dToken } from '../../core/double-token'
 import {
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
@@ -14,7 +17,7 @@ import type {
   RedisSortedSetMember,
 } from '../../state'
 import { array, integer, parseIntegerToken, scorePairs } from '../helpers'
-import { getSortedMembers } from './helpers'
+import { getSortedMembers, listpackScores } from './helpers'
 
 // ZUNIONSTORE/ZINTERSTORE/ZUNION/ZINTER/ZDIFF/ZDIFFSTORE/ZINTERCARD.
 // Source keys may be sorted sets OR plain sets (a set is treated as a zset with
@@ -168,24 +171,17 @@ function storeResult(
     db.delete(destination)
     return 0
   }
-  db.updateSortedSet(destination, zset => {
-    zset.replaceMembers(members, { forceDirty: true })
-  })
+  // One write replacing whatever the destination held, like real Redis's
+  // setKey(): any type, its TTL cleared, a single `<command>store` event.
+  db.set(destination, { type: 'zset', members })
   return members.size
 }
 
 // ------------------------------------------------------------------- parsing
 
-function parseWeight(token: Buffer): number {
-  const raw = token.toString()
-  const normalized = raw.toLowerCase()
-  if (normalized === 'inf' || normalized === '+inf') return Infinity
-  if (normalized === '-inf') return -Infinity
-
-  const value = Number(raw)
-  if (raw.trim() === '' || !Number.isFinite(value)) {
-    throw errors.weightNotFloat()
-  }
+function parseWeight(token: Buffer, profile: CompatibilityProfile): number {
+  const value = parseString2dToken(token, profile)
+  if (value === undefined) throw errors.weightNotFloat()
   return value
 }
 
@@ -220,7 +216,7 @@ function parseSetOp(
   let withScores = false
 
   while (cursor < input.length) {
-    const option = input[cursor]!.toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor]!.toString())
 
     if (options.weightsAggregate && option === 'WEIGHTS') {
       cursor++
@@ -228,7 +224,7 @@ function parseSetOp(
       for (let i = 0; i < numkeys; i++) {
         const token = input[cursor]
         if (!token) throw errors.syntax()
-        weights.push(parseWeight(token))
+        weights.push(parseWeight(token, ctx.profile))
         cursor++
       }
       continue
@@ -238,7 +234,7 @@ function parseSetOp(
       cursor++
       const token = input[cursor]
       if (!token) throw errors.syntax()
-      const value = token.toString().toUpperCase()
+      const value = asciiUpperCase(token.toString())
       if (value === 'SUM') aggregate = 'sum'
       else if (value === 'MIN') aggregate = 'min'
       else if (value === 'MAX') aggregate = 'max'
@@ -279,7 +275,13 @@ export const zunionstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeUnion(sources, args.weights, args.aggregate)
-    return integer(storeResult(ctx.db, args.destination!, result))
+    return integer(
+      storeResult(
+        ctx.db,
+        args.destination!,
+        listpackScores(result, ctx.server),
+      ),
+    )
   },
 })
 
@@ -292,7 +294,13 @@ export const zinterstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeIntersection(sources, args.weights, args.aggregate)
-    return integer(storeResult(ctx.db, args.destination!, result))
+    return integer(
+      storeResult(
+        ctx.db,
+        args.destination!,
+        listpackScores(result, ctx.server),
+      ),
+    )
   },
 })
 
@@ -305,7 +313,13 @@ export const zdiffstoreCommand = defineCommand({
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeDifference(sources)
-    return integer(storeResult(ctx.db, args.destination!, result))
+    return integer(
+      storeResult(
+        ctx.db,
+        args.destination!,
+        listpackScores(result, ctx.server),
+      ),
+    )
   },
 })
 
@@ -367,7 +381,7 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
 
   let limit = 0
   if (cursor < input.length) {
-    if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
+    if (asciiUpperCase(input[cursor]!.toString()) !== 'LIMIT') {
       throw errors.syntax()
     }
     cursor++

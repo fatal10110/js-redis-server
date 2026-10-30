@@ -7,6 +7,7 @@ import { RedisPubSubBroker } from './pubsub-broker'
 import { RedisScriptCache } from './script-cache'
 import { RedisFunctionRegistry } from './function-registry'
 import { SerialTurnQueue } from '../core/turn-queue'
+import { ClientPauseState } from './client-pause'
 import type { RedisClientSession } from '../core/redis-context'
 import {
   createRedisLuaRuntime,
@@ -62,6 +63,11 @@ export class RedisServerState {
    */
   readonly turnQueue = new SerialTurnQueue()
   /**
+   * CLIENT PAUSE: server-wide, like real Redis. The client-pause execution
+   * policy postpones commands while it is active.
+   */
+  readonly clientPause = new ClientPauseState()
+  /**
    * Parsed `notify-keyspace-events` flags; empty disables keyspace
    * notifications. Parsed once by CONFIG SET (and rendered back to Redis'
    * canonical string by CONFIG GET), so the wired {@link KeyspaceNotifier}
@@ -78,6 +84,7 @@ export class RedisServerState {
   private readonly clientSessions = new Set<RedisClientSession>()
   private activeExpiryTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
+  private readonly activeExpiryIntervalMs: number | false | undefined
   private luaRuntimePromise: Promise<RedisLuaRuntime> | null = null
   private luaRuntime: RedisLuaRuntime | null = null
 
@@ -111,7 +118,8 @@ export class RedisServerState {
       )
     }
 
-    this.startActiveExpiry(options?.activeExpiryIntervalMs)
+    this.activeExpiryIntervalMs = options?.activeExpiryIntervalMs
+    this.startActiveExpiry(this.activeExpiryIntervalMs)
   }
 
   /**
@@ -203,6 +211,8 @@ export class RedisServerState {
 
   close(): void {
     this.closed = true
+    // Lifts a CLIENT PAUSE so its timer cannot keep the process alive.
+    this.clientPause.unpause()
     if (this.activeExpiryTimer) {
       clearTimeout(this.activeExpiryTimer)
       this.activeExpiryTimer = null
@@ -216,6 +226,21 @@ export class RedisServerState {
     }
     this.luaRuntime = null
     this.luaRuntimePromise = null
+  }
+
+  /**
+   * Undo {@link close}: re-arm active expiry with the interval the state was
+   * built with. Data, scripts and functions survived the close, and the Lua
+   * runtime is rebuilt on first use, so nothing else needs restoring. A no-op
+   * on an open state. Used when a client facade that owns the state is
+   * re-opened by `connect()`.
+   */
+  reopen(): void {
+    if (!this.closed) {
+      return
+    }
+    this.closed = false
+    this.startActiveExpiry(this.activeExpiryIntervalMs)
   }
 
   private startActiveExpiry(intervalMs: number | false | undefined): void {
@@ -232,6 +257,11 @@ export class RedisServerState {
   }
 
   private scheduleActiveExpiry(intervalMs: number): void {
+    // A tick still in flight across a close() + reopen() reschedules itself
+    // too; keep only one timer either way.
+    if (this.activeExpiryTimer) {
+      clearTimeout(this.activeExpiryTimer)
+    }
     const timer = setTimeout(() => {
       this.activeExpiryTimer = null
       void this.runActiveExpiryTick(intervalMs)

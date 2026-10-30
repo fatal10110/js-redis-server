@@ -6,9 +6,9 @@ import { RedisValue } from '../src/core/redis-value'
 /**
  * The shape a `redis.call` reply takes in Lua, per the protocol the script
  * selected with `redis.setresp()` (#449). The integration suites cover the
- * kinds commands emit today (double, map, map-pairs, flat-pairs); this covers
- * the RESP3 branches no command reaches yet — set, boolean, big number and
- * verbatim string.
+ * kinds commands emit (double, map, map-pairs, flat-pairs, set); this covers
+ * the RESP3 branches one by one — set, boolean, big number and verbatim
+ * string.
  */
 describe('redisValueToLuaReply', () => {
   const b = (s: string) => Buffer.from(s)

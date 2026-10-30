@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import {
   defineCommand,
   type CommandIntrospection,
@@ -30,7 +31,7 @@ const zrankSchema = t.custom<ZRankArgs>(zrankLayout, (input, index, ctx) => {
   }
 
   const option = input[index + 2]
-  if (option && option.toString().toUpperCase() !== 'WITHSCORE') {
+  if (option && asciiUpperCase(option.toString()) !== 'WITHSCORE') {
     throw errors.syntax()
   }
 

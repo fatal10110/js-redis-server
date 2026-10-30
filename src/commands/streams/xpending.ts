@@ -1,9 +1,14 @@
+import { asciiUpperToken } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
 import { array } from '../helpers'
-import { pendingEntriesSorted, requireStreamGroup } from './groups'
+import {
+  consumerPendingCount,
+  pendingEntriesSorted,
+  requireStreamGroup,
+} from './groups'
 import {
   bufferId,
   compareStreamId,
@@ -44,7 +49,7 @@ function createXpendingSchema() {
 
       let cursor = index + 2
       let minIdleMs: number | null = null
-      if (input[cursor]?.toString().toUpperCase() === 'IDLE') {
+      if (asciiUpperToken(input[cursor]) === 'IDLE') {
         const raw = input[cursor + 1]
         if (!raw) throw new WrongNumberOfArgumentsError(ctx.commandName)
         minIdleMs = parseNonNegativeInteger(raw)
@@ -98,27 +103,30 @@ export const xpendingCommand = defineCommand({
           integerValue(0),
           nullBulk(),
           nullBulk(),
-          RedisValue.array([]),
+          RedisValue.nullArray(),
         ])
-      }
-
-      const counts = new Map<string, number>()
-      for (const entry of pending) {
-        counts.set(entry.consumerId, (counts.get(entry.consumerId) ?? 0) + 1)
       }
 
       return array([
         integerValue(pending.length),
         streamIdValue(pending[0].id),
         streamIdValue(pending[pending.length - 1].id),
+        // The consumers with something pending, by name in byte order, each
+        // with its count as a bulk string (real Redis' addReplyBulkLongLong).
         RedisValue.array(
-          Array.from(counts, ([consumerId, count]) => {
-            const consumer = group.consumers.get(consumerId)
-            return RedisValue.array([
-              bulkString(consumer?.name ?? Buffer.from(consumerId, 'hex')),
-              integerValue(count),
-            ])
-          }),
+          Array.from(group.consumers.entries())
+            .sort(([, a], [, b]) => Buffer.compare(a.name, b.name))
+            .flatMap(([consumerId, consumer]) => {
+              const count = consumerPendingCount(group, consumerId)
+              return count === 0
+                ? []
+                : [
+                    RedisValue.array([
+                      bulkString(consumer.name),
+                      bulkString(String(count)),
+                    ]),
+                  ]
+            }),
         ),
       ])
     }

@@ -143,10 +143,7 @@ describe('XREAD BLOCK (unit)', () => {
       'xread',
       buf('BLOCK', '50', 'STREAMS', 's', '$'),
     )
-    assert.deepStrictEqual(
-      result,
-      RedisResult.create(RedisValue.bulkString(null)),
-    )
+    assert.deepStrictEqual(result, RedisResult.create(RedisValue.nullArray()))
   })
 
   test('XREAD non-blocking still works (no BLOCK option)', async () => {
@@ -212,7 +209,7 @@ describe('blocking commands inside MULTI/EXEC (unit)', () => {
     const result = await session.execute('exec', buf())
     // EXEC array has one entry: nil array from non-blocking BLPOP
     assert.strictEqual(result.value.kind, 'array')
-    const execItems = (result.value as { kind: 'array'; items: RedisResult[] })
+    const execItems = (result.value as { kind: 'array'; items: RedisValue[] })
       .items
     assert.strictEqual(execItems.length, 1)
     assert.deepStrictEqual(
@@ -231,13 +228,13 @@ describe('blocking commands inside MULTI/EXEC (unit)', () => {
     )
     const result = await session.execute('exec', buf())
     assert.strictEqual(result.value.kind, 'array')
-    const execItems = (result.value as { kind: 'array'; items: RedisResult[] })
+    const execItems = (result.value as { kind: 'array'; items: RedisValue[] })
       .items
     assert.strictEqual(execItems.length, 1)
     assert.deepStrictEqual(
       execItems[0],
-      RedisValue.bulkString(null),
-      'XREAD BLOCK in MULTI returns null without blocking',
+      RedisValue.nullArray(),
+      'XREAD BLOCK in MULTI returns a null array without blocking',
     )
   })
 })

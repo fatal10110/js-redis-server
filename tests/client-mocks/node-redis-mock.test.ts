@@ -836,17 +836,6 @@ describe('createNodeRedisMock (standalone)', () => {
     }
   })
 
-  test('connect() on a closed client fails loudly (known gap)', async () => {
-    // KNOWN GAP (#440), pinned so it cannot regress silently: real node-redis re-opens
-    // a closed client — it reconnects, serves commands and emits a second
-    // 'end'. This facade cannot, because the owning client closes its
-    // RedisServerState and that is terminal. Until it can, connect() refuses
-    // rather than handing back a dead client that looks alive.
-    const client = await makeClient()
-    await client.quit()
-    await assert.rejects(() => client.connect(), ClientClosedError)
-  })
-
   test("disconnect() and destroy() emit 'end' before they return", async () => {
     // Real destroy() runs destroySocket() → emit('end') in-line, and
     // disconnect() is `Promise.resolve(this.destroy())`.
@@ -1028,8 +1017,8 @@ describe('createNodeRedisMock (cluster)', () => {
   // command whose first argument is NOT a key still reaches the key's owner —
   // a mis-route surfaces as -MOVED from the node that does not own it.
   //
-  // With 3 masters the slot space splits into [0,5460] / [5461,10921] /
-  // [10922,16383]; `alpha` (865), `abc` (7638) and `k1` (12706) sit one per
+  // With 3 masters the slot space splits into [0,5460] / [5461,10922] /
+  // [10923,16383]; `alpha` (865), `abc` (7638) and `k1` (12706) sit one per
   // range. Whatever slot a command's first argument hashes to, it can cover at
   // most one of the three — so a first-argument router mis-routes at least two
   // runs of every case below, whatever the literal happens to be.

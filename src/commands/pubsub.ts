@@ -1,7 +1,6 @@
 import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
-import { WrongNumberOfArgumentsError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import type { RedisExecutionContext } from '../core/redis-context'
@@ -9,10 +8,13 @@ import { encodeRedisValue } from '../core/resp-encoder'
 import {
   array,
   integer,
+  expectSubcommandArgCount,
+  helpReply,
   subcommandSyntaxError,
   unknownSubcommandError,
 } from './helpers'
 import { commandSubcommandInfo } from './introspection'
+import { pubsubHelpLines } from './container-help'
 
 type PubSubArgs = {
   subcommand: Buffer
@@ -95,26 +97,11 @@ export const publishCommand = defineCommand({
   }),
   flags: ['pubsub', 'fast'],
   keys: () => [],
-  execute: (args, ctx) => {
-    if (
-      ctx.session.mode !== 'subscribed' ||
-      ctx.session.protocolVersion !== 3 ||
-      !ctx.server.profile.has('pubsub.resp3-publish-reply-first')
-    ) {
-      return integer(
-        ctx.server.pubsubBroker.publish(args.channel, args.message),
-      )
-    }
-
-    const flushPushes = ctx.session.deferPushesUntilAfterReply()
-    const delivered = ctx.server.pubsubBroker.publish(
-      args.channel,
-      args.message,
-    )
-    return RedisResult.create(RedisValue.integer(delivered), {
-      afterReply: flushPushes,
-    })
-  },
+  // A message for the publishing connection itself goes out after this reply
+  // on Redis 7.2+ / valkey 8.0+ (ClientSession.execute holds it), and inside
+  // EXEC as the transaction decides (ClientSession.executeTransaction).
+  execute: (args, ctx) =>
+    integer(ctx.server.pubsubBroker.publish(args.channel, args.message)),
 })
 
 export const spublishCommand = defineCommand({
@@ -162,7 +149,13 @@ export const pubsubCommand = defineCommand({
     }
 
     if (subcommand === 'numpat') {
-      expectArgCount('pubsub|numpat', args.args, 0)
+      expectSubcommandArgCount(
+        'PUBSUB',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return integer(ctx.server.pubsubBroker.patternSubscriptionCount())
     }
 
@@ -202,7 +195,13 @@ export const pubsubCommand = defineCommand({
     }
 
     if (subcommand === 'help') {
-      expectArgCount('pubsub|help', args.args, 0)
+      expectSubcommandArgCount(
+        'PUBSUB',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return pubsubHelp(ctx)
     }
 
@@ -242,32 +241,7 @@ function pubsubNumsub(args: PubSubArgs, ctx: RedisExecutionContext) {
 }
 
 function pubsubHelp(ctx: RedisExecutionContext): RedisResult {
-  const lines = [
-    'PUBSUB <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-    'CHANNELS [<pattern>]',
-    '    Return the currently active channels matching a pattern.',
-    'NUMSUB [<channel> ...]',
-    '    Return the number of subscribers for the specified channels.',
-    'NUMPAT',
-    '    Return the number of pattern subscriptions.',
-  ]
-
-  if (ctx.server.profile.has('pubsub.sharded')) {
-    lines.push(
-      'SHARDCHANNELS [<pattern>]',
-      '    Return active shard channels matching a pattern.',
-      'SHARDNUMSUB [<channel> ...]',
-      '    Return the number of shard subscribers for the specified channels.',
-    )
-  }
-
-  lines.push('HELP', '    Prints this help.')
-
-  return RedisResult.create(
-    RedisValue.array(
-      lines.map(line => RedisValue.bulkString(Buffer.from(line))),
-    ),
-  )
+  return helpReply(pubsubHelpLines(ctx.server.profile), ctx.server.profile)
 }
 
 /**
@@ -281,8 +255,15 @@ function confirmations(
   ctx: RedisExecutionContext,
   frames: RedisResult[],
 ): RedisResult {
+  // Written as pushes (pubsub.c `CLIENT_PUSHING`): CLIENT REPLY OFF / SKIP
+  // never drop them.
   if (frames.length === 1) {
-    return frames[0]
+    const [frame] = frames
+    return new RedisResult(
+      frame.value,
+      { ...frame.options, push: true },
+      frame.encoded,
+    )
   }
 
   const version = ctx.session.protocolVersion
@@ -296,18 +277,11 @@ function confirmations(
         }),
       ),
     ),
-    { trailingFrames: frames.slice(1).map(frame => frame.value) },
+    {
+      trailingFrames: frames.slice(1).map(frame => frame.value),
+      push: true,
+    },
   )
-}
-
-function expectArgCount(
-  commandName: string,
-  args: readonly Buffer[],
-  count: number,
-): void {
-  if (args.length !== count) {
-    throw new WrongNumberOfArgumentsError(commandName)
-  }
 }
 
 /**

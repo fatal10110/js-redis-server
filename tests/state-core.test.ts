@@ -51,7 +51,9 @@ describe('new Redis state core', () => {
     const events: RedisMutationEvent[] = []
     const keyEvents: RedisMutationEvent[] = []
 
-    db.subscribe(event => events.push(event))
+    db.subscribe(event => {
+      if (event.type !== 'new') events.push(event)
+    })
     db.subscribeKey(key, event => keyEvents.push(event))
 
     db.setString(Buffer.from('string'), Buffer.from('value'))
@@ -171,7 +173,7 @@ describe('new Redis state core', () => {
     const server = new RedisServerState()
     const db = server.getDatabase(0)
     const key = Buffer.from('hash')
-    let eventValue: RedisDataValue | null = null
+    let eventValue = null as RedisDataValue | null
     db.subscribeKey(key, event => {
       if (event.type === 'write') {
         eventValue = event.value
@@ -219,11 +221,13 @@ describe('new Redis state core', () => {
     const calls: string[] = []
     let unsubscribeSecond: (() => void) | undefined
 
-    db.subscribe(() => {
+    db.subscribe(event => {
+      if (event.type === 'new') return
       calls.push('first')
       unsubscribeSecond?.()
     })
-    unsubscribeSecond = db.subscribe(() => {
+    unsubscribeSecond = db.subscribe(event => {
+      if (event.type === 'new') return
       calls.push('second')
     })
 

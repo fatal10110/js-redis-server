@@ -1,14 +1,15 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import type { StreamId } from '../../state/data-types'
 import { ok } from '../helpers'
-import { compareStreamId, parseExactId, parseNonNegativeInteger } from './ids'
+import { compareStreamId, parseExactId, parseNonNegativeInt64 } from './ids'
 
 type XsetidArgs = {
   key: Buffer
   id: StreamId
-  entriesAdded: number | null
+  entriesAdded: bigint | null
   maxDeletedId: StreamId | null
 }
 
@@ -28,14 +29,14 @@ function createXsetidSchema() {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
 
-      let entriesAdded: number | null = null
+      let entriesAdded: bigint | null = null
       let maxDeletedId: StreamId | null = null
       while (cursor < input.length) {
-        const option = input[cursor].toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor].toString())
         if (option === 'ENTRIESADDED') {
           const rawEntriesAdded = input[cursor + 1]
           if (!rawEntriesAdded) throw errors.syntax()
-          entriesAdded = parseNonNegativeInteger(rawEntriesAdded)
+          entriesAdded = parseNonNegativeInt64(rawEntriesAdded)
           cursor += 2
           continue
         }

@@ -93,7 +93,7 @@ describe('new cluster execution policy', () => {
     )
   })
 
-  test('pins transaction slot before commands are queued', async () => {
+  test('queues commands in different slots and refuses them at EXEC (#519)', async () => {
     const { session, server, topology } = createClusterHarness()
     const [first, second] = findDifferentSlotKeysOwnedBy(topology, 'local')
 
@@ -104,19 +104,35 @@ describe('new cluster execution policy', () => {
     )
     assert.deepStrictEqual(
       await session.execute('set', [second, Buffer.from('two')]),
+      RedisResult.create(RedisValue.simpleString('QUEUED')),
+    )
+    assert.deepStrictEqual(
+      await session.execute('exec', []),
       RedisResult.error(
         `Keys in request don't hash to the same slot`,
         'CROSSSLOT',
       ),
     )
+    assert.strictEqual(session.mode, 'normal')
+    assert.strictEqual(server.getDatabase(0).getString(first), null)
+    assert.strictEqual(server.getDatabase(0).getString(second), null)
+
+    // Redis keeps the queue when a later command is refused, so EXEC's
+    // cluster check still sees the earlier commands.
+    assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
+    await session.execute('set', [first, Buffer.from('one')])
+    await session.execute('set', [second, Buffer.from('two')])
+    assert.strictEqual(
+      (await session.execute('notacommand', [])).value.kind,
+      'error',
+    )
     assert.deepStrictEqual(
       await session.execute('exec', []),
       RedisResult.error(
-        'Transaction discarded because of previous errors.',
-        'EXECABORT',
+        `Keys in request don't hash to the same slot`,
+        'CROSSSLOT',
       ),
     )
-    assert.strictEqual(server.getDatabase(0).getString(first), null)
 
     assert.deepStrictEqual(await session.execute('multi', []), RedisResult.ok())
     assert.deepStrictEqual(

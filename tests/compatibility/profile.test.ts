@@ -79,20 +79,37 @@ describe('compatibility profiles', () => {
     assert.strictEqual(redis62.has('error.unknown-subcommand-wording'), false)
     assert.strictEqual(redis62.has('protocol.multibulk-count-int-max'), false)
     assert.strictEqual(redis62.has('notify.keyspace.new-key-class'), false)
+    assert.strictEqual(redis62.has('error.subscribed-context-wording'), false)
 
     const redis70 = resolveCompatibilityProfile('redis-7.0')
     assert.strictEqual(redis70.has('client.setinfo'), false)
     assert.strictEqual(redis70.has('error.unknown-subcommand-wording'), true)
     assert.strictEqual(redis70.has('protocol.multibulk-count-int-max'), true)
     assert.strictEqual(redis70.has('notify.keyspace.new-key-class'), true)
+    assert.strictEqual(redis70.has('error.subscribed-context-wording'), true)
     assert.strictEqual(redis70.has('pubsub.resp3-publish-reply-first'), false)
 
     const redis72 = resolveCompatibilityProfile('redis-7.2')
     assert.strictEqual(redis72.has('pubsub.resp3-publish-reply-first'), true)
     assert.strictEqual(redis72.has('client.kill.maxage'), false)
+    assert.strictEqual(redis72.has('client.kill.id-positive'), true)
+    assert.strictEqual(redis72.has('client.kill.type-primary'), false)
 
     const redis74 = resolveCompatibilityProfile('redis-7.4')
     assert.strictEqual(redis74.has('client.kill.maxage'), true)
+
+    assert.strictEqual(
+      resolveCompatibilityProfile('redis-8.0').has(
+        'notify.keyspace.keymiss-hgetex',
+      ),
+      false,
+    )
+    assert.strictEqual(
+      resolveCompatibilityProfile('valkey-9.0').has(
+        'notify.keyspace.keymiss-hgetex',
+      ),
+      true,
+    )
 
     const valkey72 = resolveCompatibilityProfile({
       flavor: 'valkey',
@@ -101,6 +118,7 @@ describe('compatibility profiles', () => {
     assert.strictEqual(valkey72.has('command.docs'), true)
     assert.strictEqual(valkey72.has('protocol.multibulk-count-int-max'), true)
     assert.strictEqual(valkey72.has('notify.keyspace.new-key-class'), true)
+    assert.strictEqual(valkey72.has('error.subscribed-context-wording'), true)
     assert.strictEqual(valkey72.has('pubsub.resp3-publish-reply-first'), false)
     assert.strictEqual(valkey72.has('cluster.multi-db'), false)
 
@@ -108,5 +126,30 @@ describe('compatibility profiles', () => {
     assert.strictEqual(valkey9.has('pubsub.resp3-publish-reply-first'), true)
     assert.strictEqual(valkey9.has('cluster.multi-db'), true)
     assert.strictEqual(valkey9.has('client.kill.maxage'), true)
+    assert.strictEqual(valkey9.has('client.kill.id-list'), true)
+    assert.strictEqual(redis62.has('client.kill.id-positive'), false)
+
+    const valkey8 = resolveCompatibilityProfile('valkey-8.0')
+    assert.strictEqual(valkey8.has('client.kill.maxage'), true)
+    assert.strictEqual(valkey8.has('client.kill.type-primary'), true)
+    assert.strictEqual(valkey8.has('client.kill.id-list'), false)
+  })
+
+  test('(P|S)UNSUBSCRIBE NOSUB holds on valkey 8.0.0 and 8.0.1 only (#594)', () => {
+    const window = (
+      spec: Parameters<typeof resolveCompatibilityProfile>[0],
+    ) => {
+      const profile = resolveCompatibilityProfile(spec)
+      return (
+        profile.has('pubsub.unsubscribe-nosub') &&
+        !profile.has('pubsub.unsubscribe-nosub-dropped')
+      )
+    }
+    assert.strictEqual(window('valkey-8.0'), true)
+    assert.strictEqual(window({ flavor: 'valkey', version: '8.0.1' }), true)
+    assert.strictEqual(window({ flavor: 'valkey', version: '8.0.2' }), false)
+    assert.strictEqual(window({ flavor: 'valkey', version: '7.2.4' }), false)
+    assert.strictEqual(window('valkey-9.0'), false)
+    assert.strictEqual(window('redis-8.0'), false)
   })
 })

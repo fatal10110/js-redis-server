@@ -1,3 +1,4 @@
+import { asciiUpperCase } from './ascii-case'
 import {
   RedisCommandError,
   WrongNumberOfArgumentsError,
@@ -11,6 +12,14 @@ import {
 export type ParseContext = {
   commandName: string
   profile: CompatibilityProfile
+  /** The command name as the caller sent it, case and all. */
+  rawCommand?: Buffer
+  /**
+   * Set when a script's `redis.call`/`redis.pcall` sent the command, for
+   * the few commands whose parser refuses an option there (XREAD BLOCK up
+   * to 7.2, #563).
+   */
+  inScript?: boolean
 }
 
 export type ParseNodeResult<TValue> = {
@@ -88,9 +97,14 @@ export function parseCommandArgs<TArgs>(
   input: readonly Buffer[],
   commandName: string,
   profile: CompatibilityProfile = resolveCompatibilityProfile(),
+  options: { rawCommand?: Buffer; inScript?: boolean } = {},
 ): TArgs {
   try {
-    const result = schema.parse(input, 0, { commandName, profile })
+    const result = schema.parse(input, 0, {
+      commandName,
+      profile,
+      ...options,
+    })
     if (result.nextIndex !== input.length) {
       throw new WrongNumberOfArgumentsError(commandName)
     }
@@ -119,7 +133,7 @@ function readToken(input: readonly Buffer[], index: number): Buffer {
 }
 
 function keywordMatches(actual: Buffer, expected: string): boolean {
-  return actual.toString().toUpperCase() === expected.toUpperCase()
+  return asciiUpperCase(actual.toString()) === asciiUpperCase(expected)
 }
 
 export function isIntegerToken(raw: string): boolean {

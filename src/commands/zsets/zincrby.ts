@@ -2,7 +2,11 @@ import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { RedisResult } from '../../core/redis-result'
 import { scoreValue } from '../helpers'
-import { assertValidResultingScore, parseFloatArg } from './helpers'
+import {
+  assertValidResultingScore,
+  parseFloatArg,
+  storeListpackScores,
+} from './helpers'
 
 export const zincrbyCommand = defineCommand({
   name: 'zincrby',
@@ -10,12 +14,17 @@ export const zincrbyCommand = defineCommand({
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const inc = parseFloatArg(args.increment)
+    const inc = parseFloatArg(args.increment, ctx.server.profile)
     const newScore = ctx.db.updateSortedSet(args.key, zset => {
       const existing = zset.getMember(args.member)
-      const score = (existing?.score ?? 0) + inc
+      // A new member takes the increment as is (zsetAdd): ZINCRBY -0 is -0.
+      const score = existing ? existing.score + inc : inc
       assertValidResultingScore(score)
-      zset.setScore(args.member, score)
+      // An equal score is no change (zsetAdd), so a stored -0 stays.
+      if (!existing || existing.score !== score) {
+        zset.setScore(args.member, score)
+        storeListpackScores(zset, [args.member], ctx.server)
+      }
       return score
     })
     return RedisResult.create(scoreValue(newScore))

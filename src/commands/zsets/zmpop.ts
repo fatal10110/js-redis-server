@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
@@ -8,7 +9,11 @@ import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
 import { scoreValue } from '../helpers'
 import { getSortedMembers } from './helpers'
-import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
+import {
+  blockOrTimeOut,
+  blockingTimeoutMs,
+  parseBlockingTimeout,
+} from '../blocking'
 
 type ZsetMultiPopSide = 'min' | 'max'
 
@@ -51,17 +56,10 @@ function parseZsetPopCount(token: Buffer): number {
 
 function parseZsetPopSide(token: Buffer | undefined): ZsetMultiPopSide {
   if (!token) throw errors.syntax()
-  const side = token.toString().toUpperCase()
+  const side = asciiUpperCase(token.toString())
   if (side === 'MIN') return 'min'
   if (side === 'MAX') return 'max'
   throw errors.syntax()
-}
-
-function parseZsetPopTimeout(token: Buffer): number {
-  const value = Number(token.toString())
-  if (isNaN(value)) throw errors.timeoutNotFloat()
-  if (value < 0) throw errors.timeoutNegative()
-  return value
 }
 
 function parseZsetMultiPopArgs(
@@ -90,7 +88,7 @@ function parseZsetMultiPopArgs(
   let timeout: number | undefined
 
   if (options.blocking) {
-    timeout = parseZsetPopTimeout(input[cursor])
+    timeout = parseBlockingTimeout(input[cursor], ctx.profile)
     cursor++
   }
 
@@ -115,7 +113,7 @@ function parseZsetMultiPopArgs(
 
   let count = 1
   if (cursor < input.length) {
-    const option = input[cursor].toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor].toString())
     if (option !== 'COUNT' || cursor + 2 !== input.length) {
       throw errors.syntax()
     }
@@ -175,7 +173,7 @@ export function tryZsetMultiPop(
 
 function blockingZsetMultiPop(
   keys: readonly Buffer[],
-  timeoutSecs: number,
+  timeoutMs: number,
   side: ZsetMultiPopSide,
   count: number,
   ctx: RedisExecutionContext,
@@ -185,7 +183,7 @@ function blockingZsetMultiPop(
     {
       keys,
       type: 'zset',
-      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      timeoutMs: blockingTimeoutMs(timeoutMs),
       attempt: () => tryZsetMultiPop(keys, side, count, ctx.db),
     },
     () => RedisResult.create(RedisValue.nullArray()),

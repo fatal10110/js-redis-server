@@ -23,10 +23,12 @@ import {
   unknownSubcommandError,
 } from '../helpers'
 import {
+  byName,
   consumerPendingCount,
   pendingEntriesSorted,
   streamGroup,
-  streamLag,
+  streamGroupLag,
+  streamLagRules,
 } from './groups'
 import type { CompatibilityProfile } from '../../core/compatibility'
 import { parseLongLong } from './ids'
@@ -112,9 +114,26 @@ function createXinfoSchema() {
       // Redis 7.0+ does (#438). An option list the subcommand cannot use is
       // real Redis' `addReplySubcommandSyntaxError`, not an arity error.
 
+      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
+      // 6.2 has no `xinfo|<sub>` entries: past HELP it answers fewer than one
+      // argument with the subcommand syntax error, then looks the key up, and
+      // only then rejects a wrong count, the same way. That is the `unknown`
+      // variant's path, run in execute (#437).
+      const wrongCount = (name: string) => {
+        if (lookup) throw new WrongNumberOfArgumentsError(`xinfo|${name}`)
+        return {
+          value: {
+            subcommand: 'unknown' as const,
+            name: rawSubcommand,
+            key: input[index + 1],
+          },
+          nextIndex: input.length,
+        }
+      }
+
       if (subcommand === 'STREAM') {
         const key = input[index + 1]
-        if (!key) throw new WrongNumberOfArgumentsError('xinfo|stream')
+        if (!key) return wrongCount('stream')
 
         // The options are read only after the key (#507): see
         // parseStreamOptions.
@@ -131,9 +150,7 @@ function createXinfoSchema() {
 
       if (subcommand === 'GROUPS') {
         const key = input[index + 1]
-        if (!key || input.length !== index + 2) {
-          throw new WrongNumberOfArgumentsError('xinfo|groups')
-        }
+        if (!key || input.length !== index + 2) return wrongCount('groups')
         return {
           value: { subcommand: 'groups', key },
           nextIndex: input.length,
@@ -144,7 +161,7 @@ function createXinfoSchema() {
         const key = input[index + 1]
         const group = input[index + 2]
         if (!key || !group || input.length !== index + 3) {
-          throw new WrongNumberOfArgumentsError('xinfo|consumers')
+          return wrongCount('consumers')
         }
         return {
           value: { subcommand: 'consumers', key, group },
@@ -156,7 +173,6 @@ function createXinfoSchema() {
       // 6.2 answers HELP before it counts arguments or looks a key up, but
       // its key spec still names the third argument, so it keeps routing on
       // it (and COMMAND GETKEYS reports it).
-      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
       if (subcommand === 'HELP') {
         if (lookup && input.length !== index + 1) {
           throw new WrongNumberOfArgumentsError('xinfo|help')
@@ -239,6 +255,10 @@ export const xinfoCommand = defineCommand({
       if (command.key && !ctx.db.getStream(command.key)) {
         throw errors.noSuchKey()
       }
+      const name = asciiUpperCase(command.name.toString())
+      if (name === 'STREAM' || name === 'GROUPS' || name === 'CONSUMERS') {
+        throw subcommandSyntaxError('XINFO', command.name, profile)
+      }
       throw unknownSubcommandError('XINFO', command.name, profile)
     }
 
@@ -259,8 +279,10 @@ export const xinfoCommand = defineCommand({
     }
 
     if (command.subcommand === 'groups') {
+      // Groups and consumers are listed by name, in byte order (real Redis
+      // keeps them in a rax).
       return array(
-        Array.from(stream.groups.values(), group =>
+        byName(stream.groups.values()).map(group =>
           groupInfoReply(stream, group, profile),
         ),
       )
@@ -271,7 +293,7 @@ export const xinfoCommand = defineCommand({
     if (!group) throw errors.xgroupNoSuchGroup(command.key, command.group)
     const now = Date.now()
     return array(
-      Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
+      consumersByName(group).map(([consumerId, consumer]) =>
         consumerInfoReply(group, consumerId, consumer, now, profile),
       ),
     )
@@ -293,16 +315,27 @@ function limited<T>(items: T[], count: number): T[] {
   return count === 0 ? items : items.slice(0, count)
 }
 
-// A group's `entries-read` / `lag` pair (Redis 7.0+).
+function consumersByName(
+  group: RedisStreamConsumerGroup,
+): [string, RedisStreamConsumer][] {
+  return Array.from(group.consumers.entries()).sort(([, a], [, b]) =>
+    Buffer.compare(a.name, b.name),
+  )
+}
+
+// A group's `entries-read` / `lag` pair (Redis 7.0+); either is nil when
+// unknown.
 function groupLagFields(
   stream: RedisStreamData,
   group: RedisStreamConsumerGroup,
+  profile: CompatibilityProfile,
 ): RedisValue[] {
+  const lag = streamGroupLag(stream, group, streamLagRules(profile))
   return [
     bulkString('entries-read'),
     group.entriesRead === null ? nullBulk() : integerValue(group.entriesRead),
     bulkString('lag'),
-    integerValue(streamLag(stream, group)),
+    lag === null ? nullBulk() : integerValue(lag),
   ]
 }
 
@@ -357,7 +390,7 @@ function streamInfoReply(
     ),
     bulkString('groups'),
     RedisValue.array(
-      Array.from(stream.groups.values(), group =>
+      byName(stream.groups.values()).map(group =>
         fullGroupInfoReply(stream, group, options.count, profile),
       ),
     ),
@@ -380,7 +413,7 @@ function groupInfoReply(
     bulkString('last-delivered-id'),
     streamIdValue(group.lastDeliveredId),
     ...(profile.has('stream.consumer-group-lag')
-      ? groupLagFields(stream, group)
+      ? groupLagFields(stream, group, profile)
       : []),
   ])
 }
@@ -397,7 +430,7 @@ function fullGroupInfoReply(
     bulkString('last-delivered-id'),
     streamIdValue(group.lastDeliveredId),
     ...(profile.has('stream.consumer-group-lag')
-      ? groupLagFields(stream, group)
+      ? groupLagFields(stream, group, profile)
       : []),
     bulkString('pel-count'),
     integerValue(group.pending.size),
@@ -410,18 +443,60 @@ function fullGroupInfoReply(
             group.consumers.get(pending.consumerId)?.name ??
               Buffer.from(pending.consumerId, 'hex'),
           ),
-          integerValue(Math.max(0, Date.now() - pending.deliveredAt)),
+          // The last delivery, as a Unix time in milliseconds.
+          integerValue(pending.deliveredAt),
           integerValue(pending.deliveryCount),
         ]),
       ),
     ),
     bulkString('consumers'),
     RedisValue.array(
-      Array.from(group.consumers.entries()).map(([consumerId, consumer]) =>
-        consumerInfoReply(group, consumerId, consumer, Date.now(), profile),
+      consumersByName(group).map(([consumerId, consumer]) =>
+        fullConsumerInfoReply(group, consumerId, consumer, count, profile),
       ),
     ),
   ])
+}
+
+// A consumer in XINFO STREAM FULL: its seen (and, 7.2+, active) time as Unix
+// times in milliseconds, and its own PEL as [id, delivery time, count] rows.
+function fullConsumerInfoReply(
+  group: RedisStreamConsumerGroup,
+  consumerId: string,
+  consumer: RedisStreamConsumer,
+  count: number,
+  profile: CompatibilityProfile,
+): RedisValue {
+  const pending = pendingEntriesSorted(group).filter(
+    entry => entry.consumerId === consumerId,
+  )
+  const fields: RedisValue[] = [
+    bulkString('name'),
+    bulkString(consumer.name),
+    bulkString('seen-time'),
+    integerValue(consumer.seenAt),
+  ]
+  if (profile.has('stream.consumer-active-time')) {
+    fields.push(
+      bulkString('active-time'),
+      integerValue(consumer.activeAt ?? -1),
+    )
+  }
+  fields.push(
+    bulkString('pel-count'),
+    integerValue(pending.length),
+    bulkString('pending'),
+    RedisValue.array(
+      limited(pending, count).map(entry =>
+        RedisValue.array([
+          streamIdValue(entry.id),
+          integerValue(entry.deliveredAt),
+          integerValue(entry.deliveryCount),
+        ]),
+      ),
+    ),
+  )
+  return kvMap(fields)
 }
 
 function consumerInfoReply(

@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -6,6 +7,7 @@ import { RedisResult } from '../../core/redis-result'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { array, integer, scorePairs } from '../helpers'
 import { getSortedMembers } from './helpers'
+import { parseRangeLimitInt } from './lex'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
 // ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]
@@ -19,14 +21,6 @@ type ScoreRangeArgs = {
   second: Buffer
   withScores: boolean
   limit?: ScoreLimit
-}
-
-function parseScoreLimitInt(token: Buffer): number {
-  const raw = token.toString()
-  if (!/^-?\d+$/.test(raw)) throw errors.expectedInteger()
-  const value = Number(raw)
-  if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
-  return value
 }
 
 function createScoreRangeSchema() {
@@ -44,7 +38,7 @@ function createScoreRangeSchema() {
 
     let cursor = index + 3
     while (cursor < input.length) {
-      const option = input[cursor]!.toString().toUpperCase()
+      const option = asciiUpperCase(input[cursor]!.toString())
 
       if (option === 'WITHSCORES') {
         withScores = true
@@ -57,8 +51,8 @@ function createScoreRangeSchema() {
         const countTok = input[cursor + 2]
         if (!offsetTok || !countTok) throw errors.syntax()
         limit = {
-          offset: parseScoreLimitInt(offsetTok),
-          count: parseScoreLimitInt(countTok),
+          offset: parseRangeLimitInt(offsetTok),
+          count: parseRangeLimitInt(countTok),
         }
         cursor += 3
         continue
@@ -100,8 +94,8 @@ export const zrangebyscoreCommand = defineCommand({
   flags: ['readonly'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseScoreBoundArg(args.first.toString())
-    const max = parseScoreBoundArg(args.second.toString())
+    const min = parseScoreBoundArg(args.first, ctx.server.profile)
+    const max = parseScoreBoundArg(args.second, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const matched = getSortedMembers(zset).filter(m =>
@@ -121,8 +115,8 @@ export const zrevrangebyscoreCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     // ZREVRANGEBYSCORE takes bounds as `max min`.
-    const max = parseScoreBoundArg(args.first.toString())
-    const min = parseScoreBoundArg(args.second.toString())
+    const max = parseScoreBoundArg(args.first, ctx.server.profile)
+    const min = parseScoreBoundArg(args.second, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return array([])
     const matched = getSortedMembers(zset)
@@ -141,8 +135,8 @@ export const zremrangebyscoreCommand = defineCommand({
   flags: ['write'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseScoreBoundArg(args.min)
-    const max = parseScoreBoundArg(args.max)
+    const min = parseScoreBoundArg(args.min, ctx.server.profile)
+    const max = parseScoreBoundArg(args.max, ctx.server.profile)
     let removed = 0
     ctx.db.updateSortedSet(args.key, zset => {
       for (const [hex, entry] of zset.entries()) {
@@ -189,8 +183,8 @@ export const zcountCommand = defineCommand({
   flags: ['readonly', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    const min = parseScoreBoundArg(args.min)
-    const max = parseScoreBoundArg(args.max)
+    const min = parseScoreBoundArg(args.min, ctx.server.profile)
+    const max = parseScoreBoundArg(args.max, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return integer(0)
     let count = 0

@@ -19,16 +19,27 @@ import {
   bulk,
   integer,
   ok,
-  parseIntegerToken,
+  parseInt64Token,
   simpleString,
   unknownSubcommandError,
+  expectSubcommandArgCount,
+  helpReply,
+  subcommandSyntaxError,
 } from './helpers'
 import { commandDocs, commandSubcommandInfo } from './introspection'
+import {
+  aclHelpLines,
+  clientHelpLines,
+  slowlogHelpLines,
+} from './container-help'
 import { isClientBlocked } from './blocking'
+import { resetClientReplyMode, setClientReplyMode } from '../core/client-reply'
+import type { ClientPauseMode } from '../state/client-pause'
 import {
   VALKEY_REDIS_COMPAT_VERSION,
   type CompatibilityProfile,
 } from '../core/compatibility/profile'
+import { dbIndexSchema } from './db-index'
 
 const MASTER_REPLID = '0000000000000000000000000000000000000000'
 
@@ -40,6 +51,7 @@ const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
 const noEvictClients = new WeakSet<RedisClientSession>()
+const noTouchClients = new WeakSet<RedisClientSession>()
 let nextClientId = 1
 const INVALID_CLIENT_NAME_MESSAGE =
   'Client names cannot contain spaces, newlines or special characters.'
@@ -110,7 +122,7 @@ function buildInfo(
   const requestedSections =
     sections.length === 0
       ? ['default']
-      : sections.map(section => section.toLowerCase())
+      : sections.map(section => asciiLowerCase(section))
   const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
@@ -189,18 +201,9 @@ function buildInfo(
       'used_cpu_sys_children:0.00',
       'used_cpu_user_children:0.00',
     ],
-    cluster: () => {
-      if (!clustered) {
-        return ['# Cluster', 'cluster_enabled:0']
-      }
-
-      return [
-        '# Cluster',
-        'cluster_enabled:1',
-        'cluster_state:ok',
-        'cluster_slots_assigned:16384',
-      ]
-    },
+    // Only `cluster_enabled`, on a cluster node too: the cluster state is
+    // CLUSTER INFO's.
+    cluster: () => ['# Cluster', `cluster_enabled:${clustered ? 1 : 0}`],
     commandstats: () => ['# Commandstats'],
     latencystats: () => ['# Latencystats'],
     errorstats: () => ['# Errorstats'],
@@ -272,8 +275,8 @@ function formatClientLine(
   const redis7 = profile.has('client.list.redis7-fields')
   const fields = [
     `id=${getClientId(session)}`,
-    `addr=${session.clientAddress ?? '127.0.0.1:0'}`,
-    `laddr=${session.localAddress ?? session.clientAddress ?? '127.0.0.1:0'}`,
+    `addr=${clientPeerAddress(session)}`,
+    `laddr=${clientLocalAddress(session)}`,
     `fd=${session.fd ?? -1}`,
     `name=${name}`,
     `age=${clientAgeSeconds(session)}`,
@@ -332,7 +335,7 @@ function formatClientLine(
  * The `flags=` letters, in `catClientInfoString`'s order, for the states this
  * server models: `O` MONITOR, `P` subscribed, `x` in MULTI (until its EXEC
  * has run), `b` blocked, `d` a WATCHed key changed, `r` READONLY (cluster),
- * `e` CLIENT NO-EVICT; `N` for none.
+ * `e` CLIENT NO-EVICT, `T` CLIENT NO-TOUCH; `N` for none.
  */
 function clientFlags(session: RedisClientSession): string {
   let flags = ''
@@ -343,13 +346,60 @@ function clientFlags(session: RedisClientSession): string {
   if (session.isWatchDirty()) flags += 'd'
   if (session.clusterReadOnly) flags += 'r'
   if (noEvictClients.has(session)) flags += 'e'
+  if (noTouchClients.has(session)) flags += 'T'
   return flags === '' ? 'N' : flags
 }
 
-type ClientKillOptions = {
-  id?: number
-  maxAgeSeconds?: number
+/** The CLIENT KILL filter; an unset field matches every client. */
+type ClientKillFilter = {
+  /** `undefined` matches any id; an empty set (Valkey 9.0 `ID` with no ids) none. */
+  ids?: Set<bigint>
+  addr?: string
+  laddr?: string
+  type?: ClientType
+  maxAgeSeconds?: bigint
   skipMe: boolean
+}
+
+/**
+ * `getClientType`: master links and replicas have their own types, then a
+ * subscribed client is `pubsub`. A MONITOR client is `normal`. This server
+ * has neither replication links nor replicas.
+ */
+type ClientType = 'normal' | 'master' | 'replica' | 'pubsub'
+
+function clientType(session: RedisClientSession): ClientType {
+  return session.pubsubSubscriptionCount > 0 ? 'pubsub' : 'normal'
+}
+
+/** `getClientTypeByName`, case-insensitive; Valkey 8.0 added `primary`. */
+function clientTypeByName(
+  name: string,
+  profile: CompatibilityProfile,
+): ClientType | undefined {
+  switch (asciiLowerCase(name)) {
+    case 'normal':
+      return 'normal'
+    case 'slave':
+    case 'replica':
+      return 'replica'
+    case 'pubsub':
+      return 'pubsub'
+    case 'master':
+      return 'master'
+    case 'primary':
+      return profile.has('client.kill.type-primary') ? 'master' : undefined
+    default:
+      return undefined
+  }
+}
+
+function clientPeerAddress(session: RedisClientSession): string {
+  return session.clientAddress ?? '127.0.0.1:0'
+}
+
+function clientLocalAddress(session: RedisClientSession): string {
+  return session.localAddress ?? clientPeerAddress(session)
 }
 
 function clientAgeSeconds(session: RedisClientSession): number {
@@ -363,84 +413,217 @@ function clientIdleSeconds(session: RedisClientSession): number {
   )
 }
 
-function parseClientKillOptions(
+const LLONG_MAX = 2n ** 63n - 1n
+
+/**
+ * CLIENT PAUSE timeout [WRITE|ALL] (`clientPauseCommand` / the `pause`
+ * branch of `clientCommand`): the mode is checked before the timeout
+ * (`getTimeoutFromObjectOrReply` in milliseconds), and no mode means ALL.
+ */
+function clientPause(
+  subcommand: Buffer,
   args: readonly Buffer[],
   ctx: RedisExecutionContext,
-): ClientKillOptions {
-  if (args.length === 0) {
-    throw new WrongNumberOfArgumentsError('client|kill')
+): RedisResult {
+  const profile = ctx.server.profile
+  expectSubcommandArgCount('CLIENT', subcommand, args, { min: 1 }, profile)
+  if (args.length > 2 && !profile.has('client.pause.extra-args')) {
+    throw subcommandSyntaxError('CLIENT', subcommand, profile)
   }
 
-  const options: ClientKillOptions = { skipMe: true }
+  let mode: ClientPauseMode = 'all'
+  if (args.length === 2) {
+    const token = asciiLowerCase(args[1].toString())
+    if (token === 'write') {
+      mode = 'write'
+    } else if (token !== 'all') {
+      throw new RedisCommandError('CLIENT PAUSE mode must be WRITE or ALL')
+    }
+  }
 
-  for (let i = 0; i < args.length; i++) {
-    const option = args[i].toString().toLowerCase()
+  const timeout = tryParseInt64(args[0])
+  if (timeout === undefined) {
+    throw new RedisCommandError('timeout is not an integer or out of range')
+  }
+  if (timeout < 0n) {
+    throw errors.timeoutNegative()
+  }
 
-    if (option === 'id') {
-      const value = args[++i]
-      if (!value) {
-        throw errors.syntax()
+  // A timeout of 0 is an end time of 0: already over.
+  let endMs = 0
+  if (timeout > 0n) {
+    const now = BigInt(Date.now())
+    if (timeout <= LLONG_MAX - now) {
+      endMs = Number(timeout + now)
+    } else if (profile.has('timeout.ms-overflow-check')) {
+      throw errors.timeoutOutOfRange()
+    } else {
+      // 6.2 / 7.0: `tval + now` wraps negative, an end long past.
+      endMs = -1
+    }
+  }
+
+  ctx.server.clientPause.pause(endMs, mode)
+  return ok()
+}
+
+const CLIENT_ID_NOT_POSITIVE = 'client-id should be greater than 0'
+
+/** A signed 64-bit integer token (`string2ll`), or `undefined`. */
+function tryParseInt64(token: Buffer): bigint | undefined {
+  try {
+    return parseInt64Token(token)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The filter form of CLIENT KILL (`clientKillCommand` in networking.c), the
+ * options parsed left to right and the first bad one answered. An option
+ * without a value is a syntax error, except Valkey 9.0's `ID`, which takes
+ * every integer after it (and none) and leaves the first non-integer to be
+ * read as the next option. NOT-* and Valkey 9.0's other new filters are not
+ * modelled and stay syntax errors.
+ */
+function parseClientKillFilter(
+  args: readonly Buffer[],
+  profile: CompatibilityProfile,
+): ClientKillFilter {
+  const filter: ClientKillFilter = { skipMe: true }
+
+  for (let i = 0; i < args.length; i += 2) {
+    const option = asciiLowerCase(args[i].toString())
+
+    if (option === 'id' && profile.has('client.kill.id-list')) {
+      const ids = (filter.ids ??= new Set())
+      for (i++; i < args.length; i++) {
+        const id = tryParseInt64(args[i])
+        if (id === undefined) {
+          break
+        }
+        if (id < 1n) {
+          throw new RedisCommandError(CLIENT_ID_NOT_POSITIVE)
+        }
+        ids.add(id)
       }
-      options.id = parseIntegerToken(value)
+      // `args[i]` is the next option; the loop step adds 2.
+      i -= 2
       continue
     }
 
-    if (option === 'maxage') {
-      if (!ctx.server.profile.has('client.kill.maxage')) {
-        throw errors.syntax()
-      }
+    const value = args[i + 1]
+    if (value === undefined) {
+      throw errors.syntax()
+    }
 
-      const value = args[++i]
-      if (!value) {
-        throw errors.syntax()
+    if (option === 'id') {
+      if (profile.has('client.kill.id-positive')) {
+        const id = tryParseInt64(value)
+        if (id === undefined || id < 1n) {
+          throw new RedisCommandError(CLIENT_ID_NOT_POSITIVE)
+        }
+        filter.ids = new Set([id])
+      } else {
+        // 6.2 takes any long long; 0 means "no id filter".
+        const id = parseInt64Token(value)
+        filter.ids = id === 0n ? undefined : new Set([id])
       }
+      continue
+    }
 
-      options.maxAgeSeconds = parseIntegerToken(value)
-      if (options.maxAgeSeconds < 0) {
-        throw new RedisCommandError('value is out of range')
+    if (option === 'maxage' && profile.has('client.kill.maxage')) {
+      const maxAge = tryParseInt64(value)
+      if (maxAge === undefined) {
+        throw new RedisCommandError('maxage is not an integer or out of range')
+      }
+      if (maxAge <= 0n) {
+        throw new RedisCommandError('maxage should be greater than 0')
+      }
+      filter.maxAgeSeconds = maxAge
+      continue
+    }
+
+    if (option === 'type') {
+      const name = value.toString()
+      const type = clientTypeByName(name, profile)
+      if (type === undefined) {
+        throw new RedisCommandError(`Unknown client type '${name}'`)
+      }
+      filter.type = type
+      continue
+    }
+
+    if (option === 'addr') {
+      filter.addr = value.toString()
+      continue
+    }
+
+    if (option === 'laddr') {
+      filter.laddr = value.toString()
+      continue
+    }
+
+    if (option === 'user') {
+      // `default` is the only user (see DEFAULT_ACL_USER), so every client
+      // is logged in as it and the filter matches them all.
+      const user = value.toString()
+      if (user !== DEFAULT_ACL_USER) {
+        throw new RedisCommandError(`No such user '${user}'`)
       }
       continue
     }
 
     if (option === 'skipme') {
-      const value = args[++i]?.toString().toLowerCase()
-      if (value === 'yes') {
-        options.skipMe = true
+      const skipMe = asciiLowerCase(value.toString())
+      if (skipMe === 'yes') {
+        filter.skipMe = true
         continue
       }
-      if (value === 'no') {
-        options.skipMe = false
+      if (skipMe === 'no') {
+        filter.skipMe = false
         continue
       }
-      throw errors.syntax()
     }
 
     throw errors.syntax()
   }
 
-  return options
+  return filter
 }
 
 function matchesClientKillFilter(
   session: RedisClientSession,
   currentSession: RedisClientSession,
-  options: ClientKillOptions,
+  filter: ClientKillFilter,
 ): boolean {
-  if (options.skipMe && session === currentSession) {
+  if (filter.addr !== undefined && clientPeerAddress(session) !== filter.addr) {
     return false
   }
-
-  if (options.id !== undefined && getClientId(session) !== options.id) {
-    return false
-  }
-
   if (
-    options.maxAgeSeconds !== undefined &&
-    clientAgeSeconds(session) < options.maxAgeSeconds
+    filter.laddr !== undefined &&
+    clientLocalAddress(session) !== filter.laddr
   ) {
     return false
   }
-
+  if (filter.type !== undefined && clientType(session) !== filter.type) {
+    return false
+  }
+  if (
+    filter.ids !== undefined &&
+    !filter.ids.has(BigInt(getClientId(session)))
+  ) {
+    return false
+  }
+  if (filter.skipMe && session === currentSession) {
+    return false
+  }
+  if (
+    filter.maxAgeSeconds !== undefined &&
+    BigInt(clientAgeSeconds(session)) < filter.maxAgeSeconds
+  ) {
+    return false
+  }
   return true
 }
 
@@ -500,7 +683,7 @@ function parseHelloOptions(
   let pendingName: Buffer | undefined
 
   for (let i = 0; i < args.length; i++) {
-    const option = args[i].toString().toLowerCase()
+    const option = asciiLowerCase(args[i].toString())
 
     if (option === 'auth') {
       if (i + 2 >= args.length) {
@@ -603,7 +786,14 @@ export const quitCommand = defineCommand({
   schema: t.object({ ignored: t.variadic(t.bulk()) }),
   // noscript: real 7.0+ refuses QUIT from a script (6.2 has no QUIT command
   // entry at all, so its script sees an unknown command instead).
-  flags: ['readonly', 'fast', 'subscribed', 'noscript'],
+  // transaction: every version answers QUIT inside MULTI instead of queueing
+  // it (7.0+ excludes it from queueMultiCommand, 6.2 answers it before
+  // command lookup), and the close drops the queued commands (#567).
+  flags: ['readonly', 'fast', 'subscribed', 'transaction', 'noscript'],
+  // 6.2 answers QUIT in the connection loop, before call() feeds MONITOR.
+  monitor: {
+    skip: profile => !profile.has('command.quit-table-entry'),
+  },
   keys: () => [],
   execute: () =>
     RedisResult.create(RedisValue.simpleString('OK'), { close: true }),
@@ -612,12 +802,21 @@ export const quitCommand = defineCommand({
 export const selectCommand = defineCommand({
   name: 'select',
   schema: t.object({
-    database: t.integer({ min: 0 }),
+    database: dbIndexSchema,
   }),
   flags: ['fast'],
   capabilities: { clusterMode: 'singleDb' },
   keys: () => [],
   execute: (args, ctx) => {
+    // A script runs its commands on its own client: SELECT there moves the
+    // script's later commands, never the caller (#566).
+    if (ctx.scriptDatabase) {
+      if (args.database < 0 || args.database >= ctx.server.databases.length) {
+        throw errors.dbIndexOutOfRange()
+      }
+      ctx.scriptDatabase.selected = args.database
+      return ok()
+    }
     ctx.session.selectDatabase(args.database)
     return ok()
   },
@@ -662,6 +861,10 @@ export const clientCommand = defineCommand({
       commandSubcommandInfo('client|getname', 2),
       commandSubcommandInfo('client|setname', 3),
       commandSubcommandInfo('client|no-evict', 3),
+      commandSubcommandInfo('client|no-touch', 3),
+      commandSubcommandInfo('client|pause', -3),
+      commandSubcommandInfo('client|unpause', 2),
+      commandSubcommandInfo('client|reply', 3),
       commandSubcommandInfo('client|setinfo', 4),
       commandSubcommandInfo('client|help', 2),
     ],
@@ -671,13 +874,25 @@ export const clientCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'setname') {
-      expectArgCount('client|setname', args.args, 1)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
       setClientName(ctx.session, args.args[0])
       return ok()
     }
 
     if (subcommand === 'getname') {
-      expectArgCount('client|getname', args.args, 0)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return bulk(clientNames.get(ctx.session) ?? null)
     }
 
@@ -690,8 +905,14 @@ export const clientCommand = defineCommand({
         )
       }
 
-      expectArgCount('client|setinfo', args.args, 2)
-      const attribute = args.args[0].toString().toLowerCase()
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        2,
+        ctx.server.profile,
+      )
+      const attribute = asciiLowerCase(args.args[0].toString())
       if (attribute === 'lib-name') {
         clientLibraryNames.set(ctx.session, args.args[1])
       } else if (attribute === 'lib-ver') {
@@ -709,8 +930,14 @@ export const clientCommand = defineCommand({
         )
       }
 
-      expectArgCount('client|no-evict', args.args, 1)
-      const mode = args.args[0].toString().toLowerCase()
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
+      const mode = asciiLowerCase(args.args[0].toString())
       if (mode === 'on') {
         noEvictClients.add(ctx.session)
         return ok()
@@ -723,13 +950,94 @@ export const clientCommand = defineCommand({
       throw errors.syntax()
     }
 
+    if (subcommand === 'no-touch') {
+      if (!ctx.server.profile.has('client.no-touch')) {
+        throw unknownSubcommandError(
+          'CLIENT',
+          args.subcommand,
+          ctx.server.profile,
+        )
+      }
+
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
+      const mode = asciiLowerCase(args.args[0].toString())
+      if (mode === 'on') {
+        noTouchClients.add(ctx.session)
+        return ok()
+      }
+      if (mode === 'off') {
+        noTouchClients.delete(ctx.session)
+        return ok()
+      }
+
+      throw errors.syntax()
+    }
+
+    if (subcommand === 'pause') {
+      return clientPause(args.subcommand, args.args, ctx)
+    }
+
+    if (subcommand === 'unpause') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      ctx.server.clientPause.unpause()
+      return ok()
+    }
+
+    if (subcommand === 'reply') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
+      const mode = asciiLowerCase(args.args[0].toString())
+      if (mode !== 'on' && mode !== 'off' && mode !== 'skip') {
+        throw errors.syntax()
+      }
+      setClientReplyMode(ctx.session, mode)
+      // OFF and SKIP add no reply at all. Inside EXEC real Redis then sends
+      // the array one element short; here the slot reads +OK (known gap).
+      return mode === 'on'
+        ? ok()
+        : RedisResult.create(RedisValue.simpleString('OK'), {
+            omitReply: true,
+          })
+    }
+
     if (subcommand === 'kill') {
-      const options = parseClientKillOptions(args.args, ctx)
+      const killArgs = args.args
+      if (killArgs.length === 0) {
+        // Only 6.2 gets here: 7.0+ answer the `client|kill` arity error first.
+        throw errors.syntax()
+      }
+      // One argument is always the legacy `CLIENT KILL <ip:port>`, which may
+      // kill the caller and answers +OK or `No such client`.
+      const legacy = killArgs.length === 1
+      const filter: ClientKillFilter = legacy
+        ? { addr: killArgs[0].toString(), skipMe: false }
+        : parseClientKillFilter(killArgs, ctx.server.profile)
       const victims = ctx.server
         .getConnectedClients()
         .filter(session =>
-          matchesClientKillFilter(session, ctx.session, options),
+          matchesClientKillFilter(session, ctx.session, filter),
         )
+
+      if (legacy && victims.length === 0) {
+        throw new RedisCommandError('No such client')
+      }
 
       for (const victim of victims) {
         if (victim !== ctx.session) {
@@ -737,22 +1045,37 @@ export const clientCommand = defineCommand({
         }
       }
 
+      const reply = legacy
+        ? RedisValue.simpleString('OK')
+        : RedisValue.integer(victims.length)
       if (!victims.includes(ctx.session)) {
-        return integer(victims.length)
+        return RedisResult.create(reply)
       }
 
-      return RedisResult.create(RedisValue.integer(victims.length), {
+      return RedisResult.create(reply, {
         afterReply: () => ctx.session.disconnect('client kill'),
       })
     }
 
     if (subcommand === 'id') {
-      expectArgCount('client|id', args.args, 0)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return integer(getClientId(ctx.session))
     }
 
     if (subcommand === 'info') {
-      expectArgCount('client|info', args.args, 0)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return verbatimText(formatClientLine(ctx.session, ctx.server.profile))
     }
 
@@ -765,29 +1088,14 @@ export const clientCommand = defineCommand({
     }
 
     if (subcommand === 'help') {
-      expectArgCount('client|help', args.args, 0)
-      const lines = [
-        value(
-          'CLIENT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-        ),
-        value('ID'),
-        value('INFO'),
-        value('LIST'),
-        value(
-          ctx.server.profile.has('client.kill.maxage')
-            ? 'KILL [ID <client-id>] [MAXAGE <seconds>] [SKIPME <YES|NO>]'
-            : 'KILL [ID <client-id>] [SKIPME <YES|NO>]',
-        ),
-        value('GETNAME'),
-        value('SETNAME <connection-name>'),
-      ]
-      if (ctx.server.profile.has('client.setinfo')) {
-        lines.push(value('SETINFO <LIB-NAME|LIB-VER> <value>'))
-      }
-      if (ctx.server.profile.has('client.no-evict')) {
-        lines.push(value('NO-EVICT <ON|OFF>'))
-      }
-      return array(lines)
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(clientHelpLines(ctx.server.profile), ctx.server.profile)
     }
 
     throw unknownSubcommandError('CLIENT', args.subcommand, ctx.server.profile)
@@ -929,6 +1237,8 @@ export const resetCommand = defineCommand({
     clientLibraryNames.delete(ctx.session)
     clientLibraryVersions.delete(ctx.session)
     noEvictClients.delete(ctx.session)
+    noTouchClients.delete(ctx.session)
+    resetClientReplyMode(ctx.session)
     ctx.session.resetPushProducers()
     ctx.session.resetPubSub()
     ctx.session.discardTransaction()
@@ -986,7 +1296,13 @@ export const aclCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'whoami') {
-      expectArgCount('acl|whoami', args.args, 0)
+      expectSubcommandArgCount(
+        'ACL',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return bulk(Buffer.from(DEFAULT_ACL_USER))
     }
 
@@ -995,9 +1311,13 @@ export const aclCommand = defineCommand({
         throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
       }
 
-      if (args.args.length < 2) {
-        throw new WrongNumberOfArgumentsError('acl|dryrun')
-      }
+      expectSubcommandArgCount(
+        'ACL',
+        args.subcommand,
+        args.args,
+        { min: 2 },
+        ctx.server.profile,
+      )
 
       const username = args.args[0].toString()
       if (username !== DEFAULT_ACL_USER) {
@@ -1024,20 +1344,14 @@ export const aclCommand = defineCommand({
     }
 
     if (subcommand === 'help') {
-      expectArgCount('acl|help', args.args, 0)
-      const lines = [
-        value('ACL <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'),
-        value('WHOAMI'),
-        value('    Return the current ACL username.'),
-      ]
-      if (ctx.server.profile.has('acl.dryrun')) {
-        lines.push(
-          value('DRYRUN <username> <command> [<arg> ...]'),
-          value('    Check whether a user can run a command.'),
-        )
-      }
-      lines.push(value('HELP'), value('    Prints this help.'))
-      return array(lines)
+      expectSubcommandArgCount(
+        'ACL',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(aclHelpLines(ctx.server.profile), ctx.server.profile)
     }
 
     throw unknownSubcommandError('ACL', args.subcommand, ctx.server.profile)
@@ -1066,8 +1380,14 @@ export const slowlogCommand = defineCommand({
     const subcommand = asciiLowerCase(args.subcommand.toString())
 
     if (subcommand === 'get') {
+      // `slowlog|get` is -2 in the table: lookup lets any count through, and
+      // more than one argument is the subcommand syntax error everywhere.
       if (args.args.length > 1) {
-        throw new WrongNumberOfArgumentsError('slowlog|get')
+        throw subcommandSyntaxError(
+          'SLOWLOG',
+          args.subcommand,
+          ctx.server.profile,
+        )
       }
       if (args.args.length === 1) {
         const count = args.args[0].toString()
@@ -1081,30 +1401,36 @@ export const slowlogCommand = defineCommand({
     }
 
     if (subcommand === 'len') {
-      expectArgCount('slowlog|len', args.args, 0)
+      expectSubcommandArgCount(
+        'SLOWLOG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return integer(0)
     }
 
     if (subcommand === 'reset') {
-      expectArgCount('slowlog|reset', args.args, 0)
+      expectSubcommandArgCount(
+        'SLOWLOG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
       return ok()
     }
 
     if (subcommand === 'help') {
-      expectArgCount('slowlog|help', args.args, 0)
-      return array([
-        value(
-          'SLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
-        ),
-        value('GET [<count>]'),
-        value('    Return slow log entries.'),
-        value('LEN'),
-        value('    Return the slow log length.'),
-        value('RESET'),
-        value('    Reset the slow log.'),
-        value('HELP'),
-        value('    Prints this help.'),
-      ])
+      expectSubcommandArgCount(
+        'SLOWLOG',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return helpReply(slowlogHelpLines(ctx.server.profile), ctx.server.profile)
     }
 
     throw unknownSubcommandError('SLOWLOG', args.subcommand, ctx.server.profile)
@@ -1138,7 +1464,7 @@ function parseShutdownOptions(
   let abort = false
 
   for (const arg of args) {
-    const option = arg.toString().toLowerCase()
+    const option = asciiLowerCase(arg.toString())
     if (option === 'save' || option === 'nosave') {
       continue
     }

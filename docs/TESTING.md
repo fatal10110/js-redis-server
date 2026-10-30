@@ -158,6 +158,15 @@ regardless of profile. See the current gate matrix in
 Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
 `redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
 
+Suites that pin version-dependent wording follow `REDIS_COMPAT` through
+`activeProfile` and the shared wording helpers in
+`tests-integration/profile-wording.ts` (script error decoration, `NOSCRIPT`,
+unknown-subcommand and arity errors). `npm run test:integration:profiles:mock`
+runs the script, `COMMAND`, subcommand-error and MONITOR suites once per preset
+(the `profile-suites-mock` CI job); each profile's expectations are checked
+against a real server of that version (`scripts/agent-tools/probe.py`).
+`npm test` also type-checks `scripts/` and `tests/` with `tsconfig.check.json`.
+
 Valkey profiles model the Redis 7.0-era gates as enabled:
 
 | Profile      | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate  |
@@ -305,10 +314,9 @@ as Redis 6.2 does. After `redis.setresp(3)`, `redis.call` also
 hands the script RESP3 replies — `HGETALL` as a `{map=…}` table, `ZSCORE` as a
 `{double=…}` table — so returning one gives the client a map or a double.
 
-One known mock gap here, not Redis behaviour: the mock's `SMEMBERS` replies
-with an array, not a RESP3 set (`~`), so after `redis.setresp(3)` the script
-sees a plain list instead of a `{set=…}` table. The script gaps that still
-need Lua engine work (6.2's error handler, `redis.call` number arguments on
+After `redis.setresp(3)` a set reply (`SMEMBERS`, `SINTER`, `SUNION`,
+`SDIFF`, `SPOP` with a count) reaches the script as a `{set=…}` table, as in
+Redis. The script gaps that still need Lua engine work (6.2's error handler, `redis.call` number arguments on
 6.2 / 7.0, `set_repl` / `replicate_commands`) are tracked in
 [#540](https://github.com/fatal10110/js-redis-server/issues/540).
 
@@ -470,19 +478,30 @@ They are resolved one at a time, and the facade follows the installed version:
 a class it does not export costs only that class, never the ones that do exist.
 Before redis 4.6.12 there is no `MultiErrorReply`, and — as on those releases —
 `exec()` then resolves with a failed command's `ErrorReply` inline in the reply
-array instead of throwing. redis 4.0.x exports no `ErrorReply` at all, so server
+array instead of throwing. A command that fails to *queue* (wrong arity, an
+unknown command) is different on every version: `exec()` rejects with that first
+command's own error — not `EXECABORT`, and not a `MultiErrorReply` — because
+node-redis pipelines MULTI, the commands and EXEC and awaits them together. An
+error nested in an array or map reply (`EVAL "return {1,
+redis.error_reply('x')}" 0`) is returned in place as a `SimpleError`; only a
+top-level error rejects. redis 4.0.x exports no `ErrorReply` at all, so server
 errors there are a local look-alike that is not `instanceof` anything you can
 import; match on `err.message` on 4.0.x. The same look-alikes (matching node-redis
 v6 in message, `name` and `constructor.name`) are used if `redis` cannot be
 required at all.
 
-**Known gap ([#440](https://github.com/fatal10110/js-redis-server/issues/440)):**
-real node-redis re-opens a closed client (`connect()` reconnects,
-commands work again, a second `'end'` follows the next close). This facade
-cannot yet, because the client that owns its `RedisServerState` closes it during
-teardown and that is terminal — so `connect()` on a closed client rejects with
-`ClientClosedError` rather than handing back a client that looks alive but is
-not.
+**Re-opening:** `connect()` on a closed client re-opens it, as real node-redis
+does ([#440](https://github.com/fatal10110/js-redis-server/issues/440)): a new
+connection to the same in-memory server (the keyspace survived the close) at the
+configured `RESP` and database, `'connect'` and `'ready'` again, and a second
+`'end'` on the next close. Like the real client it counts as open as soon as
+`connect()` is called, so a command issued right after it runs on the new
+connection; called while a `quit()` still drains, it waits for that close. A
+`watch()` from before the reconnect fails the next `exec()` with
+`WatchError('Client reconnected after WATCH')`, as on node-redis. Not reproduced:
+real node-redis re-subscribes the old channels on reconnect; a re-opened facade
+client starts with no subscriptions. `connect()` on an open client stays a no-op
+(real node-redis rejects `Socket already opened`).
 
 The **cluster** client closes on node-redis' own, quite different, cluster
 terms: `quit()` / `disconnect()` / `destroy()` all resolve `undefined`, they

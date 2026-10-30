@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../test-config'
 import { commandFrame, errorWithMessage } from '../utils'
+import { legacy, subcommandArity, unknownSubcommand } from '../profile-wording'
 import {
   RawRedisConnection,
   respMapGet,
@@ -10,6 +11,12 @@ import {
 } from '../raw-tcp/raw-connection'
 
 const testRunner = new TestRunner()
+// COMMAND DOCS, COMMAND LIST and COMMAND GETKEYSANDFLAGS arrive in Redis 7.0,
+// and 6.2 replies to COMMAND INFO with seven fields (no tips, key specs or
+// subcommands).
+const since70 = legacy
+  ? 'COMMAND DOCS/LIST/GETKEYSANDFLAGS need Redis 7.0'
+  : false
 
 type CommandInfoReply = [
   string,
@@ -71,142 +78,176 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     ]
 
     // Whole reply, incl. tips / key specs / subcommands (indices 7-9).
-    assert.deepStrictEqual(info, [
-      'echo',
-      2,
-      ['loading', 'stale', 'fast'],
-      0,
-      0,
-      0,
-      ['@fast', '@connection'],
-      [],
-      [],
-      [],
-    ])
+    assert.deepStrictEqual(
+      info,
+      legacy
+        ? ['echo', 2, ['fast'], 0, 0, 0, ['@fast', '@connection']]
+        : [
+            'echo',
+            2,
+            ['loading', 'stale', 'fast'],
+            0,
+            0,
+            0,
+            ['@fast', '@connection'],
+            [],
+            [],
+            [],
+          ],
+    )
   })
 
-  test('COMMAND DOCS ECHO reports summary, since, group, complexity and arguments', async () => {
-    const docs = (await redisClient?.command('DOCS', 'ECHO')) as unknown[]
-    assert.strictEqual(docs.length, 2)
-    assert.strictEqual(docs[0], 'echo')
+  test(
+    'COMMAND DOCS ECHO reports summary, since, group, complexity and arguments',
+    { skip: since70 },
+    async () => {
+      const docs = (await redisClient?.command('DOCS', 'ECHO')) as unknown[]
+      assert.strictEqual(docs.length, 2)
+      assert.strictEqual(docs[0], 'echo')
 
-    const echoDocs = docs[1] as unknown[]
-    assertMapEntry(echoDocs, 'summary', 'Returns the given string.')
-    assertMapEntry(echoDocs, 'since', '1.0.0')
-    assertMapEntry(echoDocs, 'group', 'connection')
-    assertMapEntry(echoDocs, 'complexity', 'O(1)')
+      const echoDocs = docs[1] as unknown[]
+      assertMapEntry(echoDocs, 'summary', 'Returns the given string.')
+      assertMapEntry(echoDocs, 'since', '1.0.0')
+      assertMapEntry(echoDocs, 'group', 'connection')
+      assertMapEntry(echoDocs, 'complexity', 'O(1)')
 
-    const args = resp2MapGet(echoDocs, 'arguments') as unknown[][]
-    assert.strictEqual(args.length, 1)
-    // `display_text` is not asserted: real 7.2+ sends it, but no command in
-    // this repo emits it yet (tracked as a follow-up).
-    assertMapEntry(args[0], 'name', 'message')
-    assertMapEntry(args[0], 'type', 'string')
-  })
+      const args = resp2MapGet(echoDocs, 'arguments') as unknown[][]
+      assert.strictEqual(args.length, 1)
+      // `display_text` is not asserted: real 7.2+ sends it, but no command in
+      // this repo emits it yet (tracked as a follow-up).
+      assertMapEntry(args[0], 'name', 'message')
+      assertMapEntry(args[0], 'type', 'string')
+    },
+  )
 
-  test('COMMAND LIST returns names and supports Redis FILTERBY variants', async () => {
-    const names = (await redisClient?.command('LIST')) as string[]
-    assert.ok(names.includes('get'))
-    assert.ok(names.includes('set'))
-    assert.ok(names.includes('command'))
-    assert.ok(names.includes('command|info'))
+  test(
+    'COMMAND LIST returns names and supports Redis FILTERBY variants',
+    { skip: since70 },
+    async () => {
+      const names = (await redisClient?.command('LIST')) as string[]
+      assert.ok(names.includes('get'))
+      assert.ok(names.includes('set'))
+      assert.ok(names.includes('command'))
+      assert.ok(names.includes('command|info'))
 
-    const patternNames = (await redisClient?.command(
-      'LIST',
-      'FILTERBY',
-      'PATTERN',
-      'get*',
-    )) as string[]
-    assert.ok(patternNames.includes('get'))
-    assert.ok(patternNames.every(name => name.startsWith('get')))
+      const patternNames = (await redisClient?.command(
+        'LIST',
+        'FILTERBY',
+        'PATTERN',
+        'get*',
+      )) as string[]
+      assert.ok(patternNames.includes('get'))
+      assert.ok(patternNames.every(name => name.startsWith('get')))
 
-    const moduleNames = (await redisClient?.command(
-      'LIST',
-      'FILTERBY',
-      'MODULE',
-      'nosuchmodule',
-    )) as string[]
-    assert.deepStrictEqual(moduleNames, [])
-  })
+      const moduleNames = (await redisClient?.command(
+        'LIST',
+        'FILTERBY',
+        'MODULE',
+        'nosuchmodule',
+      )) as string[]
+      assert.deepStrictEqual(moduleNames, [])
+    },
+  )
 
   test('COMMAND COUNT and HELP expose the command surface', async () => {
-    const names = (await redisClient?.command('LIST')) as string[]
+    const names = (
+      legacy
+        ? ((await redisClient?.call('COMMAND')) as string[][]).map(
+            info => info[0],
+          )
+        : await redisClient?.command('LIST')
+    ) as string[]
     const count = (await redisClient?.command('COUNT')) as number
     const help = (await redisClient?.command('HELP')) as string[]
 
     assert.ok(count > 0)
     assert.ok(names.length > 0)
     assert.ok(help.some(line => line.includes('GETKEYS')))
-    assert.ok(help.some(line => line.includes('GETKEYSANDFLAGS')))
+    assert.strictEqual(
+      help.some(line => line.includes('GETKEYSANDFLAGS')),
+      !legacy,
+    )
   })
 
-  test('COMMAND DOCS returns documentation entries and skips unknown commands', async () => {
-    const docs = (await redisClient?.command('DOCS', 'GET')) as unknown[]
-    assert.strictEqual(docs[0], 'get')
+  test(
+    'COMMAND DOCS returns documentation entries and skips unknown commands',
+    { skip: since70 },
+    async () => {
+      const docs = (await redisClient?.command('DOCS', 'GET')) as unknown[]
+      assert.strictEqual(docs[0], 'get')
 
-    const getDocs = docs[1] as unknown[]
-    assertMapEntry(getDocs, 'summary', 'Returns the string value of a key.')
-    assertMapEntry(getDocs, 'group', 'string')
+      const getDocs = docs[1] as unknown[]
+      assertMapEntry(getDocs, 'summary', 'Returns the string value of a key.')
+      assertMapEntry(getDocs, 'group', 'string')
 
-    const unknownDocs = (await redisClient?.command(
-      'DOCS',
-      'NOSUCHCOMMAND',
-    )) as unknown[]
-    assert.deepStrictEqual(unknownDocs, [])
-  })
+      const unknownDocs = (await redisClient?.command(
+        'DOCS',
+        'NOSUCHCOMMAND',
+      )) as unknown[]
+      assert.deepStrictEqual(unknownDocs, [])
+    },
+  )
 
-  test('COMMAND DOCS returns RESP3 maps after HELLO 3', async () => {
-    const port = testRunner.getClusterPorts()[0]
-    assert.notStrictEqual(port, undefined)
-    const connection = await RawRedisConnection.connect('127.0.0.1', port!)
+  test(
+    'COMMAND DOCS returns RESP3 maps after HELLO 3',
+    { skip: since70 },
+    async () => {
+      const port = testRunner.getClusterPorts()[0]
+      assert.notStrictEqual(port, undefined)
+      const connection = await RawRedisConnection.connect('127.0.0.1', port!)
 
-    try {
-      connection.write(commandFrame('HELLO', '3'))
-      assert.ok((await connection.readFrame()) instanceof Map)
+      try {
+        connection.write(commandFrame('HELLO', '3'))
+        assert.ok((await connection.readFrame()) instanceof Map)
 
-      connection.write(commandFrame('COMMAND', 'DOCS', 'GET'))
-      const reply = await connection.readFrame()
-      assert.ok(reply instanceof Map)
+        connection.write(commandFrame('COMMAND', 'DOCS', 'GET'))
+        const reply = await connection.readFrame()
+        assert.ok(reply instanceof Map)
 
-      const getDocs = respMapGet(reply, 'get')
-      assert.ok(getDocs instanceof Map)
-      assert.strictEqual(
-        respText(respMapGet(getDocs, 'summary')),
-        'Returns the string value of a key.',
-      )
-      assert.strictEqual(respText(respMapGet(getDocs, 'group')), 'string')
+        const getDocs = respMapGet(reply, 'get')
+        assert.ok(getDocs instanceof Map)
+        assert.strictEqual(
+          respText(respMapGet(getDocs, 'summary')),
+          'Returns the string value of a key.',
+        )
+        assert.strictEqual(respText(respMapGet(getDocs, 'group')), 'string')
 
-      const args = respMapGet(getDocs, 'arguments')
-      assert.ok(Array.isArray(args))
-      assert.ok(args[0] instanceof Map)
-      assert.strictEqual(respText(respMapGet(args[0], 'name')), 'key')
-    } finally {
-      connection.close()
-    }
-  })
+        const args = respMapGet(getDocs, 'arguments')
+        assert.ok(Array.isArray(args))
+        assert.ok(args[0] instanceof Map)
+        assert.strictEqual(respText(respMapGet(args[0], 'name')), 'key')
+      } finally {
+        connection.close()
+      }
+    },
+  )
 
-  test('COMMAND DOCS argument flags use RESP status strings for redis-cli', async () => {
-    const port = testRunner.getClusterPorts()[0]
-    assert.notStrictEqual(port, undefined)
-    const connection = await RawRedisConnection.connect('127.0.0.1', port!)
+  test(
+    'COMMAND DOCS argument flags use RESP status strings for redis-cli',
+    { skip: since70 },
+    async () => {
+      const port = testRunner.getClusterPorts()[0]
+      assert.notStrictEqual(port, undefined)
+      const connection = await RawRedisConnection.connect('127.0.0.1', port!)
 
-    try {
-      connection.write(commandFrame('COMMAND', 'DOCS', 'MGET'))
-      const reply = await connection.readFrame()
-      assert.ok(Array.isArray(reply))
+      try {
+        connection.write(commandFrame('COMMAND', 'DOCS', 'MGET'))
+        const reply = await connection.readFrame()
+        assert.ok(Array.isArray(reply))
 
-      const docs = resp2MapGet(reply, 'mget')
-      assert.ok(Array.isArray(docs))
-      const args = resp2MapGet(docs, 'arguments')
-      assert.ok(Array.isArray(args))
-      assert.ok(Array.isArray(args[0]))
+        const docs = resp2MapGet(reply, 'mget')
+        assert.ok(Array.isArray(docs))
+        const args = resp2MapGet(docs, 'arguments')
+        assert.ok(Array.isArray(args))
+        assert.ok(Array.isArray(args[0]))
 
-      const flags = resp2MapGet(args[0], 'flags')
-      assert.deepStrictEqual(flags, ['multiple'])
-    } finally {
-      connection.close()
-    }
-  })
+        const flags = resp2MapGet(args[0], 'flags')
+        assert.deepStrictEqual(flags, ['multiple'])
+      } finally {
+        connection.close()
+      }
+    },
+  )
 
   test('COMMAND GETKEYS and GETKEYSANDFLAGS use command key extraction', async () => {
     const tag = '{command-getkeys}'
@@ -219,6 +260,7 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
     )) as string[]
     assert.deepStrictEqual(getKeys, keys)
 
+    if (legacy) return
     const keysAndFlags = (await redisClient?.command(
       'GETKEYSANDFLAGS',
       'MGET',
@@ -233,17 +275,17 @@ describe(`COMMAND integration (${testRunner.getBackendName()})`, () => {
   test('COMMAND errors match Redis', async () => {
     await assert.rejects(
       redisClient!.call('COMMAND', 'BAD'),
-      errorWithMessage("ERR unknown subcommand 'BAD'. Try COMMAND HELP."),
+      errorWithMessage(unknownSubcommand('COMMAND', 'BAD')),
     )
     await assert.rejects(
       redisClient!.call('COMMAND', 'LIST', 'BAD'),
-      errorWithMessage('ERR syntax error'),
+      errorWithMessage(
+        legacy ? subcommandArity('COMMAND', 'LIST') : 'ERR syntax error',
+      ),
     )
     await assert.rejects(
       redisClient!.call('COMMAND', 'GETKEYS'),
-      errorWithMessage(
-        "ERR wrong number of arguments for 'command|getkeys' command",
-      ),
+      errorWithMessage(subcommandArity('COMMAND', 'GETKEYS')),
     )
     await assert.rejects(
       redisClient!.command('GETKEYS', 'NOSUCH', 'key'),

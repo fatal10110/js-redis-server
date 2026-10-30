@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 import { randomKey } from '../utils'
+import { commandCallAbort, legacy, luaRuntimeAbort } from '../profile-wording'
 
 /**
  * Raw TCP unknown-subcommand error tests (#413).
@@ -18,10 +18,12 @@ import { randomKey } from '../utils'
  * alone `CONFIG <three raw bytes>`), and neither adds anything to a
  * bytes-in/bytes-out assertion.
  *
- * This suite runs on the default profile (`redis-8.0`) and against the real 8.0
- * backend, so it pins the 7.0+ form. The 6.2 side of the gate — a different
- * template, and no truncation at all — is asserted by the profile sweep in
- * `tests-integration/compatibility/profile-gates.test.ts`.
+ * The suite runs once per compatibility profile (`REDIS_COMPAT`) and against
+ * the real server of each: from Redis 7.0 the template is
+ * `unknown subcommand '<sub>'` and the echo is cut at 128 bytes; Redis 6.2
+ * words it `Unknown subcommand or wrong number of arguments for '<sub>'`, does
+ * not truncate, has no FUNCTION command, and answers a known subcommand with
+ * the wrong arity through the same template (or, for XGROUP, a missing key).
  *
  * Captured from real servers:
  *
@@ -46,18 +48,60 @@ const CONTAINERS = [
   'ACL',
   'SLOWLOG',
   'PUBSUB',
-  'FUNCTION',
+  // Redis 6.2 has no FUNCTION command at all.
+  ...(legacy ? [] : ['FUNCTION']),
   'SCRIPT',
   'XGROUP',
   'XINFO',
 ]
 
-function sha1(script: string): string {
-  return createHash('sha1').update(script).digest('hex')
+/** `-ERR ...\r\n` for an unknown container subcommand, echoing raw bytes. */
+function unknownSubcommandReply(
+  container: string,
+  echoed: string | Buffer,
+): Buffer {
+  return Buffer.concat([
+    Buffer.from(
+      legacy
+        ? "-ERR Unknown subcommand or wrong number of arguments for '"
+        : "-ERR unknown subcommand '",
+    ),
+    Buffer.from(echoed),
+    Buffer.from(`'. Try ${container} HELP.\r\n`),
+  ])
 }
 
-function unknownSubcommandReply(container: string, echoed: string): string {
-  return `-ERR unknown subcommand '${echoed}'. Try ${container} HELP.\r\n`
+// Redis 6.2 looks up the stream key (argv[2]) before it dispatches XGROUP and
+// XINFO, so a missing key wins over an unknown subcommand.
+const requiresKey =
+  '-ERR The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.\r\n'
+const noSuchKey = '-ERR no such key\r\n'
+
+/** The echo limit: 128 bytes from Redis 7.0, none on 6.2. */
+function echoLimit(name: string): string {
+  return legacy ? name : name.slice(0, 128)
+}
+
+/** A script aborted by `error(<bytes>)`, the bytes kept raw. */
+function scriptAbortFrame(script: string, bytes: Buffer): Buffer {
+  const marker = '@@BYTES@@'
+  const [head, tail] = luaRuntimeAbort(script, marker).split(marker)
+  return Buffer.concat([
+    Buffer.from('-'),
+    Buffer.from(head!),
+    bytes,
+    Buffer.from(`${tail}\r\n`),
+  ])
+}
+
+/**
+ * The reply of a container that rejects options it cannot use
+ * (`addReplySubcommandSyntaxError`); 6.2 words it as the unknown template.
+ */
+function subcommandSyntaxReply(container: string, echoed: string): string {
+  return legacy
+    ? unknownSubcommandReply(container, echoed).toString()
+    : `-ERR unknown subcommand or wrong number of arguments for '${echoed}'. Try ${container} HELP.\r\n`
 }
 
 describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, () => {
@@ -112,18 +156,18 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     await expectReply(
       conn,
       ['XGROUP', 'BOGUS', 'stream', 'group'],
-      unknownSubcommandReply('XGROUP', 'BOGUS'),
+      legacy ? requiresKey : unknownSubcommandReply('XGROUP', 'BOGUS'),
     )
     await expectReply(
       conn,
       ['XINFO', 'BOGUS', 'stream'],
-      unknownSubcommandReply('XINFO', 'BOGUS'),
+      legacy ? noSuchKey : unknownSubcommandReply('XINFO', 'BOGUS'),
     )
   })
 
   // Real Redis renders the echoed subcommand with `%.128s`. Verified exact
   // against 7.0.15 and 8.0.6: 127 and 128 come back whole, 129 and 300 are both
-  // cut to 128. (Redis 6.2 does not truncate at all — covered by the gate.)
+  // cut to 128. Redis 6.2 does not truncate at all.
   test('the echoed subcommand is truncated at 128 bytes', async () => {
     const conn = await connect()
 
@@ -145,12 +189,12 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
       await expectReply(
         conn,
         ['CONFIG', 'X'.repeat(length)],
-        unknownSubcommandReply('CONFIG', 'X'.repeat(128)),
+        unknownSubcommandReply('CONFIG', echoLimit('X'.repeat(length))),
       )
       await expectReply(
         conn,
         ['XGROUP', 'X'.repeat(length)],
-        unknownSubcommandReply('XGROUP', 'X'.repeat(128)),
+        unknownSubcommandReply('XGROUP', echoLimit('X'.repeat(length))),
       )
     }
   })
@@ -170,11 +214,10 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     await expectReply(
       conn,
       ['CONFIG', subcommand],
-      Buffer.concat([
-        Buffer.from("-ERR unknown subcommand '"),
-        subcommand.subarray(0, 128),
-        Buffer.from("'. Try CONFIG HELP.\r\n"),
-      ]),
+      unknownSubcommandReply(
+        'CONFIG',
+        legacy ? subcommand : subcommand.subarray(0, 128),
+      ),
     )
   })
 
@@ -192,11 +235,7 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
       await expectReply(
         conn,
         [container, subcommand],
-        Buffer.concat([
-          Buffer.from("-ERR unknown subcommand '"),
-          subcommand,
-          Buffer.from(`'. Try ${container} HELP.\r\n`),
-        ]),
+        unknownSubcommandReply(container, subcommand),
       )
     }
   })
@@ -234,7 +273,7 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
           NUL,
           Buffer.from('A'.repeat(200)),
         ]),
-        'A'.repeat(128),
+        echoLimit('A'.repeat(200)),
       ],
     ]
 
@@ -257,12 +296,12 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     await expectReply(
       conn,
       ['PUBSUB', 'CHANNELS', 'a', 'b'],
-      "-ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.\r\n",
+      subcommandSyntaxReply('PUBSUB', 'CHANNELS'),
     )
     await expectReply(
       conn,
       ['PUBSUB', 'SHARDCHANNELS', 'a', 'b'],
-      "-ERR unknown subcommand or wrong number of arguments for 'SHARDCHANNELS'. Try PUBSUB HELP.\r\n",
+      subcommandSyntaxReply('PUBSUB', 'SHARDCHANNELS'),
     )
   })
 
@@ -300,11 +339,7 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     await expectReply(
       conn,
       ['EVAL', script, '0', bytes],
-      Buffer.concat([
-        Buffer.from('-ERR user_script:1: '),
-        bytes,
-        Buffer.from(` script: ${sha1(script)}, on @user_script:1.\r\n`),
-      ]),
+      scriptAbortFrame(script, bytes),
     )
   })
 
@@ -317,8 +352,7 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
   test('a nested subcommand syntax error comes back through pcall and call', async () => {
     const conn = await connect()
     const bytes = Buffer.from([0xff, 0xfe, 0xfd])
-    const body =
-      "ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP."
+    const body = subcommandSyntaxReply('PUBSUB', 'CHANNELS').slice(1, -2)
 
     await expectReply(
       conn,
@@ -335,7 +369,7 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     await expectReply(
       conn,
       ['EVAL', script, '0', bytes],
-      `-${body} script: ${sha1(script)}, on @user_script:1.\r\n`,
+      `-${commandCallAbort(script, body)}\r\n`,
     )
   })
 
@@ -352,35 +386,55 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
     const conn = await connect()
     const key = `subcmd-arity:${randomKey()}`
 
-    const cases: [string[], string][] = [
-      [['CONFIG', 'GET'], 'config|get'],
-      [['XGROUP'], 'xgroup'],
-      [['XGROUP', 'CREATE', key, 'g'], 'xgroup|create'],
-      [['XGROUP', 'create', key, 'g'], 'xgroup|create'],
-      [['XGROUP', 'SETID', key, 'g'], 'xgroup|setid'],
-      [['XGROUP', 'DESTROY', key], 'xgroup|destroy'],
-      [['XGROUP', 'DESTROY', key, 'g', 'x'], 'xgroup|destroy'],
-      [['XGROUP', 'CREATECONSUMER', key, 'g'], 'xgroup|createconsumer'],
+    // Redis 6.2 has no per-subcommand arity: a wrong count is the unknown
+    // template, and XGROUP checks the key exists before it counts anything
+    // but CREATE|SETID|DESTROY's own minimum.
+    const unknown = (container: string, echoed: string): string =>
+      unknownSubcommandReply(container, echoed).toString()
+
+    const cases: [string[], string, string][] = [
+      [['CONFIG', 'GET'], 'config|get', unknown('CONFIG', 'GET')],
+      [['XGROUP'], 'xgroup', 'same'],
+      [['XGROUP', 'CREATE', key, 'g'], 'xgroup|create', requiresKey],
+      [['XGROUP', 'create', key, 'g'], 'xgroup|create', requiresKey],
+      [['XGROUP', 'SETID', key, 'g'], 'xgroup|setid', requiresKey],
+      [
+        ['XGROUP', 'DESTROY', key],
+        'xgroup|destroy',
+        unknown('XGROUP', 'DESTROY'),
+      ],
+      [['XGROUP', 'DESTROY', key, 'g', 'x'], 'xgroup|destroy', requiresKey],
+      [
+        ['XGROUP', 'CREATECONSUMER', key, 'g'],
+        'xgroup|createconsumer',
+        requiresKey,
+      ],
       [
         ['XGROUP', 'CREATECONSUMER', key, 'g', 'c', 'x'],
         'xgroup|createconsumer',
+        requiresKey,
       ],
-      [['XGROUP', 'DELCONSUMER', key, 'g'], 'xgroup|delconsumer'],
-      [['XGROUP', 'DELCONSUMER', key, 'g', 'c', 'x'], 'xgroup|delconsumer'],
-      [['XINFO'], 'xinfo'],
-      [['XINFO', 'STREAM'], 'xinfo|stream'],
-      [['xinfo', 'stream'], 'xinfo|stream'],
-      [['XINFO', 'GROUPS'], 'xinfo|groups'],
-      [['XINFO', 'GROUPS', key, 'x'], 'xinfo|groups'],
-      [['XINFO', 'CONSUMERS', key], 'xinfo|consumers'],
-      [['XINFO', 'CONSUMERS', key, 'g', 'x'], 'xinfo|consumers'],
+      [['XGROUP', 'DELCONSUMER', key, 'g'], 'xgroup|delconsumer', requiresKey],
+      [
+        ['XGROUP', 'DELCONSUMER', key, 'g', 'c', 'x'],
+        'xgroup|delconsumer',
+        requiresKey,
+      ],
+      [['XINFO'], 'xinfo', 'same'],
+      [['XINFO', 'STREAM'], 'xinfo|stream', unknown('XINFO', 'STREAM')],
+      [['xinfo', 'stream'], 'xinfo|stream', unknown('XINFO', 'stream')],
+      [['XINFO', 'GROUPS'], 'xinfo|groups', unknown('XINFO', 'GROUPS')],
+      [['XINFO', 'GROUPS', key, 'x'], 'xinfo|groups', noSuchKey],
+      [['XINFO', 'CONSUMERS', key], 'xinfo|consumers', noSuchKey],
+      [['XINFO', 'CONSUMERS', key, 'g', 'x'], 'xinfo|consumers', noSuchKey],
     ]
 
-    for (const [args, name] of cases) {
+    for (const [args, name, legacyReply] of cases) {
+      const arity = `-ERR wrong number of arguments for '${name}' command\r\n`
       await expectReply(
         conn,
         args,
-        `-ERR wrong number of arguments for '${name}' command\r\n`,
+        legacy && legacyReply !== 'same' ? legacyReply : arity,
       )
     }
   })
@@ -427,11 +481,7 @@ describe(`Raw TCP unknown-subcommand errors (${testRunner.getBackendName()})`, (
 
     try {
       for (const [args, container, echoed] of cases) {
-        await expectReply(
-          conn,
-          args,
-          `-ERR unknown subcommand or wrong number of arguments for '${echoed}'. Try ${container} HELP.\r\n`,
-        )
+        await expectReply(conn, args, subcommandSyntaxReply(container, echoed))
       }
     } finally {
       await expectReply(conn, ['DEL', key], ':1\r\n')

@@ -1,5 +1,6 @@
 import type { CommandPlan } from './command-definition'
 import { CommandExecutor } from './command-executor'
+import { applyClientReplyMode } from './client-reply'
 import {
   createDefaultParkHandler,
   createNonBlockingParkHandler,
@@ -12,7 +13,7 @@ import {
   type RedisMonitorContext,
 } from './redis-context'
 import { RedisCommandError, errors } from './redis-error'
-import { RedisResult } from './redis-result'
+import { RedisResult, type RedisResultOptions } from './redis-result'
 import { RedisValue } from './redis-value'
 import { encodeRedisValue, type RespVersion } from './resp-encoder'
 import { type RedisTurnHandle } from './turn-queue'
@@ -205,6 +206,8 @@ export class ClientSession implements RedisClientSession {
   private readonly pushQueue: RedisResult[] = []
   private readonly pushWaiters = new Set<() => void>()
   private deferredPushes: RedisResult[] | null = null
+  /** Pushes for this connection made by the command EXEC is running. */
+  private transactionPushes: RedisResult[] | null = null
   private pushQueueClosed = false
   /** Teardown for push producers (MONITOR); run on RESET and close. */
   private readonly resetHooks = new Set<() => void>()
@@ -382,7 +385,7 @@ export class ClientSession implements RedisClientSession {
 
     const plans = [...this.transactionPlans]
     this.transactionPlans = []
-    this.sessionMode = 'normal'
+    this.leaveTransactionMode()
     this.transactionDirty = false
     this.unwatch()
     return plans
@@ -391,9 +394,20 @@ export class ClientSession implements RedisClientSession {
   /** DISCARD: drop the queued commands and leave transaction mode. */
   discardTransaction(): void {
     this.transactionPlans = []
-    this.sessionMode = 'normal'
+    this.leaveTransactionMode()
     this.transactionDirty = false
     this.unwatch()
+  }
+
+  /**
+   * Back to normal mode, or to subscribed mode: a RESP3 connection may
+   * MULTI while subscribed and stays subscribed after EXEC / DISCARD.
+   */
+  private leaveTransactionMode(): void {
+    if (this.sessionMode === 'transaction') {
+      this.sessionMode = 'normal'
+    }
+    this.refreshPubSubMode()
   }
 
   /** Flag the transaction as poisoned (a queued command failed). No-op outside MULTI. */
@@ -413,8 +427,16 @@ export class ClientSession implements RedisClientSession {
    *
    * The reply is pre-encoded item by item whenever an item's wire bytes cannot
    * be rebuilt from the array value alone: a queued `HELLO` switched the
-   * protocol partway, or a command pre-encoded its own reply (a multi-channel
-   * `SUBSCRIBE`, whose extra confirmations Redis appends inside the array).
+   * protocol partway, a command pre-encoded its own reply (a multi-channel
+   * `SUBSCRIBE`, whose extra confirmations Redis appends inside the array),
+   * or a push for this connection is written inline (below).
+   *
+   * Pushes a queued command produces for this connection (its PUBLISH to a
+   * channel it subscribes to) follow the EXEC reply on Redis 7.2+ / valkey
+   * 8.0+ (`server.pending_push_messages`, flushed after the outermost call);
+   * older versions write them into the output buffer as they happen, inside
+   * the array ahead of the item that produced them. Each item's `afterReply`
+   * and `trailingFrames` move to the EXEC reply (#509).
    */
   async executeTransaction(
     plans: readonly CommandPlan[],
@@ -445,6 +467,12 @@ export class ClientSession implements RedisClientSession {
   ): Promise<RedisResult> {
     const values: RedisValue[] = []
     const encodedValues: Buffer[] = []
+    const trailingFrames: RedisValue[] = []
+    const heldPushes: RedisResult[] = []
+    const afterReplies: (() => void)[] = []
+    const pushesAfterReply = this.server.profile.has(
+      'pubsub.resp3-publish-reply-first',
+    )
     let preEncode = false
 
     // The EXEC turn is server-wide, so a queued SELECT switching databases
@@ -459,19 +487,17 @@ export class ClientSession implements RedisClientSession {
       // the failure into this command's slot and keep running the rest (#83).
       let result: RedisResult
       const versionBefore = this.protocolVersion
+      const pushes: RedisResult[] = []
+      this.transactionPushes = pushes
       try {
         result = await this.executor.executePlan(plan, noBlockCtx)
       } catch (err) {
         if (this.signal.aborted) {
           throw err
         }
-        this.appendTransactionValue(
-          RedisValue.error((err as Error).message),
-          values,
-          encodedValues,
-        )
-        preEncode ||= this.protocolVersion !== versionBefore
-        continue
+        result = RedisResult.error((err as Error).message)
+      } finally {
+        this.transactionPushes = null
       }
 
       this.appendTransactionValue(
@@ -482,14 +508,75 @@ export class ClientSession implements RedisClientSession {
       )
       preEncode ||=
         this.protocolVersion !== versionBefore || result.encoded !== undefined
+
+      if (pushes.length > 0 && pushesAfterReply) {
+        heldPushes.push(...pushes)
+      } else if (pushes.length > 0) {
+        const last = encodedValues.length - 1
+        encodedValues[last] = Buffer.concat([
+          ...pushes.map(push => this.encodePush(push)),
+          encodedValues[last],
+        ])
+        trailingFrames.push(...pushes.map(push => push.value))
+        preEncode = true
+      }
+
+      trailingFrames.push(...(result.options?.trailingFrames ?? []))
+      if (result.options?.afterReply) {
+        afterReplies.push(result.options.afterReply)
+      }
     }
 
     const value = RedisValue.array(values)
+    const options = this.transactionReplyOptions(
+      trailingFrames,
+      heldPushes,
+      afterReplies,
+    )
     if (!preEncode) {
-      return RedisResult.create(value)
+      return RedisResult.create(value, options)
     }
 
-    return RedisResult.preEncoded(value, encodeTransactionArray(encodedValues))
+    return RedisResult.preEncoded(
+      value,
+      encodeTransactionArray(encodedValues),
+      options,
+    )
+  }
+
+  private transactionReplyOptions(
+    trailingFrames: readonly RedisValue[],
+    heldPushes: readonly RedisResult[],
+    afterReplies: readonly (() => void)[],
+  ): RedisResultOptions | undefined {
+    if (
+      trailingFrames.length === 0 &&
+      heldPushes.length === 0 &&
+      afterReplies.length === 0
+    ) {
+      return undefined
+    }
+
+    return {
+      ...(trailingFrames.length > 0 ? { trailingFrames } : {}),
+      afterReply: () => {
+        for (const push of heldPushes) {
+          this.enqueuePush(push)
+        }
+        for (const afterReply of afterReplies) {
+          afterReply()
+        }
+      },
+    }
+  }
+
+  private encodePush(push: RedisResult): Buffer {
+    return push.encoded
+      ? Buffer.from(push.encoded)
+      : encodeRedisValue(push.value, {
+          version: this.protocolVersion,
+          profile: this.server.profile,
+        })
   }
 
   private appendTransactionValue(
@@ -659,6 +746,10 @@ export class ClientSession implements RedisClientSession {
   }
 
   deferPushesUntilAfterReply(): () => void {
+    // The command's own hold (see execute) already delivers after the reply.
+    if (this.deferredPushes) {
+      return () => {}
+    }
     const deferred: RedisResult[] = []
     this.deferredPushes = deferred
     return () => {
@@ -682,7 +773,7 @@ export class ClientSession implements RedisClientSession {
    * `call()` adds the line after the command's reply, so a line from this
    * connection's own command waits in {@link ownMonitorLines} until the
    * reply is out, and every other line waits behind it
-   * ({@link holdMonitorPushes}).
+   * ({@link holdPushesUntilReply}).
    */
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void {
     if (this.stopMonitor) {
@@ -707,7 +798,9 @@ export class ClientSession implements RedisClientSession {
   /**
    * Register teardown for something that keeps producing pushes for this
    * connection. It runs once, on RESET or close, unless the returned function
-   * runs it first.
+   * runs it first. A cleanup that throws there cannot stop the rest of the
+   * teardown: RESET and close run every other hook and finish, and the error
+   * is dropped (#509).
    */
   onReset(cleanup: () => void): () => void {
     const hook = () => {
@@ -722,12 +815,21 @@ export class ClientSession implements RedisClientSession {
   /** RESET / close: tear down every producer registered with {@link onReset}. */
   resetPushProducers(): void {
     for (const hook of Array.from(this.resetHooks)) {
-      hook()
+      try {
+        hook()
+      } catch {
+        // Teardown must complete; see onReset.
+      }
     }
   }
 
   enqueuePush(result: RedisResult): void {
     if (this.pushQueueClosed || this.signal.aborted) {
+      return
+    }
+
+    if (this.transactionPushes) {
+      this.transactionPushes.push(result)
       return
     }
 
@@ -757,6 +859,29 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
+   * Resolves true once a push is queued, false once the queue is closed or a
+   * signal aborts. A transport pairs it with {@link takePushes} to move every
+   * queued push onto its output at once.
+   */
+  async waitForPushes(signal: AbortSignal): Promise<boolean> {
+    while (!signal.aborted && !this.signal.aborted) {
+      if (this.pushQueue.length > 0) {
+        return true
+      }
+      if (this.pushQueueClosed) {
+        return false
+      }
+      await this.waitForPush(signal)
+    }
+    return false
+  }
+
+  /** Every push queued so far, oldest first, removed from the queue. */
+  takePushes(): RedisResult[] {
+    return this.pushQueue.splice(0)
+  }
+
+  /**
    * Public entry point for executing one client command.
    *
    * Acquires a turn on the server's turn queue before running, guaranteeing
@@ -778,11 +903,47 @@ export class ClientSession implements RedisClientSession {
     // overlapping calls (one parked, another running) never swap lines.
     const ownLines: RedisResult[] | null = this.monitoring ? [] : null
     this.ownMonitorLines = ownLines
+    // Redis 7.2+ and valkey 8.0+ hold every push for the calling connection
+    // made while its command runs (a keyspace notification, its own PUBLISH,
+    // a script's inner calls) until the reply is out
+    // (`server.pending_push_messages`, joined after the outermost call).
+    // Older servers write each push as it is made.
+    const holdsOwnPushes = this.server.profile.has(
+      'pubsub.resp3-publish-reply-first',
+    )
+    let ownPushes: RedisResult[] | null = null
+    const holdOwnPushes = () => {
+      if (holdsOwnPushes && !this.deferredPushes) {
+        ownPushes = []
+        this.deferredPushes = ownPushes
+      }
+    }
+    // A blocked command's call returns before it has a reply: what it held
+    // so far goes out then, and pushes others make meanwhile are not held.
+    const flushOwnPushes = () => {
+      const held = ownPushes
+      ownPushes = null
+      if (!held) {
+        return
+      }
+      if (this.deferredPushes === held) {
+        this.deferredPushes = null
+      }
+      for (const push of held) {
+        this.enqueuePush(push)
+      }
+    }
+    holdOwnPushes()
     const turnAccess: TurnAccess = {
       get: () => turn,
       set: nextTurn => {
         turn = nextTurn
         this.ownMonitorLines = nextTurn ? ownLines : null
+        if (nextTurn) {
+          holdOwnPushes()
+        } else {
+          flushOwnPushes()
+        }
       },
     }
     let result: RedisResult | undefined
@@ -797,11 +958,16 @@ export class ClientSession implements RedisClientSession {
       )
       this.lastInteraction = Date.now()
       const ctx = this.createExecutionContext(turnAccess)
-      result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
+      // CLIENT REPLY OFF / SKIP drop the reply of every command processed,
+      // refused ones included, as real Redis checks before writing any reply.
+      result = applyClientReplyMode(
+        this,
+        await this.executor.executeRaw(rawCommand, rawArgs, ctx),
+      )
     } finally {
       this.lastInteraction = Date.now()
       this.ownMonitorLines = null
-      releaseHeld = this.holdMonitorPushes(ownLines)
+      releaseHeld = this.holdPushesUntilReply(ownPushes, ownLines)
       turn?.release()
       // A throw has no reply to wait for.
       if (!result) {
@@ -813,17 +979,47 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * On a monitoring connection, hold every push from here until the reply is
-   * written: real Redis appends to one output buffer, so the reply comes
-   * first, then the command's own monitor lines, then whatever other clients
-   * run once the turn is released. Returns the release (deliver or drop), or
-   * nothing when there is no hold to take: not monitoring, or a hold is
-   * already up (MONITOR's own, or an overlapping call's), which its
-   * `afterReply` releases and the own lines join.
+   * Keep holding every push from here until the reply is written: real Redis
+   * appends to one output buffer, so the reply comes first, then the pushes
+   * the command made (`ownPushes`, the hold {@link execute} took), then its
+   * own monitor lines, then whatever other clients run once the turn is
+   * released. Returns the release (deliver or drop), or nothing when there
+   * is no hold to take: no own hold and not monitoring, or a hold is already
+   * up (MONITOR's own, or an overlapping call's), which its `afterReply`
+   * releases and the own lines join.
    */
-  private holdMonitorPushes(
+  private holdPushesUntilReply(
+    ownPushes: RedisResult[] | null,
     ownLines: readonly RedisResult[] | null,
   ): ((deliver: boolean) => void) | undefined {
+    // Nothing held and nothing to receive: let go (the monitor hold below
+    // still applies).
+    if (
+      ownPushes &&
+      this.deferredPushes === ownPushes &&
+      ownPushes.length === 0 &&
+      this.pubsubSubscriptionCount === 0
+    ) {
+      this.deferredPushes = null
+    }
+
+    if (ownPushes && this.deferredPushes === ownPushes) {
+      const held = ownPushes
+      const madeByCommand = held.length
+      held.push(...(ownLines ?? []))
+      return deliver => {
+        if (this.deferredPushes === held) {
+          this.deferredPushes = null
+        }
+        // A closing command's pending pushes still join its reply
+        // (`listJoin` skips the CLIENT_CLOSE_AFTER_REPLY check); later
+        // output is dropped.
+        for (const push of deliver ? held : held.slice(0, madeByCommand)) {
+          this.enqueuePush(push)
+        }
+      }
+    }
+
     if (!this.monitoring) {
       return undefined
     }
@@ -849,7 +1045,7 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
-   * Release {@link holdMonitorPushes}'s hold once the reply is written. A
+   * Release {@link holdPushesUntilReply}'s hold once the reply is written. A
    * command that closes the connection (QUIT) drops it: Redis discards output
    * added after `CLIENT_CLOSE_AFTER_REPLY` is set.
    */
@@ -867,9 +1063,11 @@ export class ClientSession implements RedisClientSession {
       result.value,
       {
         ...result.options,
+        // Released first: the command's `afterReply` (EXEC's held pushes)
+        // goes out after what the command itself made.
         afterReply: () => {
-          afterReply?.()
           releaseHeld(deliver)
+          afterReply?.()
         },
       },
       result.encoded,

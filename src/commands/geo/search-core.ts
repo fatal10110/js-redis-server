@@ -1,20 +1,28 @@
+import { asciiUpperCase, asciiUpperToken } from '../../core/ascii-case'
 import {
   formatGeoCoordinate,
   type DoubleFormatProfile,
 } from '../../core/double-format'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import { parseString2dToken } from '../../core/double-token'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
-import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import {
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+  errors,
+} from '../../core/redis-error'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
 } from '../../state/data-types'
+import { georadiusGetKeys } from '../../core/key-specs'
 import { array, parseIntegerToken } from '../helpers'
 import { getSortedMembers } from '../zsets/helpers'
 import {
   assertValidCoordinates,
   decodeGeoScore,
-  haversineMeters,
+  geoDistanceMeters,
   isSupportedGeoUnit,
   metersToUnit,
   unitToMeters,
@@ -45,28 +53,38 @@ export type GeoMatch = {
   lat: number
 }
 
-export function parseGeoFloatToken(token: Buffer): number {
-  const n = Number(token.toString())
-  if (!Number.isFinite(n)) throw errors.expectedFloat()
-  return n
+/** A GEO* longitude or latitude, read like Redis' `string2d()`. */
+export function parseGeoFloatToken(
+  token: Buffer,
+  profile: CompatibilityProfile,
+): number {
+  const value = parseString2dToken(token, profile)
+  if (value === undefined) throw errors.expectedFloat()
+  return value
 }
 
-function parseGeoUnit(token: Buffer | undefined): string {
+function parseGeoUnit(
+  token: Buffer | undefined,
+  profile: CompatibilityProfile,
+): string {
   if (!token) throw errors.syntax()
   const unit = token.toString()
-  if (!isSupportedGeoUnit(unit)) throw errors.geoUnsupportedUnit()
+  if (!isSupportedGeoUnit(unit, profile)) {
+    throw errors.geoUnsupportedUnit(profile)
+  }
   return unit
 }
 
 export function parseByRadius(
   radiusTok: Buffer | undefined,
   unitTok: Buffer | undefined,
+  profile: CompatibilityProfile,
 ): GeoBy {
   if (!radiusTok) throw errors.syntax()
-  const radius = Number(radiusTok.toString())
-  if (!Number.isFinite(radius)) throw errors.geoRadiusNotNumeric()
+  const radius = parseString2dToken(radiusTok, profile)
+  if (radius === undefined) throw errors.geoRadiusNotNumeric()
   if (radius < 0) throw errors.geoRadiusNegative()
-  const unit = parseGeoUnit(unitTok)
+  const unit = parseGeoUnit(unitTok, profile)
   return { kind: 'radius', radiusMeters: unitToMeters(radius, unit), unit }
 }
 
@@ -74,21 +92,53 @@ export function parseByBox(
   widthTok: Buffer | undefined,
   heightTok: Buffer | undefined,
   unitTok: Buffer | undefined,
+  profile: CompatibilityProfile,
 ): GeoBy {
   if (!widthTok) throw errors.syntax()
-  const width = Number(widthTok.toString())
-  if (!Number.isFinite(width)) throw errors.geoWidthNotNumeric()
+  const width = parseString2dToken(widthTok, profile)
+  if (width === undefined) throw errors.geoWidthNotNumeric()
   if (!heightTok) throw errors.syntax()
-  const height = Number(heightTok.toString())
-  if (!Number.isFinite(height)) throw errors.geoHeightNotNumeric()
+  const height = parseString2dToken(heightTok, profile)
+  if (height === undefined) throw errors.geoHeightNotNumeric()
   if (width < 0 || height < 0) throw errors.geoBoxNegative()
-  const unit = parseGeoUnit(unitTok)
+  const unit = parseGeoUnit(unitTok, profile)
   return {
     kind: 'box',
     widthMeters: unitToMeters(width, unit),
     heightMeters: unitToMeters(height, unit),
     unit,
   }
+}
+
+/**
+ * A GEO argument error held back until execute. Real georadiusGeneric()
+ * parses its arguments only after the WRONGTYPE check (and, for FROMMEMBER /
+ * BYMEMBER, after looking the member up), so a wrong-typed key answers
+ * WRONGTYPE whatever the arguments. Arity errors are not deferred.
+ */
+export function deferGeoParseError(err: unknown): RedisCommandError {
+  if (
+    !(err instanceof RedisCommandError) ||
+    err instanceof WrongNumberOfArgumentsError
+  ) {
+    throw err
+  }
+  return err
+}
+
+/**
+ * The keys a GEORADIUS / GEORADIUSBYMEMBER whose arguments failed to parse is
+ * routed and locked by: Redis' georadiusGetKeys() over the raw arguments (the
+ * source plus the last STORE / STOREDIST destination), as for a command whose
+ * parser throws.
+ */
+export function georadiusRawKeys(
+  commandName: string,
+  input: readonly Buffer[],
+): Buffer[] {
+  return georadiusGetKeys([Buffer.from(commandName), ...input]).map(
+    ({ key }) => key,
+  )
 }
 
 export type GeoFrom =
@@ -102,8 +152,9 @@ export function parseGeoFrom(
   input: readonly Buffer[],
   cursor: number,
   commandName: string,
+  profile: CompatibilityProfile,
 ): [GeoFrom, number] {
-  const token = input[cursor]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[cursor])
   if (token === 'FROMMEMBER') {
     const member = input[cursor + 1]
     if (!member) throw new WrongNumberOfArgumentsError(commandName)
@@ -113,8 +164,8 @@ export function parseGeoFrom(
     const lonTok = input[cursor + 1]
     const latTok = input[cursor + 2]
     if (!lonTok || !latTok) throw new WrongNumberOfArgumentsError(commandName)
-    const lon = parseGeoFloatToken(lonTok)
-    const lat = parseGeoFloatToken(latTok)
+    const lon = parseGeoFloatToken(lonTok, profile)
+    const lat = parseGeoFloatToken(latTok, profile)
     assertValidCoordinates(lon, lat)
     return [{ type: 'lonlat', lon, lat }, cursor + 3]
   }
@@ -125,14 +176,23 @@ export function parseGeoFrom(
 export function parseGeoBy(
   input: readonly Buffer[],
   cursor: number,
+  profile: CompatibilityProfile,
 ): [GeoBy, number] {
-  const token = input[cursor]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[cursor])
   if (token === 'BYRADIUS') {
-    return [parseByRadius(input[cursor + 1], input[cursor + 2]), cursor + 3]
+    return [
+      parseByRadius(input[cursor + 1], input[cursor + 2], profile),
+      cursor + 3,
+    ]
   }
   if (token === 'BYBOX') {
     return [
-      parseByBox(input[cursor + 1], input[cursor + 2], input[cursor + 3]),
+      parseByBox(
+        input[cursor + 1],
+        input[cursor + 2],
+        input[cursor + 3],
+        profile,
+      ),
       cursor + 4,
     ]
   }
@@ -147,7 +207,7 @@ export function tryParseOrderOrCount(
   cursor: number,
   acc: GeoOrderCount,
 ): number | null {
-  const token = input[cursor]?.toString().toUpperCase()
+  const token = asciiUpperToken(input[cursor])
   if (token === 'ASC') {
     acc.order = 'ASC'
     return cursor + 1
@@ -163,7 +223,7 @@ export function tryParseOrderOrCount(
     if (count <= 0) throw errors.geoCountNotPositive()
     let next = cursor + 2
     let any = false
-    if (input[next]?.toString().toUpperCase() === 'ANY') {
+    if (asciiUpperToken(input[next]) === 'ANY') {
       any = true
       next++
     }
@@ -190,6 +250,7 @@ export function parseGeoRadiusFlags(
   input: readonly Buffer[],
   cursor: number,
   allowStore: boolean,
+  profile: CompatibilityProfile,
 ): [GeoRadiusFlags, number] {
   const options: GeoOrderCount = {}
   let withCoord = false
@@ -204,7 +265,7 @@ export function parseGeoRadiusFlags(
       cursor = advanced
       continue
     }
-    const token = input[cursor]!.toString().toUpperCase()
+    const token = asciiUpperCase(input[cursor]!.toString())
     if (token === 'WITHCOORD') {
       withCoord = true
       cursor++
@@ -241,7 +302,7 @@ export function parseGeoRadiusFlags(
   }
 
   if ((store || storeDist) && (withCoord || withDist || withHash)) {
-    throw errors.geoRadiusStoreWithOptions()
+    throw errors.geoRadiusStoreWithOptions(profile)
   }
 
   return [
@@ -250,33 +311,61 @@ export function parseGeoRadiusFlags(
   ]
 }
 
-// The stored zset score is a 52-bit geohash; real Redis' box test compares
-// component-wise great-circle distances (same-lon for latitude, same-lat for
-// longitude) against half the width/height, not a single radial distance —
-// see geohashGetDistanceIfInRectangle in Redis' geohash_helper.c.
+// geoWithinShape(): the radius test is geohashGetDistanceIfInRadiusWGS84()
+// (center first) and the box test geohashGetDistanceIfInRectangle(), which
+// compares the latitude distance and the longitude distance at the point's
+// latitude against half the height / width. Redis 7.0.6+ computes the former
+// with geohashGetLatDistance(); geoDistanceMeters() on a same-longitude pair
+// is that same expression there, and the full haversine on older servers.
 function withinBy(
   center: GeoCenter,
   point: GeoCenter,
   by: GeoBy,
+  profile: CompatibilityProfile,
 ): number | null {
   if (by.kind === 'radius') {
-    const dist = haversineMeters(center.lon, center.lat, point.lon, point.lat)
+    const dist = geoDistanceMeters(
+      center.lon,
+      center.lat,
+      point.lon,
+      point.lat,
+      profile,
+    )
     return dist <= by.radiusMeters ? dist : null
   }
 
-  const latDist = haversineMeters(center.lon, center.lat, center.lon, point.lat)
+  const latDist = geoDistanceMeters(
+    point.lon,
+    point.lat,
+    point.lon,
+    center.lat,
+    profile,
+  )
   if (latDist > by.heightMeters / 2) return null
-  const lonDist = haversineMeters(center.lon, center.lat, point.lon, center.lat)
+  const lonDist = geoDistanceMeters(
+    point.lon,
+    point.lat,
+    center.lon,
+    point.lat,
+    profile,
+  )
   if (lonDist > by.widthMeters / 2) return null
-  return haversineMeters(center.lon, center.lat, point.lon, point.lat)
+  return geoDistanceMeters(
+    center.lon,
+    center.lat,
+    point.lon,
+    point.lat,
+    profile,
+  )
 }
 
 export function resolveCenterFromMember(
-  zset: RedisSortedSetData | null,
+  zset: RedisSortedSetData,
   member: Buffer,
+  profile: CompatibilityProfile,
 ): GeoCenter {
-  const entry = zset?.members.get(member.toString('hex'))
-  if (!entry) throw errors.geoMissingMember()
+  const entry = zset.members.get(member.toString('hex'))
+  if (!entry) throw errors.geoMissingMember(member, profile)
   return decodeGeoScore(entry.score)
 }
 
@@ -288,12 +377,13 @@ export function collectMatches(
   zset: RedisSortedSetData | null,
   center: GeoCenter,
   by: GeoBy,
+  profile: CompatibilityProfile,
 ): GeoMatch[] {
   if (!zset) return []
   const matches: GeoMatch[] = []
   for (const entry of getSortedMembers(zset)) {
     const point = decodeGeoScore(entry.score)
-    const distanceMeters = withinBy(center, point, by)
+    const distanceMeters = withinBy(center, point, by, profile)
     if (distanceMeters === null) continue
     matches.push({
       member: entry.member,

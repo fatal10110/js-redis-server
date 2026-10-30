@@ -1,4 +1,4 @@
-import { equalsAscii } from './ascii-case'
+import { asciiLowerCase, equalsAscii } from './ascii-case'
 import { lookupSubcommandEntry } from './command-arity'
 import {
   introspectionFor,
@@ -300,7 +300,7 @@ export function sortGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
   const skips: Record<string, number> = { limit: 2, get: 1, by: 1 }
   let storedKey = -1
   for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i].toString('latin1').toLowerCase()
+    const arg = asciiLowerCase(argv[i].toString('latin1'))
     if (Object.prototype.hasOwnProperty.call(skips, arg)) {
       i += skips[arg]
     } else if (arg === 'store' && i + 1 < argv.length) {
@@ -392,7 +392,7 @@ function beginSearch(
   const forward = keyword.startFrom > 0
   const start = forward ? keyword.startFrom : argc + keyword.startFrom
   const end = forward ? argc - 1 : 1
-  const target = keyword.keyword.toLowerCase()
+  const target = asciiLowerCase(keyword.keyword)
   for (let i = start; i !== end; i += start <= end ? 1 : -1) {
     if (i >= argc || i < 1) {
       break

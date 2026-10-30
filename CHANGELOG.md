@@ -24,6 +24,8 @@ so the PR body is not a durable home for a breaking-change note.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
 ### Removed
 
 - **BREAKING** The `script.per-subcommand-noscript` member of `FeatureId` was
@@ -646,6 +648,15 @@ so the PR body is not a durable home for a breaking-change note.
   Valkey 9 cluster does), so an exhaustive `switch` over it stops
   type-checking; `'forbidden'` still means refused outright.
 
+- One profile-aware source says which commands a server flags may-replicate
+  ([#568]), shared by the MONITOR client's keyspace refusal and the
+  read-only script check (`mayReplicate` in
+  `src/core/compatibility/may-replicate.ts`). No reply changes. For
+  `js-redis-server/core` users, additions only: `CommandExecutor.plan()` takes
+  an optional `{ inScript }`, `ParseContext` has optional `rawCommand` /
+  `inScript`, and `RedisExecutionContext` has an optional `scriptDatabase`
+  (the database a running script selected, [#566]).
+
 ### Added
 
 - **`/core`** New `FeatureId` gates for the per-version `CLIENT LIST` /
@@ -693,6 +704,39 @@ so the PR body is not a durable home for a breaking-change note.
   lock is a named client connection on every endpoint, so the suites' own
   `FLUSHALL`s do not drop it and a crashed run releases it at once. The
   `test:integration:real*` scripts hold it until the test run exits.
+- `CLIENT PAUSE timeout [WRITE|ALL]` and `CLIENT UNPAUSE` (#250), with real
+  semantics: the pause is server-wide and postpones, rather than refuses, the
+  commands of every client but a MONITOR connection until the timeout or
+  UNPAUSE. `WRITE` holds back write and may-replicate commands (`SET`,
+  `PUBLISH`, `EVAL`, `PFCOUNT`, on 6.2 `SCRIPT`) and an `EXEC` whose
+  transaction queued one; `ALL` (the default) holds back every command,
+  `CLIENT UNPAUSE` included, while commands refused earlier (wrong arity,
+  unknown command, NOAUTH) are still answered at once. A second pause keeps
+  the later end time and the stricter mode. The mode is checked before the
+  timeout (`CLIENT PAUSE mode must be WRITE or ALL`); an end time past
+  `LLONG_MAX` is `timeout is out of range` from Redis 7.2 / Valkey 7.2 and a
+  no-op `+OK` before; Valkey 8.1+ ignores arguments after the mode.
+- `CLIENT REPLY ON|OFF|SKIP` (#251): `OFF` drops every reply, refused
+  commands included, until `CLIENT REPLY ON`; `SKIP` drops exactly the next
+  command's reply (and does nothing while `OFF`); `RESET` turns replies back
+  on but does not cancel a skip already armed for it. Pushes are still
+  delivered. Known gap: inside `EXEC` real Redis writes nothing for a queued
+  `OFF` / `SKIP` (the array comes one element short) and drops what follows
+  an `OFF`; here their slot reads `+OK` and an `OFF` drops the whole reply.
+- `CLIENT NO-TOUCH ON|OFF` (#251) on Redis 7.2+ / Valkey 7.2+: a per-connection
+  flag shown as `T` in `CLIENT INFO` / `CLIENT LIST` and cleared by `RESET`
+  (there is no LRU/LFU state for it to protect).
+
+- **`/core`** New `FeatureId` gates `error.subscribed-context-wording`
+  (the 7.0 subscribed-mode refusal),
+  `notify.keyspace.keymiss-store-sources` (7.0's read lookups of store
+  sources) and `notify.keyspace.keymiss-hgetex` (Valkey 9.0's read lookup in
+  `HGETEX`), and a `subscribedContext` factory on `errors` ([#514]).
+  **BREAKING** for `RedisDatabase.subscribe` listeners that switch over
+  every `RedisMutationEvent` type: the union gains the notification-only
+  `new` and `keymiss` events (they never reach per-key listeners), and
+  `RedisDatabase` gains `announceNew` / `announceKeyMiss` and the
+  `announceNew` `SetOptions` flag ([#514]).
 
 ### Fixed
 
@@ -1581,6 +1625,394 @@ so the PR body is not a durable home for a breaking-change note.
     range (`1e400`, `0x1p1024`) are still refused, because the arithmetic is
     `double` ([#512]).
 
+- A script's `SELECT` no longer changes the caller's database ([#566]). Real
+  Redis runs a script's commands on the script's own client, which starts
+  each run on the caller's database. `EVAL`, `EVALSHA` and `FCALL` with
+  `redis.call('select', n)` now leave the caller's `CLIENT INFO` `db=`, its
+  next commands and the next script on the caller's database, also inside
+  `MULTI`; the script's later commands use the database it selected. MONITOR
+  shows the script's lines with the script's database and the caller's next
+  command with the caller's. The same on every Redis and Valkey version.
+- `XREAD` / `XREADGROUP` with `BLOCK` from a script no longer wedges the
+  server (`BLOCK n`) or crashes the process when the caller disconnects
+  (`BLOCK 0`) ([#563]):
+  - Redis 6.2 - 7.2 (and Valkey 7.2) refuse the option while parsing, before
+    the timeout, the key or the group are looked at: `ERR xread command is not
+    allowed with BLOCK option from scripts`, naming the command as the script
+    sent it (`XREAD`, `xreadgroup`), even when the stream has data.
+  - Redis 7.4+ and Valkey 8.0+ run the command: the entries when there are
+    any, else the timeout reply at once (`$-1` / RESP3 `_`), even with
+    `BLOCK 0`.
+  - A command that tries to park from a script is refused instead of
+    releasing the caller's turn, and a promise a script's command returns is
+    no longer left to reject unhandled.
+
+- `QUIT` inside `MULTI` is answered `+OK` and closes the connection on every
+  profile, dropping the queued commands ([#567]). It used to be queued
+  (`+QUEUED`) and the connection stayed open. MONITOR shows `QUIT` on Redis
+  7.0+ / Valkey only, in `MULTI` or not: Redis 6.2 answers it before the
+  command runs, so it never reaches the feed.
+
+- `EXEC` hands every queued command's after-reply work to its own reply
+  ([#509]):
+  - A push the transaction makes for its own connection (a `PUBLISH` to a
+    channel it subscribes to, RESP3 or RESP2) follows the `EXEC` reply on
+    Redis 7.2+ / Valkey 8.0+, and sits inside the `EXEC` array ahead of the
+    item that made it on Redis 6.2 / 7.0. Before, it was written ahead of the
+    `EXEC` reply, and a `MULTI; SUBSCRIBE a; PUBLISH a x; EXEC` held its
+    message, and every later push, forever.
+  - The in-memory client delivers the other confirmations of a queued
+    multi-target `SUBSCRIBE` (`MULTI; SUBSCRIBE a b; EXEC`) through
+    `pushes()`.
+  - A RESP3 connection stays subscribed after `MULTI` / `EXEC` or `DISCARD`,
+    so its next `PUBLISH` to its own channel keeps the profile's reply order.
+  - A queued `PUBLISH` (or any command) after a queued `SUBSCRIBE` on a RESP2
+    connection runs inside `EXEC` instead of failing with `only (P|S)SUBSCRIBE
+    / ... are allowed in this context`: Redis checks that when it reads a
+    command, not for the ones `EXEC` runs.
+
+- An `onReset` hook that throws no longer cuts `RESET` or connection close
+  short ([#509]): every other hook runs, the rest of the teardown completes
+  and `RESET` still answers `+RESET`. The hook's error is dropped.
+
+- With `requirepass` set, a connection that has not authenticated is refused a
+  multibulk count above 10 (`-ERR Protocol error: unauthenticated multibulk
+  length`) and a bulk length above 16384 (`-ERR Protocol error:
+  unauthenticated bulk length`), then closed, as on every Redis and Valkey
+  version ([#565]). The auth state is read per request header, so AUTH lifts
+  the caps and RESET restores them. The version's own bound is checked first:
+  on 6.2 `*2000000` is still `invalid multibulk length`.
+- The RESP2 decoder no longer holds on to large buffers ([#564]): a large
+  buffer is compacted once only the start of the next command is left in it,
+  at most 32KB is kept once everything is parsed, a bulk of 32KB or more gets
+  a buffer of exactly its size and is handed over without a copy, and inline
+  arguments no longer share the request line's buffer.
+- Double operands are read like the real server's C converters ([#534]):
+  - ZADD, ZINCRBY, ZUNION/ZINTER(STORE) WEIGHTS and every GEO* longitude,
+    latitude, radius, width and height (`string2d()`) take `infinity` in any
+    case, refuse a leading or trailing space, an empty token, `0b11` and an
+    underflow to zero (`1e-400`), and accept C hex floats (`0x1p3`, `-0x10`,
+    `0x1.8`) except on Valkey 8.1+, which refuses them (also plain `0x10`).
+    `GEOADD inf 1 m` now answers `invalid longitude,latitude pair
+    inf,1.000000` as real Redis does, and a huge coordinate is printed with
+    all its digits.
+  - Score ranges (ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZCOUNT, ZREMRANGEBYSCORE,
+    ZRANGE BYSCORE) follow `zslParseRange()`: an empty bound or a bare `(` is
+    0, `1e400` and any `infinity` spelling are infinity, a NUL byte ends the
+    bound and a trailing space is refused. Hex floats and a leading space are
+    accepted up to Redis 7.4 / Valkey 8.0 and refused from Redis 8.0 / Valkey
+    8.1 (fast_float).
+- SORT converts numeric elements and BY weights like real Redis' sort.c
+  ([#513]): infinity spellings sort as +/-inf, a trailing space, `0b11` and
+  NaN are refused; hex floats and a leading space work up to Redis 7.4 /
+  Valkey 8.0 only; an empty element is 0 except on Valkey 8.1+; `1e400` and
+  `1e-310` are refused except on Redis 8.0 (Valkey 8.1+ takes `1e-310`).
+  `SORT ... LIMIT offset count` takes the full signed 64-bit range
+  (`LIMIT 0 9223372036854775807`).
+- Stream replies match real Redis and Valkey per version ([#528], [#495],
+  [#519]):
+  - An empty XREAD / XREADGROUP (nothing new, a BLOCK timeout, inside MULTI)
+    is a null array, `*-1` on RESP2 (it was `$-1`).
+  - Consumer-group `lag` and the `entries-read` counter XREADGROUP keeps
+    follow real Redis' algorithm, including deleted entries, and its 7.4 form
+    (Redis 7.4.2+ / 7.4.4+, Valkey 8.0.3+ in part). `ENTRIESREAD` (XGROUP
+    CREATE / SETID) and XSETID `ENTRIESADDED` take any int64, not only values up to 2^53 - 1.
+  - XINFO CONSUMERS, XINFO GROUPS, XINFO STREAM FULL and the XPENDING summary
+    list consumers and groups by name. The XPENDING summary sends each
+    consumer's count as a bulk string, and `*-1` for the consumer list of an
+    empty PEL.
+  - XINFO STREAM FULL lists each consumer's `seen-time`, `active-time` (7.2+),
+    `pel-count` and `pending`, and gives every PEL row its last delivery as a
+    Unix time in milliseconds.
+  - On 6.2, a consumer that XREADGROUP / XCLAIM / XAUTOCLAIM create
+    implicitly no longer publishes `xgroup-createconsumer`.
+  - Valkey 8.0+ accepts `XREAD ... +`. XREADGROUP answers `$` (and `+` on
+    Redis 7.4+ / Valkey 8.0+) with the `ID is meaningless` error, after the
+    NOGROUP check, as real servers do.
+- INCRBYFLOAT and HINCRBYFLOAT spell their result, and the value they store,
+  like Redis' `ld2string(…, LD_STR_HUMAN)` on every Redis and Valkey version
+  ([#543]): `%.17Lf` with trailing zeros dropped, never an exponent.
+  `INCRBYFLOAT n 1e-17` is `0.00000000000000001` (it was `1e-17`), `1e-18`,
+  `-1e-18` and `5e-324` are `0` (HINCRBYFLOAT gave `-0` for `-1e-18`), and
+  `1e21` prints every digit (it was `1e+21`). A stored `1e-17` read back
+  after `INCRBYFLOAT k 0` is `0.00000000000000001`, as on Redis.
+  - Known limit ([#512]): the mock still adds in a double, not a `long
+    double`, so results whose digits need the 64-bit mantissa still differ:
+    `0.1` + `0.2` is `0.30000000000000004` (Redis `0.3`), `1234.5678` is not
+    Redis' `1234.56779999999999997`, and integers above 2^53 lose their tail.
+- CLIENT KILL answers like real Redis and Valkey on every profile ([#249]):
+  - `CLIENT KILL <ip:port>` (exactly one argument) is the legacy form: `+OK`
+    when it closed a client, the caller included, else `No such client`.
+  - The `ADDR`, `LADDR`, `USER` and `TYPE` (`normal`, `master`, `replica`,
+    `slave`, `pubsub`; Valkey 8.0+ also `primary`) filters, ANDed with `ID`,
+    `MAXAGE` and `SKIPME`. An unknown user or type is `No such user '<u>'` /
+    `Unknown client type '<t>'`.
+  - A bad `ID` is `client-id should be greater than 0` on Redis 7.0+ and
+    Valkey. 6.2 takes any integer (`ID 0` means no id filter). Valkey 9.0
+    takes a list of ids after one `ID`, so `ID abc` is a syntax error there.
+  - `MAXAGE` 0, negative or non-integer values are rejected with Redis'
+    `maxage ...` errors, and Valkey 8.0 accepts `MAXAGE` (it was 9.0+ only).
+  - A bare `CLIENT KILL` on 6.2 is a syntax error.
+
+- `SMEMBERS`, `SINTER`, `SUNION`, `SDIFF` and `SPOP key count` reply with a
+  RESP3 set (`~`) to a RESP3 client, as real Redis does on every version
+  (redis 6.2 to 8.0, valkey 8.0 and 9.0); they replied with an array (`*`).
+  RESP2 is unchanged, and so are `SRANDMEMBER`, `SSCAN` and `SMISMEMBER`
+  (arrays on both). After `redis.setresp(3)` a script's `redis.call` of one of
+  them gets a `{set=…}` table, so `r.set.member` is `true`; it got a plain
+  list ([#501]).
+- `FUNCTION LIST` answers a RESP3 client with a map per library and per
+  function and a set of `flags`, and the flags are status strings (`+no-writes`)
+  on both protocols, as on Redis 7.0+ and Valkey; it sent nested arrays and
+  bulk-string flags. The RESP2 layout is otherwise unchanged ([#501]).
+- A known container subcommand given the wrong number of arguments answers
+  Redis 6.2's `Unknown subcommand or wrong number of arguments for '<SUB>'. Try
+  <CONTAINER> HELP.` on the `redis-6.2` profile (echoing the subcommand as
+  typed) in CONFIG, CLIENT, ACL, SLOWLOG, PUBSUB and SCRIPT, through one shared
+  helper; 7.0+ profiles keep the `<container>|<sub>` arity error. 6.2's
+  `SCRIPT EXISTS` with no sha answers an empty array, and `SLOWLOG GET a b` is
+  the subcommand syntax error on every profile. On 6.2, XGROUP and XINFO look
+  the key (and XGROUP SETID / CREATECONSUMER / DELCONSUMER the group) up
+  before they count the arguments, so a missing key, WRONGTYPE or NOGROUP wins
+  over the count error, as on real 6.2 ([#437]).
+- `CONFIG`, `CLIENT`, `PUBSUB`, `SLOWLOG`, `ACL`, `SCRIPT` and `FUNCTION HELP`
+  answer real Redis / Valkey's text byte for byte per profile: status lines
+  (they were bulk strings with made-up text), the `Prints this help.` /
+  `Print this help.` (7.2+) footer, and each version's additions (PUBSUB and
+  ACL from 7.0, CLIENT through Redis 7.4 and Valkey 8.0 / 9.0, SCRIPT SHOW on
+  Valkey, FUNCTION's dropped `Library description` from Redis 7.4 / Valkey
+  8.0). `CONFIG HELP` is new: it was an unknown-subcommand error ([#491]).
+- `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE`, `ZUNIONSTORE`, `ZINTERSTORE` and
+  `ZDIFFSTORE` replace a destination of any type in one write, as real Redis's
+  `setKey()` does on every profile: a string, list, hash, stream or other
+  collection is overwritten (it was `-WRONGTYPE`), the destination's TTL is
+  cleared, a WATCH on it fires and only the command's own event is published.
+  `GEOSEARCHSTORE` and `GEORADIUS` / `GEORADIUSBYMEMBER ... STORE|STOREDIST` no
+  longer publish a `del` before their event, which the `GEORADIUS` forms now
+  name `georadiusstore`, and `GEOADD` publishes `zadd` ([#524]).
+
+- The subscribed-mode refusal on a RESP2 connection matches real Redis per
+  profile: from 7.0 it names the table entry the command was looked up as
+  (`Can't execute 'config|get'`, `'client|id'`, `'xinfo|stream'`, ...; it
+  named the container), and on `redis-6.2` it lists `(P)SUBSCRIBE /
+  (P)UNSUBSCRIBE / PING / QUIT / RESET`, without the sharded commands 6.2 does
+  not have ([#384], [#514]).
+- `INFO cluster` on a cluster node prints only `cluster_enabled:1`, as real
+  Redis and Valkey do; `cluster_state` and `cluster_slots_assigned` belong to
+  `CLUSTER INFO` ([#514]).
+- The `m` (keymiss) and `n` (new) `notify-keyspace-events` classes publish.
+  `keymiss` comes from each read lookup of a missing key, on every profile:
+  readonly commands (`GET`, `MGET` per key, `EXISTS`, `TYPE`, `TTL`, `HGET`,
+  `XREAD` twice per stream, ...), `GETSET` / `GETDEL` / `GETEX` / `SET ...
+  GET`, `BITOP` / `PFMERGE` / `GEOSEARCHSTORE` / `GEORADIUS` sources,
+  `BITFIELD` with only `GET` / `OVERFLOW`, `XACK` / `XCLAIM` / `XAUTOCLAIM`,
+  `SORT`'s `BY` and `GET` pattern keys, Valkey 9.0's `HGETEX`, scripts'
+  `redis.call` and commands run by `EXEC`, but not write lookups (`DEL`,
+  `EXPIRE`, `LPOP`, `LMOVE`, `HSET`, ...), `WATCH` or scripts' keys. From
+  7.0 the store commands' sources, `SORT ... STORE`'s key and pattern keys,
+  `COPY`'s source and a single-key `PFCOUNT` are read lookups too (6.2 looks
+  them up for writing). `new` (7.0+) is published when a key is added, before the
+  command's own event, never for an overwrite: `SET`, `HSET`, `MSET` per key,
+  a collection re-created after it emptied, and `RENAME` / `COPY` /
+  `MOVE` destinations, which `RENAME` and `COPY ... REPLACE` announce even
+  over an existing key ([#514]).
+- `SORT` / `SORT_RO` `BY` and `GET` patterns of the form `key*->field` read
+  `field` of the hash `key<element>`, as real `lookupKeyByPattern` does; the
+  mock looked up a key named `key<element>->field` and found nothing ([#514]).
+- `ZADD` checks its arguments in real Redis's order: an odd score/member
+  tail (`ZADD z 1 a 2`, also from scripts and in its `EXEC` slot) is
+  `ERR syntax error` before any score is parsed, option conflicts are
+  checked after every option is read, and the `INCR` pair count comes before
+  the scores; the mock answered an arity or float error ([#517]).
+- `BLPOP` / `BRPOP` answer a bad timeout with `timeout is not a float or out
+  of range` / `timeout is negative`, as the other blocking commands do,
+  instead of `syntax error` ([#517]).
+- Inside `MULTI`, a command flagged `no_multi` is refused while queuing with
+  `Command not allowed inside a transaction` and the transaction aborts at
+  `EXEC`: `SHUTDOWN` from Redis 7.0, and on Valkey 8.0+ also `MULTI` and
+  `WATCH`. Valkey 9.0 names the command (`Command 'multi' not allowed inside
+  a transaction`) ([#517]).
+- Redis 6.2 profile: `LPOS ... RANK 0` and `invalid expire time in set`
+  (`SET` / `SETEX` / `PSETEX` / `GETEX`) use 6.2's wording; the hint
+  `... or use negative to start from the end of the list` starts at Redis
+  7.0.1 and the quoted `in 'set' command` at 7.0 ([#517]).
+- `CONFIG SET` validates values the way each parameter's type does on the
+  real server, with 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'
+  - <detail>` or 7.0+'s `CONFIG SET failed (possibly related to argument
+  '<name>') - <detail>`: integers (`timeout abc` -> `argument couldn't be
+  parsed into an integer`, `timeout -1` -> `argument must be between 0 and
+  2147483647 inclusive`), `yes`/`no` booleans, memory values (`maxmemory 5q`),
+  enums (`maxmemory-policy`, `loglevel`; case-insensitive, read back in their
+  canonical case) and `save` pairs (`Invalid save parameters`). `CONFIG GET`
+  reads accepted values back normalized (`maxmemory 1gb` -> `1073741824`).
+  `loglevel nothing` is accepted on Redis 7.2+ and Valkey; `maxmemory-samples`
+  tops out at 64 on Redis 7.4+ and Valkey 8.0+. Immutable parameters
+  (`databases`, `daemonize`) answer `can't set immutable config` on 7.0+ and
+  `Unsupported CONFIG parameter` on 6.2 ([#506]).
+- The 7.0 config table: `hash-` / `zset-max-listpack-entries|value` and
+  `list-max-listpack-size` accept their `ziplist` names as aliases for `CONFIG
+  SET` and `CONFIG GET`, which echo the alias rather than the canonical name;
+  on 6.2 the `ziplist` names are the only ones. `maxmemory-clients` and
+  `bind-source-addr` exist from 7.0, `set-max-listpack-entries|value` from 7.2.
+  Defaults follow the real servers (`hash-max-listpack-entries` 512,
+  `list-max-listpack-size` -2). `CONFIG GET` of an exact name echoes it as sent
+  on 7.0+ (`MAXMEMORY`), and 6.2's `CONFIG GET` takes exactly one pattern,
+  answering more with its subcommand syntax error ([#506]).
+- Option keywords and parameter names fold ASCII only, as C `strcasecmp`
+  does: `WITH<U+017F>CORES` (long s), `<U+017F>tore` and a Kelvin-sign `CONFIG`
+  parameter are rejected like on real Redis instead of matching `WITHSCORES`,
+  `STORE` and `tcp-keepalive` ([#508]). `GEODIST ... constructor` no longer
+  passes as a unit.
+- node-redis mock: `multi().exec()` with a command that failed to queue
+  rejects with that command's own error (`ERR wrong number of arguments for
+  'evalsha' command`), as real node-redis does, instead of `EXECABORT
+  Transaction discarded because of previous errors.`; the session still sends
+  EXEC, so it leaves MULTI. An error nested in an array or map reply (`EVAL
+  "return {1, redis.error_reply('x')}" 0`) comes back as a `SimpleError` in
+  place instead of rejecting the whole call, so `NodeRedisReply` now includes
+  `Error` ([#510]). The decoder gains an additive `nestedErrors` option
+  (default `'throw'`, the in-memory client's behavior).
+- node-redis mock: `connect()` re-opens a closed client — after `quit()`,
+  `destroy()` or `disconnect()` — instead of rejecting `ClientClosedError`:
+  commands work again on the same keyspace, `'connect'` and `'ready'` are
+  emitted, and the next close emits `'end'` again. A `watch()` from before the
+  reconnect fails the next `exec()` with `WatchError('Client reconnected after
+  WATCH')`, as on node-redis. `RedisServerState` gains `reopen()`, which re-arms
+  active expiry after `close()` ([#440]). Commands issued in the same tick as
+  `quit()` or after it are pinned to reject `ClientClosedError` like the real
+  client ([#457]).
+- Redis 7.2+ / Valkey 8.0+ profiles: a push for the connection that runs the
+  command (a keyspace notification on its own `__keyspace@` / `__keyevent@`
+  subscription, keymiss included, or one made by a script's inner calls) goes
+  out after the command's reply, as real Redis holds it
+  (`server.pending_push_messages`). Before, the first push of a command could
+  overtake the reply. Redis 6.2 / 7.0 still write them as they are made; their
+  per-command order (some before the reply, some after) is not modeled
+  ([#587]). On every profile, pushes that other clients queue for a
+  connection (for example while its `BLPOP` was parked) now all go out
+  before that connection's next reply. Before, the reply could land between
+  two of them, such as the keyspace and keyevent pushes of one `LPUSH`.
+- Valkey 8.0 profile (8.0.0): `UNSUBSCRIBE` / `PUNSUBSCRIBE` / `SUNSUBSCRIBE`
+  on a connection with no subscription of any kind answer `-NOSUB '<name>'
+  command executed not in subscribed mode`, in RESP2 and RESP3, and inside
+  `MULTI` they are refused while queuing (`EXECABORT` at `EXEC`), as on valkey
+  8.0.0 and 8.0.1. Valkey 8.0.2+ and every Redis still answer the
+  confirmation frames ([#594]).
+- `LIMIT offset count` of ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZRANGEBYLEX,
+  ZREVRANGEBYLEX, ZRANGE ... BYSCORE|BYLEX and ZRANGESTORE takes the full int64
+  range (`LIMIT 0 9223372036854775807`, `LIMIT -9223372036854775808 1`) and
+  refuses leading zeros (`LIMIT 00 01`), as real Redis does ([#576]).
+- Blocking timeouts in seconds (BLPOP, BRPOP, BLMOVE, BLMPOP, BZPOPMIN,
+  BZPOPMAX, BZMPOP) are parsed like `string2ld()`: a leading or trailing
+  space, an empty token or `0b11` is `timeout is not a float or out of range`,
+  hex floats (`0x1.8p1`) are accepted, and a bad timeout beats WRONGTYPE.
+  `inf` / `1e400` / `1e19` answer `timeout is out of range` from Redis 7.2 and
+  `timeout is negative` on 6.2 / 7.0; `-0.0001` blocks forever; on 6.2 a
+  timeout under 1 ms blocks forever (Redis 7.0.8 rounds up). XREAD /
+  XREADGROUP BLOCK takes any int64 (`BLOCK 9223372036854775807` is out of
+  range from 7.2). A timeout past 24.8 days no longer fires at once ([#577]).
+- SET / SETEX / PSETEX / GETEX and EXPIRE / PEXPIRE / EXPIREAT / PEXPIREAT
+  take int64 times and answer `invalid expire time` where the end time
+  overflows (`SET k v EX 9223372036854775807`, `EXPIRE k
+  -9223372036854775808`), instead of `value is not an integer or out of
+  range`; `PXAT 9223372036854775807` is accepted. GETEX checks its time only
+  after finding a string, so `GETEX missing EX 0` is nil and `GETEX list EX 0`
+  is WRONGTYPE. LPOS RANK / COUNT / MAXLEN take int64; RANK
+  -9223372036854775808 is out of range from Redis 7.2 and acts as RANK -1
+  before ([#592]).
+- XACK on a missing key, or on a stream without that group, answers `:0` (it
+  answered `NOGROUP`), even when an id is invalid: the key and group are looked
+  up before the ids are parsed. LINDEX looks the key up before it reads the
+  index, so a missing key answers nil and a wrong type `WRONGTYPE` whatever the
+  index, and the index is a full int64 (`LINDEX list 9223372036854775807` is
+  nil, not the integer error) ([#589]).
+- `SELECT -1` answers `DB index is out of range` (it answered the integer
+  error) from a client, a script and inside MULTI. SELECT, MOVE and COPY ... DB
+  read the index as a C int like real Redis: outside int32 they answer `value
+  is out of range, value must between -2147483648 and 2147483647` instead of
+  `DB index is out of range` ([#571]).
+- GEO units are case-sensitive on Redis 6.2 (`Km` is refused) and its
+  unsupported-unit error lists them in lower case (`please use m, km, ft, mi`);
+  7.0+ and Valkey fold case and list `M, KM, FT, MI` as before. On 6.2 a STORE
+  combined with WITHDIST / WITHHASH / WITHCOORD answers the 6.2 wording
+  (`STORE option in GEORADIUS ... WITHCOORDS options`, for GEOSEARCHSTORE too),
+  and on Valkey 9.0 a FROMMEMBER / GEORADIUSBYMEMBER member the key lacks
+  answers `member <name> does not exist` ([#596]).
+- GEO distances are computed like Redis' `geohashGetDistance()` (`deg_rad()`
+  as `a * (M_PI / 180)` and the same-longitude shortcut of Redis 7.0.6+ /
+  Valkey), so STOREDIST scores have the same digits as the real server
+  (`166.27415156960032`, was `166.2741515696005`), and BYBOX measures the
+  longitude distance at the point's latitude, not the center's ([#586]).
+- GEORADIUSBYMEMBER(_RO), GEOSEARCH FROMMEMBER and GEOSEARCHSTORE FROMMEMBER on
+  a missing source key answer `*0`, or `:0` after deleting the STORE
+  destination, without looking up the member or parsing the radius and unit
+  (they answered `could not decode requested zset member` or a radius / unit
+  error). GEORADIUS*, GEOSEARCH and GEOSEARCHSTORE on a wrong-typed key answer
+  WRONGTYPE before any argument error, and an existing key's BYMEMBER /
+  FROMMEMBER member is looked up before the radius, unit and options are
+  checked, as in real Redis ([#519]).
+- Cluster mode: a keyed command is routed before it checks its own
+  arguments, as Redis's `processCommand` does, so `EVAL s 1x k`, `SET k 1 EX
+  x` or `BLPOP k x` with `k` on another node answer `MOVED` (or `CROSSSLOT` /
+  `CLUSTERDOWN`) instead of the argument error, outside MULTI and from a
+  script's `redis.call` alike. MOVE routes first too: `MOVE k 1` for a key on
+  another node is `MOVED`, and `MOVE k x` for a local key answers `MOVE is not
+  allowed in cluster mode` (Valkey 9's cluster databases still parse it).
+  `createRedisCluster` and `computeSlotRange` split the slots as `redis-cli
+  --cluster create` does (3 masters: 0-5460, 5461-10922, 10923-16383, was
+  10921 / 10922), and CLUSTER INFO no longer sends a `cluster_enabled` line
+  ([#519]).
+- Cluster MULTI: commands queued in different slots are each `+QUEUED`, and
+  EXEC answers a bare `-CROSSSLOT Keys in request don't hash to the same
+  slot` and discards the transaction (and its WATCHes), as real Redis
+  Cluster does; the mock refused the second command at queue time and EXEC
+  answered EXECABORT. A single command whose keys span slots is still refused
+  while queuing. Commands after a queue-time refusal no longer take part in
+  EXEC's check, and on Valkey 8.0+, where a refusal empties the queue, a
+  refused transaction answers EXECABORT where Redis answers CROSSSLOT
+  ([#519]).
+- Valkey 9.0: `CLIENT REPLY` inside MULTI is refused with `Command
+  'client|reply' not allowed inside a transaction` and EXEC answers
+  EXECABORT: the `no_multi` check reads the subcommand's command-table entry
+  ([#590]).
+- EVAL, EVALSHA, EVAL_RO and EVALSHA_RO answer a negative numkeys with
+  `Number of keys can't be negative` (they answered `value is not an integer
+  or out of range`), down to -9223372036854775808. FCALL and FCALL_RO look the
+  function up first, so `FCALL nosuch -1` or `FCALL nosuch 2 a` is `Function
+  not found`, then answer `Bad number of keys provided` for a numkeys that is
+  not an integer and `Number of keys can't be negative` for a negative one
+  ([#519]).
+- MONITOR shows a command that fails its own argument check, such as `EVAL s
+  -1 a`, `SET k v EX abc` or `XREAD COUNT x STREAMS s 0`, as Redis does: the
+  check runs when the command is called. An unknown command or a wrong number
+  of arguments is still not shown ([#519]).
+- FUNCTION LIST LIBRARYNAME takes a glob pattern, matched without regard to
+  case like Redis and Valkey: `my*`, `[lm]ylib` and `MY*` all list `mylib`.
+  It used to list only a library named exactly as the pattern ([#583]).
+- A sorted-set score of -0 is kept as Redis keeps it ([#512]). On Redis 6.2
+  `ZADD z -0 m` stores -0, so ZSCORE, ZMSCORE, WITHSCORES, ZPOPMIN, ZSCAN and
+  ZUNIONSTORE show `-0`. From Redis 7.0 and on Valkey a small sorted set stores
+  0, but one past `zset-max-listpack-entries` (128) or with a member longer
+  than `zset-max-listpack-value` (64) keeps -0. `ZADD z INCR -0 n` and `ZINCRBY
+  z -0 n` for a new member reply `-0` on every version, and ZUNION ... WEIGHTS
+  -1 replies `-0` for a score of 0. A score set to the value it already has is
+  left as it is, so `ZADD z 0 m` keeps a stored -0.
+- `MONITOR` no longer shows administrative commands on Redis 6.2: `call()`
+  hides every command whose table entry is flagged `admin`, and 6.2 flags the
+  whole `CLIENT` command, so no `CLIENT` subcommand (`CLIENT GETNAME`, ...)
+  reached a monitor there. From 7.0 the flag is per subcommand, so `CLIENT
+  KILL` is hidden and `CLIENT GETNAME` shown, as before. Checked against live
+  redis-server 6.2.14 to 8.0.0 and Valkey 8.0 / 9.0 (#511).
+- Test and tooling (#511): the ioredis and node-redis `scripts` and
+  `command-integration` suites, `raw-tcp/command-errors-subcommand` and
+  `raw-tcp/monitor-protocol` now follow `REDIS_COMPAT` (Lua error wording,
+  `COMMAND` and container-subcommand errors, `NOSCRIPT`, the 6.2 forms), pass on
+  every profile and run once per profile in the new `profile-suites-mock` CI
+  job (`npm run test:integration:profiles:mock`). `npm test` also type-checks
+  `scripts/` and `tests/` (`tsconfig.check.json`), and the container
+  subcommand table takes the versions of `acl.dryrun`, `client.no-evict`,
+  `client.no-touch` and `client.setinfo` from `FEATURE_GATES`.
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the
@@ -1603,6 +2035,7 @@ requests they contain.
 
 [#430]: https://github.com/fatal10110/js-redis-server/pull/430
 [#437]: https://github.com/fatal10110/js-redis-server/issues/437
+[#491]: https://github.com/fatal10110/js-redis-server/issues/491
 [#442]: https://github.com/fatal10110/js-redis-server/issues/442
 [#439]: https://github.com/fatal10110/js-redis-server/issues/439
 
@@ -1650,11 +2083,45 @@ requests they contain.
 [#500]: https://github.com/fatal10110/js-redis-server/issues/500
 [#214]: https://github.com/fatal10110/js-redis-server/issues/214
 [#542]: https://github.com/fatal10110/js-redis-server/issues/542
+[#543]: https://github.com/fatal10110/js-redis-server/issues/543
 [#505]: https://github.com/fatal10110/js-redis-server/issues/505
 [#32]: https://github.com/fatal10110/js-redis-server/issues/32
 [#496]: https://github.com/fatal10110/js-redis-server/issues/496
 [#501]: https://github.com/fatal10110/js-redis-server/issues/501
 [#433]: https://github.com/fatal10110/js-redis-server/issues/433
 [#456]: https://github.com/fatal10110/js-redis-server/issues/456
-[unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
+[#563]: https://github.com/fatal10110/js-redis-server/issues/563
+[#566]: https://github.com/fatal10110/js-redis-server/issues/566
+[#568]: https://github.com/fatal10110/js-redis-server/issues/568
+[#567]: https://github.com/fatal10110/js-redis-server/issues/567
+[#509]: https://github.com/fatal10110/js-redis-server/issues/509
+[#564]: https://github.com/fatal10110/js-redis-server/issues/564
+[#565]: https://github.com/fatal10110/js-redis-server/issues/565
+[#534]: https://github.com/fatal10110/js-redis-server/issues/534
+[#513]: https://github.com/fatal10110/js-redis-server/issues/513
+[#528]: https://github.com/fatal10110/js-redis-server/issues/528
+[#495]: https://github.com/fatal10110/js-redis-server/issues/495
+[#519]: https://github.com/fatal10110/js-redis-server/issues/519
+[#590]: https://github.com/fatal10110/js-redis-server/issues/590
+[#249]: https://github.com/fatal10110/js-redis-server/issues/249
+[#524]: https://github.com/fatal10110/js-redis-server/issues/524
+[#514]: https://github.com/fatal10110/js-redis-server/issues/514
+[#517]: https://github.com/fatal10110/js-redis-server/issues/517
+[#506]: https://github.com/fatal10110/js-redis-server/issues/506
+[#508]: https://github.com/fatal10110/js-redis-server/issues/508
+[#510]: https://github.com/fatal10110/js-redis-server/issues/510
+[#440]: https://github.com/fatal10110/js-redis-server/issues/440
+[#457]: https://github.com/fatal10110/js-redis-server/issues/457
+[#587]: https://github.com/fatal10110/js-redis-server/issues/587
+[#594]: https://github.com/fatal10110/js-redis-server/issues/594
+[#576]: https://github.com/fatal10110/js-redis-server/issues/576
+[#577]: https://github.com/fatal10110/js-redis-server/issues/577
+[#592]: https://github.com/fatal10110/js-redis-server/issues/592
+[#589]: https://github.com/fatal10110/js-redis-server/issues/589
+[#571]: https://github.com/fatal10110/js-redis-server/issues/571
+[#596]: https://github.com/fatal10110/js-redis-server/issues/596
+[#586]: https://github.com/fatal10110/js-redis-server/issues/586
+[#583]: https://github.com/fatal10110/js-redis-server/issues/583
+[unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

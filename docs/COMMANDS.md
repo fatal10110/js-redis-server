@@ -48,13 +48,16 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
   socket's descriptor (`-1` on the in-process transport), `cmd` the last
   command by its command-table name (`client|info` from 7.0, `NULL` after an
   unknown command), and `flags`, `multi`, `watch`, `idle` follow the
-  connection (`P`, `x`, `b`, `d`, `r`, `e`). Buffer, memory and network
+  connection (`P`, `x`, `b`, `d`, `r`, `e`, `T`). Buffer, memory and network
   counters read 0. On RESP3 both replies are `txt` verbatim strings.
-- [x] `CLIENT KILL [ID client-id] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 9.0+ profiles
+- [x] `CLIENT KILL ip:port | [ID client-id] [ADDR ip:port] [LADDR ip:port] [USER username] [TYPE type] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 8.0+ profiles, `TYPE primary` and Valkey 9.0's id list (`ID id [id ...]`) on Valkey only. Valkey 9.0's `NOT-*`, `FLAGS`, `NAME`, `IDLE`, `LIB-NAME`, `LIB-VER`, `DB`, `CAPA` and `IP` filters are not modelled
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
+- [x] `CLIENT NO-TOUCH ON|OFF` - Toggle the current connection's no-touch flag (`T` in `CLIENT INFO`); Redis 7.2+ / Valkey 7.2+. There is no LRU/LFU state, so it has no other effect
+- [x] `CLIENT PAUSE timeout [WRITE|ALL]` / `CLIENT UNPAUSE` - Server-wide pause: commands of every client but a MONITOR connection are postponed (not refused) until the timeout or UNPAUSE; `WRITE` holds back write and may-replicate commands (and an `EXEC` that queued one), `ALL` (the default) every command, `CLIENT UNPAUSE` included. A new pause keeps the later end time and the stricter mode
+- [x] `CLIENT REPLY ON|OFF|SKIP` - `OFF` drops every reply until `ON`, `SKIP` drops the next command's reply; pushes (pub/sub messages, MONITOR lines) are still delivered. Known gap inside `EXEC`: real Redis writes nothing for a queued `OFF`/`SKIP` (the array comes one element short) and drops what follows an `OFF`; here their slot reads `+OK` and an `OFF` drops the whole `EXEC` reply
 - [x] `CLIENT HELP` - Return subcommand help
 
-- [ ] `CLIENT PAUSE`/`UNPAUSE`, `CLIENT NO-TOUCH`, `CLIENT REPLY`, `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT TRACKING` - not implemented
 - [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
 - [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
 
@@ -95,8 +98,11 @@ a server-level command event feed. A repeated `MONITOR` gets no reply, and
 `MONITOR` inside `MULTI` fails with `MONITOR isn't allowed for DENY BLOCKING
 client`, as in Redis. Monitor lines include an epoch timestamp, the
 selected DB, the client address/identity when available, and quoted command
-arguments. Unknown commands and arity/syntax failures are not emitted; commands
-that parse successfully but return execution errors are emitted, matching Redis.
+arguments. A command that fails its own argument check is emitted (for example
+`EVAL s -1 a` or `SET k v EX abc`), as are commands that return execution
+errors. Only an unknown command, a wrong argument count or, from 7.0 (where the
+subcommand is looked up before the command runs), an unknown subcommand is not
+emitted, matching Redis.
 Cluster redirects and pre-execution cluster errors are not emitted because the
 command is not executed on that node. Commands with monitor skip metadata are
 skipped, authentication credentials are redacted, commands replayed by `EXEC` are
@@ -109,7 +115,8 @@ before they run (`NOAUTH`, the subscribed-context refusal) are not emitted.
 `MONITOR` is flagged `noscript` and is rejected from Lua.
 
 The monitoring connection is fed its own commands too, each line right after
-the command's reply (`QUIT` closes with `+OK` alone). Redis treats a monitor
+the command's reply (`QUIT` closes with `+OK` alone; Redis 6.2 never feeds
+`QUIT`, which it answers before the command runs). Redis treats a monitor
 as a replica, so on it every command flagged readonly, write or may_replicate
 (`GET`, `SET`, `KEYS`, `PUBLISH`, `EVAL`, ...) fails with `ERR Replica can't
 interact with the keyspace` (`interract` on 6.2) and is not emitted, while
@@ -142,17 +149,18 @@ real Redis does not have) reports what its `introspection` declares.
 
 #### CONFIG
 
-- [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (glob-matched against a fixed set of plausible defaults; RESP3 map / RESP2 flat array)
-- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2)
+- [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (RESP3 map / RESP2 flat array). Patterns are glob-matched case-insensitively against the profile's parameter table, seeded with the real servers' defaults; the `redis-6.2` profile takes exactly one pattern, like real 6.2. On 7.0+ an exact parameter name (or alias) is echoed back as sent (`CONFIG GET MaxMemory` replies `MaxMemory`), while glob matches reply with the table spelling. The reply order of a glob is not pinned: real servers return dict order, which differs per version
+- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2). Each value is validated by the parameter's type (yes/no booleans, integers with their real bounds, memory values such as `1mb`, enums, `save` pairs, ...) and a bad value fails with the profile's wording: 6.2 `ERR Invalid argument '<value>' for CONFIG SET '<name>'`, 7.0+ `ERR CONFIG SET failed (possibly related to argument '<name>') - <reason>`. On 7.0+ the 6.2 `*-ziplist-*` names are accepted as aliases of the `*-listpack-*` parameters; on `redis-6.2` the ziplist names are the only ones. Immutable parameters (`databases`, `daemonize`) fail with `can't set immutable config` on 7.0+ and as unsupported parameters on 6.2
 - [x] `CONFIG HELP`
 - [x] `CONFIG RESETSTAT` - Reset the stats returned by INFO (no-op in the mock)
 - [x] `CONFIG REWRITE` - Rewrite the configuration file (returns Redis' no-config-file error)
 
 > There is no real configuration subsystem behind this - values are an
-> in-memory per-server store seeded with plausible defaults (`maxmemory`,
-> `appendonly`, `save`, listpack thresholds, etc.), enough to satisfy client
-> library initialization. Most parameters are inert: `CONFIG SET` stores the
-> value but does not change server behavior. There are two exceptions, both
+> in-memory per-server store seeded with the real servers' defaults
+> (`maxmemory`, `appendonly`, `save`, listpack thresholds, etc.), enough to
+> satisfy client library initialization. Most parameters are inert: `CONFIG SET`
+> validates the value like the real server and stores it, but does not change
+> server behavior. There are two exceptions, both
 > real, behavior-driving settings:
 >
 > - `notify-keyspace-events` — see
@@ -418,16 +426,16 @@ with `GT` or `LT`.
 - [x] `SADD key member [member ...]` - Add one or more members to a set
 - [x] `SREM key member [member ...]` - Remove one or more members from a set
 - [x] `SCARD key` - Get the number of members in a set
-- [x] `SMEMBERS key` - Get all members in a set
+- [x] `SMEMBERS key` - Get all members in a set (RESP3 set / RESP2 array)
 - [x] `SISMEMBER key member` - Determine if a value is a member of a set
 - [x] `SMISMEMBER key member [member ...]` - Determine membership for multiple values
-- [x] `SPOP key [count]` - Remove and return one or more random members
+- [x] `SPOP key [count]` - Remove and return one or more random members (with a count: RESP3 set / RESP2 array)
 - [x] `SRANDMEMBER key [count]` - Get one or more random members without removing them
 - [x] `SMOVE source destination member` - Move a member between sets
-- [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference
-- [x] `SINTER key [key ...]` / `SINTERSTORE destination key [key ...]` - Set intersection
+- [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference (SDIFF: RESP3 set / RESP2 array)
+- [x] `SINTER key [key ...]` / `SINTERSTORE destination key [key ...]` - Set intersection (SINTER: RESP3 set / RESP2 array)
 - [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
-- [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
+- [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union (SUNION: RESP3 set / RESP2 array)
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
 
 #### Notes / gaps vs. real Redis
@@ -518,7 +526,7 @@ with `GT` or `LT`.
 - [x] `XREVRANGE key end start [COUNT count]` - Return entries in descending ID order
 - [x] `XDEL key ID [ID ...]` - Remove entries by ID
 - [x] `XTRIM key MAXLEN|MINID [~] threshold [LIMIT count]` - Trim a stream to a size or minimum ID
-- [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id|+ [id|+ ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs); Redis 7.4+ profiles accept `+` to return the latest entry from each stream
+- [x] `XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id|+ [id|+ ...]` - Read entries, optionally blocking for new ones (RESP3 map / RESP2 array of stream-entry pairs); Redis 7.4+ and Valkey 8.0+ profiles accept `+` to return the latest entry from each stream
 - [x] `XGROUP CREATE|SETID|DESTROY|CREATECONSUMER|DELCONSUMER|HELP ...` - Manage stream consumer groups and consumers
 - [x] `XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]` - Read entries through a consumer group and track pending delivery; a blocked call is unblocked with `NOGROUP` when its stream is deleted (DEL, expiry, RENAME, FLUSHDB) or its group destroyed, and with `WRONGTYPE` when the stream is overwritten with another type
 - [x] `XACK key group ID [ID ...]` - Acknowledge pending stream entries
@@ -617,7 +625,7 @@ script is still routed as a write command (a cluster replica with
 - [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
 - [x] `FUNCTION LOAD [REPLACE] function-code` - Load a Lua function library
 - [x] `FUNCTION DELETE library-name` - Delete a function library
-- [x] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
+- [x] `FUNCTION LIST [LIBRARYNAME pattern] [WITHCODE]` - List function libraries; `pattern` is a case-insensitive glob matched against the library name (RESP3 maps with a status-string `flags` set / RESP2 flat arrays)
 - [x] `FUNCTION STATS` - Return loaded-library/function counts
 - [x] `FUNCTION DUMP` - Dump loaded libraries to a mock-local serialized payload
 - [x] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload
@@ -722,6 +730,19 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
       `HEXPIREAT`/`HPEXPIREAT`/`HGETEX EX|PX|...` → `hexpire` (`hdel` for a
       time already past); `HGETEX PERSIST` → `hpersist`; `HSETEX` → `hset` then
       `hexpire`/`hdel`. `SORT ... STORE` → `sortstore`.
+- [x] `keymiss` (class `m`): a read lookup of a missing key, as real Redis'
+      `lookupKeyRead` publishes it. Readonly commands read every key they
+      name (`XREAD` twice per stream; not `WATCH`); `GETSET`, `GETDEL`,
+      `GETEX`, `SET ... GET` and the sources of `BITOP`, `PFMERGE`,
+      `GEOSEARCHSTORE` and `GEORADIUS` are read lookups on every profile, the
+      sources of the `*STORE` commands, `SORT ... STORE`, `COPY` and a
+      single-key `PFCOUNT` from 7.0. Write lookups (`DEL`, `EXPIRE`, `LPOP`,
+      `LMOVE`, `HSET`, ...) publish nothing. Published as the command runs,
+      before its own events (a queued command at `EXEC`).
+- [x] `new` (class `n`, 7.0+): a key added to the database, before the
+      command's own event; an overwrite is not new. `RENAME` / `COPY` /
+      `MOVE` destinations are new, even over an existing key for `RENAME`
+      and `COPY ... REPLACE`.
 
 > Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
 > secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; `MOVE` and
@@ -802,6 +823,10 @@ Geo commands are stored in the Sorted Set type (members scored by geohash).
 - [x] `GEOSEARCH key <FROMMEMBER member | FROMLONLAT longitude latitude> <BYRADIUS radius unit | BYBOX width height unit> [ASC | DESC] [COUNT count [ANY]] [WITHCOORD] [WITHDIST] [WITHHASH]` - Search within a radius or box
 - [x] `GEOSEARCHSTORE destination source <FROMMEMBER ... | FROMLONLAT ...> <BYRADIUS ... | BYBOX ...> [STOREDIST]` - Store a `GEOSEARCH` result
 - [x] `GEORADIUS` / `GEORADIUSBYMEMBER` (and `_RO` variants) - Deprecated radius queries
+
+GEO units fold case from Redis 7.0 (and in every Valkey); the `redis-6.2`
+profile matches `m`, `km`, `ft`, `mi` exactly and lists them in lower case in
+the unsupported-unit error (`geo.unit-case-folding`).
 
 ## 20. Vector Set Commands (Redis 8.0+)
 

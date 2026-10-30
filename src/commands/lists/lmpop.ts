@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { isIntegerToken, t, type ParseContext } from '../../core/command-schema'
@@ -6,8 +7,12 @@ import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { RedisValue } from '../../core/redis-value'
 import type { RedisDatabase } from '../../state'
-import { listPopEvent, parseMoveDirection, parseTimeout } from './helpers'
-import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
+import { listPopEvent, parseMoveDirection } from './helpers'
+import {
+  blockOrTimeOut,
+  blockingTimeoutMs,
+  parseBlockingTimeout,
+} from '../blocking'
 
 type ListMultiPopArgs = {
   keys: Buffer[]
@@ -72,7 +77,7 @@ function parseListMultiPopArgs(
   let timeout: number | undefined
 
   if (options.blocking) {
-    timeout = parseTimeout(input[cursor])
+    timeout = parseBlockingTimeout(input[cursor], ctx.profile)
     cursor++
   }
 
@@ -97,7 +102,7 @@ function parseListMultiPopArgs(
 
   let count = 1
   if (cursor < input.length) {
-    const option = input[cursor].toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor].toString())
     if (option !== 'COUNT' || cursor + 2 !== input.length) {
       throw errors.syntax()
     }
@@ -142,7 +147,7 @@ export function tryListMultiPop(
 
 function blockingListMultiPop(
   keys: readonly Buffer[],
-  timeoutSecs: number,
+  timeoutMs: number,
   side: 'left' | 'right',
   count: number,
   ctx: RedisExecutionContext,
@@ -152,7 +157,7 @@ function blockingListMultiPop(
     {
       keys,
       type: 'list',
-      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      timeoutMs: blockingTimeoutMs(timeoutMs),
       attempt: () => tryListMultiPop(keys, side, count, ctx.db),
     },
     () => RedisResult.create(RedisValue.nullArray()),

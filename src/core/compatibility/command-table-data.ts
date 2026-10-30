@@ -183,6 +183,18 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     flags: ['admin', 'noscript', 'loading', 'stale'],
     categories: ['@admin', '@slow', '@dangerous', '@connection'],
   },
+  'client|no-touch': {
+    flags: ['noscript', 'loading', 'stale'],
+    categories: ['@slow', '@connection'],
+  },
+  'client|pause': {
+    flags: ['admin', 'noscript', 'loading', 'stale'],
+    categories: ['@admin', '@slow', '@dangerous', '@connection'],
+  },
+  'client|reply': {
+    flags: ['noscript', 'loading', 'stale'],
+    categories: ['@slow', '@connection'],
+  },
   'client|setinfo': {
     flags: ['noscript', 'loading', 'stale'],
     categories: ['@slow', '@connection'],
@@ -192,6 +204,10 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     flags: ['noscript', 'loading', 'stale'],
     categories: ['@slow', '@connection'],
     tips: ['request_policy:all_nodes', 'response_policy:all_succeeded'],
+  },
+  'client|unpause': {
+    flags: ['admin', 'noscript', 'loading', 'stale'],
+    categories: ['@admin', '@slow', '@dangerous', '@connection'],
   },
   cluster: { flags: [], categories: ['@slow'] },
   'cluster|info': {
@@ -2205,6 +2221,7 @@ export const REDIS_70: CommandTableDelta = {
   brpop: { flags: ['write', 'noscript', 'blocking'] },
   bzpopmax: { flags: ['write', 'noscript', 'blocking', 'fast'] },
   bzpopmin: { flags: ['write', 'noscript', 'blocking', 'fast'] },
+  'client|no-touch': null,
   'client|setinfo': null,
   'client|setname': { tips: [] },
   'cluster|shards': { flags: ['stale'] },
@@ -2243,7 +2260,10 @@ export const REDIS_62: CommandTableDelta = {
   'client|kill': null,
   'client|list': null,
   'client|no-evict': null,
+  'client|pause': null,
+  'client|reply': null,
   'client|setname': null,
+  'client|unpause': null,
   cluster: {
     flags: ['admin', 'random', 'stale'],
     categories: ['@admin', '@slow', '@dangerous'],
@@ -2450,6 +2470,7 @@ export const VALKEY_80: CommandTableDelta = {
 }
 
 export const VALKEY_90: CommandTableDelta = {
+  'client|reply': { flags: ['noscript', 'loading', 'stale', 'no_multi'] },
   exec: { flags: ['noscript', 'loading', 'stale', 'skip_commandlog'] },
   hexpire: {
     flags: ['write', 'fast'],

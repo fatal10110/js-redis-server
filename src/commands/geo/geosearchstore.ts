@@ -1,10 +1,16 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
-import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import {
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+  errors,
+} from '../../core/redis-error'
 import { integer } from '../helpers'
 import {
   buildStoreMembers,
   collectMatches,
+  deferGeoParseError,
   orderAndLimit,
   parseGeoBy,
   parseGeoFrom,
@@ -23,8 +29,17 @@ type GeoSearchStoreArgs = GeoOrderCount & {
   storeDist: boolean
 }
 
+type GeoSearchStoreParsed =
+  | GeoSearchStoreArgs
+  | {
+      destination: Buffer
+      source: Buffer
+      failed: RedisCommandError
+      member?: Buffer
+    }
+
 function createGeoSearchStoreSchema() {
-  return t.custom<GeoSearchStoreArgs>(
+  return t.custom<GeoSearchStoreParsed>(
     { min: 7, keys: [0, 1] },
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       const destination = input[index]
@@ -37,42 +52,61 @@ function createGeoSearchStoreSchema() {
       if (cursor >= input.length) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      const [from, afterFrom] = parseGeoFrom(input, cursor, ctx.commandName)
-      cursor = afterFrom
+      let member: Buffer | undefined
+      try {
+        const [from, afterFrom] = parseGeoFrom(
+          input,
+          cursor,
+          ctx.commandName,
+          ctx.profile,
+        )
+        cursor = afterFrom
+        if (from.type === 'member') member = from.member
 
-      if (cursor >= input.length) {
-        throw new WrongNumberOfArgumentsError(ctx.commandName)
-      }
-      const [by, afterBy] = parseGeoBy(input, cursor)
-      cursor = afterBy
+        if (cursor >= input.length) {
+          throw new WrongNumberOfArgumentsError(ctx.commandName)
+        }
+        const [by, afterBy] = parseGeoBy(input, cursor, ctx.profile)
+        cursor = afterBy
 
-      const options: GeoOrderCount = {}
-      let storeDist = false
-      while (cursor < input.length) {
-        const advanced = tryParseOrderOrCount(input, cursor, options)
-        if (advanced !== null) {
-          cursor = advanced
-          continue
+        const options: GeoOrderCount = {}
+        let storeDist = false
+        while (cursor < input.length) {
+          const advanced = tryParseOrderOrCount(input, cursor, options)
+          if (advanced !== null) {
+            cursor = advanced
+            continue
+          }
+          const token = asciiUpperCase(input[cursor]!.toString())
+          if (token === 'STOREDIST') {
+            storeDist = true
+            cursor++
+            continue
+          }
+          if (
+            token === 'WITHCOORD' ||
+            token === 'WITHDIST' ||
+            token === 'WITHHASH'
+          ) {
+            throw errors.geoSearchStoreWithOptions(ctx.profile)
+          }
+          throw errors.syntax()
         }
-        const token = input[cursor]!.toString().toUpperCase()
-        if (token === 'STOREDIST') {
-          storeDist = true
-          cursor++
-          continue
-        }
-        if (
-          token === 'WITHCOORD' ||
-          token === 'WITHDIST' ||
-          token === 'WITHHASH'
-        ) {
-          throw errors.geoSearchStoreWithOptions()
-        }
-        throw errors.syntax()
-      }
 
-      return {
-        value: { destination, source, from, by, storeDist, ...options },
-        nextIndex: input.length,
+        return {
+          value: { destination, source, from, by, storeDist, ...options },
+          nextIndex: input.length,
+        }
+      } catch (err) {
+        return {
+          value: {
+            destination,
+            source,
+            failed: deferGeoParseError(err),
+            member,
+          },
+          nextIndex: input.length,
+        }
       }
     },
   )
@@ -86,12 +120,25 @@ export const geosearchstoreCommand = defineCommand({
   keys: args => [args.destination, args.source],
   execute: (args, ctx) => {
     const zset = ctx.db.getSortedSet(args.source)
+    // A FROMMEMBER parsed before the bad argument is looked up first.
+    if ('failed' in args) {
+      if (zset && args.member) {
+        resolveCenterFromMember(zset, args.member, ctx.server.profile)
+      }
+      throw args.failed
+    }
+    // A missing source deletes the destination and replies `:0` without
+    // looking up the FROMMEMBER member.
+    if (!zset) {
+      ctx.db.delete(args.destination)
+      return integer(0)
+    }
     const center =
       args.from.type === 'member'
-        ? resolveCenterFromMember(zset, args.from.member)
+        ? resolveCenterFromMember(zset, args.from.member, ctx.server.profile)
         : { lon: args.from.lon, lat: args.from.lat }
 
-    const matches = collectMatches(zset, center, args.by)
+    const matches = collectMatches(zset, center, args.by, ctx.server.profile)
     const ordered = orderAndLimit(matches, {
       order: args.order,
       count: args.count,
@@ -103,10 +150,9 @@ export const geosearchstoreCommand = defineCommand({
       return integer(0)
     }
 
-    ctx.db.delete(args.destination)
-    ctx.db.updateSortedSet(args.destination, destZset => {
-      destZset.replaceMembers(members, { forceDirty: true })
-    })
+    // One write replacing whatever the destination held: a single
+    // `geosearchstore`, not `del` followed by it.
+    ctx.db.set(args.destination, { type: 'zset', members })
     return integer(members.size)
   },
 })

@@ -143,7 +143,10 @@ Current profile gates:
 | `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |
 | `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
 | `COMMAND INFO` flags, ACL categories, tips and key specs: the real command table of the profile's version (captured from redis-server 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.6 and valkey 8.0.11 / 9.0.6; Valkey 7.2 reads Redis 7.2's), for example `variable_flags` on the `GEORADIUS` `STORE` / `STOREDIST` key specs. A preset versioned below its captured patch answers as that patch: `redis-6.2` (6.2.14) reports 6.2.24's `denyoom` on `SUBSCRIBE` / `PSUBSCRIBE`, which 6.2.14 lacks | per version | per version |
-| `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-9.0+` |
+| `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-8.0+` |
+| `CLIENT KILL ID` `client-id should be greater than 0` (6.2: any integer, `ID 0` is no filter) | `redis-7.0+` | all |
+| `CLIENT KILL TYPE primary` | never | `valkey-8.0+` |
+| `CLIENT KILL ID id [id ...]` (several ids after one `ID`) | never | `valkey-9.0+` |
 | Redis 8.0 hash-field read commands: `HGETDEL`, `HGETEX` | `redis-8.0+` | `HGETEX` in `valkey-9.0`; `HGETDEL` is not modeled for Valkey |
 | Redis 8.0 hash-field write command: `HSETEX` | `redis-8.0+` | `valkey-9.0+` |
 | `COMMAND DOCS` and `COMMAND GETKEYSANDFLAGS` | `redis-7.0+` | `valkey-8.0+` |
@@ -153,6 +156,8 @@ Current profile gates:
 | `COMMAND HELP` without "Redis" (`Return details about all commands.`) | never | `valkey-8.0+` |
 | An empty array, not an empty set, for a `COMMAND INFO` entry without subcommands (RESP3 `*0` rather than `~0`), as Valkey 7.2.14, 8.0.11 and 9.0.6 send it; Valkey 8.0.0, 9.0.0 and 9.0.1 still send `~0`, so the `valkey-8.0` / `valkey-9.0` presets (8.0.0 / 9.0.0) differ from those first releases | never | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
+| `CLIENT NO-TOUCH`, and `timeout is out of range` for a `CLIENT PAUSE` end time past `LLONG_MAX` (before: `+OK`, nothing paused) | `redis-7.2+` | `valkey-8.0+` |
+| `CLIENT PAUSE` accepts arguments after the mode, reading the mode only when it is the last argument (`CLIENT PAUSE 10 WRITE x` pauses ALL) | never | `valkey-8.1+` (not a preset; `valkey-9.0`) |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
 | `SET` with a deadline already past writes nothing and deletes an existing key (Redis writes the key with the past TTL and publishes `set` / `expire`) | never | `valkey-8.0+` |
@@ -187,6 +192,7 @@ Current profile gates:
 | `CONFIG SET` with several parameter/value pairs, its `config\|set` arity / `syntax error` split, and `duplicate parameter` detection (6.2 accepts exactly one pair and answers any other shape with `Unknown subcommand or wrong number of arguments for 'SET'.`) | `redis-7.0+` | `valkey-8.0+` |
 | `n` (new-key) class in `notify-keyspace-events` (6.2 rejects it as an invalid flag character) | `redis-7.0+` | `valkey-8.0+` |
 | Unknown-command error wording (`unknown command '<name>', with args beginning with: '<arg>' ...` with the name cut at 128 bytes, vs. 6.2's backtick-quoted, `, `-separated form with the whole name; both echo args against a 128-byte budget, so 6.2 echoes fewer) | `redis-7.0+` | `valkey-8.0+` |
+| Subscribed-mode refusal naming the looked-up table entry and listing sharded Pub/Sub (`Can't execute 'config\|get': only (P\|S)SUBSCRIBE / (P\|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`, vs. 6.2's `Can't execute 'config': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / ...`) | `redis-7.0+` | `valkey-8.0+` |
 | `MSET` / `MSETNX` / `XADD` odd field/value-count error in the standard arity wording (`wrong number of arguments for 'mset' command`, vs. 6.2's `wrong number of arguments for MSET` for both MSET forms and `... for XADD`) | `redis-7.0+` | `valkey-8.0+` |
 | Script-abort error decoration (`<error> script: <sha>, on @user_script:<line>.`, keeping a failing `redis.call`'s own error code, vs. 6.2's `-ERR Error running script (call to f_<sha>): @user_script:<line>: <error>`). The same gate picks the wording of script-level rejections (unknown / not-allowed command, wrong arity, no command): 6.2's `... from Lua script` forms carry no error code and, from `redis.call`, an inner `@user_script: <line>: ` position, which a `redis.pcall` rejection carries too (`=[C]: -1: ` when called through the global `pcall`) | `redis-7.0+` | `valkey-8.0+` |
 | `CONFIG SET` rejecting a memory value above the parameter's maximum (6.2 saturates to the maximum instead) | `redis-7.0+` | `valkey-8.0+` |

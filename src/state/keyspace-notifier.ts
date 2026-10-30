@@ -104,7 +104,8 @@ type ResolvedNotification = {
   database: number
   key: Buffer
   event: string
-  eventClass: NotifyClass
+  // `n` (new) and `m` (keymiss) are classes of their own, outside `A`.
+  eventClass: NotifyClass | 'n' | 'm'
 }
 
 // Commands whose write event name differs from the command name (Redis names
@@ -125,6 +126,8 @@ const WRITE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
   hmset: 'hset',
   hsetnx: 'hset',
   zincrby: 'zincr',
+  // GEOADD rewrites itself into ZADD (geo.c), which publishes the event.
+  geoadd: 'zadd',
   rename: 'rename_to',
   renamenx: 'rename_to',
   copy: 'copy_to',
@@ -241,6 +244,20 @@ export class KeyspaceNotifier {
           key: event.key,
           event: 'expired',
           eventClass: 'x',
+        }
+      case 'new':
+        return {
+          database: event.database,
+          key: event.key,
+          event: 'new',
+          eventClass: 'n',
+        }
+      case 'keymiss':
+        return {
+          database: event.database,
+          key: event.key,
+          event: 'keymiss',
+          eventClass: 'm',
         }
       case 'flush':
         return null

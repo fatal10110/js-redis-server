@@ -1,6 +1,6 @@
 {
   "name": "js-redis-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "In-memory Redis-compatible server implementation in JavaScript, useful for testing and client-agnostic mocks",
   "keywords": [
     "redis",
@@ -65,10 +65,11 @@
   "scripts": {
     "build": "tsup",
     "start": "npm run build && node --enable-source-maps ./dist/cli.js",
-    "test": "tsc --noEmit && node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test \"./tests/**/*.test.ts\"",
+    "test": "tsc --noEmit && tsc -p tsconfig.check.json && node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test \"./tests/**/*.test.ts\"",
     "test:integration:mock": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test \"./tests-integration/**/*.test.ts\"",
     "test:integration:real": "tsc --noEmit && TEST_BACKEND=real node --import tsx --no-warnings ./scripts/flush-redis.ts -- node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test \"./tests-integration/**/*.test.ts\"",
     "test:integration:compatibility:mock": "tsc --noEmit && for profile in redis-6.2 redis-7.0 redis-7.2 redis-7.4 redis-8.0 valkey-8.0 valkey-9.0; do echo \"REDIS_COMPAT=$profile\"; TEST_BACKEND=mock REDIS_COMPAT=$profile node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test \"./tests-integration/compatibility/**/*.test.ts\" || exit $?; done",
+    "test:integration:profiles:mock": "tsc --noEmit && for profile in redis-6.2 redis-7.0 redis-7.2 redis-7.4 redis-8.0 valkey-8.0 valkey-9.0; do echo \"REDIS_COMPAT=$profile\"; TEST_BACKEND=mock REDIS_COMPAT=$profile node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test ./tests-integration/ioredis/scripts.test.ts ./tests-integration/node-redis/scripts.test.ts ./tests-integration/ioredis/scripts-noscript.test.ts ./tests-integration/node-redis/scripts-noscript.test.ts ./tests-integration/ioredis/command-integration.test.ts ./tests-integration/node-redis/command-integration.test.ts ./tests-integration/raw-tcp/command-errors-subcommand.test.ts ./tests-integration/raw-tcp/monitor-protocol.test.ts || exit $?; done",
     "test:integration:mock:ioredis": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test \"./tests-integration/ioredis/**/*.test.ts\"",
     "test:integration:mock:node-redis": "tsc --noEmit && TEST_BACKEND=mock node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test \"./tests-integration/node-redis/**/*.test.ts\"",
     "test:integration:real:ioredis": "tsc --noEmit && TEST_BACKEND=real node --import tsx --no-warnings ./scripts/flush-redis.ts -- node --enable-source-maps --import tsx --no-warnings --test-concurrency 1 --test-timeout 30000 --test \"./tests-integration/ioredis/**/*.test.ts\"",

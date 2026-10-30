@@ -1,8 +1,11 @@
+import { asciiLowerCase, asciiUpperCase } from '../core/ascii-case'
 import {
   defineCommand,
   type CommandIntrospection,
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
+import type { CompatibilityProfile } from '../core/compatibility/profile'
+import { parseSortScoreToken } from '../core/double-token'
 import {
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
@@ -25,12 +28,14 @@ import {
   integer,
   keyTtlSeconds,
   ok,
-  parseIntegerToken,
+  parseInt64Token,
   simpleString,
+  keyExpireDeadlineMs,
   ttlMilliseconds,
   typeName,
 } from './helpers'
 import { getSortedMembers } from './zsets/helpers'
+import { dbIndexSchema, parseDbIndexToken } from './db-index'
 
 export const delCommand = defineCommand({
   name: 'del',
@@ -234,7 +239,7 @@ const expireOptionsSchema = t.custom<ExpireOptions>((input, index, ctx) => {
 
   while (cursor < input.length) {
     const token = input[cursor]!.toString()
-    const option = token.toUpperCase()
+    const option = asciiUpperCase(token)
 
     if (option === 'NX') {
       if (options.condition === 'XX' || options.comparison !== undefined) {
@@ -294,28 +299,28 @@ export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
     key: t.key(),
-    seconds: t.integer(),
+    seconds: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
-    expireKey(ctx, args.key, args.seconds, 1000, args.options),
+    expireKey(ctx, args.key, args.seconds, true, 'expire', args.options),
 })
 
 export const pexpireCommand = defineCommand({
   name: 'pexpire',
   schema: t.object({
     key: t.key(),
-    milliseconds: t.integer(),
+    milliseconds: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
-    expireKey(ctx, args.key, args.milliseconds, 1, args.options),
+    expireKey(ctx, args.key, args.milliseconds, false, 'pexpire', args.options),
 })
 
 export const persistCommand = defineCommand({
@@ -342,7 +347,7 @@ const flushModeSchema = t.custom<'async' | 'sync' | undefined>(
     }
 
     if (remaining === 1) {
-      const token = input[index].toString().toLowerCase()
+      const token = asciiLowerCase(input[index].toString())
       if (token === 'async' || token === 'sync') {
         return { value: token, nextIndex: index + 1 }
       }
@@ -378,14 +383,21 @@ export const expireatCommand = defineCommand({
   name: 'expireat',
   schema: t.object({
     key: t.key(),
-    timestamp: t.integer(),
+    timestamp: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return expireAtKey(ctx, args.key, args.timestamp * 1000, args.options)
+    const expiresAt = keyExpireDeadlineMs(
+      args.timestamp,
+      true,
+      0,
+      'expireat',
+      ctx.server.profile,
+    )
+    return expireAtKey(ctx, args.key, expiresAt, args.options)
   },
 })
 
@@ -393,14 +405,21 @@ export const pexpireatCommand = defineCommand({
   name: 'pexpireat',
   schema: t.object({
     key: t.key(),
-    timestamp: t.integer(),
+    timestamp: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return expireAtKey(ctx, args.key, args.timestamp, args.options)
+    const expiresAt = keyExpireDeadlineMs(
+      args.timestamp,
+      false,
+      0,
+      'pexpireat',
+      ctx.server.profile,
+    )
+    return expireAtKey(ctx, args.key, expiresAt, args.options)
   },
 })
 
@@ -422,12 +441,12 @@ export const renameCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // Real Redis adds the destination (`new`) before deleting the source
+    // (`rename_from`), then announces `rename_to`; an existing destination
+    // is deleted and added again, so it is `new` too.
+    ctx.db.announceNew(args.newKey)
     ctx.db.delete(args.key)
-    ctx.db.set(
-      args.newKey,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    ctx.db.set(args.newKey, value, { expiresAt, announceNew: false })
 
     return ok()
   },
@@ -448,12 +467,12 @@ export const renamenxCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // Real Redis adds the destination (`new`) before deleting the source
+    // (`rename_from`), then announces `rename_to`; an existing destination
+    // is deleted and added again, so it is `new` too.
+    ctx.db.announceNew(args.newKey)
     ctx.db.delete(args.key)
-    ctx.db.set(
-      args.newKey,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    ctx.db.set(args.newKey, value, { expiresAt, announceNew: false })
 
     return integer(1)
   },
@@ -461,7 +480,7 @@ export const renamenxCommand = defineCommand({
 
 export const moveCommand = defineCommand({
   name: 'move',
-  schema: t.object({ key: t.key(), database: t.integer() }),
+  schema: t.object({ key: t.key(), database: dbIndexSchema }),
   flags: ['write'],
   capabilities: { clusterMode: 'multiDbOnly' },
   keys: args => [args.key],
@@ -486,11 +505,12 @@ export const moveCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
-    // move_from on the source, then move_to on the target (#445).
+    // `new` on the target, move_from on the source, then move_to on the
+    // target (#445).
+    const target = targetDb.withOrigin('move')
+    target.announceNew(args.key)
     ctx.db.delete(args.key)
-    targetDb
-      .withOrigin('move')
-      .set(args.key, value, expiresAt !== undefined ? { expiresAt } : undefined)
+    target.set(args.key, value, { expiresAt, announceNew: false })
 
     return integer(1)
   },
@@ -508,7 +528,7 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
   let replace = false
 
   while (cursor < input.length) {
-    const token = input[cursor].toString().toUpperCase()
+    const token = asciiUpperCase(input[cursor].toString())
 
     if (token === 'REPLACE') {
       replace = true
@@ -520,13 +540,7 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
       const raw = input[cursor + 1]
       if (!raw) throw errors.syntax()
 
-      const text = raw.toString()
-      if (!/^-?\d+$/.test(text)) throw errors.expectedInteger()
-
-      const value = Number(text)
-      if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
-
-      db = value
+      db = parseDbIndexToken(raw)
       cursor += 2
       continue
     }
@@ -575,11 +589,9 @@ export const copyCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
-    targetDb.set(
-      destination,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    // REPLACE deletes an existing destination and adds it again, so the
+    // destination is announced `new` either way.
+    targetDb.set(destination, value, { expiresAt, announceNew: true })
 
     return integer(1)
   },
@@ -644,7 +656,7 @@ function scanSortOptions(
   }
 
   for (let j = 0; j < options.length; j++) {
-    const option = options[j]!.toString().toUpperCase()
+    const option = asciiUpperCase(options[j]!.toString())
     const remaining = options.length - j - 1
 
     if (option === 'ASC') {
@@ -663,10 +675,7 @@ function scanSortOptions(
     }
 
     if (option === 'LIMIT' && remaining >= 2) {
-      scanned.limit = {
-        offset: parseIntegerToken(options[j + 1]!),
-        count: parseIntegerToken(options[j + 2]!),
-      }
+      scanned.limit = parseSortLimit(options[j + 1]!, options[j + 2]!)
       j += 2
       continue
     }
@@ -727,14 +736,36 @@ function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
   throw new WrongTypeRedisError()
 }
 
-function sortNumericScore(weight: Buffer | null): number {
-  // A missing weight leaves the score at 0. Otherwise Redis converts with
-  // strtod; an empty string becomes 0, and anything that does not parse as a
-  // double aborts the whole command.
+function sortNumericScore(
+  weight: Buffer | null,
+  profile: CompatibilityProfile,
+): number {
+  // A missing weight leaves the score at 0. Otherwise sort.c converts it with
+  // the profile's strtod / fast_float (see parseSortScoreToken), and anything
+  // that does not convert aborts the whole command.
   if (!weight) return 0
-  const value = Number(weight.toString())
-  if (Number.isNaN(value)) throw errors.sortScoreNotDouble()
+  const value = parseSortScoreToken(weight, profile)
+  if (value === undefined) throw errors.sortScoreNotDouble()
   return value
+}
+
+/**
+ * `LIMIT offset count`: both are full signed 64-bit integers
+ * (`getLongFromObjectOrReply`). sortCommand() clamps them to the element
+ * count, so a negative offset is 0 and a negative count means "the rest";
+ * clamping to the safe-integer range here keeps that meaning.
+ */
+function parseSortLimit(
+  offsetToken: Buffer,
+  countToken: Buffer,
+): { offset: number; count: number } {
+  const offset = parseInt64Token(offsetToken)
+  const count = parseInt64Token(countToken)
+  const max = BigInt(Number.MAX_SAFE_INTEGER)
+  return {
+    offset: offset < 0n ? 0 : Number(offset > max ? max : offset),
+    count: count < 0n ? -1 : Number(count > max ? max : count),
+  }
 }
 
 /**
@@ -753,6 +784,8 @@ function sortElements(
   { type, elements }: SortSource,
   options: SortOptions,
   db: RedisDatabase,
+  profile: CompatibilityProfile,
+  announceMiss: boolean,
 ): Buffer[] {
   if (options.dontsort) {
     // A constant BY does not simply skip the sort: for DESC, sortCommand()'s
@@ -781,7 +814,7 @@ function sortElements(
     //   loads rank order. That order is undefined, so it is left untested.
     const weighted = elements.map(element => ({
       element,
-      weight: by ? readSortPattern(db, by, element) : element,
+      weight: by ? readSortPattern(db, by, element, announceMiss) : element,
     }))
     weighted.sort(
       (a, b) => direction * compareSortAlphaWeights(a.weight, b.weight),
@@ -791,7 +824,10 @@ function sortElements(
 
   const scored = elements.map(element => ({
     element,
-    score: sortNumericScore(by ? readSortPattern(db, by, element) : element),
+    score: sortNumericScore(
+      by ? readSortPattern(db, by, element, announceMiss) : element,
+      profile,
+    ),
   }))
   // sortCompare() falls through to compareStringObjects() on equal scores, so
   // ties are broken lexicographically rather than left in insertion order.
@@ -858,11 +894,17 @@ function runSort(
   const db = ctx.db
   const source = readSortSource(db, args.key)
   const effective = forceDeterministicSetOrder(options, source.type, ctx)
+  // The BY / GET keys are read lookups (a missing one publishes `keymiss`),
+  // except under STORE on 6.2, which looks them up for writing (6.2.14
+  // sort.c:464).
+  const announceMiss =
+    !options.store ||
+    ctx.server.profile.has('notify.keyspace.keymiss-store-sources')
   const sorted = applySortLimit(
-    sortElements(source, effective, db),
+    sortElements(source, effective, db, ctx.server.profile, announceMiss),
     options.limit,
   )
-  const output = projectSortOutput(sorted, options.get, db)
+  const output = projectSortOutput(sorted, options.get, db, announceMiss)
 
   if (options.store) {
     // An empty result deletes the destination (`del`); otherwise the list
@@ -886,6 +928,7 @@ function projectSortOutput(
   elements: readonly Buffer[],
   get: readonly Buffer[],
   db: RedisDatabase,
+  announceMiss: boolean,
 ): Array<Buffer | null> {
   if (get.length === 0) {
     return elements.map(element => Buffer.from(element))
@@ -897,7 +940,7 @@ function projectSortOutput(
       output.push(
         isSelfSortPattern(pattern)
           ? Buffer.from(element)
-          : readSortPattern(db, pattern, element),
+          : readSortPattern(db, pattern, element, announceMiss),
       )
     }
   }
@@ -907,35 +950,61 @@ function projectSortOutput(
 /**
  * Mirrors `lookupKeyByPattern()`: a pattern with no `*` resolves to nothing,
  * and a key holding anything other than a string resolves to nothing either —
- * real Redis never turns that into a WRONGTYPE for the whole SORT.
+ * real Redis never turns that into a WRONGTYPE for the whole SORT. A
+ * `key*->field` pattern reads `field` of the hash `key<element>` instead. The
+ * key is looked up for reading, so a missing one publishes `keymiss` when
+ * `announceMiss` is set.
  */
 function readSortPattern(
   db: RedisDatabase,
   pattern: Buffer,
   element: Buffer,
+  announceMiss: boolean,
 ): Buffer | null {
   const wildcard = sortPatternWildcardIndex(pattern)
   if (wildcard === -1) {
     return null
   }
 
-  const key = expandSortPattern(pattern, wildcard, element)
-  if (db.getType(key) !== 'string') {
+  const { key, field } = expandSortPattern(pattern, wildcard, element)
+  const type = db.getType(key)
+  if (type === null) {
+    if (announceMiss) db.announceKeyMiss(key)
+    return null
+  }
+  if (field) {
+    if (type !== 'hash') return null
+    return db.updateHash(key, hash => hash.getField(field)?.value ?? null)
+  }
+  if (type !== 'string') {
     return null
   }
   return db.getString(key)
 }
 
+/**
+ * Substitutes `element` for the `*`. Like `lookupKeyByPattern()`, a `->`
+ * after the `*` (found with `strstr`, so not past a NUL) followed by at least
+ * one byte splits off a hash field.
+ */
 function expandSortPattern(
   pattern: Buffer,
   wildcard: number,
   element: Buffer,
-): Buffer {
-  return Buffer.concat([
-    pattern.subarray(0, wildcard),
-    element,
-    pattern.subarray(wildcard + 1),
-  ])
+): { key: Buffer; field: Buffer | null } {
+  const tail = pattern.subarray(wildcard + 1)
+  const nul = tail.indexOf(0)
+  const arrow = tail.indexOf('->')
+  const hasField =
+    arrow !== -1 &&
+    (nul === -1 || arrow + 1 < nul) &&
+    arrow + 2 < tail.length &&
+    tail[arrow + 2] !== 0
+  const postfix = hasField ? tail.subarray(0, arrow) : tail
+  return {
+    key: Buffer.concat([pattern.subarray(0, wildcard), element, postfix]),
+    field: hasField ? Buffer.from(tail.subarray(arrow + 2)) : null,
+  }
 }
 
 /**
@@ -951,7 +1020,7 @@ function sortRoutingKeys(args: SortArgs): Buffer[] {
   let store: Buffer | undefined
 
   for (let i = 0; i < options.length; i++) {
-    const option = options[i]!.toString().toUpperCase()
+    const option = asciiUpperCase(options[i]!.toString())
     if (option === 'LIMIT') {
       i += 2
       continue
@@ -1018,12 +1087,20 @@ export const keysCommands = [
 function expireKey(
   ctx: RedisExecutionContext,
   key: Buffer,
-  duration: number,
-  multiplier: number,
+  duration: Buffer,
+  seconds: boolean,
+  commandName: string,
   options: ExpireOptions,
 ) {
   const now = Date.now()
-  return expireAtKey(ctx, key, now + duration * multiplier, options, now)
+  const expiresAt = keyExpireDeadlineMs(
+    duration,
+    seconds,
+    now,
+    commandName,
+    ctx.server.profile,
+  )
+  return expireAtKey(ctx, key, expiresAt, options, now)
 }
 
 function expireAtKey(

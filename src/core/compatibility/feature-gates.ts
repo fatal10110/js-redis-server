@@ -50,6 +50,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // The `n` (new-key) notify-keyspace-events class is Redis 7.0+; 6.2 rejects
   // it as an invalid flag character (it does accept `m` and `d`).
   'notify.keyspace.new-key-class': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 looks up the source keys of SINTERSTORE / SUNIONSTORE /
+  // SDIFFSTORE / ZUNIONSTORE / ZINTERSTORE / ZDIFFSTORE / ZRANGESTORE /
+  // SORT ... STORE, COPY's source and a single-key PFCOUNT with
+  // `lookupKeyRead`, so a missing one publishes `keymiss`; 6.2 uses
+  // `lookupKeyWrite` there (6.2.14 t_set.c:869, t_zset.c:2608 / 3700,
+  // sort.c:273, db.c:1253, hyperloglog.c:1261), which publishes nothing.
+  // Verified against redis-server 6.2.14, 7.0.15, 7.2.4, 8.0.0 and Valkey
+  // 8.0 / 9.0 (#514).
+  'notify.keyspace.keymiss-store-sources': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0's HGETEX looks its hash up with `lookupKeyRead`, so a missing
+  // one publishes `keymiss`; Redis 8.0's uses `lookupKeyWrite` (8.0.0
+  // t_hash.c:2788) and publishes nothing. Probed on valkey 9.0.0 and redis
+  // 8.0.0 (#514).
+  'notify.keyspace.keymiss-hgetex': { valkey: '9.0.0' },
   // Redis 7.0 relaxed the RESP multibulk element-count bound in
   // `processMultibulkBuffer` from `ll > 1024*1024` to `ll > INT_MAX`: `*1048577`
   // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
@@ -72,8 +86,34 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.1.0; the error verified on redis-server 7.0.15).
   'protocol.inline-adjacent-quotes': { valkey: '9.0.0' },
   'client.no-evict': { redis: '7.0.0', valkey: '7.2.0' },
-  'client.kill.maxage': { redis: '7.4.0', valkey: '9.0.0' },
+  // CLIENT KILL MAXAGE <seconds> (`maxage should be greater than 0`). Valkey
+  // 8.0.0 already parses it (networking.c clientKillCommand), Redis since 7.4.
+  'client.kill.maxage': { redis: '7.4.0', valkey: '8.0.0' },
+  // Redis 7.0 range checks CLIENT KILL ID to 1..LONG_MAX with `client-id
+  // should be greater than 0` (getRangeLongFromObjectOrReply), a non-integer
+  // included; 6.2 takes any long long, `value is not an integer or out of
+  // range` otherwise, and ID 0 means no id filter. Valkey forked with 7.0's.
+  'client.kill.id-positive': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0 takes a list of ids after one CLIENT KILL ID and stops at the
+  // first non-integer (`parseClientFiltersOrReply`): `ID 1 2` kills both,
+  // `ID abc` is a syntax error and a trailing `ID` matches nothing.
+  'client.kill.id-list': { valkey: '9.0.0' },
+  // Valkey 8.0 accepts `primary` as a client type name next to `master`
+  // (`getClientTypeByName`); Redis and Valkey 7.2 answer `Unknown client type`.
+  'client.kill.type-primary': { valkey: '8.0.0' },
   'client.setinfo': { redis: '7.2.0', valkey: '7.2.0' },
+  'client.no-touch': { redis: '7.2.0', valkey: '7.2.0' },
+  // Valkey 8.1 gave CLIENT PAUSE its own handler (`clientPauseCommand`, arity
+  // -3): arguments past the timeout are accepted, and the mode is read only
+  // when it is the last one (`argc == 4`), so `CLIENT PAUSE 10 WRITE x` is an
+  // ALL pause. Redis and Valkey 8.0 answer the subcommand syntax error.
+  'client.pause.extra-args': { valkey: '8.1.0' },
+  // Timeouts (`getTimeoutFromObjectOrReply`: CLIENT PAUSE and XREAD BLOCK in
+  // milliseconds, BLPOP and the other blocking commands in seconds) refuse an
+  // end time past LLONG_MAX with `timeout is out of range` from Redis 7.2
+  // (timeout.c); 6.2 / 7.0 let `tval + now` overflow, and cast a seconds
+  // timeout of LLONG_MAX ms or more (`inf`, `1e400`) to a negative one.
+  'timeout.ms-overflow-check': { redis: '7.2.0', valkey: '7.2.0' },
   // The CLIENT LIST / CLIENT INFO line (`catClientInfoString`) gains fields
   // per version; the order is fixed and every field is always printed. From
   // the format strings of redis 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
@@ -101,10 +141,7 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.0.6. Valkey forked at 7.2, so every Valkey profile has the newer wording.
   //
   // This gates the *wording* only; *when* the subcommand is resolved is
-  // `error.unknown-subcommand-dispatch-timing` below. Still not modelled:
-  //  - Arity errors, `redis-6.2`. `addReplySubcommandSyntaxError` reaches only
-  //    PUBSUB, 1 of 11 containers; the rest answer the 7.0-era `wrong number
-  //    of arguments for '<c>|<sub>'` arity error on every profile (#437).
+  // `error.unknown-subcommand-dispatch-timing` below.
   'error.unknown-subcommand-wording': { redis: '7.0.0', valkey: '7.2.0' },
   // The same 7.0 change resolves `container|subcommand` at command-lookup
   // time, so an unknown subcommand fails before anything else looks at the
@@ -121,8 +158,8 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
     valkey: '7.2.0',
   },
   // The last line of a container's HELP reply: `Prints this help.` through
-  // 7.0, `Print this help.` from Redis 7.2 / Valkey 7.2. Only XINFO/XGROUP HELP
-  // read it so far; the other containers still say `Prints` on every profile.
+  // 7.0, `Print this help.` from Redis 7.2 / Valkey 7.2, for every container
+  // (`helpReply`, src/commands/helpers.ts).
   // Verified against redis-server 6.2.24, 7.0.15, 7.2, 7.4, 8.0.6 and Valkey
   // 7.2 / 8.0 / 8.1 / 9.0.
   'reply.help-print-wording': { redis: '7.2.0', valkey: '7.2.0' },
@@ -164,6 +201,15 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // server.c); 7.0 fixed it to `interact` (7.0.15 server.c and a live
   // redis-server 7.0.15, 7.2.4 / 7.4.4 / 8.0.0 and Valkey 8.0 / 9.0 server.c).
   'error.replica-keyspace-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // The refusal of a command on a RESP2 connection in subscribed mode: 6.2
+  // names the command (`c->cmd->name`, so `config` for CONFIG GET) and lists
+  // `(P)SUBSCRIBE / (P)UNSUBSCRIBE`; 7.0 names the looked-up table entry
+  // (`c->cmd->fullname`, `config|get`) and, with sharded Pub/Sub, lists
+  // `(P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE` (redis 6.2.14 / 7.0.0 server.c
+  // processCommand, valkey 8.0.0 the same as 7.0). Verified against
+  // redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and Valkey 8.0 / 9.0
+  // (#384, #514).
+  'error.subscribed-context-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   // The INFO keyspace line counts the hashes with field expirations after
   // `avg_ttl`: `subexpiry=` from Redis 7.4 (the release that added HEXPIRE),
@@ -173,6 +219,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'info.keyspace.volatile-items': { valkey: '9.0.0' },
   'shutdown.now-force-abort': { redis: '7.0.0', valkey: '7.2.0' },
   'pubsub.sharded': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.2 holds a push for the calling connection (its own PUBLISH to a
+  // channel it subscribes to) until the command's reply is out, and inside
+  // EXEC until the EXEC reply is (`server.pending_push_messages`); older
+  // versions write it as it happens, so inside the EXEC array.
   'pubsub.resp3-publish-reply-first': { redis: '7.2.0', valkey: '8.0.0' },
   // Redis 7.0 made XCLAIM / XAUTOCLAIM drop a pending entry whose stream
   // entry was deleted (XAUTOCLAIM lists it in a third reply element). 6.2
@@ -204,7 +254,37 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 9.0: checked against redis-server 6.2.24, 7.2, 7.4.0, 7.4.4, 8.0.6 and
   // valkey-server 7.2.14 (refuses), 8.0.0, 8.0.11, 8.1 and 9.0.6 (#214).
   'hscan.novalues': { redis: '7.4.0', valkey: '8.0.0' },
-  'xread.plus-id': { redis: '7.4.0' },
+  // `XREAD ... +` reads the last entry (and XREADGROUP answers `The + ID is
+  // meaningless ...` for it, after its NOGROUP check); before, `+` is an
+  // invalid stream id. Valkey took it in 8.0.0 (valkey 8.0.0 t_stream.c;
+  // 7.2.5 has no `+` branch). Verified against redis-server 7.2.4, 7.4.4,
+  // 8.0.0 and valkey-server 8.0.0 / 9.0.0.
+  'xread.plus-id': { redis: '7.4.0', valkey: '8.0.0' },
+  // XREADGROUP / XCLAIM / XAUTOCLAIM announce a consumer they create
+  // implicitly as `xgroup-createconsumer` from Redis 7.0
+  // (`streamCreateConsumer(..., SCC_DEFAULT)`); 6.2 creates it silently
+  // (`streamLookupConsumer(..., SLC_NONE)`) and only XGROUP CREATECONSUMER
+  // publishes the event (redis 6.2.14 / 7.0.15 / 7.2.4 t_stream.c).
+  'stream.implicit-consumer-event': { redis: '7.0.0', valkey: '7.2.0' },
+  // The consumer-group lag port (`streamReplyWithCGLag`). Redis 7.4.2 made
+  // the counter estimate refuse an id behind the last tombstone, dropped the
+  // tombstone helper's `first_id > max_deleted_entry_id` shortcut, and made
+  // XREADGROUP check for tombstones after the group's last id instead of the
+  // delivered one (redis 7.4.1 / 7.4.2 t_stream.c). Valkey took it in 8.0.3.
+  // Backports one minimum version cannot express: redis 7.2.7+ has it too
+  // (7.2.4, the pinned 7.2, does not), and valkey 8.1.0 lacks it (8.1.1 has
+  // it).
+  'stream.group-lag-tombstone-check': { redis: '7.4.2', valkey: '8.0.3' },
+  // Redis 7.4.4 also stopped XREADGROUP counting while the group's last id
+  // is behind the first entry (`streamCompareID(&group->last_id,
+  // &s->first_id) >= 0`; absent from 7.4.2 / 7.4.3). Valkey took it with the
+  // tombstone check in 8.0.3 (and 8.1.1, not 8.1.0).
+  'stream.group-lag-read-first-id-check': { redis: '7.4.4', valkey: '8.0.3' },
+  // Redis 7.4.2 also answers the lag directly for an emptied stream (0) and
+  // when both the group's last id and the last tombstone are behind the
+  // first entry (the stream length); 7.4.0 / 7.4.1 do not, and redis 7.2.7+
+  // backported it. Valkey 9.0.0 has not taken these.
+  'stream.group-lag-shortcuts': { redis: '7.4.2' },
   'cluster.multi-db': { valkey: '9.0.0' },
   // A standalone (`cluster-enabled no`) server refuses READONLY with `This
   // instance has cluster support disabled` on every version up to Valkey 8.0;
@@ -350,4 +430,154 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 8.1.0. Redis and Valkey 7.2 / 8.0 publish `del` (#527). Verified against
   // the Valkey 8.0.0, 8.0.11, 8.1.0, 9.0.0 and 9.0.6 sources.
   'notify.past-deadline-expired-event': { valkey: '8.1.0' },
+  // XREAD / XREADGROUP with BLOCK from a script: up to Redis 7.2 / Valkey 7.2
+  // `xreadCommand` refuses it while parsing its options, as soon as it sees
+  // BLOCK (before the timeout, the key and the group are looked at), with
+  // `<command as sent> command is not allowed with BLOCK option from scripts`
+  // (redis@7.2.4 and valkey@7.2.5 src/t_stream.c). Redis 7.4 / Valkey 8.0
+  // dropped the check: the script client's `CLIENT_DENY_BLOCKING` turns the
+  // block into the timeout reply at once, even with BLOCK 0 (#563). Verified
+  // against redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
+  // valkey-server 7.2.5, 8.0.0, 9.0.0.
+  'script.stream-block-allowed': { redis: '7.4.0', valkey: '8.0.0' },
+  // The commands flagged CMD_MAY_REPLICATE (see src/core/compatibility/
+  // may-replicate.ts, #568). Redis 7.0 made SCRIPT a container whose
+  // subcommands lack the flag, and flagged its new SPUBLISH and FCALL
+  // (7.0.15 commands.c, 7.2.4 / 7.4.4 / 8.0.0 and valkey 7.2.5 commands.def).
+  'may-replicate.redis7-table': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 8.0 flags CLUSTER SETSLOT (valkey@8.0.0 src/commands.def).
+  'may-replicate.cluster-setslot': { valkey: '8.0.0' },
+  // Valkey 9.0 adds CLUSTER SYNCSLOTS, flagged too (valkey@9.0.0
+  // src/commands.def).
+  'may-replicate.cluster-syncslots': { valkey: '9.0.0' },
+  // Redis 8.0 and Valkey 8.1 convert score-range bounds (`zslParseRange()`)
+  // and numeric SORT elements / BY weights with fast_float instead of C
+  // `strtod`: hex floats (`0x10`) and leading whitespace are refused there,
+  // and Redis 8.0's SORT stops seeing `ERANGE` (`1e400` sorts as inf).
+  // redis@7.4.4 t_zset.c:556-591 / sort.c:479-484 vs redis@8.0.0
+  // t_zset.c:541-576 / sort.c:504, valkey@8.0.0 vs valkey@8.1.0. Checked
+  // against redis-server 6.2.14 .. 8.0.0 and valkey-server 8.0.0 / 9.0.0 (#534,
+  // #513). See src/core/double-token.ts.
+  'double.fast-float': { redis: '8.0.0', valkey: '8.1.0' },
+  // Valkey 8.1's `valkey_strtod()` is fast_float with no `strtod` fallback, so
+  // `string2d()` (ZADD, ZINCRBY, WEIGHTS, GEO*) refuses hex floats too, and
+  // SORT, which now resets errno, refuses an empty element (EINVAL) and an
+  // overflow or underflow to zero (ERANGE) but takes a subnormal. Redis 8.0
+  // keeps the fallback (redis@8.0.0 util.c:660-681). valkey@8.1.0
+  // util.c:599-609, sort.c:484-485; checked against valkey-server 9.0.0.
+  'double.valkey-strtod': { valkey: '8.1.0' },
+  // Container HELP texts (#491), from the real servers' help arrays. Redis
+  // 7.0 rewrote CLIENT HELP's KILL TYPE as upper case, fixed `<timout>` and
+  // added TRACKING's `[NOLOOP]` (redis@7.0.0 networking.c clientCommand), and
+  // reworded SLOWLOG GET for `-1 mean all` (slowlog.c). Valkey 8.0 added CLIENT
+  // CAPA and SCRIPT SHOW and re-wrapped SCRIPT FLUSH (valkey@8.0.0 eval.c);
+  // Valkey 8.1 the CLIENT LIST filters, the CLIENT KILL ID list and
+  // IMPORT-SOURCE; Valkey 9.0 the remaining CLIENT KILL / LIST filters, CLIENT
+  // HELP punctuation and ACL SETUSER's `<rule>` (valkey@9.0.0 acl.c). Redis
+  // 7.4 / Valkey 8.0 dropped FUNCTION LIST's `* Library description` line
+  // (absent in redis@7.4.0 functions.c). Captured from redis-server 6.2.14 ..
+  // 8.0.0 and valkey-server 8.0.0, 8.1 and 9.0.0.
+  'help.client-redis7-text': { redis: '7.0.0', valkey: '7.2.0' },
+  'help.client-capa': { valkey: '8.0.0' },
+  'help.client-valkey81-filters': { valkey: '8.1.0' },
+  'help.client-valkey90-filters': { valkey: '9.0.0' },
+  'help.slowlog-get-all': { redis: '7.0.0', valkey: '7.2.0' },
+  'help.acl-setuser-rules': { valkey: '9.0.0' },
+  'help.script-valkey-text': { valkey: '8.0.0' },
+  'help.function-no-library-description': { redis: '7.4.0', valkey: '8.0.0' },
+  // Redis 7.0.1 appended `... or use negative to start from the end of the
+  // list` to LPOS's `RANK can't be zero` (redis@7.0.0 vs 7.0.1 t_list.c);
+  // 6.2 and 7.0.0 end at `2 from the second, ...`. Checked against
+  // redis-server 6.2.14, 6.2.24, 7.0.0, 7.0.1, 7.0.15, 8.0.0 and valkey-server
+  // 8.0.0, 9.0.0.
+  'error.lpos-rank-zero-hint': { redis: '7.0.1', valkey: '7.2.0' },
+  // Redis 7.0 quotes the command in `invalid expire time in 'set' command`;
+  // 6.2 writes `invalid expire time in set` (SET / SETEX / PSETEX / GETEX).
+  // Checked against redis-server 6.2.14, 6.2.24, 7.0.0, 7.0.15, 8.0.0 and
+  // valkey-server 8.0.0, 9.0.0.
+  'error.expire-time-quoted-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0 names the refused command in `Command 'multi' not allowed
+  // inside a transaction` (a `no_multi` command sent inside MULTI); Redis
+  // 7.0+ and Valkey 8.0 / 8.1 leave it out. Checked against redis-server
+  // 7.0.15, 8.0.0 and valkey-server 8.0.0, 8.1.0, 9.0.0.
+  'error.no-multi-named-wording': { valkey: '9.0.0' },
+  // Valkey 8.0 empties the MULTI queue when a queued command is refused
+  // (`flagTransaction` calls `resetClientMultiState`, valkey@8.0.0
+  // multi.c:113-117); Redis only flags the transaction and keeps the queue
+  // (redis@8.0.0 multi.c:86-90). In a cluster, EXEC's slot check then sees
+  // no commands, so a refused transaction whose earlier commands span slots
+  // answers EXECABORT on Valkey and CROSSSLOT on Redis (#519). Checked against
+  // redis-server 7.0.15, 7.2.4, 7.4.4, 8.0.0 and valkey-server 8.0.0, 9.0.0.
+  'transaction.refusal-empties-queue': { valkey: '8.0.0' },
+  // Redis 7.0 stops queueing MULTI commands once a WATCHed key was touched
+  // (`queueMultiCommand` returns on CLIENT_DIRTY_CAS as well as
+  // CLIENT_DIRTY_EXEC, redis@7.0.0 multi.c:66; 6.2 checks only DIRTY_EXEC,
+  // redis@6.2.14 multi.c:66). In a cluster, EXEC's slot check then sees only
+  // what was queued before the touch, so a dirty WATCH whose later commands
+  // span slots answers `*-1` from 7.0 and CROSSSLOT on 6.2 (#519). Checked
+  // against redis-server 6.2.14, 7.0.15, 8.0.0 and valkey-server 8.0.0.
+  'transaction.watch-dirty-stops-queue': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0's config table (#506): the ziplist parameters renamed to
+  // listpack, the old names kept as aliases (`hash-max-ziplist-entries` ->
+  // `hash-max-listpack-entries`; 6.2 knows only the ziplist names), and new
+  // parameters such as `maxmemory-clients` and `bind-source-addr`
+  // (redis@7.0.15 config.c:3034-3132, absent from redis@6.2.14 config.c).
+  'config.redis7-table': { redis: '7.0.0', valkey: '7.2.0' },
+  // CONFIG GET takes several patterns from 7.0 and answers an exact (non-glob)
+  // name with the name as sent; 6.2 takes exactly one pattern
+  // (redis@6.2.14 config.c:2599-2602) and replies with the table spelling.
+  'config.get.multi-pattern': { redis: '7.0.0', valkey: '7.2.0' },
+  // `loglevel nothing` (LL_NOTHING): redis@7.2.0 config.c:78-84; absent from
+  // 7.0.15; in every Valkey (valkey@7.2.4 config.c:83).
+  'config.loglevel-nothing': { redis: '7.2.0', valkey: '7.2.0' },
+  // `maxmemory-samples` capped at 64 instead of INT_MAX: redis@7.4.0
+  // config.c:3163 (7.2.11 still INT_MAX), valkey@8.0.0 (7.2.4 INT_MAX).
+  'config.maxmemory-samples-max-64': { redis: '7.4.0', valkey: '8.0.0' },
+  // Valkey 8.0.0 and 8.0.1 refuse (P|S)UNSUBSCRIBE on a connection with no
+  // subscription of any kind: `-NOSUB '<name>' command executed not in
+  // subscribed mode` (valkey@8.0.0 server.c:4076-4081, absent from valkey
+  // 7.2.4 and 8.0.2, and from every Redis). A window: the check holds from
+  // the first gate until the second (#594). Checked against valkey-server
+  // 8.0.0, 8.0.1, 8.0.2, 9.0.0 and redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4,
+  // 8.0.0.
+  'pubsub.unsubscribe-nosub': { valkey: '8.0.0' },
+  'pubsub.unsubscribe-nosub-dropped': { valkey: '8.0.2' },
+  // Blocking timeouts in seconds round up to whole milliseconds
+  // (`ceill(ftval * 1000.0)`) from redis@7.0.8 timeout.c:174; redis@7.0.7 and
+  // 6.2.14 truncate, so a timeout under 1 ms (`0.0001`) blocks forever there.
+  'timeout.ceil-ms': { redis: '7.0.8', valkey: '7.2.0' },
+  // LPOS RANK is read with `getRangeLongFromObjectOrReply(-LONG_MAX,
+  // LONG_MAX)` from redis@7.2.0 t_list.c:974 (valkey@7.2.4 the same):
+  // RANK -9223372036854775808 is out of range. redis@7.0.15 takes it, and its
+  // negation wraps to itself, so it acts as RANK -1.
+  'lpos.rank-range-check': { redis: '7.2.0', valkey: '7.2.0' },
+  // GEO units (`m`, `km`, `ft`, `mi`) fold case with `strcasecmp` from
+  // redis@7.0.0 geo.c:131-138, and the bad-unit error lists them in upper
+  // case (`please use M, KM, FT, MI`). redis@6.2.14 geo.c:122-141 compares
+  // with `strcmp` (`Km` is refused) and lists `m, km, ft, mi`. Every Valkey
+  // folds (valkey@7.2.4 geo.c:147).
+  'geo.unit-case-folding': { redis: '7.0.0', valkey: '7.2.0' },
+  // STORE / STOREDIST / GEOSEARCHSTORE with WITHDIST, WITHHASH or WITHCOORD:
+  // redis@6.2.14 geo.c:664-668 always says `STORE option in GEORADIUS is not
+  // compatible with WITHDIST, WITHHASH and WITHCOORDS options`; redis@7.0.0
+  // geo.c:665 names GEOSEARCHSTORE for that command and spells `WITHCOORD`.
+  'geo.store-with-options-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // geohashGetDistance() returns the latitude-only distance
+  // (`EARTH_RADIUS * fabs(deg_rad(lat2) - deg_rad(lat1))`) when
+  // `sin(dlon / 2) == 0.0`: from redis@7.0.6 geohash_helper.c:235 (absent in
+  // 7.0.5 and 6.2.14), in every Valkey (valkey@7.2.4).
+  'geo.distance-same-lon-shortcut': { redis: '7.0.6', valkey: '7.2.0' },
+  // ... and from valkey@9.0.0 geohash_helper.c:298-300 when
+  // `fabs(sin(dlon / 2)) <= 1e-15` (valkey@8.1.0 still compares with 0.0).
+  'geo.distance-lon-epsilon': { valkey: '9.0.0' },
+  // GEORADIUSBYMEMBER / GEOSEARCH FROMMEMBER on a member the key lacks:
+  // `member <name> does not exist` from valkey@9.0.0 geo.c:129; Redis through
+  // 8.0 and valkey@8.1.0 geo.c:539 say `could not decode requested zset member`.
+  'geo.missing-member-wording': { valkey: '9.0.0' },
+  // A small sorted set (a listpack) stores an integral score as a listpack
+  // integer (`double2ll`, redis@7.0.15 t_zset.c:1028-1053 zzlInsertAt), so a
+  // score of -0 reads back as 0. Redis 6.2's ziplist stores d2string()'s text,
+  // `-0`, and keeps the sign (redis@6.2.14 t_zset.c:1034-1055). A skiplist
+  // keeps -0 on every version (#512).
+  'zset.listpack-integer-scores': { redis: '7.0.0', valkey: '7.2.0' },
 }

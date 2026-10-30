@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -27,7 +28,7 @@ function createZrandmemberSchema() {
       count = parseLexLimitInt(input[cursor]!)
       cursor++
       if (cursor < input.length) {
-        if (input[cursor]!.toString().toUpperCase() !== 'WITHSCORES') {
+        if (asciiUpperCase(input[cursor]!.toString()) !== 'WITHSCORES') {
           throw errors.syntax()
         }
         withScores = true

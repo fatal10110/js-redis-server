@@ -631,6 +631,57 @@ describe(`Keyspace notification names (node-redis, ${testRunner.getBackendName()
     ])
   })
 
+  test('a STORE over a destination of another type publishes only the STORE event (#524)', async () => {
+    const set = randomKey()
+    const zset = randomKey()
+    const geo = randomKey()
+    const dst = randomKey()
+    const palermo = { longitude: 13.361389, latitude: 38.115556 }
+    const events = await capture({ set, zset, geo, dst }, async actor => {
+      await actor.sAdd(set, ['1', '2'])
+      await actor.zAdd(zset, { score: 1, value: 'x' })
+      await actor.geoAdd(geo, { ...palermo, member: 'Palermo' })
+      const stores: (() => Promise<unknown>)[] = [
+        () => actor.sUnionStore(dst, set),
+        () => actor.sInterStore(dst, set),
+        () => actor.sDiffStore(dst, set),
+        () => actor.zUnionStore(dst, zset),
+        () => actor.zInterStore(dst, zset),
+        () => actor.zDiffStore(dst, zset),
+        () =>
+          actor.geoSearchStore(dst, geo, 'Palermo', {
+            radius: 10,
+            unit: 'km',
+          }),
+        () => actor.geoRadiusStore(geo, palermo, 10, 'km', dst),
+        () =>
+          actor.geoRadiusByMemberStore(geo, 'Palermo', 10, 'km', dst, {
+            STOREDIST: true,
+          }),
+      ]
+      for (const store of stores) {
+        await actor.set(dst, 'v')
+        assert.ok(Number(await store()) > 0)
+      }
+    })
+    assert.deepStrictEqual(events, [
+      'set:sadd',
+      'zset:zadd',
+      'geo:zadd',
+      ...[
+        'sunionstore',
+        'sinterstore',
+        'sdiffstore',
+        'zunionstore',
+        'zinterstore',
+        'zdiffstore',
+        'geosearchstore',
+        'georadiusstore',
+        'georadiusstore',
+      ].flatMap(event => ['dst:set', `dst:${event}`]),
+    ])
+  })
+
   /**
    * Run `steps` with keyevent notifications on, then return the events
    * published for the named keys, in order, as `<name>:<event>` — or

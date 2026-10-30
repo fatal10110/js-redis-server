@@ -20,6 +20,14 @@ export type Resp2CommandDecoderOptions = {
    * matching the default profile.
    */
   profile?: Pick<CompatibilityProfile, 'has'>
+  /**
+   * Whether the connection still has to authenticate (Redis' `authRequired`:
+   * a password is set and the client has not passed AUTH), read afresh for
+   * every header line so AUTH and RESET take effect on the very next request.
+   * While it holds, a multibulk count above 10 or a bulk length above 16384 is
+   * a protocol error. Omitted, authentication is never required.
+   */
+  authRequired?: () => boolean
 }
 
 export class Resp2ParseError extends Error {
@@ -66,8 +74,30 @@ const NUL = 0x00
 
 const EMPTY = Buffer.alloc(0)
 
-/** The most buffer capacity kept around once everything buffered is parsed. */
-const RETAINED_CAPACITY = 1024 * 1024
+/**
+ * The largest multibulk count and bulk length accepted from a connection that
+ * still has to authenticate (`processMultibulkBuffer`, `ll > 10 &&
+ * authRequired(c)` and `ll > 16384 && authRequired(c)`, unchanged from redis
+ * 5.0 through 8.0 and in valkey 8.0 / 9.0). Each is checked after the
+ * version's own bound, so on 6.2 `*2000000` is still an invalid length.
+ */
+const UNAUTHENTICATED_MAX_MULTIBULK_COUNT = 10n
+const UNAUTHENTICATED_MAX_BULK_LENGTH = 16384n
+
+/**
+ * The most buffer capacity kept around once everything buffered is parsed, and
+ * the size above which a mostly consumed buffer is compacted. Redis' query
+ * buffer resize threshold (`PROTO_RESIZE_THRESHOLD`, 32KB): one large request
+ * must not pin its memory for the rest of the connection.
+ */
+const RETAINED_CAPACITY = 32 * 1024
+
+/**
+ * Redis' `PROTO_MBULK_BIG_ARG`: from this length on, a bulk gets a buffer of
+ * exactly its own size (`sdsMakeRoomForNonGreedy`) and is handed over without
+ * a copy, so its peak memory stays near the payload rather than 2-3x it.
+ */
+const BIG_BULK_LENGTH = 32 * 1024
 
 /** A multibulk request whose elements have not all arrived yet. */
 type PendingMultibulk = {
@@ -109,6 +139,7 @@ export class Resp2CommandDecoder {
   private readonly maxMultibulkCount: bigint
   private readonly headerScanPastNul: boolean
   private readonly inlineAdjacentQuotes: boolean
+  private readonly authRequired: () => boolean
   /**
    * Set once a protocol error is raised. A RESP stream cannot be resynchronised
    * after one — Redis' own parser marks the client `CLIENT_CLOSE_AFTER_REPLY`
@@ -127,6 +158,7 @@ export class Resp2CommandDecoder {
       options.profile?.has('protocol.header-scan-past-nul') === true
     this.inlineAdjacentQuotes =
       options.profile?.has('protocol.inline-adjacent-quotes') === true
+    this.authRequired = options.authRequired ?? (() => false)
   }
 
   /**
@@ -146,6 +178,17 @@ export class Resp2CommandDecoder {
     }
 
     if (this.end + chunk.length > this.storage.length) {
+      if (this.holdsBulkReservation()) {
+        // The chunk finishes the large bulk and carries the next bytes too:
+        // fill the reservation, hand the payload over, and buffer the rest
+        // afresh, rather than growing a payload-sized buffer to fit them.
+        const fill = this.storage.length - this.end
+        chunk.copy(this.storage, this.end, 0, fill)
+        this.end = this.storage.length
+        this.takeReservedBulk(this.pending!)
+        this.push(chunk.subarray(fill))
+        return
+      }
       this.reallocate(this.end - this.start + chunk.length)
     }
     chunk.copy(this.storage, this.end)
@@ -194,12 +237,12 @@ export class Resp2CommandDecoder {
         if (frame) {
           this.pending = null
         }
-        this.releaseIfDrained()
+        this.trimStorage()
         return frame
       }
 
       if (this.start === this.end) {
-        this.releaseIfDrained()
+        this.trimStorage()
         return null
       }
 
@@ -213,7 +256,7 @@ export class Resp2CommandDecoder {
         return null
       }
       if (outcome !== 'skip' && outcome !== 'started') {
-        this.releaseIfDrained()
+        this.trimStorage()
         return outcome
       }
     }
@@ -241,6 +284,11 @@ export class Resp2CommandDecoder {
     )
     if (count > this.maxMultibulkCount) {
       throw new Resp2ParseError('Protocol error: invalid multibulk length')
+    }
+    if (count > UNAUTHENTICATED_MAX_MULTIBULK_COUNT && this.authRequired()) {
+      throw new Resp2ParseError(
+        'Protocol error: unauthenticated multibulk length',
+      )
     }
 
     // The byte after the CR is skipped without being looked at, exactly as
@@ -293,6 +341,11 @@ export class Resp2CommandDecoder {
         if (length < 0n || length > this.maxBulkLength()) {
           throw new Resp2ParseError('Protocol error: invalid bulk length')
         }
+        if (length > UNAUTHENTICATED_MAX_BULK_LENGTH && this.authRequired()) {
+          throw new Resp2ParseError(
+            'Protocol error: unauthenticated bulk length',
+          )
+        }
 
         this.advanceTo(lineEnd + 2)
         pending.bulkLength = Number(length)
@@ -310,7 +363,20 @@ export class Resp2CommandDecoder {
       // so it cannot express a check backported across branches. The Valkey
       // presets are 8.0.0 and 9.0.0, which match this path.
       if (this.end - this.start < pending.bulkLength + 2) {
+        // A large bulk gets a buffer of exactly its own size, starting at the
+        // payload (Redis' `sdsMakeRoomForNonGreedy`), instead of doubling.
+        if (
+          pending.bulkLength >= BIG_BULK_LENGTH &&
+          !this.holdsBulkReservation()
+        ) {
+          this.moveUnread(pending.bulkLength + 2)
+        }
         return null
+      }
+
+      if (this.holdsBulkReservation()) {
+        this.takeReservedBulk(pending)
+        continue
       }
 
       const valueStart = this.start
@@ -428,16 +494,60 @@ export class Resp2CommandDecoder {
   }
 
   /**
-   * Rewind a fully consumed buffer, and let go of a large one so a big request
-   * does not keep its memory pinned until the connection closes.
+   * Rewind a fully consumed buffer, and keep no more than
+   * {@link RETAINED_CAPACITY} of it once the parser has caught up, so a big
+   * request does not pin its memory until the connection closes: a drained
+   * buffer above it is dropped, and one holding only a small unread tail (the
+   * start of the next command) is compacted to fit that tail.
+   *
+   * Compacting copies at most half of {@link RETAINED_CAPACITY}, and the buffer
+   * must grow past it again before the next compaction, which takes at least
+   * as many pushed bytes, so the total copying stays linear.
    */
-  private releaseIfDrained(): void {
-    if (this.start !== this.end) {
+  private trimStorage(): void {
+    if (this.holdsBulkReservation()) {
       return
     }
-    if (this.storage.length > RETAINED_CAPACITY) {
-      this.storage = EMPTY
+    const unread = this.end - this.start
+    if (unread === 0) {
+      if (this.storage.length > RETAINED_CAPACITY) {
+        this.storage = EMPTY
+      }
+      this.start = 0
+      this.end = 0
+      this.scanOrigin = -1
+    } else if (
+      this.storage.length > RETAINED_CAPACITY &&
+      unread <= RETAINED_CAPACITY / 2
+    ) {
+      this.moveUnread(Math.max(unread * 2, 4096))
     }
+  }
+
+  /**
+   * Whether the buffer is exactly the payload and terminator of the large
+   * bulk being read, from its first byte: the shape {@link continueMultibulk}
+   * reserves, and the only one whose payload can be handed over uncopied.
+   */
+  private holdsBulkReservation(): boolean {
+    const bulkLength = this.pending?.bulkLength ?? -1
+    return (
+      bulkLength >= BIG_BULK_LENGTH &&
+      this.start === 0 &&
+      this.storage.length === bulkLength + 2
+    )
+  }
+
+  /**
+   * Hand the completed, reserved bulk to the request as a view of the buffer
+   * (Redis likewise turns the query buffer itself into the argument), and
+   * start over with an empty buffer.
+   */
+  private takeReservedBulk(pending: PendingMultibulk): void {
+    pending.items.push(this.storage.subarray(0, pending.bulkLength))
+    pending.bulkLength = -1
+    pending.remaining -= 1
+    this.storage = EMPTY
     this.start = 0
     this.end = 0
     this.scanOrigin = -1
@@ -449,7 +559,12 @@ export class Resp2CommandDecoder {
    * pushed.
    */
   private reallocate(needed: number): void {
-    const next = Buffer.allocUnsafe(Math.max(needed * 2, 4096))
+    this.moveUnread(Math.max(needed * 2, 4096))
+  }
+
+  /** Move the unread bytes to the front of a fresh `capacity`-byte buffer. */
+  private moveUnread(capacity: number): void {
+    const next = Buffer.allocUnsafe(capacity)
     this.storage.copy(next, 0, this.start, this.end)
     const shift = this.start
     this.storage = next
@@ -604,7 +719,9 @@ function splitInlineArguments(
       }
     }
 
-    result.push(output.subarray(argumentStart, written))
+    // Copied out, not a view: a view would keep the whole line alive for as
+    // long as any one argument is stored.
+    result.push(Buffer.from(output.subarray(argumentStart, written)))
   }
 }
 

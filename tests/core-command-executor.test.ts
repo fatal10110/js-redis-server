@@ -40,7 +40,7 @@ function createContext(executor?: CommandExecutor): RedisExecutionContext {
       watch: () => {},
       unwatch: () => {},
       isWatchDirty: () => false,
-    },
+    } as unknown as RedisExecutionContext['session'],
     executor: contextExecutor,
     signal: new AbortController().signal,
     park: createDefaultParkHandler(),
@@ -351,7 +351,9 @@ describe('new command executor core', () => {
     // mutation outside any command carries no name at all.
     const { executor, ctx, server } = createSelectMidCommandFixture()
     const commands: (string | undefined)[] = []
-    server.getDatabase(1).subscribe(event => commands.push(event.command))
+    server.getDatabase(1).subscribe(event => {
+      if (event.type === 'write') commands.push(event.command)
+    })
 
     await executor.executeRaw('select-then-write', [], ctx)
     assert.deepStrictEqual(
@@ -604,13 +606,17 @@ describe('new command executor core', () => {
   test('parses bigint values and keeps safe integer parser strict', () => {
     const parsedBigInt = t
       .bigInteger()
-      .parse([Buffer.from('9007199254740993')], 0, { commandName: 'big' })
+      .parse([Buffer.from('9007199254740993')], 0, {
+        commandName: 'big',
+        profile: new RedisServerState().profile,
+      })
     assert.strictEqual(parsedBigInt.value, 9007199254740993n)
 
     assert.throws(
       () =>
         t.integer().parse([Buffer.from('9007199254740993')], 0, {
           commandName: 'int',
+          profile: new RedisServerState().profile,
         }),
       /integer or out of range/,
     )

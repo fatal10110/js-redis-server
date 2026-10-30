@@ -226,10 +226,17 @@ last; [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts) is
 inserted between them only for cluster nodes (see [`createRedisCluster`](../src/cluster.ts#L80)).
 Order matters: `AuthPolicy` rejects unauthenticated clients with `NOAUTH`
 before any routing or queueing happens (only `AUTH`/`HELLO`/`RESET`/`QUIT` pass
-when `requirepass` is set and the session is unauthenticated), and cluster
+when `requirepass` is set and the session is unauthenticated), then
+[`NoMultiPolicy`](../src/core/execution-policies/no-multi-policy.ts) refuses,
+inside MULTI, a command the profile's command table flags `no_multi` (the
+entry it resolves to, `container|subcommand` from 7.0, such as Valkey 9.0's
+`client|reply`; dirtying the transaction), and cluster
 routing must validate (and possibly redirect/reject) **before** a command is
-queued into a transaction — exactly like real Redis Cluster validates
-`CROSSSLOT` at queue time.
+queued into a transaction — exactly like real Redis Cluster refuses a `MOVED`
+key, or a command whose own keys span slots, at queue time. Queued commands
+in different slots are each `+QUEUED`; `EXEC` refuses the queue as a whole
+with a bare `-CROSSSLOT` and discards the transaction, as Redis's
+`getNodeByQuery` does for `EXEC`.
 
 ### Transactions — MULTI / EXEC / WATCH
 
@@ -263,8 +270,10 @@ While a session is in `'transaction'` mode,
 [`TransactionPolicy`](../src/core/execution-policies/transaction-policy.ts)
 intercepts every non-control command in `beforeExecute`, queues its
 already-parsed `CommandPlan` on the session, and replies `+QUEUED` — so parsing
-and key-extraction (and therefore early `CROSSSLOT`/`MOVED` errors) happen at
-queue time, not at `EXEC` time. Only what Redis refuses at queue time dirties
+and key-extraction (and therefore a command's own `CROSSSLOT`/`MOVED` errors)
+happen at queue time, not at `EXEC` time; in a cluster, `EXEC` then refuses a
+queue whose commands touch different slots (`-CROSSSLOT`, transaction
+discarded). Only what Redis refuses at queue time dirties
 the transaction there (an unknown command or subcommand, or a count the command
 table's arity rejects); a command whose own argument check fails is queued as
 a plan carrying the error as `deferredError`, which `executePlan` raises after
@@ -318,6 +327,17 @@ routing purposes — a keyed command sent directly to a replica is redirected to
 its master. Inside
 a transaction, the slot of the _first_ keyed command is pinned per-session in a
 `WeakMap` so every subsequent queued command must hash to the same slot.
+
+A client's command is always planned the way MULTI queues one
+(`CommandExecutor.planForQueue` from `executeRaw`): Redis's `processCommand`
+refuses only an unknown command or a bad argument count before `call()`, and
+the command checks its own arguments inside `call()`, after the policies. So a
+parse error waits in the plan behind the policy chain, and MONITOR shows the
+command (`EVAL s -1 a`). On a cluster node a script's `redis.call` is planned
+that way too: Redis routes a command after the arity check and before the
+command checks its own arguments, so `EVAL s 1x k` with `k` on another node is
+`MOVED`. MOVE's "not allowed in cluster
+mode" refusal comes after routing too, as it lives in Redis's `moveCommand`.
 
 ## State & data model
 
@@ -509,7 +529,13 @@ newline of an inline request, or the CR of a `*<count>` or `$<length>` header.
 It splits inline arguments byte for byte as `sdssplitargs` does. It parses
 incrementally, keeping its place in a partly received multibulk (the element
 count left and the current bulk length, as Redis keeps on the client), so a
-large request split across many reads costs linear time.
+large request split across many reads costs linear time. Its memory follows
+Redis' query buffer: a bulk of 32KB or more gets a buffer of exactly its size
+and becomes the argument without a copy, a buffer left holding only a small
+unread tail is compacted, and no more than 32KB is kept once everything is
+parsed. With `requirepass`, the adapter also tells the decoder, per header,
+whether the connection still has to authenticate; until it has, a multibulk
+count above 10 or a bulk length above 16384 is a protocol error, as in Redis.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
@@ -535,7 +561,8 @@ for the client-facing view of this negotiation.
 
 [`createRedisCluster`](../src/cluster.ts#L80) computes a slot-range topology
 ([`RedisClusterTopology`](../src/state/cluster-topology.ts#L68), 16384 slots
-split evenly across masters, with optional replicas), then spins up one
+split across masters as `redis-cli --cluster create` does, with optional
+replicas), then spins up one
 `Resp2Server` per node — each with its **own** `RedisServerState` (so data is
 genuinely partitioned) but **sharing** the topology object, registered with:
 

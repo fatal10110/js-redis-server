@@ -104,6 +104,19 @@ function xgroupHelpLines(profile: CompatibilityProfile): string[] {
   ]
 }
 
+// The subcommands real 6.2 checks the group of before it counts arguments,
+// and all those it knows (HELP aside).
+const XGROUP_GROUP_SUBCOMMANDS = new Set([
+  'SETID',
+  'CREATECONSUMER',
+  'DELCONSUMER',
+])
+const XGROUP_SUBCOMMANDS = new Set([
+  ...XGROUP_GROUP_SUBCOMMANDS,
+  'CREATE',
+  'DESTROY',
+])
+
 function createXgroupSchema() {
   return t.custom<XgroupArgs>(
     { min: 1 },
@@ -117,15 +130,30 @@ function createXgroupSchema() {
       // for a dispatched subcommand spell out `xgroup|<sub>` themselves, as
       // real Redis 7.0+ does (#438). An option list the subcommand cannot use
       // is real Redis' `addReplySubcommandSyntaxError`, not an arity error.
+      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
+      // 6.2 has no `xgroup|<sub>` entries: it looks the key (and, for SETID,
+      // CREATECONSUMER and DELCONSUMER, the group) up before it counts the
+      // arguments, then answers a wrong count with the subcommand syntax
+      // error. That is the `unknown` variant's path, run in execute (#437).
+      const wrongCount = (name: string) => {
+        if (lookup) throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
+        return {
+          value: {
+            subcommand: 'unknown' as const,
+            name: rawSubcommand,
+            key: input[index + 1],
+            group: input[index + 2],
+          },
+          nextIndex: input.length,
+        }
+      }
 
       if (subcommand === 'CREATE' || subcommand === 'SETID') {
         const name = subcommand === 'CREATE' ? 'create' : 'setid'
         const key = input[index + 1]
         const group = input[index + 2]
         const id = input[index + 3]
-        if (!key || !group || !id) {
-          throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
-        }
+        if (!key || !group || !id) return wrongCount(name)
 
         return {
           value: {
@@ -144,7 +172,7 @@ function createXgroupSchema() {
         const key = input[index + 1]
         const group = input[index + 2]
         if (!key || !group || input.length !== index + 3) {
-          throw new WrongNumberOfArgumentsError('xgroup|destroy')
+          return wrongCount('destroy')
         }
         return {
           value: { subcommand: 'destroy', key, group },
@@ -159,7 +187,7 @@ function createXgroupSchema() {
         const group = input[index + 2]
         const consumer = input[index + 3]
         if (!key || !group || !consumer || input.length !== index + 4) {
-          throw new WrongNumberOfArgumentsError(`xgroup|${name}`)
+          return wrongCount(name)
         }
         return {
           value: {
@@ -175,7 +203,6 @@ function createXgroupSchema() {
       // 7.0+ resolves `xgroup|help` in the command table: no key, arity 2.
       // 6.2 answers a bare HELP and treats HELP with arguments exactly like
       // an unknown subcommand, below.
-      const lookup = ctx.profile.has('error.unknown-subcommand-dispatch-timing')
       if (subcommand === 'HELP' && input.length === index + 1) {
         return {
           value: { subcommand: 'help', key: undefined },
@@ -271,9 +298,21 @@ export const xgroupCommand = defineCommand({
 
     if (command.subcommand === 'unknown') {
       // Real 6.2 looks the key up (getStream: WRONGTYPE) as soon as a group
-      // name is present, before it looks at the subcommand.
-      if (command.key && command.group && !ctx.db.getStream(command.key)) {
-        throw errors.xgroupCreateMissingKey()
+      // name is present, before it looks at the subcommand or the argument
+      // count; SETID, CREATECONSUMER and DELCONSUMER then need the group.
+      const name = asciiUpperCase(command.name.toString())
+      if (command.key && command.group) {
+        const stream = ctx.db.getStream(command.key)
+        if (!stream) throw errors.xgroupCreateMissingKey()
+        if (
+          XGROUP_GROUP_SUBCOMMANDS.has(name) &&
+          !streamGroup(stream, command.group)
+        ) {
+          throw errors.xgroupNoSuchGroup(command.key, command.group)
+        }
+      }
+      if (XGROUP_SUBCOMMANDS.has(name)) {
+        throw subcommandSyntaxError('XGROUP', command.name, ctx.server.profile)
       }
       throw unknownSubcommandError('XGROUP', command.name, ctx.server.profile)
     }
@@ -416,7 +455,7 @@ function parseSetIdTarget(rawId: string): StreamId | null {
 function parseXgroupOptions(
   command: XgroupIdCommand,
   profile: CompatibilityProfile,
-): { mkstream: boolean; entriesRead: number | null } {
+): { mkstream: boolean; entriesRead: bigint | null } {
   const create = command.subcommand === 'create'
   const options = command.options
 
@@ -431,7 +470,7 @@ function parseXgroupOptions(
   }
 
   let mkstream = false
-  let entriesRead: number | null = null
+  let entriesRead: bigint | null = null
   for (let i = 0; i < options.length; i++) {
     const option = asciiUpperCase(options[i].toString())
     if (create && option === 'MKSTREAM') {
@@ -450,12 +489,7 @@ function parseXgroupOptions(
           'value for ENTRIESREAD must be positive or -1',
         )
       }
-      // Counters are numbers here, so like XSETID ENTRIESADDED a value past
-      // 2^53 - 1 is refused (real Redis takes any int64).
-      if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw errors.expectedInteger()
-      }
-      entriesRead = value === -1n ? null : Number(value)
+      entriesRead = value === -1n ? null : value
       i++
       continue
     }

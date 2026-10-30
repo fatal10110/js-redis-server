@@ -3,8 +3,15 @@ import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../test-config'
 import { errorWithMessage } from '../utils'
+import { legacy, subcommandArity, unknownSubcommand } from '../profile-wording'
 
 const testRunner = new TestRunner()
+// COMMAND DOCS, COMMAND LIST and COMMAND GETKEYSANDFLAGS arrive in Redis 7.0,
+// and 6.2 replies to COMMAND INFO with seven fields (no tips, key specs or
+// subcommands).
+const since70 = legacy
+  ? 'COMMAND DOCS/LIST/GETKEYSANDFLAGS need Redis 7.0'
+  : false
 
 type CommandInfoReply = [
   string,
@@ -70,106 +77,134 @@ describe(`COMMAND integration (node-redis, ${testRunner.getBackendName()})`, () 
     ]
 
     // Whole reply, incl. tips / key specs / subcommands (indices 7-9).
-    assert.deepStrictEqual(info, [
-      'echo',
-      2,
-      ['loading', 'stale', 'fast'],
-      0,
-      0,
-      0,
-      ['@fast', '@connection'],
-      [],
-      [],
-      [],
-    ])
+    assert.deepStrictEqual(
+      info,
+      legacy
+        ? ['echo', 2, ['fast'], 0, 0, 0, ['@fast', '@connection']]
+        : [
+            'echo',
+            2,
+            ['loading', 'stale', 'fast'],
+            0,
+            0,
+            0,
+            ['@fast', '@connection'],
+            [],
+            [],
+            [],
+          ],
+    )
   })
 
-  test('COMMAND DOCS ECHO reports summary, since, group, complexity and arguments', async () => {
-    const docs = (await command(['COMMAND', 'DOCS', 'ECHO'])) as Record<
-      string,
-      Record<string, unknown>
-    >
-    assert.deepStrictEqual(Object.keys(docs), ['echo'])
+  test(
+    'COMMAND DOCS ECHO reports summary, since, group, complexity and arguments',
+    { skip: since70 },
+    async () => {
+      const docs = (await command(['COMMAND', 'DOCS', 'ECHO'])) as Record<
+        string,
+        Record<string, unknown>
+      >
+      assert.deepStrictEqual(Object.keys(docs), ['echo'])
 
-    const { arguments: args, ...fields } = docs.echo
-    assert.deepStrictEqual(fields, {
-      summary: 'Returns the given string.',
-      since: '1.0.0',
-      group: 'connection',
-      complexity: 'O(1)',
-    })
+      const { arguments: args, ...fields } = docs.echo
+      assert.deepStrictEqual(fields, {
+        summary: 'Returns the given string.',
+        since: '1.0.0',
+        group: 'connection',
+        complexity: 'O(1)',
+      })
 
-    const echoArgs = args as Array<Record<string, unknown>>
-    assert.strictEqual(echoArgs.length, 1)
-    // `display_text` is not asserted: real 7.2+ sends it, but no command in
-    // this repo emits it yet (tracked as a follow-up).
-    assert.strictEqual(echoArgs[0].name, 'message')
-    assert.strictEqual(echoArgs[0].type, 'string')
-  })
+      const echoArgs = args as Array<Record<string, unknown>>
+      assert.strictEqual(echoArgs.length, 1)
+      // `display_text` is not asserted: real 7.2+ sends it, but no command in
+      // this repo emits it yet (tracked as a follow-up).
+      assert.strictEqual(echoArgs[0].name, 'message')
+      assert.strictEqual(echoArgs[0].type, 'string')
+    },
+  )
 
-  test('COMMAND LIST returns names and supports Redis FILTERBY variants', async () => {
-    const names = (await command(['COMMAND', 'LIST'])) as string[]
-    assert.ok(names.includes('get'))
-    assert.ok(names.includes('set'))
-    assert.ok(names.includes('command'))
-    assert.ok(names.includes('command|info'))
+  test(
+    'COMMAND LIST returns names and supports Redis FILTERBY variants',
+    { skip: since70 },
+    async () => {
+      const names = (await command(['COMMAND', 'LIST'])) as string[]
+      assert.ok(names.includes('get'))
+      assert.ok(names.includes('set'))
+      assert.ok(names.includes('command'))
+      assert.ok(names.includes('command|info'))
 
-    const patternNames = (await command([
-      'COMMAND',
-      'LIST',
-      'FILTERBY',
-      'PATTERN',
-      'get*',
-    ])) as string[]
-    assert.ok(patternNames.includes('get'))
-    assert.ok(patternNames.every(name => name.startsWith('get')))
+      const patternNames = (await command([
+        'COMMAND',
+        'LIST',
+        'FILTERBY',
+        'PATTERN',
+        'get*',
+      ])) as string[]
+      assert.ok(patternNames.includes('get'))
+      assert.ok(patternNames.every(name => name.startsWith('get')))
 
-    const moduleNames = (await command([
-      'COMMAND',
-      'LIST',
-      'FILTERBY',
-      'MODULE',
-      'nosuchmodule',
-    ])) as string[]
-    assert.deepStrictEqual(moduleNames, [])
-  })
+      const moduleNames = (await command([
+        'COMMAND',
+        'LIST',
+        'FILTERBY',
+        'MODULE',
+        'nosuchmodule',
+      ])) as string[]
+      assert.deepStrictEqual(moduleNames, [])
+    },
+  )
 
   test('COMMAND COUNT and HELP expose the command surface', async () => {
-    const names = (await command(['COMMAND', 'LIST'])) as string[]
+    const names = (
+      legacy
+        ? ((await command(['COMMAND'])) as string[][]).map(info => info[0])
+        : await command(['COMMAND', 'LIST'])
+    ) as string[]
     const count = (await command(['COMMAND', 'COUNT'])) as number
     const help = (await command(['COMMAND', 'HELP'])) as string[]
 
     assert.ok(count > 0)
     assert.ok(names.length > 0)
     assert.ok(help.some(line => line.includes('GETKEYS')))
-    assert.ok(help.some(line => line.includes('GETKEYSANDFLAGS')))
+    assert.strictEqual(
+      help.some(line => line.includes('GETKEYSANDFLAGS')),
+      !legacy,
+    )
   })
 
-  test('COMMAND DOCS returns documentation entries and skips unknown commands', async () => {
-    // node-redis decodes COMMAND DOCS (a RESP3 map) into an object keyed by
-    // command name, each entry an object of doc fields.
-    const docs = (await command(['COMMAND', 'DOCS', 'GET'])) as Record<
-      string,
-      Record<string, unknown>
-    >
-    assert.strictEqual(docs.get.summary, 'Returns the string value of a key.')
-    assert.strictEqual(docs.get.group, 'string')
+  test(
+    'COMMAND DOCS returns documentation entries and skips unknown commands',
+    { skip: since70 },
+    async () => {
+      // node-redis decodes COMMAND DOCS (a RESP3 map) into an object keyed by
+      // command name, each entry an object of doc fields.
+      const docs = (await command(['COMMAND', 'DOCS', 'GET'])) as Record<
+        string,
+        Record<string, unknown>
+      >
+      assert.strictEqual(docs.get.summary, 'Returns the string value of a key.')
+      assert.strictEqual(docs.get.group, 'string')
 
-    const args = docs.get.arguments as Array<Record<string, unknown>>
-    assert.strictEqual(args[0].name, 'key')
+      const args = docs.get.arguments as Array<Record<string, unknown>>
+      assert.strictEqual(args[0].name, 'key')
 
-    const unknownDocs = await command(['COMMAND', 'DOCS', 'NOSUCHCOMMAND'])
-    assert.deepStrictEqual(unknownDocs, {})
-  })
+      const unknownDocs = await command(['COMMAND', 'DOCS', 'NOSUCHCOMMAND'])
+      assert.deepStrictEqual(unknownDocs, {})
+    },
+  )
 
-  test('COMMAND DOCS argument flags use RESP status strings', async () => {
-    const docs = (await command(['COMMAND', 'DOCS', 'MGET'])) as Record<
-      string,
-      Record<string, unknown>
-    >
-    const args = docs.mget.arguments as Array<Record<string, unknown>>
-    assert.deepStrictEqual(args[0].flags, ['multiple'])
-  })
+  test(
+    'COMMAND DOCS argument flags use RESP status strings',
+    { skip: since70 },
+    async () => {
+      const docs = (await command(['COMMAND', 'DOCS', 'MGET'])) as Record<
+        string,
+        Record<string, unknown>
+      >
+      const args = docs.mget.arguments as Array<Record<string, unknown>>
+      assert.deepStrictEqual(args[0].flags, ['multiple'])
+    },
+  )
 
   test('COMMAND GETKEYS and GETKEYSANDFLAGS use command key extraction', async () => {
     const tag = '{command-getkeys}'
@@ -183,6 +218,7 @@ describe(`COMMAND integration (node-redis, ${testRunner.getBackendName()})`, () 
     ])) as string[]
     assert.deepStrictEqual(getKeys, keys)
 
+    if (legacy) return
     const keysAndFlags = (await command([
       'COMMAND',
       'GETKEYSANDFLAGS',
@@ -198,17 +234,17 @@ describe(`COMMAND integration (node-redis, ${testRunner.getBackendName()})`, () 
   test('COMMAND errors match Redis', async () => {
     await assert.rejects(
       command(['COMMAND', 'BAD']),
-      errorWithMessage("ERR unknown subcommand 'BAD'. Try COMMAND HELP."),
+      errorWithMessage(unknownSubcommand('COMMAND', 'BAD')),
     )
     await assert.rejects(
       command(['COMMAND', 'LIST', 'BAD']),
-      errorWithMessage('ERR syntax error'),
+      errorWithMessage(
+        legacy ? subcommandArity('COMMAND', 'LIST') : 'ERR syntax error',
+      ),
     )
     await assert.rejects(
       command(['COMMAND', 'GETKEYS']),
-      errorWithMessage(
-        "ERR wrong number of arguments for 'command|getkeys' command",
-      ),
+      errorWithMessage(subcommandArity('COMMAND', 'GETKEYS')),
     )
     await assert.rejects(
       command(['COMMAND', 'GETKEYS', 'NOSUCH', 'key']),

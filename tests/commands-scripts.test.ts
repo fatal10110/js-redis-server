@@ -307,10 +307,8 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
         Buffer.from('2'),
         Buffer.from('only-one-key'),
       ]),
-      RedisResult.error(
-        `Number of keys can't be greater than number of args`,
-        'ERR',
-      ),
+      // The function lookup comes first (functions.c fcallCommandGeneric).
+      RedisResult.error('Function not found', 'ERR'),
     )
 
     await session.execute('function', [Buffer.from('load'), library])
@@ -330,7 +328,10 @@ redis.register_function("echo", function(keys, args) return args[1] end)`)
         Buffer.from('flush'),
         Buffer.from('invalid'),
       ]),
-      RedisResult.error('FUNCTION FLUSH only support SYNC|ASYNC option', 'ERR'),
+      RedisResult.error(
+        'FUNCTION FLUSH only supports SYNC|ASYNC option',
+        'ERR',
+      ),
     )
     assert.deepStrictEqual(
       await session.execute('function', [
@@ -593,8 +594,8 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
     assert.ok(
       help.value.items.some(
         item =>
-          item.kind === 'bulk-string' &&
-          item.value?.toString().includes('SCRIPT <subcommand>'),
+          item.kind === 'simple-string' &&
+          item.value.includes('SCRIPT <subcommand>'),
       ),
     )
   })
@@ -790,16 +791,22 @@ function scriptSha(script: Buffer): string {
   return crypto.createHash('sha1').update(script).digest('hex')
 }
 
+// Every string in a reply, through arrays, sets and maps (FUNCTION LIST
+// nests maps of status-string flag sets).
 function arrayBulkTexts(value: RedisValue): string[] {
-  if (value.kind === 'bulk-string') {
-    return value.value ? [value.value.toString()] : []
+  switch (value.kind) {
+    case 'bulk-string':
+      return value.value ? [value.value.toString()] : []
+    case 'simple-string':
+      return [value.value]
+    case 'array':
+    case 'set':
+      return value.items.flatMap(arrayBulkTexts)
+    case 'map':
+      return value.entries.flat().flatMap(arrayBulkTexts)
+    default:
+      return []
   }
-
-  if (value.kind !== 'array') {
-    return []
-  }
-
-  return value.items.flatMap(arrayBulkTexts)
 }
 
 function bulkValue(value: string): RedisValue {

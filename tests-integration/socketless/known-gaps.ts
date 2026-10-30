@@ -362,6 +362,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'XGROUP subcommands publish xgroup-<subcommand> (#381)',
       'XREADGROUP / XCLAIM / XAUTOCLAIM publish xgroup-createconsumer for a new consumer',
       'ZMPOP / BZMPOP / BZPOPMIN / BZPOPMAX publish zpopmin / zpopmax (#446)',
+      'a STORE over a destination of another type publishes only the STORE event (#524)',
       'a STORE over an existing destination publishes one event',
       'a blocked pop served by a push publishes the push, then the pop (#446)',
       'expired hash fields are published as hexpired, never as the reading command',
@@ -580,6 +581,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'SORT_RO sorts like SORT',
     'SORT_RO supports BY and GET external patterns',
   ]),
+  todo('node-redis/sort-strtod.test.ts', CAUSE.clusterTopology, [
+    'SORT LIMIT takes the full int64 range',
+    'SORT orders every infinity spelling as +/-inf',
+    'SORT reads hex floats only before Redis 8.0 / Valkey 8.1',
+    'SORT refuses trailing whitespace and NaN',
+    'SORT takes 1e400 as infinity only on Redis 8.0',
+    'SORT treats an empty element as 0, except on Valkey 8.1+',
+  ]),
   todo('node-redis/stream/add.test.ts', missing('xAdd'), [
     'XADD * generates monotonically increasing ids',
     'XADD <ms>-* auto-increments the sequence',
@@ -693,6 +702,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'INCRBYFLOAT parses operands like strtold: hex floats and long double limits (#234)',
   ]),
   todo(
+    'node-redis/string/incrbyfloat-format.test.ts',
+    missing('incrByFloat', 'hIncrByFloat'),
+    [
+      'incrByFloat replies and stores %.17Lf trimmed (#543)',
+      'hIncrByFloat replies and stores %.17Lf trimmed (#543)',
+    ],
+  ),
+  todo(
     'node-redis/string/proto-max-bulk-len.test.ts',
     missing('append', 'configGet', 'configSet', 'getRange', 'setRange'),
     [
@@ -790,6 +807,12 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/zset/lex.test.ts', CAUSE.clusterSendCommand, [
     'ZRANGEBYLEX validates LIMIT clause',
     'lex commands reject wrong arity',
+  ]),
+  todo('node-redis/zset/limit-int64.test.ts', CAUSE.clusterSendCommand, [
+    'LIMIT refuses values outside int64 and non-canonical integers',
+    'ZRANGE BYSCORE|BYLEX and ZRANGESTORE LIMIT take int64 bounds',
+    'ZRANGEBYLEX and ZREVRANGEBYLEX LIMIT take int64 bounds',
+    'ZRANGEBYSCORE and ZREVRANGEBYSCORE LIMIT take int64 bounds',
   ]),
   todo(
     'node-redis/zset/modern-range.test.ts',

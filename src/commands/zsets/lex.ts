@@ -1,5 +1,7 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import { parseInt64Token } from '../helpers'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
@@ -77,6 +79,22 @@ export function parseLexLimitInt(token: Buffer): number {
   return value
 }
 
+const MAX_SAFE_LIMIT = BigInt(Number.MAX_SAFE_INTEGER)
+
+/**
+ * A LIMIT offset or count (ZRANGEBYSCORE, ZRANGEBYLEX, ZRANGE ... BYSCORE |
+ * BYLEX, ZRANGESTORE): any int64, read by `getLongFromObjectOrReply` (#576).
+ * A negative offset is an empty range and a negative count the rest of it;
+ * magnitudes past the safe-integer range are clamped to it, which no sorted
+ * set can tell apart.
+ */
+export function parseRangeLimitInt(token: Buffer): number {
+  const value = parseInt64Token(token)
+  if (value > MAX_SAFE_LIMIT) return Number.MAX_SAFE_INTEGER
+  if (value < -MAX_SAFE_LIMIT) return -Number.MAX_SAFE_INTEGER
+  return Number(value)
+}
+
 // ZRANGEBYLEX key min max [LIMIT offset count]
 // ZREVRANGEBYLEX key max min [LIMIT offset count] — caller maps first/second.
 export function createLexRangeSchema() {
@@ -91,15 +109,15 @@ export function createLexRangeSchema() {
     let cursor = index + 3
     let limit: LexLimit | undefined
     if (cursor < input.length) {
-      if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
+      if (asciiUpperCase(input[cursor]!.toString()) !== 'LIMIT') {
         throw errors.syntax()
       }
       const offsetTok = input[cursor + 1]
       const countTok = input[cursor + 2]
       if (!offsetTok || !countTok) throw errors.syntax()
       limit = {
-        offset: parseLexLimitInt(offsetTok),
-        count: parseLexLimitInt(countTok),
+        offset: parseRangeLimitInt(offsetTok),
+        count: parseRangeLimitInt(countTok),
       }
       cursor += 3
       if (cursor < input.length) throw errors.syntax()

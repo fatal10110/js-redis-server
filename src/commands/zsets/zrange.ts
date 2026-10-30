@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
@@ -13,8 +14,9 @@ import {
   type LexLimit,
   parseLexBoundArg,
   parseLexLimitInt,
+  parseRangeLimitInt,
 } from './lex'
-import { getSortedMembers } from './helpers'
+import { getSortedMembers, listpackScores } from './helpers'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
 // Modern ZRANGE (Redis 6.2+):
@@ -60,7 +62,7 @@ function parseZrangeOptions(
   let limit: LexLimit | undefined
 
   while (cursor < input.length) {
-    const option = input[cursor]!.toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor]!.toString())
 
     if (option === 'BYSCORE') {
       if (by === 'lex') throw errors.syntax()
@@ -94,8 +96,8 @@ function parseZrangeOptions(
       const countTok = input[cursor + 2]
       if (!offsetTok || !countTok) throw errors.syntax()
       limit = {
-        offset: parseLexLimitInt(offsetTok),
-        count: parseLexLimitInt(countTok),
+        offset: parseRangeLimitInt(offsetTok),
+        count: parseRangeLimitInt(countTok),
       }
       cursor += 3
       continue
@@ -171,8 +173,8 @@ function selectZrangeMembers(
   }
 
   if (args.by === 'score') {
-    const min = parseScoreBoundArg(minTok.toString())
-    const max = parseScoreBoundArg(maxTok.toString())
+    const min = parseScoreBoundArg(minTok, ctx.server.profile)
+    const max = parseScoreBoundArg(maxTok, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return []
     let matched = getSortedMembers(zset).filter(m =>
@@ -245,7 +247,10 @@ export const zrangestoreCommand = defineCommand({
   flags: ['write'],
   keys: args => [args.destination, args.key],
   execute: (args, ctx) => {
-    const members = buildStoredMembers(selectZrangeMembers(args, ctx))
+    const members = listpackScores(
+      buildStoredMembers(selectZrangeMembers(args, ctx)),
+      ctx.server,
+    )
     if (members.size === 0) {
       ctx.db.delete(args.destination)
       return integer(0)

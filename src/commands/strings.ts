@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { setGetKeys } from '../core/key-specs'
 import {
@@ -6,6 +7,7 @@ import {
   type ParseContext,
 } from '../core/command-schema'
 import { parseLongDoubleToken } from '../core/long-double-token'
+import { formatIncrByFloatResult } from '../core/double-format'
 import type { RedisDatabase } from '../state'
 import {
   WrongTypeRedisError,
@@ -15,6 +17,7 @@ import {
 import type { RedisExecutionContext } from '../core/redis-context'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
+import type { CompatibilityProfile } from '../core/compatibility/profile'
 import {
   bulk,
   deleteForPastDeadline,
@@ -24,8 +27,9 @@ import {
   integer,
   ok,
   parseInt64Token,
-  parsePositiveExpireToken,
   requireNextOptionValue,
+  stringExpireDeadlineMs,
+  type ExpireUnit,
 } from './helpers'
 import { commandDocs, commandKeyArgument } from './introspection'
 
@@ -120,7 +124,7 @@ export const setCommand = defineCommand({
     if (
       args.expire &&
       isAbsoluteExpire(args.expire) &&
-      resolveExpireAt(args.expire) <= Date.now() &&
+      resolveExpireAt(args.expire, ctx.server.profile) <= Date.now() &&
       ctx.server.profile.has('set.past-deadline-deletes')
     ) {
       if (existingType !== null) {
@@ -130,7 +134,9 @@ export const setCommand = defineCommand({
     }
 
     ctx.db.setString(args.key, args.value, {
-      expiresAt: args.expire ? resolveExpireAt(args.expire) : undefined,
+      expiresAt: args.expire
+        ? resolveExpireAt(args.expire, ctx.server.profile)
+        : undefined,
       keepTtl: args.keepTtl,
       expireEvent: true,
     })
@@ -266,7 +272,8 @@ export const incrbyfloatCommand = defineCommand({
       throw errors.incrByFloatNanOrInfinity()
     }
 
-    const valueBuf = Buffer.from(next.toString())
+    // ld2string(…, LD_STR_HUMAN): the reply and the stored value (#543).
+    const valueBuf = Buffer.from(formatIncrByFloatResult(next))
     ctx.db.setString(args.key, valueBuf, { keepTtl: true })
     return bulk(valueBuf)
   },
@@ -326,17 +333,19 @@ export const setexCommand = defineCommand({
   name: 'setex',
   schema: t.object({
     key: t.key(),
-    seconds: t.integer(),
+    seconds: t.bulk(),
     value: t.bulk(),
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (args.seconds <= 0) {
-      throw errors.invalidExpireTime('setex')
-    }
     ctx.db.setString(args.key, args.value, {
-      expiresAt: Date.now() + args.seconds * 1000,
+      expiresAt: stringExpireDeadlineMs(
+        args.seconds,
+        'EX',
+        'setex',
+        ctx.server.profile,
+      ),
       expireEvent: true,
     })
     return ok()
@@ -347,17 +356,19 @@ export const psetexCommand = defineCommand({
   name: 'psetex',
   schema: t.object({
     key: t.key(),
-    milliseconds: t.integer(),
+    milliseconds: t.bulk(),
     value: t.bulk(),
   }),
   flags: ['write', 'denyoom'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (args.milliseconds <= 0) {
-      throw errors.invalidExpireTime('psetex')
-    }
     ctx.db.setString(args.key, args.value, {
-      expiresAt: Date.now() + args.milliseconds,
+      expiresAt: stringExpireDeadlineMs(
+        args.milliseconds,
+        'PX',
+        'psetex',
+        ctx.server.profile,
+      ),
       expireEvent: true,
     })
     return ok()
@@ -492,7 +503,9 @@ export const getexCommand = defineCommand({
     if (args.persist) {
       ctx.db.persist(args.key)
     } else if (args.expire) {
-      const expiresAt = resolveExpireAt(args.expire)
+      // Only now, past the key lookup and type check: GETEX on a missing key
+      // answers nil whatever the time says (getexCommand, t_string.c).
+      const expiresAt = resolveExpireAt(args.expire, ctx.server.profile)
       if (isAbsoluteExpire(args.expire) && expiresAt <= Date.now()) {
         deleteForPastDeadline(ctx.db, args.key, ctx.server.profile)
       } else {
@@ -545,7 +558,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
 
       let cursor = index + 2
       while (cursor < input.length) {
-        const option = input[cursor]!.toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor]!.toString())
 
         if (option === 'NX' || option === 'XX') {
           if (args.condition) {
@@ -599,10 +612,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
           }
 
           const ttl = requireNextOptionValue(input, cursor + 1)
-          args.expire = {
-            unit: option,
-            value: parsePositiveExpireToken(ttl, 'set'),
-          }
+          args.expire = { unit: option, token: ttl, command: 'set' }
           cursor += 2
           continue
         }
@@ -616,6 +626,18 @@ function createSetSchema(): CommandSchema<SetArgs> {
         !ctx.profile.has('set.nx-get')
       ) {
         throw errors.syntax()
+      }
+
+      // The time is checked once every option parsed, before the key is
+      // read; the deadline itself is computed again when the command runs,
+      // so in MULTI it counts from EXEC.
+      if (args.expire) {
+        stringExpireDeadlineMs(
+          args.expire.token,
+          args.expire.unit,
+          'set',
+          ctx.profile,
+        )
       }
 
       return { value: args, nextIndex: input.length }
@@ -638,19 +660,17 @@ type GetexArgs = {
 // An EX/PX/EXAT/PXAT option as parsed. Relative units are turned into a
 // deadline only when the command runs, so a SET or GETEX queued in MULTI
 // counts its TTL from EXEC, as real Redis does.
-type ExpireOption = { unit: 'EX' | 'PX' | 'EXAT' | 'PXAT'; value: number }
+type ExpireOption = {
+  unit: ExpireUnit
+  token: Buffer
+  command: 'set' | 'getex'
+}
 
-function resolveExpireAt({ unit, value }: ExpireOption): number {
-  switch (unit) {
-    case 'EX':
-      return Date.now() + value * 1000
-    case 'PX':
-      return Date.now() + value
-    case 'EXAT':
-      return value * 1000
-    case 'PXAT':
-      return value
-  }
+function resolveExpireAt(
+  { unit, token, command }: ExpireOption,
+  profile: CompatibilityProfile,
+): number {
+  return stringExpireDeadlineMs(token, unit, command, profile)
 }
 
 function isAbsoluteExpire({ unit }: ExpireOption): boolean {
@@ -780,7 +800,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
       let cursor = index + 1
 
       while (cursor < input.length) {
-        const option = input[cursor]!.toString().toUpperCase()
+        const option = asciiUpperCase(input[cursor]!.toString())
 
         if (option === 'PERSIST') {
           if (args.persist || args.expire) {
@@ -802,10 +822,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
           }
 
           const ttl = requireNextOptionValue(input, cursor + 1)
-          args.expire = {
-            unit: option,
-            value: parsePositiveExpireToken(ttl, 'getex'),
-          }
+          args.expire = { unit: option, token: ttl, command: 'getex' }
           cursor += 2
           continue
         }
