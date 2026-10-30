@@ -1706,6 +1706,18 @@ so the PR body is not a durable home for a breaking-change note.
     `0.1` + `0.2` is `0.30000000000000004` (Redis `0.3`), `1234.5678` is not
     Redis' `1234.56779999999999997`, and integers above 2^53 lose their tail.
 
+- `SMEMBERS`, `SINTER`, `SUNION`, `SDIFF` and `SPOP key count` reply with a
+  RESP3 set (`~`) to a RESP3 client, as real Redis does on every version
+  (redis 6.2 to 8.0, valkey 8.0 and 9.0); they replied with an array (`*`).
+  RESP2 is unchanged, and so are `SRANDMEMBER`, `SSCAN` and `SMISMEMBER`
+  (arrays on both). After `redis.setresp(3)` a script's `redis.call` of one of
+  them gets a `{set=…}` table, so `r.set.member` is `true`; it got a plain
+  list ([#501]).
+- `FUNCTION LIST` answers a RESP3 client with a map per library and per
+  function and a set of `flags`, and the flags are status strings (`+no-writes`)
+  on both protocols, as on Redis 7.0+ and Valkey; it sent nested arrays and
+  bulk-string flags. The RESP2 layout is otherwise unchanged ([#501]).
+
 ## [0.3.0] and earlier
 
 Released before this file existed. See the

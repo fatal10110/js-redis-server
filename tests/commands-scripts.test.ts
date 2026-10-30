@@ -790,16 +790,22 @@ function scriptSha(script: Buffer): string {
   return crypto.createHash('sha1').update(script).digest('hex')
 }
 
+// Every string in a reply, through arrays, sets and maps (FUNCTION LIST
+// nests maps of status-string flag sets).
 function arrayBulkTexts(value: RedisValue): string[] {
-  if (value.kind === 'bulk-string') {
-    return value.value ? [value.value.toString()] : []
+  switch (value.kind) {
+    case 'bulk-string':
+      return value.value ? [value.value.toString()] : []
+    case 'simple-string':
+      return [value.value]
+    case 'array':
+    case 'set':
+      return value.items.flatMap(arrayBulkTexts)
+    case 'map':
+      return value.entries.flat().flatMap(arrayBulkTexts)
+    default:
+      return []
   }
-
-  if (value.kind !== 'array') {
-    return []
-  }
-
-  return value.items.flatMap(arrayBulkTexts)
 }
 
 function bulkValue(value: string): RedisValue {

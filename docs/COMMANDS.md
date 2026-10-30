@@ -419,16 +419,16 @@ with `GT` or `LT`.
 - [x] `SADD key member [member ...]` - Add one or more members to a set
 - [x] `SREM key member [member ...]` - Remove one or more members from a set
 - [x] `SCARD key` - Get the number of members in a set
-- [x] `SMEMBERS key` - Get all members in a set
+- [x] `SMEMBERS key` - Get all members in a set (RESP3 set / RESP2 array)
 - [x] `SISMEMBER key member` - Determine if a value is a member of a set
 - [x] `SMISMEMBER key member [member ...]` - Determine membership for multiple values
-- [x] `SPOP key [count]` - Remove and return one or more random members
+- [x] `SPOP key [count]` - Remove and return one or more random members (with a count: RESP3 set / RESP2 array)
 - [x] `SRANDMEMBER key [count]` - Get one or more random members without removing them
 - [x] `SMOVE source destination member` - Move a member between sets
-- [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference
-- [x] `SINTER key [key ...]` / `SINTERSTORE destination key [key ...]` - Set intersection
+- [x] `SDIFF key [key ...]` / `SDIFFSTORE destination key [key ...]` - Set difference (SDIFF: RESP3 set / RESP2 array)
+- [x] `SINTER key [key ...]` / `SINTERSTORE destination key [key ...]` - Set intersection (SINTER: RESP3 set / RESP2 array)
 - [x] `SINTERCARD numkeys key [key ...] [LIMIT limit]` - Count set intersection members without materializing them
-- [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union
+- [x] `SUNION key [key ...]` / `SUNIONSTORE destination key [key ...]` - Set union (SUNION: RESP3 set / RESP2 array)
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate set members (see [Scan Family](#10-scan-family))
 
 #### Notes / gaps vs. real Redis
@@ -618,7 +618,7 @@ script is still routed as a write command (a cluster replica with
 - [x] `FCALL_RO function numkeys [key ...] [arg ...]` - Read-only variant of `FCALL`
 - [x] `FUNCTION LOAD [REPLACE] function-code` - Load a Lua function library
 - [x] `FUNCTION DELETE library-name` - Delete a function library
-- [x] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries
+- [x] `FUNCTION LIST [LIBRARYNAME name] [WITHCODE]` - List function libraries (RESP3 maps with a status-string `flags` set / RESP2 flat arrays)
 - [x] `FUNCTION STATS` - Return loaded-library/function counts
 - [x] `FUNCTION DUMP` - Dump loaded libraries to a mock-local serialized payload
 - [x] `FUNCTION RESTORE serialized-value [FLUSH|APPEND|REPLACE]` - Restore libraries from a `FUNCTION DUMP` payload

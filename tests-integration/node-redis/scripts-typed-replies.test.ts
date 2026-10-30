@@ -25,11 +25,6 @@ import { randomKey } from '../utils'
 const testRunner = new TestRunner()
 const RUN = randomKey()
 
-// A known mock gap in this repo, pinned against real Redis until it closes.
-const mockGap = (reason: string) =>
-  testRunner.backend === 'mock' ? reason : false
-const SET_REPLY_GAP = mockGap('mock SMEMBERS replies an array, not a set')
-
 function connectAt(port: number, RESP: 2 | 3) {
   const client = createClient({ url: `redis://127.0.0.1:${port}`, RESP })
   client.on('error', () => {})
@@ -166,7 +161,7 @@ describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendNam
       assert.deepStrictEqual(await evalAt(3, script), [['b', 2.5]])
     })
 
-    test('SMEMBERS is a set', { todo: SET_REPLY_GAP }, async () => {
+    test('SMEMBERS is a set', async () => {
       // node-redis reads a RESP3 set as a plain array unless told otherwise;
       // mapping sets to `Set` is what tells `~` apart from `*`.
       const script = "redis.setresp(3); return redis.call('SMEMBERS', KEYS[3])"
@@ -176,15 +171,11 @@ describe(`Lua typed replies per protocol (node-redis, ${testRunner.getBackendNam
       assert.deepStrictEqual(reply, new Set(['x']))
     })
 
-    test(
-      'the script sees a set as a {set=…} table',
-      { todo: SET_REPLY_GAP },
-      async () => {
-        const script =
-          "redis.setresp(3); local r = redis.call('SMEMBERS', KEYS[3]); return tostring(r.set.x)"
-        assert.strictEqual(await evalAt(2, script), 'true')
-      },
-    )
+    test('the script sees a set as a {set=…} table', async () => {
+      const script =
+        "redis.setresp(3); local r = redis.call('SMEMBERS', KEYS[3]); return tostring(r.set.x)"
+      assert.strictEqual(await evalAt(2, script), 'true')
+    })
 
     test('integer replies stay integers', async () => {
       const script =

@@ -804,36 +804,35 @@ function functionLibraryReply(
   library: RedisFunctionLibrary,
   withCode: boolean,
 ): RedisValue {
-  const items = [
-    RedisValue.bulkString(Buffer.from('library_name')),
-    RedisValue.bulkString(Buffer.from(library.name)),
-    RedisValue.bulkString(Buffer.from('engine')),
-    RedisValue.bulkString(Buffer.from('LUA')),
-    RedisValue.bulkString(Buffer.from('functions')),
-    RedisValue.array(library.functions.map(functionReply)),
+  const entries: [RedisValue, RedisValue][] = [
+    [field('library_name'), RedisValue.bulkString(Buffer.from(library.name))],
+    [field('engine'), RedisValue.bulkString(Buffer.from('LUA'))],
+    [
+      field('functions'),
+      RedisValue.array(library.functions.map(functionReply)),
+    ],
   ]
 
   if (withCode) {
-    items.push(
-      RedisValue.bulkString(Buffer.from('library_code')),
-      RedisValue.bulkString(library.code),
-    )
+    entries.push([field('library_code'), RedisValue.bulkString(library.code)])
   }
 
-  return RedisValue.array(items)
+  // A map on RESP3, a flat array on RESP2 (functions.c `addReplyMapLen`).
+  return RedisValue.map(entries)
 }
 
+// The flags are status strings in a set (`addReplySetLen` + `addReplyStatus`):
+// `~N +flag` on RESP3, `*N +flag` on RESP2.
 function functionReply(fn: RedisFunctionDefinition): RedisValue {
-  return RedisValue.array([
-    RedisValue.bulkString(Buffer.from('name')),
-    RedisValue.bulkString(Buffer.from(fn.name)),
-    RedisValue.bulkString(Buffer.from('description')),
-    RedisValue.bulkString(null),
-    RedisValue.bulkString(Buffer.from('flags')),
-    RedisValue.array(
-      fn.flags.map(flag => RedisValue.bulkString(Buffer.from(flag))),
-    ),
+  return RedisValue.map([
+    [field('name'), RedisValue.bulkString(Buffer.from(fn.name))],
+    [field('description'), RedisValue.bulkString(null)],
+    [field('flags'), RedisValue.set(fn.flags.map(RedisValue.simpleString))],
   ])
+}
+
+function field(name: string): RedisValue {
+  return RedisValue.bulkString(Buffer.from(name))
 }
 
 function errorMessage(err: unknown): string {
