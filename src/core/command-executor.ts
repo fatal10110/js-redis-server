@@ -610,9 +610,28 @@ function monitorFeedActive(
   )
 }
 
+/**
+ * `call()` hides a command from MONITOR when its table entry is flagged
+ * `skip_monitor` or `admin` ("administrative commands are considered too
+ * dangerous to be shown"). The entry is the subcommand's from 7.0
+ * (`CLIENT KILL` is hidden, `CLIENT GETNAME` shown) and the whole container's
+ * on 6.2, where every CLIENT and CONFIG subcommand is hidden. Verified
+ * against `call()` of 6.2.14 - 8.0.0 and Valkey 8.0 / 9.0 and a live
+ * redis-server 6.2.14. A definition can hide itself on top of the table.
+ */
 function skipsMonitor(plan: CommandPlan, ctx: RedisExecutionContext): boolean {
   const skip = plan.definition.monitor?.skip
-  return typeof skip === 'function' ? skip(ctx.server.profile) : !!skip
+  if (typeof skip === 'function' ? skip(ctx.server.profile) : !!skip) {
+    return true
+  }
+
+  const { name } = lookupTableArity(
+    plan.definition,
+    plan.rawArgs,
+    ctx.server.profile,
+  )
+  const entry = commandTableEntry(name, ctx.server.profile)
+  return entry?.flags.includes('admin') === true
 }
 
 function isQueuedTransactionCommand(

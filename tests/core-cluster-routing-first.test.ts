@@ -10,7 +10,7 @@ import {
   createRedisCommandExecutor,
 } from '../src/internal'
 import { computeSlotRange } from '../src/cluster'
-import type { CompatibilityProfileName } from '../src/core/compatibility'
+import type { CompatibilitySpec } from '../src/core/compatibility/profile'
 
 // #519: in a cluster, Redis's processCommand routes a keyed command
 // (getNodeByQuery: MOVED / CROSSSLOT / CLUSTERDOWN) after the arity check and
@@ -294,7 +294,7 @@ describe('computeSlotRange follows redis-cli --cluster create (#519)', () => {
  * Node `local` owns 0-8191, `remote` (port 7001) 8193-16383; slot 8192 is
  * unassigned.
  */
-function createHarness(compatibility: CompatibilityProfileName = 'redis-8.0') {
+function createHarness(compatibility: CompatibilitySpec = 'redis-8.0') {
   const topology = new RedisClusterTopology([
     {
       id: 'local',
@@ -318,7 +318,7 @@ function createHarness(compatibility: CompatibilityProfileName = 'redis-8.0') {
   const executor = createRedisCommandExecutor({
     extraCommands: createClusterCommands('local'),
     policies: [createClusterPolicy({ localNodeId: 'local' })],
-    profile: server.profile,
+    compatibility,
   })
   const session = new ClientSession({ server, executor })
 

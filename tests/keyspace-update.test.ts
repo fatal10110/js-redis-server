@@ -162,7 +162,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     db.updateStream(key, stream => {
       stream.addGroup('g', {
         name: Buffer.from('g'),
-        lastDeliveredId: { ms: 0, seq: 0 },
+        lastDeliveredId: { ms: 0n, seq: 0n },
         entriesRead: 0n,
         consumers: new Map(),
         pending: new Map(),
@@ -182,7 +182,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     const { db, events } = setup()
     const key = Buffer.from('stream')
     db.updateStream(key, stream => {
-      stream.appendEntry({ ms: 1, seq: 1 }, [
+      stream.appendEntry({ ms: 1n, seq: 1n }, [
         Buffer.from('f'),
         Buffer.from('v'),
       ])
@@ -194,7 +194,7 @@ describe('RedisDatabase.update — ghost entries and empty-collection cleanup (#
     db.updateStream(key, stream => {
       stream.addGroup('g', {
         name: Buffer.from('g'),
-        lastDeliveredId: { ms: 0, seq: 0 },
+        lastDeliveredId: { ms: 0n, seq: 0n },
         entriesRead: 0n,
         consumers: new Map(),
         pending: new Map(),
@@ -365,7 +365,10 @@ describe('RedisDatabase.withOrigin — a prototype-linked view (#444)', () => {
     // Everything is stamped with the view's origin, except the lazily purged
     // hash field, which is always published as `hexpired`.
     assert.deepStrictEqual(
-      events.map(event => [event.type, event.command]),
+      (events as RedisMutationEvent[]).map(event => [
+        event.type,
+        event.command,
+      ]),
       [
         ['write', 'x'], // SET s
         ['expire', 'x'],
@@ -419,7 +422,7 @@ describe('RedisDatabase.sweepExpired — active hash-field expiry (#486 review)'
 
     assert.strictEqual(db.sweepExpired(now + 100), 1)
     assert.deepStrictEqual(
-      events.map(event => [
+      (events as RedisMutationEvent[]).map(event => [
         event.type,
         'key' in event ? event.key.toString() : null,
         event.command,
@@ -466,7 +469,10 @@ describe('RedisDatabase.sweepExpired — active hash-field expiry (#486 review)'
 
     assert.strictEqual(db.sweepExpired(now + 1000), 0)
     assert.deepStrictEqual(
-      events.map(event => [event.type, event.command]),
+      (events as RedisMutationEvent[]).map(event => [
+        event.type,
+        event.command,
+      ]),
       [['write', 'hexpired']],
     )
     assert.deepStrictEqual(

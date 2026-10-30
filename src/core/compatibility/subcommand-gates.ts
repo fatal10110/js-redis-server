@@ -1,4 +1,5 @@
 import { asciiLowerCase } from '../ascii-case'
+import { FEATURE_GATES } from './feature-gates'
 import {
   gateSatisfied,
   type CompatibilityProfile,
@@ -8,6 +9,12 @@ import {
 /** Present on every profile that has per-subcommand command-table entries. */
 const ALWAYS: VersionGate = { redis: '7.0.0', valkey: '7.2.0' }
 const REDIS_72: VersionGate = { redis: '7.2.0', valkey: '7.2.0' }
+// Subcommands that also have a feature gate (their option or reply wording
+// varies by version too) take it from there, so a version is written once.
+const ACL_DRYRUN = FEATURE_GATES['acl.dryrun']
+const CLIENT_NO_EVICT = FEATURE_GATES['client.no-evict']
+const CLIENT_NO_TOUCH = FEATURE_GATES['client.no-touch']
+const CLIENT_SETINFO = FEATURE_GATES['client.setinfo']
 const VALKEY_80: VersionGate = { valkey: '8.0.0' }
 const VALKEY_90: VersionGate = { valkey: '9.0.0' }
 // Newer than every preset, so these only matter for a custom
@@ -42,7 +49,7 @@ const CONTAINER_SUBCOMMANDS: Record<
   acl: {
     cat: [ALWAYS, -2],
     deluser: [ALWAYS, -3],
-    dryrun: [ALWAYS, -4],
+    dryrun: [ACL_DRYRUN, -4],
     genpass: [ALWAYS, -2],
     getuser: [ALWAYS, 3],
     help: [ALWAYS, 2],
@@ -65,11 +72,11 @@ const CONTAINER_SUBCOMMANDS: Record<
     info: [ALWAYS, 2],
     kill: [ALWAYS, -3],
     list: [ALWAYS, -2],
-    'no-evict': [ALWAYS, 3],
-    'no-touch': [REDIS_72, 3],
+    'no-evict': [CLIENT_NO_EVICT, 3],
+    'no-touch': [CLIENT_NO_TOUCH, 3],
     pause: [ALWAYS, -3],
     reply: [ALWAYS, 3],
-    setinfo: [REDIS_72, 4],
+    setinfo: [CLIENT_SETINFO, 4],
     setname: [ALWAYS, 3],
     tracking: [ALWAYS, -3],
     trackinginfo: [ALWAYS, 2],
