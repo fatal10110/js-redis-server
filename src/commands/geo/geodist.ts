@@ -4,7 +4,7 @@ import { errors } from '../../core/redis-error'
 import { bulk } from '../helpers'
 import {
   decodeGeoScore,
-  haversineMeters,
+  geoDistanceMeters,
   isSupportedGeoUnit,
   metersToUnit,
 } from './helpers'
@@ -21,7 +21,10 @@ export const geodistCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     const unit = args.unit ?? 'm'
-    if (!isSupportedGeoUnit(unit)) throw errors.geoUnsupportedUnit()
+    const profile = ctx.server.profile
+    if (!isSupportedGeoUnit(unit, profile)) {
+      throw errors.geoUnsupportedUnit(profile)
+    }
 
     const zset = ctx.db.getSortedSet(args.key)
     const entry1 = zset?.members.get(args.member1.toString('hex'))
@@ -30,7 +33,13 @@ export const geodistCommand = defineCommand({
 
     const pos1 = decodeGeoScore(entry1.score)
     const pos2 = decodeGeoScore(entry2.score)
-    const meters = haversineMeters(pos1.lon, pos1.lat, pos2.lon, pos2.lat)
+    const meters = geoDistanceMeters(
+      pos1.lon,
+      pos1.lat,
+      pos2.lon,
+      pos2.lat,
+      profile,
+    )
     return bulk(Buffer.from(metersToUnit(meters, unit).toFixed(4)))
   },
 })

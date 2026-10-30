@@ -824,6 +824,10 @@ Geo commands are stored in the Sorted Set type (members scored by geohash).
 - [x] `GEOSEARCHSTORE destination source <FROMMEMBER ... | FROMLONLAT ...> <BYRADIUS ... | BYBOX ...> [STOREDIST]` - Store a `GEOSEARCH` result
 - [x] `GEORADIUS` / `GEORADIUSBYMEMBER` (and `_RO` variants) - Deprecated radius queries
 
+GEO units fold case from Redis 7.0 (and in every Valkey); the `redis-6.2`
+profile matches `m`, `km`, `ft`, `mi` exactly and lists them in lower case in
+the unsupported-unit error (`geo.unit-case-folding`).
+
 ## 20. Vector Set Commands (Redis 8.0+)
 
 Vector sets store elements with an associated embedding vector for
