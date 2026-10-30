@@ -22,10 +22,14 @@ describe('containerSubcommandIsAdmin', () => {
     let checked = 0
     for (const definition of redisCommandDefinitions) {
       for (const sub of definition.introspection?.subcommands ?? []) {
-        const [container, subcommand] = sub.name.split('|')
+        const fullName = sub.name
+        if (!fullName) {
+          continue
+        }
+        const [container, subcommand] = fullName.split('|')
         for (const name of PROFILES) {
           const profile = resolveCompatibilityProfile(name)
-          const entry = commandTableEntry(sub.name, profile)
+          const entry = commandTableEntry(fullName, profile)
           if (
             !entry ||
             containerSubcommandExists(container, subcommand, profile) !== true
@@ -35,7 +39,7 @@ describe('containerSubcommandIsAdmin', () => {
           assert.strictEqual(
             containerSubcommandIsAdmin(container, subcommand),
             entry.flags.includes('admin'),
-            `${sub.name} on ${name}`,
+            `${fullName} on ${name}`,
           )
           checked++
         }
