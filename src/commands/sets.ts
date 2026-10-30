@@ -370,14 +370,10 @@ function randomPositions(size: number, count: number): number[] {
 
 export const spopCommand = defineCommand({
   name: 'spop',
-  schema: t.object({ key: t.key(), count: t.optional(t.integer()) }),
+  schema: t.object({ key: t.key(), count: t.optional(t.positiveCount()) }),
   flags: ['write', 'random', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    if (args.count !== undefined && args.count < 0) {
-      throw errors.positiveCount()
-    }
-
     const type = ctx.db.getType(args.key)
     if (type === null)
       return args.count === undefined ? bulk(null) : setMembers([])

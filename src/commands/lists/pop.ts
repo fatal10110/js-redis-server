@@ -6,7 +6,7 @@ export const lpopCommand = defineCommand({
   name: 'lpop',
   schema: t.object({
     key: t.key(),
-    count: t.optional(t.integer()),
+    count: t.optional(t.positiveCount()),
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
@@ -17,7 +17,7 @@ export const rpopCommand = defineCommand({
   name: 'rpop',
   schema: t.object({
     key: t.key(),
-    count: t.optional(t.integer()),
+    count: t.optional(t.positiveCount()),
   }),
   flags: ['write', 'fast'],
   keys: args => [args.key],

@@ -580,4 +580,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `-0`, and keeps the sign (redis@6.2.14 t_zset.c:1034-1055). A skiplist
   // keeps -0 on every version (#512).
   'zset.listpack-integer-scores': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0.0 reads the ZPOPMIN / ZPOPMAX count with
+  // `getPositiveLongFromObjectOrReply` (redis@7.0.0 t_zset.c:3960): a bad or
+  // negative count answers `value is out of range, must be positive`, and a
+  // count of 0 replies after the type check. 6.2 used
+  // `getLongFromObjectOrReply` (the integer error) and answered an empty
+  // array for any count <= 0 before the type check (redis@6.2.14
+  // t_zset.c:3840-3847). Checked against redis-server 6.2.14, 7.0.15, 7.2.4,
+  // 7.4.4, 8.0.0 and valkey-server 8.0.0, 8.1.0, 9.0.0 (#610).
+  'zset.pop-count-positive': { redis: '7.0.0', valkey: '7.2.0' },
 }
