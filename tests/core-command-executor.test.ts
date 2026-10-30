@@ -351,7 +351,9 @@ describe('new command executor core', () => {
     // mutation outside any command carries no name at all.
     const { executor, ctx, server } = createSelectMidCommandFixture()
     const commands: (string | undefined)[] = []
-    server.getDatabase(1).subscribe(event => commands.push(event.command))
+    server.getDatabase(1).subscribe(event => {
+      if (event.type === 'write') commands.push(event.command)
+    })
 
     await executor.executeRaw('select-then-write', [], ctx)
     assert.deepStrictEqual(

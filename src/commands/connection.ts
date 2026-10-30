@@ -197,18 +197,9 @@ function buildInfo(
       'used_cpu_sys_children:0.00',
       'used_cpu_user_children:0.00',
     ],
-    cluster: () => {
-      if (!clustered) {
-        return ['# Cluster', 'cluster_enabled:0']
-      }
-
-      return [
-        '# Cluster',
-        'cluster_enabled:1',
-        'cluster_state:ok',
-        'cluster_slots_assigned:16384',
-      ]
-    },
+    // Only `cluster_enabled`, on a cluster node too: the cluster state is
+    // CLUSTER INFO's.
+    cluster: () => ['# Cluster', `cluster_enabled:${clustered ? 1 : 0}`],
     commandstats: () => ['# Commandstats'],
     latencystats: () => ['# Latencystats'],
     errorstats: () => ['# Errorstats'],

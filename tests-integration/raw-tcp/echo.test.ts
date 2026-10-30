@@ -1,7 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
-import { commandFrame, randomKey } from '../utils'
+import { activeProfile, commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 
 /**
@@ -87,7 +87,9 @@ describe(`Raw TCP ECHO (${testRunner.getBackendName()})`, () => {
     assert.deepStrictEqual(
       await conn.readRawFrame(),
       Buffer.from(
-        "-ERR Can't execute 'echo': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n",
+        activeProfile === 'redis-6.2'
+          ? "-ERR Can't execute 'echo': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n"
+          : "-ERR Can't execute 'echo': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context\r\n",
       ),
     )
 

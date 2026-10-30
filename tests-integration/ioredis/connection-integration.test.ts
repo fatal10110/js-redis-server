@@ -45,6 +45,11 @@ describe(`Connection commands integration (${testRunner.getBackendName()})`, () 
     assert.match(info, /loading:0/)
     assert.match(info, /redis_mode:cluster/)
     assert.match(info, /cluster_enabled:1/)
+    // INFO prints only `cluster_enabled`; the state is CLUSTER INFO's (#514).
+    assert.strictEqual(
+      await directClient?.info('cluster'),
+      '# Cluster\r\ncluster_enabled:1\r\n',
+    )
   })
 
   test('ECHO returns the message verbatim, binary-safe', async () => {

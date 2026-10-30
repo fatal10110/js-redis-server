@@ -21,7 +21,10 @@ function assertRemovalThenDelete(
 function setup() {
   const db = new RedisDatabase(0)
   const events: RedisMutationEvent[] = []
-  db.subscribe(event => events.push(event))
+  // `new` (a key's creation) is covered by keyspace-new-keymiss.test.ts.
+  db.subscribe(event => {
+    if (event.type !== 'new') events.push(event)
+  })
   return { db, events }
 }
 

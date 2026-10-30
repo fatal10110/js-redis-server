@@ -50,6 +50,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // The `n` (new-key) notify-keyspace-events class is Redis 7.0+; 6.2 rejects
   // it as an invalid flag character (it does accept `m` and `d`).
   'notify.keyspace.new-key-class': { redis: '7.0.0', valkey: '7.2.0' },
+  // Redis 7.0 looks up the source keys of SINTERSTORE / SUNIONSTORE /
+  // SDIFFSTORE / ZUNIONSTORE / ZINTERSTORE / ZDIFFSTORE / ZRANGESTORE /
+  // SORT ... STORE, COPY's source and a single-key PFCOUNT with
+  // `lookupKeyRead`, so a missing one publishes `keymiss`; 6.2 uses
+  // `lookupKeyWrite` there (6.2.14 t_set.c:869, t_zset.c:2608 / 3700,
+  // sort.c:273, db.c:1253, hyperloglog.c:1261), which publishes nothing.
+  // Verified against redis-server 6.2.14, 7.0.15, 7.2.4, 8.0.0 and Valkey
+  // 8.0 / 9.0 (#514).
+  'notify.keyspace.keymiss-store-sources': { redis: '7.0.0', valkey: '7.2.0' },
+  // Valkey 9.0's HGETEX looks its hash up with `lookupKeyRead`, so a missing
+  // one publishes `keymiss`; Redis 8.0's uses `lookupKeyWrite` (8.0.0
+  // t_hash.c:2788) and publishes nothing. Probed on valkey 9.0.0 and redis
+  // 8.0.0 (#514).
+  'notify.keyspace.keymiss-hgetex': { valkey: '9.0.0' },
   // Redis 7.0 relaxed the RESP multibulk element-count bound in
   // `processMultibulkBuffer` from `ll > 1024*1024` to `ll > INT_MAX`: `*1048577`
   // is `-ERR Protocol error: invalid multibulk length` on 6.2.24 and accepted on
@@ -175,6 +189,15 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // server.c); 7.0 fixed it to `interact` (7.0.15 server.c and a live
   // redis-server 7.0.15, 7.2.4 / 7.4.4 / 8.0.0 and Valkey 8.0 / 9.0 server.c).
   'error.replica-keyspace-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // The refusal of a command on a RESP2 connection in subscribed mode: 6.2
+  // names the command (`c->cmd->name`, so `config` for CONFIG GET) and lists
+  // `(P)SUBSCRIBE / (P)UNSUBSCRIBE`; 7.0 names the looked-up table entry
+  // (`c->cmd->fullname`, `config|get`) and, with sharded Pub/Sub, lists
+  // `(P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE` (redis 6.2.14 / 7.0.0 server.c
+  // processCommand, valkey 8.0.0 the same as 7.0). Verified against
+  // redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and Valkey 8.0 / 9.0
+  // (#384, #514).
+  'error.subscribed-context-wording': { redis: '7.0.0', valkey: '7.2.0' },
   'info.multi-section': { redis: '7.0.0', valkey: '7.2.0' },
   // The INFO keyspace line counts the hashes with field expirations after
   // `avg_ttl`: `subexpiry=` from Redis 7.4 (the release that added HEXPIRE),

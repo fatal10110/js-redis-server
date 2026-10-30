@@ -123,6 +123,9 @@ export class RedisDatabase {
         }
       }
     }
+    if (options?.announceNew ?? !existing) {
+      this.announceNew(entry.key)
+    }
     this.emitWrite(entry)
     // No liveness check: a deadline already past is still announced, then
     // the key expires on its next access, exactly as in real Redis.
@@ -134,6 +137,27 @@ export class RedisDatabase {
         expiresAt,
       })
     }
+  }
+
+  /**
+   * Announce `key` as added to the database (`new`, real Redis' `dbAdd`)
+   * ahead of the write that stores it. {@link set} and the `update*`
+   * wrappers do this themselves for a key they create; a command calls it
+   * directly only where real Redis adds the key before announcing anything
+   * else: RENAME and MOVE publish `new` for the destination before
+   * `rename_from` / `move_from` for the source.
+   */
+  announceNew(key: Buffer): void {
+    this.emit({ type: 'new', database: this.id, key: Buffer.from(key) })
+  }
+
+  /**
+   * Announce a read lookup of `key` that found nothing (`keymiss`, real
+   * Redis' `lookupKeyRead` miss). The executor calls it for the keys a
+   * command reads (see `readLookupKeys`).
+   */
+  announceKeyMiss(key: Buffer): void {
+    this.emit({ type: 'keymiss', database: this.id, key: Buffer.from(key) })
   }
 
   setString(key: Buffer, value: Buffer, options?: SetOptions): void {
@@ -310,6 +334,9 @@ export class RedisDatabase {
     // bringing a watched key into existence as a write, but leaves a WATCH
     // intact for in-place metadata changes to an already-existing key — while
     // still announcing them, hence `notify`.
+    if (!existing) {
+      this.announceNew(entry.key)
+    }
     if (dirty || !existing) {
       this.emitWrite(entry)
     } else {
