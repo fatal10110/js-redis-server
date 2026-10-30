@@ -36,6 +36,19 @@ so the PR body is not a durable home for a breaking-change note.
   error and a count of 0 or less answers an empty array before the key's
   type is checked. The new `zset.pop-count-positive` feature gate records
   the change.
+- GEOSEARCH and GEOSEARCHSTORE accept FROMMEMBER / FROMLONLAT, BYRADIUS /
+  BYBOX and their options in any order, as every Redis and Valkey version
+  does ([#607]); they used to answer `syntax error` unless FROM came first
+  and BY second. Each clause is read where it stands: FROMMEMBER is looked
+  up at its position (only when the key exists), and a repeated FROM or BY
+  clause is allowed, the last one winning. After the arguments come, in
+  order, the GEOSEARCHSTORE WITH* error, `exactly one of FROMMEMBER or
+  FROMLONLAT can be specified for <command>`, `exactly one of BYRADIUS and
+  BYBOX can be specified for <command>` (the command named as sent) and the
+  ANY check. ANY is now a flag anywhere in GEOSEARCH, GEOSEARCHSTORE,
+  GEORADIUS and GEORADIUSBYMEMBER (`ANY COUNT 1` is valid), and an
+  incomplete FROM clause answers `syntax error` instead of a
+  wrong-number-of-arguments error.
 
 ## [0.4.0] - 2026-10-30
 
@@ -2136,6 +2149,7 @@ requests they contain.
 [#586]: https://github.com/fatal10110/js-redis-server/issues/586
 [#583]: https://github.com/fatal10110/js-redis-server/issues/583
 [#610]: https://github.com/fatal10110/js-redis-server/issues/610
+[#607]: https://github.com/fatal10110/js-redis-server/issues/607
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

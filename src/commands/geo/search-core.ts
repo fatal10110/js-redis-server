@@ -5,6 +5,7 @@ import {
 } from '../../core/double-format'
 import type { CompatibilityProfile } from '../../core/compatibility/profile'
 import { parseString2dToken } from '../../core/double-token'
+import type { ParseContext } from '../../core/command-schema'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
 import {
@@ -145,67 +146,18 @@ export type GeoFrom =
   | { type: 'member'; member: Buffer }
   | { type: 'lonlat'; lon: number; lat: number }
 
-// FROMMEMBER member | FROMLONLAT lon lat, shared by GEOSEARCH and
-// GEOSEARCHSTORE. A present-but-incomplete FROM clause is a wrong-number-of-
-// arguments error in real Redis (ground-truthed), not a syntax error.
-export function parseGeoFrom(
-  input: readonly Buffer[],
-  cursor: number,
-  commandName: string,
-  profile: CompatibilityProfile,
-): [GeoFrom, number] {
-  const token = asciiUpperToken(input[cursor])
-  if (token === 'FROMMEMBER') {
-    const member = input[cursor + 1]
-    if (!member) throw new WrongNumberOfArgumentsError(commandName)
-    return [{ type: 'member', member }, cursor + 2]
-  }
-  if (token === 'FROMLONLAT') {
-    const lonTok = input[cursor + 1]
-    const latTok = input[cursor + 2]
-    if (!lonTok || !latTok) throw new WrongNumberOfArgumentsError(commandName)
-    const lon = parseGeoFloatToken(lonTok, profile)
-    const lat = parseGeoFloatToken(latTok, profile)
-    assertValidCoordinates(lon, lat)
-    return [{ type: 'lonlat', lon, lat }, cursor + 3]
-  }
-  throw errors.syntax()
-}
+/** ASC / DESC / COUNT n / ANY as the argument loop reads them. */
+export type GeoOrderCountFlags = GeoOrderCount & { any?: boolean }
 
-// BYRADIUS radius unit | BYBOX width height unit, shared the same way.
-export function parseGeoBy(
-  input: readonly Buffer[],
-  cursor: number,
-  profile: CompatibilityProfile,
-): [GeoBy, number] {
-  const token = asciiUpperToken(input[cursor])
-  if (token === 'BYRADIUS') {
-    return [
-      parseByRadius(input[cursor + 1], input[cursor + 2], profile),
-      cursor + 3,
-    ]
-  }
-  if (token === 'BYBOX') {
-    return [
-      parseByBox(
-        input[cursor + 1],
-        input[cursor + 2],
-        input[cursor + 3],
-        profile,
-      ),
-      cursor + 4,
-    ]
-  }
-  throw errors.syntax()
-}
-
-// Parses a single ASC | DESC | COUNT n [ANY] token starting at cursor into
+// Parses a single ASC | DESC | COUNT n | ANY token starting at cursor into
 // `acc`. Returns the advanced cursor, or null if the token at cursor isn't
-// one of these — the caller decides what to do with an unmatched token.
+// one of these: the caller decides what to do with an unmatched token. ANY
+// is a plain flag wherever it stands; finishOrderCount() checks it has a
+// COUNT once the loop is over, as georadiusGeneric() does.
 export function tryParseOrderOrCount(
   input: readonly Buffer[],
   cursor: number,
-  acc: GeoOrderCount,
+  acc: GeoOrderCountFlags,
 ): number | null {
   const token = asciiUpperToken(input[cursor])
   if (token === 'ASC') {
@@ -216,22 +168,163 @@ export function tryParseOrderOrCount(
     acc.order = 'DESC'
     return cursor + 1
   }
+  if (token === 'ANY') {
+    acc.any = true
+    return cursor + 1
+  }
   if (token === 'COUNT') {
     const countTok = input[cursor + 1]
     if (!countTok) throw errors.syntax()
     const count = parseIntegerToken(countTok)
     if (count <= 0) throw errors.geoCountNotPositive()
-    let next = cursor + 2
-    let any = false
-    if (asciiUpperToken(input[next]) === 'ANY') {
-      any = true
-      next++
-    }
-    acc.count = { count, any }
-    return next
+    // The last COUNT wins.
+    acc.count = { count, any: false }
+    return cursor + 2
   }
-  if (token === 'ANY') throw errors.geoAnyRequiresCount()
   return null
+}
+
+/** The post-loop `any && !count` check, folding ANY into the COUNT. */
+export function finishOrderCount(acc: GeoOrderCountFlags): GeoOrderCount {
+  if (!acc.any) return { order: acc.order, count: acc.count }
+  if (!acc.count) throw errors.geoAnyRequiresCount()
+  return { order: acc.order, count: { count: acc.count.count, any: true } }
+}
+
+export type GeoSearchQuery = GeoOrderCount &
+  GeoWithFlags & {
+    from: GeoFrom
+    by: GeoBy
+    storeDist: boolean
+  }
+
+/**
+ * GEOSEARCH / GEOSEARCHSTORE arguments. `lookups` holds every FROMMEMBER
+ * member the loop reached, in order, before any argument error: execute
+ * looks each one up (when the key exists) before raising `failed`.
+ */
+export type GeoSearchParse =
+  | { lookups: Buffer[]; failed: RedisCommandError }
+  | { lookups: Buffer[]; query: GeoSearchQuery }
+
+/**
+ * The georadiusGeneric() argument loop for GEOSEARCH (`store` false) and
+ * GEOSEARCHSTORE: FROM*, BY* and the options in any order, each clause
+ * parsed where it stands and repeatable (the last one wins), then the
+ * post-loop checks: STORE with WITH*, no FROM, no BY, ANY without COUNT
+ * (redis@8.0.0 geo.c:572-695).
+ */
+export function parseGeoSearchArgs(
+  input: readonly Buffer[],
+  start: number,
+  ctx: ParseContext,
+  store: boolean,
+): GeoSearchParse {
+  const lookups: Buffer[] = []
+  try {
+    const acc: GeoOrderCountFlags = {}
+    let withCoord = false
+    let withDist = false
+    let withHash = false
+    let storeDist = false
+    let lonLat: GeoCenter | undefined
+    let by: GeoBy | undefined
+    let cursor = start
+    while (cursor < input.length) {
+      const advanced = tryParseOrderOrCount(input, cursor, acc)
+      if (advanced !== null) {
+        cursor = advanced
+        continue
+      }
+      const token = asciiUpperToken(input[cursor])
+      // Tokens after this one.
+      const left = input.length - cursor - 1
+      if (token === 'WITHDIST') {
+        withDist = true
+      } else if (token === 'WITHHASH') {
+        withHash = true
+      } else if (token === 'WITHCOORD') {
+        withCoord = true
+      } else if (token === 'STOREDIST' && store) {
+        storeDist = true
+      } else if (token === 'FROMMEMBER' && left >= 1 && !lonLat) {
+        lookups.push(input[cursor + 1]!)
+        cursor += 1
+      } else if (token === 'FROMLONLAT' && left >= 2 && lookups.length === 0) {
+        const lon = parseGeoFloatToken(input[cursor + 1]!, ctx.profile)
+        const lat = parseGeoFloatToken(input[cursor + 2]!, ctx.profile)
+        assertValidCoordinates(lon, lat)
+        lonLat = { lon, lat }
+        cursor += 2
+      } else if (token === 'BYRADIUS' && left >= 2 && by?.kind !== 'box') {
+        by = parseByRadius(input[cursor + 1], input[cursor + 2], ctx.profile)
+        cursor += 2
+      } else if (token === 'BYBOX' && left >= 3 && by?.kind !== 'radius') {
+        by = parseByBox(
+          input[cursor + 1],
+          input[cursor + 2],
+          input[cursor + 3],
+          ctx.profile,
+        )
+        cursor += 3
+      } else {
+        throw errors.syntax()
+      }
+      cursor++
+    }
+
+    if (store && (withCoord || withDist || withHash)) {
+      throw errors.geoSearchStoreWithOptions(ctx.profile)
+    }
+    const command = ctx.rawCommand ?? ctx.commandName
+    const lastMember = lookups[lookups.length - 1]
+    const from: GeoFrom | undefined = lastMember
+      ? { type: 'member', member: lastMember }
+      : lonLat && { type: 'lonlat', ...lonLat }
+    if (!from) throw errors.geoSearchNoFrom(command)
+    if (!by) throw errors.geoSearchNoBy(command)
+    const orderCount = finishOrderCount(acc)
+    return {
+      lookups,
+      query: {
+        ...orderCount,
+        from,
+        by,
+        withCoord,
+        withDist,
+        withHash,
+        storeDist,
+      },
+    }
+  } catch (err) {
+    return { lookups, failed: deferGeoParseError(err) }
+  }
+}
+
+/**
+ * Replays a parsed GEOSEARCH against its key: every FROMMEMBER lookup in
+ * argument order (only when the key exists), then the held argument error.
+ * Returns null for a missing key, else the query and its center.
+ */
+export function resolveGeoSearch(
+  zset: RedisSortedSetData | null | undefined,
+  parsed: GeoSearchParse,
+  profile: CompatibilityProfile,
+): { query: GeoSearchQuery; center: GeoCenter } | null {
+  let center: GeoCenter | undefined
+  if (zset) {
+    for (const member of parsed.lookups) {
+      center = resolveCenterFromMember(zset, member, profile)
+    }
+  }
+  if ('failed' in parsed) throw parsed.failed
+  if (!zset) return null
+  const { query } = parsed
+  if (query.from.type === 'lonlat') {
+    center = { lon: query.from.lon, lat: query.from.lat }
+  }
+  if (!center) throw errors.syntax()
+  return { query, center }
 }
 
 export type GeoRadiusFlags = GeoOrderCount & {
@@ -252,7 +345,7 @@ export function parseGeoRadiusFlags(
   allowStore: boolean,
   profile: CompatibilityProfile,
 ): [GeoRadiusFlags, number] {
-  const options: GeoOrderCount = {}
+  const options: GeoOrderCountFlags = {}
   let withCoord = false
   let withDist = false
   let withHash = false
@@ -304,9 +397,10 @@ export function parseGeoRadiusFlags(
   if ((store || storeDist) && (withCoord || withDist || withHash)) {
     throw errors.geoRadiusStoreWithOptions(profile)
   }
+  const orderCount = finishOrderCount(options)
 
   return [
-    { ...options, withCoord, withDist, withHash, store, storeDist },
+    { ...orderCount, withCoord, withDist, withHash, store, storeDist },
     cursor,
   ]
 }
