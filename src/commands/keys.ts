@@ -424,12 +424,12 @@ export const renameCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // Real Redis adds the destination (`new`) before deleting the source
+    // (`rename_from`), then announces `rename_to`; an existing destination
+    // is deleted and added again, so it is `new` too.
+    ctx.db.announceNew(args.newKey)
     ctx.db.delete(args.key)
-    ctx.db.set(
-      args.newKey,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    ctx.db.set(args.newKey, value, { expiresAt, announceNew: false })
 
     return ok()
   },
@@ -450,12 +450,12 @@ export const renamenxCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
+    // Real Redis adds the destination (`new`) before deleting the source
+    // (`rename_from`), then announces `rename_to`; an existing destination
+    // is deleted and added again, so it is `new` too.
+    ctx.db.announceNew(args.newKey)
     ctx.db.delete(args.key)
-    ctx.db.set(
-      args.newKey,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    ctx.db.set(args.newKey, value, { expiresAt, announceNew: false })
 
     return integer(1)
   },
@@ -488,11 +488,12 @@ export const moveCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
-    // move_from on the source, then move_to on the target (#445).
+    // `new` on the target, move_from on the source, then move_to on the
+    // target (#445).
+    const target = targetDb.withOrigin('move')
+    target.announceNew(args.key)
     ctx.db.delete(args.key)
-    targetDb
-      .withOrigin('move')
-      .set(args.key, value, expiresAt !== undefined ? { expiresAt } : undefined)
+    target.set(args.key, value, { expiresAt, announceNew: false })
 
     return integer(1)
   },
@@ -577,11 +578,9 @@ export const copyCommand = defineCommand({
     const expiresAt =
       expiration.kind === 'expires' ? expiration.expiresAt : undefined
 
-    targetDb.set(
-      destination,
-      value,
-      expiresAt !== undefined ? { expiresAt } : undefined,
-    )
+    // REPLACE deletes an existing destination and adds it again, so the
+    // destination is announced `new` either way.
+    targetDb.set(destination, value, { expiresAt, announceNew: true })
 
     return integer(1)
   },
@@ -775,6 +774,7 @@ function sortElements(
   options: SortOptions,
   db: RedisDatabase,
   profile: CompatibilityProfile,
+  announceMiss: boolean,
 ): Buffer[] {
   if (options.dontsort) {
     // A constant BY does not simply skip the sort: for DESC, sortCommand()'s
@@ -803,7 +803,7 @@ function sortElements(
     //   loads rank order. That order is undefined, so it is left untested.
     const weighted = elements.map(element => ({
       element,
-      weight: by ? readSortPattern(db, by, element) : element,
+      weight: by ? readSortPattern(db, by, element, announceMiss) : element,
     }))
     weighted.sort(
       (a, b) => direction * compareSortAlphaWeights(a.weight, b.weight),
@@ -814,7 +814,7 @@ function sortElements(
   const scored = elements.map(element => ({
     element,
     score: sortNumericScore(
-      by ? readSortPattern(db, by, element) : element,
+      by ? readSortPattern(db, by, element, announceMiss) : element,
       profile,
     ),
   }))
@@ -883,11 +883,17 @@ function runSort(
   const db = ctx.db
   const source = readSortSource(db, args.key)
   const effective = forceDeterministicSetOrder(options, source.type, ctx)
+  // The BY / GET keys are read lookups (a missing one publishes `keymiss`),
+  // except under STORE on 6.2, which looks them up for writing (6.2.14
+  // sort.c:464).
+  const announceMiss =
+    !options.store ||
+    ctx.server.profile.has('notify.keyspace.keymiss-store-sources')
   const sorted = applySortLimit(
-    sortElements(source, effective, db, ctx.server.profile),
+    sortElements(source, effective, db, ctx.server.profile, announceMiss),
     options.limit,
   )
-  const output = projectSortOutput(sorted, options.get, db)
+  const output = projectSortOutput(sorted, options.get, db, announceMiss)
 
   if (options.store) {
     // An empty result deletes the destination (`del`); otherwise the list
@@ -911,6 +917,7 @@ function projectSortOutput(
   elements: readonly Buffer[],
   get: readonly Buffer[],
   db: RedisDatabase,
+  announceMiss: boolean,
 ): Array<Buffer | null> {
   if (get.length === 0) {
     return elements.map(element => Buffer.from(element))
@@ -922,7 +929,7 @@ function projectSortOutput(
       output.push(
         isSelfSortPattern(pattern)
           ? Buffer.from(element)
-          : readSortPattern(db, pattern, element),
+          : readSortPattern(db, pattern, element, announceMiss),
       )
     }
   }
@@ -932,35 +939,61 @@ function projectSortOutput(
 /**
  * Mirrors `lookupKeyByPattern()`: a pattern with no `*` resolves to nothing,
  * and a key holding anything other than a string resolves to nothing either —
- * real Redis never turns that into a WRONGTYPE for the whole SORT.
+ * real Redis never turns that into a WRONGTYPE for the whole SORT. A
+ * `key*->field` pattern reads `field` of the hash `key<element>` instead. The
+ * key is looked up for reading, so a missing one publishes `keymiss` when
+ * `announceMiss` is set.
  */
 function readSortPattern(
   db: RedisDatabase,
   pattern: Buffer,
   element: Buffer,
+  announceMiss: boolean,
 ): Buffer | null {
   const wildcard = sortPatternWildcardIndex(pattern)
   if (wildcard === -1) {
     return null
   }
 
-  const key = expandSortPattern(pattern, wildcard, element)
-  if (db.getType(key) !== 'string') {
+  const { key, field } = expandSortPattern(pattern, wildcard, element)
+  const type = db.getType(key)
+  if (type === null) {
+    if (announceMiss) db.announceKeyMiss(key)
+    return null
+  }
+  if (field) {
+    if (type !== 'hash') return null
+    return db.updateHash(key, hash => hash.getField(field)?.value ?? null)
+  }
+  if (type !== 'string') {
     return null
   }
   return db.getString(key)
 }
 
+/**
+ * Substitutes `element` for the `*`. Like `lookupKeyByPattern()`, a `->`
+ * after the `*` (found with `strstr`, so not past a NUL) followed by at least
+ * one byte splits off a hash field.
+ */
 function expandSortPattern(
   pattern: Buffer,
   wildcard: number,
   element: Buffer,
-): Buffer {
-  return Buffer.concat([
-    pattern.subarray(0, wildcard),
-    element,
-    pattern.subarray(wildcard + 1),
-  ])
+): { key: Buffer; field: Buffer | null } {
+  const tail = pattern.subarray(wildcard + 1)
+  const nul = tail.indexOf(0)
+  const arrow = tail.indexOf('->')
+  const hasField =
+    arrow !== -1 &&
+    (nul === -1 || arrow + 1 < nul) &&
+    arrow + 2 < tail.length &&
+    tail[arrow + 2] !== 0
+  const postfix = hasField ? tail.subarray(0, arrow) : tail
+  return {
+    key: Buffer.concat([pattern.subarray(0, wildcard), element, postfix]),
+    field: hasField ? Buffer.from(tail.subarray(arrow + 2)) : null,
+  }
 }
 
 /**

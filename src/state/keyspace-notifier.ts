@@ -104,7 +104,8 @@ type ResolvedNotification = {
   database: number
   key: Buffer
   event: string
-  eventClass: NotifyClass
+  // `n` (new) and `m` (keymiss) are classes of their own, outside `A`.
+  eventClass: NotifyClass | 'n' | 'm'
 }
 
 // Commands whose write event name differs from the command name (Redis names
@@ -243,6 +244,20 @@ export class KeyspaceNotifier {
           key: event.key,
           event: 'expired',
           eventClass: 'x',
+        }
+      case 'new':
+        return {
+          database: event.database,
+          key: event.key,
+          event: 'new',
+          eventClass: 'n',
+        }
+      case 'keymiss':
+        return {
+          database: event.database,
+          key: event.key,
+          event: 'keymiss',
+          eventClass: 'm',
         }
       case 'flush':
         return null

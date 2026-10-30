@@ -726,6 +726,19 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
       `HEXPIREAT`/`HPEXPIREAT`/`HGETEX EX|PX|...` → `hexpire` (`hdel` for a
       time already past); `HGETEX PERSIST` → `hpersist`; `HSETEX` → `hset` then
       `hexpire`/`hdel`. `SORT ... STORE` → `sortstore`.
+- [x] `keymiss` (class `m`): a read lookup of a missing key, as real Redis'
+      `lookupKeyRead` publishes it. Readonly commands read every key they
+      name (`XREAD` twice per stream; not `WATCH`); `GETSET`, `GETDEL`,
+      `GETEX`, `SET ... GET` and the sources of `BITOP`, `PFMERGE`,
+      `GEOSEARCHSTORE` and `GEORADIUS` are read lookups on every profile, the
+      sources of the `*STORE` commands, `SORT ... STORE`, `COPY` and a
+      single-key `PFCOUNT` from 7.0. Write lookups (`DEL`, `EXPIRE`, `LPOP`,
+      `LMOVE`, `HSET`, ...) publish nothing. Published as the command runs,
+      before its own events (a queued command at `EXEC`).
+- [x] `new` (class `n`, 7.0+): a key added to the database, before the
+      command's own event; an overwrite is not new. `RENAME` / `COPY` /
+      `MOVE` destinations are new, even over an existing key for `RENAME`
+      and `COPY ... REPLACE`.
 
 > Known gaps: `SET ... EX`/`SETEX` emit only `set` (real Redis also emits a
 > secondary `expire`); `FLUSHDB`/`FLUSHALL` emit no per-key events; `MOVE` and

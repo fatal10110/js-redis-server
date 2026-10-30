@@ -225,6 +225,20 @@ export const errors = Object.freeze({
         ? "Replica can't interact with the keyspace"
         : "Replica can't interract with the keyspace",
     ),
+  /**
+   * A command other than (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT /
+   * RESET sent on a RESP2 connection in subscribed mode. `name` is the
+   * command-table entry the call was looked up as: `config|get` from 7.0,
+   * the parent `config` on 6.2. 6.2 has no sharded Pub/Sub, so its list
+   * reads `(P)SUBSCRIBE / (P)UNSUBSCRIBE`; see
+   * `error.subscribed-context-wording`.
+   */
+  subscribedContext: (name: string, profile: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile.has('error.subscribed-context-wording')
+        ? `Can't execute '${name}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`
+        : `Can't execute '${name}': only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`,
+    ),
 
   // Numbers
   expectedInteger: () =>

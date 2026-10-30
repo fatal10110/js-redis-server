@@ -61,6 +61,21 @@ export type RedisMutationEvent = (
       key: Buffer
       valueType: RedisDataValue['type']
     }
+  | {
+      // Notification-only, like `notify`: a key was added to the database
+      // (real Redis' `dbAdd`, which publishes `new`). Emitted before the
+      // write that stores it, so `new` precedes the command's own event.
+      type: 'new'
+      database: number
+      key: Buffer
+    }
+  | {
+      // Notification-only: a read lookup of a key that does not exist (real
+      // Redis' `lookupKeyRead` miss, which publishes `keymiss`).
+      type: 'keymiss'
+      database: number
+      key: Buffer
+    }
 ) & { command?: string }
 
 export type RedisMutationListener = (event: RedisMutationEvent) => void
@@ -98,14 +113,19 @@ export class RedisMutationBus {
   /**
    * Fan `event` out. Global listeners (keyspace notifications, replication)
    * see every event. Per-key listeners — WATCH and blocked clients — see only
-   * modified-key signals, never `notify`.
+   * modified-key signals, never the notification-only `notify`, `new` and
+   * `keymiss`.
    */
   emit(event: RedisMutationEvent): void {
     for (const listener of Array.from(this.globalListeners)) {
       listener(cloneMutationEvent(event))
     }
 
-    if (event.type === 'notify') {
+    if (
+      event.type === 'notify' ||
+      event.type === 'new' ||
+      event.type === 'keymiss'
+    ) {
       return
     }
 
@@ -155,6 +175,8 @@ function cloneMutationEvent(event: RedisMutationEvent): RedisMutationEvent {
     case 'persist':
     case 'evict':
     case 'notify':
+    case 'new':
+    case 'keymiss':
       return {
         ...event,
         key: Buffer.from(event.key),
