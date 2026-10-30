@@ -170,9 +170,9 @@ function storeResult(
     db.delete(destination)
     return 0
   }
-  db.updateSortedSet(destination, zset => {
-    zset.replaceMembers(members, { forceDirty: true })
-  })
+  // One write replacing whatever the destination held, like real Redis's
+  // setKey(): any type, its TTL cleared, a single `<command>store` event.
+  db.set(destination, { type: 'zset', members })
   return members.size
 }
 

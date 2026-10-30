@@ -108,10 +108,9 @@ export const geosearchstoreCommand = defineCommand({
       return integer(0)
     }
 
-    ctx.db.delete(args.destination)
-    ctx.db.updateSortedSet(args.destination, destZset => {
-      destZset.replaceMembers(members, { forceDirty: true })
-    })
+    // One write replacing whatever the destination held: a single
+    // `geosearchstore`, not `del` followed by it.
+    ctx.db.set(args.destination, { type: 'zset', members })
     return integer(members.size)
   },
 })

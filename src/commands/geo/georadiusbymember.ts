@@ -69,10 +69,9 @@ function executeGeoRadiusByMember(
       ctx.db.delete(dest)
       return integer(0)
     }
-    ctx.db.delete(dest)
-    ctx.db.updateSortedSet(dest, destZset => {
-      destZset.replaceMembers(members, { forceDirty: true })
-    })
+    // One write replacing whatever the destination held, published as
+    // `georadiusstore` like real Redis — not `del` followed by the command.
+    ctx.db.withOrigin('georadiusstore').set(dest, { type: 'zset', members })
     return integer(members.size)
   }
 

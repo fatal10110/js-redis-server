@@ -155,9 +155,9 @@ function storeSetResult(
     db.delete(destKey)
     return 0
   }
-  db.updateSet(destKey, set => {
-    set.replaceWith(result, { forceDirty: true })
-  })
+  // One write replacing whatever the destination held, like real Redis's
+  // setKey(): any type, its TTL cleared, a single `<command>store` event.
+  db.set(destKey, result)
   return result.members.size
 }
 

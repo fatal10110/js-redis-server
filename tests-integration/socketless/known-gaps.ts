@@ -362,6 +362,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'XGROUP subcommands publish xgroup-<subcommand> (#381)',
       'XREADGROUP / XCLAIM / XAUTOCLAIM publish xgroup-createconsumer for a new consumer',
       'ZMPOP / BZMPOP / BZPOPMIN / BZPOPMAX publish zpopmin / zpopmax (#446)',
+      'a STORE over a destination of another type publishes only the STORE event (#524)',
       'a STORE over an existing destination publishes one event',
       'a blocked pop served by a push publishes the push, then the pop (#446)',
       'expired hash fields are published as hexpired, never as the reading command',
