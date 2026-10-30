@@ -13,6 +13,9 @@ export type ClusterPolicyOptions = {
   topology?: RedisClusterTopology
 }
 
+/** The queue of a transaction touches more than one slot. */
+const CROSS_SLOT = -1
+
 export function createClusterPolicy(
   options: ClusterPolicyOptions,
 ): ExecutionPolicy {
@@ -62,8 +65,8 @@ export function createClusterPolicy(
         }
       }
 
-      // A transaction boundary resets the per-session pinned slot: 'begin'
-      // (MULTI) starts fresh, 'end' (EXEC/DISCARD) releases the pin once the
+      // A transaction boundary resets the per-session queue slot: 'begin'
+      // (MULTI) starts fresh, 'end' (EXEC/DISCARD) releases it once the
       // current transaction is over.
       if (
         capabilities?.transactionBoundary === 'begin' &&
@@ -76,7 +79,24 @@ export function createClusterPolicy(
         capabilities?.transactionBoundary === 'end' &&
         ctx.session.mode === 'transaction'
       ) {
+        const queuedSlot = transactionSlots.get(ctx.session)
         transactionSlots.delete(ctx.session)
+        // EXEC's own cluster check runs over the whole queue, before EXEC
+        // looks at the dirty flag: commands in different slots answer a bare
+        // CROSSSLOT and discard the transaction (and its WATCHes). Valkey
+        // 8.0 empties the queue when a command is refused, so a dirty
+        // transaction has nothing to check there and aborts instead.
+        if (
+          plan.definition.name === 'exec' &&
+          queuedSlot === CROSS_SLOT &&
+          !(
+            ctx.session.isTransactionDirty() &&
+            ctx.server.profile.has('transaction.refusal-empties-queue')
+          )
+        ) {
+          ctx.session.discardTransaction()
+          throw new RedisCrossSlotError()
+        }
       }
 
       // Redirection is decided here, before a command runs. SORT's BY/GET
@@ -110,18 +130,27 @@ export function createClusterPolicy(
         )
       }
 
-      if (slot === null || ctx.session.mode !== 'transaction') {
+      // Inside MULTI, remember which slot the queue touches; EXEC refuses a
+      // queue that spans slots. A refused command, or any command after it,
+      // is not queued by Redis (`queueMultiCommand` stops once the
+      // transaction is dirty), so it takes no part. From 7.0 a touched WATCH
+      // stops queueing too (CLIENT_DIRTY_CAS), so EXEC answers nil.
+      if (
+        slot === null ||
+        !queueing ||
+        plan.definition.flags.includes('transaction') ||
+        ctx.session.isTransactionDirty() ||
+        (ctx.session.isWatchDirty() &&
+          ctx.server.profile.has('transaction.watch-dirty-stops-queue'))
+      ) {
         return
       }
 
-      const pinnedSlot = transactionSlots.get(ctx.session)
-      if (pinnedSlot === undefined) {
+      const queuedSlot = transactionSlots.get(ctx.session)
+      if (queuedSlot === undefined) {
         transactionSlots.set(ctx.session, slot)
-        return
-      }
-
-      if (pinnedSlot !== slot) {
-        throw new RedisCrossSlotError()
+      } else if (queuedSlot !== slot) {
+        transactionSlots.set(ctx.session, CROSS_SLOT)
       }
     },
   }

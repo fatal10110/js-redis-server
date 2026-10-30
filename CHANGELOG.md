@@ -1905,6 +1905,19 @@ so the PR body is not a durable home for a breaking-change note.
   --cluster create` does (3 masters: 0-5460, 5461-10922, 10923-16383, was
   10921 / 10922), and CLUSTER INFO no longer sends a `cluster_enabled` line
   ([#519]).
+- Cluster MULTI: commands queued in different slots are each `+QUEUED`, and
+  EXEC answers a bare `-CROSSSLOT Keys in request don't hash to the same
+  slot` and discards the transaction (and its WATCHes), as real Redis
+  Cluster does; the mock refused the second command at queue time and EXEC
+  answered EXECABORT. A single command whose keys span slots is still refused
+  while queuing. Commands after a queue-time refusal no longer take part in
+  EXEC's check, and on Valkey 8.0+, where a refusal empties the queue, a
+  refused transaction answers EXECABORT where Redis answers CROSSSLOT
+  ([#519]).
+- Valkey 9.0: `CLIENT REPLY` inside MULTI is refused with `Command
+  'client|reply' not allowed inside a transaction` and EXEC answers
+  EXECABORT: the `no_multi` check reads the subcommand's command-table entry
+  ([#590]).
 
 ## [0.3.0] and earlier
 
@@ -1995,6 +2008,7 @@ requests they contain.
 [#528]: https://github.com/fatal10110/js-redis-server/issues/528
 [#495]: https://github.com/fatal10110/js-redis-server/issues/495
 [#519]: https://github.com/fatal10110/js-redis-server/issues/519
+[#590]: https://github.com/fatal10110/js-redis-server/issues/590
 [#249]: https://github.com/fatal10110/js-redis-server/issues/249
 [#524]: https://github.com/fatal10110/js-redis-server/issues/524
 [#514]: https://github.com/fatal10110/js-redis-server/issues/514
