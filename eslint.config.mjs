@@ -44,4 +44,20 @@ export default [
       'prefer-const': ['error', { ignoreReadBeforeAssign: true }],
     },
   },
+  {
+    // Workflow scripts run in the Workflow tool's runtime, which provides these
+    // globals and wraps the body in an async function (top-level return).
+    files: ['.claude/skills/**/waves.js'],
+    languageOptions: {
+      globals: {
+        args: 'readonly',
+        agent: 'readonly',
+        parallel: 'readonly',
+        pipeline: 'readonly',
+        log: 'readonly',
+        phase: 'readonly',
+      },
+      parserOptions: { ecmaFeatures: { globalReturn: true } },
+    },
+  },
 ]
