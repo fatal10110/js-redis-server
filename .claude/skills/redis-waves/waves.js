@@ -1,13 +1,34 @@
 export const meta = {
   name: 'redis-waves',
-  description: 'js-redis-server wave runner: per PR one long-lived implementation agent and one long-lived review agent that loop through the mailbox until the PR is clean and merged; merger and helper roles run the cheap-model merge and helper agents',
-  whenToUse: 'Run by the redis-waves skill: one Workflow per track (role track), one merger and one helper broker over the same plan',
+  description:
+    'js-redis-server wave runner: per PR one long-lived implementation agent and one long-lived review agent that loop through the mailbox until the PR is clean and merged; merger and helper roles run the cheap-model merge and helper agents',
+  whenToUse:
+    'Run by the redis-waves skill: one Workflow per track (role track), one merger and one helper broker over the same plan',
   phases: [
-    { title: 'Implement', detail: 'long-lived implementation agent per PR; fixes every review, CI and conflict round' },
-    { title: 'Review', detail: 'long-lived review agent per PR; delta re-reviews; requests the merge' },
-    { title: 'Merge', detail: 'merger: CI watch, branch update, squash merge', model: 'haiku' },
-    { title: 'Coordinate', detail: 'first-push watch, final delivery, wave barrier, status', model: 'haiku' },
-    { title: 'Helpers', detail: 'helper broker: redis-researcher, ts-scout, runner' },
+    {
+      title: 'Implement',
+      detail:
+        'long-lived implementation agent per PR; fixes every review, CI and conflict round',
+    },
+    {
+      title: 'Review',
+      detail:
+        'long-lived review agent per PR; delta re-reviews; requests the merge',
+    },
+    {
+      title: 'Merge',
+      detail: 'merger: CI watch, branch update, squash merge',
+      model: 'haiku',
+    },
+    {
+      title: 'Coordinate',
+      detail: 'first-push watch, final delivery, wave barrier, status',
+      model: 'haiku',
+    },
+    {
+      title: 'Helpers',
+      detail: 'helper broker: redis-researcher, ts-scout, runner',
+    },
   ],
 }
 
@@ -19,17 +40,35 @@ const REPO = A.repo || '/home/zorg/workspace/js-redis-server'
 const GH = 'fatal10110/js-redis-server'
 const WT = A.worktrees || '/home/zorg/workspace/js-redis-server-worktrees'
 const RUN = A.run
-const ROLE = A.role === 'broker' ? 'helper' : (A.role || 'track')
+const ROLE = A.role === 'broker' ? 'helper' : A.role || 'track'
 const PLAN = A.plan || {}
 const TRACKS = PLAN.tracks || []
 const TRACK = A.track
 const TOOL = A.tool || REPO + '/scripts/agent-tools/wave_mail.py'
 const RUNDIR = (A.wavesRoot || WT + '/.waves') + '/' + RUN
 // impl/review: null = the session model; a lane's implModel/reviewModel overrides it for that lane.
-const M = Object.assign({ merge: 'haiku', coord: 'haiku', deliver: 'haiku', scout: 'haiku', runner: 'haiku', brief: 'sonnet', researcher: 'sonnet', impl: null, review: null }, A.models || {})
+const M = Object.assign(
+  {
+    merge: 'haiku',
+    coord: 'haiku',
+    deliver: 'haiku',
+    scout: 'haiku',
+    runner: 'haiku',
+    brief: 'sonnet',
+    researcher: 'sonnet',
+    impl: null,
+    review: null,
+  },
+  A.models || {},
+)
 // Commit trailer of the model an implementation agent actually runs on (a lane's implModel, else the session model).
 const SESSION_MODEL = A.sessionModel || 'Claude Opus 5.5'
-const MODEL_NAMES = [[/fable/i, 'Claude Fable 5.1'], [/opus/i, 'Claude Opus 5.5'], [/sonnet/i, 'Claude Sonnet 5.5'], [/haiku/i, 'Claude Haiku 5.5']]
+const MODEL_NAMES = [
+  [/fable/i, 'Claude Fable 5.1'],
+  [/opus/i, 'Claude Opus 5.5'],
+  [/sonnet/i, 'Claude Sonnet 5.5'],
+  [/haiku/i, 'Claude Haiku 5.5'],
+]
 const coAuthor = model => {
   const hit = model && MODEL_NAMES.find(([re]) => re.test(model))
   return `Co-Authored-By: ${hit ? hit[1] : SESSION_MODEL} <noreply@anthropic.com>`
@@ -37,16 +76,34 @@ const coAuthor = model => {
 // Slim agent types (.claude/agents/wave-*.md): each role gets only the tools it uses, so no agent
 // pays for the session's MCP tools, skill listing or deferred-tool list.
 // agentTypes: {role: null} falls back to the default workflow subagent for that role.
-const AT = Object.assign({ coord: 'wave-coord', deliver: 'wave-deliver', merge: 'wave-merge', impl: 'wave-impl', review: 'wave-review', runner: 'wave-runner', scout: 'wave-scout', brief: 'wave-brief', researcher: 'wave-researcher' }, A.agentTypes || {})
+const AT = Object.assign(
+  {
+    coord: 'wave-coord',
+    deliver: 'wave-deliver',
+    merge: 'wave-merge',
+    impl: 'wave-impl',
+    review: 'wave-review',
+    runner: 'wave-runner',
+    scout: 'wave-scout',
+    brief: 'wave-brief',
+    researcher: 'wave-researcher',
+  },
+  A.agentTypes || {},
+)
 // A session loads .claude/agents at start, so a type added later is missing until a restart:
 // such a call reruns on the default subagent and the role stops asking for the type.
 async function agentAs(role, prompt, opts) {
   if (AT[role]) {
     try {
-      return await agent(prompt, Object.assign({}, opts, { agentType: AT[role] }))
+      return await agent(
+        prompt,
+        Object.assign({}, opts, { agentType: AT[role] }),
+      )
     } catch (e) {
       if (!/agent type .* not found/i.test(String(e))) throw e
-      log(`agent type ${AT[role]} is not in this session's registry; ${role} agents use the default subagent`)
+      log(
+        `agent type ${AT[role]} is not in this session's registry; ${role} agents use the default subagent`,
+      )
       AT[role] = null
     }
   }
@@ -54,7 +111,8 @@ async function agentAs(role, prompt, opts) {
 }
 const CHECKOUT = TOOL.replace(/\/scripts\/agent-tools\/wave_mail\.py$/, '')
 const REFS = CHECKOUT + '/.claude/skills/redis-waves/references'
-const refDoc = name => `the procedure ${REFS}/${name}.md (Read it once with the Read tool and follow it)`
+const refDoc = name =>
+  `the procedure ${REFS}/${name}.md (Read it once with the Read tool and follow it)`
 const SLOTS = A.slots || 2
 const LANES = A.lanesPerTrack || Math.max(1, Math.floor(SLOTS / 2))
 const MAX_ROUNDS = A.maxRounds || 8
@@ -70,26 +128,59 @@ const BRIEF = A.brief !== false
 // checkpoints are not failures and do not use the restart budget.
 const MAX_CHECKPOINTS = A.maxCheckpoints === undefined ? 6 : A.maxCheckpoints
 const EPOCH = String(A.epoch || '1')
-const RESEARCHER_LIMIT = A.researcherPerLane === undefined ? 2 : A.researcherPerLane
+const RESEARCHER_LIMIT =
+  A.researcherPerLane === undefined ? 2 : A.researcherPerLane
 const RETRY = A.retry || []
 // merge: false — no merger workflow: a clean review ends the lane merge_blocked ("approved, merge
 // by hand") instead of asking for a merge. helpers: false — no helper broker: prompts offer none.
 const MERGE = A.merge !== false
 const USE_HELPERS = A.helpers !== false
 const SATISFIED = ['merged', 'no_change']
-const DONE_BEFORE = ['merged', 'no_change', 'blocked', 'unresolved', 'stalled', 'merge_blocked', 'failed', 'skipped']
+const DONE_BEFORE = [
+  'merged',
+  'no_change',
+  'blocked',
+  'unresolved',
+  'stalled',
+  'merge_blocked',
+  'failed',
+  'skipped',
+]
 // Set once any lane of this track has seen STOP: lanes not started yet then return without starting.
 let STOPPING = false
-const FINAL = ['merged', 'unresolved', 'stalled', 'merge_blocked', 'failed', 'stopped', 'no_change', 'blocked']
+const FINAL = [
+  'merged',
+  'unresolved',
+  'stalled',
+  'merge_blocked',
+  'failed',
+  'stopped',
+  'no_change',
+  'blocked',
+]
 
 if (!RUN) throw new Error('args.run is required')
-if (!['track', 'merger', 'helper'].includes(ROLE)) throw new Error('args.role must be track, merger or helper')
-if (ROLE === 'track' && !TRACKS.includes(TRACK)) throw new Error(`args.track ${TRACK} is not in plan.tracks ${TRACKS.join(',')}`)
+if (!['track', 'merger', 'helper'].includes(ROLE))
+  throw new Error('args.role must be track, merger or helper')
+if (ROLE === 'track' && !TRACKS.includes(TRACK))
+  throw new Error(
+    `args.track ${TRACK} is not in plan.tracks ${TRACKS.join(',')}`,
+  )
 for (const L of (PLAN.waves || []).flatMap(w => w.lanes || [])) {
-  if (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(L.slug || '')) throw new Error(`bad lane slug ${JSON.stringify(L.slug)}: run wave_mail.py validate on the plan`)
+  if (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(L.slug || ''))
+    throw new Error(
+      `bad lane slug ${JSON.stringify(L.slug)}: run wave_mail.py validate on the plan`,
+    )
 }
-if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(RUN) || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(EPOCH)) throw new Error('args.run and args.epoch must be simple names')
-if (LANES * 2 > SLOTS) log(`warning: ${LANES} lanes need ${LANES * 2} agent slots but slots=${SLOTS}; lanes will stall on the concurrency cap`)
+if (
+  !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(RUN) ||
+  !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(EPOCH)
+)
+  throw new Error('args.run and args.epoch must be simple names')
+if (LANES * 2 > SLOTS)
+  log(
+    `warning: ${LANES} lanes need ${LANES * 2} agent slots but slots=${SLOTS}; lanes will stall on the concurrency cap`,
+  )
 
 const MB = `python3 ${TOOL}`
 const AGENT_TOOLS = TOOL.replace(/\/wave_mail\.py$/, '')
@@ -100,7 +191,8 @@ const LANE_DIR = slug => `${RUNDIR}/lanes/${slug}`
 const ALL_LANES = (PLAN.waves || []).flatMap(w => w.lanes || [])
 const LANE_BY = Object.fromEntries(ALL_LANES.map(l => [l.slug, l]))
 const sq = obj => JSON.stringify(obj).replace(/'/g, '\\u0027')
-const NODE_TEST = 'node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test'
+const NODE_TEST =
+  'node --enable-source-maps --import tsx --no-warnings --test-timeout 60000 --test'
 
 // ---------------------------------------------------------------------------
 // Shared prompt blocks
@@ -116,9 +208,12 @@ const TESTRULE = `TEST SCOPE (HIGHEST PRIORITY — overrides every procedure and
 - REAL SERVERS ARE THE ORACLE. Real behavior is checked with ${PROBE} (throwaway docker containers per profile, kept running and shared). Every new or changed integration test that runs standalone (raw-tcp, compatibility, standalone client tests) must also pass against the real server of each profile it covers: \`${PROBE} up -p <profiles>\` prints ports, then ${HEAVY} env TEST_BACKEND=real REDIS_COMPAT=<profile> REDIS_STANDALONE_PORT=<port> ${NODE_TEST} <file>. Cluster suites against real servers run in CI (redis 8.0) only.
 - Report in the PR body (and in review "Checks"): the probes (profiles and versions), the scoped tests you ran, the real-server runs with their profiles, and "full suite: CI".
 `
-const HELPERS = (slug, role) => !USE_HELPERS ? `
+const HELPERS = (slug, role) =>
+  !USE_HELPERS
+    ? `
 No helper agents run in this launch: do every lookup, probe and test run yourself.
-` : `
+`
+    : `
 Cheap helper agents: you cannot spawn subagents, so a broker workflow runs them for you on cheaper models. One Bash call (timeout 600000):
   ${MB} ask --run ${RUN} --from ${slug}/${role} --type <type> --worktree <your worktree or ''> --question - <<'EOF_ASK'
   <self-contained question: what you need, the leads you already have (paths, symbols, commands), the answer shape you want>
@@ -164,7 +259,21 @@ const issuesText = L => L.issues.map(i => '#' + i).join(', ')
 const IMPL_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string', enum: ['merged', 'no_change', 'blocked', 'unresolved', 'stalled', 'merge_blocked', 'failed', 'stopped', 'idle_exit', 'checkpoint'] },
+    status: {
+      type: 'string',
+      enum: [
+        'merged',
+        'no_change',
+        'blocked',
+        'unresolved',
+        'stalled',
+        'merge_blocked',
+        'failed',
+        'stopped',
+        'idle_exit',
+        'checkpoint',
+      ],
+    },
     pr_number: { type: 'integer' },
     closes: { type: 'array', items: { type: 'integer' } },
     summary: { type: 'string' },
@@ -175,18 +284,49 @@ const IMPL_SCHEMA = {
 const REVIEWER_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string', enum: ['merged', 'unresolved', 'stalled', 'merge_blocked', 'failed', 'stopped', 'idle_exit', 'no_change', 'blocked'] },
+    status: {
+      type: 'string',
+      enum: [
+        'merged',
+        'unresolved',
+        'stalled',
+        'merge_blocked',
+        'failed',
+        'stopped',
+        'idle_exit',
+        'no_change',
+        'blocked',
+      ],
+    },
     pr_number: { type: 'integer' },
     rounds: { type: 'integer' },
     merge_sha: { type: 'string' },
-    summary: { type: 'string', description: 'one line per round: verdict and item count; merge attempts and outcomes' },
+    summary: {
+      type: 'string',
+      description:
+        'one line per round: verdict and item count; merge attempts and outcomes',
+    },
   },
   required: ['status', 'summary'],
 }
 const WAIT_SCHEMA = {
   type: 'object',
   properties: {
-    messages: { type: 'array', items: { type: 'object', properties: { seq: { type: 'integer' }, kind: { type: 'string' }, data: { type: 'string', description: 'the message data object, as a JSON string' } }, required: ['seq', 'kind', 'data'] } },
+    messages: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          seq: { type: 'integer' },
+          kind: { type: 'string' },
+          data: {
+            type: 'string',
+            description: 'the message data object, as a JSON string',
+          },
+        },
+        required: ['seq', 'kind', 'data'],
+      },
+    },
     timeout: { type: 'boolean' },
     stop: { type: 'boolean' },
   },
@@ -195,8 +335,21 @@ const WAIT_SCHEMA = {
 const MERGE_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string', enum: ['merged', 'conflict', 'ci_failed', 'head_moved', 'merge_blocked', 'retry'] },
-    answered: { type: 'boolean', description: 'true once the answer file was written' },
+    status: {
+      type: 'string',
+      enum: [
+        'merged',
+        'conflict',
+        'ci_failed',
+        'head_moved',
+        'merge_blocked',
+        'retry',
+      ],
+    },
+    answered: {
+      type: 'boolean',
+      description: 'true once the answer file was written',
+    },
     merge_sha: { type: 'string' },
     notes: { type: 'string' },
   },
@@ -204,13 +357,28 @@ const MERGE_SCHEMA = {
 }
 const LINES_SCHEMA = {
   type: 'object',
-  properties: { passed: { type: 'boolean' }, stop: { type: 'boolean' }, lines: { type: 'array', items: { type: 'string' } } },
+  properties: {
+    passed: { type: 'boolean' },
+    stop: { type: 'boolean' },
+    lines: { type: 'array', items: { type: 'string' } },
+  },
   required: ['lines'],
 }
 const TAKE_SCHEMA = {
   type: 'object',
   properties: {
-    events: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, type: { type: 'string' }, from: { type: 'string' } }, required: ['id', 'type', 'from'] } },
+    events: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          type: { type: 'string' },
+          from: { type: 'string' },
+        },
+        required: ['id', 'type', 'from'],
+      },
+    },
     timeout: { type: 'boolean' },
     stop: { type: 'boolean' },
   },
@@ -235,9 +403,11 @@ ${L.note || ''}
 You own this PR's code: you implement it and fix every review round, CI failure and merge conflict, handing over to a fresh implementation agent at the CHECKPOINTS below so no agent carries a huge context. One long-lived review agent reviews every push and routes merge results back through the lane mailbox. You never merge.
 ${brief ? `\nLANE BRIEF (a scout prepared it from origin/main; it is also in ${D}/brief.md). Rely on it instead of repeating its searches and probes; verify only what you change or what looks wrong:\n${brief}\n` : resume ? `\nThe lane brief is in ${D}/brief.md: Read it once if the lane is still at stage impl; review, CI and conflict rounds rarely need it.\n` : ''}
 
-PHASE 1 — implement. Follow ${refDoc('implement')}: ${brief
-    ? 'the LANE BRIEF above already holds the issue text, the real replies and the code anchors, so start from it: read live only what it lacks or marks open (issue comments newer than the brief included), and probe only what it does not cover'
-    : 'read each issue live (gh issue view --comments), verify each gap still exists on origin/main, and pin the real behavior per profile with the probe'} (through the helpers below where they fit), implement the smallest complete change for this lane test-first, run the scoped gates, then open ONE PR, ready for review (not draft), with "Closes #n" per fully resolved issue and the verification evidence the procedure requires.
+PHASE 1 — implement. Follow ${refDoc('implement')}: ${
+    brief
+      ? 'the LANE BRIEF above already holds the issue text, the real replies and the code anchors, so start from it: read live only what it lacks or marks open (issue comments newer than the brief included), and probe only what it does not cover'
+      : 'read each issue live (gh issue view --comments), verify each gap still exists on origin/main, and pin the real behavior per profile with the probe'
+  } (through the helpers below where they fit), implement the smallest complete change for this lane test-first, run the scoped gates, then open ONE PR, ready for review (not draft), with "Closes #n" per fully resolved issue and the verification evidence the procedure requires.
 - Worktree: ${MB} worktree --run ${RUN} --lane ${L.slug} (one call: creates or reuses ${W} on branch wf/${L.slug} from origin/main, installs node_modules, records it in the lane state, and prints head, dirty files and how far it is behind main). Push with git -C ${W} push -u origin wf/${L.slug}.
 ${(L.deps || []).length ? `- This lane builds on lane(s) ${L.deps.join(', ')}, already merged to origin/main: read their merged PRs and reuse what they added.` : ''}
 - An issue already fixed on main or stale: no code for it; comment with evidence (main SHA, file:line, merging PR), close it (gh issue close --reason completed), leave it out of "Closes".
@@ -343,8 +513,12 @@ function reviewerResume(L, why) {
 // ---------------------------------------------------------------------------
 function watchPrompt(L, drain) {
   return `You are a mailbox watcher. Run only ${drain ? 'these commands, each' : 'this command'} in one Bash call with timeout 600000, copied exactly; do nothing else:
-${drain ? `1. ${MB} drain --run ${RUN} --lane ${L.slug} --box review --kinds no_change,blocked   (discards answers left from an earlier run)
-2. ` : ''}${MB} recv --run ${RUN} --lane ${L.slug} --box review --peek --wait 570
+${
+  drain
+    ? `1. ${MB} drain --run ${RUN} --lane ${L.slug} --box review --kinds no_change,blocked   (discards answers left from an earlier run)
+2. `
+    : ''
+}${MB} recv --run ${RUN} --lane ${L.slug} --box review --peek --wait 570
 While its output has "timeout": true and no "stop", run it again: at most ${WAIT_CALLS} recv runs in total.
 Return the last output: messages (seq, kind, and data re-encoded as a JSON string), timeout, stop.`
 }
@@ -380,7 +554,7 @@ function helperPrompt(ev) {
   const body = {
     'redis-researcher': `Answer it with live probes (${PROBE} run ...: batch every command and profile into as few calls as possible; use {u} in key names) and the servers' sources (${LOOK} redis@<tag>:src/<file>.c:fn:<name> / rg: / ranges; valkey@<tag>:...). Report per version the exact reply bytes, the source lines behind them, and the first release with each behavior; mark what is probed versus read from source only. Never edit anything.`,
     'ts-scout': `Locate the TypeScript code the question asks about, in the worktree it names (read-only; ${LOOK} ts:/rg:/rgl: specs batch several lookups in one call). Report file:line locations with one line each on what is there; no file dumps.`,
-    'runner': `Run the commands the question lists, in the worktree it names; tests, tsc and eslint always through ${HEAVY}. Refuse whole-suite integration commands (npm run test:integration:*, test:all, a glob over all of tests-integration/) and anything touching the shared docker-compose stack (clean:redis, test:integration:real*): answer that CI runs them and ask for the files. Do not edit, commit or push anything. Report per command: pass/fail, the failing test names, and the first error lines with file:line (at most 60 lines in total).`,
+    runner: `Run the commands the question lists, in the worktree it names; tests, tsc and eslint always through ${HEAVY}. Refuse whole-suite integration commands (npm run test:integration:*, test:all, a glob over all of tests-integration/) and anything touching the shared docker-compose stack (clean:redis, test:integration:real*): answer that CI runs them and ask for the files. Do not edit, commit or push anything. Report per command: pass/fail, the failing test names, and the first error lines with file:line (at most 60 lines in total).`,
   }[ev.type]
   return `Helper request ${ev.id} from ${ev.from}. Read the request file ${file} with the Read tool; its "question" field is your task and its "worktree" field is the requester's worktree. ${body}
 Your final message is delivered verbatim to the requester: lead with the answer, cite evidence (probe output, file:line, source refs), say what is confirmed versus inferred.`
@@ -424,30 +598,44 @@ function sem(n) {
   return async fn => {
     if (active < n) active++
     else await new Promise(r => q.push(r))
-    try { return await fn() } finally {
+    try {
+      return await fn()
+    } finally {
       const nx = q.shift()
-      if (nx) nx(); else active--
+      if (nx) nx()
+      else active--
     }
   }
 }
 const hotLocks = {}
-for (const L of ALL_LANES) for (const h of (L.hot || [])) if (!hotLocks[h]) hotLocks[h] = sem(1)
+for (const L of ALL_LANES)
+  for (const h of L.hot || []) if (!hotLocks[h]) hotLocks[h] = sem(1)
 function withHot(groups, fn) {
   const gs = [...groups].sort()
-  const step = i => i >= gs.length ? fn() : hotLocks[gs[i]](() => step(i + 1))
+  const step = i => (i >= gs.length ? fn() : hotLocks[gs[i]](() => step(i + 1)))
   return step(0)
 }
 function parseLines(lines) {
   const st = {}
-  for (const ln of (lines || [])) {
+  for (const ln of lines || []) {
     const [slug, status, stage, pr, round] = String(ln).split('|')
-    if (slug) st[slug] = { status: status || 'active', stage: stage || '', pr: pr ? Number(pr) : undefined, round: round ? Number(round) : 0 }
+    if (slug)
+      st[slug] = {
+        status: status || 'active',
+        stage: stage || '',
+        pr: pr ? Number(pr) : undefined,
+        round: round ? Number(round) : 0,
+      }
   }
   return st
 }
 function parseData(s) {
   if (s && typeof s === 'object') return s
-  try { return JSON.parse(s || '{}') } catch { return {} }
+  try {
+    return JSON.parse(s || '{}')
+  } catch {
+    return {}
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -456,9 +644,11 @@ function parseData(s) {
 async function lifecycle(L, prev, retried) {
   const slug = L.slug
   const history = []
-  const resuming = prev && !DONE_BEFORE.includes(prev.status) && prev.stage ? prev : null
+  const resuming =
+    prev && !DONE_BEFORE.includes(prev.status) && prev.stage ? prev : null
   // A retried lane gets a fresh round budget on top of the rounds it already used.
-  const roundLimit = (retried && prev && prev.round ? prev.round : 0) + MAX_ROUNDS
+  const roundLimit =
+    (retried && prev && prev.round ? prev.round : 0) + MAX_ROUNDS
   const runs = { impl: 0, review: 0 }
   const fails = { impl: 0, review: 0 } // early exits that are not checkpoints
   let checkpoints = 0
@@ -472,35 +662,77 @@ async function lifecycle(L, prev, retried) {
   const start = (role, resume) => {
     const n = ++runs[role]
     done[role] = null
-    const model = role === 'impl' ? (L.implModel || M.impl) : (L.reviewModel || M.review)
-    const opts = role === 'impl'
-      ? { label: `impl:${slug}${n > 1 ? '#' + n : ''}`, phase: 'Implement', schema: IMPL_SCHEMA }
-      : { label: `review:${slug}${n > 1 ? '#' + n : ''}`, phase: 'Review', schema: REVIEWER_SCHEMA }
+    const model =
+      role === 'impl' ? L.implModel || M.impl : L.reviewModel || M.review
+    const opts =
+      role === 'impl'
+        ? {
+            label: `impl:${slug}${n > 1 ? '#' + n : ''}`,
+            phase: 'Implement',
+            schema: IMPL_SCHEMA,
+          }
+        : {
+            label: `review:${slug}${n > 1 ? '#' + n : ''}`,
+            phase: 'Review',
+            schema: REVIEWER_SCHEMA,
+          }
     if (model) opts.model = model
     const effort = role === 'impl' ? L.implEffort : L.reviewEffort
     if (effort) opts.effort = effort
-    const prompt = role === 'impl' ? implPrompt(L, resume, pushed ? null : brief, checkpoints < MAX_CHECKPOINTS) : reviewerPrompt(L, resume, roundLimit)
+    const prompt =
+      role === 'impl'
+        ? implPrompt(
+            L,
+            resume,
+            pushed ? null : brief,
+            checkpoints < MAX_CHECKPOINTS,
+          )
+        : reviewerPrompt(L, resume, roundLimit)
     live[role] = agentAs(role, prompt, opts).then(r => {
       if (r && r.pr_number) pushed = true
       done[role] = r || { status: 'died', summary: `${role} agent died` }
       return { role, n, r: done[role] }
     })
   }
-  const why = (role, r) => `The previous ${role === 'impl' ? 'implementation' : 'review'} agent of this lane exited early (${r.status}: ${(r.summary || '').slice(0, 300)}).`
+  const why = (role, r) =>
+    `The previous ${role === 'impl' ? 'implementation' : 'review'} agent of this lane exited early (${r.status}: ${(r.summary || '').slice(0, 300)}).`
   const sendFinal = async data => {
-    await agentAs('coord', deliverFinalPrompt(L, data), { label: `final:${slug}`, phase: 'Coordinate', model: M.coord, effort: 'low' })
+    await agentAs('coord', deliverFinalPrompt(L, data), {
+      label: `final:${slug}`,
+      phase: 'Coordinate',
+      model: M.coord,
+      effort: 'low',
+    })
   }
 
   if (BRIEF && !resuming) {
-    const b = await agentAs('brief', briefPrompt(L), { label: `brief:${slug}`, phase: 'Implement', model: M.brief })
-    if (typeof b === 'string' && b.trim() === 'STOP') { STOPPING = true; return { slug, status: 'stopped', history } }
+    const b = await agentAs('brief', briefPrompt(L), {
+      label: `brief:${slug}`,
+      phase: 'Implement',
+      model: M.brief,
+    })
+    if (typeof b === 'string' && b.trim() === 'STOP') {
+      STOPPING = true
+      return { slug, status: 'stopped', history }
+    }
     if (typeof b === 'string' && b.trim()) brief = b.trim().slice(0, 24000)
-    else if (b && typeof b === 'object' && b.brief) brief = String(b.brief).slice(0, 24000)
+    else if (b && typeof b === 'object' && b.brief)
+      brief = String(b.brief).slice(0, 24000)
   }
-  start('impl', resuming ? implResume(L, 'A previous implementation agent for this lane stopped (run restart).') : null)
+  start(
+    'impl',
+    resuming
+      ? implResume(
+          L,
+          'A previous implementation agent for this lane stopped (run restart).',
+        )
+      : null,
+  )
   // A checkpoint hands the lane to a fresh implementation agent; anything else counts as an early exit.
-  const checkpointed = r => r.status === 'checkpoint' && checkpoints < MAX_CHECKPOINTS && ++checkpoints
-  const ckptWhy = 'The previous implementation agent of this lane checkpointed to keep its context small; you continue its work with an empty context.'
+  const checkpointed = r =>
+    r.status === 'checkpoint' && checkpoints < MAX_CHECKPOINTS && ++checkpoints
+  const ckptWhy =
+    'The previous implementation agent of this lane checkpointed to keep its context small; you continue its work with an empty context.'
 
   // Until the first push only the implementation agent runs; a cheap watcher holds the second slot.
   const reviewing = pushed
@@ -510,26 +742,53 @@ async function lifecycle(L, prev, retried) {
   // An implementation agent's exit (a checkpoint above all) posts no mailbox message, so the watcher
   // races it instead of being waited out; a watcher still in flight is reused on the next pass.
   let watching = null
-  const settle = async res => { if (watching) await watching; return res }
+  const settle = async res => {
+    if (watching) await watching
+    return res
+  }
   while (!reviewing) {
-    if (!watching) watching = agentAs('coord', watchPrompt(L, firstWatch), { label: `watch:${slug}`, phase: 'Coordinate', model: M.coord, effort: 'low', schema: WAIT_SCHEMA }).then(w => ({ w }))
+    if (!watching)
+      watching = agentAs('coord', watchPrompt(L, firstWatch), {
+        label: `watch:${slug}`,
+        phase: 'Coordinate',
+        model: M.coord,
+        effort: 'low',
+        schema: WAIT_SCHEMA,
+      }).then(w => ({ w }))
     const ev = await Promise.race([watching, live.impl.then(() => null)])
     const w = ev && ev.w
     if (ev) watching = null
     if (w) firstWatch = false
-    if (w && w.stop) { STOPPING = true; await live.impl; return { slug, status: 'stopped', history, impl: done.impl } }
-    const msgs = w ? (w.messages || []).map(m => ({ kind: m.kind, data: parseData(m.data) })) : []
+    if (w && w.stop) {
+      STOPPING = true
+      await live.impl
+      return { slug, status: 'stopped', history, impl: done.impl }
+    }
+    const msgs = w
+      ? (w.messages || []).map(m => ({ kind: m.kind, data: parseData(m.data) }))
+      : []
     const term = msgs.find(m => m.kind === 'no_change' || m.kind === 'blocked')
     if (term) {
       await live.impl
-      log(`${slug}: ${term.kind} — ${(term.data.summary || term.data.reason || '').slice(0, 160)}`)
+      log(
+        `${slug}: ${term.kind} — ${(term.data.summary || term.data.reason || '').slice(0, 160)}`,
+      )
       return { slug, status: term.kind, history, impl: done.impl }
     }
-    if (msgs.some(m => m.kind === 'ready')) { pushed = true; break }
+    if (msgs.some(m => m.kind === 'ready')) {
+      pushed = true
+      break
+    }
     if (done.impl) {
       seen.impl = runs.impl
       if (done.impl.status === 'stopped') STOPPING = true
-      if (['no_change', 'blocked', 'stopped'].includes(done.impl.status)) return settle({ slug, status: done.impl.status, history, impl: done.impl })
+      if (['no_change', 'blocked', 'stopped'].includes(done.impl.status))
+        return settle({
+          slug,
+          status: done.impl.status,
+          history,
+          impl: done.impl,
+        })
       if (checkpointed(done.impl)) {
         history.push(`impl#${runs.impl} checkpoint`)
         start('impl', implResume(L, ckptWhy))
@@ -541,13 +800,24 @@ async function lifecycle(L, prev, retried) {
         // the review side still finishes the lane, as it does for an exit after the push.
         const late = watching ? (await watching).w : null
         watching = null
-        if (!(late && (late.messages || []).some(m => m.kind === 'ready'))) return { slug, status: 'failed', notes: 'implementation agent exited too often', history, impl: done.impl }
+        if (!(late && (late.messages || []).some(m => m.kind === 'ready')))
+          return {
+            slug,
+            status: 'failed',
+            notes: 'implementation agent exited too often',
+            history,
+            impl: done.impl,
+          }
         history.push(`impl gave up after the first push: ${done.impl.status}`)
         pushed = true
         break
       }
-      history.push(`impl#${runs.impl} exited before the first push: ${done.impl.status}`)
-      log(`${slug}: implementation agent exited (${done.impl.status}); starting a replacement`)
+      history.push(
+        `impl#${runs.impl} exited before the first push: ${done.impl.status}`,
+      )
+      log(
+        `${slug}: implementation agent exited (${done.impl.status}); starting a replacement`,
+      )
       start('impl', implResume(L, why('impl', done.impl)))
       idleMin = 0
       continue
@@ -556,7 +826,13 @@ async function lifecycle(L, prev, retried) {
       if (++watchFails > 3) {
         await sendFinal({ reason: 'failed' })
         await live.impl
-        return { slug, status: 'failed', notes: 'mailbox watcher failed repeatedly', history, impl: done.impl }
+        return {
+          slug,
+          status: 'failed',
+          notes: 'mailbox watcher failed repeatedly',
+          history,
+          impl: done.impl,
+        }
       }
       continue
     }
@@ -570,15 +846,28 @@ async function lifecycle(L, prev, retried) {
   }
 
   log(`${slug}: first push ready; review agent starting`)
-  start('review', resuming && resuming.stage !== 'impl' ? reviewerResume(L, 'A previous review agent for this lane stopped (run restart).') : null)
+  start(
+    'review',
+    resuming && resuming.stage !== 'impl'
+      ? reviewerResume(
+          L,
+          'A previous review agent for this lane stopped (run restart).',
+        )
+      : null,
+  )
 
   for (let guard = 0; guard < 50; guard++) {
     // Handle an exit the loop has not seen yet before waiting on anything: an agent can finish
     // while the other one is still being started, or both in the same tick.
-    const exitOf = role => (done[role] && seen[role] < runs[role]) ? { role, n: runs[role], r: done[role] } : null
+    const exitOf = role =>
+      done[role] && seen[role] < runs[role]
+        ? { role, n: runs[role], r: done[role] }
+        : null
     let ev = exitOf('review') || exitOf('impl')
     if (!ev) {
-      const pending = ['impl', 'review'].filter(role => !done[role]).map(role => live[role])
+      const pending = ['impl', 'review']
+        .filter(role => !done[role])
+        .map(role => live[role])
       if (!pending.length) break
       ev = await Promise.race(pending)
     }
@@ -588,19 +877,41 @@ async function lifecycle(L, prev, retried) {
       if (FINAL.includes(r.status)) {
         history.push(`review: ${r.status} — ${(r.summary || '').slice(0, 300)}`)
         if (!done.impl) {
-          if (r.status !== 'stopped') await sendFinal({ reason: r.status, merge_sha: r.merge_sha || '' })
+          if (r.status !== 'stopped')
+            await sendFinal({ reason: r.status, merge_sha: r.merge_sha || '' })
           await live.impl
         }
-        log(`${slug}: ${r.status}${r.pr_number ? ' (PR #' + r.pr_number + ')' : ''}${r.merge_sha ? ' ' + r.merge_sha : ''}`)
-        return { slug, status: r.status, pr: r.pr_number, rounds: r.rounds, merge_sha: r.merge_sha, history, impl: done.impl, review: r }
+        log(
+          `${slug}: ${r.status}${r.pr_number ? ' (PR #' + r.pr_number + ')' : ''}${r.merge_sha ? ' ' + r.merge_sha : ''}`,
+        )
+        return {
+          slug,
+          status: r.status,
+          pr: r.pr_number,
+          rounds: r.rounds,
+          merge_sha: r.merge_sha,
+          history,
+          impl: done.impl,
+          review: r,
+        }
       }
-      const implGone = done.impl && seen.impl === runs.impl && (FINAL.includes(done.impl.status) || fails.impl > RESTARTS)
+      const implGone =
+        done.impl &&
+        seen.impl === runs.impl &&
+        (FINAL.includes(done.impl.status) || fails.impl > RESTARTS)
       if (++fails.review > RESTARTS || implGone) {
         if (!done.impl) {
           await sendFinal({ reason: 'failed' })
           await live.impl
         }
-        return { slug, status: 'failed', notes: 'review agent exited too often', history, impl: done.impl, review: r }
+        return {
+          slug,
+          status: 'failed',
+          notes: 'review agent exited too often',
+          history,
+          impl: done.impl,
+          review: r,
+        }
       }
       history.push(`review#${runs.review} exited: ${r.status}`)
       log(`${slug}: review agent exited (${r.status}); starting a replacement`)
@@ -617,66 +928,152 @@ async function lifecycle(L, prev, retried) {
     if (++fails.impl > RESTARTS) {
       history.push(`impl gave up: ${r.status}`)
       if (!done.review) continue // the review agent ends the lane (stalled at worst)
-      return { slug, status: 'failed', notes: 'implementation agent exited too often', history, impl: r, review: done.review }
+      return {
+        slug,
+        status: 'failed',
+        notes: 'implementation agent exited too often',
+        history,
+        impl: r,
+        review: done.review,
+      }
     }
     history.push(`impl#${runs.impl} exited: ${r.status}`)
-    log(`${slug}: implementation agent exited (${r.status}); starting a replacement`)
+    log(
+      `${slug}: implementation agent exited (${r.status}); starting a replacement`,
+    )
     start('impl', implResume(L, why('impl', r)))
   }
-  return { slug, status: (done.review && done.review.status) || 'failed', history, impl: done.impl, review: done.review }
+  return {
+    slug,
+    status: (done.review && done.review.status) || 'failed',
+    history,
+    impl: done.impl,
+    review: done.review,
+  }
 }
 
 async function trackMain() {
   phase('Coordinate')
-  const st0 = await agentAs('coord', statusPrompt(), { label: 'status', phase: 'Coordinate', model: M.coord, effort: 'low', schema: LINES_SCHEMA })
+  const st0 = await agentAs('coord', statusPrompt(), {
+    label: 'status',
+    phase: 'Coordinate',
+    model: M.coord,
+    effort: 'low',
+    schema: LINES_SCHEMA,
+  })
   let STATE = parseLines(st0 && st0.lines)
   const laneSem = sem(LANES)
   const results = []
   const waves = PLAN.waves || []
-  log(`track ${TRACK}: ${waves.length} waves, ${LANES} lane(s) at a time, ${Object.keys(STATE).length} lanes with saved state`)
+  log(
+    `track ${TRACK}: ${waves.length} waves, ${LANES} lane(s) at a time, ${Object.keys(STATE).length} lanes with saved state`,
+  )
   for (let wi = 0; wi < waves.length; wi++) {
-    const mine = (waves[wi].lanes || []).filter(L => L.track === TRACK).map(L => Object.assign({ wave: waves[wi].name || String(wi + 1) }, L))
+    const mine = (waves[wi].lanes || [])
+      .filter(L => L.track === TRACK)
+      .map(L => Object.assign({ wave: waves[wi].name || String(wi + 1) }, L))
     const settled = {}
-    for (const L of mine) { let res; settled[L.slug] = { p: new Promise(r => { res = r }), res: s => res(s) } }
+    for (const L of mine) {
+      let res
+      settled[L.slug] = {
+        p: new Promise(r => {
+          res = r
+        }),
+        res: s => res(s),
+      }
+    }
     const runOne = async L => {
       const prev = STATE[L.slug]
-      if (prev && DONE_BEFORE.includes(prev.status) && !RETRY.includes(L.slug)) return { slug: L.slug, status: prev.status, pr: prev.pr, resumed: true }
+      if (prev && DONE_BEFORE.includes(prev.status) && !RETRY.includes(L.slug))
+        return { slug: L.slug, status: prev.status, pr: prev.pr, resumed: true }
       const same = (L.deps || []).filter(d => settled[d])
       const sameSt = await Promise.all(same.map(d => settled[d].p))
       const bad = (L.deps || []).filter(d => {
-        const s = settled[d] ? sameSt[same.indexOf(d)] : (STATE[d] && STATE[d].status)
+        const s = settled[d]
+          ? sameSt[same.indexOf(d)]
+          : STATE[d] && STATE[d].status
         return !SATISFIED.includes(s)
       })
       if (bad.length) {
         log(`${L.slug}: skipped, deps not merged: ${bad.join(', ')}`)
-        return { slug: L.slug, status: 'skipped', notes: 'deps not merged: ' + bad.join(', ') }
+        return {
+          slug: L.slug,
+          status: 'skipped',
+          notes: 'deps not merged: ' + bad.join(', '),
+        }
       }
-      const retryPrev = prev && RETRY.includes(L.slug) ? Object.assign({}, prev, { status: 'active' }) : prev
-      const notStarted = { slug: L.slug, status: 'stopped', notes: 'run stopping: lane not started' }
+      const retryPrev =
+        prev && RETRY.includes(L.slug)
+          ? Object.assign({}, prev, { status: 'active' })
+          : prev
+      const notStarted = {
+        slug: L.slug,
+        status: 'stopped',
+        notes: 'run stopping: lane not started',
+      }
       if (STOPPING) return notStarted
-      return withHot(L.hot || [], () => laneSem(() => STOPPING ? notStarted : lifecycle(L, retryPrev, RETRY.includes(L.slug))))
+      return withHot(L.hot || [], () =>
+        laneSem(() =>
+          STOPPING
+            ? notStarted
+            : lifecycle(L, retryPrev, RETRY.includes(L.slug)),
+        ),
+      )
     }
-    const rs = await parallel(mine.map(L => async () => {
-      let r
-      try { r = await runOne(L) } catch (e) { r = { slug: L.slug, status: 'failed', notes: String(e) } }
-      if (r.status === 'stopped') STOPPING = true
-      settled[L.slug].res(r.status)
-      STATE[L.slug] = Object.assign({}, STATE[L.slug], { status: r.status, pr: r.pr })
-      return r
-    }))
+    const rs = await parallel(
+      mine.map(L => async () => {
+        let r
+        try {
+          r = await runOne(L)
+        } catch (e) {
+          r = { slug: L.slug, status: 'failed', notes: String(e) }
+        }
+        if (r.status === 'stopped') STOPPING = true
+        settled[L.slug].res(r.status)
+        STATE[L.slug] = Object.assign({}, STATE[L.slug], {
+          status: r.status,
+          pr: r.pr,
+        })
+        return r
+      }),
+    )
     results.push(...rs.filter(Boolean))
-    log(`track ${TRACK}: wave ${wi + 1} done (${rs.filter(r => r && r.status === 'merged').length}/${mine.length} merged); waiting for the other tracks`)
+    log(
+      `track ${TRACK}: wave ${wi + 1} done (${rs.filter(r => r && r.status === 'merged').length}/${mine.length} merged); waiting for the other tracks`,
+    )
     let b = null
     for (let tries = 0; tries < 20; tries++) {
-      b = await agentAs('coord', barrierPrompt(wi, wi === waves.length - 1), { label: `barrier:w${wi + 1}`, phase: 'Coordinate', model: M.coord, effort: 'low', schema: LINES_SCHEMA })
+      b = await agentAs('coord', barrierPrompt(wi, wi === waves.length - 1), {
+        label: `barrier:w${wi + 1}`,
+        phase: 'Coordinate',
+        model: M.coord,
+        effort: 'low',
+        schema: LINES_SCHEMA,
+      })
       if (b && (b.passed || b.stop)) break
     }
-    if (!b || b.stop || !b.passed) { log(`track ${TRACK}: stopping after wave ${wi + 1} (${b && b.stop ? 'STOP' : 'barrier did not pass'})`); break }
+    if (!b || b.stop || !b.passed) {
+      log(
+        `track ${TRACK}: stopping after wave ${wi + 1} (${b && b.stop ? 'STOP' : 'barrier did not pass'})`,
+      )
+      break
+    }
     STATE = Object.assign(STATE, parseLines(b.lines))
   }
-  return results.map(r => ({ slug: r.slug, status: r.status, pr: r.pr, rounds: r.rounds, resumed: r.resumed, merge_sha: r.merge_sha, notes: r.notes, history: r.history,
-    summary: r.impl ? r.impl.summary : undefined, closes: r.impl ? r.impl.closes : undefined, followups: r.impl ? r.impl.followups_filed : undefined,
-    review: r.review ? r.review.summary : undefined }))
+  return results.map(r => ({
+    slug: r.slug,
+    status: r.status,
+    pr: r.pr,
+    rounds: r.rounds,
+    resumed: r.resumed,
+    merge_sha: r.merge_sha,
+    notes: r.notes,
+    history: r.history,
+    summary: r.impl ? r.impl.summary : undefined,
+    closes: r.impl ? r.impl.closes : undefined,
+    followups: r.impl ? r.impl.followups_filed : undefined,
+    review: r.review ? r.review.summary : undefined,
+  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -688,19 +1085,47 @@ async function mergerMain() {
   let requeued = false
   log(`merger: serving merge requests for tracks ${TRACKS.join(',')}`)
   for (let i = 0; i < 900; i++) {
-    const t = await agentAs('coord', takePrompt('merge', !requeued), { label: 'take', phase: 'Merge', model: M.coord, effort: 'low', schema: TAKE_SCHEMA })
+    const t = await agentAs('coord', takePrompt('merge', !requeued), {
+      label: 'take',
+      phase: 'Merge',
+      model: M.coord,
+      effort: 'low',
+      schema: TAKE_SCHEMA,
+    })
     if (!t) continue
     requeued = true // only a take that actually ran has re-served the orphans
     if (t.stop) break
-    for (const ev of (t.events || [])) {
+    for (const ev of t.events || []) {
       const slug = String(ev.from).split('/')[0]
       const L = LANE_BY[slug] || { slug, issues: [] }
-      const m = await agentAs('merge', mergePrompt(ev, L), { label: `merge:${slug}`, phase: 'Merge', model: M.merge, schema: MERGE_SCHEMA })
+      const m = await agentAs('merge', mergePrompt(ev, L), {
+        label: `merge:${slug}`,
+        phase: 'Merge',
+        model: M.merge,
+        schema: MERGE_SCHEMA,
+      })
       if (!m || !m.answered) {
-        await agentAs('deliver', deliverPrompt(ev.id, JSON.stringify({ status: 'retry', notes: 'merge agent ' + (m ? 'did not answer' : 'failed') })), { label: `deliver:${ev.id}`, phase: 'Merge', model: M.deliver, effort: 'low' })
+        await agentAs(
+          'deliver',
+          deliverPrompt(
+            ev.id,
+            JSON.stringify({
+              status: 'retry',
+              notes: 'merge agent ' + (m ? 'did not answer' : 'failed'),
+            }),
+          ),
+          {
+            label: `deliver:${ev.id}`,
+            phase: 'Merge',
+            model: M.deliver,
+            effort: 'low',
+          },
+        )
       }
       handled.push(`${slug}: ${m ? m.status : 'failed'}`)
-      log(`merger: ${slug} ${m ? m.status : 'failed'}${m && m.merge_sha ? ' ' + m.merge_sha : ''}`)
+      log(
+        `merger: ${slug} ${m ? m.status : 'failed'}${m && m.merge_sha ? ' ' + m.merge_sha : ''}`,
+      )
     }
   }
   return { handled }
@@ -715,32 +1140,65 @@ async function helperMain() {
   const perLane = {}
   const served = []
   let requeued = false
-  const deliver = (id, text) => agentAs('deliver', deliverPrompt(id, text), { label: `deliver:${id}`, phase: 'Helpers', model: M.deliver, effort: 'low' })
-  const HELPER_ROLE = { 'redis-researcher': 'researcher', 'ts-scout': 'scout', runner: 'runner' }
+  const deliver = (id, text) =>
+    agentAs('deliver', deliverPrompt(id, text), {
+      label: `deliver:${id}`,
+      phase: 'Helpers',
+      model: M.deliver,
+      effort: 'low',
+    })
+  const HELPER_ROLE = {
+    'redis-researcher': 'researcher',
+    'ts-scout': 'scout',
+    runner: 'runner',
+  }
   const helperRun = ev => {
     const role = HELPER_ROLE[ev.type] || 'runner'
-    const opts = { label: `${ev.type}:${ev.from}`, phase: 'Helpers', model: M[role] }
+    const opts = {
+      label: `${ev.type}:${ev.from}`,
+      phase: 'Helpers',
+      model: M[role],
+    }
     if (role === 'runner') opts.effort = 'low'
     return agentAs(role, helperPrompt(ev), opts)
   }
   log(`helper broker: serving helper requests for tracks ${TRACKS.join(',')}`)
   for (let i = 0; i < 900; i++) {
-    const t = await agentAs('coord', takePrompt('helper', !requeued), { label: 'take', phase: 'Helpers', model: M.coord, effort: 'low', schema: TAKE_SCHEMA })
+    const t = await agentAs('coord', takePrompt('helper', !requeued), {
+      label: 'take',
+      phase: 'Helpers',
+      model: M.coord,
+      effort: 'low',
+      schema: TAKE_SCHEMA,
+    })
     if (!t) continue
     requeued = true // only a take that actually ran has re-served the orphans
     if (t.stop) break
-    for (const ev of (t.events || [])) {
+    for (const ev of t.events || []) {
       const lane = String(ev.from).split('/')[0]
       if (ev.type === 'redis-researcher') {
         perLane[lane] = (perLane[lane] || 0) + 1
         if (perLane[lane] > RESEARCHER_LIMIT) {
-          pending.push(deliver(ev.id, `DENIED: the redis-researcher limit (${RESEARCHER_LIMIT} per lane) is used up for ${lane}. Probe and read the sources inline.`))
+          pending.push(
+            deliver(
+              ev.id,
+              `DENIED: the redis-researcher limit (${RESEARCHER_LIMIT} per lane) is used up for ${lane}. Probe and read the sources inline.`,
+            ),
+          )
           continue
         }
       }
       served.push(`${ev.type} ${ev.from}`)
-      pending.push(helperRun(ev).then(ans =>
-        deliver(ev.id, ans ? String(ans) : `ERROR: the ${ev.type} helper failed. Research inline.`)))
+      pending.push(
+        helperRun(ev).then(ans =>
+          deliver(
+            ev.id,
+            ans
+              ? String(ans)
+              : `ERROR: the ${ev.type} helper failed. Research inline.`,
+          ),
+        ),
+      )
     }
   }
   await Promise.all(pending)
