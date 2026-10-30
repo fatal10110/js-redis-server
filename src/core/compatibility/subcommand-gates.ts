@@ -33,7 +33,11 @@ const REDIS_84: VersionGate = { redis: '8.4.0' }
  * Each entry is `[since, arity]`: the versions that have it, and its
  * command-table arity (command name and subcommand included, negated for a
  * minimum) as `COMMAND INFO` reports it. Lookup checks a call against that
- * arity before the container runs.
+ * arity before the container runs. A third `'admin'` marks an entry flagged
+ * `admin` on every version that has it; `call()` hides those from MONITOR
+ * ({@link containerSubcommandIsAdmin}). Flags checked with `COMMAND INFO` on
+ * redis 7.0.15, 7.2.4, 7.4.4, 8.0.0 and valkey 8.0.0, 9.0.0, and in the
+ * redis 8.4.0 `commands.def` for the 8.2+/8.4+ entries.
  *
  * Captured from redis 7.0.15, 7.2.16, 7.4.11, 8.0.6, 8.4.7 and valkey 7.2.14,
  * 8.0.11, 8.1.0, 9.0.6; the version differences in arity are in
@@ -44,21 +48,21 @@ const REDIS_84: VersionGate = { redis: '8.4.0' }
  */
 const CONTAINER_SUBCOMMANDS: Record<
   string,
-  Record<string, readonly [VersionGate, number]>
+  Record<string, readonly [VersionGate, number, 'admin'?]>
 > = {
   acl: {
     cat: [ALWAYS, -2],
-    deluser: [ALWAYS, -3],
-    dryrun: [ACL_DRYRUN, -4],
+    deluser: [ALWAYS, -3, 'admin'],
+    dryrun: [ACL_DRYRUN, -4, 'admin'],
     genpass: [ALWAYS, -2],
-    getuser: [ALWAYS, 3],
+    getuser: [ALWAYS, 3, 'admin'],
     help: [ALWAYS, 2],
-    list: [ALWAYS, 2],
-    load: [ALWAYS, 2],
-    log: [ALWAYS, -2],
-    save: [ALWAYS, 2],
-    setuser: [ALWAYS, -3],
-    users: [ALWAYS, 2],
+    list: [ALWAYS, 2, 'admin'],
+    load: [ALWAYS, 2, 'admin'],
+    log: [ALWAYS, -2, 'admin'],
+    save: [ALWAYS, 2, 'admin'],
+    setuser: [ALWAYS, -3, 'admin'],
+    users: [ALWAYS, 2, 'admin'],
     whoami: [ALWAYS, 2],
   },
   client: {
@@ -70,55 +74,55 @@ const CONTAINER_SUBCOMMANDS: Record<
     id: [ALWAYS, 2],
     'import-source': [{ valkey: '8.1.0' }, 3],
     info: [ALWAYS, 2],
-    kill: [ALWAYS, -3],
-    list: [ALWAYS, -2],
-    'no-evict': [CLIENT_NO_EVICT, 3],
+    kill: [ALWAYS, -3, 'admin'],
+    list: [ALWAYS, -2, 'admin'],
+    'no-evict': [CLIENT_NO_EVICT, 3, 'admin'],
     'no-touch': [CLIENT_NO_TOUCH, 3],
-    pause: [ALWAYS, -3],
+    pause: [ALWAYS, -3, 'admin'],
     reply: [ALWAYS, 3],
     setinfo: [CLIENT_SETINFO, 4],
     setname: [ALWAYS, 3],
     tracking: [ALWAYS, -3],
     trackinginfo: [ALWAYS, 2],
-    unblock: [ALWAYS, -3],
-    unpause: [ALWAYS, 2],
+    unblock: [ALWAYS, -3, 'admin'],
+    unpause: [ALWAYS, 2, 'admin'],
   },
   cluster: {
-    addslots: [ALWAYS, -3],
-    addslotsrange: [ALWAYS, -4],
-    bumpepoch: [ALWAYS, 2],
-    cancelslotmigrations: [VALKEY_90, 2],
-    'count-failure-reports': [ALWAYS, 3],
+    addslots: [ALWAYS, -3, 'admin'],
+    addslotsrange: [ALWAYS, -4, 'admin'],
+    bumpepoch: [ALWAYS, 2, 'admin'],
+    cancelslotmigrations: [VALKEY_90, 2, 'admin'],
+    'count-failure-reports': [ALWAYS, 3, 'admin'],
     countkeysinslot: [ALWAYS, 3],
-    delslots: [ALWAYS, -3],
-    delslotsrange: [ALWAYS, -4],
-    failover: [ALWAYS, -2],
-    flushslot: [VALKEY_90, -3],
-    flushslots: [ALWAYS, 2],
-    forget: [ALWAYS, 3],
+    delslots: [ALWAYS, -3, 'admin'],
+    delslotsrange: [ALWAYS, -4, 'admin'],
+    failover: [ALWAYS, -2, 'admin'],
+    flushslot: [VALKEY_90, -3, 'admin'],
+    flushslots: [ALWAYS, 2, 'admin'],
+    forget: [ALWAYS, 3, 'admin'],
     getkeysinslot: [ALWAYS, 4],
-    getslotmigrations: [VALKEY_90, 2],
+    getslotmigrations: [VALKEY_90, 2, 'admin'],
     help: [ALWAYS, 2],
     info: [ALWAYS, 2],
     keyslot: [ALWAYS, 3],
     links: [ALWAYS, 2],
-    meet: [ALWAYS, -4],
-    migration: [REDIS_84, -4],
-    migrateslots: [VALKEY_90, -4],
+    meet: [ALWAYS, -4, 'admin'],
+    migration: [REDIS_84, -4, 'admin'],
+    migrateslots: [VALKEY_90, -4, 'admin'],
     myid: [ALWAYS, 2],
     myshardid: [REDIS_72, 2],
     nodes: [ALWAYS, 2],
-    replicas: [ALWAYS, 3],
-    replicate: [ALWAYS, 3],
-    reset: [ALWAYS, -2],
-    saveconfig: [ALWAYS, 2],
-    'set-config-epoch': [ALWAYS, 3],
-    setslot: [ALWAYS, -4],
+    replicas: [ALWAYS, 3, 'admin'],
+    replicate: [ALWAYS, 3, 'admin'],
+    reset: [ALWAYS, -2, 'admin'],
+    saveconfig: [ALWAYS, 2, 'admin'],
+    'set-config-epoch': [ALWAYS, 3, 'admin'],
+    setslot: [ALWAYS, -4, 'admin'],
     shards: [ALWAYS, 2],
-    slaves: [ALWAYS, 3],
+    slaves: [ALWAYS, 3, 'admin'],
     'slot-stats': [{ redis: '8.2.0', valkey: '8.0.0' }, -4],
     slots: [ALWAYS, 2],
-    syncslots: [{ redis: '8.4.0', valkey: '9.0.0' }, -3],
+    syncslots: [{ redis: '8.4.0', valkey: '9.0.0' }, -3, 'admin'],
   },
   command: {
     count: [ALWAYS, 2],
@@ -130,11 +134,11 @@ const CONTAINER_SUBCOMMANDS: Record<
     list: [ALWAYS, -2],
   },
   config: {
-    get: [ALWAYS, -3],
+    get: [ALWAYS, -3, 'admin'],
     help: [ALWAYS, 2],
-    resetstat: [ALWAYS, 2],
-    rewrite: [ALWAYS, 2],
-    set: [ALWAYS, -4],
+    resetstat: [ALWAYS, 2, 'admin'],
+    rewrite: [ALWAYS, 2, 'admin'],
+    set: [ALWAYS, -4, 'admin'],
   },
   pubsub: {
     channels: [ALWAYS, -2],
@@ -165,10 +169,10 @@ const CONTAINER_SUBCOMMANDS: Record<
     stats: [ALWAYS, 2],
   },
   slowlog: {
-    get: [ALWAYS, -2],
+    get: [ALWAYS, -2, 'admin'],
     help: [ALWAYS, 2],
-    len: [ALWAYS, 2],
-    reset: [ALWAYS, 2],
+    len: [ALWAYS, 2, 'admin'],
+    reset: [ALWAYS, 2, 'admin'],
   },
   xgroup: {
     create: [ALWAYS, -5],
@@ -210,6 +214,30 @@ export function containerSubcommandExists(
     ? subcommands[name]
     : undefined
   return entry !== undefined && gateSatisfied(entry[0], profile)
+}
+
+/**
+ * Whether real Redis/Valkey flags the `container|subcommand` table entry
+ * `admin`. Covers the subcommands this server has no captured command-table
+ * entry for (`CLUSTER MEET`, `ACL SETUSER`), so MONITOR hides them as
+ * `call()` does. Only meaningful where the entry exists at the profile (see
+ * {@link containerSubcommandExists}).
+ */
+export function containerSubcommandIsAdmin(
+  container: string,
+  subcommand: Buffer | string,
+): boolean {
+  const subcommands = CONTAINER_SUBCOMMANDS[asciiLowerCase(container)]
+  if (!subcommands) {
+    return false
+  }
+  const name = asciiLowerCase(
+    Buffer.isBuffer(subcommand) ? subcommand.toString('latin1') : subcommand,
+  )
+  return (
+    Object.prototype.hasOwnProperty.call(subcommands, name) &&
+    subcommands[name][2] === 'admin'
+  )
 }
 
 /**

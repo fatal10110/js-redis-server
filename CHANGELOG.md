@@ -102,6 +102,13 @@ so the PR body is not a durable home for a breaking-change note.
   group's last-delivered id, consumers and pending entries only after the
   next XADD, XDEL or XTRIM. Replies, keyspace notifications and WATCH are
   unchanged.
+- MONITOR now shows the non-admin CLUSTER and CONFIG subcommands on redis
+  7.0+ and valkey ([#613]): CLUSTER INFO, KEYSLOT, HELP, MYID, NODES, SLOTS,
+  SHARDS, COUNTKEYSINSLOT, GETKEYSINSLOT, LINKS and CONFIG HELP, also when
+  queued in MULTI or called from a script. Admin subcommands (CLUSTER MEET,
+  SETSLOT, COUNT-FAILURE-REPORTS, CONFIG GET / SET, ...) stay hidden, and so
+  do ACL SETUSER, GETUSER, USERS and CLIENT UNBLOCK, which used to be shown.
+  Redis 6.2 still hides every CLUSTER and CONFIG call.
 
 ### Changed
 
@@ -2217,6 +2224,7 @@ requests they contain.
 [#604]: https://github.com/fatal10110/js-redis-server/issues/604
 [#610]: https://github.com/fatal10110/js-redis-server/issues/610
 [#607]: https://github.com/fatal10110/js-redis-server/issues/607
+[#613]: https://github.com/fatal10110/js-redis-server/issues/613
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

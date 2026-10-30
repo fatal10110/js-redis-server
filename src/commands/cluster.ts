@@ -46,9 +46,6 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
     name: 'cluster',
     schema: clusterSchema,
     flags: ['admin'],
-    monitor: {
-      skip: true,
-    },
     introspection: clusterIntrospection,
     keys: () => [],
     execute: (args, ctx) => {
@@ -137,9 +134,6 @@ export const standaloneClusterCommand = defineCommand({
   name: 'cluster',
   schema: clusterSchema,
   flags: ['admin'],
-  monitor: {
-    skip: true,
-  },
   introspection: clusterIntrospection,
   keys: () => [],
   execute: () => {
