@@ -509,7 +509,13 @@ newline of an inline request, or the CR of a `*<count>` or `$<length>` header.
 It splits inline arguments byte for byte as `sdssplitargs` does. It parses
 incrementally, keeping its place in a partly received multibulk (the element
 count left and the current bulk length, as Redis keeps on the client), so a
-large request split across many reads costs linear time.
+large request split across many reads costs linear time. Its memory follows
+Redis' query buffer: a bulk of 32KB or more gets a buffer of exactly its size
+and becomes the argument without a copy, a buffer left holding only a small
+unread tail is compacted, and no more than 32KB is kept once everything is
+parsed. With `requirepass`, the adapter also tells the decoder, per header,
+whether the connection still has to authenticate; until it has, a multibulk
+count above 10 or a bulk length above 16384 is a protocol error, as in Redis.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
