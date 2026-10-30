@@ -1910,8 +1910,10 @@ so the PR body is not a durable home for a breaking-change note.
   a missing source key answer `*0`, or `:0` after deleting the STORE
   destination, without looking up the member or parsing the radius and unit
   (they answered `could not decode requested zset member` or a radius / unit
-  error). GEORADIUSBYMEMBER on a wrong-typed key answers WRONGTYPE before any
-  radius or unit error ([#519]).
+  error). GEORADIUS*, GEOSEARCH and GEOSEARCHSTORE on a wrong-typed key answer
+  WRONGTYPE before any argument error, and an existing key's BYMEMBER /
+  FROMMEMBER member is looked up before the radius, unit and options are
+  checked, as in real Redis ([#519]).
 
 ## [0.3.0] and earlier
 

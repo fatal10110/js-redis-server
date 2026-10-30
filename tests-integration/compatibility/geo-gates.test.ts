@@ -180,5 +180,10 @@ describe(`GEO gates (${testRunner.getBackendName()}, ${profile})`, () => {
       ['GEOSEARCH', key, 'FROMMEMBER', 'nosuch', 'BYRADIUS', '200', 'km'],
       error,
     )
+    await expectReply(
+      conn,
+      ['GEOSEARCH', key, 'FROMMEMBER', 'nosuch', 'BYRADIUS', 'abc', 'km'],
+      error,
+    )
   })
 })

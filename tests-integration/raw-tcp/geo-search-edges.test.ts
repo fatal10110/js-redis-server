@@ -234,13 +234,35 @@ describe(`Raw TCP GEO search edges (${testRunner.getBackendName()})`, () => {
     await expectReply(conn, ['EXEC'], '*1\r\n*0\r\n')
   })
 
-  test('WRONGTYPE before the radius and unit', async () => {
+  test('WRONGTYPE before any argument error', async () => {
     const str = randomKey('geo-edges-str')
+    const dest = randomKey('geo-edges-dest')
     await expectReply(conn, ['SET', str, 'v'], '+OK\r\n')
-    await expectReply(
-      conn,
+    for (const args of [
       ['GEORADIUSBYMEMBER', str, 'Palermo', 'abc', 'xx'],
-      '-WRONGTYPE Operation against a key holding the wrong kind of value\r\n',
-    )
+      ['GEORADIUSBYMEMBER_RO', str, 'Palermo', '200', 'km', 'FOO'],
+      ['GEORADIUS', str, '15', '37', '200', 'xx'],
+      ['GEORADIUS_RO', str, '15', 'abc', '200', 'km'],
+      ['GEOSEARCH', str, 'FROMLONLAT', '15', '37', 'BYRADIUS', '200', 'xx'],
+      ['GEOSEARCH', str, 'FROMMEMBER', 'a', 'BYBOX', '1', '1', 'km', 'FOO'],
+      [
+        'GEOSEARCHSTORE',
+        dest,
+        str,
+        'FROMLONLAT',
+        '15',
+        '37',
+        'BYRADIUS',
+        '200',
+        'km',
+        'FOO',
+      ],
+    ]) {
+      await expectReply(
+        conn,
+        args,
+        '-WRONGTYPE Operation against a key holding the wrong kind of value\r\n',
+      )
+    }
   })
 })

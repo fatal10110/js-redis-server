@@ -7,11 +7,16 @@ import type { CompatibilityProfile } from '../../core/compatibility/profile'
 import { parseString2dToken } from '../../core/double-token'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
-import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
+import {
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+  errors,
+} from '../../core/redis-error'
 import type {
   RedisSortedSetData,
   RedisSortedSetMember,
 } from '../../state/data-types'
+import { georadiusGetKeys } from '../../core/key-specs'
 import { array, parseIntegerToken } from '../helpers'
 import { getSortedMembers } from '../zsets/helpers'
 import {
@@ -103,6 +108,37 @@ export function parseByBox(
     heightMeters: unitToMeters(height, unit),
     unit,
   }
+}
+
+/**
+ * A GEO argument error held back until execute. Real georadiusGeneric()
+ * parses its arguments only after the WRONGTYPE check (and, for FROMMEMBER /
+ * BYMEMBER, after looking the member up), so a wrong-typed key answers
+ * WRONGTYPE whatever the arguments. Arity errors are not deferred.
+ */
+export function deferGeoParseError(err: unknown): RedisCommandError {
+  if (
+    !(err instanceof RedisCommandError) ||
+    err instanceof WrongNumberOfArgumentsError
+  ) {
+    throw err
+  }
+  return err
+}
+
+/**
+ * The keys a GEORADIUS / GEORADIUSBYMEMBER whose arguments failed to parse is
+ * routed and locked by: Redis' georadiusGetKeys() over the raw arguments (the
+ * source plus the last STORE / STOREDIST destination), as for a command whose
+ * parser throws.
+ */
+export function georadiusRawKeys(
+  commandName: string,
+  input: readonly Buffer[],
+): Buffer[] {
+  return georadiusGetKeys([Buffer.from(commandName), ...input]).map(
+    ({ key }) => key,
+  )
 }
 
 export type GeoFrom =

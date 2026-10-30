@@ -2,15 +2,14 @@ import { defineCommand } from '../../core/command-definition'
 import { georadiusGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
 import type { RedisExecutionContext } from '../../core/redis-context'
-import {
-  RedisCommandError,
-  WrongNumberOfArgumentsError,
-} from '../../core/redis-error'
+import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import { array, integer } from '../helpers'
 import {
   buildSearchReply,
   buildStoreMembers,
   collectMatches,
+  deferGeoParseError,
+  georadiusRawKeys,
   orderAndLimit,
   parseByRadius,
   parseGeoRadiusFlags,
@@ -28,12 +27,8 @@ type GeoRadiusByMemberArgs = {
   // The option tail, or the error it raised. Real Redis reports that error
   // only after the WRONGTYPE check, the member lookup and the radius parse.
   flags: GeoRadiusFlags | Error
-}
-
-function storeDestination(args: GeoRadiusByMemberArgs): Buffer | undefined {
-  return args.flags instanceof Error
-    ? undefined
-    : (args.flags.store ?? args.flags.storeDist)
+  // When the options failed: the keys georadiusGetKeys() finds in them.
+  rawKeys?: Buffer[]
 }
 
 function createGeoRadiusByMemberSchema(allowStore: boolean) {
@@ -49,6 +44,7 @@ function createGeoRadiusByMemberSchema(allowStore: boolean) {
       }
 
       let flags: GeoRadiusFlags | Error
+      let rawKeys: Buffer[] | undefined
       try {
         flags = parseGeoRadiusFlags(
           input,
@@ -57,12 +53,12 @@ function createGeoRadiusByMemberSchema(allowStore: boolean) {
           ctx.profile,
         )[0]
       } catch (err) {
-        if (!(err instanceof RedisCommandError)) throw err
-        flags = err
+        flags = deferGeoParseError(err)
+        rawKeys = georadiusRawKeys(ctx.commandName, input)
       }
 
       return {
-        value: { key, member, radiusTok, unitTok, flags },
+        value: { key, member, radiusTok, unitTok, flags, rawKeys },
         nextIndex: input.length,
       }
     },
@@ -135,7 +131,8 @@ export const georadiusbymemberCommand = defineCommand({
   schema: createGeoRadiusByMemberSchema(true),
   flags: ['write', 'denyoom'],
   keys: args => {
-    const dest = storeDestination(args)
+    if (args.flags instanceof Error) return args.rawKeys ?? [args.key]
+    const dest = args.flags.store ?? args.flags.storeDist
     return dest ? [args.key, dest] : [args.key]
   },
   execute: executeGeoRadiusByMember,
