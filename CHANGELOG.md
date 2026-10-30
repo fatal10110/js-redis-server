@@ -1868,7 +1868,10 @@ so the PR body is not a durable home for a breaking-change note.
   (`server.pending_push_messages`). Before, the first push of a command could
   overtake the reply. Redis 6.2 / 7.0 still write them as they are made; their
   per-command order (some before the reply, some after) is not modeled
-  ([#587]).
+  ([#587]). On every profile, pushes that other clients queue for a
+  connection (for example while its `BLPOP` was parked) now all go out
+  before that connection's next reply. Before, the reply could land between
+  two of them, such as the keyspace and keyevent pushes of one `LPUSH`.
 - Valkey 8.0 profile (8.0.0): `UNSUBSCRIBE` / `PUNSUBSCRIBE` / `SUNSUBSCRIBE`
   on a connection with no subscription of any kind answer `-NOSUB '<name>'
   command executed not in subscribed mode`, in RESP2 and RESP3, and inside

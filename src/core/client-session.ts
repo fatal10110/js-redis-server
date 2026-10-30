@@ -859,6 +859,29 @@ export class ClientSession implements RedisClientSession {
   }
 
   /**
+   * Resolves true once a push is queued, false once the queue is closed or a
+   * signal aborts. A transport pairs it with {@link takePushes} to move every
+   * queued push onto its output at once.
+   */
+  async waitForPushes(signal: AbortSignal): Promise<boolean> {
+    while (!signal.aborted && !this.signal.aborted) {
+      if (this.pushQueue.length > 0) {
+        return true
+      }
+      if (this.pushQueueClosed) {
+        return false
+      }
+      await this.waitForPush(signal)
+    }
+    return false
+  }
+
+  /** Every push queued so far, oldest first, removed from the queue. */
+  takePushes(): RedisResult[] {
+    return this.pushQueue.splice(0)
+  }
+
+  /**
    * Public entry point for executing one client command.
    *
    * Acquires a turn on the server's turn queue before running, guaranteeing

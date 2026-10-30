@@ -17,11 +17,15 @@ import { RawRedisConnection } from '../raw-tcp/raw-connection'
  * or after the reply depends on where the command notifies (SET / GET / DEL /
  * RENAME / EVAL before, HSET / LPUSH / EXPIRE after). The mock does not model
  * that per-command order (a known gap): on those profiles only the frames are
- * checked, not their order.
+ * checked, not their order. Inside EXEC they write each push into the middle
+ * of the EXEC array itself, so the MULTI/EXEC case runs only where the reply
+ * comes first.
  *
  * Checked against redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
  * valkey-server 8.0.0, 9.0.0.
  */
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
 const testRunner = new TestRunner()
 const profile = activeProfile
 const replyFirst = !['redis-6.2', 'redis-7.0'].includes(profile)
@@ -34,6 +38,7 @@ const bulk = (value: string) => `$${Buffer.byteLength(value)}\r\n${value}\r\n`
 
 describe(`keyspace pushes vs the command reply (${testRunner.getBackendName()}, ${profile})`, () => {
   let conn: RawRedisConnection
+  let port: number
   const run = randomKey()
   const keyPattern = `__keyspace@${DB}__:${run}:*`
   const eventPattern = `__keyevent@${DB}__:*`
@@ -72,7 +77,7 @@ describe(`keyspace pushes vs the command reply (${testRunner.getBackendName()}, 
   }
 
   before(async () => {
-    const port = await testRunner.setupRawStandalone()
+    port = await testRunner.setupRawStandalone()
     conn = await RawRedisConnection.connect('127.0.0.1', port)
     conn.write(commandFrame('HELLO', '3'))
     await conn.readFrame()
@@ -152,5 +157,65 @@ describe(`keyspace pushes vs the command reply (${testRunner.getBackendName()}, 
       '+OK\r\n',
       both(key, 'set'),
     )
+  })
+
+  test(
+    "MULTI/EXEC: the EXEC reply, then every queued command's pushes",
+    {
+      skip: replyFirst
+        ? false
+        : '6.2 / 7.0 write the pushes inside the EXEC array',
+    },
+    async () => {
+      const key = `${run}:exec`
+      assert.strictEqual(await send('MULTI'), '+OK\r\n')
+      assert.strictEqual(await send('SET', key, 'v'), '+QUEUED\r\n')
+      assert.strictEqual(await send('EXPIRE', key, '100'), '+QUEUED\r\n')
+      await expectReplyThenPushes(['EXEC'], '*2\r\n+OK\r\n:1\r\n', [
+        ...both(key, 'set'),
+        ...both(key, 'expire'),
+      ])
+    },
+  )
+
+  test("a blocked BLPOP: the pusher's pushes, then the reply, then the pop's", async () => {
+    const key = `${run}:blocked`
+    const other = await RawRedisConnection.connect('127.0.0.1', port)
+    try {
+      const otherSend = async (...args: string[]) => {
+        other.write(commandFrame(...args))
+        return (await other.readRawFrame()).toString('latin1')
+      }
+      assert.strictEqual(await otherSend('SELECT', DB), '+OK\r\n')
+      const id = (await send('CLIENT', 'ID')).slice(1, -2)
+      conn.write(commandFrame('BLPOP', key, '0'))
+      // Wait until the server has parked the BLPOP, so the LPUSH serves it.
+      const deadline = Date.now() + 5000
+      for (;;) {
+        const list = await otherSend('CLIENT', 'LIST')
+        const line = list.split('\n').find(l => l.startsWith(`id=${id} `))
+        if (line && /\bflags=\S*b/.test(line)) break
+        assert.ok(Date.now() < deadline, `BLPOP never blocked:\n${list}`)
+        await delay(10)
+      }
+      assert.strictEqual(await otherSend('LPUSH', key, 'x', 'y'), ':2\r\n')
+      const frames: string[] = []
+      while (frames.length < 5) {
+        frames.push((await conn.readRawFrame()).toString('latin1'))
+      }
+      const expected = [
+        ...both(key, 'lpush'),
+        `*2\r\n${bulk(key)}${bulk('y')}`,
+        ...both(key, 'lpop'),
+      ]
+      // Real 7.0 sends this order too; the mock does not model 6.2 / 7.0.
+      if (!replyFirst) {
+        assert.deepStrictEqual([...frames].sort(), [...expected].sort())
+      } else {
+        assert.deepStrictEqual(frames, expected)
+      }
+    } finally {
+      other.close()
+    }
   })
 })
