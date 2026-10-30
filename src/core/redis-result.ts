@@ -12,6 +12,11 @@ export type RedisResultOptions = {
    * front end that reads `value` instead of bytes delivers them as pushes.
    */
   trailingFrames?: readonly RedisValue[]
+  /**
+   * Written as a push (`CLIENT_PUSHING`): the (un)subscribe confirmations,
+   * which CLIENT REPLY OFF / SKIP never drop.
+   */
+  push?: boolean
 }
 
 export class RedisResult {

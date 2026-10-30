@@ -702,6 +702,28 @@ so the PR body is not a durable home for a breaking-change note.
   lock is a named client connection on every endpoint, so the suites' own
   `FLUSHALL`s do not drop it and a crashed run releases it at once. The
   `test:integration:real*` scripts hold it until the test run exits.
+- `CLIENT PAUSE timeout [WRITE|ALL]` and `CLIENT UNPAUSE` (#250), with real
+  semantics: the pause is server-wide and postpones, rather than refuses, the
+  commands of every client but a MONITOR connection until the timeout or
+  UNPAUSE. `WRITE` holds back write and may-replicate commands (`SET`,
+  `PUBLISH`, `EVAL`, `PFCOUNT`, on 6.2 `SCRIPT`) and an `EXEC` whose
+  transaction queued one; `ALL` (the default) holds back every command,
+  `CLIENT UNPAUSE` included, while commands refused earlier (wrong arity,
+  unknown command, NOAUTH) are still answered at once. A second pause keeps
+  the later end time and the stricter mode. The mode is checked before the
+  timeout (`CLIENT PAUSE mode must be WRITE or ALL`); an end time past
+  `LLONG_MAX` is `timeout is out of range` from Redis 7.2 / Valkey 7.2 and a
+  no-op `+OK` before; Valkey 8.1+ ignores arguments after the mode.
+- `CLIENT REPLY ON|OFF|SKIP` (#251): `OFF` drops every reply, refused
+  commands included, until `CLIENT REPLY ON`; `SKIP` drops exactly the next
+  command's reply (and does nothing while `OFF`); `RESET` turns replies back
+  on but does not cancel a skip already armed for it. Pushes are still
+  delivered. Known gap: inside `EXEC` real Redis writes nothing for a queued
+  `OFF` / `SKIP` (the array comes one element short) and drops what follows
+  an `OFF`; here their slot reads `+OK` and an `OFF` drops the whole reply.
+- `CLIENT NO-TOUCH ON|OFF` (#251) on Redis 7.2+ / Valkey 7.2+: a per-connection
+  flag shown as `T` in `CLIENT INFO` / `CLIENT LIST` and cleared by `RESET`
+  (there is no LRU/LFU state for it to protect).
 
 - **`/core`** New `FeatureId` gates `error.subscribed-context-wording`
   (the 7.0 subscribed-mode refusal),

@@ -1,5 +1,6 @@
 import type { CommandPlan } from './command-definition'
 import { CommandExecutor } from './command-executor'
+import { applyClientReplyMode } from './client-reply'
 import {
   createDefaultParkHandler,
   createNonBlockingParkHandler,
@@ -894,7 +895,12 @@ export class ClientSession implements RedisClientSession {
       )
       this.lastInteraction = Date.now()
       const ctx = this.createExecutionContext(turnAccess)
-      result = await this.executor.executeRaw(rawCommand, rawArgs, ctx)
+      // CLIENT REPLY OFF / SKIP drop the reply of every command processed,
+      // refused ones included, as real Redis checks before writing any reply.
+      result = applyClientReplyMode(
+        this,
+        await this.executor.executeRaw(rawCommand, rawArgs, ctx),
+      )
     } finally {
       this.lastInteraction = Date.now()
       this.ownMonitorLines = null

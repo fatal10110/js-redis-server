@@ -156,6 +156,8 @@ Current profile gates:
 | `COMMAND HELP` without "Redis" (`Return details about all commands.`) | never | `valkey-8.0+` |
 | An empty array, not an empty set, for a `COMMAND INFO` entry without subcommands (RESP3 `*0` rather than `~0`), as Valkey 7.2.14, 8.0.11 and 9.0.6 send it; Valkey 8.0.0, 9.0.0 and 9.0.1 still send `~0`, so the `valkey-8.0` / `valkey-9.0` presets (8.0.0 / 9.0.0) differ from those first releases | never | `valkey-8.0+` |
 | `CLIENT NO-EVICT` and multi-section `INFO` | `redis-7.0+` | `valkey-8.0+` |
+| `CLIENT NO-TOUCH`, and `timeout is out of range` for a `CLIENT PAUSE` end time past `LLONG_MAX` (before: `+OK`, nothing paused) | `redis-7.2+` | `valkey-8.0+` |
+| `CLIENT PAUSE` accepts arguments after the mode, reading the mode only when it is the last argument (`CLIENT PAUSE 10 WRITE x` pauses ALL) | never | `valkey-8.1+` (not a preset; `valkey-9.0`) |
 | `EXPIRE`/`PEXPIRE`/`EXPIREAT`/`PEXPIREAT` `NX`, `XX`, `GT`, `LT` options (before them: arity 3, and any extra token is `wrong number of arguments`) | `redis-7.0+` | `valkey-8.0+` |
 | `SET GET`, `SET EXAT`, `SET PXAT` | `redis-6.2+` | `valkey-8.0+` |
 | `SET` with a deadline already past writes nothing and deletes an existing key (Redis writes the key with the past TTL and publishes `set` / `expire`) | never | `valkey-8.0+` |
