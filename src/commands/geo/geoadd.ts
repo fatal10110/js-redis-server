@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
 import { parseString2dToken } from '../../core/double-token'
@@ -29,7 +30,7 @@ function createGeoAddSchema() {
 
       const options: GeoAddOptions = { nx: false, xx: false, ch: false }
       while (cursor < input.length) {
-        const token = input[cursor]!.toString().toUpperCase()
+        const token = asciiUpperCase(input[cursor]!.toString())
         if (token === 'NX') {
           options.nx = true
           cursor++

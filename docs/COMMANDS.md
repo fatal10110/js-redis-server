@@ -146,17 +146,18 @@ real Redis does not have) reports what its `introspection` declares.
 
 #### CONFIG
 
-- [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (glob-matched against a fixed set of plausible defaults; RESP3 map / RESP2 flat array)
-- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2)
+- [x] `CONFIG GET parameter [parameter ...]` - Get configuration parameters (RESP3 map / RESP2 flat array). Patterns are glob-matched case-insensitively against the profile's parameter table, seeded with the real servers' defaults; the `redis-6.2` profile takes exactly one pattern, like real 6.2. On 7.0+ an exact parameter name (or alias) is echoed back as sent (`CONFIG GET MaxMemory` replies `MaxMemory`), while glob matches reply with the table spelling. The reply order of a glob is not pinned: real servers return dict order, which differs per version
+- [x] `CONFIG SET parameter value [parameter value ...]` - Set configuration parameters (rejects unknown and repeated parameter names with the real Redis errors, resolving every name before validating any value, matching CONFIG SET's "all-or-nothing" validation; the `redis-6.2` profile accepts exactly one pair, like real 6.2). Each value is validated by the parameter's type (yes/no booleans, integers with their real bounds, memory values such as `1mb`, enums, `save` pairs, ...) and a bad value fails with the profile's wording: 6.2 `ERR Invalid argument '<value>' for CONFIG SET '<name>'`, 7.0+ `ERR CONFIG SET failed (possibly related to argument '<name>') - <reason>`. On 7.0+ the 6.2 `*-ziplist-*` names are accepted as aliases of the `*-listpack-*` parameters; on `redis-6.2` the ziplist names are the only ones. Immutable parameters (`databases`, `daemonize`) fail with `can't set immutable config` on 7.0+ and as unsupported parameters on 6.2
 - [x] `CONFIG HELP`
 - [x] `CONFIG RESETSTAT` - Reset the stats returned by INFO (no-op in the mock)
 - [x] `CONFIG REWRITE` - Rewrite the configuration file (returns Redis' no-config-file error)
 
 > There is no real configuration subsystem behind this - values are an
-> in-memory per-server store seeded with plausible defaults (`maxmemory`,
-> `appendonly`, `save`, listpack thresholds, etc.), enough to satisfy client
-> library initialization. Most parameters are inert: `CONFIG SET` stores the
-> value but does not change server behavior. There are two exceptions, both
+> in-memory per-server store seeded with the real servers' defaults
+> (`maxmemory`, `appendonly`, `save`, listpack thresholds, etc.), enough to
+> satisfy client library initialization. Most parameters are inert: `CONFIG SET`
+> validates the value like the real server and stores it, but does not change
+> server behavior. There are two exceptions, both
 > real, behavior-driving settings:
 >
 > - `notify-keyspace-events` — see

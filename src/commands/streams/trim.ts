@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import {
   SchemaMismatchError,
   t,
@@ -42,7 +43,7 @@ export function createTrimSpecSchema() {
     (input: readonly Buffer[], index: number, ctx: ParseContext) => {
       if (index >= input.length) throw new SchemaMismatchError()
 
-      const keyword = input[index].toString().toUpperCase()
+      const keyword = asciiUpperCase(input[index].toString())
       if (keyword !== 'MAXLEN' && keyword !== 'MINID')
         throw new SchemaMismatchError()
 
@@ -69,7 +70,7 @@ export function createTrimSpecSchema() {
       }
 
       while (cursor < input.length) {
-        if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
+        if (asciiUpperCase(input[cursor]!.toString()) !== 'LIMIT') {
           break
         }
 

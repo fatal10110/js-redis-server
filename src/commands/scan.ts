@@ -1,3 +1,4 @@
+import { asciiLowerCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { RedisCommandError, errors } from '../core/redis-error'
@@ -221,7 +222,7 @@ function parseScanOptions(
   let cursor = index
 
   while (cursor < input.length) {
-    const option = input[cursor].toString().toLowerCase()
+    const option = asciiLowerCase(input[cursor].toString())
     const hasValue = cursor + 1 < input.length
 
     if (option === 'match' && hasValue) {
@@ -237,7 +238,7 @@ function parseScanOptions(
     }
 
     if (option === 'type' && command === 'scan' && hasValue) {
-      options.type = input[cursor + 1].toString().toLowerCase()
+      options.type = asciiLowerCase(input[cursor + 1].toString())
       cursor += 2
       continue
     }

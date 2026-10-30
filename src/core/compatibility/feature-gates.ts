@@ -483,4 +483,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'help.acl-setuser-rules': { valkey: '9.0.0' },
   'help.script-valkey-text': { valkey: '8.0.0' },
   'help.function-no-library-description': { redis: '7.4.0', valkey: '8.0.0' },
+  // Redis 7.0's config table (#506): the ziplist parameters renamed to
+  // listpack, the old names kept as aliases (`hash-max-ziplist-entries` ->
+  // `hash-max-listpack-entries`; 6.2 knows only the ziplist names), and new
+  // parameters such as `maxmemory-clients` and `bind-source-addr`
+  // (redis@7.0.15 config.c:3034-3132, absent from redis@6.2.14 config.c).
+  'config.redis7-table': { redis: '7.0.0', valkey: '7.2.0' },
+  // CONFIG GET takes several patterns from 7.0 and answers an exact (non-glob)
+  // name with the name as sent; 6.2 takes exactly one pattern
+  // (redis@6.2.14 config.c:2599-2602) and replies with the table spelling.
+  'config.get.multi-pattern': { redis: '7.0.0', valkey: '7.2.0' },
+  // `loglevel nothing` (LL_NOTHING): redis@7.2.0 config.c:78-84; absent from
+  // 7.0.15; in every Valkey (valkey@7.2.4 config.c:83).
+  'config.loglevel-nothing': { redis: '7.2.0', valkey: '7.2.0' },
+  // `maxmemory-samples` capped at 64 instead of INT_MAX: redis@7.4.0
+  // config.c:3163 (7.2.11 still INT_MAX), valkey@8.0.0 (7.2.4 INT_MAX).
+  'config.maxmemory-samples-max-64': { redis: '7.4.0', valkey: '8.0.0' },
 }

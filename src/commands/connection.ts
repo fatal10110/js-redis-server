@@ -121,7 +121,7 @@ function buildInfo(
   const requestedSections =
     sections.length === 0
       ? ['default']
-      : sections.map(section => section.toLowerCase())
+      : sections.map(section => asciiLowerCase(section))
   const clustered = ctx.server.clusterEnabled
   const defaultSections = [
     'server',
@@ -682,7 +682,7 @@ function parseHelloOptions(
   let pendingName: Buffer | undefined
 
   for (let i = 0; i < args.length; i++) {
-    const option = args[i].toString().toLowerCase()
+    const option = asciiLowerCase(args[i].toString())
 
     if (option === 'auth') {
       if (i + 2 >= args.length) {
@@ -911,7 +911,7 @@ export const clientCommand = defineCommand({
         2,
         ctx.server.profile,
       )
-      const attribute = args.args[0].toString().toLowerCase()
+      const attribute = asciiLowerCase(args.args[0].toString())
       if (attribute === 'lib-name') {
         clientLibraryNames.set(ctx.session, args.args[1])
       } else if (attribute === 'lib-ver') {
@@ -936,7 +936,7 @@ export const clientCommand = defineCommand({
         1,
         ctx.server.profile,
       )
-      const mode = args.args[0].toString().toLowerCase()
+      const mode = asciiLowerCase(args.args[0].toString())
       if (mode === 'on') {
         noEvictClients.add(ctx.session)
         return ok()
@@ -1463,7 +1463,7 @@ function parseShutdownOptions(
   let abort = false
 
   for (const arg of args) {
-    const option = arg.toString().toLowerCase()
+    const option = asciiLowerCase(arg.toString())
     if (option === 'save' || option === 'nosave') {
       continue
     }

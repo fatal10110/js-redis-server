@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
 import { numkeysGetKeys } from '../core/key-specs'
 import { t } from '../core/command-schema'
@@ -210,7 +211,7 @@ const sintercardSchema = t.custom<{
     return { value: { keys, limit }, nextIndex: cursor }
   }
 
-  const option = input[cursor].toString().toUpperCase()
+  const option = asciiUpperCase(input[cursor].toString())
   if (option !== 'LIMIT') {
     throw errors.syntax()
   }

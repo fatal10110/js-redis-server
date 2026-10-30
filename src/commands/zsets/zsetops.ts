@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
@@ -215,7 +216,7 @@ function parseSetOp(
   let withScores = false
 
   while (cursor < input.length) {
-    const option = input[cursor]!.toString().toUpperCase()
+    const option = asciiUpperCase(input[cursor]!.toString())
 
     if (options.weightsAggregate && option === 'WEIGHTS') {
       cursor++
@@ -233,7 +234,7 @@ function parseSetOp(
       cursor++
       const token = input[cursor]
       if (!token) throw errors.syntax()
-      const value = token.toString().toUpperCase()
+      const value = asciiUpperCase(token.toString())
       if (value === 'SUM') aggregate = 'sum'
       else if (value === 'MIN') aggregate = 'min'
       else if (value === 'MAX') aggregate = 'max'
@@ -362,7 +363,7 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
 
   let limit = 0
   if (cursor < input.length) {
-    if (input[cursor]!.toString().toUpperCase() !== 'LIMIT') {
+    if (asciiUpperCase(input[cursor]!.toString()) !== 'LIMIT') {
       throw errors.syntax()
     }
     cursor++

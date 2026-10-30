@@ -1,3 +1,4 @@
+import { asciiUpperCase } from '../../core/ascii-case'
 import { errors } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
@@ -100,7 +101,7 @@ export function parseMoveDirection(
   token: Buffer | undefined,
 ): 'left' | 'right' {
   if (!token) throw errors.syntax()
-  const direction = token.toString().toUpperCase()
+  const direction = asciiUpperCase(token.toString())
   if (direction === 'LEFT') return 'left'
   if (direction === 'RIGHT') return 'right'
   throw errors.syntax()

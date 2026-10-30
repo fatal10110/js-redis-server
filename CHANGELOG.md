@@ -1817,6 +1817,33 @@ so the PR body is not a durable home for a breaking-change note.
 - `SORT` / `SORT_RO` `BY` and `GET` patterns of the form `key*->field` read
   `field` of the hash `key<element>`, as real `lookupKeyByPattern` does; the
   mock looked up a key named `key<element>->field` and found nothing ([#514]).
+- `CONFIG SET` validates values the way each parameter's type does on the
+  real server, with 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'
+  - <detail>` or 7.0+'s `CONFIG SET failed (possibly related to argument
+  '<name>') - <detail>`: integers (`timeout abc` -> `argument couldn't be
+  parsed into an integer`, `timeout -1` -> `argument must be between 0 and
+  2147483647 inclusive`), `yes`/`no` booleans, memory values (`maxmemory 5q`),
+  enums (`maxmemory-policy`, `loglevel`; case-insensitive, read back in their
+  canonical case) and `save` pairs (`Invalid save parameters`). `CONFIG GET`
+  reads accepted values back normalized (`maxmemory 1gb` -> `1073741824`).
+  `loglevel nothing` is accepted on Redis 7.2+ and Valkey; `maxmemory-samples`
+  tops out at 64 on Redis 7.4+ and Valkey 8.0+. Immutable parameters
+  (`databases`, `daemonize`) answer `can't set immutable config` on 7.0+ and
+  `Unsupported CONFIG parameter` on 6.2 ([#506]).
+- The 7.0 config table: `hash-` / `zset-max-listpack-entries|value` and
+  `list-max-listpack-size` accept their `ziplist` names as aliases for `CONFIG
+  SET` and `CONFIG GET`, which echo the alias rather than the canonical name;
+  on 6.2 the `ziplist` names are the only ones. `maxmemory-clients` and
+  `bind-source-addr` exist from 7.0, `set-max-listpack-entries|value` from 7.2.
+  Defaults follow the real servers (`hash-max-listpack-entries` 512,
+  `list-max-listpack-size` -2). `CONFIG GET` of an exact name echoes it as sent
+  on 7.0+ (`MAXMEMORY`), and 6.2's `CONFIG GET` takes exactly one pattern,
+  answering more with its subcommand syntax error ([#506]).
+- Option keywords and parameter names fold ASCII only, as C `strcasecmp`
+  does: `WITH<U+017F>CORES` (long s), `<U+017F>tore` and a Kelvin-sign `CONFIG`
+  parameter are rejected like on real Redis instead of matching `WITHSCORES`,
+  `STORE` and `tcp-keepalive` ([#508]). `GEODIST ... constructor` no longer
+  passes as a unit.
 
 ## [0.3.0] and earlier
 
@@ -1910,5 +1937,7 @@ requests they contain.
 [#249]: https://github.com/fatal10110/js-redis-server/issues/249
 [#524]: https://github.com/fatal10110/js-redis-server/issues/524
 [#514]: https://github.com/fatal10110/js-redis-server/issues/514
+[#506]: https://github.com/fatal10110/js-redis-server/issues/506
+[#508]: https://github.com/fatal10110/js-redis-server/issues/508
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
