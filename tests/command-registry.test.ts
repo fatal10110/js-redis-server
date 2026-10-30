@@ -84,7 +84,10 @@ describe('CommandRegistry', () => {
     const registry = new CommandRegistry()
     const definition = new ClassCommand()
     const metadata = new WeakMap<CommandDefinition<never>, string>()
-    metadata.set(definition, 'policy-config')
+    metadata.set(
+      definition as unknown as CommandDefinition<never>,
+      'policy-config',
+    )
 
     registry.register(definition)
 
@@ -94,7 +97,7 @@ describe('CommandRegistry', () => {
     // therefore its `name` — exactly as handed in.
     assert.strictEqual(stored?.name, 'ClassCmd')
     assert.strictEqual(typeof stored?.keys, 'function')
-    assert.deepStrictEqual(stored?.keys({}), [])
+    assert.deepStrictEqual(stored?.keys(), [])
     assert.strictEqual(
       metadata.get(stored as unknown as CommandDefinition<never>),
       'policy-config',

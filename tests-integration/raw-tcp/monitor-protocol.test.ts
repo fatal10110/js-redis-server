@@ -4,6 +4,7 @@ import type { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
 import { TestRunner } from '../test-config'
 import { activeProfile, commandFrame, randomKey } from '../utils'
+import { SCRIPT_LIB, libCallAbort } from '../profile-wording'
 import {
   RawRedisConnection,
   respMapGet,
@@ -225,11 +226,18 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
       argv: ['INFO', 'server'],
     })
 
+    // `call()` hides `admin` commands. From 7.0 the flag is per subcommand
+    // (CLIENT KILL is hidden, CLIENT GETNAME shown); Redis 6.2 flags the whole
+    // CLIENT command, so none of its subcommands reach MONITOR there.
+    actor.write(commandFrame('CLIENT', 'KILL', 'ID', '999999999'))
+    await actor.readFrame()
     actor.write(commandFrame('CLIENT', 'GETNAME'))
+    await actor.readFrame()
+    actor.write(commandFrame('PING'))
     await actor.readFrame()
     assertMonitorLine(respText(await monitor.readFrame()), {
       database: 0,
-      argv: ['CLIENT', 'GETNAME'],
+      argv: activeProfile === 'redis-6.2' ? ['PING'] : ['CLIENT', 'GETNAME'],
     })
   })
 
@@ -303,10 +311,11 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
       "ERR wrong number of arguments for 'monitor' command",
     )
 
-    conn.write(commandFrame('EVAL', 'return redis.call("monitor")', '0'))
-    assert.match(
+    const script = 'return redis.call("monitor")'
+    conn.write(commandFrame('EVAL', script, '0'))
+    assert.strictEqual(
       respText(await conn.readFrame()),
-      /^ERR This Redis command is not allowed from script/,
+      libCallAbort(script, SCRIPT_LIB.notAllowed),
     )
   })
 

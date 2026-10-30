@@ -1879,6 +1879,100 @@ so the PR body is not a durable home for a breaking-change note.
   active expiry after `close()` ([#440]). Commands issued in the same tick as
   `quit()` or after it are pinned to reject `ClientClosedError` like the real
   client ([#457]).
+- `LIMIT offset count` of ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZRANGEBYLEX,
+  ZREVRANGEBYLEX, ZRANGE ... BYSCORE|BYLEX and ZRANGESTORE takes the full int64
+  range (`LIMIT 0 9223372036854775807`, `LIMIT -9223372036854775808 1`) and
+  refuses leading zeros (`LIMIT 00 01`), as real Redis does ([#576]).
+- Blocking timeouts in seconds (BLPOP, BRPOP, BLMOVE, BLMPOP, BZPOPMIN,
+  BZPOPMAX, BZMPOP) are parsed like `string2ld()`: a leading or trailing
+  space, an empty token or `0b11` is `timeout is not a float or out of range`,
+  hex floats (`0x1.8p1`) are accepted, and a bad timeout beats WRONGTYPE.
+  `inf` / `1e400` / `1e19` answer `timeout is out of range` from Redis 7.2 and
+  `timeout is negative` on 6.2 / 7.0; `-0.0001` blocks forever; on 6.2 a
+  timeout under 1 ms blocks forever (Redis 7.0.8 rounds up). XREAD /
+  XREADGROUP BLOCK takes any int64 (`BLOCK 9223372036854775807` is out of
+  range from 7.2). A timeout past 24.8 days no longer fires at once ([#577]).
+- SET / SETEX / PSETEX / GETEX and EXPIRE / PEXPIRE / EXPIREAT / PEXPIREAT
+  take int64 times and answer `invalid expire time` where the end time
+  overflows (`SET k v EX 9223372036854775807`, `EXPIRE k
+  -9223372036854775808`), instead of `value is not an integer or out of
+  range`; `PXAT 9223372036854775807` is accepted. GETEX checks its time only
+  after finding a string, so `GETEX missing EX 0` is nil and `GETEX list EX 0`
+  is WRONGTYPE. LPOS RANK / COUNT / MAXLEN take int64; RANK
+  -9223372036854775808 is out of range from Redis 7.2 and acts as RANK -1
+  before ([#592]).
+- XACK on a missing key, or on a stream without that group, answers `:0` (it
+  answered `NOGROUP`), even when an id is invalid: the key and group are looked
+  up before the ids are parsed. LINDEX looks the key up before it reads the
+  index, so a missing key answers nil and a wrong type `WRONGTYPE` whatever the
+  index, and the index is a full int64 (`LINDEX list 9223372036854775807` is
+  nil, not the integer error) ([#589]).
+- `SELECT -1` answers `DB index is out of range` (it answered the integer
+  error) from a client, a script and inside MULTI. SELECT, MOVE and COPY ... DB
+  read the index as a C int like real Redis: outside int32 they answer `value
+  is out of range, value must between -2147483648 and 2147483647` instead of
+  `DB index is out of range` ([#571]).
+- Cluster mode: a keyed command is routed before it checks its own
+  arguments, as Redis's `processCommand` does, so `EVAL s 1x k`, `SET k 1 EX
+  x` or `BLPOP k x` with `k` on another node answer `MOVED` (or `CROSSSLOT` /
+  `CLUSTERDOWN`) instead of the argument error, outside MULTI and from a
+  script's `redis.call` alike. MOVE routes first too: `MOVE k 1` for a key on
+  another node is `MOVED`, and `MOVE k x` for a local key answers `MOVE is not
+  allowed in cluster mode` (Valkey 9's cluster databases still parse it).
+  `createRedisCluster` and `computeSlotRange` split the slots as `redis-cli
+  --cluster create` does (3 masters: 0-5460, 5461-10922, 10923-16383, was
+  10921 / 10922), and CLUSTER INFO no longer sends a `cluster_enabled` line
+  ([#519]).
+- Cluster MULTI: commands queued in different slots are each `+QUEUED`, and
+  EXEC answers a bare `-CROSSSLOT Keys in request don't hash to the same
+  slot` and discards the transaction (and its WATCHes), as real Redis
+  Cluster does; the mock refused the second command at queue time and EXEC
+  answered EXECABORT. A single command whose keys span slots is still refused
+  while queuing. Commands after a queue-time refusal no longer take part in
+  EXEC's check, and on Valkey 8.0+, where a refusal empties the queue, a
+  refused transaction answers EXECABORT where Redis answers CROSSSLOT
+  ([#519]).
+- Valkey 9.0: `CLIENT REPLY` inside MULTI is refused with `Command
+  'client|reply' not allowed inside a transaction` and EXEC answers
+  EXECABORT: the `no_multi` check reads the subcommand's command-table entry
+  ([#590]).
+- EVAL, EVALSHA, EVAL_RO and EVALSHA_RO answer a negative numkeys with
+  `Number of keys can't be negative` (they answered `value is not an integer
+  or out of range`), down to -9223372036854775808. FCALL and FCALL_RO look the
+  function up first, so `FCALL nosuch -1` or `FCALL nosuch 2 a` is `Function
+  not found`, then answer `Bad number of keys provided` for a numkeys that is
+  not an integer and `Number of keys can't be negative` for a negative one
+  ([#519]).
+- MONITOR shows a command that fails its own argument check, such as `EVAL s
+  -1 a`, `SET k v EX abc` or `XREAD COUNT x STREAMS s 0`, as Redis does: the
+  check runs when the command is called. An unknown command or a wrong number
+  of arguments is still not shown ([#519]).
+- FUNCTION LIST LIBRARYNAME takes a glob pattern, matched without regard to
+  case like Redis and Valkey: `my*`, `[lm]ylib` and `MY*` all list `mylib`.
+  It used to list only a library named exactly as the pattern ([#583]).
+- A sorted-set score of -0 is kept as Redis keeps it ([#512]). On Redis 6.2
+  `ZADD z -0 m` stores -0, so ZSCORE, ZMSCORE, WITHSCORES, ZPOPMIN, ZSCAN and
+  ZUNIONSTORE show `-0`. From Redis 7.0 and on Valkey a small sorted set stores
+  0, but one past `zset-max-listpack-entries` (128) or with a member longer
+  than `zset-max-listpack-value` (64) keeps -0. `ZADD z INCR -0 n` and `ZINCRBY
+  z -0 n` for a new member reply `-0` on every version, and ZUNION ... WEIGHTS
+  -1 replies `-0` for a score of 0. A score set to the value it already has is
+  left as it is, so `ZADD z 0 m` keeps a stored -0.
+- `MONITOR` no longer shows administrative commands on Redis 6.2: `call()`
+  hides every command whose table entry is flagged `admin`, and 6.2 flags the
+  whole `CLIENT` command, so no `CLIENT` subcommand (`CLIENT GETNAME`, ...)
+  reached a monitor there. From 7.0 the flag is per subcommand, so `CLIENT
+  KILL` is hidden and `CLIENT GETNAME` shown, as before. Checked against live
+  redis-server 6.2.14 to 8.0.0 and Valkey 8.0 / 9.0 (#511).
+- Test and tooling (#511): the ioredis and node-redis `scripts` and
+  `command-integration` suites, `raw-tcp/command-errors-subcommand` and
+  `raw-tcp/monitor-protocol` now follow `REDIS_COMPAT` (Lua error wording,
+  `COMMAND` and container-subcommand errors, `NOSCRIPT`, the 6.2 forms), pass on
+  every profile and run once per profile in the new `profile-suites-mock` CI
+  job (`npm run test:integration:profiles:mock`). `npm test` also type-checks
+  `scripts/` and `tests/` (`tsconfig.check.json`), and the container
+  subcommand table takes the versions of `acl.dryrun`, `client.no-evict`,
+  `client.no-touch` and `client.setinfo` from `FEATURE_GATES`.
 
 ## [0.3.0] and earlier
 
@@ -1969,6 +2063,7 @@ requests they contain.
 [#528]: https://github.com/fatal10110/js-redis-server/issues/528
 [#495]: https://github.com/fatal10110/js-redis-server/issues/495
 [#519]: https://github.com/fatal10110/js-redis-server/issues/519
+[#590]: https://github.com/fatal10110/js-redis-server/issues/590
 [#249]: https://github.com/fatal10110/js-redis-server/issues/249
 [#524]: https://github.com/fatal10110/js-redis-server/issues/524
 [#514]: https://github.com/fatal10110/js-redis-server/issues/514
@@ -1978,5 +2073,11 @@ requests they contain.
 [#510]: https://github.com/fatal10110/js-redis-server/issues/510
 [#440]: https://github.com/fatal10110/js-redis-server/issues/440
 [#457]: https://github.com/fatal10110/js-redis-server/issues/457
+[#576]: https://github.com/fatal10110/js-redis-server/issues/576
+[#577]: https://github.com/fatal10110/js-redis-server/issues/577
+[#592]: https://github.com/fatal10110/js-redis-server/issues/592
+[#589]: https://github.com/fatal10110/js-redis-server/issues/589
+[#571]: https://github.com/fatal10110/js-redis-server/issues/571
+[#583]: https://github.com/fatal10110/js-redis-server/issues/583
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

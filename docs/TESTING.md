@@ -158,6 +158,15 @@ regardless of profile. See the current gate matrix in
 Supported presets: `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
 `redis-8.0`, `valkey-8.0`, and `valkey-9.0`.
 
+Suites that pin version-dependent wording follow `REDIS_COMPAT` through
+`activeProfile` and the shared wording helpers in
+`tests-integration/profile-wording.ts` (script error decoration, `NOSCRIPT`,
+unknown-subcommand and arity errors). `npm run test:integration:profiles:mock`
+runs the script, `COMMAND`, subcommand-error and MONITOR suites once per preset
+(the `profile-suites-mock` CI job); each profile's expectations are checked
+against a real server of that version (`scripts/agent-tools/probe.py`).
+`npm test` also type-checks `scripts/` and `tests/` with `tsconfig.check.json`.
+
 Valkey profiles model the Redis 7.0-era gates as enabled:
 
 | Profile      | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate  |

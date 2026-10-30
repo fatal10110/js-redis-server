@@ -4,9 +4,13 @@ import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
 import { bulk } from '../helpers'
-import { parseMoveDirection, parseTimeout } from './helpers'
+import { parseMoveDirection } from './helpers'
 import { tryListMove } from './move'
-import { blockOrTimeOut, blockingTimeoutMs } from '../blocking'
+import {
+  blockOrTimeOut,
+  blockingTimeoutMs,
+  parseBlockingTimeout,
+} from '../blocking'
 
 type BlmoveArgs = {
   source: Buffer
@@ -21,7 +25,7 @@ function blockingListMove(
   destination: Buffer,
   fromDirection: 'left' | 'right',
   toDirection: 'left' | 'right',
-  timeoutSecs: number,
+  timeoutMs: number,
   ctx: RedisExecutionContext,
 ): RedisResult | Promise<RedisResult> {
   return blockOrTimeOut(
@@ -29,7 +33,7 @@ function blockingListMove(
     {
       keys: [source],
       type: 'list',
-      timeoutMs: blockingTimeoutMs(timeoutSecs),
+      timeoutMs: blockingTimeoutMs(timeoutMs),
       attempt: () =>
         tryListMove(source, destination, fromDirection, toDirection, ctx.db),
     },
@@ -51,7 +55,7 @@ export const blmoveCommand = defineCommand({
     const toDirection = parseMoveDirection(input[index + 3])
     const timeoutToken = input[index + 4]
     if (!timeoutToken) throw new WrongNumberOfArgumentsError(ctx.commandName)
-    const timeout = parseTimeout(timeoutToken)
+    const timeout = parseBlockingTimeout(timeoutToken, ctx.profile)
     return {
       value: { source, destination, fromDirection, toDirection, timeout },
       nextIndex: index + 5,

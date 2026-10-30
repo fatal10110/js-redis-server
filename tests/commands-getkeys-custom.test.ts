@@ -42,7 +42,7 @@ async function wire(args: string[]): Promise<string> {
     'command',
     args.map(arg => Buffer.from(arg)),
   )
-  return encodeRedisValue(result.value, 2).toString()
+  return encodeRedisValue(result.value, { version: 2 }).toString()
 }
 
 describe('COMMAND GETKEYS on a user-added command', () => {

@@ -30,10 +30,12 @@ import {
   ok,
   parseInt64Token,
   simpleString,
+  keyExpireDeadlineMs,
   ttlMilliseconds,
   typeName,
 } from './helpers'
 import { getSortedMembers } from './zsets/helpers'
+import { dbIndexSchema, parseDbIndexToken } from './db-index'
 
 export const delCommand = defineCommand({
   name: 'del',
@@ -297,28 +299,28 @@ export const expireCommand = defineCommand({
   name: 'expire',
   schema: t.object({
     key: t.key(),
-    seconds: t.integer(),
+    seconds: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
-    expireKey(ctx, args.key, args.seconds, 1000, args.options),
+    expireKey(ctx, args.key, args.seconds, true, 'expire', args.options),
 })
 
 export const pexpireCommand = defineCommand({
   name: 'pexpire',
   schema: t.object({
     key: t.key(),
-    milliseconds: t.integer(),
+    milliseconds: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) =>
-    expireKey(ctx, args.key, args.milliseconds, 1, args.options),
+    expireKey(ctx, args.key, args.milliseconds, false, 'pexpire', args.options),
 })
 
 export const persistCommand = defineCommand({
@@ -381,14 +383,21 @@ export const expireatCommand = defineCommand({
   name: 'expireat',
   schema: t.object({
     key: t.key(),
-    timestamp: t.integer(),
+    timestamp: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return expireAtKey(ctx, args.key, args.timestamp * 1000, args.options)
+    const expiresAt = keyExpireDeadlineMs(
+      args.timestamp,
+      true,
+      0,
+      'expireat',
+      ctx.server.profile,
+    )
+    return expireAtKey(ctx, args.key, expiresAt, args.options)
   },
 })
 
@@ -396,14 +405,21 @@ export const pexpireatCommand = defineCommand({
   name: 'pexpireat',
   schema: t.object({
     key: t.key(),
-    timestamp: t.integer(),
+    timestamp: t.bulk(),
     options: expireOptionsSchema,
   }),
   introspection: expireIntrospection,
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
-    return expireAtKey(ctx, args.key, args.timestamp, args.options)
+    const expiresAt = keyExpireDeadlineMs(
+      args.timestamp,
+      false,
+      0,
+      'pexpireat',
+      ctx.server.profile,
+    )
+    return expireAtKey(ctx, args.key, expiresAt, args.options)
   },
 })
 
@@ -464,7 +480,7 @@ export const renamenxCommand = defineCommand({
 
 export const moveCommand = defineCommand({
   name: 'move',
-  schema: t.object({ key: t.key(), database: t.integer() }),
+  schema: t.object({ key: t.key(), database: dbIndexSchema }),
   flags: ['write'],
   capabilities: { clusterMode: 'multiDbOnly' },
   keys: args => [args.key],
@@ -524,13 +540,7 @@ const copyOptionsSchema = t.custom<CopyOptions>((input, index) => {
       const raw = input[cursor + 1]
       if (!raw) throw errors.syntax()
 
-      const text = raw.toString()
-      if (!/^-?\d+$/.test(text)) throw errors.expectedInteger()
-
-      const value = Number(text)
-      if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
-
-      db = value
+      db = parseDbIndexToken(raw)
       cursor += 2
       continue
     }
@@ -1077,12 +1087,20 @@ export const keysCommands = [
 function expireKey(
   ctx: RedisExecutionContext,
   key: Buffer,
-  duration: number,
-  multiplier: number,
+  duration: Buffer,
+  seconds: boolean,
+  commandName: string,
   options: ExpireOptions,
 ) {
   const now = Date.now()
-  return expireAtKey(ctx, key, now + duration * multiplier, options, now)
+  const expiresAt = keyExpireDeadlineMs(
+    duration,
+    seconds,
+    now,
+    commandName,
+    ctx.server.profile,
+  )
+  return expireAtKey(ctx, key, expiresAt, options, now)
 }
 
 function expireAtKey(

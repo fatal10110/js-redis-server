@@ -1,9 +1,21 @@
 import { after, before, describe, test } from 'node:test'
 import { Cluster } from 'ioredis'
 import assert from 'node:assert'
-import { createHash } from 'node:crypto'
 import { TestRunner } from '../test-config'
 import { connectToSlotOwner, errorWithMessage, randomKey } from '../utils'
+import {
+  ERROR_REPLY_FOO,
+  NOSCRIPT,
+  SCRIPT_LIB,
+  commandCallAbort,
+  legacy,
+  libCallAbort,
+  libPcallRejection,
+  luaRuntimeAbort,
+  scriptSha,
+  subcommandArity,
+  unknownSubcommand,
+} from '../profile-wording'
 
 const testRunner = new TestRunner()
 // Unique per run: the real-backend suites share one Redis that is never
@@ -99,12 +111,11 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
 
     test('matches Redis script error format', async () => {
       const script = "return redis.set('x', 1)"
-      const sha = createHash('sha1').update(script).digest('hex')
 
       await assert.rejects(
         () => redisClient?.eval(script, 0),
         errorWithMessage(
-          `ERR user_script:1: attempt to call field 'set' (a nil value) script: ${sha}, on @user_script:1.`,
+          luaRuntimeAbort(script, "attempt to call field 'set' (a nil value)"),
         ),
       )
     })
@@ -114,17 +125,8 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       const listKey = `${tag}:list`
       const directClient = await connectToSlotOwner(redisClient!, listKey)
       const unknownCallScript = "return redis.call('nosuchcommand')"
-      const unknownCallSha = createHash('sha1')
-        .update(unknownCallScript)
-        .digest('hex')
       const wrongTypeCallScript = "return redis.call('get', KEYS[1])"
-      const wrongTypeCallSha = createHash('sha1')
-        .update(wrongTypeCallScript)
-        .digest('hex')
       const noArgsCallScript = 'return redis.call()'
-      const noArgsCallSha = createHash('sha1')
-        .update(noArgsCallScript)
-        .digest('hex')
 
       try {
         await directClient.lpush(listKey, 'value')
@@ -132,17 +134,20 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         await assert.rejects(
           () => directClient.eval(unknownCallScript, 0),
           errorWithMessage(
-            `ERR Unknown Redis command called from script script: ${unknownCallSha}, on @user_script:1.`,
+            libCallAbort(unknownCallScript, SCRIPT_LIB.unknownCommand),
           ),
         )
         await assert.rejects(
           () => directClient.eval("return redis.pcall('nosuchcommand')", 0),
-          errorWithMessage('ERR Unknown Redis command called from script'),
+          libPcallRejection(SCRIPT_LIB.unknownCommand),
         )
         await assert.rejects(
           () => directClient.eval(wrongTypeCallScript, 1, listKey),
           errorWithMessage(
-            `WRONGTYPE Operation against a key holding the wrong kind of value script: ${wrongTypeCallSha}, on @user_script:1.`,
+            commandCallAbort(
+              wrongTypeCallScript,
+              'WRONGTYPE Operation against a key holding the wrong kind of value',
+            ),
           ),
         )
         await assert.rejects(
@@ -155,14 +160,12 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
         await assert.rejects(
           () => directClient.eval(noArgsCallScript, 0),
           errorWithMessage(
-            `ERR Please specify at least one argument for this redis lib call script: ${noArgsCallSha}, on @user_script:1.`,
+            libCallAbort(noArgsCallScript, SCRIPT_LIB.noArguments),
           ),
         )
         await assert.rejects(
           () => directClient.eval('return redis.pcall()', 0),
-          errorWithMessage(
-            'ERR Please specify at least one argument for this redis lib call',
-          ),
+          libPcallRejection(SCRIPT_LIB.noArguments),
         )
       } finally {
         await directClient.del(listKey)
@@ -176,14 +179,17 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       const directClient = await connectToSlotOwner(redisClient!, listKey)
       // The failing redis.call is on line 3; the error must reference line 3, not 1.
       const script = `local a = 1\nlocal b = 2\nreturn redis.call('get', KEYS[1])`
-      const sha = createHash('sha1').update(script).digest('hex')
 
       try {
         await directClient.lpush(listKey, 'value')
         await assert.rejects(
           () => directClient.eval(script, 1, listKey),
           errorWithMessage(
-            `WRONGTYPE Operation against a key holding the wrong kind of value script: ${sha}, on @user_script:3.`,
+            commandCallAbort(
+              script,
+              'WRONGTYPE Operation against a key holding the wrong kind of value',
+              3,
+            ),
           ),
         )
       } finally {
@@ -196,22 +202,16 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       const tag = `{noscript:${randomKey()}}`
       const directClient = await connectToSlotOwner(redisClient!, tag)
       const authScript = "return redis.call('AUTH', 'whatever')"
-      const authSha = createHash('sha1').update(authScript).digest('hex')
       const helloScript = "return redis.call('HELLO', '3')"
-      const helloSha = createHash('sha1').update(helloScript).digest('hex')
 
       try {
         await assert.rejects(
           () => directClient.eval(authScript, 0),
-          errorWithMessage(
-            `ERR This Redis command is not allowed from script script: ${authSha}, on @user_script:1.`,
-          ),
+          errorWithMessage(libCallAbort(authScript, SCRIPT_LIB.notAllowed)),
         )
         await assert.rejects(
           () => directClient.eval(helloScript, 0),
-          errorWithMessage(
-            `ERR This Redis command is not allowed from script script: ${helloSha}, on @user_script:1.`,
-          ),
+          errorWithMessage(libCallAbort(helloScript, SCRIPT_LIB.notAllowed)),
         )
       } finally {
         directClient.disconnect()
@@ -231,12 +231,9 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
 
       try {
         for (const { script, keys } of cases) {
-          const sha = createHash('sha1').update(script).digest('hex')
           await assert.rejects(
             () => directClient.eval(script, keys.length, ...keys),
-            errorWithMessage(
-              `ERR This Redis command is not allowed from script script: ${sha}, on @user_script:1.`,
-            ),
+            errorWithMessage(libCallAbort(script, SCRIPT_LIB.notAllowed)),
           )
         }
       } finally {
@@ -305,7 +302,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
     test('redis.error_reply prepends ERR only when there is no code', async () => {
       await assert.rejects(
         () => redisClient!.eval("return redis.error_reply('foo')", 0),
-        errorWithMessage('ERR foo'),
+        errorWithMessage(ERROR_REPLY_FOO),
       )
       await assert.rejects(
         () => redisClient!.eval("return redis.error_reply('WRONGTYPE x')", 0),
@@ -322,34 +319,37 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
 
     test('accessing a nonexistent global errors like Redis', async () => {
       const script = "print('a')"
-      const sha = createHash('sha1').update(script).digest('hex')
+      // Redis 6.2 does not guard the global table: print is a no-op there.
+      if (legacy) {
+        assert.strictEqual(await redisClient!.eval(script, 0), null)
+        return
+      }
       await assert.rejects(
         () => redisClient!.eval(script, 0),
         errorWithMessage(
-          `ERR user_script:1: Script attempted to access nonexistent global variable 'print' script: ${sha}, on @user_script:1.`,
+          luaRuntimeAbort(
+            script,
+            "Script attempted to access nonexistent global variable 'print'",
+          ),
         ),
       )
     })
 
     test('creating a global errors like Redis (readonly table)', async () => {
       const script = 'x = 5'
-      const sha = createHash('sha1').update(script).digest('hex')
       await assert.rejects(
         () => redisClient!.eval(script, 0),
         errorWithMessage(
-          `ERR user_script:1: Attempt to modify a readonly table script: ${sha}, on @user_script:1.`,
+          luaRuntimeAbort(script, 'Attempt to modify a readonly table'),
         ),
       )
     })
 
     test('boolean redis.call argument is rejected like Redis', async () => {
       const script = "return redis.call('set', 'k', true)"
-      const sha = createHash('sha1').update(script).digest('hex')
       await assert.rejects(
         () => redisClient!.eval(script, 0),
-        errorWithMessage(
-          `ERR Lua redis lib command arguments must be strings or integers script: ${sha}, on @user_script:1.`,
-        ),
+        errorWithMessage(libCallAbort(script, SCRIPT_LIB.badArgument)),
       )
     })
   })
@@ -360,12 +360,10 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       `{script:${randomKey()}}:probe`,
     )
     const script = 'return ARGV[1]'
-    const sha = createHash('sha1').update(script).digest('hex')
+    const sha = scriptSha(script)
     const upperSha = sha.toUpperCase()
     const mixedSha = `${sha.slice(0, 20).toUpperCase()}${sha.slice(20)}`
-    const missingSha = createHash('sha1')
-      .update('return "missing"')
-      .digest('hex')
+    const missingSha = scriptSha('return "missing"')
 
     try {
       assert.strictEqual(await directClient.script('LOAD', script), sha)
@@ -396,7 +394,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       assert.deepStrictEqual(await directClient.script('EXISTS', sha), [0])
       await assert.rejects(
         () => directClient.evalsha(upperSha, 0, 'cached'),
-        errorWithMessage('NOSCRIPT No matching script. Please use EVAL.'),
+        errorWithMessage(NOSCRIPT),
       )
     } finally {
       directClient.disconnect()
@@ -424,13 +422,11 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       )
       await assert.rejects(
         () => directClient.call('SCRIPT', 'missing'),
-        errorWithMessage("ERR unknown subcommand 'missing'. Try SCRIPT HELP."),
+        errorWithMessage(unknownSubcommand('SCRIPT', 'missing')),
       )
       await assert.rejects(
         () => directClient.call('SCRIPT', 'LOAD'),
-        errorWithMessage(
-          "ERR wrong number of arguments for 'script|load' command",
-        ),
+        errorWithMessage(subcommandArity('SCRIPT', 'LOAD')),
       )
       await assert.rejects(
         () => directClient.script('DEBUG', 'invalid'),
@@ -460,7 +456,7 @@ describe(`Redis scripts (ioredis) ${testRunner.getBackendName()}`, () => {
       )
       await assert.rejects(
         () => directClient.evalsha('missing', 0),
-        errorWithMessage('NOSCRIPT No matching script. Please use EVAL.'),
+        errorWithMessage(NOSCRIPT),
       )
     } finally {
       directClient.disconnect()

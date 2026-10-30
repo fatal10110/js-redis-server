@@ -2,7 +2,7 @@ import { defineCommand } from '../../core/command-definition'
 import { t } from '../../core/command-schema'
 import { errors } from '../../core/redis-error'
 import { RedisValue } from '../../core/redis-value'
-import { array, bulk, integer, ok } from '../helpers'
+import { array, bulk, integer, ok, parseInt64Token } from '../helpers'
 import { resolveIndex } from './helpers'
 
 export const llenCommand = defineCommand({
@@ -46,7 +46,9 @@ export const lindexCommand = defineCommand({
   name: 'lindex',
   schema: t.object({
     key: t.key(),
-    index: t.integer(),
+    // Parsed in execute: real Redis looks the key up (null reply, or
+    // WRONGTYPE) before it reads the index, as a full int64 (#589).
+    index: t.bulk(),
   }),
   flags: ['readonly'],
   keys: args => [args.key],
@@ -54,9 +56,11 @@ export const lindexCommand = defineCommand({
     const list = ctx.db.getList(args.key)
     if (!list) return bulk(null)
 
-    const idx = resolveIndex(args.index, list.values.length)
-    if (idx < 0 || idx >= list.values.length) return bulk(null)
-    return bulk(list.values[idx])
+    const length = BigInt(list.values.length)
+    const index = parseInt64Token(args.index)
+    const idx = index < 0n ? length + index : index
+    if (idx < 0n || idx >= length) return bulk(null)
+    return bulk(list.values[Number(idx)])
   },
 })
 

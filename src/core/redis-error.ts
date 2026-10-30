@@ -275,6 +275,12 @@ export const errors = Object.freeze({
   timeoutNotFloat: () =>
     new RedisCommandError('timeout is not a float or out of range'),
   timeoutNegative: () => new RedisCommandError('timeout is negative'),
+  timeoutOutOfRange: () => new RedisCommandError('timeout is out of range'),
+  /** `getRangeLongFromObjectOrReply(-LONG_MAX, LONG_MAX)`, Redis 7.2+. */
+  lposRankOutOfRange: () =>
+    new RedisCommandError(
+      'value is out of range, value must between -9223372036854775807 and 9223372036854775807',
+    ),
   indexOutOfRange: () => new RedisCommandError('index out of range'),
   noSuchKey: () => new RedisCommandError('no such key'),
 
@@ -455,6 +461,11 @@ export const errors = Object.freeze({
     new RedisCommandError(
       `Number of keys can't be greater than number of args`,
     ),
+  /** EVAL / EVALSHA / FCALL family when numkeys < 0 (eval.c, functions.c). */
+  negativeNumberOfKeys: () =>
+    new RedisCommandError(`Number of keys can't be negative`),
+  /** FCALL / FCALL_RO when numkeys is not an int64 (functions.c). */
+  badNumberOfKeys: () => new RedisCommandError('Bad number of keys provided'),
   numKeysGreaterThanZero: () =>
     new RedisCommandError('numkeys should be greater than 0'),
   /** ZUNION/ZINTER/ZDIFF family when numkeys <= 0. */
@@ -546,6 +557,11 @@ export const errors = Object.freeze({
     new RedisCommandError('source and destination objects are the same'),
   /** A database index outside `0 .. databaseCount - 1` (e.g. `COPY ... DB 99`, `SELECT 99`). */
   dbIndexOutOfRange: () => new RedisCommandError('DB index is out of range'),
+  /** `getIntFromObjectOrReply` on an int64 outside the C int range (SELECT, MOVE, COPY ... DB). */
+  int32OutOfRange: () =>
+    new RedisCommandError(
+      'value is out of range, value must between -2147483648 and 2147483647',
+    ),
 
   // Streams
   streamLimitRequiresApprox: () =>

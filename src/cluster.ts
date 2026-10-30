@@ -157,10 +157,25 @@ export function computeSlotRange(
     throw new Error(`Invalid master index ${masterIndex}`)
   }
 
-  const start = Math.floor((REDIS_CLUSTER_SLOT_COUNT * masterIndex) / masters)
-  const end =
-    Math.floor((REDIS_CLUSTER_SLOT_COUNT * (masterIndex + 1)) / masters) - 1
-  return [start, end]
+  // redis-cli's `--cluster create` split (clusterManagerCommandCreate), in
+  // its float32 arithmetic: 3 masters get 0-5460, 5461-10922, 10923-16383.
+  const slotsPerNode = Math.fround(REDIS_CLUSTER_SLOT_COUNT / masters)
+  let cursor = 0
+  let first = 0
+  for (let index = 0; ; index++) {
+    let last = Math.round(Math.fround(Math.fround(cursor + slotsPerNode) - 1))
+    if (last > REDIS_CLUSTER_SLOT_COUNT || index === masters - 1) {
+      last = REDIS_CLUSTER_SLOT_COUNT - 1
+    }
+    if (last < first) {
+      last = first
+    }
+    if (index === masterIndex) {
+      return [first, last]
+    }
+    first = last + 1
+    cursor = Math.fround(cursor + slotsPerNode)
+  }
 }
 
 function validateOptions(options: RedisClusterOptions): void {

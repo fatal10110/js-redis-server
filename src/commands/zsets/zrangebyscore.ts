@@ -7,6 +7,7 @@ import { RedisResult } from '../../core/redis-result'
 import type { RedisSortedSetMember } from '../../state/data-types'
 import { array, integer, scorePairs } from '../helpers'
 import { getSortedMembers } from './helpers'
+import { parseRangeLimitInt } from './lex'
 import { parseScoreBoundArg, scoreWithinBounds } from './score'
 
 // ZRANGEBYSCORE key min max [WITHSCORES] [LIMIT offset count]
@@ -20,14 +21,6 @@ type ScoreRangeArgs = {
   second: Buffer
   withScores: boolean
   limit?: ScoreLimit
-}
-
-function parseScoreLimitInt(token: Buffer): number {
-  const raw = token.toString()
-  if (!/^-?\d+$/.test(raw)) throw errors.expectedInteger()
-  const value = Number(raw)
-  if (!Number.isSafeInteger(value)) throw errors.expectedInteger()
-  return value
 }
 
 function createScoreRangeSchema() {
@@ -58,8 +51,8 @@ function createScoreRangeSchema() {
         const countTok = input[cursor + 2]
         if (!offsetTok || !countTok) throw errors.syntax()
         limit = {
-          offset: parseScoreLimitInt(offsetTok),
-          count: parseScoreLimitInt(countTok),
+          offset: parseRangeLimitInt(offsetTok),
+          count: parseRangeLimitInt(countTok),
         }
         cursor += 3
         continue

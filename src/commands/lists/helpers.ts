@@ -106,10 +106,3 @@ export function parseMoveDirection(
   if (direction === 'RIGHT') return 'right'
   throw errors.syntax()
 }
-
-export function parseTimeout(token: Buffer): number {
-  const value = Number(token.toString())
-  if (isNaN(value)) throw errors.timeoutNotFloat()
-  if (value < 0) throw errors.timeoutNegative()
-  return value
-}

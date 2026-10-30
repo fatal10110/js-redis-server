@@ -30,7 +30,7 @@ describe('createIoredisMock — seed (standalone)', () => {
     })
     assert.deepStrictEqual(await redis.lrange('l:1', 0, -1), ['a', 'b', '1'])
     assert.deepStrictEqual((await redis.smembers('s:1')).sort(), ['x', 'y'])
-    assert.deepStrictEqual(await redis.zrange('z:1', 0, -1, 'WITHSCORES'), [
+    assert.deepStrictEqual(await redis.zrange('z:1', 0, '-1', 'WITHSCORES'), [
       'a',
       '1',
       'b',

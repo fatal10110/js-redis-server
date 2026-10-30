@@ -210,11 +210,12 @@ export class CommandExecutor {
    * Plan and execute a raw command in one step — the normal entry point for a
    * network client.
    *
-   * Errors thrown during *planning* (unknown command, arity/parse failures) are
-   * caught here and converted into a RESP error reply. Inside MULTI, and on a
-   * MONITOR connection, a command is planned the way Redis's `processCommand`
-   * queues it (see {@link planForQueue}). Execution-time errors are handled inside
-   * {@link executePlan}.
+   * Errors thrown during *planning* (unknown command, arity) are caught here
+   * and converted into a RESP error reply. Every command is planned the way
+   * Redis's `processCommand` sees it (see {@link planForQueue}): the
+   * command's own argument check runs in `call()`, after the policy chain,
+   * so its error is the plan's `deferredError`. Execution-time errors are
+   * handled inside {@link executePlan}.
    */
   async executeRaw(
     rawCommand: Buffer | string,
@@ -222,13 +223,13 @@ export class CommandExecutor {
     ctx: RedisExecutionContext,
   ): Promise<RedisResult> {
     try {
-      // A MONITOR connection is refused the keyspace in processCommand, after
-      // the arity check but before the command parses its arguments, so its
-      // parse errors wait behind the policy chain as a queued command's do.
-      const plan =
-        ctx.session.mode === 'transaction' || ctx.session.monitoring
-          ? this.planForQueue(rawCommand, rawArgs)
-          : this.plan(rawCommand, rawArgs)
+      // processCommand refuses a command before its parser runs: a queued
+      // command waits for EXEC, a MONITOR connection is refused the keyspace,
+      // a cluster routes it (getNodeByQuery: MOVED, CROSSSLOT, CLUSTERDOWN),
+      // so `EVAL s 1x k` with `k` on another node is MOVED, not the numkeys
+      // error. A command that fails its own argument check still reaches
+      // call(), which feeds it to MONITOR (`EVAL s -1 a`, #519).
+      const plan = this.planForQueue(rawCommand, rawArgs)
       return await this.executePlan(plan, ctx)
     } catch (err) {
       if (err instanceof RedisCommandError) {
@@ -254,15 +255,20 @@ export class CommandExecutor {
    * raw arguments ({@link rawCommandKeys}), as Redis routes a queued command
    * without running its parser. The transaction commands themselves (EXEC,
    * DISCARD, ...) run at once, so their parse errors are answered now.
+   *
+   * A cluster plans every command this way, a script's `redis.call` included
+   * (`options.inScript`, as for {@link plan}): Redis routes it by these keys
+   * before the command checks its arguments.
    */
-  private planForQueue(
+  planForQueue(
     rawCommand: Buffer | string,
     rawArgs: readonly Buffer[],
+    options: { inScript?: boolean } = {},
   ): CommandPlan {
     const definition = this.lookup(rawCommand, rawArgs)
 
     try {
-      return this.createPlan(definition, rawCommand, rawArgs)
+      return this.createPlan(definition, rawCommand, rawArgs, options)
     } catch (err) {
       if (
         !(err instanceof RedisCommandError) ||
@@ -604,9 +610,28 @@ function monitorFeedActive(
   )
 }
 
+/**
+ * `call()` hides a command from MONITOR when its table entry is flagged
+ * `skip_monitor` or `admin` ("administrative commands are considered too
+ * dangerous to be shown"). The entry is the subcommand's from 7.0
+ * (`CLIENT KILL` is hidden, `CLIENT GETNAME` shown) and the whole container's
+ * on 6.2, where every CLIENT and CONFIG subcommand is hidden. Verified
+ * against `call()` of 6.2.14 - 8.0.0 and Valkey 8.0 / 9.0 and a live
+ * redis-server 6.2.14. A definition can hide itself on top of the table.
+ */
 function skipsMonitor(plan: CommandPlan, ctx: RedisExecutionContext): boolean {
   const skip = plan.definition.monitor?.skip
-  return typeof skip === 'function' ? skip(ctx.server.profile) : !!skip
+  if (typeof skip === 'function' ? skip(ctx.server.profile) : !!skip) {
+    return true
+  }
+
+  const { name } = lookupTableArity(
+    plan.definition,
+    plan.rawArgs,
+    ctx.server.profile,
+  )
+  const entry = commandTableEntry(name, ctx.server.profile)
+  return entry?.flags.includes('admin') === true
 }
 
 function isQueuedTransactionCommand(

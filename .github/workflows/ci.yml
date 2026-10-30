@@ -109,6 +109,10 @@ jobs:
             script: test:integration:raw:mock
           - name: compatibility-profiles-mock
             script: test:integration:compatibility:mock
+          # The suites that pin script, COMMAND and subcommand wording, run once
+          # per compatibility profile (#511).
+          - name: profile-suites-mock
+            script: test:integration:profiles:mock
           - name: raw-real
             script: test:integration:raw:real
             needsRedis: true
