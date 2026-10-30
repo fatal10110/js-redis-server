@@ -338,6 +338,21 @@ describe(`keymiss and new keyspace notifications (${testRunner.getBackendName()}
     )
   })
 
+  test('ZUNIONSTORE, ZINTERSTORE and ZDIFFSTORE read their sources in order', async () => {
+    const events = await capture('Em', async key => {
+      for (const command of ['ZUNIONSTORE', 'ZINTERSTORE', 'ZDIFFSTORE']) {
+        assert.strictEqual(
+          await send(command, key('dst'), '2', key('a'), key('b')),
+          ':0\r\n',
+        )
+      }
+    })
+    assert.deepStrictEqual(
+      events,
+      legacy ? [] : Array(3).fill(['keymiss a', 'keymiss b']).flat(),
+    )
+  })
+
   test('both channels carry keymiss and new, before the command event', async () => {
     const events = await capture(legacy ? 'KEm$' : 'KEmn$', async key => {
       assert.strictEqual(await send('GET', key('k')), '$-1\r\n')

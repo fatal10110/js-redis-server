@@ -1,4 +1,5 @@
 import { asciiLowerCase } from '../core/ascii-case'
+import type { CompatibilityProfile } from '../core/compatibility'
 import {
   defineCommand,
   type CommandDefinition,
@@ -66,7 +67,7 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
           return clusterNodes(topology, localNodeId)
         case 'info':
           expectClusterRestLength(args.rest, 'cluster|info')
-          return clusterInfo(topology, localNodeId)
+          return clusterInfo(topology, localNodeId, ctx.server.profile)
         case 'myid':
           expectClusterRestLength(args.rest, 'cluster|myid')
           return RedisResult.create(
@@ -342,6 +343,7 @@ function formatNodeLine(
 function clusterInfo(
   topology: RedisClusterTopology,
   localNodeId: string,
+  profile: CompatibilityProfile,
 ): RedisResult {
   const masterList = masters(topology)
   const knownNodes = topology.nodes.length
@@ -360,13 +362,23 @@ function clusterInfo(
     `cluster_slots_ok:${REDIS_CLUSTER_SLOT_COUNT}`,
     'cluster_slots_pfail:0',
     'cluster_slots_fail:0',
+    ...(profile.has('cluster.info-node-fail-counts')
+      ? [
+          'cluster_nodes_pfail:0',
+          'cluster_nodes_fail:0',
+          'cluster_voting_nodes_pfail:0',
+          'cluster_voting_nodes_fail:0',
+        ]
+      : []),
     `cluster_known_nodes:${knownNodes}`,
     `cluster_size:${size}`,
     `cluster_current_epoch:${size}`,
     `cluster_my_epoch:${myEpoch}`,
     'cluster_stats_messages_sent:0',
     'cluster_stats_messages_received:0',
-    'total_cluster_links_buffer_limit_exceeded:0',
+    ...(profile.has('cluster.info-links-buffer-line')
+      ? ['total_cluster_links_buffer_limit_exceeded:0']
+      : []),
   ]
 
   return RedisResult.create(
