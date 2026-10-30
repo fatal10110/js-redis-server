@@ -26,6 +26,25 @@ so the PR body is not a durable home for a breaking-change note.
 
 ### Fixed
 
+- `CLUSTER INFO` prints the line set of the profile's version ([#604]): no
+  `total_cluster_links_buffer_limit_exceeded` line on redis 6.2, and valkey
+  9.0's `cluster_nodes_pfail`, `cluster_nodes_fail`,
+  `cluster_voting_nodes_pfail` and `cluster_voting_nodes_fail` after
+  `cluster_slots_fail`. New `FeatureId` members
+  `cluster.info-links-buffer-line` and `cluster.info-node-fail-counts`.
+- A script command whose key's slot has no owner answers `Script attempted to
+  access a slot not served` on redis 7.4+ and valkey 8.0+, and the "non local
+  key" error on redis 7.0 / 7.2, instead of `CLUSTERDOWN Hash slot not
+  served` ([#604]). On redis 6.2 that error, and the one for a key on another
+  node, take 6.2's `@user_script: <line>: Lua script attempted to access a
+  non local key in a cluster node` form with no error code. New `FeatureId`
+  member `script.cluster-slot-not-served`.
+- Cluster routing answers `CLUSTERDOWN Hash slot not served` when a command's
+  first key is in an unserved slot, even if a later key is in another slot,
+  as redis and valkey 8.x do; valkey 9.0 answers `CROSSSLOT` there ([#604]).
+  `ZUNIONSTORE`, `ZINTERSTORE` and `ZDIFFSTORE` are routed by their source
+  keys first and the destination last, as Redis lists them. New `FeatureId`
+  member `cluster.crossslot-before-unserved`.
 - LPOP, RPOP and SPOP now answer `value is out of range, must be positive`
   for any count that is not an integer, as every Redis and Valkey version
   does ([#610]); they used to answer `value is not an integer or out of
@@ -2135,6 +2154,7 @@ requests they contain.
 [#596]: https://github.com/fatal10110/js-redis-server/issues/596
 [#586]: https://github.com/fatal10110/js-redis-server/issues/586
 [#583]: https://github.com/fatal10110/js-redis-server/issues/583
+[#604]: https://github.com/fatal10110/js-redis-server/issues/604
 [#610]: https://github.com/fatal10110/js-redis-server/issues/610
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0

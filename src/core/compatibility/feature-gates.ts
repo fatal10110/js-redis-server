@@ -295,6 +295,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // `readwriteCommand` in cluster.c) and the transcripts in #537.
   'cluster.standalone-readwrite-refused': { redis: '7.0.0', valkey: '7.2.0' },
   'cluster.standalone-readonly-allowed': { valkey: '8.0.0' },
+  // CLUSTER INFO's line set (#604). `total_cluster_links_buffer_limit_exceeded`
+  // is last from redis 7.0.0 (cluster.c:5562; absent from 6.2.14's
+  // cluster.c:4722 reply) and valkey 7.2 (cluster.c:5888). Valkey
+  // 9.0.0 adds `cluster_nodes_pfail`, `cluster_nodes_fail`,
+  // `cluster_voting_nodes_pfail` and `cluster_voting_nodes_fail` after
+  // `cluster_slots_fail` (cluster_legacy.c; not in 8.1.0). Probed on redis
+  // 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and valkey 8.0.0, 8.1.0, 9.0.0.
+  'cluster.info-links-buffer-line': { redis: '7.0.0', valkey: '7.2.0' },
+  'cluster.info-node-fail-counts': { valkey: '9.0.0' },
+  // Valkey 9.0 checks that every key hashes to one slot before it looks the
+  // slot up (`READ_FLAGS_CROSSSLOT`, cluster.c getNodeByQuery), so an
+  // unserved first key followed by a key in another slot answers CROSSSLOT.
+  // Redis and valkey 8.x walk the keys in order and answer CLUSTERDOWN as soon
+  // as the first key's slot has no owner. Probed on redis 6.2.14, 7.4.4,
+  // 8.0.0 and valkey 8.0.0, 8.1.0, 9.0.0 (#604).
+  'cluster.crossslot-before-unserved': { valkey: '9.0.0' },
   // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
   // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
   // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.
@@ -337,6 +353,14 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis.call()`), so this gate also picks that wording (see
   // `scriptRejection` in src/core/lua-runtime.ts).
   'script.abort-error-suffix': { redis: '7.0.0', valkey: '7.2.0' },
+  // A script command whose key's slot has no owner (CLUSTER_REDIR_DOWN_UNBOUND
+  // in scriptVerifyClusterState) answers `Script attempted to access a slot
+  // not served` from redis 7.4.0 (script.c:496) and valkey 8.0.0
+  // (script.c:453); before that it shares the MOVED branch's `... non local
+  // key in a cluster node` (6.2 in its legacy `luaPushError` form). Probed on
+  // redis 6.2.14, 7.0.15, 7.2.4, 7.2.16, 7.4.0, 7.4.4, 8.0.0 and valkey 8.0.0,
+  // 8.1.0, 9.0.0 (#604).
+  'script.cluster-slot-not-served': { redis: '7.4.0', valkey: '8.0.0' },
   // Valkey 8.0 dropped the product name from the scripting layer's own
   // errors, where Redis (and Valkey 7.2) keep it:
   //   Unknown command called from script              (Unknown Redis command ...)

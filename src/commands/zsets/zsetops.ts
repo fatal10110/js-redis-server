@@ -271,7 +271,9 @@ export const zunionstoreCommand = defineCommand({
   rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: true }),
   flags: ['write', 'denyoom'],
-  keys: args => [args.destination!, ...args.keys],
+  // Sources first, destination last, as `zunionInterDiffStoreGetKeys` lists
+  // them: cluster routing answers for the first key's slot (#604).
+  keys: args => [...args.keys, args.destination!],
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeUnion(sources, args.weights, args.aggregate)
@@ -290,7 +292,7 @@ export const zinterstoreCommand = defineCommand({
   rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: true }),
   flags: ['write', 'denyoom'],
-  keys: args => [args.destination!, ...args.keys],
+  keys: args => [...args.keys, args.destination!],
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeIntersection(sources, args.weights, args.aggregate)
@@ -309,7 +311,7 @@ export const zdiffstoreCommand = defineCommand({
   rawKeys: numkeysGetKeys(1, 2, 3),
   schema: setOpSchema({ hasDest: true, weightsAggregate: false }),
   flags: ['write', 'denyoom'],
-  keys: args => [args.destination!, ...args.keys],
+  keys: args => [...args.keys, args.destination!],
   execute: (args, ctx) => {
     const sources = args.keys.map(k => getScoredMembers(ctx.db, k))
     const result = computeDifference(sources)

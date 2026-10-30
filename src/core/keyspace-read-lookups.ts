@@ -68,6 +68,10 @@ const sources: ReadKeys = keys => keys.slice(1)
 // 6.2 looks these sources up with `lookupKeyWrite`.
 const storeSources: ReadKeys = (keys, profile) =>
   profile.has('notify.keyspace.keymiss-store-sources') ? keys.slice(1) : []
+// ZUNIONSTORE, ZINTERSTORE and ZDIFFSTORE list their sources first and the
+// destination last (the order their key specs, and so cluster routing, use).
+const zstoreSources: ReadKeys = (keys, profile) =>
+  profile.has('notify.keyspace.keymiss-store-sources') ? keys.slice(0, -1) : []
 
 const READONLY_OVERRIDES: Readonly<Record<string, ReadKeys>> = {
   // WATCH checks a key without looking it up; OBJECT and MEMORY USAGE look
@@ -114,9 +118,9 @@ const WRITE_READ_KEYS: Readonly<Record<string, ReadKeys>> = {
   sinterstore: storeSources,
   sunionstore: storeSources,
   sdiffstore: storeSources,
-  zunionstore: storeSources,
-  zinterstore: storeSources,
-  zdiffstore: storeSources,
+  zunionstore: zstoreSources,
+  zinterstore: zstoreSources,
+  zdiffstore: zstoreSources,
   zrangestore: storeSources,
   copy: (keys, profile) =>
     profile.has('notify.keyspace.keymiss-store-sources')
