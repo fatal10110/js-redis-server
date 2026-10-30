@@ -226,7 +226,10 @@ last; [`ClusterPolicy`](../src/core/execution-policies/cluster-policy.ts) is
 inserted between them only for cluster nodes (see [`createRedisCluster`](../src/cluster.ts#L80)).
 Order matters: `AuthPolicy` rejects unauthenticated clients with `NOAUTH`
 before any routing or queueing happens (only `AUTH`/`HELLO`/`RESET`/`QUIT` pass
-when `requirepass` is set and the session is unauthenticated), and cluster
+when `requirepass` is set and the session is unauthenticated), then
+[`NoMultiPolicy`](../src/core/execution-policies/no-multi-policy.ts) refuses,
+inside MULTI, a command the profile's command table flags `no_multi`
+(dirtying the transaction), and cluster
 routing must validate (and possibly redirect/reject) **before** a command is
 queued into a transaction — exactly like real Redis Cluster validates
 `CROSSSLOT` at queue time.

@@ -107,6 +107,9 @@ export type FeatureId =
   | 'help.acl-setuser-rules'
   | 'help.script-valkey-text'
   | 'help.function-no-library-description'
+  | 'error.lpos-rank-zero-hint'
+  | 'error.expire-time-quoted-wording'
+  | 'error.no-multi-named-wording'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

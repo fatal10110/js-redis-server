@@ -1817,6 +1817,23 @@ so the PR body is not a durable home for a breaking-change note.
 - `SORT` / `SORT_RO` `BY` and `GET` patterns of the form `key*->field` read
   `field` of the hash `key<element>`, as real `lookupKeyByPattern` does; the
   mock looked up a key named `key<element>->field` and found nothing ([#514]).
+- `ZADD` checks its arguments in real Redis's order: an odd score/member
+  tail (`ZADD z 1 a 2`, also from scripts and in its `EXEC` slot) is
+  `ERR syntax error` before any score is parsed, option conflicts are
+  checked after every option is read, and the `INCR` pair count comes before
+  the scores; the mock answered an arity or float error ([#517]).
+- `BLPOP` / `BRPOP` answer a bad timeout with `timeout is not a float or out
+  of range` / `timeout is negative`, as the other blocking commands do,
+  instead of `syntax error` ([#517]).
+- Inside `MULTI`, a command flagged `no_multi` is refused while queuing with
+  `Command not allowed inside a transaction` and the transaction aborts at
+  `EXEC`: `SHUTDOWN` from Redis 7.0, and on Valkey 8.0+ also `MULTI` and
+  `WATCH`. Valkey 9.0 names the command (`Command 'multi' not allowed inside
+  a transaction`) ([#517]).
+- Redis 6.2 profile: `LPOS ... RANK 0` and `invalid expire time in set`
+  (`SET` / `SETEX` / `PSETEX` / `GETEX`) use 6.2's wording; the hint
+  `... or use negative to start from the end of the list` starts at Redis
+  7.0.1 and the quoted `in 'set' command` at 7.0 ([#517]).
 - `CONFIG SET` validates values the way each parameter's type does on the
   real server, with 6.2's `Invalid argument '<value>' for CONFIG SET '<name>'
   - <detail>` or 7.0+'s `CONFIG SET failed (possibly related to argument
@@ -1937,6 +1954,7 @@ requests they contain.
 [#249]: https://github.com/fatal10110/js-redis-server/issues/249
 [#524]: https://github.com/fatal10110/js-redis-server/issues/524
 [#514]: https://github.com/fatal10110/js-redis-server/issues/514
+[#517]: https://github.com/fatal10110/js-redis-server/issues/517
 [#506]: https://github.com/fatal10110/js-redis-server/issues/506
 [#508]: https://github.com/fatal10110/js-redis-server/issues/508
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD

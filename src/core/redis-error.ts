@@ -263,9 +263,12 @@ export const errors = Object.freeze({
   hashValueNotFloat: () => new RedisCommandError('hash value is not a float'),
 
   // Lists / blocking
-  lposRankZero: () =>
+  /** Redis 7.0.1 added the negative-rank hint; see `error.lpos-rank-zero-hint`. */
+  lposRankZero: (profile: CompatibilityProfile) =>
     new RedisCommandError(
-      "RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list",
+      profile.has('error.lpos-rank-zero-hint')
+        ? "RANK can't be zero: use 1 to start from the first match, 2 from the second ... or use negative to start from the end of the list"
+        : "RANK can't be zero: use 1 to start from the first match, 2 from the second, ...",
     ),
   lposCountNegative: () => new RedisCommandError("COUNT can't be negative"),
   lposMaxlenNegative: () => new RedisCommandError("MAXLEN can't be negative"),
@@ -298,8 +301,17 @@ export const errors = Object.freeze({
     new RedisCommandError(
       'INCR option supports a single increment-element pair',
     ),
-  invalidExpireTime: (commandName: string) =>
-    new RedisCommandError(`invalid expire time in '${commandName}' command`),
+  /**
+   * Redis 6.2 names the command bare (`in set`); 7.0 quotes it, see
+   * `error.expire-time-quoted-wording`. Without a profile (commands newer
+   * than 7.0, such as HEXPIRE) the quoted form.
+   */
+  invalidExpireTime: (commandName: string, profile?: CompatibilityProfile) =>
+    new RedisCommandError(
+      profile && !profile.has('error.expire-time-quoted-wording')
+        ? `invalid expire time in ${commandName}`
+        : `invalid expire time in '${commandName}' command`,
+    ),
 
   // Geo
   invalidLongitudeLatitude: (lon: number, lat: number) =>
@@ -501,6 +513,19 @@ export const errors = Object.freeze({
   discardWithoutMulti: () => new RedisCommandError('DISCARD without MULTI'),
   watchInsideMulti: () =>
     new RedisCommandError('WATCH inside MULTI is not allowed'),
+  /**
+   * A command flagged `no_multi` sent inside MULTI. Valkey 9.0 names it
+   * (`fullname` in lower case); see `error.no-multi-named-wording`.
+   */
+  commandNotAllowedInTransaction: (
+    name: string,
+    profile: CompatibilityProfile,
+  ) =>
+    new RedisCommandError(
+      profile.has('error.no-multi-named-wording')
+        ? `Command '${name}' not allowed inside a transaction`
+        : 'Command not allowed inside a transaction',
+    ),
   transactionDiscarded: () =>
     new RedisCommandError(
       'Transaction discarded because of previous errors.',

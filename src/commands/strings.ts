@@ -336,7 +336,7 @@ export const setexCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.seconds <= 0) {
-      throw errors.invalidExpireTime('setex')
+      throw errors.invalidExpireTime('setex', ctx.server.profile)
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.seconds * 1000,
@@ -357,7 +357,7 @@ export const psetexCommand = defineCommand({
   keys: args => [args.key],
   execute: (args, ctx) => {
     if (args.milliseconds <= 0) {
-      throw errors.invalidExpireTime('psetex')
+      throw errors.invalidExpireTime('psetex', ctx.server.profile)
     }
     ctx.db.setString(args.key, args.value, {
       expiresAt: Date.now() + args.milliseconds,
@@ -604,7 +604,7 @@ function createSetSchema(): CommandSchema<SetArgs> {
           const ttl = requireNextOptionValue(input, cursor + 1)
           args.expire = {
             unit: option,
-            value: parsePositiveExpireToken(ttl, 'set'),
+            value: parsePositiveExpireToken(ttl, 'set', ctx.profile),
           }
           cursor += 2
           continue
@@ -807,7 +807,7 @@ function createGetexSchema(): CommandSchema<GetexArgs> {
           const ttl = requireNextOptionValue(input, cursor + 1)
           args.expire = {
             unit: option,
-            value: parsePositiveExpireToken(ttl, 'getex'),
+            value: parsePositiveExpireToken(ttl, 'getex', ctx.profile),
           }
           cursor += 2
           continue
