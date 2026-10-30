@@ -115,6 +115,8 @@ export function createVirtualConnection(
     nodeRole: opts.nodeRole,
     logger: opts.logger,
     clientAddress: formatSocketAddressParts(remoteAddress, remotePort),
+    // The client's remote end is the server's end: the node it dialled.
+    localAddress: formatSocketAddressParts(remoteAddress, remotePort),
   })
 
   return {

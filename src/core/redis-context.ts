@@ -79,7 +79,40 @@ export interface RedisClientSession {
   readonly monitoring: boolean
   startMonitor(frame: (event: RedisMonitorCommandEvent) => RedisResult): void
   disconnect(reason?: string): void
+  // What CLIENT LIST / CLIENT INFO report beyond the fields above.
+  /**
+   * The server's end of the connection, `host:port` (`laddr=`); absent on a
+   * connection with no address (CLIENT LIST then prints `addr`'s).
+   */
+  readonly localAddress?: string
+  /**
+   * The socket's file descriptor (`fd=`); absent without one (the in-process
+   * wire), which CLIENT LIST prints as `-1`, Redis's own spelling.
+   */
+  readonly fd?: number
+  /**
+   * The command-table name of the last command the client sent (`cmd=`):
+   * `container|subcommand` once lookup resolves subcommands (7.0+), `null`
+   * before the first command or after one lookup did not find.
+   */
+  readonly lastCommand: string | null
+  /** When the client last sent a command or got its reply (`idle=`). */
+  readonly lastInteractionMs: number
+  /**
+   * Commands queued since MULTI, still counted while EXEC runs them
+   * (`multi=`; `-1` outside a transaction).
+   */
+  readonly queuedCommandCount: number
+  /** Keys under WATCH (`watch=`). */
+  readonly watchedKeyCount: number
 }
+
+/**
+ * The slot a running script keeps to: its declared keys' slot, else the
+ * first slot one of its commands touched, `null` until then. Redis keeps it
+ * on the calling client (`original_c->slot`).
+ */
+export type ScriptSlotPin = { slot: number | null }
 
 export interface RedisExecutionContext {
   readonly db: RedisDatabase
@@ -93,6 +126,14 @@ export interface RedisExecutionContext {
    * reproducible across replicas — `SORT` over a set, today — branch on it.
    */
   readonly inScript?: boolean
+  /**
+   * Set on a cluster node while a script that must keep to one slot runs
+   * (Redis 7.0+: a shebang script or a function, unless it declares
+   * `allow-cross-slot-keys`). The cluster policy refuses a command whose
+   * keys hash to another slot than the pin's, and pins the first slot a
+   * command touches when the script declared no keys.
+   */
+  readonly scriptSlot?: ScriptSlotPin
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

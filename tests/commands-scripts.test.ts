@@ -383,6 +383,86 @@ redis.register_function('dup', function(keys, args) return 'dup' end)`
     assert.ok(!arrayBulkTexts(list.value).includes('newlib'))
   })
 
+  // #538, checked against redis-server 7.0.15 (and the #538 transcripts for
+  // 8.0.6 and valkey-server 8.0.11).
+  test('FUNCTION LOAD refuses a library that does not compile', async () => {
+    const { session } = createSession()
+    const load = (...args: string[]) =>
+      session.execute('function', [
+        Buffer.from('load'),
+        ...args.map(arg => Buffer.from(arg)),
+      ])
+
+    assert.deepStrictEqual(
+      await load('#!lua name=badlib\nreturn +'),
+      RedisResult.error(
+        "Error compiling function: user_function:2: unexpected symbol near '+'",
+        'ERR',
+      ),
+    )
+    assert.deepStrictEqual(
+      await load(
+        "#!lua name=badlib2\nredis.register_function('f', function() return 1 end) +",
+      ),
+      RedisResult.error(
+        "Error compiling function: user_function:2: unexpected symbol near '+'",
+        'ERR',
+      ),
+    )
+    // The metadata line counts as line 1.
+    assert.deepStrictEqual(
+      await load('#!lua name=e9\nlocal x = 1\nfunction f()\nreturn 1\n'),
+      RedisResult.error(
+        "Error compiling function: user_function:5: 'end' expected (to close 'function' at line 3) near '<eof>'",
+        'ERR',
+      ),
+    )
+    assert.deepStrictEqual(
+      await load('#!lua name=emptylib\nreturn 1'),
+      RedisResult.error('No functions registered', 'ERR'),
+    )
+
+    const good =
+      "#!lua name=goodlib\nredis.register_function('gf', function() return 1 end)"
+    assert.deepStrictEqual(
+      await load(good),
+      RedisResult.create(RedisValue.bulkString(Buffer.from('goodlib'))),
+    )
+    // An existing library is refused before the code is compiled.
+    assert.deepStrictEqual(
+      await load('#!lua name=goodlib\nreturn +'),
+      RedisResult.error("Library 'goodlib' already exists", 'ERR'),
+    )
+    assert.deepStrictEqual(
+      await load('#!lua name=goodlib\nreturn 1'),
+      RedisResult.error("Library 'goodlib' already exists", 'ERR'),
+    )
+    // REPLACE with code that does not compile keeps the old library.
+    assert.deepStrictEqual(
+      await load('REPLACE', '#!lua name=goodlib\nreturn +'),
+      RedisResult.error(
+        "Error compiling function: user_function:2: unexpected symbol near '+'",
+        'ERR',
+      ),
+    )
+    const list = await session.execute('function', [Buffer.from('list')])
+    assert.ok(list instanceof RedisResult)
+    assert.deepStrictEqual(
+      arrayBulkTexts(list.value).filter(text => text.endsWith('lib')),
+      ['goodlib'],
+    )
+    assert.deepStrictEqual(
+      await session.execute('fcall', [Buffer.from('gf'), Buffer.from('0')]),
+      RedisResult.create(RedisValue.integer(1)),
+    )
+
+    // Like Redis, code that does not open with `#!` has no metadata.
+    assert.deepStrictEqual(
+      await load('-- lib\n#!lua name=late\nreturn 1'),
+      RedisResult.error('Missing library metadata', 'ERR'),
+    )
+  })
+
   test('exposes Redis-compatible script command flags through COMMAND INFO', async () => {
     const { session } = createSession()
     const info = await session.execute('command', [

@@ -47,6 +47,7 @@ export { RedisScriptCache } from './script-cache'
 export {
   RedisFunctionRegistry,
   parseFunctionLibrary,
+  parseFunctionLibraryMetadata,
   type RedisFunctionDefinition,
   type RedisFunctionLibrary,
 } from './function-registry'

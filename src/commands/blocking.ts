@@ -1,5 +1,34 @@
-import type { RedisExecutionContext } from '../core/redis-context'
+import type {
+  RedisClientSession,
+  RedisExecutionContext,
+} from '../core/redis-context'
 import type { RedisDataValue } from '../state/data-types'
+
+/**
+ * Sessions inside {@link blockOnKeys}, with how many of their commands are:
+ * the clients real Redis flags `CLIENT_BLOCKED` (`flags=b` in CLIENT LIST,
+ * counted by INFO's `blocked_clients`). A client sends one command at a time,
+ * so the count is 1 in practice; it is a count so nesting can never clear
+ * the flag early.
+ */
+const blockedSessions = new WeakMap<RedisClientSession, number>()
+
+/** Whether `session` is parked in a blocking command (BLPOP, XREAD BLOCK, ...). */
+export function isClientBlocked(session: RedisClientSession): boolean {
+  return (blockedSessions.get(session) ?? 0) > 0
+}
+
+function markBlocked(session: RedisClientSession): () => void {
+  blockedSessions.set(session, (blockedSessions.get(session) ?? 0) + 1)
+  return () => {
+    const count = (blockedSessions.get(session) ?? 1) - 1
+    if (count > 0) {
+      blockedSessions.set(session, count)
+    } else {
+      blockedSessions.delete(session)
+    }
+  }
+}
 
 export type BlockOnKeysOptions<TResult> = {
   keys: readonly Buffer[]
@@ -65,6 +94,10 @@ export async function blockOnKeys<TResult>(
         ],
   )
 
+  // Blocked from here until the command finishes: a wake that finds nothing
+  // ready re-parks without the client ever leaving the blocked state, and
+  // the flag is cleared before the reply is written.
+  const unmarkBlocked = markBlocked(ctx.session)
   try {
     while (true) {
       const remaining =
@@ -100,6 +133,7 @@ export async function blockOnKeys<TResult>(
       if (result !== null) return result
     }
   } finally {
+    unmarkBlocked()
     for (const unsub of unsubs) {
       try {
         unsub()
@@ -108,6 +142,27 @@ export async function blockOnKeys<TResult>(
       }
     }
   }
+}
+
+/**
+ * A blocking command's wait once its non-blocking attempt found nothing:
+ * {@link blockOnKeys}, then `timedOut()` for its timeout reply.
+ *
+ * A command called from a script cannot block (real Redis sets
+ * `CLIENT_DENY_BLOCKING` on the script client), so there it answers
+ * `timedOut()` at once, even with timeout 0, as if the timeout had expired
+ * (#500). Which blocking commands a script may call at all is the command
+ * table's `noscript` flag: from 7.2 every one of them, before that only
+ * BLMPOP and BZMPOP. The reply is synchronous, because `redis.call` runs
+ * through `executePlanSync`, which refuses a promise.
+ */
+export function blockOrTimeOut<TResult>(
+  ctx: RedisExecutionContext,
+  options: BlockOnKeysOptions<TResult>,
+  timedOut: () => TResult,
+): TResult | Promise<TResult> {
+  if (ctx.inScript) return timedOut()
+  return blockOnKeys(ctx, options).then(result => result ?? timedOut())
 }
 
 /** A blocking timeout in seconds (`0` = forever) as park milliseconds. */

@@ -69,10 +69,17 @@ redirects and pre-execution cluster errors are skipped because the command is no
 executed on that node. Commands with monitor skip metadata are skipped, sensitive
 authentication arguments are redacted, transaction commands are emitted when
 `EXEC` replays them, and Lua `redis.call` / `redis.pcall` commands are emitted
-with the `lua` source. Credential-bearing commands declare their own monitor
-redaction metadata in the command definition, and Redis-invisible commands
-declare monitor skip metadata there too, so the executor does not need
-command-specific argument knowledge.
+with the `lua` source. A command is stamped after it ran, except the ones the
+real command table flags `skip_monitor` (`EVAL`, `EVALSHA`, `FCALL`, ...),
+which Redis feeds from inside the command and the executor stamps at dispatch.
+A short-circuit from a policy marked `rejectsBeforeCall` (auth, subscribed
+mode, the monitor connection's keyspace refusal) is not published, as Redis
+rejects those in `processCommand`, before `call()`. Every subscriber, the
+sending connection included, receives each event; a monitoring session holds
+its own command's lines, then every later push, until the reply is written. Credential-bearing commands
+declare their own monitor redaction metadata in the command definition, and
+Redis-invisible commands declare monitor skip metadata there too, so the
+executor does not need command-specific argument knowledge.
 
 ## Layers
 
@@ -408,7 +415,10 @@ COPY's write into `copy_to` (#445). A write that sets a TTL (`SET ... EX`,
 `SETEX`, `PSETEX`) passes `expireEvent` to `RedisDatabase.set`, which follows
 the write with an `expire` mutation, as Redis notifies `set` then `expire`;
 `GETEX` changes only the TTL, so it emits `expire` (or `del` for a time already
-past) and no write (#380).
+past) and no write (#380). On Valkey 8.0+ a `SET` with a deadline already past
+writes nothing and deletes the key if it exists, and on Valkey 8.1+ every such
+past-deadline deletion goes through `RedisDatabase.expireNow`, an `evict`
+mutation published as `expired`, instead of `delete` (#527).
 In-place collection updates run through a mutation tracker owned by
 `RedisDatabase.update` and
 typed helpers such as `TrackedHashData.setField()` and
@@ -486,11 +496,20 @@ inline arguments) for the request side. The adapter pulls one frame at a time
 parsed — which is what lets the decoder enforce the *live*
 `proto-max-bulk-len` on every bulk header, refusing an oversized argument with
 `Protocol error: invalid bulk length` and closing the connection before any
-command handler sees it, exactly as Redis does. The adapter also hands the
+command handler sees it, exactly as Redis does. While a command is parked
+(`BLPOP`, `XREAD BLOCK`, ...) the adapter keeps reading the socket and
+buffers what arrives without parsing it, as Redis keeps reading a blocked
+client, so a client that hangs up while blocked is seen at once:
+`ClientSession.endInput()` aborts the park and the session closes. The adapter also hands the
 decoder the server's compatibility profile, which picks the multibulk
-element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+). Like Redis, the
-decoder refuses an inline request once more than 64KB is buffered with no
-newline.
+element-count bound (`1024*1024` on 6.2, `INT_MAX` on 7.0+) and the few other
+framing rules that differ by version. Like Redis, the decoder refuses a request
+once more than 64KB is buffered without the line it is waiting for: the
+newline of an inline request, or the CR of a `*<count>` or `$<length>` header.
+It splits inline arguments byte for byte as `sdssplitargs` does. It parses
+incrementally, keeping its place in a partly received multibulk (the element
+count left and the current bulk length, as Redis keeps on the client), so a
+large request split across many reads costs linear time.
 
 On the reply side, [`encodeRedisValue`](../src/core/resp-encoder.ts#L17)
 serializes the protocol-agnostic [`RedisValue`](../src/core/redis-value.ts)
@@ -586,19 +605,33 @@ per server state keeps each logical node's `LuaEngine` and script
 re-entrancy guard isolated, so concurrent `EVAL`s on independent
 server/cluster nodes never share Lua state.
 
+Since lua-redis-wasm 2.0 an exception that escapes the WASM module (a
+`WasmFault`, an Emscripten abort, a trap) leaves the engine unusable. The
+runtime notices (`RedisLuaRuntime.usable`), the command that hit the fault
+gets an `ERR` reply, and the next `getLuaRuntime()` replaces the runtime with
+a fresh one. The script cache and the function libraries live on the server
+state, so they survive the swap (#539).
+
 `RedisLuaRuntime` wraps `lua-redis-wasm` and exposes `redis.call`/`redis.pcall`
 to scripts via a host callback
 ([`runRedisCommand`](../src/core/lua-runtime.ts#L58)) that:
 
 1. builds a `CommandPlan` with `ctx.executor.plan(name, args)` — the _exact_
    same lookup/parse/key-extraction the normal path uses,
-2. rejects commands flagged `noscript` with the standard Redis script error
-   (on 7.0+ profiles a `noscript` container's subcommand is looked up
-   first, mirroring Redis's per-subcommand flags: `HELP` is exempt and an
-   unknown subcommand gets the unknown-command error), and
+2. rejects commands flagged `noscript` with the standard Redis script error.
+   The flag is read from the real command table of the profile's version
+   (the definition's own `flags` only for a name that table lacks), so it
+   follows each version: on 7.0+ profiles a container's subcommand is looked
+   up first, mirroring Redis's per-subcommand flags (`HELP` is exempt and an
+   unknown subcommand gets the unknown-command error), and from 7.2 the
+   blocking pops are allowed. A blocking command called from a script never
+   parks: like Redis's `CLIENT_DENY_BLOCKING`, it answers its timeout reply
+   at once (`blockOrTimeOut` in `src/commands/blocking.ts`), and
 3. runs the plan through [`executePlanSync`](../src/core/command-executor.ts#L116)
    — the same registry and policies as a client-issued command, so cluster
-   slot validation and transaction-flag rules apply _inside_ scripts too, and
+   slot validation and transaction-flag rules apply _inside_ scripts too
+   (a script that must keep to one slot carries a `scriptSlot` pin on its
+   context, which `ClusterPolicy` checks once the keys are known local), and
    any command/policy that tries to go async or stream is rejected outright
    (Lua cannot await).
 
@@ -620,6 +653,21 @@ in the server-wide [`RedisScriptCache`](../src/state/script-cache.ts). A script
 is cached only once it compiles: `EVAL` caches it after the run unless it was
 a compile error, and `SCRIPT LOAD` compiles it first (`RedisLuaRuntime.compile`)
 and refuses invalid Lua, as Redis does.
+
+From 7.0 a script may open with a `#!lua [flags=...]` shebang
+([`parseScriptShebang`](../src/core/script-shebang.ts)). The engine does not
+skip it (fatal10110/lua-redis-wasm#98), so the host checks the shebang with
+Redis's wording, hands the engine the body with that line blanked (its line
+feed kept, so line numbers count it) and renders errors with the SHA of the
+script the client sent. The declared flags are checked like Redis's
+`scriptPrepareForRun`: `no-writes` runs the script read-only (refusing
+writes and Redis's `may-replicate` commands), `EVAL_RO` refuses a script
+without it, `no-cluster` refuses to run on a cluster node, and a shebang
+script or function keeps to one slot on a cluster node unless it declares
+`allow-cross-slot-keys`. `FUNCTION LOAD` reads the library's metadata line
+as Redis's `functionExtractLibMetaData` does and compiles the library the
+same way before registering it, naming the chunk `user_function` as Redis
+does.
 
 ## Adding a command
 
