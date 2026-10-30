@@ -129,6 +129,7 @@ export async function blockOnKeys<TResult>(
         }
       })
 
+      const parkedAt = Date.now()
       let woken: true | null
       try {
         woken = await ctx.park({
@@ -145,6 +146,11 @@ export async function blockOnKeys<TResult>(
 
       if (woken === null) {
         if (parkMs === remaining) return null
+        // A park that gave up long before its step (the non-blocking park
+        // of MULTI / EXEC) is a timeout too: parking again would spin.
+        if (parkMs !== undefined && Date.now() - parkedAt < parkMs / 2) {
+          return null
+        }
         continue
       }
 

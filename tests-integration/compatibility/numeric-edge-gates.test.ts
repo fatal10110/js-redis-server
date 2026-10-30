@@ -203,6 +203,21 @@ describe(`Numeric edge profile rows (${testRunner.getBackendName()}, ${profile})
     })
   }
 
+  test('a timeout past the 32-bit timer range does not block in MULTI', async () => {
+    const conn = await connect()
+    const list = randomKey()
+    const stream = randomKey()
+    await expectReply(conn, ['MULTI'], '+OK\r\n')
+    await expectReply(conn, ['BLPOP', list, '100000000'], '+QUEUED\r\n')
+    await expectReply(
+      conn,
+      ['XREAD', 'BLOCK', '2147483648', 'STREAMS', stream, '$'],
+      '+QUEUED\r\n',
+    )
+    await expectReply(conn, ['EXEC'], '*2\r\n*-1\r\n*-1\r\n')
+    await expectReply(conn, ['PING'], '+PONG\r\n')
+  })
+
   test('the milliseconds come from long double arithmetic', async () => {
     // Inside MULTI a timeout of 0 answers a null array instead of blocking.
     const conn = await connect()
