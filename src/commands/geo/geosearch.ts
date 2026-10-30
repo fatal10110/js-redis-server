@@ -34,13 +34,18 @@ function createGeoSearchSchema() {
       if (cursor >= input.length) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      const [from, afterFrom] = parseGeoFrom(input, cursor, ctx.commandName)
+      const [from, afterFrom] = parseGeoFrom(
+        input,
+        cursor,
+        ctx.commandName,
+        ctx.profile,
+      )
       cursor = afterFrom
 
       if (cursor >= input.length) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
-      const [by, afterBy] = parseGeoBy(input, cursor)
+      const [by, afterBy] = parseGeoBy(input, cursor, ctx.profile)
       cursor = afterBy
 
       const options: GeoOrderCount = {}

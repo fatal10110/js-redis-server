@@ -1652,6 +1652,28 @@ so the PR body is not a durable home for a breaking-change note.
   at most 32KB is kept once everything is parsed, a bulk of 32KB or more gets
   a buffer of exactly its size and is handed over without a copy, and inline
   arguments no longer share the request line's buffer.
+- Double operands are read like the real server's C converters ([#534]):
+  - ZADD, ZINCRBY, ZUNION/ZINTER(STORE) WEIGHTS and every GEO* longitude,
+    latitude, radius, width and height (`string2d()`) take `infinity` in any
+    case, refuse a leading or trailing space, an empty token, `0b11` and an
+    underflow to zero (`1e-400`), and accept C hex floats (`0x1p3`, `-0x10`,
+    `0x1.8`) except on Valkey 8.1+, which refuses them (also plain `0x10`).
+    `GEOADD inf 1 m` now answers `invalid longitude,latitude pair
+    inf,1.000000` as real Redis does, and a huge coordinate is printed with
+    all its digits.
+  - Score ranges (ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZCOUNT, ZREMRANGEBYSCORE,
+    ZRANGE BYSCORE) follow `zslParseRange()`: an empty bound or a bare `(` is
+    0, `1e400` and any `infinity` spelling are infinity, a NUL byte ends the
+    bound and a trailing space is refused. Hex floats and a leading space are
+    accepted up to Redis 7.4 / Valkey 8.0 and refused from Redis 8.0 / Valkey
+    8.1 (fast_float).
+- SORT converts numeric elements and BY weights like real Redis' sort.c
+  ([#513]): infinity spellings sort as +/-inf, a trailing space, `0b11` and
+  NaN are refused; hex floats and a leading space work up to Redis 7.4 /
+  Valkey 8.0 only; an empty element is 0 except on Valkey 8.1+; `1e400` and
+  `1e-310` are refused except on Redis 8.0 (Valkey 8.1+ takes `1e-310`).
+  `SORT ... LIMIT offset count` takes the full signed 64-bit range
+  (`LIMIT 0 9223372036854775807`).
 
 ## [0.3.0] and earlier
 
@@ -1735,5 +1757,7 @@ requests they contain.
 [#509]: https://github.com/fatal10110/js-redis-server/issues/509
 [#564]: https://github.com/fatal10110/js-redis-server/issues/564
 [#565]: https://github.com/fatal10110/js-redis-server/issues/565
+[#534]: https://github.com/fatal10110/js-redis-server/issues/534
+[#513]: https://github.com/fatal10110/js-redis-server/issues/513
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

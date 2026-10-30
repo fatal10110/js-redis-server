@@ -580,6 +580,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'SORT_RO sorts like SORT',
     'SORT_RO supports BY and GET external patterns',
   ]),
+  todo('node-redis/sort-strtod.test.ts', CAUSE.clusterTopology, [
+    'SORT LIMIT takes the full int64 range',
+    'SORT orders every infinity spelling as +/-inf',
+    'SORT reads hex floats only before Redis 8.0 / Valkey 8.1',
+    'SORT refuses trailing whitespace and NaN',
+    'SORT takes 1e400 as infinity only on Redis 8.0',
+    'SORT treats an empty element as 0, except on Valkey 8.1+',
+  ]),
   todo('node-redis/stream/add.test.ts', missing('xAdd'), [
     'XADD * generates monotonically increasing ids',
     'XADD <ms>-* auto-increments the sequence',

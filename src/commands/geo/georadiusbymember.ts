@@ -34,7 +34,7 @@ function createGeoRadiusByMemberSchema(allowStore: boolean) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
 
-      const by = parseByRadius(radiusTok, unitTok)
+      const by = parseByRadius(radiusTok, unitTok, ctx.profile)
       const [flags, nextIndex] = parseGeoRadiusFlags(
         input,
         index + 4,

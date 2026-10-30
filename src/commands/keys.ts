@@ -3,6 +3,8 @@ import {
   type CommandIntrospection,
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
+import type { CompatibilityProfile } from '../core/compatibility/profile'
+import { parseSortScoreToken } from '../core/double-token'
 import {
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
@@ -25,7 +27,7 @@ import {
   integer,
   keyTtlSeconds,
   ok,
-  parseIntegerToken,
+  parseInt64Token,
   simpleString,
   ttlMilliseconds,
   typeName,
@@ -663,10 +665,7 @@ function scanSortOptions(
     }
 
     if (option === 'LIMIT' && remaining >= 2) {
-      scanned.limit = {
-        offset: parseIntegerToken(options[j + 1]!),
-        count: parseIntegerToken(options[j + 2]!),
-      }
+      scanned.limit = parseSortLimit(options[j + 1]!, options[j + 2]!)
       j += 2
       continue
     }
@@ -727,14 +726,36 @@ function readSortSource(db: RedisDatabase, key: Buffer): SortSource {
   throw new WrongTypeRedisError()
 }
 
-function sortNumericScore(weight: Buffer | null): number {
-  // A missing weight leaves the score at 0. Otherwise Redis converts with
-  // strtod; an empty string becomes 0, and anything that does not parse as a
-  // double aborts the whole command.
+function sortNumericScore(
+  weight: Buffer | null,
+  profile: CompatibilityProfile,
+): number {
+  // A missing weight leaves the score at 0. Otherwise sort.c converts it with
+  // the profile's strtod / fast_float (see parseSortScoreToken), and anything
+  // that does not convert aborts the whole command.
   if (!weight) return 0
-  const value = Number(weight.toString())
-  if (Number.isNaN(value)) throw errors.sortScoreNotDouble()
+  const value = parseSortScoreToken(weight, profile)
+  if (value === undefined) throw errors.sortScoreNotDouble()
   return value
+}
+
+/**
+ * `LIMIT offset count`: both are full signed 64-bit integers
+ * (`getLongFromObjectOrReply`). sortCommand() clamps them to the element
+ * count, so a negative offset is 0 and a negative count means "the rest";
+ * clamping to the safe-integer range here keeps that meaning.
+ */
+function parseSortLimit(
+  offsetToken: Buffer,
+  countToken: Buffer,
+): { offset: number; count: number } {
+  const offset = parseInt64Token(offsetToken)
+  const count = parseInt64Token(countToken)
+  const max = BigInt(Number.MAX_SAFE_INTEGER)
+  return {
+    offset: offset < 0n ? 0 : Number(offset > max ? max : offset),
+    count: count < 0n ? -1 : Number(count > max ? max : count),
+  }
 }
 
 /**
@@ -753,6 +774,7 @@ function sortElements(
   { type, elements }: SortSource,
   options: SortOptions,
   db: RedisDatabase,
+  profile: CompatibilityProfile,
 ): Buffer[] {
   if (options.dontsort) {
     // A constant BY does not simply skip the sort: for DESC, sortCommand()'s
@@ -791,7 +813,10 @@ function sortElements(
 
   const scored = elements.map(element => ({
     element,
-    score: sortNumericScore(by ? readSortPattern(db, by, element) : element),
+    score: sortNumericScore(
+      by ? readSortPattern(db, by, element) : element,
+      profile,
+    ),
   }))
   // sortCompare() falls through to compareStringObjects() on equal scores, so
   // ties are broken lexicographically rather than left in insertion order.
@@ -859,7 +884,7 @@ function runSort(
   const source = readSortSource(db, args.key)
   const effective = forceDeterministicSetOrder(options, source.type, ctx)
   const sorted = applySortLimit(
-    sortElements(source, effective, db),
+    sortElements(source, effective, db, ctx.server.profile),
     options.limit,
   )
   const output = projectSortOutput(sorted, options.get, db)

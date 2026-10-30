@@ -37,10 +37,10 @@ function createGeoRadiusSchema(allowStore: boolean) {
         throw new WrongNumberOfArgumentsError(ctx.commandName)
       }
 
-      const lon = parseGeoFloatToken(lonTok)
-      const lat = parseGeoFloatToken(latTok)
+      const lon = parseGeoFloatToken(lonTok, ctx.profile)
+      const lat = parseGeoFloatToken(latTok, ctx.profile)
       assertValidCoordinates(lon, lat)
-      const by = parseByRadius(radiusTok, unitTok)
+      const by = parseByRadius(radiusTok, unitTok, ctx.profile)
       const [flags, nextIndex] = parseGeoRadiusFlags(
         input,
         index + 5,

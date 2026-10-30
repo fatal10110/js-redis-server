@@ -1,5 +1,6 @@
 import { defineCommand } from '../../core/command-definition'
 import { t, type ParseContext } from '../../core/command-schema'
+import { parseString2dToken } from '../../core/double-token'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
 import { integer } from '../helpers'
 import { assertValidCoordinates, encodeGeoScore } from './helpers'
@@ -8,10 +9,10 @@ type GeoPoint = { lon: number; lat: number; member: Buffer }
 type GeoAddOptions = { nx: boolean; xx: boolean; ch: boolean }
 type GeoAddArgs = { key: Buffer; options: GeoAddOptions; points: GeoPoint[] }
 
-function parseFloatToken(token: Buffer): number {
-  const n = Number(token.toString())
-  if (!Number.isFinite(n)) throw errors.expectedFloat()
-  return n
+function parseFloatToken(token: Buffer, ctx: ParseContext): number {
+  const value = parseString2dToken(token, ctx.profile)
+  if (value === undefined) throw errors.expectedFloat()
+  return value
 }
 
 function createGeoAddSchema() {
@@ -55,8 +56,8 @@ function createGeoAddSchema() {
 
       const points: GeoPoint[] = []
       while (cursor < input.length) {
-        const lon = parseFloatToken(input[cursor]!)
-        const lat = parseFloatToken(input[cursor + 1]!)
+        const lon = parseFloatToken(input[cursor]!, ctx)
+        const lat = parseFloatToken(input[cursor + 1]!, ctx)
         assertValidCoordinates(lon, lat)
         points.push({ lon, lat, member: input[cursor + 2]! })
         cursor += 3

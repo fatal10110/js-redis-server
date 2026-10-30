@@ -290,7 +290,7 @@ export const errors = Object.freeze({
   // Geo
   invalidLongitudeLatitude: (lon: number, lat: number) =>
     new RedisCommandError(
-      `invalid longitude,latitude pair ${lon.toFixed(6)},${lat.toFixed(6)}`,
+      `invalid longitude,latitude pair ${formatCFixed6(lon)},${formatCFixed6(lat)}`,
     ),
   geoUnsupportedUnit: () =>
     new RedisCommandError(
@@ -554,3 +554,13 @@ export const errors = Object.freeze({
       'The stream has exhausted the last possible ID, unable to add more items',
     ),
 })
+
+/**
+ * C's `%f` for the GEO coordinate errors: six decimals, `inf` / `-inf` for
+ * an infinity, and plain digits (no exponent) however large the value.
+ */
+function formatCFixed6(value: number): string {
+  if (!Number.isFinite(value)) return value > 0 ? 'inf' : '-inf'
+  if (Math.abs(value) < 1e21) return value.toFixed(6)
+  return `${BigInt(value)}.000000`
+}

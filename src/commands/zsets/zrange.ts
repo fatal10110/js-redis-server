@@ -171,8 +171,8 @@ function selectZrangeMembers(
   }
 
   if (args.by === 'score') {
-    const min = parseScoreBoundArg(minTok.toString())
-    const max = parseScoreBoundArg(maxTok.toString())
+    const min = parseScoreBoundArg(minTok, ctx.server.profile)
+    const max = parseScoreBoundArg(maxTok, ctx.server.profile)
     const zset = ctx.db.getSortedSet(args.key)
     if (!zset) return []
     let matched = getSortedMembers(zset).filter(m =>
