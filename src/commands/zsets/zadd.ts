@@ -118,7 +118,7 @@ function parseZaddPairs(
       throw new WrongNumberOfArgumentsError(ctx.commandName)
     }
 
-    const score = parseFloatArg(scoreToken.toString())
+    const score = parseFloatArg(scoreToken, ctx.profile)
 
     pairs.push({ score, member: memberToken })
     cursor += 2

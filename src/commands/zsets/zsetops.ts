@@ -1,6 +1,8 @@
 import { defineCommand } from '../../core/command-definition'
 import { numkeysGetKeys } from '../../core/key-specs'
 import { t, type ParseContext } from '../../core/command-schema'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import { parseString2dToken } from '../../core/double-token'
 import {
   WrongNumberOfArgumentsError,
   WrongTypeRedisError,
@@ -176,16 +178,9 @@ function storeResult(
 
 // ------------------------------------------------------------------- parsing
 
-function parseWeight(token: Buffer): number {
-  const raw = token.toString()
-  const normalized = raw.toLowerCase()
-  if (normalized === 'inf' || normalized === '+inf') return Infinity
-  if (normalized === '-inf') return -Infinity
-
-  const value = Number(raw)
-  if (raw.trim() === '' || !Number.isFinite(value)) {
-    throw errors.weightNotFloat()
-  }
+function parseWeight(token: Buffer, profile: CompatibilityProfile): number {
+  const value = parseString2dToken(token, profile)
+  if (value === undefined) throw errors.weightNotFloat()
   return value
 }
 
@@ -228,7 +223,7 @@ function parseSetOp(
       for (let i = 0; i < numkeys; i++) {
         const token = input[cursor]
         if (!token) throw errors.syntax()
-        weights.push(parseWeight(token))
+        weights.push(parseWeight(token, ctx.profile))
         cursor++
       }
       continue

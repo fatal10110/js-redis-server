@@ -1,3 +1,5 @@
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import { parseString2dToken } from '../../core/double-token'
 import { errors } from '../../core/redis-error'
 import type {
   RedisSortedSetData,
@@ -16,14 +18,14 @@ export function getSortedMembers(
   )
 }
 
-export function parseFloatArg(s: string): number {
-  const normalized = s.toLowerCase()
-  if (normalized === 'inf' || normalized === '+inf') return Infinity
-  if (normalized === '-inf') return -Infinity
-
-  const n = Number(s)
-  if (!Number.isFinite(n)) throw errors.expectedFloat()
-  return n
+/** A ZADD / ZINCRBY score, read like Redis' `string2d()`. */
+export function parseFloatArg(
+  token: Buffer | string,
+  profile: CompatibilityProfile,
+): number {
+  const value = parseString2dToken(token, profile)
+  if (value === undefined) throw errors.expectedFloat()
+  return value
 }
 
 export function assertValidResultingScore(score: number) {

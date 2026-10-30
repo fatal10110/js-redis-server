@@ -1652,14 +1652,36 @@ so the PR body is not a durable home for a breaking-change note.
   at most 32KB is kept once everything is parsed, a bulk of 32KB or more gets
   a buffer of exactly its size and is handed over without a copy, and inline
   arguments no longer share the request line's buffer.
+- Double operands are read like the real server's C converters ([#534]):
+  - ZADD, ZINCRBY, ZUNION/ZINTER(STORE) WEIGHTS and every GEO* longitude,
+    latitude, radius, width and height (`string2d()`) take `infinity` in any
+    case, refuse a leading or trailing space, an empty token, `0b11` and an
+    underflow to zero (`1e-400`), and accept C hex floats (`0x1p3`, `-0x10`,
+    `0x1.8`) except on Valkey 8.1+, which refuses them (also plain `0x10`).
+    `GEOADD inf 1 m` now answers `invalid longitude,latitude pair
+    inf,1.000000` as real Redis does, and a huge coordinate is printed with
+    all its digits.
+  - Score ranges (ZRANGEBYSCORE, ZREVRANGEBYSCORE, ZCOUNT, ZREMRANGEBYSCORE,
+    ZRANGE BYSCORE) follow `zslParseRange()`: an empty bound or a bare `(` is
+    0, `1e400` and any `infinity` spelling are infinity, a NUL byte ends the
+    bound and a trailing space is refused. Hex floats and a leading space are
+    accepted up to Redis 7.4 / Valkey 8.0 and refused from Redis 8.0 / Valkey
+    8.1 (fast_float).
+- SORT converts numeric elements and BY weights like real Redis' sort.c
+  ([#513]): infinity spellings sort as +/-inf, a trailing space, `0b11` and
+  NaN are refused; hex floats and a leading space work up to Redis 7.4 /
+  Valkey 8.0 only; an empty element is 0 except on Valkey 8.1+; `1e400` and
+  `1e-310` are refused except on Redis 8.0 (Valkey 8.1+ takes `1e-310`).
+  `SORT ... LIMIT offset count` takes the full signed 64-bit range
+  (`LIMIT 0 9223372036854775807`).
 - Stream replies match real Redis and Valkey per version ([#528], [#495],
   [#519]):
   - An empty XREAD / XREADGROUP (nothing new, a BLOCK timeout, inside MULTI)
     is a null array, `*-1` on RESP2 (it was `$-1`).
   - Consumer-group `lag` and the `entries-read` counter XREADGROUP keeps
     follow real Redis' algorithm, including deleted entries, and its 7.4 form
-    (Redis 7.4.2+ / 7.4.4+, Valkey 8.0.3+ in part). `ENTRIESREAD` (XGROUP CREATE / SETID)
-    and XSETID `ENTRIESADDED` take any int64, not only values up to 2^53 - 1.
+    (Redis 7.4.2+ / 7.4.4+, Valkey 8.0.3+ in part). `ENTRIESREAD` (XGROUP
+    CREATE / SETID) and XSETID `ENTRIESADDED` take any int64, not only values up to 2^53 - 1.
   - XINFO CONSUMERS, XINFO GROUPS, XINFO STREAM FULL and the XPENDING summary
     list consumers and groups by name. The XPENDING summary sends each
     consumer's count as a bulk string, and `*-1` for the consumer list of an
@@ -1755,6 +1777,8 @@ requests they contain.
 [#509]: https://github.com/fatal10110/js-redis-server/issues/509
 [#564]: https://github.com/fatal10110/js-redis-server/issues/564
 [#565]: https://github.com/fatal10110/js-redis-server/issues/565
+[#534]: https://github.com/fatal10110/js-redis-server/issues/534
+[#513]: https://github.com/fatal10110/js-redis-server/issues/513
 [#528]: https://github.com/fatal10110/js-redis-server/issues/528
 [#495]: https://github.com/fatal10110/js-redis-server/issues/495
 [#519]: https://github.com/fatal10110/js-redis-server/issues/519

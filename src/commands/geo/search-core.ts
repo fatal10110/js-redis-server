@@ -2,6 +2,8 @@ import {
   formatGeoCoordinate,
   type DoubleFormatProfile,
 } from '../../core/double-format'
+import type { CompatibilityProfile } from '../../core/compatibility/profile'
+import { parseString2dToken } from '../../core/double-token'
 import { RedisValue } from '../../core/redis-value'
 import { RedisResult } from '../../core/redis-result'
 import { WrongNumberOfArgumentsError, errors } from '../../core/redis-error'
@@ -45,10 +47,14 @@ export type GeoMatch = {
   lat: number
 }
 
-export function parseGeoFloatToken(token: Buffer): number {
-  const n = Number(token.toString())
-  if (!Number.isFinite(n)) throw errors.expectedFloat()
-  return n
+/** A GEO* longitude or latitude, read like Redis' `string2d()`. */
+export function parseGeoFloatToken(
+  token: Buffer,
+  profile: CompatibilityProfile,
+): number {
+  const value = parseString2dToken(token, profile)
+  if (value === undefined) throw errors.expectedFloat()
+  return value
 }
 
 function parseGeoUnit(token: Buffer | undefined): string {
@@ -61,10 +67,11 @@ function parseGeoUnit(token: Buffer | undefined): string {
 export function parseByRadius(
   radiusTok: Buffer | undefined,
   unitTok: Buffer | undefined,
+  profile: CompatibilityProfile,
 ): GeoBy {
   if (!radiusTok) throw errors.syntax()
-  const radius = Number(radiusTok.toString())
-  if (!Number.isFinite(radius)) throw errors.geoRadiusNotNumeric()
+  const radius = parseString2dToken(radiusTok, profile)
+  if (radius === undefined) throw errors.geoRadiusNotNumeric()
   if (radius < 0) throw errors.geoRadiusNegative()
   const unit = parseGeoUnit(unitTok)
   return { kind: 'radius', radiusMeters: unitToMeters(radius, unit), unit }
@@ -74,13 +81,14 @@ export function parseByBox(
   widthTok: Buffer | undefined,
   heightTok: Buffer | undefined,
   unitTok: Buffer | undefined,
+  profile: CompatibilityProfile,
 ): GeoBy {
   if (!widthTok) throw errors.syntax()
-  const width = Number(widthTok.toString())
-  if (!Number.isFinite(width)) throw errors.geoWidthNotNumeric()
+  const width = parseString2dToken(widthTok, profile)
+  if (width === undefined) throw errors.geoWidthNotNumeric()
   if (!heightTok) throw errors.syntax()
-  const height = Number(heightTok.toString())
-  if (!Number.isFinite(height)) throw errors.geoHeightNotNumeric()
+  const height = parseString2dToken(heightTok, profile)
+  if (height === undefined) throw errors.geoHeightNotNumeric()
   if (width < 0 || height < 0) throw errors.geoBoxNegative()
   const unit = parseGeoUnit(unitTok)
   return {
@@ -102,6 +110,7 @@ export function parseGeoFrom(
   input: readonly Buffer[],
   cursor: number,
   commandName: string,
+  profile: CompatibilityProfile,
 ): [GeoFrom, number] {
   const token = input[cursor]?.toString().toUpperCase()
   if (token === 'FROMMEMBER') {
@@ -113,8 +122,8 @@ export function parseGeoFrom(
     const lonTok = input[cursor + 1]
     const latTok = input[cursor + 2]
     if (!lonTok || !latTok) throw new WrongNumberOfArgumentsError(commandName)
-    const lon = parseGeoFloatToken(lonTok)
-    const lat = parseGeoFloatToken(latTok)
+    const lon = parseGeoFloatToken(lonTok, profile)
+    const lat = parseGeoFloatToken(latTok, profile)
     assertValidCoordinates(lon, lat)
     return [{ type: 'lonlat', lon, lat }, cursor + 3]
   }
@@ -125,14 +134,23 @@ export function parseGeoFrom(
 export function parseGeoBy(
   input: readonly Buffer[],
   cursor: number,
+  profile: CompatibilityProfile,
 ): [GeoBy, number] {
   const token = input[cursor]?.toString().toUpperCase()
   if (token === 'BYRADIUS') {
-    return [parseByRadius(input[cursor + 1], input[cursor + 2]), cursor + 3]
+    return [
+      parseByRadius(input[cursor + 1], input[cursor + 2], profile),
+      cursor + 3,
+    ]
   }
   if (token === 'BYBOX') {
     return [
-      parseByBox(input[cursor + 1], input[cursor + 2], input[cursor + 3]),
+      parseByBox(
+        input[cursor + 1],
+        input[cursor + 2],
+        input[cursor + 3],
+        profile,
+      ),
       cursor + 4,
     ]
   }

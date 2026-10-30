@@ -404,4 +404,20 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Valkey 9.0 adds CLUSTER SYNCSLOTS, flagged too (valkey@9.0.0
   // src/commands.def).
   'may-replicate.cluster-syncslots': { valkey: '9.0.0' },
+  // Redis 8.0 and Valkey 8.1 convert score-range bounds (`zslParseRange()`)
+  // and numeric SORT elements / BY weights with fast_float instead of C
+  // `strtod`: hex floats (`0x10`) and leading whitespace are refused there,
+  // and Redis 8.0's SORT stops seeing `ERANGE` (`1e400` sorts as inf).
+  // redis@7.4.4 t_zset.c:556-591 / sort.c:479-484 vs redis@8.0.0
+  // t_zset.c:541-576 / sort.c:504, valkey@8.0.0 vs valkey@8.1.0. Checked
+  // against redis-server 6.2.14 .. 8.0.0 and valkey-server 8.0.0 / 9.0.0 (#534,
+  // #513). See src/core/double-token.ts.
+  'double.fast-float': { redis: '8.0.0', valkey: '8.1.0' },
+  // Valkey 8.1's `valkey_strtod()` is fast_float with no `strtod` fallback, so
+  // `string2d()` (ZADD, ZINCRBY, WEIGHTS, GEO*) refuses hex floats too, and
+  // SORT, which now resets errno, refuses an empty element (EINVAL) and an
+  // overflow or underflow to zero (ERANGE) but takes a subnormal. Redis 8.0
+  // keeps the fallback (redis@8.0.0 util.c:660-681). valkey@8.1.0
+  // util.c:599-609, sort.c:484-485; checked against valkey-server 9.0.0.
+  'double.valkey-strtod': { valkey: '8.1.0' },
 }

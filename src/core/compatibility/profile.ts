@@ -84,6 +84,8 @@ export type FeatureId =
   | 'may-replicate.redis7-table'
   | 'may-replicate.cluster-setslot'
   | 'may-replicate.cluster-syncslots'
+  | 'double.fast-float'
+  | 'double.valkey-strtod'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor
