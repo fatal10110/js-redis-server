@@ -361,6 +361,17 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis 6.2.14, 7.0.15, 7.2.4, 7.2.16, 7.4.0, 7.4.4, 8.0.0 and valkey 8.0.0,
   // 8.1.0, 9.0.0 (#604).
   'script.cluster-slot-not-served': { redis: '7.4.0', valkey: '8.0.0' },
+  // A script command whose own keys hash to different slots
+  // (CLUSTER_REDIR_CROSS_SLOT in scriptVerifyClusterState) answers `Command
+  // '<fullname>' in script attempted to access keys that don't hash to the
+  // same slot` from redis 7.4.0 (script.c:483-486) and valkey 8.0.0
+  // (script.c:440-443); before that it falls into the `... non local key in a
+  // cluster node` branch (6.2 in its legacy `luaPushError` form). Probed on
+  // redis 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and valkey 8.0.0, 9.0.0 (#618).
+  'script.cluster-crossslot-command-wording': {
+    redis: '7.4.0',
+    valkey: '8.0.0',
+  },
   // Valkey 8.0 dropped the product name from the scripting layer's own
   // errors, where Redis (and Valkey 7.2) keep it:
   //   Unknown command called from script              (Unknown Redis command ...)

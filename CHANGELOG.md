@@ -124,6 +124,15 @@ so the PR body is not a durable home for a breaking-change note.
   deleted from the stream keeps its count and time, and now comes back as
   `[id, *-1]` (a null array) in RESP2 instead of a null bulk string. The
   bump is not propagated to replicas, as in real Redis.
+- A command run from a script whose own keys hash to different slots answers
+  the scripting layer's error instead of `CROSSSLOT Keys in request don't
+  hash to the same slot` ([#618]): `Command '<name>' in script attempted to
+  access keys that don't hash to the same slot` on redis 7.4+ and valkey
+  8.0+, the "non local key" error on redis 7.0 / 7.2, and on redis 6.2
+  `@user_script: <line>: Lua script attempted to access a non local key in a
+  cluster node` with no error code. `redis.call` aborts the script with it and
+  `redis.pcall` returns it, as for the other script cluster errors. New
+  `FeatureId` member `script.cluster-crossslot-command-wording`.
 
 ### Changed
 
@@ -2242,6 +2251,7 @@ requests they contain.
 [#613]: https://github.com/fatal10110/js-redis-server/issues/613
 [#619]: https://github.com/fatal10110/js-redis-server/issues/619
 [#624]: https://github.com/fatal10110/js-redis-server/issues/624
+[#618]: https://github.com/fatal10110/js-redis-server/issues/618
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

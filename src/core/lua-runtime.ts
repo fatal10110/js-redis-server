@@ -291,7 +291,7 @@ export class RedisLuaRuntime {
       ),
     )
     return (
-      scriptClusterRejection(result.value, profile, call) ??
+      scriptClusterRejection(result.value, lookup.name, profile, call) ??
       redisValueToLuaReply(result.value, this.hostState.resp, profile)
     )
   }
@@ -852,24 +852,41 @@ function resp3TypedLuaReply(
 }
 
 /**
- * A command run from a script cannot redirect the client, so a MOVED or
- * unserved-slot (CLUSTERDOWN) routing reply reaches the script as the
- * scripting layer's own error (`scriptVerifyClusterState`): `Script attempted
- * to access a slot not served` for an unserved slot from redis 7.4 / valkey
- * 8.0, `Script attempted to access a non local key in a cluster node`
- * otherwise, and on 6.2 the `luaPushError` form `<source>: <line>: Lua script
- * attempted to access a non local key in a cluster node` with no code.
+ * A command run from a script cannot redirect the client, so a MOVED,
+ * unserved-slot (CLUSTERDOWN) or CROSSSLOT routing reply reaches the script
+ * as the scripting layer's own error (`scriptVerifyClusterState`): from redis
+ * 7.4 / valkey 8.0 `Script attempted to access a slot not served` for an
+ * unserved slot and `Command '<name>' in script attempted to access keys that
+ * don't hash to the same slot` for keys in different slots (`name` is the
+ * command's lowercase full name), `Script attempted to access a non local key
+ * in a cluster node` otherwise, and on 6.2 the `luaPushError` form `<source>:
+ * <line>: Lua script attempted to access a non local key in a cluster node`
+ * with no code.
  */
 function scriptClusterRejection(
   value: RedisValue,
+  name: string,
   profile: CompatibilityProfile,
   call: RedisCallContext | undefined,
 ): ReplyValue | undefined {
   if (
     value.kind !== 'error' ||
-    (value.code !== 'MOVED' && value.code !== 'CLUSTERDOWN')
+    (value.code !== 'MOVED' &&
+      value.code !== 'CLUSTERDOWN' &&
+      value.code !== 'CROSSSLOT')
   ) {
     return undefined
+  }
+
+  if (
+    value.code === 'CROSSSLOT' &&
+    profile.has('script.cluster-crossslot-command-wording')
+  ) {
+    return redisErrorToLuaReply(
+      new RedisCommandError(
+        `Command '${name}' in script attempted to access keys that don't hash to the same slot`,
+      ),
+    )
   }
 
   if (
