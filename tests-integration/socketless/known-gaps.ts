@@ -764,6 +764,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'SET KEEPTTL preserves the existing expiration',
     'SET and GET wrong-type and syntax errors match Redis',
   ]),
+  todo(
+    'node-redis/time-lastsave-integration.test.ts',
+    missing('lastSave', 'time'),
+    [
+      'LASTSAVE returns a Unix timestamp integer not in the future',
+      'TIME returns [seconds, microseconds] close to current time',
+    ],
+  ),
   todo('node-redis/watch.test.ts', CAUSE.directNodeConnection, [
     'EXEC should clear watched keys',
     'WATCH inside MULTI should return error',
