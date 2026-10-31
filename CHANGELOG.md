@@ -146,6 +146,15 @@ so the PR body is not a durable home for a breaking-change note.
   it to `subscribe()` listeners only, never to `subscribeKey()` ones. An
   exhaustive `switch (event.type)` stops type-checking; a replicating listener
   applies it like a `write`, any other ignores it.
+- Docs ([#459], [#609], [#461]): the in-process transport's three TCP-fidelity
+  gaps (event order when the client ends first, a bounded `Duplex` that can
+  stay parked, the experimental `readable.iterator({ destroyOnReturn })`) are
+  documented as known limits in `docs/ARCHITECTURE.md` and `docs/API.md`;
+  `CLIENT REPLY SKIP` / `OFF` inside `MULTI` is documented in `docs/COMMANDS.md`
+  as a divergence (real servers send a malformed `EXEC` reply, valkey 9.0
+  refuses it at queue time); the `proto-max-bulk-len` note says reads
+  (`GETBIT`, `BITFIELD GET` / `BITFIELD_RO`) are not capped; the cluster init
+  script is described as waiting on `INFO cluster`, not `PING`.
 
 ## [0.4.0] - 2026-10-30
 
@@ -287,7 +296,9 @@ so the PR body is not a durable home for a breaking-change note.
   half-closes as described above. One limit: the client's EOF is only seen
   while the read loop is reading. A bounded stream whose loop is blocked
   writing an ordinary reply to a client that stopped reading stays parked
-  until the stream closes. Neither shipped path hits this.
+  until the stream closes. This also happens over TCP, for a client that
+  half-closes without reading, and over the virtual wire with a bounded stream
+  ([#459]).
 
   ioredis and node-redis always read, so none of this changes what they see.
 
@@ -2252,6 +2263,9 @@ requests they contain.
 [#619]: https://github.com/fatal10110/js-redis-server/issues/619
 [#624]: https://github.com/fatal10110/js-redis-server/issues/624
 [#618]: https://github.com/fatal10110/js-redis-server/issues/618
+[#459]: https://github.com/fatal10110/js-redis-server/issues/459
+[#461]: https://github.com/fatal10110/js-redis-server/issues/461
+[#609]: https://github.com/fatal10110/js-redis-server/issues/609
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

@@ -54,8 +54,29 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
 - [x] `CLIENT NO-TOUCH ON|OFF` - Toggle the current connection's no-touch flag (`T` in `CLIENT INFO`); Redis 7.2+ / Valkey 7.2+. There is no LRU/LFU state, so it has no other effect
 - [x] `CLIENT PAUSE timeout [WRITE|ALL]` / `CLIENT UNPAUSE` - Server-wide pause: commands of every client but a MONITOR connection are postponed (not refused) until the timeout or UNPAUSE; `WRITE` holds back write and may-replicate commands (and an `EXEC` that queued one), `ALL` (the default) every command, `CLIENT UNPAUSE` included. A new pause keeps the later end time and the stricter mode
-- [x] `CLIENT REPLY ON|OFF|SKIP` - `OFF` drops every reply until `ON`, `SKIP` drops the next command's reply; pushes (pub/sub messages, MONITOR lines) are still delivered. Known gap inside `EXEC`: real Redis writes nothing for a queued `OFF`/`SKIP` (the array comes one element short) and drops what follows an `OFF`; here their slot reads `+OK` and an `OFF` drops the whole `EXEC` reply
+- [x] `CLIENT REPLY ON|OFF|SKIP` - `OFF` drops every reply until `ON`, `SKIP` drops the next command's reply; pushes (pub/sub messages, MONITOR lines) are still delivered. Divergence inside `MULTI`, see the note below the `CLIENT` list
 - [x] `CLIENT HELP` - Return subcommand help
+
+> **`CLIENT REPLY SKIP` / `OFF` inside `MULTI` (documented divergence).** Every
+> profile but valkey 9.0 queues the command (`+QUEUED`); the difference is at
+> `EXEC`.
+>
+> - **`SKIP`.** Real redis 6.2, 7.0, 7.2, 7.4, 8.0 and valkey 8.0 write the
+>   `EXEC` array header, count the `SKIP` slot in it, and then drop that slot's
+>   reply (the `SKIP` flag is already set when it is written). The reply is
+>   malformed: `MULTI`, `CLIENT REPLY SKIP`, `CLIENT REPLY BOGUS`,
+>   `CLIENT GETNAME`, `EXEC` answers `*3\r\n-ERR syntax error\r\n_\r\n` (RESP3;
+>   RESP2 has the same shape), a header promising three items followed by two,
+>   so a client takes the next command's reply as the missing item. The mock
+>   sends `+OK` for the `SKIP` slot instead (`*3\r\n+OK\r\n-ERR syntax
+>   error\r\n_\r\n`), because copying a reply that desynchronizes the
+>   connection would break the client under test. Valkey 9.0 refuses it at queue
+>   time (`CLIENT REPLY` is `NO_MULTI` there): `-ERR Command 'client|reply' not
+>   allowed inside a transaction`, then `-EXECABORT` at `EXEC`. The mock matches
+>   valkey 9.0 there.
+> - **`OFF`.** Real redis 7.4 and valkey 8.0 write the `EXEC` array header and
+>   then nothing, because replies stay off until a later `CLIENT REPLY ON`. The
+>   mock sends no `EXEC` reply at all.
 
 - [ ] `CLIENT TRACKING` - not implemented
 - [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
@@ -197,10 +218,13 @@ real Redis does not have) reports what its `introspection` declares.
 >   Raising it past **512MB**, Redis' own default, does not raise what the mock
 >   will allocate — for the bit-offset ceiling (3) just as for `APPEND` and
 >   `SETRANGE` (2). Beyond the default the mock answers an error rather than
->   producing a buffer the test process may not survive: the size error for a
->   string that would grow too large, and the ordinary bit-offset error for an
->   offset the raised setting would otherwise admit. At or below the default the
->   behavior is Redis'.
+>   producing a buffer the test process may not survive. That applies to the
+>   operations that allocate: the size error for an `APPEND` / `SETRANGE` that
+>   would grow a string too large, and the ordinary bit-offset error for a
+>   `SETBIT` or `BITFIELD SET` / `INCRBY` at an offset the raised setting would
+>   otherwise admit. Reads never allocate and are not capped: `GETBIT`,
+>   `BITFIELD GET` and `BITFIELD_RO` past the 512MB ceiling answer `0`, as
+>   Redis does. At or below the default the behavior is Redis'.
 >
 > Since there is no backing config file,
 > `CONFIG REWRITE` reports the same no-config-file error as Redis.

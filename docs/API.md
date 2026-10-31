@@ -20,6 +20,7 @@ For test lifecycle helpers, seeding and socketless APIs, see the
   - [`createRedisCluster`](#createrediscluster)
   - [`Resp2Server`](#resp2server)
   - [`RedisServerState`](#redisserverstate)
+  - [`createVirtualConnection`](#createvirtualconnection)
 
 ## Running a Standalone Server
 
@@ -379,3 +380,42 @@ new RedisServerState(options?: RedisServerStateOptions)
 | `clusterTopology` | `RedisClusterTopology` | `undefined`   | Optional cluster topology for slot routing. |
 | `pubsubBroker`    | `RedisPubSubBroker`    | `undefined`   | Optional broker for pub/sub operations.     |
 | `scriptCache`     | `RedisScriptCache`     | `undefined`   | Optional cache for Lua scripts.             |
+
+---
+
+### `createVirtualConnection`
+
+Creates an in-process connection to a server pipeline without opening a socket:
+the returned `clientSocket` is a `net.Socket`-shaped stream you hand to a client
+library, and the server side runs on the other end of a `stream.duplexPair()`.
+
+> Imported from the `js-redis-server/core` subpath, not the package root.
+
+```typescript
+import { createVirtualConnection } from 'js-redis-server/core'
+
+const { clientSocket, done, close } = createVirtualConnection(options)
+```
+
+`options` takes the `state` (`RedisServerState`) and `executor`
+(`CommandExecutor`), and optionally `nodeRole`, `logger`, `remoteAddress` and
+`remotePort`. `done` resolves once the server-side session has ended, and
+`close()` ends it and half-closes the wire.
+
+**Known limits.** The in-process transport (`SocketConnectionTransport`, which
+also serves TCP sockets) differs from a real TCP connection in three ways. None
+of them affects ioredis or node-redis, which always read; they matter only to
+code that drives the stream directly. See
+[Known limits of the in-process transport](ARCHITECTURE.md#known-limits-of-the-in-process-transport).
+
+1. **Event order when the client ends first.** With a pipelined reply, the
+   in-process wire emits `data, finish, end, close` on the client end; real TCP
+   emits `finish, data, end, close`.
+2. **A bounded `Duplex` can stay parked.** The client's EOF is only seen while
+   the read loop is reading. A size-limited stream that is blocked writing an
+   ordinary reply to a client that stopped reading stays parked until the
+   stream closes. The same holds over TCP for a client that half-closes without
+   reading.
+3. **`readable.iterator({ destroyOnReturn })` is experimental in Node.** The
+   TCP and virtual read paths depend on it, so a Node release that changes or
+   removes it needs a change in `SocketConnectionTransport`.
