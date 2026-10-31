@@ -117,6 +117,13 @@ so the PR body is not a durable home for a breaking-change note.
   in MULTI or called from a script. `COMMAND INFO` still reports arity -2,
   and LPOP / RPOP keep `wrong number of arguments`. New schema combinator
   `t.optionalLast` in `js-redis-server/core`.
+- XREADGROUP with an id other than `>` (a history read) now bumps the
+  delivery count and resets the idle time of every pending entry it
+  re-delivers, as every Redis and Valkey version does ([#624]), so XPENDING
+  and XINFO STREAM FULL show the new count and delivery time. An entry
+  deleted from the stream keeps its count and time, and now comes back as
+  `[id, *-1]` (a null array) in RESP2 instead of a null bulk string. The
+  bump is not propagated to replicas, as in real Redis.
 
 ### Changed
 
@@ -2234,6 +2241,7 @@ requests they contain.
 [#607]: https://github.com/fatal10110/js-redis-server/issues/607
 [#613]: https://github.com/fatal10110/js-redis-server/issues/613
 [#619]: https://github.com/fatal10110/js-redis-server/issues/619
+[#624]: https://github.com/fatal10110/js-redis-server/issues/624
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
