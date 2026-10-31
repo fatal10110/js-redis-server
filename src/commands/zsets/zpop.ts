@@ -53,7 +53,7 @@ function legacyEmptyCount(
 
 export const zpopminCommand = defineCommand({
   name: 'zpopmin',
-  schema: t.object({ key: t.key(), count: t.optional(zpopCountSchema()) }),
+  schema: t.object({ key: t.key(), count: t.optionalLast(zpopCountSchema()) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {
@@ -75,7 +75,7 @@ export const zpopminCommand = defineCommand({
 
 export const zpopmaxCommand = defineCommand({
   name: 'zpopmax',
-  schema: t.object({ key: t.key(), count: t.optional(zpopCountSchema()) }),
+  schema: t.object({ key: t.key(), count: t.optionalLast(zpopCountSchema()) }),
   flags: ['write', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {

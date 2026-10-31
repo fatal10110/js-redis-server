@@ -667,6 +667,9 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XREAD with $ id returns null (no entries after current last)',
     'XREAD with + id returns the last entry from each stream',
   ]),
+  todo('node-redis/stream/redelivery.test.ts', CAUSE.directNodeConnection, [
+    'XPENDING and XINFO STREAM FULL see the bumped NACKs',
+  ]),
   todo('node-redis/stream/setid.test.ts', CAUSE.directNodeConnection, [
     'XSETID ENTRIESADDED updates XINFO STREAM metadata',
     'XSETID MAXDELETEDID updates XINFO STREAM metadata',

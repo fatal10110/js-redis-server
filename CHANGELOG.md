@@ -134,6 +134,21 @@ so the PR body is not a durable home for a breaking-change note.
   its own connection per node, and its nodes get synthetic ports from 7000 (a
   distinct `host:port` each, as in CLUSTER SLOTS / NODES and MOVED) instead
   of all port 0.
+- ZPOPMIN, ZPOPMAX and SPOP with more than one argument after the key now
+  answer `syntax error`, as every Redis and Valkey version does ([#619]);
+  they used to answer `wrong number of arguments`. The check runs before the
+  count is parsed and before the key is looked up, so a bad count, a missing
+  key or a key of another type answers `syntax error` too, also when queued
+  in MULTI or called from a script. `COMMAND INFO` still reports arity -2,
+  and LPOP / RPOP keep `wrong number of arguments`. New schema combinator
+  `t.optionalLast` in `js-redis-server/core`.
+- XREADGROUP with an id other than `>` (a history read) now bumps the
+  delivery count and resets the idle time of every pending entry it
+  re-delivers, as every Redis and Valkey version does ([#624]), so XPENDING
+  and XINFO STREAM FULL show the new count and delivery time. An entry
+  deleted from the stream keeps its count and time, and now comes back as
+  `[id, *-1]` (a null array) in RESP2 instead of a null bulk string. The
+  bump is not propagated to replicas, as in real Redis.
 
 ### Changed
 
@@ -2259,6 +2274,8 @@ requests they contain.
 [#613]: https://github.com/fatal10110/js-redis-server/issues/613
 [#600]: https://github.com/fatal10110/js-redis-server/issues/600
 [#490]: https://github.com/fatal10110/js-redis-server/issues/490
+[#619]: https://github.com/fatal10110/js-redis-server/issues/619
+[#624]: https://github.com/fatal10110/js-redis-server/issues/624
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

@@ -27,9 +27,11 @@ export function entryToReply(id: StreamId, fields: Buffer[]): RedisValue {
   ])
 }
 
+// A history entry deleted from the stream: `[id, nil]`, where real Redis
+// sends the nil as a null array (`*-1` in RESP2, `_` in RESP3).
 export function deletedEntryToReply(id: StreamId): RedisValue {
   return RedisValue.array([
     RedisValue.bulkString(Buffer.from(formatStreamId(id))),
-    RedisValue.bulkString(null),
+    RedisValue.nullArray(),
   ])
 }

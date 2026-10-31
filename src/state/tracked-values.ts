@@ -584,6 +584,9 @@ export class TrackedStreamData {
   // shape into a reply. Delivering messages / advancing the PEL does not dirty a
   // WATCH on the stream key in real Redis, but is propagated (as XCLAIM /
   // XGROUP SETID), and so is creating the consumer (XGROUP CREATECONSUMER).
+  // A history read (any id but `>`) bumps the delivery count and resets the
+  // delivery time of each re-delivered entry still in the stream (a deleted
+  // one keeps its NACK), in place and without propagating, as real Redis does.
   readGroup(
     group: RedisStreamConsumerGroup,
     consumerName: Buffer,
@@ -641,11 +644,14 @@ export class TrackedStreamData {
       if (compareStreamId(pending.id, id) <= 0) continue
 
       const entry = findEntry(this.stream, pending.id)
-      delivered.push(
-        entry
-          ? { id: entry.id, fields: entry.fields }
-          : { id: pending.id, fields: null },
-      )
+      if (entry) {
+        delivered.push({ id: entry.id, fields: entry.fields })
+        // Re-delivery: real Redis bumps the NACK in place, not propagated.
+        pending.deliveredAt = now
+        pending.deliveryCount++
+      } else {
+        delivered.push({ id: pending.id, fields: null })
+      }
 
       if (limited && delivered.length >= count) break
     }
