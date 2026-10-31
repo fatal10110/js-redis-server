@@ -73,9 +73,12 @@ All in `scripts/agent-tools/` of the checkout this skill was loaded from:
   integration file against a real server (`TEST_BACKEND=real REDIS_COMPAT=<p>
   REDIS_STANDALONE_PORT=<port>`). The default container of each profile (pinned version, no
   `--args`) is shared by every agent. A run with `--args` or `PROFILE@TAG` starts a one-off
-  container and prints the `probe.py down -p ... --args ...` line that removes it; agents must run
-  it when they are done and before they return. `probe.py gc [--idle 60]` removes every probe
-  container idle that long (each use is recorded); `probe.py down --all` removes all of them.
+  container owned by the caller (the git worktree's name, or `--owner` / `$WAVE_OWNER`), so agents
+  with the same arguments never share one, and prints the `probe.py down -p ... --args ... --owner
+  ...` line that removes it; agents must run it when they are done and before they return.
+  `probe.py gc [--idle 60]` removes every probe container idle that long with no client connected
+  (each probe.py use is recorded, and an open connection keeps a container); `probe.py down --all`
+  removes all of them.
 - `look.py <spec>...` — ranges, TypeScript declarations by name (`ts:PATH:Name,Class.method`),
   bounded rg, and the real servers' sources by tag (`redis@7.2.4:src/t_stream.c:fn:xreadCommand`,
   cached under `.cache/src`); many lookups in one call.
