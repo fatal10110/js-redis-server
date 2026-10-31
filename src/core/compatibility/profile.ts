@@ -77,6 +77,7 @@ export type FeatureId =
   | 'cluster.info-node-fail-counts'
   | 'cluster.crossslot-before-unserved'
   | 'script.cluster-slot-not-served'
+  | 'script.cluster-crossslot-command-wording'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
