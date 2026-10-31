@@ -109,6 +109,31 @@ so the PR body is not a durable home for a breaking-change note.
   SETSLOT, COUNT-FAILURE-REPORTS, CONFIG GET / SET, ...) stay hidden, and so
   do ACL SETUSER, GETUSER, USERS and CLIENT UNBLOCK, which used to be shown.
   Redis 6.2 still hides every CLUSTER and CONFIG call.
+- The node-redis facade's `connect()` on a closed client subscribes again
+  every channel and pattern that still has a listener, before `'ready'`, as
+  node-redis' reconnect does ([#600]). The listeners now survive `quit()`,
+  `destroy()` and `disconnect()`; a re-opened client used to start with no
+  subscriptions.
+- The node-redis facade's curated methods take node-redis' argument forms
+  ([#490]): arrays for `sAdd`, `del`, `exists`, `lPush`, `rPush`, `watch`,
+  `subscribe`, `pSubscribe`, `unsubscribe` and `pUnsubscribe`; an object,
+  `Map`, tuples or a flat list for `hSet(key, fields)`; tuples, a flat list or
+  an object for `mSet` (an empty list throws `empty toSet Argument`); the
+  `set` options object (`expiration`, `EX` / `PX` / `EXAT` / `PXAT` /
+  `KEEPTTL`, `condition` + `matchValue`, `NX`, `XX`, `GET`); the `expire`
+  mode; `zAdd` options (`NX` / `XX`, `LT` / `GT`, `CH`; an infinite score is
+  sent as `+inf`); `zUnionStore` with one key, weighted keys and `AGGREGATE`;
+  and `set` / `del` / `hSet` in `multi()`. They used to reject them with
+  `"arguments[N]" must be of type "string | Buffer"` (and a flat `mSet` list
+  wrote `undefined` values). `unsubscribe(channel, listener)` /
+  `pUnsubscribe(pattern, listener)` remove just that listener.
+- The node-redis facade's `duplicate()` returns the client synchronously, as
+  node-redis does, instead of a Promise ([#490]); both facades have `isOpen`
+  (and the standalone one `isReady`). The cluster facade has node-redis'
+  `slots`, `masters` and a synchronous `duplicate()` sharing the keyspace with
+  its own connection per node, and its nodes get synthetic ports from 7000 (a
+  distinct `host:port` each, as in CLUSTER SLOTS / NODES and MOVED) instead
+  of all port 0.
 
 ### Changed
 
@@ -122,6 +147,13 @@ so the PR body is not a durable home for a breaking-change note.
   it to `subscribe()` listeners only, never to `subscribeKey()` ones. An
   exhaustive `switch (event.type)` stops type-checking; a replicating listener
   applies it like a `write`, any other ignores it.
+- **BREAKING** `NodeRedisMockCluster.sendCommand()` takes node-redis' cluster
+  signature, `sendCommand(firstKey, isReadonly, args)` ([#490]), and refuses
+  the old `sendCommand(args)` with a `TypeError`. A keyed command still runs
+  on the owner of its own keys (where node-redis ends up after following
+  `MOVED`); a keyless one runs on `firstKey`'s owner. Replace
+  `cluster.sendCommand(['GET', 'k'])` with
+  `cluster.sendCommand(undefined, false, ['GET', 'k'])`.
 
 ## [0.4.0] - 2026-10-30
 
@@ -2225,6 +2257,8 @@ requests they contain.
 [#610]: https://github.com/fatal10110/js-redis-server/issues/610
 [#607]: https://github.com/fatal10110/js-redis-server/issues/607
 [#613]: https://github.com/fatal10110/js-redis-server/issues/613
+[#600]: https://github.com/fatal10110/js-redis-server/issues/600
+[#490]: https://github.com/fatal10110/js-redis-server/issues/490
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

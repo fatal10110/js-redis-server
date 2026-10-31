@@ -56,6 +56,17 @@ export {
   type NodeRedisZMember,
   type NodeRedisZRangeOptions,
   type NodeRedisPubSubListener,
+  type NodeRedisVariadicArgument,
+  type NodeRedisSetOptions,
+  type NodeRedisHashValue,
+  type NodeRedisHashFields,
+  type NodeRedisMSetArguments,
+  type NodeRedisExpireMode,
+  type NodeRedisZAddOptions,
+  type NodeRedisZKeyAndWeight,
+  type NodeRedisZKeys,
+  type NodeRedisMockClusterNode,
+  type NodeRedisMockClusterShard,
 } from './client-mocks/node-redis-mock'
 
 // Cluster builder.

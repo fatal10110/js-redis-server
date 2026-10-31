@@ -505,7 +505,9 @@ describe(
         ...slotRanges(
           await ref.sendCommand(undefined, true, ['CLUSTER', 'SLOTS']),
         ),
-        ...slotRanges(await mock.sendCommand(['CLUSTER', 'SLOTS'])),
+        ...slotRanges(
+          await mock.sendCommand(undefined, true, ['CLUSTER', 'SLOTS']),
+        ),
       ])
     })
 
@@ -553,10 +555,12 @@ describe(
               const key = probe[0] === 'XREAD' ? probe[4] : probe[1]
               for (const args of setup) {
                 await ref.sendCommand(args[1], false, args)
-                await mock.sendCommand(args)
+                await mock.sendCommand(args[1], false, args)
               }
               assert.deepStrictEqual(
-                await outcome(() => mock.sendCommand(probe)),
+                await outcome(() =>
+                  mock.sendCommand(key, !WRITES.has(probe[0]), probe),
+                ),
                 await outcome(() =>
                   ref.sendCommand(key, !WRITES.has(probe[0]), probe),
                 ),
@@ -570,7 +574,7 @@ describe(
           const [ref, mock] = [await reference(RESP), await facade(RESP)]
           const args = ['MSET', `{${tags[0]}}:x`, '1', `{${tags[1]}}:y`, '2']
           assert.deepStrictEqual(
-            await outcome(() => mock.sendCommand(args)),
+            await outcome(() => mock.sendCommand(args[1], false, args)),
             await outcome(() => ref.sendCommand(args[1], false, args)),
           )
         })

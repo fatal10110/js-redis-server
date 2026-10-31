@@ -8,7 +8,10 @@ import {
   type RedisClusterType,
 } from 'redis'
 import clusterKeySlot from 'cluster-key-slot'
-import { directNodeRedisOptions } from './test-config'
+import {
+  directNodeRedisOptions,
+  SocketlessUnsupportedError,
+} from './test-config'
 import { errorWithMessage } from '../tests/shared-test-helpers'
 export {
   assertBufferSetsEqual,
@@ -268,9 +271,19 @@ function endpointFromClusterSlotsNode(node: ClusterSlotsNode): RedisEndpoint {
 /** Open a fresh, standalone node-redis client to a specific endpoint. */
 export async function connectToNodeRedisEndpoint(
   endpoint: RedisEndpoint,
+  options: { RESP?: 2 | 3 } = {},
 ): Promise<RedisClientType> {
+  // The socketless node-redis facade's nodes have no port to dial (their
+  // `slots` / CLUSTER SLOTS report a synthetic one), and node-redis would keep
+  // retrying it until the test timed out. Refuse at once instead.
+  if (process.env.TEST_BACKEND === 'socketless') {
+    throw new SocketlessUnsupportedError(
+      `a direct node-redis connection to ${endpoint.host}:${endpoint.port} — it needs a TCP port`,
+    )
+  }
   const client = createClient({
     url: `redis://${endpoint.host}:${endpoint.port}`,
+    ...options,
   }) as RedisClientType
   client.on('error', () => {})
   await client.connect()

@@ -17,7 +17,11 @@ import { RedisCommandError } from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import type { RedisValue } from '../core/redis-value'
 import type { RespVersion } from '../core/resp-encoder'
-import { RedisServerState, RedisClusterTopology } from '../state'
+import {
+  REDIS_CLUSTER_SLOT_COUNT,
+  RedisServerState,
+  RedisClusterTopology,
+} from '../state'
 
 /**
  * In-memory drop-in for the `node-redis` (`redis` package) client.
@@ -262,8 +266,96 @@ export type NodeRedisZRangeOptions = {
 /** A single `{ score, value }` member for ZADD-style methods. */
 export type NodeRedisZMember = { score: number; value: string }
 
+/**
+ * A cluster node as node-redis' `cluster.masters` / `cluster.slots` list it.
+ * Real node-redis also hangs its connection (`client`, `connectPromise`) on
+ * it; the facade has none to expose.
+ */
+export type NodeRedisMockClusterNode = {
+  id: string
+  host: string
+  port: number
+  /** `host:port`. */
+  address: string
+  readonly: boolean
+}
+
+/** One entry of node-redis' `cluster.slots`: the shard owning the slot. */
+export type NodeRedisMockClusterShard = { master: NodeRedisMockClusterNode }
+
 /** Listener invoked for each delivered pub/sub message: `(message, channel)`. */
 export type NodeRedisPubSubListener = (message: string, channel: string) => void
+
+/**
+ * node-redis' variadic argument (`RedisVariadicArgument`): one value or an
+ * array of them, sent in order. The facade's variadic methods also take them
+ * as rest arguments (`sAdd(key, 'a', 'b')`), which real node-redis does not.
+ */
+export type NodeRedisVariadicArgument =
+  NodeRedisCommandArgument | readonly NodeRedisCommandArgument[]
+
+/** `set()` options, in node-redis' shape and emitted in its order. */
+export type NodeRedisSetOptions = {
+  expiration?:
+    | 'KEEPTTL'
+    | { type: 'KEEPTTL' }
+    | { type: 'EX' | 'PX' | 'EXAT' | 'PXAT'; value: number }
+  EX?: number
+  PX?: number
+  EXAT?: number
+  PXAT?: number
+  KEEPTTL?: boolean
+  /** `'NX'`, `'XX'`, or a compare condition followed by {@link matchValue}. */
+  condition?: string
+  matchValue?: NodeRedisCommandArgument
+  NX?: boolean
+  XX?: boolean
+  GET?: boolean
+}
+
+/** A hash field or value; numbers are sent as their decimal string. */
+export type NodeRedisHashValue = NodeRedisCommandArgument | number
+
+/** `hSet(key, fields)`'s multi-field forms: an object, a `Map`, or tuples / a flat list. */
+export type NodeRedisHashFields =
+  | Record<string, NodeRedisHashValue>
+  | Map<NodeRedisHashValue, NodeRedisHashValue>
+  | readonly (NodeRedisHashValue | readonly NodeRedisHashValue[])[]
+
+/** `mSet()`'s forms: `[key, value]` tuples, a flat `[k, v, k, v]` list, or an object. */
+export type NodeRedisMSetArguments =
+  | readonly (readonly [
+      key: NodeRedisCommandArgument,
+      value: NodeRedisCommandArgument | number,
+    ])[]
+  | readonly (NodeRedisCommandArgument | number)[]
+  | Record<string, NodeRedisCommandArgument | number>
+
+/** `expire()`'s optional mode. */
+export type NodeRedisExpireMode = 'NX' | 'XX' | 'GT' | 'LT'
+
+/** `zAdd()` options, emitted as node-redis emits them. */
+export type NodeRedisZAddOptions = {
+  condition?: 'NX' | 'XX'
+  NX?: boolean
+  XX?: boolean
+  comparison?: 'LT' | 'GT'
+  LT?: boolean
+  GT?: boolean
+  CH?: boolean
+}
+
+/** A weighted source key for `zUnionStore()`. */
+export type NodeRedisZKeyAndWeight = {
+  key: NodeRedisCommandArgument
+  weight: number
+}
+
+/** `zUnionStore()`'s source keys: plain or weighted, one or an array. */
+export type NodeRedisZKeys =
+  | NodeRedisVariadicArgument
+  | NodeRedisZKeyAndWeight
+  | readonly NodeRedisZKeyAndWeight[]
 
 /**
  * Creates an in-memory node-redis-shaped client (standalone) or cluster client.
@@ -341,10 +433,14 @@ abstract class CommandRunner extends EventEmitter {
   /** The served profile, which spells a RESP2 `double` (#451). */
   protected abstract get profile(): CompatibilityProfile
 
-  /** Generic escape hatch for any command, decoded to a native JS reply. */
-  async sendCommand(args: NodeRedisCommandArgument[]): Promise<NodeRedisReply> {
-    const value = await this.run(args)
+  /** Decode a reply the way the generic `sendCommand()` escape hatch does. */
+  protected decode(value: RedisValue): NodeRedisReply {
     return decodeReply(value, this.respVersion, this.profile)
+  }
+
+  /** Whether the client is open: node-redis' `isOpen` getter. */
+  get isOpen(): boolean {
+    return !this.closed
   }
 
   // --- strings -------------------------------------------------------------
@@ -353,40 +449,62 @@ abstract class CommandRunner extends EventEmitter {
     return asStringOrNull(await this.run(['GET', key]))
   }
 
-  async set(
-    key: string,
-    value: string | number,
+  /**
+   * SET with node-redis' `options` object (`{ expiration: { type: 'EX',
+   * value } }`, the legacy `EX` / `PX` / … / `KEEPTTL` keys, `condition` /
+   * `NX` / `XX`, `GET`), emitted in node-redis' order. Raw trailing arguments
+   * (`set(key, value, 'EX', '10')`) are still appended as given.
+   */
+  set(
+    key: NodeRedisCommandArgument,
+    value: NodeRedisCommandArgument | number,
+    options?: NodeRedisSetOptions,
+  ): Promise<string | null>
+  set(
+    key: NodeRedisCommandArgument,
+    value: NodeRedisCommandArgument | number,
     ...rest: NodeRedisCommandArgument[]
+  ): Promise<string | null>
+  async set(
+    key: NodeRedisCommandArgument,
+    value: NodeRedisCommandArgument | number,
+    ...rest: (NodeRedisCommandArgument | NodeRedisSetOptions | undefined)[]
   ): Promise<string | null> {
-    return asStringOrNull(await this.run(['SET', key, String(value), ...rest]))
+    return asStringOrNull(await this.run(setArguments(key, value, rest)))
   }
 
-  async del(...keys: string[]): Promise<number> {
-    return asNumber(await this.run(['DEL', ...keys]))
+  async del(...keys: NodeRedisVariadicArgument[]): Promise<number> {
+    return asNumber(await this.run(['DEL', ...variadicArguments(keys)]))
   }
 
-  async mSet(
-    entries: [key: string, value: string | number][],
-  ): Promise<string> {
-    const args: NodeRedisCommandArgument[] = ['MSET']
-    for (const [key, value] of entries) {
-      args.push(key, String(value))
-    }
-    return asString(await this.run(args))
+  /**
+   * MSET from `[key, value]` tuples, a flat `[k, v, k, v]` list or an object,
+   * as node-redis takes it (an empty list throws `empty toSet Argument`).
+   */
+  async mSet(toSet: NodeRedisMSetArguments): Promise<string> {
+    return asString(await this.run(['MSET', ...mSetArguments(toSet)]))
   }
 
-  async exists(...keys: string[]): Promise<number> {
-    return asNumber(await this.run(['EXISTS', ...keys]))
+  async exists(...keys: NodeRedisVariadicArgument[]): Promise<number> {
+    return asNumber(await this.run(['EXISTS', ...variadicArguments(keys)]))
   }
 
   async incr(key: string): Promise<number> {
     return asNumber(await this.run(['INCR', key]))
   }
 
-  async expire(key: string, seconds: number): Promise<number> {
+  async expire(
+    key: NodeRedisCommandArgument,
+    seconds: number,
+    mode?: NodeRedisExpireMode,
+  ): Promise<number> {
     // node-redis' EXPIRE has no transformReply — it passes the raw 0/1 integer
     // through as a number (not a boolean).
-    return asNumber(await this.run(['EXPIRE', key, String(seconds)]))
+    const args = ['EXPIRE', key, String(seconds)]
+    if (mode) {
+      args.push(mode)
+    }
+    return asNumber(await this.run(args))
   }
 
   async ttl(key: string): Promise<number> {
@@ -395,8 +513,27 @@ abstract class CommandRunner extends EventEmitter {
 
   // --- hashes --------------------------------------------------------------
 
-  async hSet(key: string, field: string, value: string): Promise<number> {
-    return asNumber(await this.run(['HSET', key, field, value]))
+  /**
+   * HSET of one `field, value` pair, or of many as node-redis takes them: an
+   * object, a `Map`, or `[field, value]` tuples / a flat list.
+   */
+  hSet(
+    key: NodeRedisCommandArgument,
+    field: NodeRedisHashValue,
+    value: NodeRedisHashValue,
+  ): Promise<number>
+  hSet(
+    key: NodeRedisCommandArgument,
+    fields: NodeRedisHashFields,
+  ): Promise<number>
+  async hSet(
+    key: NodeRedisCommandArgument,
+    fields: NodeRedisHashValue | NodeRedisHashFields,
+    value?: NodeRedisHashValue,
+  ): Promise<number> {
+    return asNumber(
+      await this.run(['HSET', key, ...hashFieldArguments(fields, value)]),
+    )
   }
 
   async hGet(key: string, field: string): Promise<string | null> {
@@ -416,12 +553,22 @@ abstract class CommandRunner extends EventEmitter {
 
   // --- lists ---------------------------------------------------------------
 
-  async lPush(key: string, ...values: string[]): Promise<number> {
-    return asNumber(await this.run(['LPUSH', key, ...values]))
+  async lPush(
+    key: NodeRedisCommandArgument,
+    ...elements: NodeRedisVariadicArgument[]
+  ): Promise<number> {
+    return asNumber(
+      await this.run(['LPUSH', key, ...variadicArguments(elements)]),
+    )
   }
 
-  async rPush(key: string, ...values: string[]): Promise<number> {
-    return asNumber(await this.run(['RPUSH', key, ...values]))
+  async rPush(
+    key: NodeRedisCommandArgument,
+    ...elements: NodeRedisVariadicArgument[]
+  ): Promise<number> {
+    return asNumber(
+      await this.run(['RPUSH', key, ...variadicArguments(elements)]),
+    )
   }
 
   async lRange(key: string, start: number, stop: number): Promise<string[]> {
@@ -432,8 +579,13 @@ abstract class CommandRunner extends EventEmitter {
 
   // --- sets ----------------------------------------------------------------
 
-  async sAdd(key: string, ...members: string[]): Promise<number> {
-    return asNumber(await this.run(['SADD', key, ...members]))
+  async sAdd(
+    key: NodeRedisCommandArgument,
+    ...members: NodeRedisVariadicArgument[]
+  ): Promise<number> {
+    return asNumber(
+      await this.run(['SADD', key, ...variadicArguments(members)]),
+    )
   }
 
   async sMembers(key: string): Promise<string[]> {
@@ -442,14 +594,26 @@ abstract class CommandRunner extends EventEmitter {
 
   // --- sorted sets ---------------------------------------------------------
 
+  /**
+   * ZADD with node-redis' options (`condition` / `NX` / `XX`, `comparison` /
+   * `LT` / `GT`, `CH`) ahead of the members; an infinite score goes out as
+   * `+inf` / `-inf`.
+   */
   async zAdd(
-    key: string,
-    members: NodeRedisZMember | NodeRedisZMember[],
+    key: NodeRedisCommandArgument,
+    members: NodeRedisZMember | readonly NodeRedisZMember[],
+    options?: NodeRedisZAddOptions,
   ): Promise<number> {
-    const list = Array.isArray(members) ? members : [members]
-    const args = ['ZADD', key]
+    const list: readonly NodeRedisZMember[] = Array.isArray(members)
+      ? members
+      : [members as NodeRedisZMember]
+    const args: NodeRedisCommandArgument[] = [
+      'ZADD',
+      key,
+      ...zAddOptionArguments(options),
+    ]
     for (const { score, value } of list) {
-      args.push(String(score), value)
+      args.push(doubleArgument(score), value)
     }
     return asNumber(await this.run(args))
   }
@@ -496,15 +660,20 @@ abstract class CommandRunner extends EventEmitter {
     )
   }
 
-  async zUnionStore(destination: string, keys: string[]): Promise<number> {
-    return asNumber(
-      await this.run([
-        'ZUNIONSTORE',
-        destination,
-        String(keys.length),
-        ...keys,
-      ]),
-    )
+  /**
+   * ZUNIONSTORE with node-redis' key forms — one key or an array, plain or
+   * `{ key, weight }` (which adds `WEIGHTS`) — and `{ AGGREGATE }`.
+   */
+  async zUnionStore(
+    destination: NodeRedisCommandArgument,
+    keys: NodeRedisZKeys,
+    options?: { AGGREGATE?: 'SUM' | 'MIN' | 'MAX' },
+  ): Promise<number> {
+    const args = ['ZUNIONSTORE', destination, ...zKeysArguments(keys)]
+    if (options?.AGGREGATE) {
+      args.push('AGGREGATE', options.AGGREGATE)
+    }
+    return asNumber(await this.run(args))
   }
 
   // --- scripting -----------------------------------------------------------
@@ -527,7 +696,7 @@ abstract class CommandRunner extends EventEmitter {
       ...keys,
       ...args,
     ])
-    return decodeReply(value, this.respVersion, this.profile)
+    return this.decode(value)
   }
 }
 
@@ -562,11 +731,23 @@ export class NodeRedisMockClient extends CommandRunner {
   private pubsub?: {
     session: ClientSession
     abort: AbortController
-    listeners: Map<string, Set<NodeRedisPubSubListener>>
-    patternListeners: Map<string, Set<NodeRedisPubSubListener>>
     /** The push-draining loop; awaited on teardown so nothing dangles. */
     drained: Promise<void>
   }
+  /**
+   * The registered pub/sub listeners, per channel and per pattern. They belong
+   * to the client, not to a connection: like node-redis' `PubSub.listeners`
+   * they survive `quit()` / `destroy()` / `disconnect()`, and {@link connect}
+   * re-subscribes them on the new connection before `'ready'` (#600).
+   */
+  private readonly channelListeners = new Map<
+    string,
+    Set<NodeRedisPubSubListener>
+  >()
+  private readonly patternListeners = new Map<
+    string,
+    Set<NodeRedisPubSubListener>
+  >()
   /**
    * Set synchronously by `destroy()` (and so `disconnect()`), which — unlike
    * `quit()` — flush instead of draining. Every unit of work not yet answered,
@@ -627,8 +808,9 @@ export class NodeRedisMockClient extends CommandRunner {
    * right after it (without awaiting) run on the new connection. Called while a
    * `quit()` is still draining, it waits for that close to finish first.
    *
-   * Not reproduced: real node-redis re-subscribes the channels the client was
-   * subscribed to; here a re-opened client starts with no subscriptions.
+   * Like node-redis' `RedisCommandsQueue.resubscribe()`, the channels and
+   * patterns that still have listeners are subscribed again on the new
+   * connection — one `SUBSCRIBE` and one `PSUBSCRIBE` — before `'ready'` (#600).
    */
   async connect(): Promise<this> {
     if (!this.closed) {
@@ -643,7 +825,11 @@ export class NodeRedisMockClient extends CommandRunner {
         // Closed again before the re-open got its turn.
         throw clientClosedError()
       }
-      this.reopen()
+      await this.reopen()
+      if (this.closeCount !== closeCount) {
+        // Closed while the re-subscribe ran.
+        throw clientClosedError()
+      }
       return this
     })
     this.reopening = reopening
@@ -656,8 +842,11 @@ export class NodeRedisMockClient extends CommandRunner {
     }
   }
 
-  /** The connect-time handshake: a fresh session, then 'connect' + 'ready'. */
-  private reopen(): void {
+  /**
+   * The connect-time handshake: a fresh session, `'connect'`, the re-subscribe
+   * of every channel and pattern that still has a listener, then `'ready'`.
+   */
+  private async reopen(): Promise<void> {
     if (this.ownsState) {
       this.backend.state.reopen()
     }
@@ -666,7 +855,29 @@ export class NodeRedisMockClient extends CommandRunner {
     this.flushPendingWith = undefined
     this.socketEpoch += 1
     this.emit('connect')
-    this.emit('ready')
+    await this.resubscribe()
+    if (!this.closed) {
+      this.emit('ready')
+    }
+  }
+
+  /** node-redis' `PubSub.resubscribe()`: one command per listener kind. */
+  private async resubscribe(): Promise<void> {
+    const kinds = [
+      ['SUBSCRIBE', this.channelListeners],
+      ['PSUBSCRIBE', this.patternListeners],
+    ] as const
+    for (const [command, listeners] of kinds) {
+      if (listeners.size === 0) {
+        continue
+      }
+      const pubsub = this.ensurePubSub()
+      await runOnSession(
+        pubsub.session,
+        [command, ...listeners.keys()],
+        this.closed,
+      )
+    }
   }
 
   private openSession(): ClientSession {
@@ -683,13 +894,15 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /**
    * A fresh, independent client over the **same** shared keyspace. Like
-   * node-redis' `duplicate(overrides)`, it takes this client's options — so
-   * its configured `RESP`, not whatever a `HELLO` has since switched this
-   * connection to — unless `overrides` says otherwise.
+   * node-redis' `duplicate(overrides)`, it is returned synchronously and takes
+   * this client's options — so its configured `RESP`, not whatever a `HELLO`
+   * has since switched this connection to — unless `overrides` says otherwise.
+   *
+   * Real node-redis returns it unconnected (`isOpen` false until `connect()`);
+   * the facade's is already open, and its `connect()` resolves at once, so
+   * both `duplicate()` + `await connect()` and using it directly work.
    */
-  async duplicate(
-    overrides: NodeRedisMockClientOptions = {},
-  ): Promise<NodeRedisMockClient> {
+  duplicate(overrides: NodeRedisMockClientOptions = {}): NodeRedisMockClient {
     return new NodeRedisMockClient({
       ...this.backend,
       database: this.database,
@@ -697,6 +910,16 @@ export class NodeRedisMockClient extends CommandRunner {
       // `RESP: undefined` drops the option and falls back to DEFAULT_RESP.
       RESP: 'RESP' in overrides ? overrides.RESP : this.resp,
     })
+  }
+
+  /** Generic escape hatch for any command, decoded to a native JS reply. */
+  async sendCommand(args: NodeRedisCommandArgument[]): Promise<NodeRedisReply> {
+    return this.decode(await this.run(args))
+  }
+
+  /** node-redis' `isReady`: open, with the connect handshake done. */
+  get isReady(): boolean {
+    return !this.closed && this.reopening === undefined
   }
 
   protected get respVersion(): RespVersion {
@@ -784,58 +1007,143 @@ export class NodeRedisMockClient extends CommandRunner {
     return asNumber(await this.run(['PUBLISH', channel, message]))
   }
 
-  async subscribe(
-    channel: string,
+  /**
+   * Subscribe `listener` to one channel or an array of them. As in node-redis,
+   * one `SUBSCRIBE` carries the channels not yet subscribed, and a listener
+   * added to already-subscribed channels sends no command.
+   */
+  subscribe(
+    channels: NodeRedisVariadicArgument,
     listener: NodeRedisPubSubListener,
   ): Promise<void> {
-    const pubsub = this.ensurePubSub()
-    addListener(pubsub.listeners, channel, listener)
-    this.syncPubSubProtocol(pubsub)
-    await runOnSession(pubsub.session, ['SUBSCRIBE', channel], this.closed)
+    return this.subscribeTo(
+      'SUBSCRIBE',
+      this.channelListeners,
+      channels,
+      listener,
+    )
   }
 
-  async pSubscribe(
-    pattern: string,
+  pSubscribe(
+    patterns: NodeRedisVariadicArgument,
     listener: NodeRedisPubSubListener,
   ): Promise<void> {
-    const pubsub = this.ensurePubSub()
-    addListener(pubsub.patternListeners, pattern, listener)
-    this.syncPubSubProtocol(pubsub)
-    await runOnSession(pubsub.session, ['PSUBSCRIBE', pattern], this.closed)
+    return this.subscribeTo(
+      'PSUBSCRIBE',
+      this.patternListeners,
+      patterns,
+      listener,
+    )
   }
 
-  async unsubscribe(channel?: string): Promise<void> {
-    if (!this.pubsub) {
+  /**
+   * node-redis' `unsubscribe(channels?, listener?)`: no channels drops every
+   * channel; channels without a listener drop all of their listeners; with a
+   * listener only that one goes, and only channels left without listeners are
+   * unsubscribed (no command at all when every channel keeps one).
+   */
+  unsubscribe(
+    channels?: NodeRedisVariadicArgument,
+    listener?: NodeRedisPubSubListener,
+  ): Promise<void> {
+    return this.unsubscribeFrom(
+      'UNSUBSCRIBE',
+      this.channelListeners,
+      channels,
+      listener,
+    )
+  }
+
+  pUnsubscribe(
+    patterns?: NodeRedisVariadicArgument,
+    listener?: NodeRedisPubSubListener,
+  ): Promise<void> {
+    return this.unsubscribeFrom(
+      'PUNSUBSCRIBE',
+      this.patternListeners,
+      patterns,
+      listener,
+    )
+  }
+
+  private async subscribeTo(
+    command: 'SUBSCRIBE' | 'PSUBSCRIBE',
+    listeners: Map<string, Set<NodeRedisPubSubListener>>,
+    channels: NodeRedisVariadicArgument,
+    listener: NodeRedisPubSubListener,
+  ): Promise<void> {
+    this.assertOpen()
+    const names = variadicArguments([channels]).map(pubSubName)
+    const fresh = names.filter(name => !listeners.has(name))
+    // Registered before the command runs, so a message published right after
+    // the subscribe lands reaches it; undone if the subscribe fails.
+    const added = names.filter(name => addListener(listeners, name, listener))
+    if (fresh.length === 0) {
       return
     }
-    const args = channel ? ['UNSUBSCRIBE', channel] : ['UNSUBSCRIBE']
-    this.syncPubSubProtocol(this.pubsub)
-    await runOnSession(this.pubsub.session, args, this.closed)
-    if (channel) {
-      this.pubsub.listeners.delete(channel)
-    } else {
-      this.pubsub.listeners.clear()
+    try {
+      const pubsub = this.ensurePubSub()
+      this.syncPubSubProtocol(pubsub)
+      await runOnSession(pubsub.session, [command, ...fresh], this.closed)
+    } catch (err) {
+      for (const name of added) {
+        removeListener(listeners, name, listener)
+      }
+      throw err
     }
   }
 
-  async pUnsubscribe(pattern?: string): Promise<void> {
+  private async unsubscribeFrom(
+    command: 'UNSUBSCRIBE' | 'PUNSUBSCRIBE',
+    listeners: Map<string, Set<NodeRedisPubSubListener>>,
+    channels: NodeRedisVariadicArgument | undefined,
+    listener: NodeRedisPubSubListener | undefined,
+  ): Promise<void> {
+    const names =
+      channels === undefined
+        ? undefined
+        : variadicArguments([channels]).map(pubSubName)
+    let args: string[]
+    let release: () => void
+    if (names === undefined) {
+      args = [command]
+      release = () => listeners.clear()
+    } else if (listener === undefined) {
+      args = [command, ...names]
+      release = () => names.forEach(name => listeners.delete(name))
+    } else {
+      args = [command]
+      for (const name of names) {
+        const set = listeners.get(name)
+        if (set && [...set].some(other => other !== listener)) {
+          continue
+        }
+        args.push(name)
+      }
+      release = () =>
+        names.forEach(name => removeListener(listeners, name, listener))
+      if (args.length === 1) {
+        // Every channel keeps another listener: no command, as node-redis.
+        release()
+        return
+      }
+    }
     if (!this.pubsub) {
+      // Never subscribed on this connection: nothing to tell the server.
+      release()
       return
     }
-    const args = pattern ? ['PUNSUBSCRIBE', pattern] : ['PUNSUBSCRIBE']
     this.syncPubSubProtocol(this.pubsub)
     await runOnSession(this.pubsub.session, args, this.closed)
-    if (pattern) {
-      this.pubsub.patternListeners.delete(pattern)
-    } else {
-      this.pubsub.patternListeners.clear()
-    }
+    release()
   }
 
   // --- transactions --------------------------------------------------------
 
-  async watch(...keys: string[]): Promise<string> {
-    const reply = asString(await this.run(['WATCH', ...keys]))
+  async watch(...keys: NodeRedisVariadicArgument[]): Promise<string> {
+    const reply = asString(
+      await this.run(['WATCH', ...variadicArguments(keys)]),
+    )
     this.watchEpoch ??= this.socketEpoch
     return reply
   }
@@ -1028,9 +1336,9 @@ export class NodeRedisMockClient extends CommandRunner {
         pubsub.session.close()
         // Wait for the drain loop to observe the abort and finish, so no async
         // iteration dangles past teardown.
+        // The listener maps stay: they are the client's, and a later
+        // connect() re-subscribes them (#600).
         await pubsub.drained
-        pubsub.listeners.clear()
-        pubsub.patternListeners.clear()
       }
     } finally {
       // In a `finally` because a push-drain loop that rejects must not strand
@@ -1079,8 +1387,6 @@ export class NodeRedisMockClient extends CommandRunner {
     const pubsub: NonNullable<NodeRedisMockClient['pubsub']> = {
       session,
       abort,
-      listeners: new Map<string, Set<NodeRedisPubSubListener>>(),
-      patternListeners: new Map<string, Set<NodeRedisPubSubListener>>(),
       drained: Promise.resolve(),
     }
     pubsub.drained = this.drainPushes(pubsub, abort.signal)
@@ -1126,13 +1432,13 @@ export class NodeRedisMockClient extends CommandRunner {
 
     if (value.name === 'message') {
       const [channel, message] = items
-      notify(pubsub.listeners.get(channel), message, channel)
+      notify(this.channelListeners.get(channel), message, channel)
       return
     }
 
     if (value.name === 'pmessage') {
       const [pattern, channel, message] = items
-      notify(pubsub.patternListeners.get(pattern), message, channel)
+      notify(this.patternListeners.get(pattern), message, channel)
     }
   }
 }
@@ -1281,24 +1587,38 @@ export class NodeRedisMockMulti {
     ) => Promise<TransactionSpan>,
   ) {}
 
-  set(key: string, value: string | number): this {
-    return this.queue(['SET', key, String(value)])
+  set(
+    key: NodeRedisCommandArgument,
+    value: NodeRedisCommandArgument | number,
+    options?: NodeRedisSetOptions,
+  ): this {
+    return this.queue(setArguments(key, value, [options]))
   }
 
   get(key: string): this {
     return this.queue(['GET', key])
   }
 
-  del(...keys: string[]): this {
-    return this.queue(['DEL', ...keys])
+  del(...keys: NodeRedisVariadicArgument[]): this {
+    return this.queue(['DEL', ...variadicArguments(keys)])
   }
 
   incr(key: string): this {
     return this.queue(['INCR', key])
   }
 
-  hSet(key: string, field: string, value: string): this {
-    return this.queue(['HSET', key, field, value])
+  hSet(
+    key: NodeRedisCommandArgument,
+    field: NodeRedisHashValue,
+    value: NodeRedisHashValue,
+  ): this
+  hSet(key: NodeRedisCommandArgument, fields: NodeRedisHashFields): this
+  hSet(
+    key: NodeRedisCommandArgument,
+    fields: NodeRedisHashValue | NodeRedisHashFields,
+    value?: NodeRedisHashValue,
+  ): this {
+    return this.queue(['HSET', key, ...hashFieldArguments(fields, value)])
   }
 
   hGet(key: string, field: string): this {
@@ -1387,6 +1707,9 @@ export class NodeRedisMockMulti {
   }
 }
 
+/** First synthetic node port of a {@link NodeRedisMockCluster}. */
+const CLUSTER_BASE_PORT = 7000
+
 /**
  * In-memory node-redis cluster facade. Reuses {@link buildClusterNodes} for a
  * TCP-free cluster, then routes each command to the slot owner's session
@@ -1395,7 +1718,16 @@ export class NodeRedisMockMulti {
  */
 export class NodeRedisMockCluster extends CommandRunner {
   private readonly topology: RedisClusterTopology
-  private readonly masters: ClusterNodePipeline[]
+  /** The master pipelines: what this facade routes to. */
+  private readonly masterPipelines: ClusterNodePipeline[]
+  /**
+   * Whether this client built the nodes. Only the creator closes their state
+   * and replication links; a {@link duplicate} shares them and closes just its
+   * own sessions, as the standalone client's `ownsState` does.
+   */
+  private readonly ownsNodes: boolean
+  /** node-redis' node objects, one per node id, kept so they compare by identity. */
+  private readonly nodeObjects = new Map<string, NodeRedisMockClusterNode>()
   private readonly sessions = new Map<string, ClientSession>()
   private readonly replicationLinks: { close(): void }[]
   /**
@@ -1428,11 +1760,13 @@ export class NodeRedisMockCluster extends CommandRunner {
     masters: ClusterNodePipeline[],
     replicationLinks: readonly { close(): void }[],
     options: NodeRedisMockClientOptions,
+    ownsNodes = true,
   ) {
     super()
     this.topology = topology
-    this.masters = masters
+    this.masterPipelines = masters
     this.replicationLinks = [...replicationLinks]
+    this.ownsNodes = ownsNodes
     this.resp = options.RESP ?? nodeRedisDefaultResp()
     this.clientRespVersion = this.resp
     queueMicrotask(() => {
@@ -1448,7 +1782,10 @@ export class NodeRedisMockCluster extends CommandRunner {
     const { topology, nodes, replicationLinks } = buildClusterNodes({
       masters: options.masters,
       replicasPerMaster: options.replicas ?? 0,
-      basePort: 0,
+      // Synthetic ports, as the ioredis mock uses: nothing listens on them,
+      // but each node gets its own `host:port` — the identity node-redis'
+      // `masters` / `slots` nodes and CLUSTER SLOTS / NODES / MOVED carry.
+      basePort: CLUSTER_BASE_PORT,
     })
     const masters = nodes.filter(node => node.role === 'master')
     return new NodeRedisMockCluster(
@@ -1463,16 +1800,118 @@ export class NodeRedisMockCluster extends CommandRunner {
     return this
   }
 
+  /**
+   * A second cluster client over the **same** nodes and keyspace, returned
+   * synchronously like node-redis' `duplicate(overrides)`, with this client's
+   * `RESP` unless `overrides` says otherwise. It has its own connection
+   * (session) per node, so a blocked command on one client does not hold up
+   * the other, and closing it leaves the nodes to the client that built them.
+   * Like the standalone {@link NodeRedisMockClient.duplicate} it is already
+   * open; `connect()` resolves at once.
+   */
+  duplicate(overrides: NodeRedisMockClientOptions = {}): NodeRedisMockCluster {
+    return new NodeRedisMockCluster(
+      this.topology,
+      this.masterPipelines,
+      this.replicationLinks,
+      { RESP: 'RESP' in overrides ? overrides.RESP : this.resp },
+      false,
+    )
+  }
+
+  /**
+   * node-redis' `cluster.slots`: one entry per hash slot (16384), each the
+   * `{ master }` shard that owns it. Real node-redis adds `replicas` only with
+   * its `useReplicas` option, which the facade does not have. Read from the
+   * live topology on each access; the node objects are shared with
+   * {@link masters}.
+   */
+  get slots(): NodeRedisMockClusterShard[] {
+    const shards = new Map<string, NodeRedisMockClusterShard>()
+    const slots: NodeRedisMockClusterShard[] = []
+    for (let slot = 0; slot < REDIS_CLUSTER_SLOT_COUNT; slot++) {
+      const owner = this.topology.getSlotOwner(slot)
+      if (!owner) {
+        continue
+      }
+      let shard = shards.get(owner.id)
+      if (!shard) {
+        shard = { master: this.nodeObject(owner) }
+        shards.set(owner.id, shard)
+      }
+      slots[slot] = shard
+    }
+    return slots
+  }
+
+  /** node-redis' `cluster.masters`: `{ id, host, port, address, readonly }` per master. */
+  get masters(): NodeRedisMockClusterNode[] {
+    return this.topology.nodes
+      .filter(node => node.role === 'master')
+      .map(node => this.nodeObject(node))
+  }
+
+  private nodeObject(node: {
+    id: string
+    host: string
+    port: number
+  }): NodeRedisMockClusterNode {
+    let object = this.nodeObjects.get(node.id)
+    if (!object) {
+      object = {
+        id: node.id,
+        host: node.host,
+        port: node.port,
+        address: `${node.host}:${node.port}`,
+        readonly: false,
+      }
+      this.nodeObjects.set(node.id, object)
+    }
+    return object
+  }
+
+  /**
+   * node-redis' cluster escape hatch, `sendCommand(firstKey, isReadonly,
+   * args, options?)`. A real cluster client sends it to `firstKey`'s slot
+   * owner (a random node without one) and follows `MOVED`, so a keyed command
+   * ends up on the owner of its own keys whatever `firstKey` says: the facade
+   * routes by those keys, by `firstKey` for a keyless command, and to the
+   * first master without either. `isReadonly` and `options` change nothing
+   * here (there are no replica reads without `useReplicas`).
+   */
+  async sendCommand(
+    firstKey: NodeRedisCommandArgument | undefined,
+    isReadonly: boolean | undefined,
+    args: NodeRedisCommandArgument[],
+    options?: unknown,
+  ): Promise<NodeRedisReply> {
+    void isReadonly
+    void options
+    if (!Array.isArray(args)) {
+      throw new TypeError(
+        'NodeRedisMockCluster.sendCommand(firstKey, isReadonly, args): args must be the command array, as in node-redis',
+      )
+    }
+    return this.decode(await this.runRouted(args, firstKey))
+  }
+
   protected get respVersion(): RespVersion {
     return this.clientRespVersion
   }
 
   protected get profile(): CompatibilityProfile {
     // Every node shares one hoisted profile (see buildClusterNodes).
-    return this.masters[0].state.profile
+    return this.masterPipelines[0].state.profile
   }
 
-  protected async run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
+  protected run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
+    return this.runRouted(args, undefined)
+  }
+
+  private async runRouted(
+    args: NodeRedisCommandArgument[],
+    firstKey: NodeRedisCommandArgument | undefined,
+  ): Promise<RedisValue> {
     // DELIBERATE DEVIATION: a command on a closed cluster throws
     // ClientClosedError here, where real node-redis v6 throws an internal
     // `TypeError: Cannot read properties of undefined (reading 'replicas')` —
@@ -1480,7 +1919,7 @@ export class NodeRedisMockCluster extends CommandRunner {
     // upstream crash, not a contract, and reproducing it would only teach
     // callers to catch a TypeError. Everything else about the cluster close
     // path follows real node-redis exactly; see the note above quit().
-    const session = this.sessionForCommand(args)
+    const session = this.sessionForCommand(args, firstKey)
     await this.syncProtocol(session)
     // Captured *after* syncProtocol, which moves the session itself: reading
     // it earlier would make the first command on a newly-synced node look like
@@ -1575,19 +2014,24 @@ export class NodeRedisMockCluster extends CommandRunner {
     // Per-connection state goes back to its handshake default alongside the
     // sessions it belongs to.
     this.clientRespVersion = this.resp
+    if (!this.ownsNodes) {
+      // A duplicate: the nodes, their state and links are the creator's.
+      return
+    }
     for (const link of this.replicationLinks) {
       link.close()
     }
     // Close each master's state to clear its active-expiry timer. (Replicas are
     // built with expiry disabled, so only masters arm one.)
-    for (const node of this.masters) {
+    for (const node of this.masterPipelines) {
       node.state.close()
     }
   }
 
   /**
    * Resolve (and cache) a session on the master that owns the slot for the
-   * command's keys. Keyless commands run on the first master.
+   * command's keys. A keyless command runs on `firstKey`'s slot owner when
+   * {@link sendCommand} names one, else on the first master.
    *
    * There is deliberately no client-side rejection here. A key set spanning
    * slots gives `-1`, which owns no node and falls through to the first master;
@@ -1610,12 +2054,18 @@ export class NodeRedisMockCluster extends CommandRunner {
    * NodeRedisMockClient.ensurePubSub}) — which is a feature, not a routing
    * change. Use {@link NodeRedisMockClient} for pub/sub.
    */
-  private sessionForCommand(args: NodeRedisCommandArgument[]): ClientSession {
-    const slot = this.topology.calculateSlotForKeys(this.routingKeys(args))
+  private sessionForCommand(
+    args: NodeRedisCommandArgument[],
+    firstKey?: NodeRedisCommandArgument,
+  ): ClientSession {
+    const keys = this.routingKeys(args)
+    const slot = this.topology.calculateSlotForKeys(
+      keys.length === 0 && firstKey !== undefined ? [toBuffer(firstKey)] : keys,
+    )
     const owner =
       slot === null
-        ? this.masters[0]
-        : (this.topology.getSlotOwner(slot) ?? this.masters[0])
+        ? this.masterPipelines[0]
+        : (this.topology.getSlotOwner(slot) ?? this.masterPipelines[0])
 
     return this.sessionFor(owner.id)
   }
@@ -1653,7 +2103,7 @@ export class NodeRedisMockCluster extends CommandRunner {
 
     const [name, ...rest] = args
     try {
-      return this.masters[0].executor.plan(
+      return this.masterPipelines[0].executor.plan(
         toBuffer(name),
         rest.map((arg, index) => toBuffer(arg, index + 1)),
       ).keys
@@ -1670,7 +2120,7 @@ export class NodeRedisMockCluster extends CommandRunner {
     if (existing) {
       return existing
     }
-    const node = this.masters.find(master => master.id === nodeId)
+    const node = this.masterPipelines.find(master => master.id === nodeId)
     if (!node) {
       throw new Error(`No master pipeline for cluster node ${nodeId}`)
     }
@@ -1742,14 +2192,258 @@ function toBuffer(arg: NodeRedisCommandArgument, index = 0): Buffer {
   return Buffer.from(arg)
 }
 
+/** Adds `listener` under `key`; false when it was already there. */
 function addListener(
   map: Map<string, Set<NodeRedisPubSubListener>>,
   key: string,
   listener: NodeRedisPubSubListener,
-): void {
+): boolean {
   const set = map.get(key) ?? new Set<NodeRedisPubSubListener>()
+  if (set.has(listener)) {
+    return false
+  }
   set.add(listener)
   map.set(key, set)
+  return true
+}
+
+/** Removes `listener` under `key`, and `key` once it has no listener left. */
+function removeListener(
+  map: Map<string, Set<NodeRedisPubSubListener>>,
+  key: string,
+  listener: NodeRedisPubSubListener,
+): void {
+  const set = map.get(key)
+  if (!set) {
+    return
+  }
+  set.delete(listener)
+  if (set.size === 0) {
+    map.delete(key)
+  }
+}
+
+/** A channel or pattern as the listener maps key it (pushes decode to text). */
+function pubSubName(name: NodeRedisCommandArgument): string {
+  return Buffer.isBuffer(name) ? name.toString() : name
+}
+
+// --- node-redis argument forms ----------------------------------------------
+//
+// Each mirrors the `parseCommand` of the node-redis v6 command it serves
+// (`@redis/client/dist/lib/commands/*.js`), so a facade method sends the
+// argument list the real client would. Values pass through untouched except
+// numbers, which node-redis stringifies; anything else non-string reaches
+// toBuffer(), which rejects it as node-redis' encoder does.
+
+function isArgumentList(
+  value: unknown,
+): value is readonly NodeRedisCommandArgument[] {
+  return Array.isArray(value)
+}
+
+/** node-redis' `pushVariadicArguments`, over each of the method's arguments. */
+function variadicArguments(
+  values: readonly NodeRedisVariadicArgument[],
+): NodeRedisCommandArgument[] {
+  const out: NodeRedisCommandArgument[] = []
+  for (const value of values) {
+    if (isArgumentList(value)) {
+      out.push(...value)
+    } else {
+      out.push(value)
+    }
+  }
+  return out
+}
+
+/** node-redis stringifies a number argument; everything else passes as is. */
+function numberArgument<T>(value: T | number): T | string {
+  return typeof value === 'number' ? value.toString() : value
+}
+
+function setArguments(
+  key: NodeRedisCommandArgument,
+  value: NodeRedisCommandArgument | number,
+  rest: readonly (NodeRedisCommandArgument | NodeRedisSetOptions | undefined)[],
+): NodeRedisCommandArgument[] {
+  const args: NodeRedisCommandArgument[] = ['SET', key, numberArgument(value)]
+  for (const item of rest) {
+    if (item === undefined) {
+      continue
+    }
+    if (typeof item === 'string' || Buffer.isBuffer(item)) {
+      args.push(item)
+    } else {
+      args.push(...setOptionArguments(item))
+    }
+  }
+  return args
+}
+
+function setOptionArguments(
+  options: NodeRedisSetOptions,
+): NodeRedisCommandArgument[] {
+  const args: NodeRedisCommandArgument[] = []
+  const { expiration } = options
+  if (expiration) {
+    if (typeof expiration === 'string') {
+      args.push(expiration)
+    } else if (expiration.type === 'KEEPTTL') {
+      args.push('KEEPTTL')
+    } else {
+      args.push(expiration.type, expiration.value.toString())
+    }
+  } else if (options.EX !== undefined) {
+    args.push('EX', options.EX.toString())
+  } else if (options.PX !== undefined) {
+    args.push('PX', options.PX.toString())
+  } else if (options.EXAT !== undefined) {
+    args.push('EXAT', options.EXAT.toString())
+  } else if (options.PXAT !== undefined) {
+    args.push('PXAT', options.PXAT.toString())
+  } else if (options.KEEPTTL) {
+    args.push('KEEPTTL')
+  }
+  if (options.condition) {
+    args.push(options.condition)
+    if (options.matchValue !== undefined) {
+      args.push(options.matchValue)
+    }
+  } else if (options.NX) {
+    args.push('NX')
+  } else if (options.XX) {
+    args.push('XX')
+  }
+  if (options.GET) {
+    args.push('GET')
+  }
+  return args
+}
+
+/** node-redis' `parseMSetArguments`. */
+function mSetArguments(
+  toSet: NodeRedisMSetArguments,
+): NodeRedisCommandArgument[] {
+  const args: NodeRedisCommandArgument[] = []
+  if (Array.isArray(toSet)) {
+    if (toSet.length === 0) {
+      throw new Error('empty toSet Argument')
+    }
+    if (Array.isArray(toSet[0])) {
+      for (const [key, value] of toSet as readonly (readonly [
+        NodeRedisCommandArgument,
+        NodeRedisCommandArgument | number,
+      ])[]) {
+        args.push(key, numberArgument(value))
+      }
+    } else {
+      const flat = toSet as readonly (NodeRedisCommandArgument | number)[]
+      for (let i = 0; i < flat.length; i += 2) {
+        args.push(numberArgument(flat[i]), numberArgument(flat[i + 1]))
+      }
+    }
+    return args
+  }
+  for (const [key, value] of Object.entries(
+    toSet as Record<string, NodeRedisCommandArgument | number>,
+  )) {
+    args.push(key, numberArgument(value))
+  }
+  return args
+}
+
+/** HSET's field/value list: node-redis' `pushMap` / `pushTuples` / `pushObject`. */
+function hashFieldArguments(
+  fields: NodeRedisHashValue | NodeRedisHashFields,
+  value: NodeRedisHashValue | undefined,
+): NodeRedisCommandArgument[] {
+  if (
+    typeof fields === 'string' ||
+    typeof fields === 'number' ||
+    Buffer.isBuffer(fields)
+  ) {
+    return [numberArgument(fields), numberArgument(value as NodeRedisHashValue)]
+  }
+  const args: NodeRedisCommandArgument[] = []
+  if (fields instanceof Map) {
+    for (const [field, fieldValue] of fields) {
+      args.push(numberArgument(field), numberArgument(fieldValue))
+    }
+    return args
+  }
+  if (Array.isArray(fields)) {
+    const pushTuples = (tuples: readonly unknown[]): void => {
+      for (const tuple of tuples) {
+        if (Array.isArray(tuple)) {
+          pushTuples(tuple)
+        } else {
+          args.push(numberArgument(tuple as NodeRedisHashValue))
+        }
+      }
+    }
+    pushTuples(fields)
+    return args
+  }
+  const object = fields as Record<string, NodeRedisHashValue>
+  for (const field of Object.keys(object)) {
+    args.push(field, numberArgument(object[field]))
+  }
+  return args
+}
+
+function zAddOptionArguments(
+  options: NodeRedisZAddOptions | undefined,
+): NodeRedisCommandArgument[] {
+  const args: NodeRedisCommandArgument[] = []
+  if (options?.condition) {
+    args.push(options.condition)
+  } else if (options?.NX) {
+    args.push('NX')
+  } else if (options?.XX) {
+    args.push('XX')
+  }
+  if (options?.comparison) {
+    args.push(options.comparison)
+  } else if (options?.LT) {
+    args.push('LT')
+  } else if (options?.GT) {
+    args.push('GT')
+  }
+  if (options?.CH) {
+    args.push('CH')
+  }
+  return args
+}
+
+function isPlainKey(key: unknown): key is NodeRedisCommandArgument {
+  return typeof key === 'string' || Buffer.isBuffer(key)
+}
+
+/** node-redis' `parseZKeysArguments`: numkeys, the keys, then any `WEIGHTS`. */
+function zKeysArguments(keys: NodeRedisZKeys): NodeRedisCommandArgument[] {
+  if (Array.isArray(keys)) {
+    const list = keys as readonly (
+      NodeRedisCommandArgument | NodeRedisZKeyAndWeight
+    )[]
+    const args: NodeRedisCommandArgument[] = [list.length.toString()]
+    if (list.length === 0) {
+      return args
+    }
+    if (isPlainKey(list[0])) {
+      args.push(...(list as readonly NodeRedisCommandArgument[]))
+      return args
+    }
+    const weighted = list as readonly NodeRedisZKeyAndWeight[]
+    args.push(...weighted.map(({ key }) => key), 'WEIGHTS')
+    args.push(...weighted.map(({ weight }) => doubleArgument(weight)))
+    return args
+  }
+  if (isPlainKey(keys)) {
+    return ['1', keys]
+  }
+  const { key, weight } = keys as NodeRedisZKeyAndWeight
+  return ['1', key, 'WEIGHTS', doubleArgument(weight)]
 }
 
 function notify(

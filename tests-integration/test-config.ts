@@ -122,17 +122,14 @@ export async function openSocketlessStream(
  * in-memory keyspace (socketless) as `base`, connected and with its `'error'`
  * events swallowed.
  *
- * Real node-redis' `duplicate()` returns an unconnected client synchronously;
- * the socketless facade's returns a Promise of a client that is already usable
- * and has no `isOpen`. That is a known divergence of the facade
- * (`FACADE_DUPLICATE_PROMISE` in socketless/known-gaps.ts), which this helper
- * absorbs so the pub/sub and keyspace-notification suites exercise the
- * facade's pub/sub itself rather than stopping at `duplicate()`.
+ * Real node-redis' `duplicate()` returns an unconnected client; the socketless
+ * facade's is already open (`isOpen` true), so it is connected only when it
+ * needs to be.
  */
 export async function duplicateNodeRedisClient(
   base: RedisClientType,
 ): Promise<RedisClientType> {
-  const client = (await (base.duplicate() as unknown)) as RedisClientType
+  const client = base.duplicate() as RedisClientType
   client.on('error', () => {})
   if (client.isOpen === false) {
     await client.connect()
@@ -188,6 +185,8 @@ export class TestRunner {
     string,
     NodeRedisMockCluster
   >()
+  /** The `duplicate()`s of those roots handed to the tests. */
+  private socketlessNodeRedisClusterClients: NodeRedisMockCluster[] = []
   private socketlessNodeRedisStandalone: NodeRedisMockClient[] = []
 
   private async ensureMockCluster(
@@ -656,7 +655,10 @@ export class TestRunner {
     )
     this.socketlessIoredisRoots.clear()
     socketlessClusters.clear()
-    for (const cluster of this.socketlessNodeRedisClusters.values()) {
+    for (const cluster of [
+      ...this.socketlessNodeRedisClusterClients,
+      ...this.socketlessNodeRedisClusters.values(),
+    ]) {
       try {
         cluster.destroy()
       } catch {
@@ -664,6 +666,7 @@ export class TestRunner {
       }
     }
     this.socketlessNodeRedisClusters.clear()
+    this.socketlessNodeRedisClusterClients = []
     for (const client of this.socketlessNodeRedisStandalone) {
       try {
         client.destroy()
@@ -718,29 +721,29 @@ export class TestRunner {
   }
 
   /**
-   * The node-redis cluster facade has no `duplicate()` and no way to open a
-   * second client onto an existing `NodeRedisMockCluster`'s nodes, so unlike
-   * the other backends a second `setupNodeRedisCluster()` in one file cannot
-   * share the first one's keyspace. Handing back the same instance would put
-   * both "clients" on one session per node (a blocked BLPOP would wedge the
-   * other), so it throws instead and the file is listed in known-gaps.ts.
+   * Like the other backends, every `setupNodeRedisCluster()` with the same
+   * shape in one file is a new client onto one shared cluster: a
+   * `duplicate()` of a root `NodeRedisMockCluster`, with its own session per
+   * node (so a blocked BLPOP on one does not wedge the other). The root owns
+   * the nodes and is only closed by `cleanup()`, so a test closing its client
+   * leaves the keyspace to the others.
    */
   private async setupSocketlessNodeRedisCluster(
     options: Required<IoredisClusterSetupOptions>,
   ): Promise<NodeRedisMockCluster> {
     const key = mockClusterKey(options, undefined)
-    if (this.socketlessNodeRedisClusters.has(key)) {
-      throw new SocketlessUnsupportedError(
-        'a second node-redis cluster client on the same keyspace (NodeRedisMockCluster has no duplicate())',
-      )
+    let root = this.socketlessNodeRedisClusters.get(key)
+    if (!root) {
+      root = (await createNodeRedisMock({
+        cluster: {
+          masters: options.masters,
+          replicas: options.replicasPerMaster,
+        },
+      })) as NodeRedisMockCluster
+      this.socketlessNodeRedisClusters.set(key, root)
     }
-    const cluster = (await createNodeRedisMock({
-      cluster: {
-        masters: options.masters,
-        replicas: options.replicasPerMaster,
-      },
-    })) as NodeRedisMockCluster
-    this.socketlessNodeRedisClusters.set(key, cluster)
+    const cluster = root.duplicate()
+    this.socketlessNodeRedisClusterClients.push(cluster)
     return cluster
   }
 }
