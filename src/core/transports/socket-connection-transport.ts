@@ -44,7 +44,8 @@ export class SocketConnectionTransport implements ConnectionTransport {
     // and from Node 24 a duplexPair answers an errored destroy by destroying
     // its peer — the client — which strands a reply it has not read yet.
     // close() half-closes instead. `readable.iterator()` and `destroyOnReturn`
-    // are documented as experimental.
+    // are documented as experimental by Node; docs/ARCHITECTURE.md lists that
+    // dependency under "Known limits of the in-process transport".
     const chunks = this.socket.iterator({ destroyOnReturn: false })
 
     try {
@@ -128,9 +129,11 @@ export class SocketConnectionTransport implements ConnectionTransport {
    * This only runs once the read loop has seen the EOF. A bounded stream whose
    * loop is blocked writing a reply to a client that stopped reading never
    * gets that far, so that session stays parked until the stream closes. The
-   * shipped paths do not hit this: the virtual wire cannot back up, and a TCP
-   * peer that goes away errors or closes the socket, which aborts the
-   * transport.
+   * virtual wire cannot back up, so only a bounded stream supplied by the
+   * consumer hits this there. Over TCP it also happens for a client that
+   * half-closes without reading; a peer that goes away entirely errors or
+   * closes the socket, which aborts the transport. Documented as a known limit in
+   * docs/ARCHITECTURE.md ("Known limits of the in-process transport").
    */
   private dropOnPeerEof(): void {
     setImmediate(() => {

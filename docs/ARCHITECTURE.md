@@ -17,6 +17,7 @@ queueing, and command semantics never diverge between them.
 - [State & data model](#state--data-model)
 - [Concurrency model](#concurrency-model)
 - [Protocol & transports (RESP2 / RESP3)](#protocol--transports-resp2--resp3)
+  - [Known limits of the in-process transport](#known-limits-of-the-in-process-transport)
 - [Cluster mode](#cluster-mode)
 - [Test-mock facade](#test-mock-facade)
 - [Lua scripting](#lua-scripting)
@@ -572,6 +573,30 @@ socketless decoders and the Lua bridge share the same
 [`formatRedisDouble`](../src/core/double-format.ts). See the
 [testing guide's "Connecting your client" section](TESTING.md#connecting-your-client)
 for the client-facing view of this negotiation.
+
+### Known limits of the in-process transport
+
+[`SocketConnectionTransport`](../src/core/transports/socket-connection-transport.ts)
+(used for TCP sockets and for the `stream.duplexPair()` wire of
+[`createVirtualConnection`](../src/core/transports/virtual-connection.ts)) has
+three known differences from a real TCP connection, documented as limits
+rather than fixed:
+
+1. **Event order when the client ends first.** With a pipelined reply, the
+   in-process wire emits `data, finish, end, close` on the client end; real TCP
+   emits `finish, data, end, close`.
+2. **A bounded `Duplex` can stay parked.** The client's EOF is only seen while
+   the read loop is reading. A size-limited stream that is blocked writing an
+   ordinary reply to a client that stopped reading stays parked until the
+   stream closes. The same holds over TCP for a client that half-closes without
+   reading. The virtual wire itself cannot back up, so this needs a bounded
+   stream supplied by the consumer.
+3. **`readable.iterator({ destroyOnReturn })` is experimental in Node.** The
+   TCP and virtual read paths depend on it, so a Node release that changes or
+   removes it needs a change in `SocketConnectionTransport`.
+
+None of this affects ioredis or node-redis, which always read; it matters only
+to direct `js-redis-server/core` consumers.
 
 ## Cluster mode
 

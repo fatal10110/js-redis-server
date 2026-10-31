@@ -17,6 +17,13 @@ export type CreateVirtualConnectionOptions = {
   remotePort?: number
 }
 
+/**
+ * The in-process wire differs from TCP in a few ways that only matter to code
+ * driving the stream directly (event order when the client ends first, a
+ * bounded stream that can stay parked, the experimental
+ * `readable.iterator({ destroyOnReturn })`): see docs/ARCHITECTURE.md, "Known
+ * limits of the in-process transport".
+ */
 export type VirtualConnection = {
   /** The fake `net.Socket`-shaped stream handed to the client library. */
   clientSocket: VirtualClientSocket
