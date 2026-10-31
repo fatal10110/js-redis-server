@@ -3,6 +3,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -128,6 +129,51 @@ class ProbeTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             probe.resolve_profiles("redis-5.0")
 
+    def test_one_off_containers(self):
+        self.assertTrue(probe.is_shared("redis:7.2.4", ""))
+        self.assertTrue(probe.is_shared("valkey/valkey:8.1.0", " "))
+        self.assertFalse(probe.is_shared("redis:7.2.16", ""))
+        self.assertFalse(probe.is_shared("redis:7.2.4", "--requirepass pw"))
+        self.assertIsNone(probe.one_off_note(probe.resolve_profiles("redis-7.2,valkey-9.0"), "", "wf-a"))
+        note = probe.one_off_note(probe.resolve_profiles("redis-7.2,redis-8.0"), "--cluster-enabled yes", "wf-a")
+        self.assertIn("probe.py down -p redis-7.2,redis-8.0 --args '--cluster-enabled yes' --owner wf-a", note)
+        self.assertIn("down -p redis-7.2@7.2.16 --owner wf-a)",
+                      probe.one_off_note(probe.resolve_profiles("redis-7.2@7.2.16"), "", "wf-a"))
+
+    def test_container_names(self):
+        # The shared default keeps its owner-free name (running containers are found by it).
+        self.assertEqual(probe.container_name("redis:7.2.4", "", "wf-a"), probe.container_name("redis:7.2.4", ""))
+        self.assertEqual(probe.container_name("redis:7.2.4", " "), probe.container_name("redis:7.2.4", ""))
+        a = probe.container_name("redis:7.2.4", "--requirepass pw", "wf-a")
+        b = probe.container_name("redis:7.2.4", "--requirepass pw", "review-a")
+        self.assertNotEqual(a, b)
+        self.assertTrue(a.startswith("wave-probe-redis-7.2.4-wf-a-"), a)
+        self.assertEqual(a, probe.container_name("redis:7.2.4", " --requirepass pw ", "wf-a"))
+
+    def test_owner_token(self):
+        self.assertEqual(probe.owner_token("WF_Lane/x"), "wf-lane-x")
+        with tempfile.TemporaryDirectory() as d:
+            sub = Path(d) / "My Tree"
+            sub.mkdir()
+            with mock.patch.dict(os.environ, {"WAVE_OWNER": ""}):
+                self.assertEqual(probe.owner_token(None, cwd=str(sub)), "my-tree")
+            with mock.patch.dict(os.environ, {"WAVE_OWNER": "research-x"}):
+                self.assertEqual(probe.owner_token(None, cwd=str(sub)), "research-x")
+
+    def test_idle_containers(self):
+        started = {"a": 0, "b": 0, "c": 5000}
+        self.assertEqual(probe.idle_containers(started, {"b": 4000}, 6000, 2500), ["a"])
+        self.assertEqual(probe.idle_containers(started, {}, 6000, 1000), ["a", "b", "c"])
+
+    def test_count_connections(self):
+        text = """  sl  local_address rem_address   st tx_queue
+   0: 00000000:18EB 00000000:0000 0A 00000000:00000000
+   1: 020011AC:18EB 010011AC:D2F4 01 00000000:00000000
+   2: 020011AC:18EB 010011AC:D2F6 06 00000000:00000000
+   3: 020011AC:3C3B 010011AC:18EB 01 00000000:00000000
+"""
+        self.assertEqual(probe.count_connections(text), 1)
+        self.assertEqual(probe.count_connections(""), 0)
 
 if __name__ == "__main__":
     unittest.main()

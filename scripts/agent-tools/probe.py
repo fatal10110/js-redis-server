@@ -4,7 +4,7 @@
 Every claim about real behavior is checked byte for byte against a real server of the
 profile's pinned version (src/core/compatibility/profile.ts). This starts (or reuses) one
 throwaway docker container per profile and server-argument set, and keeps it running for
-later calls and for other agents.
+later calls and for other agents. Every use is recorded, so idle containers can be removed.
 
   probe.py run [-p PROFILES] [--resp 3] [--args '--requirepass pw'] [--raw] -- CMD...
       Sends each CMD on one connection and prints the reply bytes per profile.
@@ -17,19 +17,31 @@ later calls and for other agents.
   probe.py up [-p PROFILES] [--args ...]
       Starts the containers and prints {"<profile>": port}: run a standalone integration
       file against one with TEST_BACKEND=real REDIS_COMPAT=<profile> REDIS_STANDALONE_PORT=<port>.
-  probe.py down
-      Stops every probe container.
+  probe.py down [-p PROFILES] --args ARGS [--owner O] | -p PROFILE@TAG [--owner O] | --all
+      Removes your one-off containers of an argument set or a custom image tag (the ones a
+      run/up with --args or PROFILE@TAG started); remove yours when you are done with them.
+      The shared default containers (pinned tag, no --args) stay unless --all is given.
+  probe.py gc [--idle MINUTES]
+      Removes every probe container, shared or not, unused for MINUTES (default 60) and with
+      no client connected.
+
+One-off containers belong to an owner: --owner, else $WAVE_OWNER, else the name of the git
+worktree you run from. Two agents with the same --args get separate containers, and down
+removes only the caller's. The shared default containers have no owner. A suite run against a
+port from `up` is not recorded as a use: run `up` again right before each such run.
 
 PROFILES: comma-separated profile names (default: all), "redis", "valkey", or a profile
 with an explicit image tag, e.g. redis-7.2@7.2.16 or valkey-9.0@9.0.6.
 """
 
 import argparse
+import calendar
 import codecs
 import contextlib
 import fcntl
 import hashlib
 import json
+import os
 import re
 import secrets
 import shlex
@@ -57,6 +69,7 @@ PROFILES = {
 EXTRA = {"valkey-7.2": ("valkey/valkey", "7.2.4"), "valkey-8.1": ("valkey/valkey", "8.1.0")}
 PREFIX = "wave-probe-"
 LOCK = Path(wave_mail.DEFAULT_ROOT).parent / ".tools" / "probe.lock"
+USED = LOCK.parent / "probe-used"  # one file per container; its mtime is the last use
 IDLE = 0.25  # seconds of silence that end a raw read or the pushes after a reply
 
 
@@ -84,9 +97,69 @@ def resolve_profiles(spec):
     return res
 
 
-def container_name(image, server_args):
-    key = hashlib.sha1((image + " " + server_args).encode()).hexdigest()[:8]
-    return PREFIX + re.sub(r"[^a-z0-9.-]", "-", image.split("/")[-1].lower()) + "-" + key
+def is_shared(image, server_args):
+    """The default container of a profile: its pinned tag and no extra server arguments."""
+    return not server_args.strip() and any(f"{i}:{t}" == image for i, t in [*PROFILES.values(), *EXTRA.values()])
+
+
+def owner_token(explicit=None, cwd=None):
+    """Who a one-off container belongs to: --owner, $WAVE_OWNER, or the git worktree's name."""
+    raw = explicit or os.environ.get("WAVE_OWNER")
+    if not raw:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, cwd=cwd)
+        raw = Path(r.stdout.strip() if r.returncode == 0 else (cwd or Path.cwd())).name
+    return re.sub(r"[^a-z0-9.-]", "-", raw.lower()).strip("-.")[:40] or "anon"
+
+
+def one_off_note(targets, server_args, owner):
+    """A reminder to remove the one-off containers a run or up just used."""
+    mine = [n for n, image in targets if not is_shared(image, server_args)]
+    if not mine:
+        return None
+    args = f" --args {shlex.quote(server_args)}" if server_args else ""
+    return (f"(note: one-off containers of owner {owner} for {', '.join(mine)}{args}; remove them when you no"
+            f" longer need them: probe.py down -p {shlex.quote(','.join(mine))}{args} --owner {owner})")
+
+
+def idle_containers(started, used, now, idle_s):
+    """Names whose last use (the later of start time and recorded use) is idle_s or more ago."""
+    return sorted(n for n, t in started.items() if now - max(t, used.get(n, 0)) >= idle_s)
+
+
+def count_connections(proc_net_tcp, port=6379):
+    """ESTABLISHED connections to the server port in /proc/net/tcp{,6} text (needs no AUTH)."""
+    n = 0
+    for line in proc_net_tcp.splitlines():
+        f = line.split()
+        if len(f) > 3 and f[1].rpartition(":")[2] == f"{port:04X}" and f[3] == "01":
+            n += 1
+    return n
+
+
+def has_clients(name):
+    out = docker("exec", name, "cat", "/proc/net/tcp", "/proc/net/tcp6", check=False, timeout=15)
+    return count_connections(out) > 0
+
+
+def mark_used(name):
+    USED.mkdir(parents=True, exist_ok=True)
+    (USED / name).touch()
+
+
+def remove(names):
+    for n in names:
+        docker("rm", "-f", n, check=False)
+        with contextlib.suppress(OSError):
+            (USED / n).unlink()
+
+
+def container_name(image, server_args, owner=""):
+    """The shared default container of a profile has no owner; a one-off one is the owner's own."""
+    server_args = server_args.strip()
+    owner = "" if is_shared(image, server_args) else owner
+    key = hashlib.sha1((image + " " + server_args + (" " + owner if owner else "")).encode()).hexdigest()[:8]
+    return (PREFIX + re.sub(r"[^a-z0-9.-]", "-", image.split("/")[-1].lower()) + "-"
+            + (owner + "-" if owner else "") + key)
 
 
 def published_port(name):
@@ -95,8 +168,8 @@ def published_port(name):
     return int(m.group(1)) if m else None
 
 
-def ensure(image, server_args):
-    name = container_name(image, server_args)
+def ensure(image, server_args, owner=""):
+    name = container_name(image, server_args, owner)
     LOCK.parent.mkdir(parents=True, exist_ok=True)
     with open(LOCK, "a+") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
@@ -111,6 +184,7 @@ def ensure(image, server_args):
                 if port:
                     break
                 time.sleep(0.1)
+        mark_used(name)
         fcntl.flock(lf, fcntl.LOCK_UN)
     deadline = time.time() + 30
     while time.time() < deadline:
@@ -236,7 +310,7 @@ def mock_rows(worktree, profile, cmds, a, uid):
 
 def probe_one(profile, image, server_args, cmds, a, uid):
     try:
-        name, port = ensure(image, server_args)
+        name, port = ensure(image, server_args, a.owner)
         rows = exchange(port, cmds, a, uid)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
         return [f"## {profile} ({image}): error: {e}"]
@@ -265,20 +339,63 @@ def cmd_run(a):
     print(f"(probe id {{u}} = {uid})")
     for r in results:
         print("\n".join(r))
+    note = one_off_note(targets, a.args, a.owner)
+    if note:
+        print(note)
 
 
 def cmd_up(a):
     targets = resolve_profiles(a.profiles)
     with ThreadPoolExecutor(max_workers=len(targets)) as ex:
-        ports = list(ex.map(lambda t: ensure(t[1], a.args)[1], targets))
+        ports = list(ex.map(lambda t: ensure(t[1], a.args, a.owner)[1], targets))
     print(json.dumps({t[0]: p for t, p in zip(targets, ports)}))
+    note = one_off_note(targets, a.args, a.owner)
+    if note:
+        print(note)
+
+
+def running():
+    return [n for n in docker("ps", "--format", "{{.Names}}").split("\n") if n.startswith(PREFIX)]
 
 
 def cmd_down(a):
-    names = [n for n in docker("ps", "--format", "{{.Names}}").split("\n") if n.startswith(PREFIX)]
-    for n in names:
-        docker("rm", "-f", n, check=False)
-    print(json.dumps({"stopped": names}))
+    if a.all:
+        names = running()
+        remove(names)
+        print(json.dumps({"stopped": names}))
+        return
+    targets = resolve_profiles(a.profiles)
+    mine = [container_name(image, a.args, a.owner) for _, image in targets if not is_shared(image, a.args)]
+    if not mine:
+        raise SystemExit("down removes one-off containers only: pass the --args (and -p) of the run/up that "
+                         "started them, or PROFILE@TAG; the shared defaults go with --all or gc")
+    live = set(running())
+    remove([n for n in mine if n in live])
+    print(json.dumps({"stopped": [n for n in mine if n in live]}))
+
+
+def cmd_gc(a):
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK, "a+") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        names = running()
+        started = {}
+        if names:
+            # check=False: a container removed since `ps` (--rm, or down / docker rm without the
+            # lock) makes inspect exit 1 but still prints the others.
+            for line in docker("inspect", "-f", "{{.Name}} {{.State.StartedAt}}", *names, check=False).split("\n"):
+                n, _, ts = line.strip().lstrip("/").partition(" ")
+                with contextlib.suppress(ValueError):
+                    started[n] = calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+        used = {f.name: f.stat().st_mtime for f in USED.glob(PREFIX + "*")} if USED.is_dir() else {}
+        candidates = idle_containers(started, used, time.time(), a.idle * 60)
+        # A suite running against a port from `up` is a use probe.py never sees: keep anything
+        # with a client connected.
+        busy = [n for n in candidates if has_clients(n)]
+        idle = [n for n in candidates if n not in busy]
+        remove(idle)
+        fcntl.flock(lf, fcntl.LOCK_UN)
+    print(json.dumps({"stopped": idle, "kept_busy": busy, "kept": sorted(set(names) - set(idle))}))
 
 
 def main(argv=None):
@@ -298,8 +415,19 @@ def main(argv=None):
     u.add_argument("--args", default="")
     u.set_defaults(fn=cmd_up)
     d = sub.add_parser("down")
+    d.add_argument("-p", "--profiles", default="all")
+    d.add_argument("--args", default="")
+    d.add_argument("--all", action="store_true", help="also the shared default containers")
     d.set_defaults(fn=cmd_down)
+    g = sub.add_parser("gc")
+    g.add_argument("--idle", type=float, default=60, help="minutes without a use (default 60)")
+    g.set_defaults(fn=cmd_gc)
+    for sp in (r, u, d):
+        sp.add_argument("--owner", help="owner of one-off containers (default: $WAVE_OWNER or the git worktree name)")
     a = p.parse_args(argv)
+    if hasattr(a, "args"):
+        a.args = a.args.strip()
+        a.owner = owner_token(a.owner)
     a.fn(a)
 
 

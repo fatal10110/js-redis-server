@@ -71,7 +71,14 @@ All in `scripts/agent-tools/` of the checkout this skill was loaded from:
   `wave-probe-*`, started on first use and shared), and with `--mock` the mock's reply from a
   checkout next to each, marked `=` or `≠`. `probe.py up` prints ports for running a standalone
   integration file against a real server (`TEST_BACKEND=real REDIS_COMPAT=<p>
-  REDIS_STANDALONE_PORT=<port>`). `probe.py down` stops them.
+  REDIS_STANDALONE_PORT=<port>`). The default container of each profile (pinned version, no
+  `--args`) is shared by every agent. A run with `--args` or `PROFILE@TAG` starts a one-off
+  container owned by the caller (the git worktree's name, or `--owner` / `$WAVE_OWNER`), so agents
+  with the same arguments never share one, and prints the `probe.py down -p ... --args ... --owner
+  ...` line that removes it; agents must run it when they are done and before they return.
+  `probe.py gc [--idle 60]` removes every probe container idle that long with no client connected
+  (each probe.py use is recorded, and an open connection keeps a container); `probe.py down --all`
+  removes all of them.
 - `look.py <spec>...` — ranges, TypeScript declarations by name (`ts:PATH:Name,Class.method`),
   bounded rg, and the real servers' sources by tag (`redis@7.2.4:src/t_stream.c:fn:xreadCommand`,
   cached under `.cache/src`); many lookups in one call.
@@ -159,6 +166,8 @@ approved a grouping in this conversation.
 ## Step 2: preflight
 
 - `docker ps` works (the probe needs it) and `gh auth status` is logged in with push rights.
+- Remove probe containers left over from earlier runs: `python3 <tool dir>/probe.py gc` (idle for
+  an hour), and look at `docker ps` for other leftovers of this repo's agents.
 - Pull the probe images once, before the agents need them: `python3 <tool dir>/probe.py up`
   (all seven profiles; about a minute the first time).
 - No leftover `wf-<slug>` worktree or `wf/<slug>` branch from another run uses a planned slug
@@ -252,7 +261,8 @@ When all workflows have returned:
 - Report per lane: status, PR, merge SHA, rounds, follow-ups filed, and for every lane that did
   not merge, the reason and what is left (open PR, worktree kept).
 - Check that each "Closes" issue is closed, and that no `wf-<slug>` worktree remains for a merged
-  lane. `probe.py down` stops the probe containers.
+  lane. `probe.py down --all` removes every probe container (or `probe.py gc` when another run is
+  still going); check `docker ps` for any container an agent started by hand and left behind.
 - Record the run id, the plan, the outcome and the next backlog in memory.
 
 ## Editing waves.js
