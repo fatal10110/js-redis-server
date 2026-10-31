@@ -58,6 +58,10 @@ or blow up, and never trade parity for them.
   `probe.py up -p <profiles>` prints ports; then
   `TEST_BACKEND=real REDIS_COMPAT=<profile> REDIS_STANDALONE_PORT=<port> node --import tsx --no-warnings --test-timeout 60000 --test <file>`
   (standalone/raw-tcp files; cluster suites run against real 8.0 only, in CI).
+- Containers you start, you remove: a `probe.py run/up` with `--args` or `PROFILE@TAG` prints the
+  `probe.py down -p ... --args ...` line for its one-off containers; run it once you are done with
+  them and before you return. Leave the shared default containers (pinned versions, no `--args`)
+  running.
 - A test fixed by your change that is listed in `tests-integration/socketless/known-gaps.ts` must
   leave that list (the list is strict).
 - Put new tests in new or small files where you can, to avoid conflicts with other lanes.

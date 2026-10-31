@@ -128,6 +128,21 @@ class ProbeTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             probe.resolve_profiles("redis-5.0")
 
+    def test_one_off_containers(self):
+        self.assertTrue(probe.is_shared("redis:7.2.4", ""))
+        self.assertTrue(probe.is_shared("valkey/valkey:8.1.0", " "))
+        self.assertFalse(probe.is_shared("redis:7.2.16", ""))
+        self.assertFalse(probe.is_shared("redis:7.2.4", "--requirepass pw"))
+        self.assertIsNone(probe.one_off_note(probe.resolve_profiles("redis-7.2,valkey-9.0"), ""))
+        note = probe.one_off_note(probe.resolve_profiles("redis-7.2,redis-8.0"), "--cluster-enabled yes")
+        self.assertIn("probe.py down -p redis-7.2,redis-8.0 --args '--cluster-enabled yes'", note)
+        self.assertIn("down -p redis-7.2@7.2.16)", probe.one_off_note(probe.resolve_profiles("redis-7.2@7.2.16"), ""))
+
+    def test_idle_containers(self):
+        started = {"a": 0, "b": 0, "c": 5000}
+        self.assertEqual(probe.idle_containers(started, {"b": 4000}, 6000, 2500), ["a"])
+        self.assertEqual(probe.idle_containers(started, {}, 6000, 1000), ["a", "b", "c"])
+
 
 if __name__ == "__main__":
     unittest.main()
