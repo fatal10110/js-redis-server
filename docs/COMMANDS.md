@@ -56,31 +56,40 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT PAUSE timeout [WRITE|ALL]` / `CLIENT UNPAUSE` - Server-wide pause: commands of every client but a MONITOR connection are postponed (not refused) until the timeout or UNPAUSE; `WRITE` holds back write and may-replicate commands (and an `EXEC` that queued one), `ALL` (the default) every command, `CLIENT UNPAUSE` included. A new pause keeps the later end time and the stricter mode
 - [x] `CLIENT REPLY ON|OFF|SKIP` - `OFF` drops every reply until `ON`, `SKIP` drops the next command's reply; pushes (pub/sub messages, MONITOR lines) are still delivered. Divergence inside `MULTI`, see the note below the `CLIENT` list
 - [x] `CLIENT HELP` - Return subcommand help
+- [ ] `CLIENT TRACKING` - not implemented
+- [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
+- [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
 
 > **`CLIENT REPLY SKIP` / `OFF` inside `MULTI` (documented divergence).** Every
 > profile but valkey 9.0 queues the command (`+QUEUED`); the difference is at
 > `EXEC`.
 >
-> - **`SKIP`.** Real redis 6.2, 7.0, 7.2, 7.4, 8.0 and valkey 8.0 write the
->   `EXEC` array header, count the `SKIP` slot in it, and then drop that slot's
->   reply (the `SKIP` flag is already set when it is written). The reply is
->   malformed: `MULTI`, `CLIENT REPLY SKIP`, `CLIENT REPLY BOGUS`,
->   `CLIENT GETNAME`, `EXEC` answers `*3\r\n-ERR syntax error\r\n_\r\n` (RESP3;
->   RESP2 has the same shape), a header promising three items followed by two,
->   so a client takes the next command's reply as the missing item. The mock
->   sends `+OK` for the `SKIP` slot instead (`*3\r\n+OK\r\n-ERR syntax
->   error\r\n_\r\n`), because copying a reply that desynchronizes the
->   connection would break the client under test. Valkey 9.0 refuses it at queue
->   time (`CLIENT REPLY` is `NO_MULTI` there): `-ERR Command 'client|reply' not
->   allowed inside a transaction`, then `-EXECABORT` at `EXEC`. The mock matches
->   valkey 9.0 there.
-> - **`OFF`.** Real redis 7.4 and valkey 8.0 write the `EXEC` array header and
->   then nothing, because replies stay off until a later `CLIENT REPLY ON`. The
->   mock sends no `EXEC` reply at all.
-
-- [ ] `CLIENT TRACKING` - not implemented
-- [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
-- [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
+> - **`SKIP`.** `CLIENT REPLY SKIP` never writes a reply of its own. It only
+>   sets a "skip the next command" flag, which the server turns into an active
+>   skip once the current command (here `EXEC`) has finished. Real redis 6.2,
+>   7.0, 7.2, 7.4, 8.0 and valkey 8.0 still count the `SKIP` slot in the `EXEC`
+>   array header but write nothing for it, so the reply is malformed: `MULTI`,
+>   `CLIENT REPLY SKIP`, `PING a`, `EXEC` answers `*2\r\n$1\r\na\r\n`, a
+>   header promising two items followed by one, so a client takes the next
+>   reply as the missing item. The mock sends `+OK` for the `SKIP` slot
+>   (`*2\r\n+OK\r\n$1\r\na\r\n`), because copying a reply that
+>   desynchronizes the connection would break the client under test. Valkey 9.0
+>   refuses it at queue time (`CLIENT REPLY` is `NO_MULTI` there): `-ERR Command
+>   'client|reply' not allowed inside a transaction`, then `-EXECABORT` at
+>   `EXEC`. The mock matches valkey 9.0 there.
+> - **After the `EXEC`.** Real servers and the mock agree that the skip then
+>   drops the reply of the first command after `EXEC`: in `MULTI`,
+>   `CLIENT REPLY SKIP`, `PING a`, `EXEC`, `PING b`, `PING c`, `PING b` gets no
+>   reply and `PING c` answers `c`.
+> - **`OFF`.** Replies stay off for the rest of the connection or until a later
+>   `CLIENT REPLY ON`, so the replies of the commands between `OFF` and that
+>   `ON` are omitted while the `EXEC` array header still counts them. Without a
+>   later `ON` in the same transaction real redis 7.4 and valkey 8.0 write the
+>   header and nothing else, and the mock sends no `EXEC` reply at all. With
+>   one (`MULTI`, `CLIENT REPLY OFF`, `PING a`, `CLIENT REPLY ON`, `PING b`,
+>   `EXEC`) real answers `*4\r\n+OK\r\n$1\r\nb\r\n` (the replies of `OFF` and
+>   `PING a` omitted), while the mock includes the reply of every command
+>   between them: `*4\r\n+OK\r\n$1\r\na\r\n+OK\r\n$1\r\nb\r\n`.
 
 `CLIENT` is flagged `noscript`. From Lua, every subcommand is rejected with
 `This Redis command is not allowed from script`, with two exceptions on Redis

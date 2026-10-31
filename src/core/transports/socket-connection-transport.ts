@@ -131,8 +131,8 @@ export class SocketConnectionTransport implements ConnectionTransport {
    * gets that far, so that session stays parked until the stream closes. The
    * virtual wire cannot back up, so only a bounded stream supplied by the
    * consumer hits this there. Over TCP it also happens for a client that
-   * half-closes without reading; a peer that goes away entirely errors or closes the socket,
-   * which aborts the transport. Documented as a known limit in
+   * half-closes without reading; a peer that goes away entirely errors or
+   * closes the socket, which aborts the transport. Documented as a known limit in
    * docs/ARCHITECTURE.md ("Known limits of the in-process transport").
    */
   private dropOnPeerEof(): void {

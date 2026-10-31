@@ -297,8 +297,8 @@ so the PR body is not a durable home for a breaking-change note.
   while the read loop is reading. A bounded stream whose loop is blocked
   writing an ordinary reply to a client that stopped reading stays parked
   until the stream closes. This also happens over TCP, for a client that
-  half-closes without reading, and over the virtual wire with a bounded stream
-  ([#459]).
+  half-closes without reading, and for a bounded Duplex a consumer passes to
+  `SocketConnectionTransport` ([#459]).
 
   ioredis and node-redis always read, so none of this changes what they see.
 
