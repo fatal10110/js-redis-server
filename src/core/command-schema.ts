@@ -446,6 +446,26 @@ export const t = {
     )
   },
 
+  /**
+   * An optional last argument after which any further token answers `syntax
+   * error`, checked before the argument itself is parsed: Redis's `if
+   * (c->argc > 3) addReplyErrorObject(c, shared.syntaxerr)` ahead of the
+   * count parse and the key lookup in ZPOPMIN / ZPOPMAX / SPOP. The layout is
+   * `optional`'s, so the table arity stays a minimum.
+   */
+  optionalLast<TValue>(
+    schema: CommandSchema<TValue>,
+  ): CommandSchema<TValue | undefined> {
+    const optional = t.optional(schema)
+    return makeSchema((input, index, ctx) => {
+      if (input.length - index > 1) {
+        throw errors.syntax()
+      }
+
+      return optional.parse(input, index, ctx)
+    }, schemaLayout(optional))
+  },
+
   variadic<TValue>(
     schema: CommandSchema<TValue>,
     options?: { min?: number },

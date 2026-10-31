@@ -370,7 +370,7 @@ function randomPositions(size: number, count: number): number[] {
 
 export const spopCommand = defineCommand({
   name: 'spop',
-  schema: t.object({ key: t.key(), count: t.optional(t.positiveCount()) }),
+  schema: t.object({ key: t.key(), count: t.optionalLast(t.positiveCount()) }),
   flags: ['write', 'random', 'fast'],
   keys: args => [args.key],
   execute: (args, ctx) => {

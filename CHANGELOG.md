@@ -109,6 +109,14 @@ so the PR body is not a durable home for a breaking-change note.
   SETSLOT, COUNT-FAILURE-REPORTS, CONFIG GET / SET, ...) stay hidden, and so
   do ACL SETUSER, GETUSER, USERS and CLIENT UNBLOCK, which used to be shown.
   Redis 6.2 still hides every CLUSTER and CONFIG call.
+- ZPOPMIN, ZPOPMAX and SPOP with more than one argument after the key now
+  answer `syntax error`, as every Redis and Valkey version does ([#619]);
+  they used to answer `wrong number of arguments`. The check runs before the
+  count is parsed and before the key is looked up, so a bad count, a missing
+  key or a key of another type answers `syntax error` too, also when queued
+  in MULTI or called from a script. `COMMAND INFO` still reports arity -2,
+  and LPOP / RPOP keep `wrong number of arguments`. New schema combinator
+  `t.optionalLast` in `js-redis-server/core`.
 
 ### Changed
 
@@ -2225,6 +2233,7 @@ requests they contain.
 [#610]: https://github.com/fatal10110/js-redis-server/issues/610
 [#607]: https://github.com/fatal10110/js-redis-server/issues/607
 [#613]: https://github.com/fatal10110/js-redis-server/issues/613
+[#619]: https://github.com/fatal10110/js-redis-server/issues/619
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
