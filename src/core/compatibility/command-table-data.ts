@@ -2498,6 +2498,13 @@ export const VALKEY_80: CommandTableDelta = {
 
 export const VALKEY_90: CommandTableDelta = {
   'client|reply': { flags: ['noscript', 'loading', 'stale', 'no_multi'] },
+  delifeq: {
+    flags: ['write', 'fast'],
+    categories: ['@write', '@string', '@fast'],
+    keySpecs: [
+      { flags: ['RM', 'delete'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
+    ],
+  },
   exec: { flags: ['noscript', 'loading', 'stale', 'skip_commandlog'] },
   hexpire: {
     flags: ['write', 'fast'],

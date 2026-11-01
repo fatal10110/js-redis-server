@@ -76,6 +76,7 @@ export type FeatureId =
   | 'stream.consumer-group-lag'
   | 'stream.consumer-active-time'
   | 'bit.byte-bit-range'
+  | 'bitcount.start-only'
   | 'hscan.novalues'
   | 'zscan.noscores'
   | 'scan.type-unknown-error'
