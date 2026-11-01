@@ -243,6 +243,22 @@ so the PR body is not a durable home for a breaking-change note.
   without their scores ([#642]); the option may repeat and mixes with `MATCH`
   / `COUNT`. `SCAN`, `SSCAN` and `HSCAN` answer `NOSCORES option can only be
   used in ZSCAN` there. Redis profiles keep `syntax error`.
+- `DUMP key` and `RESTORE key ttl payload [REPLACE] [ABSTTL] [IDLETIME s]
+  [FREQ f]` ([#202]) with real RDB payloads: the object type, the value as
+  each profile's `rdb.c` writes it (integer-encoded and LZF-compressed
+  strings, 6.2 ziplists, 7.0+ listpacks, quicklist nodes, intsets, listpack
+  sets on 7.2+, skiplist sorted sets, streams with their consumer groups,
+  hash field TTLs on redis 7.4+ / valkey 9.0), the RDB version (9 on 6.2, 10
+  on 7.0, 11 on 7.2 and valkey 8.0, 12 on 7.4 / 8.0, 80 on valkey 9.0) and
+  the CRC-64. DUMP of a key built by plain writes is byte-identical to the
+  real server of the profile, and RESTORE loads every payload that server
+  accepts (older ziplist / zipmap / linked-list encodings included), so
+  payloads move between real servers and the mock both ways. RESTORE's
+  replies follow `restoreCommand()`: options first, then `BUSYKEY`, then the
+  ttl, then `DUMP payload version or checksum are wrong` / `Bad data
+  format`; a deadline already past creates nothing (and deletes the key with
+  REPLACE, announced as `del`); otherwise the key is announced `restore`.
+  HyperLogLogs still move as the mock's own string format ([#664]).
 
 ### Changed
 
@@ -2403,6 +2419,8 @@ requests they contain.
 [#643]: https://github.com/fatal10110/js-redis-server/issues/643
 [#635]: https://github.com/fatal10110/js-redis-server/issues/635
 [#642]: https://github.com/fatal10110/js-redis-server/issues/642
+[#202]: https://github.com/fatal10110/js-redis-server/issues/202
+[#664]: https://github.com/fatal10110/js-redis-server/issues/664
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

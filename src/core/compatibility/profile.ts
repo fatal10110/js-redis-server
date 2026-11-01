@@ -135,6 +135,11 @@ export type FeatureId =
   | 'geo.distance-same-lon-shortcut'
   | 'geo.distance-lon-epsilon'
   | 'geo.missing-member-wording'
+  | 'rdb.version-10'
+  | 'rdb.version-11'
+  | 'rdb.version-12'
+  | 'rdb.version-80'
+  | 'list.large-element-plain-node'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

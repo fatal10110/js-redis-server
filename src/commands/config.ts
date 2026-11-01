@@ -28,6 +28,10 @@ import {
 } from './helpers'
 import { configHelpLines } from './container-help'
 import { commandSubcommandInfo } from './introspection'
+import {
+  DEFAULT_ENCODING_LIMITS,
+  type EncodingLimits,
+} from '../state/rdb/payload'
 
 // Behavior-driving parameters whose authoritative value lives on the server
 // state (not the inert defaults map below), so other subsystems can read them.
@@ -556,6 +560,46 @@ export function configuredZsetListpackLimits(server: object): {
   return {
     maxEntries: read('zset-max-listpack-entries', 128),
     maxValue: read('zset-max-listpack-value', 64),
+  }
+}
+
+/**
+ * The live encoding limits DUMP derives a value's encoding from (#202).
+ * stream-node-max-bytes / -entries are not configurable in the mock and keep
+ * their defaults.
+ */
+export function configuredEncodingLimits(server: object): EncodingLimits {
+  const store = configStoreFor(server)
+  const read = (name: string, fallback: number): number => {
+    const raw = store.get(name) ?? ''
+    return /^-?[0-9]+$/.test(raw) ? Number(raw) : fallback
+  }
+  const d = DEFAULT_ENCODING_LIMITS
+  return {
+    ...d,
+    hashMaxListpackEntries: read(
+      'hash-max-listpack-entries',
+      d.hashMaxListpackEntries,
+    ),
+    hashMaxListpackValue: read(
+      'hash-max-listpack-value',
+      d.hashMaxListpackValue,
+    ),
+    listMaxListpackSize: read('list-max-listpack-size', d.listMaxListpackSize),
+    setMaxIntsetEntries: configuredSetMaxIntsetEntries(server),
+    setMaxListpackEntries: read(
+      'set-max-listpack-entries',
+      d.setMaxListpackEntries,
+    ),
+    setMaxListpackValue: read('set-max-listpack-value', d.setMaxListpackValue),
+    zsetMaxListpackEntries: read(
+      'zset-max-listpack-entries',
+      d.zsetMaxListpackEntries,
+    ),
+    zsetMaxListpackValue: read(
+      'zset-max-listpack-value',
+      d.zsetMaxListpackValue,
+    ),
   }
 }
 

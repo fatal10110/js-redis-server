@@ -37,6 +37,7 @@ import { stringsCommands } from './strings'
 import { lcsCommands } from './lcs'
 import { transactionCommands } from './transactions'
 import { zsetsCommands } from './zsets'
+import { dumpRestoreCommands } from './dump-restore'
 
 export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...connectionCommands,
@@ -49,6 +50,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...bitmapsCommands,
   ...hyperloglogCommands,
   ...keysCommands,
+  ...dumpRestoreCommands,
   ...scanCommands,
   ...hashesCommands,
   ...listsCommands,
