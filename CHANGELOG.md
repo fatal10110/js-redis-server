@@ -178,6 +178,28 @@ so the PR body is not a durable home for a breaking-change note.
 - BLMOVE answers a null array (`*-1`) when its timeout expires, as every
   Redis and Valkey version does; it used to answer a null bulk string
   (`$-1`). Queued in MULTI or called from a script it still answers `$-1`.
+- The node-redis facade's `multi().exec()` with a command node-redis' encoder
+  refuses (a number or other non-string, non-Buffer argument) now rejects with
+  the encoder's `TypeError` after running the other queued commands and EXEC,
+  as node-redis does ([#490]). It used to throw before EXEC and leave the
+  connection inside MULTI, so every later command answered `QUEUED`. The
+  `TypeError` wins over a queue-time or runtime error in the same
+  transaction, and the transaction still consumes a `WATCH`.
+- The node-redis facade's `mSet()` rejects a number key or value in every form
+  (tuples, a flat list, an object) with node-redis' `"arguments[N]" must be of
+  type "string | Buffer", got number instead.` ([#490]); it used to stringify
+  it. Its `NodeRedisMSetArguments` type no longer accepts numbers, as in
+  node-redis' typings. `set()` and `hSet()` still stringify numbers, as
+  node-redis does.
+- The node-redis facade's `subscribe()`, `pSubscribe()`, `unsubscribe()` and
+  `pUnsubscribe()` on a closed client wait for the next `connect()` and run
+  after the re-subscribe, as node-redis queues them ([#490]). `subscribe()`
+  used to reject with `ClientClosedError` and `unsubscribe()` to resolve at
+  once without unsubscribing. A listener added to a channel that already has
+  one still resolves at once, without a command. One difference: node-redis
+  6 never settles a bare `unsubscribe()` (`pUnsubscribe()`) while patterns
+  (channels) are still subscribed, open or closed, because it waits for a
+  reply count of 0; the facade resolves it.
 
 ### Added
 

@@ -331,14 +331,18 @@ export type NodeRedisHashFields =
   | Map<NodeRedisHashValue, NodeRedisHashValue>
   | readonly (NodeRedisHashValue | readonly NodeRedisHashValue[])[]
 
-/** `mSet()`'s forms: `[key, value]` tuples, a flat `[k, v, k, v]` list, or an object. */
+/**
+ * `mSet()`'s forms: `[key, value]` tuples, a flat `[k, v, k, v]` list, or an
+ * object. Strings and Buffers only, as node-redis types them: a number is
+ * passed through and rejected by the encoder, as node-redis does.
+ */
 export type NodeRedisMSetArguments =
   | readonly (readonly [
       key: NodeRedisCommandArgument,
-      value: NodeRedisCommandArgument | number,
+      value: NodeRedisCommandArgument,
     ])[]
-  | readonly (NodeRedisCommandArgument | number)[]
-  | Record<string, NodeRedisCommandArgument | number>
+  | readonly NodeRedisCommandArgument[]
+  | Record<string, NodeRedisCommandArgument>
 
 /** `expire()`'s optional mode. */
 export type NodeRedisExpireMode = 'NX' | 'XX' | 'GT' | 'LT'
@@ -877,6 +881,8 @@ export class NodeRedisMockClient extends CommandRunner {
   private quitDone: Promise<void> = Promise.resolve()
   /** Present while a {@link connect} is re-opening the client. */
   private reopening?: Promise<this>
+  /** Pub/sub calls made while closed wait on it; see {@link untilReopened}. */
+  private reopened?: { promise: Promise<void>; resolve: () => void }
   /**
    * Bumped by every `quit()` / `destroy()`, so a re-open that a close
    * overtook (closed again before its turn came) knows to give up.
@@ -968,7 +974,28 @@ export class NodeRedisMockClient extends CommandRunner {
     await this.resubscribe()
     if (!this.closed) {
       this.emit('ready')
+      const waiting = this.reopened
+      this.reopened = undefined
+      waiting?.resolve()
     }
+  }
+
+  /**
+   * Settles once the next {@link connect} has re-opened the client. node-redis
+   * queues a pub/sub command issued on a closed client (no `ClientClosedError`,
+   * unlike every other command) and writes it after the re-subscribe, so
+   * {@link subscribeTo} / {@link unsubscribeFrom} wait on this, then run (#490).
+   * Nothing holds the event loop: never re-opened, they just stay pending.
+   */
+  private untilReopened(): Promise<void> {
+    if (!this.reopened) {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => {
+        resolve = done
+      })
+      this.reopened = { promise, resolve }
+    }
+    return this.reopened.promise
   }
 
   /** node-redis' `PubSub.resubscribe()`: one command per listener kind. */
@@ -1197,9 +1224,12 @@ export class NodeRedisMockClient extends CommandRunner {
     channels: NodeRedisVariadicArgument,
     listener: NodeRedisPubSubListener,
   ): Promise<void> {
-    this.assertOpen()
     const names = variadicArguments([channels]).map(pubSubName)
     const fresh = names.filter(name => !listeners.has(name))
+    if (fresh.length > 0 && this.closed) {
+      await this.untilReopened()
+      return this.subscribeTo(command, listeners, channels, listener)
+    }
     // Registered before the command runs, so a message published right after
     // the subscribe lands reaches it; undone if the subscribe fails.
     const added = names.filter(name => addListener(listeners, name, listener))
@@ -1253,6 +1283,10 @@ export class NodeRedisMockClient extends CommandRunner {
         return
       }
     }
+    if (this.closed) {
+      await this.untilReopened()
+      return this.unsubscribeFrom(command, listeners, channels, listener)
+    }
     if (!this.pubsub) {
       // Never subscribed on this connection: nothing to tell the server.
       release()
@@ -1300,6 +1334,7 @@ export class NodeRedisMockClient extends CommandRunner {
             // EXEC has answered with the replies.
             if (
               selectedDatabase !== undefined &&
+              span.encodeError === undefined &&
               (span.value.kind === 'array' || span.value.kind === 'set')
             ) {
               this.selectedDatabase = selectedDatabase
@@ -1568,6 +1603,8 @@ type TransactionSpan = {
   value: RedisValue
   /** The first command that failed to queue (EXEC then answered `EXECABORT`). */
   queueError?: RedisErrorValue
+  /** The encoder's `TypeError` for the first command never written, if any. */
+  encodeError?: unknown
   /** The protocol in force once the transaction finished. */
   respVersion: RespVersion
   /** The served profile, which spells a RESP2 `double`. */
@@ -1837,6 +1874,7 @@ export class NodeRedisMockMulti {
     const {
       value: result,
       queueError,
+      encodeError,
       respVersion,
       profile,
       replyVersions,
@@ -1847,6 +1885,12 @@ export class NodeRedisMockMulti {
     )
     const errors = redisErrors()
 
+    if (encodeError !== undefined) {
+      // node-redis rejects the un-encodable command while writing, before any
+      // reply is read, so its TypeError rejects exec() ahead of every reply
+      // error; the other commands and EXEC still ran (#490).
+      throw encodeError
+    }
     if (queueError) {
       // node-redis pipelines MULTI, the queued commands and EXEC and awaits
       // them together, so the first command that failed to queue rejects the
@@ -2386,12 +2430,17 @@ export class NodeRedisMockCluster extends CommandRunner {
       return []
     }
 
-    const [name, ...rest] = args
+    let encoded: Buffer[]
     try {
-      return this.masterPipelines[0].executor.plan(
-        toBuffer(name),
-        rest.map((arg, index) => toBuffer(arg, index + 1)),
-      ).keys
+      encoded = encodeArguments(args)
+    } catch {
+      // Un-encodable: no route. The command itself rejects with the
+      // encoder's TypeError when it is written (inside exec(), it alone).
+      return []
+    }
+    const [name, ...rest] = encoded
+    try {
+      return this.masterPipelines[0].executor.plan(name, rest).keys
     } catch (err) {
       if (err instanceof RedisCommandError) {
         return []
@@ -2425,6 +2474,10 @@ export class NodeRedisMockCluster extends CommandRunner {
  * Replay MULTI → queued commands → EXEC on `session` as one span. EXEC is sent
  * even after a command failed to queue, so the session leaves MULTI (it
  * answers `EXECABORT`), exactly as node-redis pipelines it.
+ *
+ * A command the encoder refuses is never written: node-redis'
+ * `commandsToWrite()` rejects just that command and writes the rest, EXEC
+ * included (#490). Its `TypeError` is kept in {@link TransactionSpan.encodeError}.
  */
 async function runTransactionSpan(
   session: ClientSession,
@@ -2433,8 +2486,18 @@ async function runTransactionSpan(
 ): Promise<TransactionSpan> {
   await runOnSession(session, ['MULTI'], closed)
   let queueError: RedisErrorValue | undefined
+  let encodeError: unknown
+  const written: NodeRedisCommandArgument[][] = []
   for (const args of queued) {
-    const reply = await runOnSession(session, args, closed)
+    let encoded: Buffer[]
+    try {
+      encoded = encodeArguments(args)
+    } catch (err) {
+      encodeError ??= err
+      continue
+    }
+    written.push(args)
+    const reply = await runEncoded(session, encoded, closed)
     if (reply.kind === 'error') {
       queueError ??= reply
     }
@@ -2444,9 +2507,10 @@ async function runTransactionSpan(
   return {
     value,
     queueError,
+    encodeError,
     respVersion: session.protocolVersion,
     profile: session.server.profile,
-    replyVersions: replayProtocolSwitches(queued, before, value),
+    replyVersions: replayProtocolSwitches(written, before, value),
   }
 }
 
@@ -2465,23 +2529,36 @@ async function runOnSession(
   args: NodeRedisCommandArgument[],
   closed: boolean,
 ): Promise<RedisValue> {
+  assertSessionOpen(closed)
+  return runEncoded(session, encodeArguments(args), closed)
+}
+
+/** {@link runOnSession} for a command already through {@link encodeArguments}. */
+async function runEncoded(
+  session: ClientSession,
+  [name, ...rest]: Buffer[],
+  closed: boolean,
+): Promise<RedisValue> {
+  assertSessionOpen(closed)
+  const result = await session.execute(name, rest)
+  result.options?.afterReply?.()
+  return result.value
+}
+
+function assertSessionOpen(closed: boolean): void {
   if (closed) {
     // Real node-redis rejects a command on a closed client with this exact
     // error, same as it does a redundant quit()/disconnect()/destroy().
     throw clientClosedError()
   }
+}
+
+/** The command's arguments as node-redis' encoder takes them (name at 0). */
+function encodeArguments(args: readonly NodeRedisCommandArgument[]): Buffer[] {
   if (args.length === 0) {
     throw new Error('command requires at least a name')
   }
-
-  const [name, ...rest] = args
-  const result = await session.execute(
-    toBuffer(name),
-    rest.map((arg, index) => toBuffer(arg, index + 1)),
-  )
-
-  result.options?.afterReply?.()
-  return result.value
+  return args.map((arg, index) => toBuffer(arg, index))
 }
 
 /**
@@ -2635,7 +2712,11 @@ function setOptionArguments(
   return args
 }
 
-/** node-redis' `parseMSetArguments`. */
+/**
+ * node-redis' `parseMSetArguments`. Unlike `set()` / `hSet()` it does not
+ * stringify numbers: they reach the encoder, whose `TypeError` rejects the
+ * call (#490).
+ */
 function mSetArguments(
   toSet: NodeRedisMSetArguments,
 ): NodeRedisCommandArgument[] {
@@ -2647,22 +2728,22 @@ function mSetArguments(
     if (Array.isArray(toSet[0])) {
       for (const [key, value] of toSet as readonly (readonly [
         NodeRedisCommandArgument,
-        NodeRedisCommandArgument | number,
+        NodeRedisCommandArgument,
       ])[]) {
-        args.push(key, numberArgument(value))
+        args.push(key, value)
       }
     } else {
-      const flat = toSet as readonly (NodeRedisCommandArgument | number)[]
+      const flat = toSet as readonly NodeRedisCommandArgument[]
       for (let i = 0; i < flat.length; i += 2) {
-        args.push(numberArgument(flat[i]), numberArgument(flat[i + 1]))
+        args.push(flat[i], flat[i + 1])
       }
     }
     return args
   }
   for (const [key, value] of Object.entries(
-    toSet as Record<string, NodeRedisCommandArgument | number>,
+    toSet as Record<string, NodeRedisCommandArgument>,
   )) {
-    args.push(key, numberArgument(value))
+    args.push(key, value)
   }
   return args
 }
