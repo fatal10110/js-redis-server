@@ -14,9 +14,6 @@
  * the hand-written node-redis facade (`createNodeRedisMock`), which curates a
  * few dozen of node-redis' methods and signatures — most of these are surface
  * it does not have yet, not wrong replies.
- *
- * One divergence is not listed per test, because the harness works around it:
- * see {@link FACADE_DUPLICATE_PROMISE}.
  */
 
 export type KnownGap = {
@@ -44,17 +41,6 @@ export type KnownGap = {
   mode?: 'todo' | 'skip'
 }
 
-/**
- * `NodeRedisMockClient.duplicate()` returns a Promise of an already-usable
- * client; real node-redis returns an unconnected client synchronously (you
- * `connect()` it). The harness's `duplicateNodeRedisClient()` (test-config.ts)
- * absorbs the difference so the pub/sub and keyspace-notification suites reach
- * the facade's pub/sub. Follow-up for `src/`: return the client synchronously
- * and make `connect()` do the work.
- */
-export const FACADE_DUPLICATE_PROMISE =
-  'NodeRedisMockClient.duplicate() returns a Promise; node-redis returns the unconnected client synchronously'
-
 type Cause = { reason: string; error: NonNullable<KnownGap['error']> }
 
 /**
@@ -65,34 +51,17 @@ type Cause = { reason: string; error: NonNullable<KnownGap['error']> }
  * node:assert's message, which is what these patterns then match.
  */
 const CAUSE = {
-  clusterSendCommand: {
+  directNodeConnection: {
     reason:
-      "calls node-redis' cluster `sendCommand(firstKey, isReadonly, args)`; `NodeRedisMockCluster.sendCommand` only takes `(args)`, so the key is read as the argument list (`undefined` has no length; a key string is spread into characters)",
+      "opens a direct node-redis connection to a slot owner (`connectToNodeRedisEndpoint()` on a node from `cluster.slots` / CLUSTER SLOTS); the facade's nodes have synthetic ports nothing listens on, so the harness refuses the dial instead of letting node-redis retry it until the test times out",
     error:
-      /Cannot read properties of undefined \(reading 'length'\)|ERR unknown command '[^']', with args beginning with/,
-  },
-  clusterTopology: {
-    reason:
-      "looks up a slot owner through node-redis' `cluster.slots`, which `NodeRedisMockCluster` does not expose",
-    error: /cluster\.slots is not available on this cluster client/,
-  },
-  argumentShapes: {
-    reason:
-      "passes node-redis' array / object argument forms (`sAdd(key, [members])`, `hSet(key, { … })`, `set(key, v, { expiration })`, …); the facade's curated methods only take positional strings",
-    error: /"arguments\[\d+\]" must be of type "string \| Buffer", got object/,
-  },
-  secondClusterClient: {
-    reason:
-      'needs a second cluster client on the same keyspace (blocking pop + push, WATCH from another connection); `NodeRedisMockCluster` has no `duplicate()` or equivalent',
-    error: /second node-redis cluster client on the same keyspace/,
+      /cannot provide a direct node-redis connection to [\d.]+:\d+ — it needs a TCP port/,
   },
 } as const satisfies Record<string, Cause>
 
 /** Skip reasons: setups the backend cannot provide at all. */
 const SKIP = {
-  topologyInBefore:
-    "before() looks up a slot owner through node-redis' `cluster.slots`, which `NodeRedisMockCluster` does not expose",
-  secondClusterClient: CAUSE.secondClusterClient.reason,
+  directConnectionInBefore: `before() ${CAUSE.directNodeConnection.reason}`,
   flushAllInHook:
     'beforeEach() calls `flushAll()`, which the facade does not have',
   tcpClients:
@@ -116,44 +85,55 @@ function skip(file: string, reason: string): KnownGap {
 }
 
 export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
-  // Waiters are opened in each test (not in before()), so every test fails
-  // on its own with this cause instead of a hook failure hiding them all.
-  todo('node-redis/blocking-fifo.test.ts', CAUSE.secondClusterClient, [
-    'BLMOVE: 3 waiters on one key are served in the order they blocked',
-    'BLMOVE: a write of another type does not wake the waiter',
-    'BLMPOP: a waiter woken to find nothing keeps its place in line',
-    'BLMPOP: a write of another type does not wake the waiter',
-    'BLPOP k1 k2: a type change on k2 keeps the client blocked for k1',
-    'BLPOP: 3 waiters on one key are served in the order they blocked',
-    'BLPOP: a single multi-value push serves the waiters in the order they blocked',
-    'BLPOP: a waiter woken to find nothing keeps its place in line',
-    'BLPOP: a write of another type does not wake the waiter',
-    'BRPOP: 3 waiters on one key are served in the order they blocked',
-    'BZMPOP: 3 waiters on one key are served in the order they blocked',
-    'BZMPOP: a waiter woken to find nothing keeps its place in line',
-    'BZMPOP: a write of another type does not wake the waiter',
-    'BZPOPMIN: 3 waiters on one key are served in the order they blocked',
-    'BZPOPMIN: a waiter woken to find nothing keeps its place in line',
-    'BZPOPMIN: a write of another type does not wake the waiter',
-    'XREAD BLOCK: a write of another type does not wake the waiter',
-    'XREAD BLOCK: every waiter on one key is served the new entry',
-    'XREADGROUP BLOCK on two streams: deleting the second unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: 3 waiters on one key are served in the order they blocked',
-    'XREADGROUP BLOCK: DEL unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: MULTI; DEL; XADD; EXEC unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: MULTI; XGROUP DESTROY; XGROUP CREATE; EXEC keeps it blocked',
-    'XREADGROUP BLOCK: PEXPIRE (active expiry) unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: RENAME unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: UNLINK unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: XGROUP DESTROY of another group keeps it blocked',
-    'XREADGROUP BLOCK: XGROUP DESTROY unblocks it with NOGROUP',
-    'XREADGROUP BLOCK: overwriting the stream (MULTI; DEL; SET; EXEC) unblocks it with WRONGTYPE',
-    'XREADGROUP BLOCK: overwriting the stream (SET) unblocks it with WRONGTYPE',
-  ]),
-  todo('node-redis/cluster-append-routing.test.ts', CAUSE.clusterSendCommand, [
-    'clusterAppend reaches the slot owner without a MOVED',
-  ]),
-  todo('node-redis/cluster-integration.test.ts', CAUSE.clusterSendCommand, [
+  todo(
+    'node-redis/blocking-fifo.test.ts',
+    missing(
+      'blMove',
+      'blPop',
+      'blmPop',
+      'brPop',
+      'bzPopMin',
+      'bzmPop',
+      'xGroupCreate',
+      'xRead',
+    ),
+    [
+      'BLMOVE: 3 waiters on one key are served in the order they blocked',
+      'BLMOVE: a write of another type does not wake the waiter',
+      'BLMPOP: a waiter woken to find nothing keeps its place in line',
+      'BLMPOP: a write of another type does not wake the waiter',
+      'BLPOP k1 k2: a type change on k2 keeps the client blocked for k1',
+      'BLPOP: 3 waiters on one key are served in the order they blocked',
+      'BLPOP: a single multi-value push serves the waiters in the order they blocked',
+      'BLPOP: a waiter woken to find nothing keeps its place in line',
+      'BLPOP: a write of another type does not wake the waiter',
+      'BRPOP: 3 waiters on one key are served in the order they blocked',
+      'BZMPOP: 3 waiters on one key are served in the order they blocked',
+      'BZMPOP: a waiter woken to find nothing keeps its place in line',
+      'BZMPOP: a write of another type does not wake the waiter',
+      'BZPOPMIN: 3 waiters on one key are served in the order they blocked',
+      'BZPOPMIN: a waiter woken to find nothing keeps its place in line',
+      'BZPOPMIN: a write of another type does not wake the waiter',
+      'XREAD BLOCK: a write of another type does not wake the waiter',
+      'XREAD BLOCK: every waiter on one key is served the new entry',
+      'XREADGROUP BLOCK on two streams: deleting the second unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: 3 waiters on one key are served in the order they blocked',
+      'XREADGROUP BLOCK: DEL unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: MULTI; DEL; XADD; EXEC unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: MULTI; XGROUP DESTROY; XGROUP CREATE; EXEC keeps it blocked',
+      'XREADGROUP BLOCK: PEXPIRE (active expiry) unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: RENAME unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: UNLINK unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: XGROUP DESTROY of another group keeps it blocked',
+      'XREADGROUP BLOCK: XGROUP DESTROY unblocks it with NOGROUP',
+      'XREADGROUP BLOCK: overwriting the stream (MULTI; DEL; SET; EXEC) unblocks it with WRONGTYPE',
+      'XREADGROUP BLOCK: overwriting the stream (SET) unblocks it with WRONGTYPE',
+    ],
+  ),
+  todo('node-redis/cluster-integration.test.ts', CAUSE.directNodeConnection, [
+    'CLUSTER NODES reports bus port as client port + 10000',
+    'CLUSTER SHARDS returns structured shard metadata',
+    'CLUSTER arity and subcommand errors match Redis',
     'HELLO reports master and replica roles for direct node connections',
     'Lua redis.call and redis.pcall non-local key errors match Redis',
     'READONLY and READWRITE arity errors match Redis',
@@ -163,11 +143,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'direct node connections return MOVED for keys owned by another node',
     'direct replica connections redirect keyed commands to the master',
   ]),
-  todo('node-redis/cluster-integration.test.ts', CAUSE.clusterTopology, [
-    'CLUSTER NODES reports bus port as client port + 10000',
-    'CLUSTER SHARDS returns structured shard metadata',
-    'CLUSTER arity and subcommand errors match Redis',
-  ]),
   todo(
     'node-redis/command-info-keys.test.ts',
     missing('commandInfo', 'geoPos'),
@@ -176,26 +151,20 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'reports arity and first/last/step keys like Redis',
     ],
   ),
-  todo('node-redis/command-integration.test.ts', CAUSE.clusterSendCommand, [
-    'COMMAND COUNT and HELP expose the command surface',
-    'COMMAND DOCS ECHO reports summary, since, group, complexity and arguments',
-    'COMMAND DOCS argument flags use RESP status strings',
-    'COMMAND DOCS returns documentation entries and skips unknown commands',
-    'COMMAND GETKEYS and GETKEYSANDFLAGS use command key extraction',
-    'COMMAND INFO ECHO reports arity, flags and categories like Redis',
-    'COMMAND INFO returns Redis command metadata and nulls for unknown commands',
-    'COMMAND LIST returns names and supports Redis FILTERBY variants',
-    'COMMAND errors match Redis',
-  ]),
   todo('node-redis/commands.test.ts', missing('mGet'), [
     'cross slot error',
     'returns multiple key values',
   ]),
-  skip('node-redis/config-integration.test.ts', SKIP.topologyInBefore),
-  skip('node-redis/connection-integration.test.ts', SKIP.topologyInBefore),
+  skip('node-redis/config-integration.test.ts', SKIP.directConnectionInBefore),
+  skip(
+    'node-redis/connection-integration.test.ts',
+    SKIP.directConnectionInBefore,
+  ),
   todo('node-redis/copy-integration.test.ts', missing('copy', 'select'), [
+    'REPLACE overwrites the destination TTL with the source TTL (none)',
     'copies a value to a new destination and returns 1',
     'copies across databases with the DB option',
+    'copies the TTL together with the value',
     'errors on an unknown option',
     'errors when DB has no value',
     'errors when source and destination are the same key',
@@ -206,10 +175,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'returns 0 when destination already exists without REPLACE',
     'returns 0 when the source key does not exist',
     'same key name in a different DB is allowed (not "same objects")',
-  ]),
-  todo('node-redis/copy-integration.test.ts', CAUSE.argumentShapes, [
-    'REPLACE overwrites the destination TTL with the source TTL (none)',
-    'copies the TTL together with the value',
     'works on any value type (list)',
   ]),
   todo('node-redis/flush-async-sync.test.ts', missing('flushAll', 'flushDb'), [
@@ -226,11 +191,9 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'GEOADD NX/XX/CH option flags match Redis',
     'GEOADD adds members and GEOPOS/GEODIST/GEOHASH read them back',
   ]),
-  todo('node-redis/geo/core.test.ts', CAUSE.clusterSendCommand, [
-    'GEOADD option/argument errors match Redis',
-  ]),
   todo('node-redis/geo/search.test.ts', missing('geoAdd', 'geoSearch'), [
     'GEORADIUS (deprecated) matches GEOSEARCH-equivalent behavior',
+    'GEORADIUS STORE / STOREDIST write results, reject combining with WITH*',
     'GEORADIUSBYMEMBER matches GEOSEARCH FROMMEMBER-equivalent behavior',
     'GEORADIUSBYMEMBER_RO rejects STORE',
     'GEORADIUS_RO rejects STORE',
@@ -240,9 +203,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'GEOSEARCH argument and edge-case errors match Redis',
     'GEOSEARCH on missing key returns empty array',
     'GEOSEARCH rejects wrong type key',
-  ]),
-  todo('node-redis/geo/search.test.ts', CAUSE.argumentShapes, [
-    'GEORADIUS STORE / STOREDIST write results, reject combining with WITH*',
     'GEOSEARCHSTORE rejects WITH* options',
     'GEOSEARCHSTORE stores geohash score, STOREDIST stores distance',
   ]),
@@ -251,32 +211,30 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'HLEN command',
     'HSETNX command',
   ]),
-  todo('node-redis/hash/basic.test.ts', CAUSE.argumentShapes, [
-    'HGETALL command',
+  todo('node-redis/hash/basic.test.ts', missing('hKeys', 'hmGet'), [
     'HKEYS and HVALS commands',
     'HMSET and HMGET commands',
-    'HSET and HGET commands',
   ]),
-  todo('node-redis/hash/basic.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/basic.test.ts', CAUSE.directNodeConnection, [
     'HGETALL works over a RESP3 connection (HELLO 3)',
     'HRANDFIELD command matches Redis',
   ]),
   todo('node-redis/hash/del.test.ts', missing('hDel'), [
+    'HDEL command',
     'HDEL on a missing key does not create an empty hash',
   ]),
-  todo('node-redis/hash/del.test.ts', CAUSE.argumentShapes, ['HDEL command']),
-  todo('node-redis/hash/del.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/del.test.ts', CAUSE.directNodeConnection, [
     'HGETDEL errors match Redis',
     'HGETDEL returns values and deletes fields',
   ]),
   todo('node-redis/hash/errors-workflow.test.ts', missing('hIncrBy'), [
+    'Hash command errors match Redis',
     'Hash commands workflow - Shopping Cart',
   ]),
-  todo('node-redis/hash/errors-workflow.test.ts', CAUSE.argumentShapes, [
-    'Hash command errors match Redis',
+  todo('node-redis/hash/errors-workflow.test.ts', missing('hExists'), [
     'Hash commands workflow - User Profile',
   ]),
-  todo('node-redis/hash/field-expire.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/field-expire.test.ts', CAUSE.directNodeConnection, [
     'HEXPIRE arg-content errors stay inline inside MULTI/EXEC',
     'HEXPIRE condition flags match Redis',
     'HEXPIRE deletes the key when every field expires',
@@ -285,17 +243,17 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'HSCAN omits expired hash fields',
     'hash writes clear or preserve field TTLs like Redis',
   ]),
-  todo('node-redis/hash/field-persist.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/field-persist.test.ts', CAUSE.directNodeConnection, [
     'HPERSIST, HTTL and HPTTL errors match Redis',
     'HPERSIST, HTTL and HPTTL handle missing keys',
     'HPERSIST, HTTL and HPTTL report and clear hash field TTLs',
     'HTTL rounds hash-field TTLs up to the next second, unlike key TTL',
   ]),
-  todo('node-redis/hash/hgetex.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/hgetex.test.ts', CAUSE.directNodeConnection, [
     'HGETEX errors match Redis',
     'HGETEX returns values and updates field TTLs like Redis',
   ]),
-  todo('node-redis/hash/hsetex.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/hsetex.test.ts', CAUSE.directNodeConnection, [
     'HSETEX FNX/FXX conditions match Redis',
     'HSETEX errors match Redis',
     'HSETEX sets fields and expiration like Redis',
@@ -305,7 +263,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'HINCRBY respects Redis 64-bit signed integer range',
     'HINCRBYFLOAT command',
   ]),
-  todo('node-redis/hash/incr.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/hash/incr.test.ts', CAUSE.directNodeConnection, [
     'HINCRBYFLOAT parses operands like strtold: hex floats, infinity and error order (#234)',
   ]),
   todo('node-redis/info-standalone.test.ts', missing('info'), [
@@ -316,13 +274,12 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'INFO with an unknown section returns an empty bulk string, not an error',
   ]),
   todo('node-redis/key/commands.test.ts', missing('type'), ['TYPE command']),
-  todo('node-redis/key/commands.test.ts', CAUSE.argumentShapes, [
-    'DBSIZE command',
-    'EXISTS command',
+  todo('node-redis/key/commands.test.ts', missing('rename', 'unlink'), [
     'Key command errors and past expiration match Redis',
     'UNLINK command removes keys and returns the deleted count',
   ]),
-  todo('node-redis/key/commands.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/key/commands.test.ts', CAUSE.directNodeConnection, [
+    'DBSIZE command',
     'TOUCH command counts live keys without mutating keyspace',
   ]),
   todo('node-redis/key/expire.test.ts', missing('expireAt', 'persist'), [
@@ -330,22 +287,26 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'PERSIST removes expiration and EXPIRE 0 deletes the key',
     'TTL integration with EXPIRE and EXPIREAT',
   ]),
-  todo('node-redis/key/expire.test.ts', CAUSE.argumentShapes, [
+  todo('node-redis/key/expire.test.ts', missing('expireTime', 'pTTL'), [
     'EXPIRETIME and PEXPIRETIME return absolute expiry, -1, -2',
     'TTL rounds to nearest second like real Redis (#59)',
   ]),
-  todo('node-redis/key/expire.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/key/expire.test.ts', CAUSE.directNodeConnection, [
     'EXPIRE family supports conditional expiry options',
     'EXPIREAT/PEXPIREAT past timestamp respects conditional flags (#72)',
   ]),
   todo('node-redis/key/keyspace-empty-cleanup.test.ts', missing('hDel'), [
     'emptying a hash via HDEL deletes the key (no phantom empty hash persists)',
   ]),
-  todo('node-redis/key/keyspace-empty-cleanup.test.ts', CAUSE.clusterTopology, [
-    'emptying an EXISTING watched collection still invalidates the WATCH',
-    'no-op HDEL on a non-existent key must not invalidate a WATCH on that key',
-    'no-op SREM on a non-existent key must not invalidate a WATCH on that key',
-  ]),
+  todo(
+    'node-redis/key/keyspace-empty-cleanup.test.ts',
+    CAUSE.directNodeConnection,
+    [
+      'emptying an EXISTING watched collection still invalidates the WATCH',
+      'no-op HDEL on a non-existent key must not invalidate a WATCH on that key',
+      'no-op SREM on a non-existent key must not invalidate a WATCH on that key',
+    ],
+  ),
   // The facade's own pub/sub runs here (via duplicateNodeRedisClient()); what
   // stops these is the rest of its surface.
   todo(
@@ -372,12 +333,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'expired hash fields are removed by active expiry, with no access to the key',
     ],
   ),
-  todo(
-    'node-redis/key/keyspace-notifications.test.ts',
-    CAUSE.argumentShapes,
-    // pSubscribe([patterns], listener): the facade takes one pattern string.
-    ['publishes set keyspace and keyevent notifications'],
-  ),
   todo('node-redis/key/keyspace-notifications.test.ts', missing('configSet'), [
     'CONFIG normalizes flags and rejects invalid characters',
     'a parked blocking command does not name writes into its database (#444)',
@@ -390,46 +345,81 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'publishes del, expire and persist generic notifications',
     'publishes expired event from active expiry without a forcing read',
     'publishes expired event when a key lazily expires',
+    'publishes set keyspace and keyevent notifications',
     'stream group metadata commands notify without dirtying WATCH (#379)',
     'translates RENAME into rename_from and rename_to',
   ]),
   todo('node-redis/key/workflow.test.ts', missing('expireAt'), [
     'Expiration workflow - Cache with Scheduled Invalidation',
   ]),
-  todo('node-redis/key/workflow.test.ts', CAUSE.argumentShapes, [
-    'DBSIZE workflow - Database Monitoring and Capacity Planning',
+  todo('node-redis/key/workflow.test.ts', missing('type'), [
     'Key commands workflow - Cache Validation',
     'Key commands workflow - Data Type Validation',
     'Key commands workflow - Multi-tenant Data Isolation',
   ]),
-  skip('node-redis/list/blmove.test.ts', SKIP.secondClusterClient),
-  skip('node-redis/list/blocking.test.ts', SKIP.secondClusterClient),
+  todo('node-redis/key/workflow.test.ts', CAUSE.directNodeConnection, [
+    'DBSIZE workflow - Database Monitoring and Capacity Planning',
+  ]),
+  todo('node-redis/list/blmove.test.ts', missing('blMove'), [
+    'BLMOVE blocks then returns when a push arrives on source',
+    'BLMOVE error paths match Redis',
+    'BLMOVE returns immediately when source is non-empty',
+    'BLMOVE rotates a list onto itself',
+    'BLMOVE timeout returns null',
+  ]),
+  todo(
+    'node-redis/list/blocking.test.ts',
+    missing('blPop', 'brPop', 'xAdd', 'xRead'),
+    [
+      'BLPOP blocks then returns when LPUSH arrives',
+      'BLPOP returns immediately when list is non-empty',
+      'BLPOP thundering herd: single push delivers to exactly one of two concurrent waiters',
+      'BLPOP timeout returns null',
+      'BRPOP blocks then returns when RPUSH arrives',
+      'BRPOP returns immediately when list is non-empty',
+      'BRPOP timeout returns null',
+      'XREAD BLOCK returns immediately when entries exist after given id',
+      'XREAD BLOCK timeout returns null',
+      'XREAD BLOCK with $ blocks then returns when new entry arrives',
+      'XREAD BLOCK with COUNT limits returned entries',
+      'XREAD COUNT is per-stream: each stream returns up to COUNT entries independently',
+    ],
+  ),
   todo('node-redis/list/commands.test.ts', missing('lLen'), [
     'LLEN command',
+    'List commands workflow - Task Queue',
     'List commands workflow - Undo Stack',
   ]),
-  todo('node-redis/list/commands.test.ts', CAUSE.argumentShapes, [
-    'LINDEX command',
-    'LPOP and RPOP commands',
-    'LPUSH and RPUSH commands',
-    'LRANGE command',
-    'LREM command',
-    'LSET command',
-    'LTRIM command',
-    'List commands workflow - Chat Messages',
-    'List commands workflow - Task Queue',
-  ]),
-  todo('node-redis/list/commands.test.ts', CAUSE.clusterTopology, [
+  todo(
+    'node-redis/list/commands.test.ts',
+    missing('lIndex', 'lPop', 'lRem', 'lSet', 'lTrim'),
+    [
+      'LINDEX command',
+      'LPOP and RPOP commands',
+      'LREM command',
+      'LSET command',
+      'LTRIM command',
+      'List commands workflow - Chat Messages',
+    ],
+  ),
+  todo('node-redis/list/commands.test.ts', CAUSE.directNodeConnection, [
     'LPOP and RPOP support count argument',
     'List command errors match Redis',
   ]),
-  todo('node-redis/list/linsert.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/list/linsert.test.ts', CAUSE.directNodeConnection, [
     'error paths match Redis',
     'inserts before and after the first matching pivot',
     'returns Redis-compatible values for missing keys and pivots',
   ]),
-  skip('node-redis/list/lmpop-blmpop.test.ts', SKIP.secondClusterClient),
-  todo('node-redis/list/lpos-lmove.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/list/lmpop-blmpop.test.ts', missing('blmPop', 'lmPop'), [
+    'BLMPOP blocks then returns when a push arrives',
+    'BLMPOP returns immediately when a list is non-empty',
+    'BLMPOP timeout returns null',
+    'LMPOP / BLMPOP error paths match Redis',
+    'LMPOP pops from the first non-empty key with the requested side and count',
+    'LMPOP returns null when all keys are empty or missing',
+  ]),
+  todo('node-redis/list/lpos-lmove.test.ts', CAUSE.directNodeConnection, [
     'LMOVE error paths match Redis',
     'LMOVE moves elements between list ends',
     'LMOVE on missing source returns nil and deletes emptied source',
@@ -446,25 +436,24 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'returns 0 and leaves both databases unchanged when destination exists',
     'returns 0 when the source key is missing',
   ]),
-  todo('node-redis/move-integration.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/move-integration.test.ts', CAUSE.directNodeConnection, [
     'rejects MOVE in cluster mode',
   ]),
   todo('node-redis/multi.test.ts', missing('multi'), [
     'returns execution errors from EXEC replies',
   ]),
-  todo('node-redis/multi.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/multi.test.ts', missing('close'), [
+    'Queue commands before execution without piplining',
+  ]),
+  todo('node-redis/multi.test.ts', CAUSE.directNodeConnection, [
     'aborts the whole transaction (EXECABORT) when a command fails to queue',
     'runtime command errors are surfaced via MultiErrorReply',
   ]),
-  todo('node-redis/multi.test.ts', CAUSE.secondClusterClient, [
-    'Queue commands before execution without piplining',
-  ]),
   skip('node-redis/randomkey-integration.test.ts', SKIP.flushAllInHook),
-  todo('node-redis/scan/keys-scan.test.ts', CAUSE.clusterSendCommand, [
-    'scan COUNT errors match Redis',
+  todo('node-redis/scan/keys-scan.test.ts', missing('withTypeMapping'), [
     'scan MATCH treats patterns as raw bytes',
   ]),
-  todo('node-redis/scan/keys-scan.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/scan/keys-scan.test.ts', CAUSE.directNodeConnection, [
     'HSCAN NOVALUES returns only matching fields',
     'KEYS and top-level SCAN MATCH treat patterns as raw bytes',
     'KEYS and top-level SCAN support MATCH and TYPE filters',
@@ -476,7 +465,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/scan/typed-scan.test.ts', missing('zScan'), [
     'ZSCAN iterates with COUNT until cursor 0',
   ]),
-  todo('node-redis/scan/typed-scan.test.ts', CAUSE.argumentShapes, [
+  todo('node-redis/scan/typed-scan.test.ts', missing('hScan', 'sScan'), [
     'HSCAN iterates with COUNT until cursor 0',
     'SSCAN iterates with COUNT until cursor 0',
     'keyed scan MATCH advances across non-matching COUNT batches',
@@ -489,54 +478,82 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   todo('node-redis/select-multi.test.ts', missing('select'), [
     'a queued SELECT switches the DB for later commands in the same EXEC',
   ]),
-  todo('node-redis/set/core.test.ts', CAUSE.argumentShapes, [
-    'SADD and SCARD commands',
-    'SISMEMBER command',
-    'SMEMBERS command',
-    'SPOP command',
-    'SPOP command with count',
-    'SRANDMEMBER command',
-    'SREM command',
-    'Set command errors match Redis',
-  ]),
-  todo('node-redis/set/core.test.ts', CAUSE.clusterTopology, [
+  todo(
+    'node-redis/set/core.test.ts',
+    missing(
+      'sCard',
+      'sIsMember',
+      'sMove',
+      'sPop',
+      'sPopCount',
+      'sRandMember',
+      'sRem',
+    ),
+    [
+      'SADD and SCARD commands',
+      'SISMEMBER command',
+      'SPOP command',
+      'SPOP command with count',
+      'SRANDMEMBER command',
+      'SREM command',
+      'Set command errors match Redis',
+    ],
+  ),
+  todo('node-redis/set/core.test.ts', CAUSE.directNodeConnection, [
     'SMISMEMBER command matches Redis',
   ]),
-  todo('node-redis/set/order.test.ts', CAUSE.argumentShapes, [
-    'COPY keeps the encoding',
-    'SDIFFSTORE result depends on the difference algorithm Redis picks',
-    'SINTER walks the smallest set',
-    'SINTERSTORE stores an integer-only result as an intset',
-    'SMOVE creates its destination like SADD does',
-    'SRANDMEMBER and SPOP return the whole set in storage order',
-    'SRANDMEMBER and SPOP sample a small set in storage order',
-    'SUNION and SDIFF of intsets are sorted',
-    'SUNIONSTORE and SDIFFSTORE rebuild the result from an empty intset',
-    'a set that held a non-integer never becomes an intset again',
-    'an intset that gains a non-integer keeps its integers sorted first',
-    'an integer-only set is read in ascending order',
-  ]),
-  todo('node-redis/set/setops.test.ts', CAUSE.argumentShapes, [
-    'SDIFF command',
-    'SINTER command',
-    'SMOVE command',
-    'SUNION command',
-  ]),
-  todo('node-redis/set/setops.test.ts', CAUSE.clusterTopology, [
+  todo(
+    'node-redis/set/order.test.ts',
+    missing(
+      'sDiffStore',
+      'sInter',
+      'sMove',
+      'sRandMemberCount',
+      'sRem',
+      'sScan',
+      'sUnion',
+    ),
+    [
+      'COPY keeps the encoding',
+      'SDIFFSTORE result depends on the difference algorithm Redis picks',
+      'SINTER walks the smallest set',
+      'SINTERSTORE stores an integer-only result as an intset',
+      'SMOVE creates its destination like SADD does',
+      'SRANDMEMBER and SPOP return the whole set in storage order',
+      'SRANDMEMBER and SPOP sample a small set in storage order',
+      'SUNION and SDIFF of intsets are sorted',
+      'SUNIONSTORE and SDIFFSTORE rebuild the result from an empty intset',
+      'a set that held a non-integer never becomes an intset again',
+      'an integer-only set is read in ascending order',
+      'an intset that gains a non-integer keeps its integers sorted first',
+    ],
+  ),
+  todo(
+    'node-redis/set/setops.test.ts',
+    missing('sDiff', 'sInter', 'sMove', 'sUnion'),
+    ['SDIFF command', 'SINTER command', 'SMOVE command', 'SUNION command'],
+  ),
+  todo('node-redis/set/setops.test.ts', CAUSE.directNodeConnection, [
     'SINTERCARD command matches Redis',
   ]),
-  todo('node-redis/set/workflow.test.ts', CAUSE.argumentShapes, [
-    'Set commands workflow - Content Categories',
-    'Set commands workflow - Online Users',
-    'Set commands workflow - User Tags System',
-  ]),
+  todo(
+    'node-redis/set/workflow.test.ts',
+    missing('sCard', 'sInter', 'sIsMember'),
+    [
+      'Set commands workflow - Content Categories',
+      'Set commands workflow - Online Users',
+      'Set commands workflow - User Tags System',
+    ],
+  ),
   todo('node-redis/sharded-pubsub-cluster.test.ts', missing('sUnsubscribe'), [
     'routes shard subscriptions and publishes by channel slot',
   ]),
-  todo('node-redis/sharded-pubsub-cluster.test.ts', CAUSE.clusterSendCommand, [
-    'rejects sharded Pub/Sub commands routed to the wrong slot',
-  ]),
-  todo('node-redis/sort-integration.test.ts', CAUSE.clusterTopology, [
+  todo(
+    'node-redis/sharded-pubsub-cluster.test.ts',
+    CAUSE.directNodeConnection,
+    ['rejects sharded Pub/Sub commands routed to the wrong slot'],
+  ),
+  todo('node-redis/sort-integration.test.ts', CAUSE.directNodeConnection, [
     'SORT ALPHA BY missing weights keeps the source order',
     'SORT ALPHA BY orders a missing weight before an empty one',
     'SORT ALPHA DESC keeps tied elements in load order',
@@ -584,7 +601,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'SORT_RO sorts like SORT',
     'SORT_RO supports BY and GET external patterns',
   ]),
-  todo('node-redis/sort-strtod.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/sort-strtod.test.ts', CAUSE.directNodeConnection, [
     'SORT LIMIT takes the full int64 range',
     'SORT orders every infinity spelling as +/-inf',
     'SORT reads hex floats only before Redis 8.0 / Valkey 8.1',
@@ -600,7 +617,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XADD with explicit ids and XLEN',
     'stream commands reject keys holding another type',
   ]),
-  todo('node-redis/stream/add.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/add.test.ts', CAUSE.directNodeConnection, [
     'XADD LIMIT validates approximate trim syntax before id',
     'XADD MAXLEN trims oldest entries after append',
     'XADD MAXLEN with ~ accepts LIMIT count before generated id',
@@ -618,10 +635,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   ]),
   todo(
     'node-redis/stream/cluster-group-replication.test.ts',
-    CAUSE.clusterSendCommand,
+    CAUSE.directNodeConnection,
     ['replicas receive in-place consumer-group and last-id changes'],
   ),
-  todo('node-redis/stream/group.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/group.test.ts', CAUSE.directNodeConnection, [
     'XCLAIM and XAUTOCLAIM transfer pending stream entries',
     'XGROUP MKSTREAM and SETID control group delivery position',
     'XGROUP creates, mutates, and destroys consumer groups',
@@ -637,10 +654,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XRANGE returns entries within an inclusive range',
     'XREVRANGE returns entries in descending order',
   ]),
-  todo('node-redis/stream/range.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/range.test.ts', CAUSE.directNodeConnection, [
     'XRANGE and XREVRANGE reject non-integer COUNT values',
   ]),
-  todo('node-redis/stream/read.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/read.test.ts', CAUSE.directNodeConnection, [
     'XREAD COUNT limits the number of returned entries',
     'XREAD from multiple streams on same slot returns combined results',
     'XREAD on a missing key returns null',
@@ -650,10 +667,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XREAD with $ id returns null (no entries after current last)',
     'XREAD with + id returns the last entry from each stream',
   ]),
-  todo('node-redis/stream/redelivery.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/redelivery.test.ts', CAUSE.directNodeConnection, [
     'XPENDING and XINFO STREAM FULL see the bumped NACKs',
   ]),
-  todo('node-redis/stream/setid.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/setid.test.ts', CAUSE.directNodeConnection, [
     'XSETID ENTRIESADDED updates XINFO STREAM metadata',
     'XSETID MAXDELETEDID updates XINFO STREAM metadata',
     'XSETID rejects lower ids, invalid options, and wrong types',
@@ -666,7 +683,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XTRIM MAXLEN removes oldest entries and returns removed count',
     'XTRIM on missing key returns 0 without creating it',
   ]),
-  todo('node-redis/stream/trim.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/stream/trim.test.ts', CAUSE.directNodeConnection, [
     'XTRIM LIMIT validates approximate trim syntax',
     'XTRIM MAXLEN with ~ (approximate) does not exact-trim tiny streams',
     'XTRIM MAXLEN with ~ accepts LIMIT count',
@@ -678,7 +695,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'raising the limit past 512MB raises the read ceiling but not the write ceiling',
     'the ceiling follows the setting back up',
   ]),
-  skip('node-redis/string/bitmap.test.ts', SKIP.topologyInBefore),
+  skip('node-redis/string/bitmap.test.ts', SKIP.directConnectionInBefore),
   todo(
     'node-redis/string/core.test.ts',
     missing('getSet', 'mGet', 'mSetNX', 'strLen'),
@@ -689,17 +706,14 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'MGET returns null for keys holding non-string values',
       'MSETNX command',
       'STRLEN command',
+      'String commands workflow',
     ],
   ),
-  todo('node-redis/string/core.test.ts', CAUSE.clusterSendCommand, [
-    'APPEND command',
-    'String commands workflow',
-  ]),
-  todo('node-redis/string/core.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/string/core.test.ts', CAUSE.directNodeConnection, [
     'SUBSTR aliases GETRANGE',
     'String numeric and expiration errors match Redis',
   ]),
-  skip('node-redis/string/hyperloglog.test.ts', SKIP.topologyInBefore),
+  skip('node-redis/string/hyperloglog.test.ts', SKIP.directConnectionInBefore),
   todo(
     'node-redis/string/incr.test.ts',
     missing('decr', 'incrBy', 'incrByFloat'),
@@ -709,7 +723,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'INCRBYFLOAT command',
     ],
   ),
-  todo('node-redis/string/incr.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/string/incr.test.ts', CAUSE.directNodeConnection, [
     'INCR/INCRBY/DECR/DECRBY operate over the full int64 range',
     'INCRBYFLOAT distinguishes invalid-float from NaN/Infinity result (#56)',
     'INCRBYFLOAT parses operands like strtold: hex floats and long double limits (#234)',
@@ -718,8 +732,8 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'node-redis/string/incrbyfloat-format.test.ts',
     missing('incrByFloat', 'hIncrByFloat'),
     [
-      'incrByFloat replies and stores %.17Lf trimmed (#543)',
       'hIncrByFloat replies and stores %.17Lf trimmed (#543)',
+      'incrByFloat replies and stores %.17Lf trimmed (#543)',
     ],
   ),
   todo(
@@ -741,22 +755,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'SETRANGE with an empty value skips the limit check and creates no key',
     ],
   ),
-  todo(
-    'node-redis/string/proto-max-bulk-len.test.ts',
-    CAUSE.clusterSendCommand,
-    ['APPEND on a missing key is not size-checked'],
-  ),
-  todo('node-redis/string/set.test.ts', CAUSE.argumentShapes, [
-    'SET with EX option',
-    'SET with GET option',
-    'SET with NX option - key does not exist',
-    'SET with NX option - key exists',
+  todo('node-redis/string/set.test.ts', missing('pTTL'), [
     'SET with PX option',
-    'SET with XX option - key does not exist',
-    'SET with XX option - key exists',
-    'SET with multiple options',
   ]),
-  todo('node-redis/string/set.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/string/set.test.ts', CAUSE.directNodeConnection, [
     'SET KEEPTTL preserves the existing expiration',
     'SET and GET wrong-type and syntax errors match Redis',
   ]),
@@ -768,7 +770,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'TIME returns [seconds, microseconds] close to current time',
     ],
   ),
-  todo('node-redis/watch.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/watch.test.ts', CAUSE.directNodeConnection, [
     'EXEC should clear watched keys',
     'WATCH inside MULTI should return error',
     'WATCH should abort transaction if watched key is modified',
@@ -784,25 +786,31 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'ZRANK reflects raw byte order for equal scores',
     ],
   ),
-  skip('node-redis/zset/bzpopmin-bzpopmax.test.ts', SKIP.secondClusterClient),
+  todo(
+    'node-redis/zset/bzpopmin-bzpopmax.test.ts',
+    missing('bzPopMax', 'bzPopMin'),
+    [
+      'BZPOPMAX blocks then returns the highest-score member when a zadd arrives',
+      'BZPOPMAX pops the highest-score member and deletes the set when empty',
+      'BZPOPMIN / BZPOPMAX error paths match Redis',
+      'BZPOPMIN blocks then returns when a zadd arrives on a watched key',
+      'BZPOPMIN pops the lowest-score member from the first non-empty key',
+      'BZPOPMIN times out and returns null when all keys are empty',
+    ],
+  ),
   todo(
     'node-redis/zset/core.test.ts',
     missing('zCard', 'zIncrBy', 'zRem', 'zScore'),
     [
+      'Sorted set command errors match Redis',
       'ZADD and ZCARD commands',
       'ZADD option flags match Redis',
       'ZINCRBY command',
       'ZREM command',
       'ZSCORE command',
+      'sorted set commands accept and return Redis infinity score tokens',
     ],
   ),
-  todo('node-redis/zset/core.test.ts', CAUSE.argumentShapes, [
-    'Sorted set command errors match Redis',
-    'sorted set commands accept and return Redis infinity score tokens',
-  ]),
-  todo('node-redis/zset/core.test.ts', CAUSE.clusterSendCommand, [
-    'ZADD option syntax errors match Redis',
-  ]),
   todo('node-redis/zset/double-format.test.ts', missing('zIncrBy', 'zScore'), [
     'ZINCRBY parses back to the new score',
     'ZSCORE / ZMSCORE parse back to the stored score',
@@ -821,14 +829,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'lex ordering uses raw byte comparison, not locale',
     ],
   ),
-  todo('node-redis/zset/lex.test.ts', CAUSE.clusterSendCommand, [
-    'ZRANGEBYLEX validates LIMIT clause',
-    'lex commands reject wrong arity',
-  ]),
-  todo('node-redis/zset/limit-int64.test.ts', CAUSE.clusterSendCommand, [
-    'LIMIT refuses values outside int64 and non-canonical integers',
-    'ZRANGE BYSCORE|BYLEX and ZRANGESTORE LIMIT take int64 bounds',
-    'ZRANGEBYLEX and ZREVRANGEBYLEX LIMIT take int64 bounds',
+  todo('node-redis/zset/limit-int64.test.ts', missing('zRangeByScore'), [
     'ZRANGEBYSCORE and ZREVRANGEBYSCORE LIMIT take int64 bounds',
   ]),
   todo(
@@ -852,27 +853,20 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'ZRANDMEMBER with negative count allows repeats and matches |count| length',
       'ZRANDMEMBER with positive count returns distinct members',
       'ZRANDMEMBER without count returns one existing member',
+      'ZRANGESTORE deletes destination when source is missing or range is empty',
+      'ZRANGESTORE rejects invalid syntax and wrong-type sources',
       'ZRANGESTORE stores an index range and overwrites destination',
+      'ZRANGESTORE supports BYSCORE and BYLEX ranges',
     ],
   ),
-  todo('node-redis/zset/modern-range.test.ts', CAUSE.argumentShapes, [
-    'ZRANGESTORE deletes destination when source is missing or range is empty',
-    'ZRANGESTORE rejects invalid syntax and wrong-type sources',
-    'ZRANGESTORE supports BYSCORE and BYLEX ranges',
-  ]),
-  todo('node-redis/zset/modern-range.test.ts', CAUSE.clusterSendCommand, [
-    'ZMSCORE rejects wrong arity',
-    'ZRANDMEMBER with non-integer count errors',
-    'ZRANGE rejects invalid option combinations',
-  ]),
-  todo('node-redis/zset/modern-range.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/zset/modern-range.test.ts', CAUSE.directNodeConnection, [
     'ZRANGESTORE rejects destination and source keys from different slots',
   ]),
   todo('node-redis/zset/range.test.ts', missing('zRangeByScore', 'zRank'), [
     'ZRANK and ZREVRANK commands',
     'score range commands support infinite and exclusive bounds',
   ]),
-  todo('node-redis/zset/range.test.ts', CAUSE.argumentShapes, [
+  todo('node-redis/zset/range.test.ts', missing('zRankWithScore'), [
     'ZRANK and ZREVRANK WITHSCORE option',
   ]),
   todo(
@@ -894,14 +888,7 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'ZREMRANGEBYRANK supports negative ranks',
     ],
   ),
-  todo('node-redis/zset/score-range.test.ts', CAUSE.clusterSendCommand, [
-    'ZRANGEBYSCORE LIMIT with non-integer rejects',
-    'ZRANGEBYSCORE LIMIT without offset/count rejects with syntax error',
-    'ZRANGEBYSCORE rejects wrong arity',
-    'ZREMRANGEBYRANK rejects non-integer rank',
-    'ZREMRANGEBYRANK rejects wrong arity',
-  ]),
-  todo('node-redis/zset/setops.test.ts', CAUSE.clusterTopology, [
+  todo('node-redis/zset/setops.test.ts', CAUSE.directNodeConnection, [
     'ZDIFF rejects WEIGHTS (diff has no weights/aggregate)',
     'ZDIFF returns members of the first set not in the rest',
     'ZDIFFSTORE stores the difference and returns its cardinality',
@@ -939,5 +926,12 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'Sorted Set commands workflow - Time Series Events',
     ],
   ),
-  skip('node-redis/zset/zmpop-bzmpop.test.ts', SKIP.secondClusterClient),
+  todo('node-redis/zset/zmpop-bzmpop.test.ts', missing('bzmPop', 'zmPop'), [
+    'BZMPOP blocks then returns when a zset write arrives',
+    'BZMPOP returns immediately when a sorted set is non-empty',
+    'BZMPOP timeout returns null',
+    'ZMPOP / BZMPOP error paths match Redis',
+    'ZMPOP pops from the first non-empty key with the requested side and count',
+    'ZMPOP returns null when all keys are empty or missing',
+  ]),
 ]

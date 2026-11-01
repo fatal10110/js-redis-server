@@ -1002,10 +1002,13 @@ describe('createNodeRedisMock (cluster)', () => {
     })) as NodeRedisMockCluster
 
     assert.strictEqual(
-      await cluster.sendCommand(['SET', 'routed', 'yes']),
+      await cluster.sendCommand(undefined, false, ['SET', 'routed', 'yes']),
       'OK',
     )
-    assert.strictEqual(await cluster.sendCommand(['GET', 'routed']), 'yes')
+    assert.strictEqual(
+      await cluster.sendCommand(undefined, false, ['GET', 'routed']),
+      'yes',
+    )
   })
 
   // ---------------------------------------------------------------- routing
@@ -1045,7 +1048,7 @@ describe('createNodeRedisMock (cluster)', () => {
 
       for (const key of KEYS_ONE_PER_MASTER) {
         assert.deepStrictEqual(
-          await cluster.sendCommand(args(key)),
+          await cluster.sendCommand(undefined, false, args(key)),
           reply,
           `${label} on ${key} did not reach the node owning it`,
         )
@@ -1086,7 +1089,13 @@ describe('createNodeRedisMock (cluster)', () => {
       ['GET', 'p_*'],
     ]) {
       await assert.rejects(
-        () => cluster!.sendCommand(['SORT', 'mylist', option, pattern]),
+        () =>
+          cluster!.sendCommand(undefined, false, [
+            'SORT',
+            'mylist',
+            option,
+            pattern,
+          ]),
         (err: unknown) => {
           assert.ok(err instanceof ErrorReply)
           assert.strictEqual(
@@ -1149,7 +1158,7 @@ describe('createNodeRedisMock (cluster)', () => {
     // arity both fail to plan. Neither may crash the facade — each must come
     // back as the normal server error reply.
     await assert.rejects(
-      () => cluster!.sendCommand(['NOSUCHCOMMAND', 'k']),
+      () => cluster!.sendCommand(undefined, false, ['NOSUCHCOMMAND', 'k']),
       (err: unknown) => {
         assert.ok(err instanceof ErrorReply)
         assert.match(err.message, /^ERR unknown command/)
@@ -1157,7 +1166,7 @@ describe('createNodeRedisMock (cluster)', () => {
       },
     )
     await assert.rejects(
-      () => cluster!.sendCommand(['GET']),
+      () => cluster!.sendCommand(undefined, false, ['GET']),
       (err: unknown) => {
         assert.ok(err instanceof ErrorReply)
         assert.match(err.message, /wrong number of arguments/)

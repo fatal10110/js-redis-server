@@ -414,12 +414,27 @@ await client.quit() // tears down the in-memory state
 Like a real client, the facade opens at node-redis' default protocol (RESP3
 on node-redis 6) unless given `RESP`. `duplicate()` copies that option, and
 the facade's pub/sub session always runs at the client's current protocol,
-following a `HELLO` sent before or while subscribed:
+following a `HELLO` sent before or while subscribed. Like node-redis,
+`duplicate()` returns the new client synchronously; unlike node-redis it is
+already open (`isOpen` is true), so its `connect()` resolves at once and both
+`duplicate()` + `await connect()` and using it directly work:
 
 ```typescript
 const resp2 = await createNodeRedisMock({ RESP: 2 })
 await resp2.sendCommand(['ZSCORE', 'z', 'm']) // '2.5' (RESP3: 2.5)
 ```
+
+The curated methods take node-redis' argument forms
+([#490](https://github.com/fatal10110/js-redis-server/issues/490)) and send the
+argument list node-redis would: an array for the variadic ones (`sAdd(key,
+['a', 'b'])`, `del`, `exists`, `lPush`, `rPush`, `watch`, `subscribe`,
+`pSubscribe`, `unsubscribe`, `pUnsubscribe`; the facade also still takes them
+as rest arguments), an object, `Map` or tuples for `hSet(key, fields)` and
+`mSet(toSet)`, `set(key, value, { expiration: { type: 'EX', value: 10 }, NX:
+true, GET: true })`, `expire(key, seconds, 'NX')`, `zAdd(key, members, { XX,
+GT, CH })` and weighted `zUnionStore(dest, [{ key, weight }], { AGGREGATE })`.
+`unsubscribe(channel, listener)` removes just that listener, and unsubscribes
+the channel only once it has none left.
 
 `zRange()` and `zRangeWithScores()` take node-redis' `{ BY, REV, LIMIT }`
 options and send them the way node-redis does, so `zRange(key, 5, 2, { BY:
@@ -498,10 +513,13 @@ configured `RESP` and database, `'connect'` and `'ready'` again, and a second
 `connect()` is called, so a command issued right after it runs on the new
 connection; called while a `quit()` still drains, it waits for that close. A
 `watch()` from before the reconnect fails the next `exec()` with
-`WatchError('Client reconnected after WATCH')`, as on node-redis. Not reproduced:
-real node-redis re-subscribes the old channels on reconnect; a re-opened facade
-client starts with no subscriptions. `connect()` on an open client stays a no-op
-(real node-redis rejects `Socket already opened`).
+`WatchError('Client reconnected after WATCH')`, as on node-redis. The pub/sub
+listeners survive the close, whether `quit()`, `destroy()` or `disconnect()`,
+and the re-open subscribes every channel and pattern that still has one again
+(one `SUBSCRIBE`, one `PSUBSCRIBE`) before `'ready'`, as node-redis' reconnect
+does ([#600](https://github.com/fatal10110/js-redis-server/issues/600)); one
+unsubscribed before the close stays unsubscribed. `connect()` on an open client
+stays a no-op (real node-redis rejects `Socket already opened`).
 
 The **cluster** client closes on node-redis' own, quite different, cluster
 terms: `quit()` / `disconnect()` / `destroy()` all resolve `undefined`, they
@@ -518,7 +536,17 @@ Routing keys come from `CommandExecutor.plan()` — the same extraction
 ones (`EVAL`, `ZUNIONSTORE`) and STORE targets all reach the right node, and a
 key set spanning slots is refused with `CROSSSLOT`. The facade routes by the
 server's own slot, so unlike real node-redis it reaches the owner of a key
-whose first hash tag is empty (see [Cluster mocks](#cluster-mocks)):
+whose first hash tag is empty (see [Cluster mocks](#cluster-mocks)).
+
+The cluster facade has node-redis' cluster surface too:
+`sendCommand(firstKey, isReadonly, args)` (a keyed command runs on the owner
+of its own keys, where a real client following `MOVED` ends up; a keyless one
+on `firstKey`'s owner), `masters` (`{ id, host, port, address, readonly }`
+nodes, at synthetic ports from 7000 that nothing listens on), `slots` (16384
+`{ master }` shards; node-redis adds `replicas` only with `useReplicas`),
+`isOpen`, and a synchronous `duplicate()`: a second client on the same nodes
+and keyspace with its own connection per node, whose close leaves the nodes to
+the client that built them:
 
 ```typescript
 const cluster = await createNodeRedisMock({
@@ -527,6 +555,11 @@ const cluster = await createNodeRedisMock({
 
 await cluster.set('alpha', '1')
 await cluster.get('alpha') // '1'
+await cluster.sendCommand('alpha', true, ['GET', 'alpha']) // '1'
+
+const second = cluster.duplicate() // same keyspace, own connections
+await second.get('alpha') // '1'
+await second.quit()
 
 await cluster.quit()
 ```

@@ -1,8 +1,9 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
-import { createClient, RedisClientType, RedisClusterType } from 'redis'
+import { RedisClientType, RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
 import {
+  connectToNodeRedisEndpoint,
   connectToNodeRedisSlotOwner,
   errorWithMessage,
   findNodeRedisSlotOwner,
@@ -67,13 +68,10 @@ describe(`Hash Commands Integration (node-redis, ${testRunner.getBackendName()})
 
   test('HGETALL works over a RESP3 connection (HELLO 3)', async () => {
     const key = `{hash-resp3:${randomKey()}}:hash`
-    const { host, port } = findNodeRedisSlotOwner(redisClient, key)
-    const conn = createClient({
-      url: `redis://${host}:${port}`,
-      RESP: 3,
-    }) as unknown as RedisClientType
-    conn.on('error', () => {})
-    await conn.connect()
+    const conn = await connectToNodeRedisEndpoint(
+      findNodeRedisSlotOwner(redisClient, key),
+      { RESP: 3 },
+    )
 
     try {
       assert.strictEqual(

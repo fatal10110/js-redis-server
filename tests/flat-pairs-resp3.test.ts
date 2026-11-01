@@ -373,13 +373,26 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       })) as NodeRedisMockCluster
       openClusters.push(cluster)
       for (const key of keys) {
-        await cluster.sendCommand(['ZADD', key, '1', 'a', '2', 'b'])
+        await cluster.sendCommand(undefined, false, [
+          'ZADD',
+          key,
+          '1',
+          'a',
+          '2',
+          'b',
+        ])
       }
       return cluster
     }
 
     const zrange = (cluster: NodeRedisMockCluster, key: string) =>
-      cluster.sendCommand(['ZRANGE', key, '0', '-1', 'WITHSCORES'])
+      cluster.sendCommand(undefined, false, [
+        'ZRANGE',
+        key,
+        '0',
+        '-1',
+        'WITHSCORES',
+      ])
 
     const tuples = [
       ['a', 1],
@@ -389,7 +402,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
 
     test('HELLO 3 reaches every node, not just the one it routed to', async () => {
       const cluster = await seededCluster()
-      await cluster.sendCommand(['HELLO', '3'])
+      await cluster.sendCommand(undefined, false, ['HELLO', '3'])
 
       for (const key of keys) {
         assert.deepStrictEqual(
@@ -402,7 +415,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
 
     test('concurrent commands on different nodes do not cross-contaminate', async () => {
       const cluster = await seededCluster()
-      await cluster.sendCommand(['HELLO', '3'])
+      await cluster.sendCommand(undefined, false, ['HELLO', '3'])
 
       // k0 and k2 hash to different masters. Whichever finishes last must not
       // decide the other's shape.
@@ -430,7 +443,7 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
       for (const key of keys) {
         assert.deepStrictEqual(await zrange(cluster, key), tuples)
       }
-      await cluster.sendCommand(['HELLO', '2'])
+      await cluster.sendCommand(undefined, false, ['HELLO', '2'])
       for (const key of keys) {
         assert.deepStrictEqual(await zrange(cluster, key), flat)
       }
@@ -445,12 +458,12 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
 
     test('HELLO 2 downgrades every node back to the flat shape', async () => {
       const cluster = await seededCluster()
-      await cluster.sendCommand(['HELLO', '3'])
+      await cluster.sendCommand(undefined, false, ['HELLO', '3'])
       // Touch a non-masters[0] key so more than one node session is live and
       // has actually been switched to RESP3 before the downgrade.
       assert.deepStrictEqual(await zrange(cluster, 'k0'), tuples)
 
-      await cluster.sendCommand(['HELLO', '2'])
+      await cluster.sendCommand(undefined, false, ['HELLO', '2'])
       for (const key of keys) {
         assert.deepStrictEqual(await zrange(cluster, key), flat)
       }
@@ -463,7 +476,8 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
     test('a HELLO raced against a command on another node is not lost', async () => {
       for (const helloFirst of [true, false]) {
         const cluster = await seededCluster()
-        const hello = () => cluster.sendCommand(['HELLO', '3'])
+        const hello = () =>
+          cluster.sendCommand(undefined, false, ['HELLO', '3'])
         // k0 is not on masters[0], so its session has not synced yet.
         const read = () => zrange(cluster, 'k0')
 
@@ -481,11 +495,11 @@ describe('flat-pairs shape follows the negotiated RESP version', () => {
 
     test('a HELLO 2 raced against a command on another node is not lost', async () => {
       const cluster = await seededCluster()
-      await cluster.sendCommand(['HELLO', '3'])
+      await cluster.sendCommand(undefined, false, ['HELLO', '3'])
       assert.deepStrictEqual(await zrange(cluster, 'k0'), tuples)
 
       await Promise.all([
-        cluster.sendCommand(['HELLO', '2']),
+        cluster.sendCommand(undefined, false, ['HELLO', '2']),
         zrange(cluster, 'k0'),
       ])
 
