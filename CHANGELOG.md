@@ -204,6 +204,15 @@ so the PR body is not a durable home for a breaking-change note.
   -100`) answer an empty string before the indexes are resolved, as every
   Redis and Valkey version does ([#650]); they used to clamp the range and
   return the first byte. A missing key and WRONGTYPE still answer first.
+- `GEOPOS` answers a member it cannot find, and every member of a missing key,
+  with a null array (`*-1`) at RESP2, as real Redis and Valkey do on every
+  profile ([#635]); it used to send a null bulk string (`$-1`). RESP3 still
+  sends `_`, a script still sees `false`, and `GEODIST` / `GEOHASH` keep their
+  null bulk strings.
+- On Valkey 8.0+ profiles `SCAN ... TYPE <name>` with a name no type has
+  answers `ERR unknown type name '<name>'`, checked at that TYPE token, as
+  Valkey does ([#642]). Redis profiles keep the empty scan (the check is
+  commented out through redis 8.0), the last TYPE winning.
 
 ### Added
 
@@ -230,6 +239,10 @@ so the PR body is not a durable home for a breaking-change note.
   `BYTE|BIT` unit before the end, so `BITCOUNT s 0 BIT x` is a syntax error
   there, and on redis 6.2 (no unit) any four-argument form is a syntax error
   before the indexes are read.
+- `ZSCAN key cursor ... NOSCORES` on Valkey 8.0+ profiles returns members
+  without their scores ([#642]); the option may repeat and mixes with `MATCH`
+  / `COUNT`. `SCAN`, `SSCAN` and `HSCAN` answer `NOSCORES option can only be
+  used in ZSCAN` there. Redis profiles keep `syntax error`.
 
 ### Changed
 
@@ -2388,6 +2401,8 @@ requests they contain.
 [#650]: https://github.com/fatal10110/js-redis-server/issues/650
 [#645]: https://github.com/fatal10110/js-redis-server/issues/645
 [#643]: https://github.com/fatal10110/js-redis-server/issues/643
+[#635]: https://github.com/fatal10110/js-redis-server/issues/635
+[#642]: https://github.com/fatal10110/js-redis-server/issues/642
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

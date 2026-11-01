@@ -656,4 +656,16 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // every version, takes only `start end` and reads the end first. Checked
   // against redis-server 6.2.14 - 8.0.0 and valkey-server 8.0.0, 9.0.0 (#643).
   'bitcount.start-only': { valkey: '8.0.0' },
+  // ZSCAN ... NOSCORES returns members only; SCAN / SSCAN / HSCAN answer
+  // `NOSCORES option can only be used in ZSCAN` (valkey@8.0.0:src/db.c:
+  // 1040-1046). Redis through 8.0.0 has no such option (`syntax error`).
+  // Checked against redis-server 6.2.14 - 8.0.0 and valkey-server 8.0.0, 8.1
+  // and 9.0.0 (#642).
+  'zscan.noscores': { valkey: '8.0.0' },
+  // SCAN ... TYPE <name> answers `unknown type name '<name>'` for a name no
+  // type has (valkey@8.0.0:src/db.c:1024-1031). Redis through 8.0.0 and
+  // valkey 7.2.4 keep that check commented out (redis@8.0.0:src/db.c:
+  // 1247-1251) and scan for a type no key has: an empty scan. Checked against
+  // the same servers as above (#642).
+  'scan.type-unknown-error': { valkey: '8.0.0' },
 }

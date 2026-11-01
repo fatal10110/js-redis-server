@@ -66,6 +66,8 @@ export type FeatureId =
   | 'bit.byte-bit-range'
   | 'bitcount.start-only'
   | 'hscan.novalues'
+  | 'zscan.noscores'
+  | 'scan.type-unknown-error'
   | 'xread.plus-id'
   | 'stream.implicit-consumer-event'
   | 'stream.group-lag-tombstone-check'
