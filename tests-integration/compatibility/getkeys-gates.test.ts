@@ -10,16 +10,17 @@ import { expectReply } from '../raw-tcp/helpers'
  * profile (#518). 6.2 has no subcommand entries and no key specs: it asks the
  * getkeys procedure or the legacy key range, and answers `Invalid arguments
  * specified for command` when they find nothing. From 7.0 the key specs
- * answer; Valkey 8.0+ marks GEORADIUS's STORE / STOREDIST specs
- * `variable_flags`, so its procedure (last destination wins) does. 7.0 alone
- * needs an argument after the target command. Checked against redis-server
- * 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.0 / 8.0.6 and valkey 8.0.11 / 9.0.6. The
+ * answer; Valkey patch releases from 8.0.11 / 9.0.6 mark GEORADIUS's STORE /
+ * STOREDIST specs `variable_flags`, so its procedure (last destination wins)
+ * does there, but not on the pinned valkey-8.0 / valkey-9.0 profiles (8.0.0 /
+ * 9.0.0). 7.0 alone needs an argument after the target command. Checked
+ * against redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 / 8.0.6 and valkey
+ * 8.0.0 / 9.0.0. The
  * Redis 8.0 matrix is `tests-integration/raw-tcp/command-getkeys-matrix.test.ts`.
  */
 const testRunner = new TestRunner()
 const profile = activeProfile
 const legacy = profile === 'redis-6.2'
-const valkey = profile.startsWith('valkey-')
 
 const NO_KEYS = '-ERR The command has no key arguments\r\n'
 const INVALID_ARGS = '-ERR Invalid arguments specified for command\r\n'
@@ -79,7 +80,7 @@ const GETKEYS: Array<[string[], string]> = [
   [['EVAL', 's', '2', 'a'], legacy ? INVALID_ARGS : '*0\r\n'],
   [
     [...geo, 'STORE', 'a', 'STOREDIST', 'b'],
-    legacy || valkey ? keys('k', 'b') : keys('k', 'a', 'b'),
+    legacy ? keys('k', 'b') : keys('k', 'a', 'b'),
   ],
   [['SPUBLISH', 'ch', 'msg'], legacy ? INVALID_COMMAND : NO_KEYS],
   [['LMPOP', '1x', 'a', 'LEFT'], legacy ? INVALID_COMMAND : keys('a')],
@@ -100,13 +101,10 @@ const GETKEYS: Array<[string[], string]> = [
 ]
 
 const GETKEYSANDFLAGS: Array<[string[], string]> = [
-  [
-    [...geo, 'STORE', 'd', 'STORE', 'e'],
-    valkey ? flagged(source, dest('e')) : flagged(source, dest('d')),
-  ],
+  [[...geo, 'STORE', 'd', 'STORE', 'e'], flagged(source, dest('d'))],
   [
     [...geo, 'STORE', 'd', 'STOREDIST', 'e'],
-    valkey ? flagged(source, dest('e')) : flagged(source, dest('d'), dest('e')),
+    flagged(source, dest('d'), dest('e')),
   ],
   [['SPUBLISH', 'ch', 'msg'], NO_KEYS],
   // Every key takes its real key spec's flags (#494); BITFIELD's and

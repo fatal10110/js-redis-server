@@ -177,16 +177,16 @@ describe('real command table (#494)', () => {
       hexpire('redis-8.0'),
     )
 
-    // Valkey 8.0 marks GEORADIUS's STORE specs variable_flags; Valkey 7.2
-    // shares Redis 7.2's table, which does not.
+    // Valkey 8.0.11 marks GEORADIUS's STORE specs variable_flags, 8.0.0
+    // does not; Valkey 7.2 shares Redis 7.2's table, which does not.
     const storeFlags = (spec: CompatibilitySpec) =>
       commandTableEntry('georadius', resolveCompatibilityProfile(spec))
         ?.keySpecs?.[1].flags
-    assert.deepStrictEqual(storeFlags('valkey-8.0'), [
-      'OW',
-      'update',
-      'variable_flags',
-    ])
+    assert.deepStrictEqual(
+      storeFlags({ flavor: 'valkey', version: '8.0.11' }),
+      ['OW', 'update', 'variable_flags'],
+    )
+    assert.deepStrictEqual(storeFlags('valkey-8.0'), ['OW', 'update'])
     assert.deepStrictEqual(storeFlags({ flavor: 'valkey', version: '7.2.0' }), [
       'OW',
       'update',

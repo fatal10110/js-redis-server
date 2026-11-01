@@ -136,14 +136,15 @@ const valkey90: TableSource = {
  * the same) and valkey 8.0.11 / 9.0.6. Valkey 7.2 reads Redis 7.2's table.
  * Patch releases do change the table, so recapture from the same versions:
  * 7.4.11 marks the SUBSCRIBE family `denyoom` (not modelled); valkey 8.0.0
- * lacks the `variable_flags` 8.0.11 has. The `incomplete` key specs of XREAD,
+ * lacks the `variable_flags` 8.0.11 has (taken off again by
+ * `commandTableEntry` before the patches that add it). The `incomplete` key specs of XREAD,
  * XREADGROUP and GEORADIUS(BYMEMBER) that 7.2.16, 7.4.11, 8.2.9 and later
  * patches add are applied on top of the table by `commandTableEntry`. Some
  * presets are versioned below the patch captured for them and so answer as
  * the captured patch, not as their nominal version: the redis-6.2 preset
  * (6.2.14) reports 6.2.24's `denyoom` on SUBSCRIBE / PSUBSCRIBE, which 6.2.14
  * does not have, and the valkey-8.0 / valkey-9.0 presets (8.0.0 / 9.0.0)
- * report 8.0.11 / 9.0.6's metadata. Redis 8.0 is stored whole, every other
+ * report 8.0.11 / 9.0.6's metadata, apart from those `variable_flags`. Redis 8.0 is stored whole, every other
  * version as its differences from the one it is derived from.
  */
 const TABLES: readonly TableSource[] = [
@@ -170,7 +171,11 @@ export function commandTableEntry(
 ): CommandTableEntry | undefined {
   // redis62's gate is satisfied by every profile, so a table is always found.
   const source = TABLES.find(table => gateSatisfied(table.gate, profile))
-  const entry = source ? resolved(source).get(name) : undefined
+  const entry = withoutVariableFlags(
+    source ? resolved(source).get(name) : undefined,
+    name,
+    profile,
+  )
   const notes = INCOMPLETE_KEY_SPEC_NOTES[name]
   if (
     !entry?.keySpecs ||
@@ -223,3 +228,41 @@ const INCOMPLETE_KEY_SPEC_NOTES: Readonly<
 }
 
 const incompleteEntries = new WeakMap<CommandTableEntry, CommandTableEntry>()
+
+/**
+ * Commands whose `variable_flags` key specs a Valkey patch release added
+ * (feature `command.georadius-variable-flags`; valkey@8.0.11:src/commands/
+ * georadius.json). The Valkey tables are captured from those patches, so
+ * the flag is taken off again for a profile before them.
+ */
+const VARIABLE_FLAGS_PATCHED = new Set(['georadius', 'georadiusbymember'])
+
+const fixedFlagEntries = new WeakMap<CommandTableEntry, CommandTableEntry>()
+
+function withoutVariableFlags(
+  entry: CommandTableEntry | undefined,
+  name: string,
+  profile: CompatibilityProfile,
+): CommandTableEntry | undefined {
+  if (
+    !entry?.keySpecs ||
+    !VARIABLE_FLAGS_PATCHED.has(name) ||
+    profile.has('command.georadius-variable-flags') ||
+    !entry.keySpecs.some(spec => spec.flags.includes('variable_flags'))
+  ) {
+    return entry
+  }
+
+  let patched = fixedFlagEntries.get(entry)
+  if (!patched) {
+    patched = {
+      ...entry,
+      keySpecs: entry.keySpecs.map(spec => ({
+        ...spec,
+        flags: spec.flags.filter(flag => flag !== 'variable_flags'),
+      })),
+    }
+    fixedFlagEntries.set(entry, patched)
+  }
+  return patched
+}

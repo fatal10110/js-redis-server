@@ -151,6 +151,9 @@ export type FeatureId =
   | 'protocol.strict-crlf'
   | 'zset.numkeys-quoted-wording'
   | 'hello.noauth-proto-wording'
+  | 'command.georadius-variable-flags'
+  | 'client.info-multi-lazy-state'
+  | 'protocol.inline-drops-0xff'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

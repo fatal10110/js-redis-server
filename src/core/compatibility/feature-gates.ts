@@ -23,13 +23,16 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // and 9.0.6.
   'command.help-valkey-wording': { valkey: '8.0.0' },
   // A COMMAND INFO entry without subcommands ends in an empty set on Redis
-  // (`~0` in RESP3) and an empty array on Valkey (`*0`); RESP2 cannot tell
-  // them apart. Verified against redis-server 7.0.15 / 8.0.6 and Valkey
-  // 7.2.14 / 8.0.11 / 9.0.6, the patch releases the command table is
-  // captured from. Earlier Valkey patches still send `~0`: 8.0.0, 9.0.0 and
-  // 9.0.1 do, so the valkey-8.0 / valkey-9.0 presets (nominally 8.0.0 /
-  // 9.0.0) answer as 8.0.11 / 9.0.6 do, not as those first releases.
-  'command.info-subcommands-array': { valkey: '7.2.0' },
+  // (`~0` in RESP3); Valkey patch releases send an empty array (`*0`) since
+  // 8c3cad610 (valkey@8.0.10:src/server.c:4819-4825, `addReplyArrayLen` for
+  // COMMAND INFO; valkey@8.0.9 still has `addReplySetLen(c, 0)`). RESP2
+  // cannot tell them apart. Backported per branch: 7.2.14, 8.0.10, 8.1.9,
+  // 9.0.5 and 9.1.1, so the valkey-8.0 / valkey-9.0 presets (8.0.0 / 9.0.0)
+  // answer `~0`. Probed on valkey-server 7.2.13 / 7.2.14, 8.0.9 / 8.0.10,
+  // 8.1.8 / 8.1.9, 9.0.4 / 9.0.5 and 9.1.0 / 9.1.1 (#522).
+  'command.info-subcommands-array': {
+    valkey: ['7.2.14', '8.0.10', '8.1.9', '9.0.5', '9.1.1'],
+  },
   'acl.dryrun': { redis: '7.0.0', valkey: '7.2.0' },
   // Redis 7.0 rewrote CONFIG SET and changed the failure wording from
   // `Invalid argument '<value>' for CONFIG SET '<name>' - <detail>` to
@@ -706,4 +709,30 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // redis@7.0.15 networking.c:3503). Probed on redis-server 6.2.14 and 7.0.15
   // (#522).
   'hello.noauth-proto-wording': { redis: '7.2.0', valkey: '7.2.0' },
+  // GEORADIUS / GEORADIUSBYMEMBER's STORE and STOREDIST key specs are
+  // `variable_flags` on Valkey patch releases from 97f11983f (valkey@8.0.11:
+  // src/commands/georadius.json), so COMMAND GETKEYS asks georadiusGetKeys,
+  // which takes the last STORE / STOREDIST as the one destination
+  // (valkey@8.0.11:src/db.c:2549-2584). Earlier releases read both key specs:
+  // `... STORE a STOREDIST b` answers `k a b`. Backported per branch: 7.2.15,
+  // 8.0.11, 8.1.10, 9.0.6 and 9.1.2. Probed on valkey-server 8.0.0 - 8.0.12
+  // and 9.0.0 - 9.0.7 (#522).
+  'command.georadius-variable-flags': {
+    valkey: ['7.2.15', '8.0.11', '8.1.10', '9.0.6', '9.1.2'],
+  },
+  // CLIENT INFO / LIST `multi=` on Valkey 8.1+ reads `mstate ? count : -1`
+  // (valkey@8.1.0:src/networking.c:3415, valkey@9.0.0:src/networking.c:4259):
+  // the multi state is allocated by the first MULTI or WATCH and kept until
+  // the client is freed (valkey@9.0.6:src/multi.c:35-60, 132, 490), so such
+  // a client shows `multi=0` once its transaction is over. Valkey 8.0 and
+  // Redis read the MULTI flag (valkey@8.0.12:src/networking.c:3432): `-1`.
+  // Probed on valkey-server 8.0.0 / 8.0.12, 8.1.0 and 9.0.0 - 9.0.7 (#522).
+  'client.info-multi-lazy-state': { valkey: '8.1.0' },
+  // Valkey 8.1's inline parser (sdsparsearg) uses -1 as its "no byte"
+  // sentinel and reads the line through a signed `char`, so every raw 0xFF
+  // byte of an inline request is dropped, quoted or not; a `\xff` escape
+  // still gives one (valkey@9.0.6:src/sds.c:1055,1076,1088,1099,1102).
+  // Probed on valkey-server 8.1.0, 8.1.11, 9.0.0 - 9.0.7 and 9.1.3: `ECHO
+  // \xe9\xff` answers `$1\r\n\xe9\r\n`; 8.0 and Redis keep the byte (#522).
+  'protocol.inline-drops-0xff': { valkey: '8.1.0' },
 }

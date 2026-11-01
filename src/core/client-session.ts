@@ -233,6 +233,12 @@ export class ClientSession implements RedisClientSession {
    * queued CLIENT INFO / LIST sees `flags=x multi=<count>`; -1 otherwise.
    */
   private execQueuedCount = -1
+  /**
+   * Whether MULTI or WATCH ever ran: Valkey 8.1+ allocates the client's multi
+   * state then and keeps it, so CLIENT INFO shows `multi=0` from then on
+   * (`client.info-multi-lazy-state`).
+   */
+  private multiStateAllocated = false
 
   constructor(options: ClientSessionOptions) {
     this.id = options.id ?? `client-${++ClientSession.nextId}`
@@ -288,9 +294,17 @@ export class ClientSession implements RedisClientSession {
   }
 
   get queuedCommandCount(): number {
-    return this.sessionMode === 'transaction'
-      ? this.transactionPlans.length
-      : this.execQueuedCount
+    if (this.sessionMode === 'transaction') {
+      return this.transactionPlans.length
+    }
+    if (
+      this.execQueuedCount === -1 &&
+      this.multiStateAllocated &&
+      this.server.profile.has('client.info-multi-lazy-state')
+    ) {
+      return 0
+    }
+    return this.execQueuedCount
   }
 
   get watchedKeyCount(): number {
@@ -359,6 +373,7 @@ export class ClientSession implements RedisClientSession {
     }
 
     this.sessionMode = 'transaction'
+    this.multiStateAllocated = true
     this.transactionPlans = []
     this.transactionDirty = false
   }
@@ -603,6 +618,7 @@ export class ClientSession implements RedisClientSession {
    * skipped so re-WATCHing is idempotent.
    */
   watch(keys: readonly Buffer[]): void {
+    this.multiStateAllocated = true
     const database = this.selectedDatabaseId
     const db = this.db
 

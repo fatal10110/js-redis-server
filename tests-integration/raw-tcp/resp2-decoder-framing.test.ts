@@ -322,10 +322,21 @@ describe(`Raw TCP RESP2 decoder framing (${testRunner.getBackendName()})`, () =>
       )
     })
 
+    // Valkey 8.1+'s sdsparsearg drops every raw 0xFF byte (valkey@9.0.6
+    // sds.c:1055,1102); an `\xff` escape still gives one.
     test('non-ASCII bytes pass through unchanged', async () => {
+      const dropsFF = activeProfile === 'valkey-9.0'
       assert.deepStrictEqual(
         await echoInline('ECHO \xe9\xff'),
-        Buffer.from('$2\r\n\xe9\xff\r\n', 'latin1'),
+        dropsFF
+          ? Buffer.from('$1\r\n\xe9\r\n', 'latin1')
+          : Buffer.from('$2\r\n\xe9\xff\r\n', 'latin1'),
+      )
+      assert.deepStrictEqual(
+        await echoInline('ECHO "a\xffb\\xff"'),
+        dropsFF
+          ? Buffer.from('$3\r\nab\xff\r\n', 'latin1')
+          : Buffer.from('$4\r\na\xffb\xff\r\n', 'latin1'),
       )
     })
 
