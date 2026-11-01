@@ -300,6 +300,20 @@ so the PR body is not a durable home for a breaking-change note.
   `Protocol error: invalid CRLF in request` and close the connection
   ([#521]). Redis and the Valkey x.0.0 releases (the presets) still skip
   those bytes unread.
+- `CLIENT TRACKING ON|OFF` with `REDIRECT`, `PREFIX`, `BCAST`, `OPTIN`,
+  `OPTOUT` and `NOLOOP`, `CLIENT CACHING`, `CLIENT GETREDIR` and
+  `CLIENT TRACKINGINFO` ([#252]): server-assisted client-side caching as real
+  Redis and Valkey run it. Keys read by readonly commands (inside MULTI/EXEC
+  and scripts too) get one `invalidate` push on their next change, expiry or
+  flush; BCAST batches changed keys per prefix; a redirect target gets them
+  as pushes, or as `__redis__:invalidate` messages on a subscribed RESP2
+  connection. `CLIENT LIST` / `CLIENT INFO` show the `t`, `R` and `B` flags
+  and `redir=`. node-redis' `clientSideCache` works against the mock. A
+  client's own sync `FLUSHDB` / `FLUSHALL` writes its null before the `+OK`
+  on redis 7.4+ (new `FeatureId` `client.tracking-sync-flush-push-first`).
+  A readonly command run from a script remembers the keys the script
+  declared on redis 6.2 and 7.0, its own keys on 7.2+ and Valkey (new
+  `FeatureId` `client.tracking-script-command-keys`).
 
 - Slot migration in cluster mode ([#85], [#616]): `CLUSTER SETSLOT slot
   IMPORTING | MIGRATING | NODE | STABLE`, `CLUSTER KEYSLOT`,
@@ -2523,6 +2537,7 @@ requests they contain.
 [#521]: https://github.com/fatal10110/js-redis-server/issues/521
 [#511]: https://github.com/fatal10110/js-redis-server/issues/511
 [#522]: https://github.com/fatal10110/js-redis-server/issues/522
+[#252]: https://github.com/fatal10110/js-redis-server/issues/252
 [#85]: https://github.com/fatal10110/js-redis-server/issues/85
 [#616]: https://github.com/fatal10110/js-redis-server/issues/616
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD

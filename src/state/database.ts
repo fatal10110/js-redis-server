@@ -44,6 +44,17 @@ export class RedisDatabase {
    * itself; set only on a {@link withOrigin} view.
    */
   readonly origin: string | undefined = undefined
+  /**
+   * The connection this handle mutates for, stamped on every event as
+   * {@link RedisMutationEvent.client}; set only on a {@link withOrigin} view.
+   */
+  readonly originClient: object | undefined = undefined
+  /**
+   * Whether this handle's writes come from a script's `redis.call`, stamped
+   * on every event as {@link RedisMutationEvent.viaScript}; set only on a
+   * {@link withOrigin} view.
+   */
+  readonly originViaScript: boolean = false
   private readonly entries = new Map<string, KeyspaceEntry>()
   /**
    * For each hash key that may hold a field with a TTL: a lower bound on its
@@ -74,9 +85,18 @@ export class RedisDatabase {
    * `origin` is its own. RedisDatabase methods therefore must never assign a
    * field on `this` — the write would land on the view.
    */
-  withOrigin(command: string): RedisDatabase {
+  withOrigin(
+    command: string,
+    client?: object,
+    viaScript?: boolean,
+  ): RedisDatabase {
     return Object.create(this, {
       origin: { value: command, enumerable: true },
+      originClient: { value: client ?? this.originClient, enumerable: true },
+      originViaScript: {
+        value: viaScript ?? this.originViaScript,
+        enumerable: true,
+      },
     }) as RedisDatabase
   }
 
@@ -187,7 +207,7 @@ export class RedisDatabase {
       return false
     }
 
-    this.removeEntry(existing, 'evict')
+    this.removeEntry(existing, 'evict', true)
     return true
   }
 
@@ -694,10 +714,21 @@ export class RedisDatabase {
     return true
   }
 
-  /** Remove a key: `delete` publishes `del`, `evict` publishes `expired`. */
-  private removeEntry(entry: KeyspaceEntry, type: 'delete' | 'evict'): void {
+  /**
+   * Remove a key: `delete` publishes `del`, `evict` publishes `expired`.
+   * `pastDeadline` marks an `evict` a command made ({@link expireNow}).
+   */
+  private removeEntry(
+    entry: KeyspaceEntry,
+    type: 'delete' | 'evict',
+    pastDeadline = false,
+  ): void {
     this.entries.delete(keyId(entry.key))
-    this.emit({ type, database: this.id, key: entry.key })
+    this.emit(
+      type === 'evict' && pastDeadline
+        ? { type, database: this.id, key: entry.key, pastDeadline }
+        : { type, database: this.id, key: entry.key },
+    )
   }
 
   private emitWrite(entry: KeyspaceEntry): void {
@@ -713,7 +744,14 @@ export class RedisDatabase {
 
   private emit(event: RedisMutationEvent): void {
     this.mutations.emit(
-      this.origin === undefined ? event : { ...event, command: this.origin },
+      this.origin === undefined
+        ? event
+        : {
+            ...event,
+            command: this.origin,
+            client: this.originClient,
+            ...(this.originViaScript ? { viaScript: true } : {}),
+          },
     )
   }
 

@@ -362,8 +362,12 @@ export const flushdbCommand = defineCommand({
   schema: t.object({ mode: flushModeSchema }),
   flags: ['write'],
   keys: () => [],
-  execute: (_args, ctx) => {
-    ctx.db.flush()
+  execute: (args, ctx) => {
+    ctx.server.clientTracking.coalesceFlush(
+      ctx.session,
+      flushPushesFirst(args.mode, ctx),
+      () => ctx.db.flush(),
+    )
     return ok()
   },
 })
@@ -373,11 +377,32 @@ export const flushallCommand = defineCommand({
   schema: t.object({ mode: flushModeSchema }),
   flags: ['write'],
   keys: () => [],
-  execute: (_args, ctx) => {
-    ctx.server.flushAllDatabases()
+  execute: (args, ctx) => {
+    ctx.server.clientTracking.coalesceFlush(
+      ctx.session,
+      flushPushesFirst(args.mode, ctx),
+      () => ctx.server.flushAllDatabases(),
+    )
     return ok()
   },
 })
+
+/**
+ * Redis 7.4+ runs a sync FLUSHDB / FLUSHALL outside MULTI and scripts as a
+ * blocking async flush, replying once it is done, so a tracking client's own
+ * flush invalidation goes out before the `+OK` (redis@7.4.0:src/db.c:730-763).
+ */
+function flushPushesFirst(
+  mode: 'async' | 'sync' | undefined,
+  ctx: RedisExecutionContext,
+): boolean {
+  return (
+    ctx.server.profile.has('client.tracking-sync-flush-push-first') &&
+    mode !== 'async' &&
+    !ctx.transactionReplay &&
+    !ctx.inScript
+  )
+}
 
 export const expireatCommand = defineCommand({
   name: 'expireat',
@@ -507,7 +532,7 @@ export const moveCommand = defineCommand({
 
     // `new` on the target, move_from on the source, then move_to on the
     // target (#445).
-    const target = targetDb.withOrigin('move')
+    const target = targetDb.withOrigin('move', ctx.session)
     target.announceNew(args.key)
     ctx.db.delete(args.key)
     target.set(args.key, value, { expiresAt, announceNew: false })
@@ -571,7 +596,9 @@ export const copyCommand = defineCommand({
       }
       // The executor tags only the selected database with the command's
       // name; tag the target too so its write is published as copy_to (#445).
-      targetDb = ctx.server.getDatabase(options.db).withOrigin('copy')
+      targetDb = ctx.server
+        .getDatabase(options.db)
+        .withOrigin('copy', ctx.session)
     }
 
     if (targetDb.id === ctx.db.id && source.equals(destination)) {

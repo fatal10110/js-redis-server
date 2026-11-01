@@ -297,29 +297,37 @@ describe('MONITOR: commands sent on the monitoring connection (#456)', () => {
   })
 
   // The captured table lists only the CLIENT subcommands this server has, so
-  // a lookup miss must not fall back to the mock's own CLIENT flags. Real
-  // 7.2.1 runs all of these on a monitor (TRACKINGINFO `*6`, GETREDIR `:-1`,
-  // TRACKING off `+OK`, ...); this server does not implement them, so they
-  // get CLIENT's unknown-subcommand reply.
+  // a lookup miss must not fall back to the mock's own CLIENT flags: UNBLOCK
+  // gets CLIENT's unknown-subcommand reply. The tracking subcommands run on a
+  // monitor as on real 7.2.1 (TRACKINGINFO `*6`, GETREDIR `:-1`, TRACKING off
+  // `+OK`, CACHING its own error).
   for (const profile of ['redis-6.2', 'redis-7.2', 'valkey-9.0'] as const) {
     test(`${profile}: CLIENT subcommands outside the captured table are not refused`, async () => {
       const monitor = createServer(profile).session()
       await startMonitor(monitor)
 
-      for (const args of [
-        ['TRACKINGINFO'],
-        ['GETREDIR'],
-        ['TRACKING', 'off'],
-        ['CACHING', 'yes'],
-        ['UNBLOCK', '99999'],
-      ]) {
-        const reply = await monitor.execute('client', buffers(...args))
-        assert.match(
-          errorText(reply),
-          /^(unknown subcommand|Unknown subcommand or wrong number of arguments for) '/,
-          `CLIENT ${args.join(' ')}`,
-        )
-      }
+      const unblock = await monitor.execute(
+        'client',
+        buffers('UNBLOCK', '99999'),
+      )
+      assert.match(
+        errorText(unblock),
+        /^(unknown subcommand|Unknown subcommand or wrong number of arguments for) '/,
+      )
+      const getredir = await monitor.execute('client', buffers('GETREDIR'))
+      assert.deepStrictEqual(getredir.value, { kind: 'integer', value: -1 })
+      const tracking = await monitor.execute(
+        'client',
+        buffers('TRACKING', 'off'),
+      )
+      assert.deepStrictEqual(tracking.value, {
+        kind: 'simple-string',
+        value: 'OK',
+      })
+      const info = await monitor.execute('client', buffers('TRACKINGINFO'))
+      assert.strictEqual(info.value.kind, 'map')
+      const caching = await monitor.execute('client', buffers('CACHING', 'yes'))
+      assert.match(errorText(caching), /^CLIENT CACHING can be called only/)
       monitor.close()
     })
   }

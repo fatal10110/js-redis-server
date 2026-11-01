@@ -45,6 +45,8 @@ type LuaHostState = {
   // The protocol the running script selected with `redis.setresp()`. It picks
   // the shape `redis.call` replies take in Lua — not the client's protocol.
   resp: RespVersion
+  /** The keys the running script declared. */
+  keys: readonly Buffer[]
 }
 
 export type LuaReplyValue = ReplyValue
@@ -58,6 +60,7 @@ export class RedisLuaRuntime {
     scriptSlot: null,
     database: { selected: null },
     resp: 2,
+    keys: [],
   }
   private readonly engine: LuaEngine
   private broken = false
@@ -108,6 +111,7 @@ export class RedisLuaRuntime {
     // Each run starts on the caller's database (#566).
     this.hostState.database = { selected: null }
     this.hostState.resp = 2
+    this.hostState.keys = keys
 
     try {
       return this.guard(() =>
@@ -118,6 +122,7 @@ export class RedisLuaRuntime {
       this.hostState.readOnly = false
       this.hostState.scriptSlot = null
       this.hostState.resp = 2
+      this.hostState.keys = []
     }
   }
 
@@ -288,6 +293,7 @@ export class RedisLuaRuntime {
         ctx,
         this.hostState.scriptSlot,
         this.hostState.database,
+        this.hostState.keys,
       ),
     )
     return (
@@ -377,6 +383,7 @@ function createLuaCallContext(
   ctx: RedisExecutionContext,
   scriptSlot: ScriptSlotPin | null,
   database: ScriptDatabase,
+  scriptKeys: readonly Buffer[],
 ): RedisExecutionContext {
   return {
     get db() {
@@ -389,6 +396,7 @@ function createLuaCallContext(
     executor: ctx.executor,
     inScript: true,
     scriptDatabase: database,
+    scriptKeys,
     ...(ctx.transactionReplay
       ? { transactionReplay: ctx.transactionReplay }
       : {}),

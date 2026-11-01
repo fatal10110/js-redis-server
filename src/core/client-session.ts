@@ -850,17 +850,17 @@ export class ClientSession implements RedisClientSession {
     }
   }
 
-  enqueuePush(result: RedisResult): void {
+  enqueuePush(result: RedisResult, beforeReply = false): void {
     if (this.pushQueueClosed || this.signal.aborted) {
       return
     }
 
-    if (this.transactionPushes) {
+    if (this.transactionPushes && !beforeReply) {
       this.transactionPushes.push(result)
       return
     }
 
-    if (this.deferredPushes) {
+    if (this.deferredPushes && !beforeReply) {
       this.deferredPushes.push(result)
       return
     }
@@ -975,6 +975,7 @@ export class ClientSession implements RedisClientSession {
     }
     let result: RedisResult | undefined
     let releaseHeld: ((deliver: boolean) => void) | undefined
+    let deliverTracking: (() => void) | undefined
     try {
       // Redis records the command as the client's last one (`cmd=` in CLIENT
       // LIST) at lookup, before any check can refuse it, and stamps the
@@ -999,14 +1000,49 @@ export class ClientSession implements RedisClientSession {
       this.lastInteraction = Date.now()
       this.ownMonitorLines = null
       releaseHeld = this.holdPushesUntilReply(ownPushes, ownLines)
+      deliverTracking = this.server.clientTracking.afterCommand(
+        this,
+        isClientCommand(rawCommand),
+      )
       turn?.release()
       // A throw has no reply to wait for.
       if (!result) {
         releaseHeld?.(true)
+        deliverTracking?.()
       }
     }
 
-    return this.deliverHeldPushesAfter(result, releaseHeld)
+    return this.deliverTrackingAfter(
+      this.deliverHeldPushesAfter(result, releaseHeld),
+      deliverTracking,
+    )
+  }
+
+  /**
+   * Send the CLIENT TRACKING invalidations this connection's own command
+   * caused once its reply is written (`tracking_pending_keys`, handled after
+   * the reply on every version), ahead of the pushes it held (`afterCommand`
+   * sends them before joining `pending_push_messages`).
+   */
+  private deliverTrackingAfter(
+    result: RedisResult,
+    deliver: (() => void) | undefined,
+  ): RedisResult {
+    if (!deliver) {
+      return result
+    }
+    const afterReply = result.options?.afterReply
+    return new RedisResult(
+      result.value,
+      {
+        ...result.options,
+        afterReply: () => {
+          deliver()
+          afterReply?.()
+        },
+      },
+      result.encoded,
+    )
   }
 
   /**
@@ -1317,6 +1353,13 @@ function pubsubId(value: Buffer): string {
  */
 function bulk(value: Buffer): RedisValue {
   return RedisValue.bulkString(Buffer.from(value))
+}
+
+/** CLIENT, any subcommand: it keeps a CLIENT CACHING flag alive. */
+function isClientCommand(rawCommand: Buffer | string): boolean {
+  const name =
+    typeof rawCommand === 'string' ? rawCommand : rawCommand.toString('latin1')
+  return name.length === 6 && name.toLowerCase() === 'client'
 }
 
 function pubsubFrame(name: string, items: RedisValue[]): RedisResult {

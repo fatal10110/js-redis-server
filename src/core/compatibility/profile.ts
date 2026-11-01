@@ -164,6 +164,8 @@ export type FeatureId =
   | 'client.info-multi-lazy-state'
   | 'protocol.inline-drops-0xff'
   | 'hello.setname-after-auth'
+  | 'client.tracking-sync-flush-push-first'
+  | 'client.tracking-script-command-keys'
   | 'migrate.connect-timeout-error'
 
 export interface CompatibilityProfile {

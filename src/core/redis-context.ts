@@ -76,7 +76,12 @@ export interface RedisClientSession {
   pubsubUnsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
-  enqueuePush(result: RedisResult): void
+  /**
+   * Queue a push for this connection. `beforeReply` skips every hold, so a
+   * push made while this connection's own command runs goes out before its
+   * reply.
+   */
+  enqueuePush(result: RedisResult, beforeReply?: boolean): void
   onReset(cleanup: () => void): () => void
   resetPushProducers(): void
   readonly monitoring: boolean
@@ -157,6 +162,12 @@ export interface RedisExecutionContext {
    * has selected. SELECT changes it instead of the session's (#566).
    */
   readonly scriptDatabase?: ScriptDatabase
+  /**
+   * Set while the command runs inside a Lua script: the keys the script
+   * command (EVAL, EVALSHA, FCALL, ...) declared. Before Redis 7.2 a tracking
+   * client remembers these, not the inner command's keys (#252).
+   */
+  readonly scriptKeys?: readonly Buffer[]
   readonly nodeRole?: RedisClusterNodeRole
   readonly monitor?: RedisMonitorContext
   readonly signal: AbortSignal

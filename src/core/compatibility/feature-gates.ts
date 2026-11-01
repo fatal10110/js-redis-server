@@ -785,6 +785,18 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // networking.c:3491-3507), so the name sticks. Probed on redis-server 6.2.14
   // and 7.0.15 with --requirepass (#522).
   'hello.setname-after-auth': { redis: '7.2.0', valkey: '7.2.0' },
+  // A sync FLUSHDB / FLUSHALL (no ASYNC, outside MULTI and scripts) runs as a
+  // blocking async flush on Redis 7.4+, replying `+OK` only once the
+  // background job is done (redis@7.4.0:src/db.c:730-763; absent in 7.2.4 and
+  // Valkey), so a tracking client's own flush invalidation is written before
+  // the `+OK` instead of after. Probed on redis-server 7.4.4 and 8.0.0 (#252).
+  'client.tracking-sync-flush-push-first': { redis: '7.4.0' },
+  // A readonly command run from a script makes a tracking client remember the
+  // command's own keys on Redis 7.2+ (redis@7.2.0:src/server.c:3664); 6.2 and
+  // 7.0 remember the keys the script declared instead (redis@7.0.15:src/
+  // server.c:3515-3529, redis@6.2.14:src/server.c:3918-3928). Probed on
+  // redis-server 6.2.14, 7.0.15, 7.2.4, 8.0.0 and valkey-server 9.0.0 (#252).
+  'client.tracking-script-command-keys': { redis: '7.2.0', valkey: '7.2.0' },
   // MIGRATE to a host that never answers the connect: from Redis 7.4 / Valkey
   // 8.0 the blocking connect fails on its timeout (`return C_ERR`, redis@7.4.0:
   // src/socket.c:343), so the reply is `-IOERR error or timeout connecting to
