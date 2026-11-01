@@ -650,4 +650,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // t_zset.c:3840-3847). Checked against redis-server 6.2.14, 7.0.15, 7.2.4,
   // 7.4.4, 8.0.0 and valkey-server 8.0.0, 8.1.0, 9.0.0 (#610).
   'zset.pop-count-positive': { redis: '7.0.0', valkey: '7.2.0' },
+  // `BITCOUNT key start` (no end, which defaults to the last byte), and the
+  // BYTE|BIT unit read before the end, so `BITCOUNT s 0 BIT x` is a syntax
+  // error rather than a bad end (valkey@8.0.0 bitops.c:798-823). Redis, at
+  // every version, takes only `start end` and reads the end first. Checked
+  // against redis-server 6.2.14 - 8.0.0 and valkey-server 8.0.0, 9.0.0 (#643).
+  'bitcount.start-only': { valkey: '8.0.0' },
 }

@@ -383,6 +383,7 @@ with `GT` or `LT`.
 - [x] `MSETNX key value [key value ...]` - Set multiple keys, only if none of them exist
 - [x] `GETSET key value` - Set a key's value and return its old value
 - [x] `GETDEL key` - Get the value of a key and delete it
+- [x] `DELIFEQ key value` - Delete a string key if its value equals `value` (valkey 9.0 only; an unknown command elsewhere)
 - [x] `GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds | PXAT unix-time-milliseconds | PERSIST]` - Get the value and optionally manage its TTL
 - [x] `APPEND key value` - Append a value to a key (on an existing key, rejects a result larger than `proto-max-bulk-len`, like Redis)
 - [x] `STRLEN key` - Get the length of the value stored at key
@@ -823,7 +824,7 @@ key.
 
 - [x] `SETBIT key offset value` - Set or clear the bit at `offset`
 - [x] `GETBIT key offset` - Return the bit value at `offset`
-- [x] `BITCOUNT key [start end [BYTE | BIT]]` - Count set bits, optionally within a byte or bit range
+- [x] `BITCOUNT key [start end [BYTE | BIT]]` - Count set bits, optionally within a byte or bit range (valkey 8.0+ also takes `BITCOUNT key start`, to the last byte)
 - [x] `BITPOS key bit [start [end [BYTE | BIT]]]` - Find the first bit set to `bit`
 - [x] `BITOP AND | OR | XOR | NOT destkey key [key ...]` - Bitwise operation across keys, storing the result
 - [x] `BITFIELD key [GET type offset] [SET type offset value] [INCRBY type offset increment] [OVERFLOW WRAP | SAT | FAIL]` - Operate on arbitrary-width integer fields

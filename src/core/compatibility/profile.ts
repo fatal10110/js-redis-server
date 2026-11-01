@@ -64,6 +64,7 @@ export type FeatureId =
   | 'stream.consumer-group-lag'
   | 'stream.consumer-active-time'
   | 'bit.byte-bit-range'
+  | 'bitcount.start-only'
   | 'hscan.novalues'
   | 'xread.plus-id'
   | 'stream.implicit-consumer-event'

@@ -156,6 +156,7 @@ export {
   incrbyfloatCommand,
   getsetCommand,
   getdelCommand,
+  delifeqCommand,
   setnxCommand,
   setexCommand,
   psetexCommand,
