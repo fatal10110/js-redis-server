@@ -311,6 +311,9 @@ so the PR body is not a durable home for a breaking-change note.
   and `redir=`. node-redis' `clientSideCache` works against the mock. A
   client's own sync `FLUSHDB` / `FLUSHALL` writes its null before the `+OK`
   on redis 7.4+ (new `FeatureId` `client.tracking-sync-flush-push-first`).
+  A readonly command run from a script remembers the keys the script
+  declared on redis 6.2 and 7.0, its own keys on 7.2+ and Valkey (new
+  `FeatureId` `client.tracking-script-command-keys`).
 
 ### Changed
 

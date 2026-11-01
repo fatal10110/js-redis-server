@@ -258,7 +258,14 @@ export class ClientTrackingTable {
       case 'expire':
       case 'persist':
       case 'evict':
-        this.invalidateKey(event.key, event.client)
+        // BCAST NOLOOP compares the client handed to `signalModifiedKey`:
+        // the script's own client for a script write, none for an expiry
+        // (redis@7.2.4:src/db.c:1687). Default mode compares the caller.
+        this.invalidateKey(
+          event.key,
+          event.client,
+          event.viaScript || event.type === 'evict' ? undefined : event.client,
+        )
         return
       case 'flush':
         if (this.flushBatch) {
@@ -370,9 +377,13 @@ export class ClientTrackingTable {
   }
 
   /** `trackingInvalidateKey`. */
-  private invalidateKey(key: Buffer, writer: object | undefined): void {
+  private invalidateKey(
+    key: Buffer,
+    writer: object | undefined,
+    broadcastWriter: object | undefined,
+  ): void {
     if (this.prefixTable.size > 0) {
-      this.rememberKeyToBroadcast(key, writer)
+      this.rememberKeyToBroadcast(key, broadcastWriter)
     }
     const id = keyId(key)
     const entry = this.table.get(id)
@@ -545,7 +556,8 @@ function checkPrefixCollisions(
   prefixes: readonly Buffer[],
 ): void {
   for (let i = 0; i < prefixes.length; i++) {
-    for (const current of existing?.values() ?? []) {
+    // The rax walks the client's prefixes bytewise.
+    for (const current of existing ? sortedBuffers(existing.values()) : []) {
       if (sharesPrefix(current, prefixes[i])) {
         throw new RedisCommandError(
           Buffer.concat([

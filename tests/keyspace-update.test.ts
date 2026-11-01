@@ -347,7 +347,7 @@ describe('RedisDatabase.set — expireEvent (#380)', () => {
 })
 
 describe('RedisDatabase.withOrigin — a prototype-linked view (#444)', () => {
-  test('writes through a view stamp its origin and leave origin and its client as its only own properties', () => {
+  test('writes through a view stamp its origin and leave its origin fields as its only own properties', () => {
     // The view reads all state through to the database; a RedisDatabase
     // method that assigned `this.x` would silently land on the view instead.
     const { db, events } = setup()
@@ -375,6 +375,7 @@ describe('RedisDatabase.withOrigin — a prototype-linked view (#444)', () => {
     assert.deepStrictEqual(Object.getOwnPropertyNames(view), [
       'origin',
       'originClient',
+      'originViaScript',
     ])
     assert.strictEqual(db.origin, undefined)
     assert.strictEqual(db.size(), 0)

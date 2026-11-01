@@ -141,6 +141,16 @@ describe(`CLIENT TRACKING (${testRunner.getBackendName()}, ${profile})`, () => {
       ),
     )
     assert.strictEqual(await tracking('OFF'), '+OK\r\n')
+    // The existing prefixes are checked in bytewise order.
+    assert.strictEqual(await tracking('ON', 'BCAST', 'PREFIX', 'ac'), '+OK\r\n')
+    assert.strictEqual(await tracking('ON', 'BCAST', 'PREFIX', 'ab'), '+OK\r\n')
+    assert.strictEqual(
+      await tracking('ON', 'BCAST', 'PREFIX', 'a'),
+      err(
+        "Prefix 'a' overlaps with an existing prefix 'ab'. Prefixes for a single client must not overlap.",
+      ),
+    )
+    assert.strictEqual(await tracking('OFF'), '+OK\r\n')
   })
 
   test('TRACKINGINFO, GETREDIR and the CLIENT INFO fields', async () => {
@@ -358,6 +368,20 @@ describe(`CLIENT TRACKING (${testRunner.getBackendName()}, ${profile})`, () => {
     await delay(20)
     assert.deepStrictEqual(await quiet.pending(), [
       invalidate(key('nlb:theirs')),
+    ])
+    // A script writes on its own client, so NOLOOP does not filter it.
+    assert.strictEqual(
+      await quiet.call(
+        'EVAL',
+        "redis.call('set', KEYS[1], '1'); return 1",
+        '1',
+        key('nlb:script'),
+      ),
+      ':1\r\n',
+    )
+    await delay(20)
+    assert.deepStrictEqual(await quiet.pending(), [
+      invalidate(key('nlb:script')),
     ])
   })
 

@@ -721,7 +721,10 @@ function applyPolicyShortCircuit(
  * (a script's caller, the client running EXEC) remembers its keys, missing
  * ones included (redis@7.2.4:src/server.c:3651-3666). EVAL_RO, EVALSHA_RO and
  * FCALL_RO are skipped, only the commands they run count, and so are Pub/Sub
- * commands, whose shard channels are keys.
+ * commands, whose shard channels are keys. Before Redis 7.2 a readonly
+ * command run from a script remembers the keys the script declared instead
+ * (`trackingRememberKeys(caller)` reads the caller's argv,
+ * redis@7.0.15:src/server.c:3515-3529, redis@6.2.14:src/server.c:3918-3928).
  */
 function rememberTrackedKeys(
   plan: CommandPlan,
@@ -729,14 +732,21 @@ function rememberTrackedKeys(
 ): void {
   const { definition } = plan
   if (
-    plan.keys.length === 0 ||
     !definition.flags.includes('readonly') ||
     definition.flags.includes('pubsub') ||
     READONLY_SCRIPT_COMMANDS.has(definition.name)
   ) {
     return
   }
-  ctx.server.clientTracking.rememberKeys(ctx.session, plan.keys)
+  const keys =
+    ctx.inScript &&
+    ctx.scriptKeys &&
+    !ctx.server.profile.has('client.tracking-script-command-keys')
+      ? ctx.scriptKeys
+      : plan.keys
+  if (keys.length > 0) {
+    ctx.server.clientTracking.rememberKeys(ctx.session, keys)
+  }
 }
 
 const READONLY_SCRIPT_COMMANDS = new Set(['eval_ro', 'evalsha_ro', 'fcall_ro'])
@@ -754,7 +764,7 @@ function withMutationOrigin(
         const db = ctx.db
         if (db !== base || !view) {
           base = db
-          view = db.withOrigin(command, ctx.session)
+          view = db.withOrigin(command, ctx.session, ctx.inScript === true)
         }
         return view
       },
