@@ -140,6 +140,8 @@ export class Resp2CommandDecoder {
   private readonly maxMultibulkCount: bigint
   private readonly headerScanPastNul: boolean
   private readonly inlineAdjacentQuotes: boolean
+  /** Whether raw 0xFF bytes of an inline request are dropped (Valkey 8.1+). */
+  private readonly inlineDropsFF: boolean
   /** Whether the byte after a header CR and a bulk's terminator are checked. */
   private readonly strictCrlf: boolean
   private readonly authRequired: () => boolean
@@ -161,6 +163,8 @@ export class Resp2CommandDecoder {
       options.profile?.has('protocol.header-scan-past-nul') === true
     this.inlineAdjacentQuotes =
       options.profile?.has('protocol.inline-adjacent-quotes') === true
+    this.inlineDropsFF =
+      options.profile?.has('protocol.inline-drops-0xff') === true
     this.strictCrlf = options.profile?.has('protocol.strict-crlf') === true
     this.authRequired = options.authRequired ?? (() => false)
   }
@@ -435,6 +439,7 @@ export class Resp2CommandDecoder {
     const parts = splitInlineArguments(
       this.storage.subarray(this.start, lineEnd),
       this.inlineAdjacentQuotes,
+      this.inlineDropsFF,
     )
     if (parts === null) {
       throw new Resp2ParseError('Protocol error: unbalanced quotes in request')
@@ -644,6 +649,9 @@ const INLINE_ESCAPES: Record<number, number> = {
  *  - A closing quote must be followed by `isspace` or the end of the line, else
  *    the request is refused. With `adjacentQuotes` (Valkey 9.0's `sdsparsearg`)
  *    it simply ends the quoted section and the argument continues.
+ *  - With `dropsFF` (Valkey 8.1+'s `sdsparsearg`, whose signed `char` turns
+ *    0xFF into its -1 "no byte" sentinel) every raw 0xFF byte is left out,
+ *    escaped with `\` or not; a `\xff` escape still gives one.
  *
  * The line never holds a NUL byte: the `strchr` that found its newline would
  * have stopped there. The end of the line plays the part of C's terminator.
@@ -651,6 +659,7 @@ const INLINE_ESCAPES: Record<number, number> = {
 function splitInlineArguments(
   line: Buffer,
   adjacentQuotes: boolean,
+  dropsFF = false,
 ): Buffer[] | null {
   const length = line.length
   const at = (index: number): number => (index < length ? line[index]! : NUL)
@@ -687,7 +696,9 @@ function splitInlineArguments(
         } else if (byte === 0x5c && p + 1 < length) {
           p += 1
           const escaped = line[p]!
-          output[written++] = INLINE_ESCAPES[escaped] ?? escaped
+          if (!(dropsFF && escaped === 0xff)) {
+            output[written++] = INLINE_ESCAPES[escaped] ?? escaped
+          }
         } else if (byte === 0x22) {
           if (adjacentQuotes) {
             inDouble = false
@@ -699,7 +710,7 @@ function splitInlineArguments(
           }
         } else if (p >= length) {
           return null
-        } else {
+        } else if (!(dropsFF && byte === 0xff)) {
           output[written++] = byte
         }
       } else if (inSingle) {
@@ -717,7 +728,7 @@ function splitInlineArguments(
           }
         } else if (p >= length) {
           return null
-        } else {
+        } else if (!(dropsFF && byte === 0xff)) {
           output[written++] = byte
         }
       } else if (
@@ -732,7 +743,7 @@ function splitInlineArguments(
         inDouble = true
       } else if (byte === 0x27) {
         inSingle = true
-      } else {
+      } else if (!(dropsFF && byte === 0xff)) {
         output[written++] = byte
       }
 

@@ -198,3 +198,94 @@ jobs:
       - name: Stop Redis (cluster + standalone)
         if: always() && matrix.needsRedis
         run: docker compose -f docker-compose.test.yml down -v
+
+  # The compatibility-profile and raw-tcp suites against a real standalone
+  # server of every profile's pinned version, with the matching REDIS_COMPAT
+  # (#522). Each entry runs its own throwaway containers (one plain, one
+  # --requirepass), so it shares nothing with the docker-compose stack the
+  # `*-real` jobs use. There is no cluster here: tests marked `needsCluster`
+  # skip under REDIS_STANDALONE_ONLY=1 and run against the redis 8.0 cluster
+  # in `raw-real` instead.
+  compatibility-real:
+    name: compatibility-real (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in step with src/core/compatibility/profile.ts.
+        include:
+          - profile: redis-6.2
+            image: redis:6.2.14
+            cli: redis-cli
+          - profile: redis-7.0
+            image: redis:7.0.15
+            cli: redis-cli
+          - profile: redis-7.2
+            image: redis:7.2.4
+            cli: redis-cli
+          - profile: redis-7.4
+            image: redis:7.4.4
+            cli: redis-cli
+          - profile: redis-8.0
+            image: redis:8.0.0
+            cli: redis-cli
+          - profile: valkey-8.0
+            image: valkey/valkey:8.0.0
+            cli: valkey-cli
+          - profile: valkey-9.0
+            image: valkey/valkey:9.0.0
+            cli: valkey-cli
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start ${{ matrix.image }} (plain and requirepass)
+        env:
+          IMAGE: ${{ matrix.image }}
+          CLI: ${{ matrix.cli }}
+        run: |
+          docker run -d --name standalone -p 6399:6379 "$IMAGE"
+          docker run -d --name standalone-auth -p 6400:6379 "$IMAGE" --requirepass testpass
+          for _ in $(seq 1 60); do
+            if docker exec standalone "$CLI" ping 2>/dev/null | grep -q PONG &&
+              docker exec standalone-auth "$CLI" -a testpass --no-auth-warning ping 2>/dev/null | grep -q PONG; then
+              docker exec standalone "$CLI" info server | grep -E '^(redis|valkey)_version|^server_name'
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "servers did not answer PING within 60s"
+          exit 1
+
+      - name: Run compatibility + raw-tcp tests (REDIS_COMPAT=${{ matrix.profile }})
+        timeout-minutes: 15
+        env:
+          REDIS_COMPAT: ${{ matrix.profile }}
+          REDIS_STANDALONE_PORT: 6399
+          REDIS_STANDALONE_AUTH_PORT: 6400
+        run: npm run test:integration:compatibility:real
+
+      - name: Dump server logs on failure
+        if: failure()
+        run: |
+          for name in standalone standalone-auth; do
+            echo "::group::docker logs $name"
+            docker logs --timestamps "$name" || true
+            echo "::endgroup::"
+          done
+
+      - name: Stop servers
+        if: always()
+        run: docker rm -f standalone standalone-auth || true

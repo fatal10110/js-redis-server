@@ -1,5 +1,5 @@
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, keyInAnotherSlot, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import {
@@ -37,7 +37,8 @@ const EXECABORT =
   '-EXECABORT Transaction discarded because of previous errors.\r\n'
 const EXEC_WITHOUT_MULTI = '-ERR EXEC without MULTI\r\n'
 
-describe(`Raw TCP cluster MULTI across slots (${testRunner.getBackendName()}, ${activeProfile})`, () => {
+const clusterSuite = `Raw TCP cluster MULTI across slots (${testRunner.getBackendName()}, ${activeProfile})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

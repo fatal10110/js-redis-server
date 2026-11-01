@@ -1200,11 +1200,12 @@ describe(
       )
     })
 
-    // Valkey 8.0 marks GEORADIUS's STORE / STOREDIST key specs variable_flags
-    // (valkey 8.0.11 / 9.0.6; Redis and Valkey 7.2 do not). Only the key
-    // specs' flags are compared.
+    // Valkey 8.0.11 / 9.0.6 mark GEORADIUS's STORE / STOREDIST key specs
+    // variable_flags (`command.georadius-variable-flags`); Redis and the
+    // pinned valkey-8.0 / valkey-9.0 presets (8.0.0 / 9.0.0) do not. Only the
+    // key specs' flags are compared.
     test(
-      'GEORADIUS STORE key spec flags follow the flavor',
+      'GEORADIUS STORE key spec flags follow the version',
       {
         skip: profile === 'redis-6.2' && 'key specs are 7.0+',
       },
@@ -1213,9 +1214,7 @@ describe(
         const reply = normalizeFrame(await connection.readFrame())
         assert.ok(Array.isArray(reply) && Array.isArray(reply[0]))
         const specs = (reply[0] as RespWireValue[])[8] as RespWireValue[][]
-        const destination = supportsValkeyGeoVariableFlags()
-          ? ['OW', 'update', 'variable_flags']
-          : ['OW', 'update']
+        const destination = ['OW', 'update']
         assert.deepStrictEqual(
           specs.map(spec => flatToRecord(spec).flags),
           [['RO', 'access'], destination, destination],
@@ -1616,10 +1615,6 @@ function supportsCommandDocs(): boolean {
 
 function supportsUnknownSubcommandWording(): boolean {
   return profile !== 'redis-6.2'
-}
-
-function supportsValkeyGeoVariableFlags(): boolean {
-  return profile === 'valkey-8.0' || profile === 'valkey-9.0'
 }
 
 function supportsSuffixScriptErrorDecoration(): boolean {

@@ -1,6 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
+import { legacy } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -16,6 +17,12 @@ import { expectReply } from './helpers'
  * through `.call(...)`.
  */
 const testRunner = new TestRunner()
+
+/** numkeys <= 0: 6.2 does not quote the name (`zset.numkeys-quoted-wording`). */
+const inputKeyNeeded = (command: string): string =>
+  legacy
+    ? `-ERR at least 1 input key is needed for ${command}\r\n`
+    : `-ERR at least 1 input key is needed for '${command}' command\r\n`
 
 const WRONGTYPE =
   '-WRONGTYPE Operation against a key holding the wrong kind of value\r\n'
@@ -88,15 +95,19 @@ describe(`Raw TCP zset command errors (${testRunner.getBackendName()})`, () => {
       ['ZCOUNT', zsetKey, 'abc', '1'],
       '-ERR min or max is not a float\r\n',
     )
+    // 6.2 reads the count as a plain integer and answers an empty array for
+    // a negative one (`zset.pop-count-positive`).
     await expectReply(
       conn,
       ['ZPOPMIN', zsetKey, 'abc'],
-      '-ERR value is out of range, must be positive\r\n',
+      legacy
+        ? '-ERR value is not an integer or out of range\r\n'
+        : '-ERR value is out of range, must be positive\r\n',
     )
     await expectReply(
       conn,
       ['ZPOPMAX', zsetKey, '-1'],
-      '-ERR value is out of range, must be positive\r\n',
+      legacy ? '*0\r\n' : '-ERR value is out of range, must be positive\r\n',
     )
 
     // count of 0 is not an error: returns an empty array.
@@ -117,23 +128,21 @@ describe(`Raw TCP zset command errors (${testRunner.getBackendName()})`, () => {
     await expectReply(
       conn,
       ['ZUNIONSTORE', dest, '0', z1],
-      "-ERR at least 1 input key is needed for 'zunionstore' command\r\n",
+      inputKeyNeeded('zunionstore'),
     )
     await expectReply(
       conn,
       ['ZUNIONSTORE', dest, '-1', z1],
-      "-ERR at least 1 input key is needed for 'zunionstore' command\r\n",
+      inputKeyNeeded('zunionstore'),
     )
-    await expectReply(
-      conn,
-      ['ZUNION', '0', z1],
-      "-ERR at least 1 input key is needed for 'zunion' command\r\n",
-    )
-    await expectReply(
-      conn,
-      ['ZINTERCARD', '0', z1],
-      "-ERR at least 1 input key is needed for 'zintercard' command\r\n",
-    )
+    await expectReply(conn, ['ZUNION', '0', z1], inputKeyNeeded('zunion'))
+    if (!legacy) {
+      await expectReply(
+        conn,
+        ['ZINTERCARD', '0', z1],
+        inputKeyNeeded('zintercard'),
+      )
+    }
     await expectReply(
       conn,
       ['ZUNIONSTORE', dest, 'abc', z1],
@@ -169,11 +178,13 @@ describe(`Raw TCP zset command errors (${testRunner.getBackendName()})`, () => {
       ['ZDIFF', '2', z1, z2, 'WEIGHTS', '1', '2'],
       '-ERR syntax error\r\n',
     )
-    await expectReply(
-      conn,
-      ['ZINTERCARD', '2', z1, z2, 'LIMIT', '-1'],
-      "-ERR LIMIT can't be negative\r\n",
-    )
+    if (!legacy) {
+      await expectReply(
+        conn,
+        ['ZINTERCARD', '2', z1, z2, 'LIMIT', '-1'],
+        "-ERR LIMIT can't be negative\r\n",
+      )
+    }
     await expectReply(conn, ['ZUNION', '2', z1, str], WRONGTYPE)
     await expectReply(
       conn,

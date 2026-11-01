@@ -285,7 +285,11 @@ describe(`Raw TCP CLIENT INFO / LIST and INFO (${testRunner.getBackendName()}, $
 
     const after = bulkBody(await send(conn, 'CLIENT', 'INFO'))
     assert.strictEqual(field(after, 'flags'), 'N')
-    assert.strictEqual(field(after, 'multi'), '-1')
+    // Valkey 8.1+ keeps the multi state MULTI / WATCH allocated: `0`.
+    assert.strictEqual(
+      field(after, 'multi'),
+      activeProfile === 'valkey-9.0' ? '0' : '-1',
+    )
     await send(conn, 'DEL', key)
   })
 
@@ -314,7 +318,9 @@ describe(`Raw TCP CLIENT INFO / LIST and INFO (${testRunner.getBackendName()}, $
           ? ',keys_with_volatile_items=\\d+'
           : ''
     const match = new RegExp(
-      `^db0:keys=(\\d+),expires=(\\d+),avg_ttl=(\\d+)${extra}$`,
+      // avg_ttl goes negative on a real server holding keys whose expiry
+      // passed but which the active cycle has not reclaimed yet.
+      `^db0:keys=(\\d+),expires=(\\d+),avg_ttl=(-?\\d+)${extra}$`,
       'm',
     ).exec(info)
     assert.ok(match, info)

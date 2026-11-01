@@ -2,7 +2,7 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import type { Cluster } from 'ioredis'
 import clusterKeySlot from 'cluster-key-slot'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, commandFrame, randomKey } from '../utils'
 import { SCRIPT_LIB, libCallAbort } from '../profile-wording'
 import {
@@ -146,7 +146,8 @@ describe(`Raw TCP MONITOR protocol (${testRunner.getBackendName()})`, () => {
     })
   })
 
-  test('skips cluster commands rejected before local execution', async () => {
+  test('skips cluster commands rejected before local execution', async t => {
+    if (needsCluster.skip) return t.skip(needsCluster.skip)
     const cluster = await testRunner.setupIoredisCluster('monitor-moved')
     const directPort = testRunner.getClusterPorts()[0]
     assert.notStrictEqual(directPort, undefined)

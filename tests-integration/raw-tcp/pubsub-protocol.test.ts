@@ -2,6 +2,7 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
 import { commandFrame, randomKey } from '../utils'
+import { legacy, subcommandArity, unknownSubcommand } from '../profile-wording'
 import {
   RawRedisConnection,
   type RespWireValue,
@@ -11,6 +12,9 @@ import {
 } from './raw-connection'
 
 const testRunner = new TestRunner()
+
+/** Sharded Pub/Sub (SSUBSCRIBE, SPUBLISH, ...) arrived in 7.0. */
+const NO_SHARDED = 'sharded Pub/Sub arrived in 7.0'
 
 describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
   let port: number
@@ -68,7 +72,8 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     assert.deepStrictEqual(await conn.readFrame(), 'OK')
   })
 
-  test('allows sharded subscribed-mode commands and receives shard messages', async () => {
+  test('allows sharded subscribed-mode commands and receives shard messages', async t => {
+    if (legacy) return t.skip(NO_SHARDED)
     const subscriber = await connect()
     const publisher = await connect()
     const channel = `raw-shard-pubsub:${randomKey()}`
@@ -133,7 +138,8 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     assert.deepStrictEqual(await publisher.readFrame(), [])
   })
 
-  test('keeps regular and shard subscription reply counts independent', async () => {
+  test('keeps regular and shard subscription reply counts independent', async t => {
+    if (legacy) return t.skip(NO_SHARDED)
     const conn = await connect()
     const prefix = `raw-mixed-pubsub:${randomKey()}`
     const firstChannel = `${prefix}:channel:1`
@@ -246,7 +252,8 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     ])
   })
 
-  test('RESET exits subscribed mode and removes all subscriptions', async () => {
+  test('RESET exits subscribed mode and removes all subscriptions', async t => {
+    if (legacy) return t.skip(NO_SHARDED)
     const subscriber = await connect()
     const publisher = await connect()
     const channel = `raw-reset:${randomKey()}`
@@ -374,8 +381,12 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
           commandFrame('PING', 'after-subscribe'),
           commandFrame('PSUBSCRIBE', ...patterns),
           commandFrame('PING', 'after-psubscribe'),
-          commandFrame('SSUBSCRIBE', ...shards),
-          commandFrame('PING', 'after-ssubscribe'),
+          ...(legacy
+            ? []
+            : [
+                commandFrame('SSUBSCRIBE', ...shards),
+                commandFrame('PING', 'after-ssubscribe'),
+              ]),
         ]),
       )
 
@@ -393,10 +404,14 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
           ),
         ),
         subscribedPingBytes(protocol, 'after-psubscribe'),
-        ...shards.map((shard, i) =>
-          confirmationBytes(protocol, 'ssubscribe', shard, i + 1),
-        ),
-        subscribedPingBytes(protocol, 'after-ssubscribe'),
+        ...(legacy
+          ? []
+          : [
+              ...shards.map((shard, i) =>
+                confirmationBytes(protocol, 'ssubscribe', shard, i + 1),
+              ),
+              subscribedPingBytes(protocol, 'after-ssubscribe'),
+            ]),
       ]
       const actual: string[] = []
       for (let i = 0; i < expected.length; i++) {
@@ -464,22 +479,24 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
       "ERR wrong number of arguments for 'publish' command",
     )
 
-    conn.write(commandFrame('SSUBSCRIBE'))
-    assert.strictEqual(
-      respText(await conn.readFrame()),
-      "ERR wrong number of arguments for 'ssubscribe' command",
-    )
+    if (!legacy) {
+      conn.write(commandFrame('SSUBSCRIBE'))
+      assert.strictEqual(
+        respText(await conn.readFrame()),
+        "ERR wrong number of arguments for 'ssubscribe' command",
+      )
 
-    conn.write(commandFrame('SPUBLISH', 'channel-only'))
-    assert.strictEqual(
-      respText(await conn.readFrame()),
-      "ERR wrong number of arguments for 'spublish' command",
-    )
+      conn.write(commandFrame('SPUBLISH', 'channel-only'))
+      assert.strictEqual(
+        respText(await conn.readFrame()),
+        "ERR wrong number of arguments for 'spublish' command",
+      )
+    }
 
     conn.write(commandFrame('PUBSUB', 'NUMPAT', 'extra'))
     assert.strictEqual(
       respText(await conn.readFrame()),
-      "ERR wrong number of arguments for 'pubsub|numpat' command",
+      subcommandArity('PUBSUB', 'NUMPAT'),
     )
 
     conn.write(commandFrame('PUBSUB'))
@@ -491,20 +508,22 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     conn.write(commandFrame('PUBSUB', 'CHANNELS', '*', 'extra'))
     assert.strictEqual(
       respText(await conn.readFrame()),
-      "ERR unknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.",
+      `ERR ${legacy ? 'U' : 'u'}nknown subcommand or wrong number of arguments for 'CHANNELS'. Try PUBSUB HELP.`,
     )
 
     conn.write(commandFrame('PUBSUB', 'HELP', 'extra'))
     assert.strictEqual(
       respText(await conn.readFrame()),
-      "ERR wrong number of arguments for 'pubsub|help' command",
+      subcommandArity('PUBSUB', 'HELP'),
     )
 
-    conn.write(commandFrame('PUBSUB', 'SHARDCHANNELS', '*', 'extra'))
-    assert.strictEqual(
-      respText(await conn.readFrame()),
-      "ERR unknown subcommand or wrong number of arguments for 'SHARDCHANNELS'. Try PUBSUB HELP.",
-    )
+    if (!legacy) {
+      conn.write(commandFrame('PUBSUB', 'SHARDCHANNELS', '*', 'extra'))
+      assert.strictEqual(
+        respText(await conn.readFrame()),
+        "ERR unknown subcommand or wrong number of arguments for 'SHARDCHANNELS'. Try PUBSUB HELP.",
+      )
+    }
   })
 
   // Bare (P|S)UNSUBSCRIBE on a fresh connection is profile-dependent (valkey
@@ -515,7 +534,7 @@ describe(`Raw TCP Pub/Sub protocol (${testRunner.getBackendName()})`, () => {
     conn.write(commandFrame('PUBSUB', 'BOGUS'))
     assert.strictEqual(
       respText(await conn.readFrame()),
-      "ERR unknown subcommand 'BOGUS'. Try PUBSUB HELP.",
+      unknownSubcommand('PUBSUB', 'BOGUS'),
     )
   })
 })

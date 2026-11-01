@@ -13,6 +13,7 @@ import { createRedisCluster, RedisCluster } from '../src/cluster-server'
 import {
   realClusterPorts,
   realStandaloneAuthPort,
+  realStandaloneOnly,
   realStandalonePort,
   STANDALONE_AUTH_PASSWORD,
 } from './redis-endpoints'
@@ -155,6 +156,19 @@ export function directNodeRedisOptions(): Partial<RedisOptions> {
  * here so the harness and `scripts/flush-redis.ts` cannot drift apart.
  */
 export { STANDALONE_AUTH_PASSWORD }
+
+/**
+ * Options for a `describe` / `test` that needs a cluster. A real run against
+ * standalone servers only (`REDIS_STANDALONE_ONLY=1`: the per-profile
+ * `compatibility-real` CI matrix) skips it; the mock runs it on every
+ * profile and the `*-real` CI jobs run it against the docker-compose cluster.
+ */
+export const needsCluster = {
+  skip:
+    process.env.TEST_BACKEND === 'real' &&
+    realStandaloneOnly() &&
+    'needs a real cluster (REDIS_STANDALONE_ONLY=1)',
+}
 
 export type IoredisClusterSetupOptions = {
   masters?: number
@@ -585,6 +599,11 @@ export class TestRunner {
    * the suite then uses would be silent in precisely the way #395 was.
    */
   getRealClusterPorts(): number[] {
+    if (realStandaloneOnly()) {
+      throw new Error(
+        'REDIS_STANDALONE_ONLY=1 runs have no cluster: mark the suite or test with needsCluster',
+      )
+    }
     return realClusterPorts()
   }
 

@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import { createHash } from 'node:crypto'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, keyInAnotherSlot, randomKey } from '../utils'
 import { RawRedisConnection } from '../raw-tcp/raw-connection'
 import {
@@ -46,7 +46,8 @@ function callReply(script: string, command: string): string {
   return `-${text} script: ${sha}, on @user_script:1.\r\n`
 }
 
-describe(`Script command across slots in a cluster (${testRunner.getBackendName()}, ${activeProfile})`, () => {
+const clusterSuite = `Script command across slots in a cluster (${testRunner.getBackendName()}, ${activeProfile})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

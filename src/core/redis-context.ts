@@ -103,6 +103,12 @@ export interface RedisClientSession {
    * (`multi=`; `-1` outside a transaction).
    */
   readonly queuedCommandCount: number
+  /**
+   * CLIENT INFO's `multi=`: {@link queuedCommandCount}, except `0` on Valkey
+   * 8.1+ for a client whose MULTI or WATCH allocated the multi state
+   * (`client.info-multi-lazy-state`).
+   */
+  readonly clientInfoMultiCount: number
   /** Keys under WATCH (`watch=`). */
   readonly watchedKeyCount: number
 }

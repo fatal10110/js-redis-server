@@ -154,6 +154,25 @@ and the cluster via `REDIS_CLUSTER_PORTS` (comma-separated seed ports) or `REDIS
 
 If unset, the harness spawns a local `redis-server` child as a dev fallback.
 
+`REDIS_STANDALONE_ONLY=1` declares a real run with standalone servers and no
+cluster: suites and tests marked `needsCluster` (`tests-integration/test-config.ts`)
+skip, and anything else that reaches for the cluster throws instead of hanging on
+the default cluster ports. `npm run test:integration:compatibility:real` sets it
+and runs `tests-integration/compatibility/**` and `tests-integration/raw-tcp/**`
+against the server on `REDIS_STANDALONE_PORT` (plus `REDIS_STANDALONE_AUTH_PORT`,
+a `--requirepass testpass` server, for the AUTH suites) under the `REDIS_COMPAT`
+you give it:
+
+```bash
+docker run -d --rm --name compat-6.2 -p 6501:6379 redis:6.2.14
+docker run -d --rm --name compat-6.2-auth -p 6502:6379 redis:6.2.14 --requirepass testpass
+REDIS_COMPAT=redis-6.2 REDIS_STANDALONE_PORT=6501 REDIS_STANDALONE_AUTH_PORT=6502 \
+  npm run test:integration:compatibility:real
+```
+
+It does not flush: point it at fresh servers, not at the shared docker-compose
+stack.
+
 ### Socketless backend
 
 `TEST_BACKEND=socketless` runs the same `ioredis/**` and `node-redis/**` suites against the packaged socketless client mocks instead of a TCP server (#412), so a reply-shape divergence in those clients fails an integration test rather than surviving to review:
@@ -262,7 +281,23 @@ Either compose spelling works for the commands in this document: the `docker com
 
 ## CI/CD Integration
 
-For continuous integration, you can run both test suites:
+`.github/workflows/ci.yml` runs, on every pull request:
+
+- `integration`: each client suite against the mock and against the
+  docker-compose stack (redis 8.0 cluster + standalone), the compatibility
+  suites on the mock once per profile (`compatibility-profiles-mock`), the
+  profile-aware client and raw-tcp suites once per profile on the mock
+  (`profile-suites-mock`), and the socketless suites.
+- `compatibility-real`: one matrix entry per profile (redis 6.2.14, 7.0.15,
+  7.2.4, 7.4.4, 8.0.0; valkey 8.0.0, 9.0.0). Each starts a plain and a
+  `--requirepass` container of that exact version and runs
+  `npm run test:integration:compatibility:real` with the matching
+  `REDIS_COMPAT`, so every profile's expectations are checked against the
+  real server of that version (#522). Cluster rows skip there
+  (`REDIS_STANDALONE_ONLY=1`) and run against the redis 8.0 cluster in
+  `raw-real`.
+
+For your own pipeline, you can run both test suites:
 
 ```yaml
 # Example GitHub Actions

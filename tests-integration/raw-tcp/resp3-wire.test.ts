@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import { connectToRawSlotOwner, expectReply, send } from './helpers'
@@ -15,7 +15,8 @@ import { connectToRawSlotOwner, expectReply, send } from './helpers'
  */
 const testRunner = new TestRunner()
 
-describe(`Raw TCP RESP3 wire encoding (${testRunner.getBackendName()})`, () => {
+const clusterSuite = `Raw TCP RESP3 wire encoding (${testRunner.getBackendName()})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

@@ -522,9 +522,11 @@ export const errors = Object.freeze({
   numKeysGreaterThanZero: () =>
     new RedisCommandError('numkeys should be greater than 0'),
   /** ZUNION/ZINTER/ZDIFF family when numkeys <= 0. */
-  atLeastOneInputKey: (commandName: string) =>
+  atLeastOneInputKey: (commandName: string, profile: CompatibilityProfile) =>
     new RedisCommandError(
-      `at least 1 input key is needed for '${commandName}' command`,
+      profile.has('zset.numkeys-quoted-wording')
+        ? `at least 1 input key is needed for '${commandName}' command`
+        : `at least 1 input key is needed for ${commandName}`,
     ),
   weightNotFloat: () => new RedisCommandError('weight value is not a float'),
   countGreaterThanZero: () =>

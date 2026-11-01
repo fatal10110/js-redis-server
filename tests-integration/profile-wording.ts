@@ -116,3 +116,38 @@ export function subcommandArity(container: string, sub: string): string {
     ? `ERR Unknown subcommand or wrong number of arguments for '${sub.toUpperCase()}'. Try ${container.toUpperCase()} HELP.`
     : `ERR wrong number of arguments for '${container.toLowerCase()}|${sub.toLowerCase()}' command`
 }
+
+/**
+ * GEO unit errors: redis 6.2 lists the units in lower case, 7.0+ and valkey
+ * in upper case (`geo.unit-case-folding`).
+ */
+export const GEO_UNIT_ERROR = legacy
+  ? 'ERR unsupported unit provided. please use m, km, ft, mi'
+  : 'ERR unsupported unit provided. please use M, KM, FT, MI'
+
+/**
+ * STORE / STOREDIST / GEOSEARCHSTORE combined with WITHDIST, WITHHASH or
+ * WITHCOORD: redis 6.2 answers the GEORADIUS wording (`...COORDS options`)
+ * for every command, 7.0+ and valkey name the command
+ * (`geo.store-with-options-wording`).
+ */
+export function geoStoreWithError(
+  command: 'GEORADIUS' | 'GEOSEARCHSTORE',
+): string {
+  if (legacy) {
+    return 'ERR STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORDS options'
+  }
+  return command === 'GEOSEARCHSTORE'
+    ? 'ERR GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
+    : 'ERR STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options'
+}
+
+/**
+ * GEOSEARCH FROMMEMBER / GEORADIUSBYMEMBER of a missing member: valkey 9.0
+ * names it, everything before says the zset member could not be decoded.
+ */
+export function geoMissingMember(member: string): string {
+  return activeProfile === 'valkey-9.0'
+    ? `ERR member ${member} does not exist`
+    : 'ERR could not decode requested zset member'
+}

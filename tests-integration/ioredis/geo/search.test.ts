@@ -3,6 +3,11 @@ import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
 import { errorWithMessage, randomKey } from '../../utils'
+import {
+  GEO_UNIT_ERROR,
+  geoMissingMember,
+  geoStoreWithError,
+} from '../../profile-wording'
 
 const testRunner = new TestRunner()
 
@@ -165,7 +170,7 @@ describe(`Geo Search Commands Integration (${testRunner.getBackendName()})`, () 
             '200',
             'km',
           ),
-        errorWithMessage('ERR could not decode requested zset member'),
+        errorWithMessage(geoMissingMember('NoSuchMember')),
       )
       await assert.rejects(
         () =>
@@ -199,9 +204,7 @@ describe(`Geo Search Commands Integration (${testRunner.getBackendName()})`, () 
             '1',
             'parsec',
           ),
-        errorWithMessage(
-          'ERR unsupported unit provided. please use M, KM, FT, MI',
-        ),
+        errorWithMessage(GEO_UNIT_ERROR),
       )
       await assert.rejects(
         () =>
@@ -380,9 +383,7 @@ describe(`Geo Search Commands Integration (${testRunner.getBackendName()})`, () 
             'km',
             'WITHCOORD',
           ),
-        errorWithMessage(
-          'ERR GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
-        ),
+        errorWithMessage(geoStoreWithError('GEOSEARCHSTORE')),
       )
     } finally {
       await redisClient?.del(key, dest)
@@ -443,9 +444,7 @@ describe(`Geo Search Commands Integration (${testRunner.getBackendName()})`, () 
             dest,
             'WITHCOORD',
           ),
-        errorWithMessage(
-          'ERR STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
-        ),
+        errorWithMessage(geoStoreWithError('GEORADIUS')),
       )
     } finally {
       await redisClient?.del(key, dest)
@@ -485,7 +484,7 @@ describe(`Geo Search Commands Integration (${testRunner.getBackendName()})`, () 
 
       await assert.rejects(
         () => redisClient?.georadiusbymember(key, 'NoSuchMember', '200', 'km'),
-        errorWithMessage('ERR could not decode requested zset member'),
+        errorWithMessage(geoMissingMember('NoSuchMember')),
       )
     } finally {
       await redisClient?.del(key)

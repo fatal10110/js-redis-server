@@ -294,7 +294,7 @@ function formatClientLine(
   if (redis7) {
     fields.push(`ssub=${session.pubsubShardChannelCount}`)
   }
-  fields.push(`multi=${session.queuedCommandCount}`)
+  fields.push(`multi=${session.clientInfoMultiCount}`)
   if (profile.has('client.list.watch')) {
     fields.push(`watch=${session.watchedKeyCount}`)
   }
@@ -627,8 +627,13 @@ function matchesClientKillFilter(
   return true
 }
 
-const HELLO_NOAUTH_MESSAGE =
-  'HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time'
+/** `hello.noauth-proto-wording`: 6.2 and 7.0 leave `<proto>` out. */
+function helloNoAuthMessage(profile: CompatibilityProfile): string {
+  const form = profile.has('hello.noauth-proto-wording')
+    ? 'HELLO <proto> AUTH'
+    : 'HELLO AUTH'
+  return `HELLO must be called with the client already authenticated, otherwise the ${form} <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time`
+}
 
 /**
  * The only user this server knows about. Redis' `requirepass` is the password of
@@ -672,9 +677,11 @@ function authenticateUser(
 
 /**
  * Parse HELLO's option list. AUTH is processed inline (it can unlock the
- * connection), but SETNAME is only collected as `pendingName` — it must not be
- * applied until the caller has cleared the NOAUTH gate, so a HELLO that fails on
- * a password-protected server leaves connection state untouched.
+ * connection). From 7.2 (`hello.setname-after-auth`) SETNAME is only collected
+ * as `pendingName` — it must not be applied until the caller has cleared the
+ * NOAUTH gate, so a HELLO that fails on a password-protected server leaves
+ * connection state untouched. 6.2 and 7.0 set the name inline, in option
+ * order, before that gate (redis@7.0.15:src/networking.c:3491-3493).
  */
 function parseHelloOptions(
   ctx: RedisExecutionContext,
@@ -700,7 +707,11 @@ function parseHelloOptions(
         throw errors.syntax()
       }
 
-      pendingName = args[i + 1]
+      if (ctx.server.profile.has('hello.setname-after-auth')) {
+        pendingName = args[i + 1]
+      } else {
+        setClientName(ctx.session, args[i + 1])
+      }
       i++
       continue
     }
@@ -1146,11 +1157,11 @@ export const helloCommand = defineCommand({
     const { pendingName } = parseHelloOptions(ctx, args.args)
 
     // A password-protected server rejects HELLO unless the client is already
-    // authenticated or authenticates inline via the AUTH option above. The gate
-    // runs before any SETNAME side effect is applied, so a failed HELLO leaves
-    // connection state untouched.
+    // authenticated or authenticates inline via the AUTH option above. From
+    // 7.2 the gate runs before any SETNAME side effect is applied, so a failed
+    // HELLO leaves connection state untouched.
     if (ctx.server.requirepass && !ctx.session.isAuthenticated) {
-      throw new NoAuthError(HELLO_NOAUTH_MESSAGE)
+      throw new NoAuthError(helloNoAuthMessage(ctx.server.profile))
     }
 
     if (pendingName !== undefined) {

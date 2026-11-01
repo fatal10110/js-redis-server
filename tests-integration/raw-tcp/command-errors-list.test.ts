@@ -1,6 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
+import { legacy } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -103,7 +104,10 @@ describe(`Raw TCP list command errors (${testRunner.getBackendName()})`, () => {
       "-ERR wrong number of arguments for 'sort' command\r\n",
     )
     await expectReply(conn, ['SORT', num, 'FOO'], SYNTAX)
-    await expectReply(conn, ['SORT_RO', num, 'STORE', dst], SYNTAX)
+    // SORT_RO arrived in 7.0.
+    if (!legacy) {
+      await expectReply(conn, ['SORT_RO', num, 'STORE', dst], SYNTAX)
+    }
   })
 
   test('SORT BY/GET globs are not cluster-guarded on a standalone server', async () => {
@@ -126,7 +130,7 @@ describe(`Raw TCP list command errors (${testRunner.getBackendName()})`, () => {
     )
 
     const reply = '*4\r\n$3\r\ntwo\r\n$1\r\n2\r\n$3\r\none\r\n$1\r\n1\r\n'
-    for (const command of ['SORT', 'SORT_RO']) {
+    for (const command of legacy ? ['SORT'] : ['SORT', 'SORT_RO']) {
       await expectReply(
         conn,
         [

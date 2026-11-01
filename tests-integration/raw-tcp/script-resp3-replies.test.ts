@@ -3,6 +3,7 @@ import assert from 'node:assert'
 
 import { TestRunner } from '../test-config'
 import { commandFrame } from '../utils'
+import { legacy } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 
 /**
@@ -50,7 +51,9 @@ describe(`Lua RESP3 script replies (${testRunner.getBackendName()})`, () => {
       await evalRaw(
         "redis.setresp(3) return {big_number='123456789012345678901234567890'}",
       ),
-      '(123456789012345678901234567890\r\n',
+      // 6.2 converts the table like any other: an empty array
+      // (`script.big-number-verbatim-returns`).
+      legacy ? '*0\r\n' : '(123456789012345678901234567890\r\n',
     )
   })
 
@@ -59,7 +62,7 @@ describe(`Lua RESP3 script replies (${testRunner.getBackendName()})`, () => {
       await evalRaw(
         "redis.setresp(3) return {verbatim_string={format='txt', string='hello'}}",
       ),
-      '=9\r\ntxt:hello\r\n',
+      legacy ? '*0\r\n' : '=9\r\ntxt:hello\r\n',
     )
   })
 

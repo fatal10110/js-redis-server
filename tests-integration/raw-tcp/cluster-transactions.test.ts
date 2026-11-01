@@ -1,5 +1,5 @@
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import {
@@ -27,7 +27,8 @@ const testRunner = new TestRunner()
 const EXECABORT =
   '-EXECABORT Transaction discarded because of previous errors.\r\n'
 
-describe(`Raw TCP cluster transactions (${testRunner.getBackendName()})`, () => {
+const clusterSuite = `Raw TCP cluster transactions (${testRunner.getBackendName()})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

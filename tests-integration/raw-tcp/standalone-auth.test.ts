@@ -1,7 +1,8 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
 import { STANDALONE_AUTH_PASSWORD, TestRunner } from '../test-config'
-import { commandFrame, randomKey } from '../utils'
+import { activeProfile, commandFrame, randomKey } from '../utils'
+import { isValkey } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -25,8 +26,12 @@ const WRONGPASS =
   '-WRONGPASS invalid username-password pair or user is disabled.\r\n'
 const NOPASS_CONFIGURED =
   '-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n'
-const HELLO_NOAUTH =
-  '-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n'
+// 6.2 and 7.0 leave `<proto>` out (`hello.noauth-proto-wording`).
+const HELLO_NOAUTH = `-NOAUTH HELLO must be called with the client already authenticated, otherwise the ${
+  activeProfile === 'redis-6.2' || activeProfile === 'redis-7.0'
+    ? 'HELLO AUTH'
+    : 'HELLO <proto> AUTH'
+} <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n`
 
 async function helloFlat(
   conn: RawRedisConnection,
@@ -77,7 +82,7 @@ describe(`Raw TCP AUTH with no password configured (${testRunner.getBackendName(
     const conn = await connect()
     const flat = await helloFlat(conn, ['HELLO', '2', 'AUTH', 'default', ''])
     assert.ok(flat.includes('server'))
-    assert.ok(flat.includes('redis'))
+    assert.ok(flat.includes(isValkey ? 'valkey' : 'redis'))
   })
 })
 
@@ -107,7 +112,8 @@ describe(`Raw TCP AUTH enforcement with requirepass (${testRunner.getBackendName
     // Bare HELLO is gated with the HELLO-specific NOAUTH.
     await expectReply(conn, ['HELLO', '2'], HELLO_NOAUTH)
 
-    // A rejected HELLO must not apply its SETNAME side effect.
+    // From 7.2 a rejected HELLO does not apply its SETNAME; 6.2 and 7.0 set
+    // the name while parsing the options, before the NOAUTH check.
     await expectReply(conn, ['HELLO', '2', 'SETNAME', 'leaked'], HELLO_NOAUTH)
 
     // Unlock.
@@ -117,14 +123,19 @@ describe(`Raw TCP AUTH enforcement with requirepass (${testRunner.getBackendName
       '+OK\r\n',
     )
 
-    // The failed SETNAME never stuck (empty/null name, never 'leaked').
     conn.write(commandFrame('CLIENT', 'GETNAME'))
     const name = (await conn.readRawFrame()).toString()
-    assert.ok(!name.includes('leaked'), `name leaked: ${name}`)
-    assert.ok(
-      name === '$-1\r\n' || name === '$0\r\n\r\n',
-      `unexpected name reply: ${name}`,
-    )
+    if (activeProfile === 'redis-6.2' || activeProfile === 'redis-7.0') {
+      assert.strictEqual(name, '$6\r\nleaked\r\n')
+      await expectReply(conn, ['CLIENT', 'SETNAME', ''], '+OK\r\n')
+    } else {
+      // The failed SETNAME never stuck (empty/null name, never 'leaked').
+      assert.ok(!name.includes('leaked'), `name leaked: ${name}`)
+      assert.ok(
+        name === '$-1\r\n' || name === '$0\r\n\r\n',
+        `unexpected name reply: ${name}`,
+      )
+    }
 
     // Previously gated command now succeeds.
     await expectReply(conn, ['GET', MISSING_KEY], '$-1\r\n')

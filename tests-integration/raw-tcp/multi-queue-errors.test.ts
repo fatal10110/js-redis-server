@@ -1,5 +1,5 @@
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, keyInAnotherSlot, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import {
@@ -339,7 +339,7 @@ describe(
 
 describe(
   `Raw TCP MULTI queue-time errors in a cluster (${testRunner.getBackendName()}, ${activeProfile})`,
-  redis80,
+  { skip: redis80.skip || needsCluster.skip },
   () => {
     let ports: number[]
     const connections: RawRedisConnection[] = []

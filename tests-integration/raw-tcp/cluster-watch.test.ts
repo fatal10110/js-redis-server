@@ -1,5 +1,5 @@
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import { connectToRawSlotOwner, expectReply } from './helpers'
@@ -16,7 +16,8 @@ import { connectToRawSlotOwner, expectReply } from './helpers'
  */
 const testRunner = new TestRunner()
 
-describe(`Raw TCP cluster WATCH semantics (${testRunner.getBackendName()})`, () => {
+const clusterSuite = `Raw TCP cluster WATCH semantics (${testRunner.getBackendName()})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

@@ -2,6 +2,7 @@ import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import { TestRunner } from '../test-config'
 import { commandFrame, randomKey } from '../utils'
+import { legacy } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 
 /**
@@ -73,7 +74,11 @@ describe(`Raw TCP protocol errors (${testRunner.getBackendName()})`, () => {
   test('keyed commands with no arguments return a wrong-arity error', async () => {
     const conn = await connect()
 
-    for (const command of ['EXPIRETIME', 'PEXPIRETIME', 'TTL', 'PTTL']) {
+    // EXPIRETIME and PEXPIRETIME arrived in 7.0.
+    const commands = legacy
+      ? ['TTL', 'PTTL']
+      : ['EXPIRETIME', 'PEXPIRETIME', 'TTL', 'PTTL']
+    for (const command of commands) {
       conn.write(commandFrame(command))
       assert.strictEqual(
         (await conn.readRawFrame()).toString(),

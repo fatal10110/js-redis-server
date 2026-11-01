@@ -213,6 +213,24 @@ so the PR body is not a durable home for a breaking-change note.
   answers `ERR unknown type name '<name>'`, checked at that TYPE token, as
   Valkey does ([#642]). Redis profiles keep the empty scan (the check is
   commented out through redis 8.0), the last TYPE winning.
+- On the redis 6.2 profile `ZUNION`, `ZINTER`, `ZDIFF` and their `STORE`
+  forms with a numkeys of 0 or less answer `at least 1 input key is needed
+  for zunionstore`, without the quotes and the `command` suffix 7.0 added
+  ([#522]).
+- On the redis 6.2 and 7.0 profiles, `HELLO` before `AUTH` on a
+  password-protected server says `HELLO AUTH <user> <pass>`, without the
+  `<proto>` argument 7.2 added ([#522]). A `HELLO ... SETNAME <name>` refused
+  that way has already set the name there, as those versions set it while
+  parsing the options; 7.2+ still leaves it unset.
+- The valkey-8.0 and valkey-9.0 profiles answer as valkey-server 8.0.0 and
+  9.0.0 do, not as the later patches the command table was captured from
+  ([#522]): a RESP3 `COMMAND INFO` entry without subcommands ends in an
+  empty set (`~0`; the array arrived in 8.0.10 / 9.0.5), and
+  `COMMAND GETKEYS` / `GETKEYSANDFLAGS` read both GEORADIUS(BYMEMBER) `STORE`
+  and `STOREDIST` key specs (the `variable_flags` arrived in 8.0.11 / 9.0.6).
+  On valkey-9.0 (Valkey 8.1+), a client that ever ran `MULTI` or `WATCH`
+  shows `multi=0` in `CLIENT INFO` / `LIST` once its transaction is over, and
+  an inline request drops every raw `0xFF` byte, as `sdsparsearg` does.
 
 ### Added
 
@@ -321,6 +339,14 @@ so the PR body is not a durable home for a breaking-change note.
   across a reconnect, `multi().select()`, `close()`, and `multi()` on the
   cluster facade. Without `redis`, or on node-redis 4, the facade keeps only
   its hand-written methods.
+- Test and tooling ([#522], [#511]): CI's new `compatibility-real` matrix
+  runs `tests-integration/compatibility/**` and `tests-integration/raw-tcp/**`
+  against a real standalone server of every profile's pinned version (redis
+  6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0; valkey 8.0.0, 9.0.0) with the matching
+  `REDIS_COMPAT` (`npm run test:integration:compatibility:real`). Under
+  `REDIS_STANDALONE_ONLY=1` the cluster rows (`needsCluster`) skip. The raw-tcp
+  suites that pinned the 7.0+ forms now follow the profile, and the GEO error
+  suites run once per profile in `profile-suites-mock`.
 
 ## [0.4.0] - 2026-10-30
 
@@ -2445,6 +2471,8 @@ requests they contain.
 [#202]: https://github.com/fatal10110/js-redis-server/issues/202
 [#664]: https://github.com/fatal10110/js-redis-server/issues/664
 [#521]: https://github.com/fatal10110/js-redis-server/issues/521
+[#511]: https://github.com/fatal10110/js-redis-server/issues/511
+[#522]: https://github.com/fatal10110/js-redis-server/issues/522
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

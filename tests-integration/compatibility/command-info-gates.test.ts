@@ -13,13 +13,14 @@ import { expectReply } from '../raw-tcp/helpers'
  * bulk strings in a set, key specs maps (RESP3 shows the types; RESP2 renders
  * sets as arrays and maps as flat arrays). Redis 6.2's entries have 7 fields
  * and no QUIT; its COMMAND dispatches on the argument count alone and has no
- * LIST. An entry without subcommands ends in an empty set on Redis and an
- * empty array on Valkey.
+ * LIST. An entry without subcommands ends in an empty set; Valkey patch
+ * releases from 8.0.10 / 9.0.5 send an empty array instead, which the
+ * pinned valkey-8.0 / valkey-9.0 profiles (8.0.0 / 9.0.0) do not.
  *
  * Every expectation follows `REDIS_COMPAT`, so the suite also runs against a
  * real server of the matching version (`TEST_BACKEND=real
  * REDIS_STANDALONE_PORT=<port>`). Checked against redis-server 6.2.24,
- * 7.0.15, 7.2.4, 7.4.4, 8.0.6 and valkey 8.0.11 / 9.0.6.
+ * 7.0.15, 7.2.4, 7.4.4, 8.0.0 / 8.0.6 and valkey 8.0.0 / 9.0.0.
  */
 const testRunner = new TestRunner()
 const profile = activeProfile
@@ -100,11 +101,7 @@ function commandEntry(
     e.statusSet(categories),
   ]
   if (!legacy) {
-    fields.push(
-      e.set([]),
-      e.set(specs.map(keySpec)),
-      valkey ? e.array([]) : e.set([]),
-    )
+    fields.push(e.set([]), e.set(specs.map(keySpec)), e.set([]))
   }
   return e.array(fields)
 }

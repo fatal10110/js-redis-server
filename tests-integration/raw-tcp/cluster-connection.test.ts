@@ -1,6 +1,6 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import { connectToRawSlotOwner, expectBulk, expectReply } from './helpers'
@@ -20,7 +20,8 @@ const INVALID_CLIENT_NAME_ERROR =
   '-ERR Client names cannot contain spaces, newlines or special characters.\r\n'
 const NOPROTO = '-NOPROTO unsupported protocol version\r\n'
 
-describe(`Raw TCP cluster connection handshake (${testRunner.getBackendName()})`, () => {
+const clusterSuite = `Raw TCP cluster connection handshake (${testRunner.getBackendName()})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 
