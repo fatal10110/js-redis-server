@@ -10,9 +10,12 @@ import {
 // queues them, instead of rejecting (subscribe) or settling at once (unsubscribe).
 // Each expectation was observed through real node-redis 6.0.0 against Redis 8.0.0,
 // at RESP2 and RESP3, closed by quit() and by destroy(). One exception: real
-// node-redis never settles a bare unsubscribe() / pUnsubscribe() queued while
-// closed when channels / patterns were subscribed before the close; the facade
-// resolves it after connect(), like the forms that name a channel.
+// node-redis never settles a bare unsubscribe() (pUnsubscribe()) while patterns
+// (channels) are still subscribed, open or closed, because it waits for an
+// unsubscribe reply whose count is 0. subscribedThenClosed() subscribes both a
+// channel and a pattern, so the bare-unsubscribe test below hangs on the real
+// client; the facade resolves it after connect(), like the forms that name a
+// channel.
 
 type Close = 'quit' | 'destroy'
 const CLOSES: readonly Close[] = ['quit', 'destroy']

@@ -197,9 +197,9 @@ so the PR body is not a durable home for a breaking-change note.
   used to reject with `ClientClosedError` and `unsubscribe()` to resolve at
   once without unsubscribing. A listener added to a channel that already has
   one still resolves at once, without a command. One difference: node-redis
-  6 never settles a bare `unsubscribe()` / `pUnsubscribe()` queued while
-  closed when channels were subscribed before the close; the facade resolves
-  it after `connect()`.
+  6 never settles a bare `unsubscribe()` (`pUnsubscribe()`) while patterns
+  (channels) are still subscribed, open or closed, because it waits for a
+  reply count of 0; the facade resolves it.
 
 ### Changed
 

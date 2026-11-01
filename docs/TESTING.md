@@ -541,8 +541,9 @@ and the re-open subscribes every channel and pattern that still has one again
 does ([#600](https://github.com/fatal10110/js-redis-server/issues/600)); one
 unsubscribed before the close stays unsubscribed. A pub/sub call made while
 closed runs after that re-subscribe. Real node-redis 6 never settles a bare
-`unsubscribe()` / `pUnsubscribe()` queued while closed when channels were
-subscribed before the close; the facade resolves it after `connect()`.
+`unsubscribe()` (`pUnsubscribe()`) while patterns (channels) are still
+subscribed, on an open client or queued while closed, because it waits for an
+unsubscribe reply whose count is 0; the facade resolves it.
 `connect()` on an open client
 stays a no-op (real node-redis rejects `Socket already opened`).
 
