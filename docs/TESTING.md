@@ -393,11 +393,23 @@ await redis.get('user:1') // 'alice'
 
 node-redis exposes no socket hook, so this can't drive the real client over a
 virtual socket the way `createIoredisMock` does. Instead `createNodeRedisMock()`
-returns a **hand-written facade** that mirrors node-redis' public surface — a
-curated set of camelCase methods with node-redis-correct return types — and
-routes every command through the same in-memory pipeline. Anything not curated
-falls through to the generic `sendCommand()` escape hatch, which decodes replies
-to native JS.
+returns a **facade** that mirrors node-redis' public surface and routes every
+command through the same in-memory pipeline. Its command methods are node-redis'
+own ([#490](https://github.com/fatal10110/js-redis-server/issues/490)): every
+entry of the installed node-redis' (5 or 6) `@redis/client` command map, in both
+spellings (`zScore`, `ZSCORE`), builds its arguments with that command's
+`parseCommand` and shapes the reply with its `transformReply` for the client's
+configured `RESP`, just as `RedisClient` does, so `zScore()` is a number,
+`xRange()` a list of `{ id, message }` and `hScan()` `{ cursor, entries }` at
+either protocol. A few dozen methods stay hand-written (`get`, `set`, `del`,
+`mSet`, `hSet`, `zAdd`, `zRange`, `eval`, pub/sub, `watch`, `multi`, ...), as do
+node-redis' client methods `select()` (it resolves `undefined` and is selected
+again after a reconnect) and `close()`. `sendCommand()` is the generic escape
+hatch, which decodes replies to native JS. With `redis` absent, or on node-redis
+4, only the hand-written methods exist. The generated methods are typed loosely
+(`(...args: any[]) => Promise<any>`); cast the client to `RedisClientType` for
+node-redis' own signatures. `withTypeMapping()`, the scan iterators and sharded
+pub/sub (`sSubscribe`) are not modelled.
 
 ```typescript
 import { createNodeRedisMock } from 'js-redis-server'
@@ -406,6 +418,9 @@ const client = await createNodeRedisMock() // 16 logical DBs by default
 
 await client.set('k', 'v')
 await client.get('k') // 'v'
+await client.zAdd('z', { score: 2.5, value: 'm' })
+await client.zScore('z', 'm') // 2.5, node-redis' own ZSCORE
+await client.multi().zScore('z', 'm').incr('n').exec() // [2.5, 1]
 await client.sendCommand(['HSET', 'h', 'f1', 'a']) // escape hatch
 
 await client.quit() // tears down the in-memory state
@@ -424,7 +439,7 @@ const resp2 = await createNodeRedisMock({ RESP: 2 })
 await resp2.sendCommand(['ZSCORE', 'z', 'm']) // '2.5' (RESP3: 2.5)
 ```
 
-The curated methods take node-redis' argument forms
+The hand-written methods take node-redis' argument forms
 ([#490](https://github.com/fatal10110/js-redis-server/issues/490)) and send the
 argument list node-redis would: an array for the variadic ones (`sAdd(key,
 ['a', 'b'])`, `del`, `exists`, `lPush`, `rPush`, `watch`, `subscribe`,
@@ -544,7 +559,9 @@ of its own keys, where a real client following `MOVED` ends up; a keyless one
 on `firstKey`'s owner), `masters` (`{ id, host, port, address, readonly }`
 nodes, at synthetic ports from 7000 that nothing listens on), `slots` (16384
 `{ master }` shards; node-redis adds `replicas` only with `useReplicas`),
-`isOpen`, and a synchronous `duplicate()`: a second client on the same nodes
+`isOpen`, `close()`, `multi(routing?)` (the transaction runs on the owner of
+`routing`, else of the first queued command's key), and a synchronous
+`duplicate()`: a second client on the same nodes
 and keyspace with its own connection per node, whose close leaves the nodes to
 the client that built them:
 

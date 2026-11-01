@@ -137,7 +137,8 @@ the operating-system network path. It is not a guaranteed drop-in replacement
 for every `ioredis-mock` test or every Redis behavior.
 
 Also available: `createNodeRedisMock()` provides a node-redis-shaped facade
-(not the real node-redis client); `createInMemoryClient()` exposes a
+(not the real node-redis client, but node-redis' own command methods);
+`createInMemoryClient()` exposes a
 client-independent `command()` API with native JavaScript replies and no RESP
 encoding. [Socketless APIs and examples](https://github.com/fatal10110/js-redis-server/blob/main/docs/TESTING.md#experimental-socketless-client-mocks)
 
