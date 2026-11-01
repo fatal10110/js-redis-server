@@ -314,6 +314,22 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // as the first key's slot has no owner. Probed on redis 6.2.14, 7.4.4,
   // 8.0.0 and valkey 8.0.0, 8.1.0, 9.0.0 (#604).
   'cluster.crossslot-before-unserved': { valkey: '9.0.0' },
+  // Inside MULTI, Valkey 9.0 looks the keys of a slot open for resharding up
+  // only when EXEC routes the whole queue ("Multi/Exec validation happens
+  // on exec", cluster.c getNodeByQuery), so a missing key answers ASK or
+  // TRYAGAIN for EXEC itself. Redis and valkey 8.x refuse the command when
+  // it is queued (then EXECABORT). Probed on redis 6.2.14 - 8.0.0 and
+  // valkey 8.0.0, 9.0.0 2-node clusters (#85).
+  'cluster.ask-at-exec': { valkey: '9.0.0' },
+  // A command on a MIGRATING slot that finds some of its keys here and some
+  // not answers TRYAGAIN from redis 7.0.3 (getNodeByQuery's
+  // `existing_keys`, absent from 7.0.2 and 6.2.14); before that any missing
+  // key is ASK. Probed on real 2-node clusters of redis 6.2.14 and 8.0.0 (#85).
+  'cluster.migrating-mixed-keys-tryagain': { redis: '7.0.3', valkey: '7.2.0' },
+  // CLUSTER SETSLOT takes optional arguments after its action from valkey
+  // 8.0 (`clusterParseSetSlotCommand`, TIMEOUT), so `SETSLOT 1 STABLE x` is
+  // +OK there; redis wants the exact argument count. TIMEOUT itself is #652.
+  'cluster.setslot-extra-args-ignored': { valkey: '8.0.0' },
   // SORT BY/GET in cluster mode: compare each pattern's slot against the sort
   // key's slot (`patternHashSlot()`) instead of refusing every pattern, and use
   // the longer "...may be in different slots." wording — Redis 7.4 / Valkey 8.0.
@@ -375,6 +391,13 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
     redis: '7.4.0',
     valkey: '8.0.0',
   },
+  // A script command that finds some of its keys missing in a slot being
+  // resharded (CLUSTER_REDIR_UNSTABLE) answers `Unable to execute command
+  // '<fullname>' in script because undeclared keys were accessed during
+  // rehashing of the slot` from redis 7.4.0 (script.c:487-493) and valkey
+  // 8.0.0 (script.c:444-450); before that it is `... non local key in a
+  // cluster node`, as an ASK is everywhere (source at each tag, #85).
+  'script.cluster-tryagain-wording': { redis: '7.4.0', valkey: '8.0.0' },
   // Valkey 8.0 dropped the product name from the scripting layer's own
   // errors, where Redis (and Valkey 7.2) keep it:
   //   Unknown command called from script              (Unknown Redis command ...)

@@ -19,6 +19,8 @@ export type CommandFlag =
   | 'transaction'
   | 'pubsub'
   | 'subscribed'
+  /** Served on an IMPORTING slot without ASKING (RESTORE-ASKING). */
+  | 'asking'
 
 export type CommandCapabilities = {
   blocking?: boolean

@@ -2211,7 +2211,34 @@ export class NodeRedisMockCluster extends CommandRunner {
     // callers to catch a TypeError. Everything else about the cluster close
     // path follows real node-redis exactly; see the note above quit().
     const session = this.sessionForCommand(args, firstKey)
-    return this.runOnNode(session, () => this.runOnSessionSynced(session, args))
+    let value = await this.runOnNode(session, () =>
+      this.runOnSessionSynced(session, args),
+    )
+    // node-redis' `_execute` follows `-ASK slot host:port` (a key of a slot
+    // being resharded is already on the target): ASKING then the command on
+    // the target node, up to `maxCommandRedirections` (16) times, after
+    // which the last error is the reply. MOVED needs no following here: the
+    // facade routes by the live slot map.
+    for (
+      let redirections = 0;
+      redirections < MAX_COMMAND_REDIRECTIONS && isAskReply(value);
+      redirections++
+    ) {
+      const address = value.message.slice(value.message.lastIndexOf(' ') + 1)
+      const target = this.masterPipelines.find(
+        node => `${node.host}:${node.port}` === address,
+      )
+      if (!target) {
+        throw new Error(`Cannot find node ${address}`)
+      }
+      const targetSession = this.sessionFor(target.id)
+      value = await this.runOnNode(targetSession, async () => {
+        await this.syncProtocol(targetSession)
+        await runOnSession(targetSession, ['ASKING'], this.closed)
+        return this.runOnSessionSynced(targetSession, args)
+      })
+    }
+    return value
   }
 
   private async runOnSessionSynced(
@@ -2524,6 +2551,15 @@ async function runTransactionSpan(
  * queue of a non-pub/sub session, so `sendCommand(['MONITOR'])` resolves `OK`
  * but its feed lines are never surfaced — the facade has no `monitor()`.
  */
+/** node-redis' default `maxCommandRedirections`. */
+const MAX_COMMAND_REDIRECTIONS = 16
+
+function isAskReply(
+  value: RedisValue,
+): value is Extract<RedisValue, { kind: 'error' }> {
+  return value.kind === 'error' && value.code === 'ASK'
+}
+
 async function runOnSession(
   session: ClientSession,
   args: NodeRedisCommandArgument[],

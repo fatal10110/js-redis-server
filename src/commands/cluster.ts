@@ -6,15 +6,22 @@ import {
 } from '../core/command-definition'
 import { t } from '../core/command-schema'
 import { formatHostPort } from '../core/network-address'
-import { errors, WrongNumberOfArgumentsError } from '../core/redis-error'
+import {
+  errors,
+  RedisCommandError,
+  WrongNumberOfArgumentsError,
+} from '../core/redis-error'
 import { RedisResult } from '../core/redis-result'
 import { RedisValue } from '../core/redis-value'
 import {
+  keyHashSlot,
   REDIS_CLUSTER_SLOT_COUNT,
   type RedisClusterNode,
   type RedisClusterTopology,
+  type RedisDatabase,
 } from '../state'
-import { unknownSubcommandError } from './helpers'
+import { parseInt64Token, unknownSubcommandError } from './helpers'
+import { subcommandSyntaxError } from '../core/subcommand-errors'
 import { commandSubcommandInfo } from './introspection'
 
 const clusterSchema = t.object({
@@ -33,6 +40,10 @@ const clusterIntrospection = {
     commandSubcommandInfo('cluster|slots', 2),
     commandSubcommandInfo('cluster|shards', 2),
     commandSubcommandInfo('cluster|myid', 2),
+    commandSubcommandInfo('cluster|keyslot', 3),
+    commandSubcommandInfo('cluster|countkeysinslot', 3),
+    commandSubcommandInfo('cluster|getkeysinslot', 4),
+    commandSubcommandInfo('cluster|setslot', -4),
   ],
 }
 
@@ -70,6 +81,61 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
           return RedisResult.create(
             RedisValue.bulkString(Buffer.from(localNodeId)),
           )
+        case 'keyslot':
+          expectSubcommandArgs(args.rest, 1, args.subcommand, ctx)
+          return RedisResult.create(
+            RedisValue.integer(keyHashSlot(args.rest[0])),
+          )
+        case 'countkeysinslot': {
+          expectSubcommandArgs(args.rest, 1, args.subcommand, ctx)
+          const slot = parseInt64Token(args.rest[0])
+          if (slot < 0n || slot >= BigInt(REDIS_CLUSTER_SLOT_COUNT)) {
+            throw new RedisCommandError('Invalid slot')
+          }
+          return RedisResult.create(
+            RedisValue.integer(
+              keysInSlot(ctx.server.getDatabase(0), Number(slot)).length,
+            ),
+          )
+        }
+        case 'getkeysinslot': {
+          expectSubcommandArgs(args.rest, 2, args.subcommand, ctx)
+          const slot = parseInt64Token(args.rest[0])
+          const count = parseInt64Token(args.rest[1])
+          if (
+            slot < 0n ||
+            slot >= BigInt(REDIS_CLUSTER_SLOT_COUNT) ||
+            count < 0n
+          ) {
+            throw new RedisCommandError('Invalid slot or number of keys')
+          }
+          const keys = keysInSlot(ctx.server.getDatabase(0), Number(slot))
+          return RedisResult.create(
+            RedisValue.array(
+              keys
+                .slice(
+                  0,
+                  count > BigInt(keys.length) ? keys.length : Number(count),
+                )
+                .map(key => RedisValue.bulkString(Buffer.from(key))),
+            ),
+          )
+        }
+        case 'setslot':
+          if (args.rest.length < 2) {
+            throw subcommandSyntaxError(
+              'CLUSTER',
+              args.subcommand,
+              ctx.server.profile,
+            )
+          }
+          return clusterSetSlot(
+            args.rest,
+            topology,
+            localNodeId,
+            ctx.server.getDatabase(0),
+            ctx.server.profile,
+          )
         default:
           throw unknownSubcommandError(
             'CLUSTER',
@@ -84,8 +150,33 @@ export function createClusterCommand(localNodeId: string): CommandDefinition {
 export function createClusterCommands(
   localNodeId: string,
 ): readonly CommandDefinition[] {
-  return [createClusterCommand(localNodeId), readonlyCommand, readwriteCommand]
+  return [
+    createClusterCommand(localNodeId),
+    readonlyCommand,
+    readwriteCommand,
+    askingCommand,
+  ]
 }
+
+/**
+ * ASKING: the client follows an `-ASK` redirect, so its next command may use
+ * a slot this node is importing. The flag lasts one command, or until EXEC
+ * when the client then opens MULTI (see `ClientSession.execute`). A script's
+ * own ASKING changes nothing: Redis copies the caller's flag onto the script
+ * client before every call.
+ */
+export const askingCommand = defineCommand({
+  name: 'asking',
+  schema: t.object({}),
+  flags: ['fast'],
+  keys: () => [],
+  execute: (_args, ctx) => {
+    if (!ctx.inScript) {
+      ctx.session.setClusterAsking(true)
+    }
+    return RedisResult.ok()
+  },
+})
 
 export const readonlyCommand = defineCommand({
   name: 'readonly',
@@ -182,11 +273,137 @@ export const standaloneReadwriteCommand = defineCommand({
   },
 })
 
+/** ASKING on a standalone server: refused, on every version. */
+export const standaloneAskingCommand = defineCommand({
+  name: 'asking',
+  schema: t.object({}),
+  flags: ['fast'],
+  keys: () => [],
+  execute: () => {
+    throw errors.clusterSupportDisabled()
+  },
+})
+
 export const standaloneClusterCommands: readonly CommandDefinition[] = [
   standaloneClusterCommand,
   standaloneReadonlyCommand,
   standaloneReadwriteCommand,
+  standaloneAskingCommand,
 ]
+
+/**
+ * A known subcommand given the wrong number of arguments. From 7.0 the
+ * command table's arity refuses it before CLUSTER runs; 6.2 has no such
+ * lookup and answers its syntax error.
+ */
+function expectSubcommandArgs(
+  rest: readonly Buffer[],
+  count: number,
+  subcommand: Buffer,
+  ctx: { server: { profile: CompatibilityProfile } },
+): void {
+  if (rest.length !== count) {
+    throw subcommandSyntaxError('CLUSTER', subcommand, ctx.server.profile)
+  }
+}
+
+/** The keys of `db` that hash to `slot`, in the database's order. */
+function keysInSlot(db: RedisDatabase, slot: number): Buffer[] {
+  return db.keys().filter(key => keyHashSlot(key) === slot)
+}
+
+/**
+ * CLUSTER SETSLOT `<slot>` MIGRATING|IMPORTING|NODE `<id>` | STABLE
+ * (redis 7.2.4 cluster.c, valkey 8.0.0 `clusterParseSetSlotCommand`). The
+ * open-slot state is this node's own; NODE moves the slot for every node
+ * at once (the mock has no gossip). A master that gives its last slot away
+ * stays a master here, where a real one turns into a replica of the new
+ * owner (`cluster-allow-replica-migration`).
+ */
+function clusterSetSlot(
+  rest: readonly Buffer[],
+  topology: RedisClusterTopology,
+  localNodeId: string,
+  db: RedisDatabase,
+  profile: CompatibilityProfile,
+): RedisResult {
+  if (topology.getNode(localNodeId)?.role !== 'master') {
+    throw new RedisCommandError('Please use SETSLOT only with masters.')
+  }
+
+  const slot = parseSlot(rest[0])
+  const action = asciiLowerCase(rest[1].toString())
+  const argc = rest.length + 2
+  // Valkey 8.0+ parses optional arguments (TIMEOUT) after the action.
+  const fits = (expected: number) =>
+    profile.has('cluster.setslot-extra-args-ignored')
+      ? argc >= expected
+      : argc === expected
+  const owner = topology.getSlotOwner(slot)
+  const lookupMaster = (unknown: string): RedisClusterNode => {
+    const id = rest[2].toString()
+    const node = topology.getNode(id)
+    if (!node) {
+      throw new RedisCommandError(`${unknown} ${id}`)
+    }
+    if (node.role !== 'master') {
+      throw new RedisCommandError('Target node is not a master')
+    }
+    return node
+  }
+
+  if (action === 'migrating' && fits(5)) {
+    if (owner?.id !== localNodeId) {
+      throw new RedisCommandError(`I'm not the owner of hash slot ${slot}`)
+    }
+    const target = lookupMaster("I don't know about node")
+    topology.setMigrating(localNodeId, slot, target.id)
+  } else if (action === 'importing' && fits(5)) {
+    if (owner?.id === localNodeId) {
+      throw new RedisCommandError(`I'm already the owner of hash slot ${slot}`)
+    }
+    const source = lookupMaster("I don't know about node")
+    topology.setImporting(localNodeId, slot, source.id)
+  } else if (action === 'stable' && fits(4)) {
+    topology.setImporting(localNodeId, slot, null)
+    topology.setMigrating(localNodeId, slot, null)
+  } else if (action === 'node' && fits(5)) {
+    const target = lookupMaster('Unknown node')
+    const keyCount = keysInSlot(db, slot).length
+    if (owner?.id === localNodeId && target.id !== localNodeId && keyCount) {
+      throw new RedisCommandError(
+        `Can't assign hashslot ${slot} to a different node while I still hold keys for this hash slot.`,
+      )
+    }
+    if (keyCount === 0) {
+      topology.setMigrating(localNodeId, slot, null)
+    }
+    topology.assignSlot(slot, target.id)
+    if (target.id === localNodeId) {
+      topology.setImporting(localNodeId, slot, null)
+    }
+  } else {
+    throw new RedisCommandError(
+      'Invalid CLUSTER SETSLOT action or number of arguments. Try CLUSTER HELP',
+    )
+  }
+
+  return RedisResult.ok()
+}
+
+/** `getSlotOrReply`: an integer in 0..16383. */
+function parseSlot(token: Buffer): number {
+  let slot: bigint
+  try {
+    slot = parseInt64Token(token)
+  } catch {
+    throw new RedisCommandError('Invalid or out of range slot')
+  }
+  if (slot < 0n || slot >= BigInt(REDIS_CLUSTER_SLOT_COUNT)) {
+    throw new RedisCommandError('Invalid or out of range slot')
+  }
+  return Number(slot)
+}
 
 function expectClusterRestLength(
   rest: readonly Buffer[],
@@ -219,23 +436,28 @@ function nodeEntry(node: RedisClusterNode): RedisValue {
   ])
 }
 
+// One entry per run of slots with one owner, in slot order
+// (`clusterReplyMultiBulkSlots` walks slots 0..16383), so a slot moved by
+// SETSLOT NODE splits its old owner's range around it.
 function clusterSlots(topology: RedisClusterTopology): RedisResult {
-  const slots: RedisValue[] = []
+  const slots: Array<{ min: number; entry: RedisValue }> = []
   for (const master of masters(topology)) {
     const master_ = nodeEntry(master)
     const replicas = replicasOf(topology, master.id).map(nodeEntry)
     for (const [min, max] of master.slots) {
-      slots.push(
-        RedisValue.array([
+      slots.push({
+        min,
+        entry: RedisValue.array([
           RedisValue.integer(min),
           RedisValue.integer(max),
           master_,
           ...replicas,
         ]),
-      )
+      })
     }
   }
-  return RedisResult.create(RedisValue.array(slots))
+  slots.sort((a, b) => a.min - b.min)
+  return RedisResult.create(RedisValue.array(slots.map(slot => slot.entry)))
 }
 
 function clusterShards(topology: RedisClusterTopology): RedisResult {
@@ -309,7 +531,7 @@ function clusterNodes(
       node.role === 'master'
         ? (epochs.get(node.id) ?? 0)
         : (epochs.get(node.masterId ?? '') ?? 0)
-    lines.push(formatNodeLine(node, localNodeId, epoch))
+    lines.push(formatNodeLine(node, localNodeId, epoch, topology))
   }
 
   return RedisResult.create(RedisValue.bulkString(Buffer.from(lines.join(''))))
@@ -319,6 +541,7 @@ function formatNodeLine(
   node: RedisClusterNode,
   localNodeId: string,
   configEpoch: number,
+  topology: RedisClusterTopology,
 ): string {
   const connection = `${formatHostPort(node.host, node.port)}@${node.port + 10000}`
   const myself = node.id === localNodeId ? 'myself,' : ''
@@ -331,7 +554,20 @@ function formatNodeLine(
           .map(([min, max]) => (min === max ? ` ${min}` : ` ${min}-${max}`))
           .join('')
       : ''
-  return `${node.id} ${connection} ${myself}${roleField} ${ping} ${configEpoch} connected${slots}\n`
+  // Only the node's own line shows the slots it has open for resharding,
+  // `[slot->-target]` and `[slot-<-source]` (clusterGenNodeDescription).
+  const openSlots =
+    node.id === localNodeId
+      ? topology
+          .openSlots(localNodeId)
+          .map(({ slot, state, nodeId }) =>
+            state === 'migrating'
+              ? ` [${slot}->-${nodeId}]`
+              : ` [${slot}-<-${nodeId}]`,
+          )
+          .join('')
+      : ''
+  return `${node.id} ${connection} ${myself}${roleField} ${ping} ${configEpoch} connected${slots}${openSlots}\n`
 }
 
 function clusterInfo(

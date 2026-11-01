@@ -19,6 +19,7 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
       { flags: ['RW', 'insert'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
     ],
   },
+  asking: { flags: ['fast'], categories: ['@fast', '@connection'] },
   auth: {
     flags: ['noscript', 'loading', 'stale', 'fast', 'no_auth', 'allow_busy'],
     categories: ['@fast', '@connection'],
@@ -223,16 +224,27 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     categories: ['@admin', '@slow', '@dangerous', '@connection'],
   },
   cluster: { flags: [], categories: ['@slow'] },
+  'cluster|countkeysinslot': { flags: ['stale'], categories: ['@slow'] },
+  'cluster|getkeysinslot': {
+    flags: ['stale'],
+    categories: ['@slow'],
+    tips: ['nondeterministic_output'],
+  },
   'cluster|info': {
     flags: ['stale'],
     categories: ['@slow'],
     tips: ['nondeterministic_output'],
   },
+  'cluster|keyslot': { flags: ['stale'], categories: ['@slow'] },
   'cluster|myid': { flags: ['stale'], categories: ['@slow'] },
   'cluster|nodes': {
     flags: ['stale'],
     categories: ['@slow'],
     tips: ['nondeterministic_output'],
+  },
+  'cluster|setslot': {
+    flags: ['admin', 'stale', 'no_async_loading'],
+    categories: ['@admin', '@slow', '@dangerous'],
   },
   'cluster|shards': {
     flags: ['loading', 'stale'],
@@ -314,14 +326,6 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     categories: ['@keyspace', '@read', '@fast'],
     tips: ['request_policy:all_shards', 'response_policy:agg_sum'],
   },
-  dump: {
-    flags: ['readonly'],
-    categories: ['@keyspace', '@read', '@slow'],
-    tips: ['nondeterministic_output'],
-    keySpecs: [
-      { flags: ['RO', 'access'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
-    ],
-  },
   decr: {
     flags: ['write', 'denyoom', 'fast'],
     categories: ['@write', '@string', '@fast'],
@@ -357,6 +361,14 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
   discard: {
     flags: ['noscript', 'loading', 'stale', 'fast', 'allow_busy'],
     categories: ['@fast', '@transaction'],
+  },
+  dump: {
+    flags: ['readonly'],
+    categories: ['@keyspace', '@read', '@slow'],
+    tips: ['nondeterministic_output'],
+    keySpecs: [
+      { flags: ['RO', 'access'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
+    ],
   },
   echo: {
     flags: ['loading', 'stale', 'fast'],
@@ -1323,6 +1335,13 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
       { flags: ['OW', 'update'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
     ],
   },
+  'restore-asking': {
+    flags: ['write', 'denyoom', 'asking'],
+    categories: ['@keyspace', '@write', '@slow', '@dangerous'],
+    keySpecs: [
+      { flags: ['OW', 'update'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
+    ],
+  },
   rpop: {
     flags: ['write', 'fast'],
     categories: ['@write', '@list', '@fast'],
@@ -2277,6 +2296,7 @@ export const REDIS_62: CommandTableDelta = {
   'acl|dryrun': null,
   'acl|help': null,
   'acl|whoami': null,
+  asking: { categories: ['@keyspace', '@fast'] },
   auth: { flags: ['noscript', 'loading', 'stale', 'fast', 'no_auth'] },
   blmove: { flags: ['write', 'denyoom', 'noscript'] },
   blmpop: null,
@@ -2305,9 +2325,13 @@ export const REDIS_62: CommandTableDelta = {
     flags: ['admin', 'random', 'stale'],
     categories: ['@admin', '@slow', '@dangerous'],
   },
+  'cluster|countkeysinslot': null,
+  'cluster|getkeysinslot': null,
   'cluster|info': null,
+  'cluster|keyslot': null,
   'cluster|myid': null,
   'cluster|nodes': null,
+  'cluster|setslot': null,
   'cluster|shards': null,
   'cluster|slots': null,
   command: { flags: ['random', 'loading', 'stale'] },
@@ -2327,8 +2351,8 @@ export const REDIS_62: CommandTableDelta = {
   'config|resetstat': null,
   'config|rewrite': null,
   'config|set': null,
-  dump: { flags: ['readonly', 'random'] },
   discard: { flags: ['noscript', 'loading', 'stale', 'fast'] },
+  dump: { flags: ['readonly', 'random'] },
   echo: { flags: ['fast'] },
   eval: { flags: ['noscript', 'skip_monitor', 'may_replicate', 'movablekeys'] },
   eval_ro: null,

@@ -96,10 +96,12 @@ export {
 export {
   ExecCommandAbortError,
   NoAuthError,
+  RedisAskError,
   RedisClusterDownError,
   RedisCommandError,
   RedisCrossSlotError,
   RedisMovedError,
+  RedisTryAgainError,
   UnknownRedisCommandError,
   UnknownSubcommandError,
   WrongNumberOfArgumentsError,

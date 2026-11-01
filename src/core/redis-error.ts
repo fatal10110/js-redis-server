@@ -84,6 +84,23 @@ export class RedisMovedError extends RedisCommandError {
   }
 }
 
+/** A key of a MIGRATING slot is not here: ask the target node (`-ASK`). */
+export class RedisAskError extends RedisCommandError {
+  constructor(slot: number, host: string, port: number) {
+    super(`${slot} ${host}:${port}`, 'ASK')
+  }
+}
+
+/**
+ * A multi-key command in a slot being resharded finds some of its keys on
+ * this node and some not (`-TRYAGAIN`).
+ */
+export class RedisTryAgainError extends RedisCommandError {
+  constructor() {
+    super('Multiple keys request during rehashing of slot', 'TRYAGAIN')
+  }
+}
+
 export class RedisClusterDownError extends RedisCommandError {
   constructor() {
     super('Hash slot not served', 'CLUSTERDOWN')
