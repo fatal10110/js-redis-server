@@ -135,8 +135,10 @@ const valkey90: TableSource = {
  * against: redis-server 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.6 (8.0.0 answers
  * the same) and valkey 8.0.11 / 9.0.6. Valkey 7.2 reads Redis 7.2's table.
  * Patch releases do change the table, so recapture from the same versions:
- * 7.4.11 marks the SUBSCRIBE family `denyoom` and GEORADIUS's STORE specs
- * `incomplete`; valkey 8.0.0 lacks the `variable_flags` 8.0.11 has. Some
+ * 7.4.11 marks the SUBSCRIBE family `denyoom` (not modelled); valkey 8.0.0
+ * lacks the `variable_flags` 8.0.11 has. The `incomplete` key specs of XREAD,
+ * XREADGROUP and GEORADIUS(BYMEMBER) that 7.2.16, 7.4.11, 8.2.9 and later
+ * patches add are applied on top of the table by `commandTableEntry`. Some
  * presets are versioned below the patch captured for them and so answer as
  * the captured patch, not as their nominal version: the redis-6.2 preset
  * (6.2.14) reports 6.2.24's `denyoom` on SUBSCRIBE / PSUBSCRIBE, which 6.2.14
@@ -168,5 +170,56 @@ export function commandTableEntry(
 ): CommandTableEntry | undefined {
   // redis62's gate is satisfied by every profile, so a table is always found.
   const source = TABLES.find(table => gateSatisfied(table.gate, profile))
-  return source ? resolved(source).get(name) : undefined
+  const entry = source ? resolved(source).get(name) : undefined
+  const notes = INCOMPLETE_KEY_SPEC_NOTES[name]
+  if (
+    !entry?.keySpecs ||
+    !notes ||
+    !profile.has('command.incomplete-stream-geo-key-specs')
+  ) {
+    return entry
+  }
+
+  let patched = incompleteEntries.get(entry)
+  if (!patched) {
+    patched = {
+      ...entry,
+      keySpecs: entry.keySpecs.map((spec, index) => {
+        const note = notes[index]
+        return note === undefined
+          ? spec
+          : { notes: note, ...spec, flags: [...spec.flags, 'incomplete'] }
+      }),
+    }
+    incompleteEntries.set(entry, patched)
+  }
+  return patched
 }
+
+const GEORADIUS_INCOMPLETE_NOTES = {
+  1: 'Incomplete because duplicate STORE options use last-wins; fall back to georadiusGetKeys',
+  2: 'Incomplete because duplicate STOREDIST options use last-wins; fall back to georadiusGetKeys',
+}
+
+/**
+ * The key specs a patch release marks `incomplete`, by command and spec
+ * index, with the `notes` it adds (feature
+ * `command.incomplete-stream-geo-key-specs`; redis@7.4.11:src/commands/
+ * xread.json, xreadgroup.json, georadius.json, georadiusbymember.json). The
+ * captured tables are of the releases before, so the change is applied on
+ * top of whichever table the profile reads.
+ */
+const INCOMPLETE_KEY_SPEC_NOTES: Readonly<
+  Record<string, Readonly<Record<number, string>>>
+> = {
+  xread: {
+    0: 'Incomplete because a stream key named STREAMS (or options before it) can shift the STREAMS keyword; fall back to xreadGetKeys',
+  },
+  xreadgroup: {
+    0: 'Incomplete because a consumer/group named STREAMS (or options before GROUP) can shift the STREAMS keyword; fall back to xreadGetKeys',
+  },
+  georadius: GEORADIUS_INCOMPLETE_NOTES,
+  georadiusbymember: GEORADIUS_INCOMPLETE_NOTES,
+}
+
+const incompleteEntries = new WeakMap<CommandTableEntry, CommandTableEntry>()

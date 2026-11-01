@@ -106,7 +106,11 @@ need **no construction-time wiring** — they already receive `ctx`, so reading
 export type RedisFlavor = 'redis' | 'valkey'
 
 // minimum version a thing appears in, per flavor; absent flavor = "never present"
-export type VersionGate = { redis?: string; valkey?: string }
+// One minimum, or per-branch minimums for a patch-level backport (#521).
+export type VersionGate = {
+  redis?: string | readonly string[]
+  valkey?: string | readonly string[]
+}
 
 export type FeatureId =
   | 'expire.conditions' // EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT  NX|XX|GT|LT  (parser)
@@ -149,7 +153,10 @@ export function gateSatisfied(
 - `resolveCompatibilityProfile()` with no arg ⇒ newest Redis (**`redis-8.0` / `8.0.0`**) ⇒ identical to today.
 - Named presets map to `{ flavor, version }`; arbitrary versions allowed (`{ flavor:'valkey', version:'9.0.0' }`) so "valkey 9.0" works even though it post-dates real releases.
 - `versionNum` via a `parseVersion()` helper; `has()` is precomputed at resolve time from the gate table.
-- `gateSatisfied(gate, p)` = `gate[p.flavor] !== undefined && p.versionNum >= parseVersion(gate[p.flavor])`.
+- `gateSatisfied(gate, p)`: false when `gate[p.flavor]` is undefined. Otherwise a single minimum
+  is a one-entry list, and with per-branch minimums (`['7.2.16', '7.4.11', '8.2.9']`) the entry of
+  `p`'s `major.minor` branch decides (`p.versionNum >= parseVersion(entry)`); a branch without an
+  entry has it only when it is newer than the last entry (8.4 yes; 7.0 and 8.0 no).
 
 `feature-gates.ts`:
 

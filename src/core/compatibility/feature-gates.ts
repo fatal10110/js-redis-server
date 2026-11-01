@@ -662,4 +662,29 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 1247-1251) and scan for a type no key has: an empty scan. Checked against
   // the same servers as above (#642).
   'scan.type-unknown-error': { valkey: '8.0.0' },
+  // Patch releases mark the key specs of XREAD / XREADGROUP (the STREAMS
+  // keyword) and GEORADIUS / GEORADIUSBYMEMBER (STORE, STOREDIST) `incomplete`
+  // with a `notes` entry (redis@7.4.11:src/commands/xread.json): COMMAND INFO
+  // shows both, and COMMAND GETKEYS falls back to xreadGetKeys /
+  // georadiusGetKeys, so `XREAD STREAMS a b 0` answers `Invalid arguments
+  // specified for command` and the last of repeated STOREs is the
+  // destination (redis@7.4.11:src/db.c:2228-2232). Backported per branch:
+  // 7.2.16, 7.4.11, 8.2.9, 8.4.6, 8.6.6, 8.8.2 and 8.10.0; never to 7.0 or
+  // 8.0 (8.0.6 is the last 8.0). Probed on redis-server 7.2.15 / 7.2.16,
+  // 7.4.10 / 7.4.11, 8.0.5 / 8.0.6, 8.2.8 / 8.2.9 / 8.2.10 and 8.4.5 / 8.4.6;
+  // 8.6 to 8.10 from the tagged source. Valkey 7.2.15 has none (#521).
+  'command.incomplete-stream-geo-key-specs': {
+    redis: ['7.2.16', '7.4.11', '8.2.9', '8.4.6', '8.6.6', '8.8.2', '8.10.0'],
+  },
+  // Valkey patch releases check that a CR in a header line is followed by an
+  // LF, and that a bulk payload is followed by CRLF, refusing with `Protocol
+  // error: invalid CRLF in request` and closing (valkey@7.2.14:src/
+  // networking.c:2311,2372,2431; valkey@9.0.5:src/networking.c:3699,3783,
+  // 3843). Redis and the Valkey x.0.0 releases skip those bytes unread.
+  // Backported per branch: 7.2.14, 8.0.8, 8.1.8, 9.0.5 and 9.1.0. Probed on
+  // valkey-server 7.2.13 / 7.2.14, 8.0.7 / 8.0.10, 8.1.7 / 8.1.8 and
+  // 9.0.4 / 9.0.5; 8.0.8 from the tagged source (#521).
+  'protocol.strict-crlf': {
+    valkey: ['7.2.14', '8.0.8', '8.1.8', '9.0.5', '9.1.0'],
+  },
 }

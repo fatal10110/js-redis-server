@@ -23,8 +23,9 @@ export type { KeyWithFlags }
  * absent adds nothing, nor does a `not_key` one (a shard channel), and a
  * spec that cannot be applied (an `unknown` one, a numkeys that is not a
  * non-negative integer, keys running past the end of the command, a step
- * below 1) makes the whole lookup fail with `null`. This is how
- * `COMMAND GETKEYSANDFLAGS` attributes flags to keys.
+ * below 1) makes the whole lookup fail with `null`, as does an `incomplete`
+ * spec that finds keys. This is how `COMMAND GETKEYSANDFLAGS` attributes
+ * flags to keys.
  */
 export function keysFromKeySpecs(
   specs: readonly CommandKeySpec[],
@@ -56,6 +57,12 @@ export function keysFromKeySpecs(
 
     for (let i = range.first; i <= range.last; i += range.step) {
       keys.push({ key: argv[i], flags: spec.flags })
+    }
+    // An `incomplete` spec that found keys cannot be trusted with them: the
+    // lookup fails, and the caller falls back to the getkeys procedure
+    // (redis@7.4.11:src/db.c:2228-2232).
+    if (spec.flags.includes('incomplete')) {
+      return null
     }
   }
   return keys
@@ -270,8 +277,14 @@ export function xreadGetKeys(argv: readonly Buffer[]): KeyWithFlags[] {
   }
   return argv
     .slice(streamsPos + 1, streamsPos + 1 + num / 2)
-    .map(key => ({ key, flags: [] }))
+    .map(key => ({ key, flags: XREAD_KEY_FLAGS }))
 }
+
+// The flags xreadGetKeys gives each key from the releases whose `incomplete`
+// key spec sends COMMAND GETKEYSANDFLAGS to it (redis@7.2.16:src/db.c:2501).
+// Earlier releases set none, but reach it only after the key spec failed,
+// and then it finds no keys either.
+const XREAD_KEY_FLAGS: readonly string[] = ['RO', 'access']
 
 /**
  * Redis's `georadiusGetKeys` (GEORADIUS and GEORADIUSBYMEMBER): the key, plus
