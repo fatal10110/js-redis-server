@@ -671,6 +671,10 @@ export const errors = Object.freeze({
   dumpPayloadInvalid: () =>
     new RedisCommandError('DUMP payload version or checksum are wrong'),
   badDataFormat: () => new RedisCommandError('Bad data format'),
+  migrateKeysNeedEmptyKey: () =>
+    new RedisCommandError(
+      'When using MIGRATE KEYS option, the key argument must be set to the empty string',
+    ),
   busyStreamGroup: () =>
     new RedisCommandError('Consumer Group name already exists', 'BUSYGROUP'),
   noSuchStreamGroup: (key: Buffer, group: Buffer, commandName?: string) =>

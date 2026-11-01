@@ -426,7 +426,7 @@ function commandKeys(
     keys = keysFromKeySpecs(specs, argv)
   }
   if (!keys && proc) {
-    keys = proc(argv)
+    keys = proc(argv, profile)
   }
   if (!keys && specs.length === 0) {
     keys = parsedKeys(definition, rawArgs, ctx, range, argv)

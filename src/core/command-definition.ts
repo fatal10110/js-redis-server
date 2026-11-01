@@ -186,9 +186,13 @@ export interface CommandDefinition<TArgs = unknown> {
    * most). Consulted to route a command queued inside MULTI whose own parser
    * failed (without one, the legacy first/last/step range `COMMAND INFO`
    * reports is used, as Redis does), and by `COMMAND GETKEYS` /
-   * `GETKEYSANDFLAGS` when the key specs cannot answer.
+   * `GETKEYSANDFLAGS` when the key specs cannot answer. `profile` is for a
+   * proc that changed between versions (MIGRATE's, rewritten in 7.0).
    */
-  rawKeys?(argv: readonly Buffer[]): readonly KeyWithFlags[]
+  rawKeys?(
+    argv: readonly Buffer[],
+    profile: CompatibilityProfile,
+  ): readonly KeyWithFlags[]
   execute(args: TArgs, ctx: RedisExecutionContext): CommandExecutionResult
 }
 

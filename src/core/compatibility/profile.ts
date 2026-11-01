@@ -164,6 +164,7 @@ export type FeatureId =
   | 'client.info-multi-lazy-state'
   | 'protocol.inline-drops-0xff'
   | 'hello.setname-after-auth'
+  | 'migrate.connect-timeout-error'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor
