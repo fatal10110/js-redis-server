@@ -301,6 +301,33 @@ so the PR body is not a durable home for a breaking-change note.
   ([#521]). Redis and the Valkey x.0.0 releases (the presets) still skip
   those bytes unread.
 
+- Slot migration in cluster mode ([#85], [#616]): `CLUSTER SETSLOT slot
+  IMPORTING | MIGRATING | NODE | STABLE`, `CLUSTER KEYSLOT`,
+  `COUNTKEYSINSLOT` and `GETKEYSINSLOT`, `ASKING` and `RESTORE-ASKING`, with
+  the replies of real redis 6.2 - 8.0 and valkey 8.0 / 9.0 2-node clusters.
+  While a slot is open, keyed commands follow `getNodeByQuery`: the
+  MIGRATING source answers `-ASK slot host:port` when none of the keys is
+  there and `-TRYAGAIN Multiple keys request during rehashing of slot` when
+  some are (redis 7.0.3+; any missing key is ASK before), the IMPORTING
+  target serves a client that sent `ASKING` (one command, or until EXEC) or
+  `RESTORE-ASKING` and answers `-MOVED` to the owner otherwise. Inside MULTI
+  the check runs when a command is queued and again over the queue at EXEC;
+  valkey 9.0 runs it only at EXEC, so EXEC itself answers ASK / TRYAGAIN.
+  `CLUSTER NODES` marks open slots on the node's own line (`[3300->-id]`,
+  `[3300-<-id]`), `SETSLOT NODE` moves the slot (`CLUSTER SLOTS` lists runs
+  in slot order), and a script's call that would be ASK or TRYAGAIN is the
+  scripting layer's own error (redis 7.4+ / valkey 8.0+: `Unable to execute
+  command '<name>' in script because undeclared keys were accessed during
+  rehashing of the slot` for TRYAGAIN). A standalone server answers `ASKING`
+  with `This instance has cluster support disabled`. The ioredis cluster mock
+  and the node-redis facade follow `-ASK` as the real clients do (ASKING,
+  then the command, on the target). New `RedisAskError` and
+  `RedisTryAgainError` exports, `CommandFlag` member `asking`, and
+  `FeatureId` members `cluster.ask-at-exec`,
+  `cluster.setslot-extra-args-ignored`,
+  `cluster.migrating-mixed-keys-tryagain` and
+  `script.cluster-tryagain-wording`.
+
 ### Changed
 
 - **BREAKING (`/core`)** `RedisMutationEvent` has a new `propagate` variant
@@ -2473,6 +2500,8 @@ requests they contain.
 [#521]: https://github.com/fatal10110/js-redis-server/issues/521
 [#511]: https://github.com/fatal10110/js-redis-server/issues/511
 [#522]: https://github.com/fatal10110/js-redis-server/issues/522
+[#85]: https://github.com/fatal10110/js-redis-server/issues/85
+[#616]: https://github.com/fatal10110/js-redis-server/issues/616
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

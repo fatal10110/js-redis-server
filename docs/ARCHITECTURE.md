@@ -308,6 +308,8 @@ flowchart TD
     CP -->|"slot owned by this node"| OK2[continue to command]
     CP -->|"slot owned by another master"| MV["throw RedisMovedError<br/>→ -MOVED (slot) (host):(port)"]
     CP -->|"slot unassigned"| DN["throw RedisClusterDownError<br/>→ -CLUSTERDOWN"]
+    CP -->|"slot MIGRATING here,<br/>keys missing"| ASK["throw RedisAskError / RedisTryAgainError<br/>→ -ASK (slot) (host):(port) / -TRYAGAIN"]
+    CP -->|"slot IMPORTING here,<br/>after ASKING"| OK3[continue to command]
 
     style XS fill:#fbb,stroke:#900
     style MV fill:#ffe9a8,stroke:#a70
@@ -328,6 +330,17 @@ routing purposes — a keyed command sent directly to a replica is redirected to
 its master. Inside
 a transaction, the slot of the _first_ keyed command is pinned per-session in a
 `WeakMap` so every subsequent queued command must hash to the same slot.
+
+A slot being resharded (`CLUSTER SETSLOT`) is open on two nodes: each node's
+MIGRATING / IMPORTING state lives in the shared topology, keyed by node id,
+while slot ownership is shared, so `SETSLOT NODE` is seen by every node at
+once. For an open slot the policy follows Redis's `getNodeByQuery`: it looks
+the keys up (`RedisDatabase.peekExists`, which neither expires nor counts)
+and answers `ASK` or `TRYAGAIN` on the source, and serves the target only
+after `ASKING` (`ClientSession.clusterAsking`, cleared after the next
+command unless that leaves the client in MULTI) or for an `asking`-flagged
+command (RESTORE-ASKING). EXEC routes its whole queue again before running
+it; the queued commands themselves are not routed a second time.
 
 A client's command is always planned the way MULTI queues one
 (`CommandExecutor.planForQueue` from `executeRaw`): Redis's `processCommand`

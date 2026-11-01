@@ -1,6 +1,7 @@
 import { asciiUpperCase } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
-import { t } from '../core/command-schema'
+import { t, type InferSchema } from '../core/command-schema'
+import type { RedisExecutionContext } from '../core/redis-context'
 import { errors } from '../core/redis-error'
 import {
   createDumpPayload,
@@ -80,19 +81,21 @@ const restoreOptionsSchema = t.custom<RestoreOptions>((input, index) => {
   return { value: { replace, absttl }, nextIndex: input.length }
 })
 
-export const restoreCommand = defineCommand({
-  name: 'restore',
-  schema: t.object({
-    key: t.key(),
-    // Parsed in execute: an existing key answers BUSYKEY before the TTL is
-    // looked at.
-    ttl: t.bulk(),
-    payload: t.bulk(),
-    options: restoreOptionsSchema,
-  }),
-  flags: ['write', 'denyoom'],
-  keys: args => [args.key],
-  execute: (args, ctx) => {
+const restoreSchema = t.object({
+  key: t.key(),
+  // Parsed in execute: an existing key answers BUSYKEY before the TTL is
+  // looked at.
+  ttl: t.bulk(),
+  payload: t.bulk(),
+  options: restoreOptionsSchema,
+})
+
+type RestoreArgs = InferSchema<typeof restoreSchema>
+
+const restoreSpec = {
+  schema: restoreSchema,
+  keys: (args: RestoreArgs) => [args.key],
+  execute: (args: RestoreArgs, ctx: RedisExecutionContext) => {
     const { key, options } = args
     if (!options.replace && ctx.db.getType(key) !== null) {
       throw errors.busyKey()
@@ -135,6 +138,28 @@ export const restoreCommand = defineCommand({
     ctx.db.set(key, value, { expiresAt, announceNew: true })
     return ok()
   },
+}
+
+export const restoreCommand = defineCommand({
+  ...restoreSpec,
+  name: 'restore',
+  flags: ['write', 'denyoom'],
 })
 
-export const dumpRestoreCommands = [dumpCommand, restoreCommand]
+/**
+ * RESTORE-ASKING: RESTORE with the `asking` flag, which a cluster node
+ * importing the key's slot serves without a preceding ASKING (redis-cli
+ * `--cluster` and MIGRATE send it to the target). Everything else is
+ * RESTORE's.
+ */
+export const restoreAskingCommand = defineCommand({
+  ...restoreSpec,
+  name: 'restore-asking',
+  flags: ['write', 'denyoom', 'asking'],
+})
+
+export const dumpRestoreCommands = [
+  dumpCommand,
+  restoreCommand,
+  restoreAskingCommand,
+]

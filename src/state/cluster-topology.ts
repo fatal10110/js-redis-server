@@ -66,6 +66,15 @@ export function keyHashSlot(key: Buffer): number {
 }
 
 export class RedisClusterTopology {
+  /**
+   * Each node's own `migrating_slots_to` / `importing_slots_from`: real
+   * nodes keep these per node, and only the node a `CLUSTER SETSLOT`
+   * reaches changes its own. Slot ownership itself is shared, so a
+   * `SETSLOT NODE` is seen by every node at once (gossip made instant).
+   */
+  private readonly migratingSlots = new Map<string, Map<number, string>>()
+  private readonly importingSlots = new Map<string, Map<number, string>>()
+
   constructor(public readonly nodes: readonly RedisClusterNode[] = []) {
     validateTopology(nodes)
   }
@@ -132,6 +141,70 @@ export class RedisClusterTopology {
     return node && node.role === 'master' ? nodeOwnsSlot(node, slot) : false
   }
 
+  /** The node `nodeId` migrates `slot` to, if it has the slot MIGRATING. */
+  migratingTarget(nodeId: string, slot: number): RedisClusterNode | undefined {
+    const target = this.migratingSlots.get(nodeId)?.get(slot)
+    return target === undefined ? undefined : this.getNode(target)
+  }
+
+  /** The node `nodeId` imports `slot` from, if it has the slot IMPORTING. */
+  importingSource(nodeId: string, slot: number): RedisClusterNode | undefined {
+    const source = this.importingSlots.get(nodeId)?.get(slot)
+    return source === undefined ? undefined : this.getNode(source)
+  }
+
+  /** Open (`otherId`) or close (`null`) a MIGRATING slot on `nodeId`. */
+  setMigrating(nodeId: string, slot: number, otherId: string | null): void {
+    setOpenSlot(this.migratingSlots, nodeId, slot, otherId)
+  }
+
+  /** Open (`otherId`) or close (`null`) an IMPORTING slot on `nodeId`. */
+  setImporting(nodeId: string, slot: number, otherId: string | null): void {
+    setOpenSlot(this.importingSlots, nodeId, slot, otherId)
+  }
+
+  /**
+   * The slots `nodeId` has open, by ascending slot; a slot both MIGRATING
+   * and IMPORTING lists MIGRATING first, as CLUSTER NODES prints them.
+   */
+  openSlots(nodeId: string): RedisClusterOpenSlot[] {
+    const open: RedisClusterOpenSlot[] = []
+    for (const [slot, other] of this.migratingSlots.get(nodeId) ?? []) {
+      open.push({ slot, state: 'migrating', nodeId: other })
+    }
+    for (const [slot, other] of this.importingSlots.get(nodeId) ?? []) {
+      open.push({ slot, state: 'importing', nodeId: other })
+    }
+    return open.sort(
+      (a, b) =>
+        a.slot - b.slot ||
+        (a.state === b.state ? 0 : a.state === 'migrating' ? -1 : 1),
+    )
+  }
+
+  /**
+   * `CLUSTER SETSLOT <slot> NODE <id>`'s `clusterDelSlot` + `clusterAddSlot`:
+   * the slot leaves its current owner's ranges and joins the master
+   * `nodeId`'s. Ranges are edited in place, so a replica that shares its
+   * master's `slots` array follows.
+   */
+  assignSlot(slot: number, nodeId: string): void {
+    const target = this.getNode(nodeId)
+    if (!target || target.role !== 'master') {
+      throw new Error(`Cannot assign slot ${slot} to ${nodeId}`)
+    }
+    for (const node of this.nodes) {
+      if (node.role === 'master' && node !== target) {
+        if (nodeOwnsSlot(node, slot)) {
+          replaceRanges(node.slots, removeSlot(node.slots, slot))
+        }
+      }
+    }
+    if (!nodeOwnsSlot(target, slot)) {
+      replaceRanges(target.slots, addSlot(target.slots, slot))
+    }
+  }
+
   /**
    * Returns whether a node may serve a readonly command for the slot after the
    * client enabled Redis Cluster READONLY mode. Masters may serve their own
@@ -156,6 +229,14 @@ export class RedisClusterTopology {
       ? nodeOwnsSlot(master, slot)
       : false
   }
+}
+
+/** A slot this node has open for resharding (`CLUSTER SETSLOT`). */
+export type RedisClusterOpenSlot = {
+  slot: number
+  /** `migrating`: keys move out to `nodeId`; `importing`: in from it. */
+  state: 'migrating' | 'importing'
+  nodeId: string
 }
 
 function validateTopology(nodes: readonly RedisClusterNode[]): void {
@@ -194,4 +275,65 @@ function nodeOwnsSlot(node: RedisClusterNode, slot: number): boolean {
   }
 
   return false
+}
+
+function setOpenSlot(
+  table: Map<string, Map<number, string>>,
+  nodeId: string,
+  slot: number,
+  otherId: string | null,
+): void {
+  let slots = table.get(nodeId)
+  if (otherId === null) {
+    slots?.delete(slot)
+    return
+  }
+  if (!slots) {
+    slots = new Map()
+    table.set(nodeId, slots)
+  }
+  slots.set(slot, otherId)
+}
+
+function replaceRanges(
+  ranges: Array<[number, number]>,
+  next: Array<[number, number]>,
+): void {
+  ranges.splice(0, ranges.length, ...next)
+}
+
+function removeSlot(
+  ranges: readonly [number, number][],
+  slot: number,
+): Array<[number, number]> {
+  const next: Array<[number, number]> = []
+  for (const [min, max] of ranges) {
+    if (slot < min || slot > max) {
+      next.push([min, max])
+      continue
+    }
+    if (min < slot) next.push([min, slot - 1])
+    if (slot < max) next.push([slot + 1, max])
+  }
+  return next
+}
+
+/** The ranges plus `slot`, sorted, with touching ranges merged. */
+function addSlot(
+  ranges: readonly [number, number][],
+  slot: number,
+): Array<[number, number]> {
+  const sorted = [...ranges, [slot, slot] as [number, number]].sort(
+    (a, b) => a[0] - b[0],
+  )
+  const next: Array<[number, number]> = []
+  for (const [min, max] of sorted) {
+    const last = next[next.length - 1]
+    if (last && min <= last[1] + 1) {
+      last[1] = Math.max(last[1], max)
+    } else {
+      next.push([min, max])
+    }
+  }
+  return next
 }

@@ -1,12 +1,14 @@
 import type { ExecutionPolicy } from './index'
 import {
+  RedisAskError,
   RedisClusterDownError,
   RedisCommandError,
   RedisCrossSlotError,
   RedisMovedError,
+  RedisTryAgainError,
 } from '../redis-error'
 import type { RedisClientSession, ScriptSlotPin } from '../redis-context'
-import type { RedisClusterTopology } from '../../state'
+import type { RedisClusterTopology, RedisDatabase } from '../../state'
 
 export type ClusterPolicyOptions = {
   localNodeId: string
@@ -16,10 +18,29 @@ export type ClusterPolicyOptions = {
 /** The queue of a transaction touches more than one slot. */
 const CROSS_SLOT = -1
 
+const PUBSUB_SHARD_COMMANDS = new Set([
+  'spublish',
+  'ssubscribe',
+  'sunsubscribe',
+])
+
+/** What EXEC routes the whole queue by, as `getNodeByQuery` does for EXEC. */
+type QueuedRouting = {
+  keys: Buffer[]
+  /**
+   * A queued command is a write (`mstate.cmd_flags & CMD_WRITE`): a READONLY
+   * replica then redirects EXEC to its master.
+   */
+  write: boolean
+  /** A queued command is a shard pub/sub command: its channels are not keys. */
+  pubsubShard: boolean
+}
+
 export function createClusterPolicy(
   options: ClusterPolicyOptions,
 ): ExecutionPolicy {
   const transactionSlots = new WeakMap<RedisClientSession, number>()
+  const transactionKeys = new WeakMap<RedisClientSession, QueuedRouting>()
   let localNodeChecked = false
 
   return {
@@ -73,6 +94,7 @@ export function createClusterPolicy(
         ctx.session.mode !== 'transaction'
       ) {
         transactionSlots.delete(ctx.session)
+        transactionKeys.delete(ctx.session)
       }
 
       if (
@@ -80,7 +102,9 @@ export function createClusterPolicy(
         ctx.session.mode === 'transaction'
       ) {
         const queuedSlot = transactionSlots.get(ctx.session)
+        const queued = transactionKeys.get(ctx.session)
         transactionSlots.delete(ctx.session)
+        transactionKeys.delete(ctx.session)
         // EXEC's own cluster check runs over the whole queue, before EXEC
         // looks at the dirty flag: commands in different slots answer a bare
         // CROSSSLOT and discard the transaction (and its WATCHes). Valkey
@@ -97,17 +121,73 @@ export function createClusterPolicy(
           ctx.session.discardTransaction()
           throw new RedisCrossSlotError()
         }
+
+        // EXEC routes the queue as one command (getNodeByQuery treats EXEC
+        // as its queue), whatever the slot's state: a slot that moved since
+        // its commands were queued answers MOVED, and keys of a resharded
+        // slot that went missing answer ASK or TRYAGAIN, for EXEC itself,
+        // which discards the transaction. Valkey 9.0 counts the keys only
+        // here. Only the client's ASKING counts: EXEC's own flags are the
+        // command flags getNodeByQuery sees, so a queued RESTORE-ASKING does
+        // not make it asking (redis 7.2.4 cluster.c:7419).
+        if (
+          plan.definition.name === 'exec' &&
+          queued &&
+          queuedSlot !== undefined &&
+          queuedSlot !== CROSS_SLOT &&
+          !(
+            ctx.session.isTransactionDirty() &&
+            ctx.server.profile.has('transaction.refusal-empties-queue')
+          )
+        ) {
+          try {
+            validateClusterSlot(topology, options.localNodeId, queued.keys, {
+              db: ctx.db,
+              asking: ctx.session.clusterAsking,
+              migration: 'keys',
+              pubsubShard: queued.pubsubShard,
+              mixedKeysTryAgain: ctx.server.profile.has(
+                'cluster.migrating-mixed-keys-tryagain',
+              ),
+              allowReplicaRead: ctx.session.clusterReadOnly && !queued.write,
+            })
+          } catch (err) {
+            ctx.session.discardTransaction()
+            throw err
+          }
+        }
       }
 
       // Redirection is decided here, before a command runs. SORT's BY/GET
       // cluster guard runs later, inside SORT's own option scan (#417), so a
       // stale slot map still gets a MOVED it can follow rather than a terminal
       // "denied in Cluster mode".
+      //
+      // A slot open for resharding is decided by which of the keys this node
+      // still holds (ASK, TRYAGAIN, or served after ASKING). A command EXEC
+      // replays was decided with the whole queue when EXEC started, as Redis
+      // runs queued commands without routing them again; a script's own
+      // calls are still checked. Valkey 9.0 looks the keys up only at EXEC.
+      const replay = ctx.transactionReplay === true && ctx.inScript !== true
       const slot = validateClusterSlot(
         topology,
         options.localNodeId,
         plan.keys,
         {
+          db: ctx.db,
+          asking:
+            ctx.session.clusterAsking ||
+            plan.definition.flags.includes('asking'),
+          migration: replay
+            ? 'serve'
+            : queueing && ctx.server.profile.has('cluster.ask-at-exec')
+              ? 'defer'
+              : 'keys',
+          isMigrate: plan.definition.name === 'migrate',
+          pubsubShard: PUBSUB_SHARD_COMMANDS.has(plan.definition.name),
+          mixedKeysTryAgain: ctx.server.profile.has(
+            'cluster.migrating-mixed-keys-tryagain',
+          ),
           allowReplicaRead:
             ctx.session.clusterReadOnly &&
             plan.definition.flags.includes('readonly'),
@@ -155,6 +235,15 @@ export function createClusterPolicy(
       } else if (queuedSlot !== slot) {
         transactionSlots.set(ctx.session, CROSS_SLOT)
       }
+
+      let queued = transactionKeys.get(ctx.session)
+      if (!queued) {
+        queued = { keys: [], write: false, pubsubShard: false }
+        transactionKeys.set(ctx.session, queued)
+      }
+      queued.keys.push(...plan.keys)
+      queued.write ||= plan.definition.flags.includes('write')
+      queued.pubsubShard ||= PUBSUB_SHARD_COMMANDS.has(plan.definition.name)
     },
   }
 }
@@ -176,11 +265,36 @@ function pinScriptSlot(pin: ScriptSlotPin, slot: number): void {
   }
 }
 
+type SlotRouting = {
+  /** The database the keys of a resharded slot are looked up in. */
+  db: RedisDatabase
+  /** The client sent ASKING, or the command is flagged `asking`. */
+  asking: boolean
+  /**
+   * How a slot open for resharding is decided: `keys` looks the keys up
+   * (getNodeByQuery), `defer` leaves that to EXEC (valkey 9.0 queueing),
+   * `serve` runs the command here (EXEC replaying its queue).
+   */
+  migration: 'keys' | 'defer' | 'serve'
+  /** MIGRATE always runs on a node with the slot open. */
+  isMigrate?: boolean
+  /** Shard channels are not keys: they are never looked up. */
+  pubsubShard?: boolean
+  /** Present and missing keys of a MIGRATING slot are TRYAGAIN (7.0.3+). */
+  mixedKeysTryAgain: boolean
+  allowReplicaRead?: boolean
+  crossSlotFirst?: boolean
+}
+
+/**
+ * Redis's `getNodeByQuery` (redis 7.2.4 cluster.c, valkey 9.0.0 cluster.c):
+ * the slot the keys route to on this node, or the redirection or refusal.
+ */
 function validateClusterSlot(
   topology: RedisClusterTopology,
   localNodeId: string,
   keys: readonly Buffer[],
-  options: { allowReplicaRead?: boolean; crossSlotFirst?: boolean } = {},
+  options: SlotRouting,
 ): number | null {
   if (keys.length === 0) {
     return null
@@ -199,7 +313,70 @@ function validateClusterSlot(
     throw new RedisCrossSlotError()
   }
 
-  if (topology.nodeOwnsSlot(localNodeId, slot)) {
+  const owner = topology.getSlotOwner(slot)
+  if (!owner) {
+    throw new RedisClusterDownError()
+  }
+
+  // A slot this node owns and migrates out, or one it imports from its
+  // owner. Its keys decide: the source keeps serving the keys it still
+  // holds and ASKs for the others, the target serves a client that sent
+  // ASKING (or RESTORE-ASKING); a mix of present and missing keys is
+  // TRYAGAIN, the client retries once the move is done.
+  const migratingTo =
+    owner.id === localNodeId
+      ? topology.migratingTarget(localNodeId, slot)
+      : undefined
+  const importing =
+    !migratingTo && topology.importingSource(localNodeId, slot) !== undefined
+  if ((migratingTo || importing) && options.migration !== 'keys') {
+    if (
+      options.migration === 'serve' ||
+      migratingTo ||
+      options.asking ||
+      options.isMigrate
+    ) {
+      return slot
+    }
+  } else if (migratingTo || importing) {
+    if (options.isMigrate) {
+      return slot
+    }
+
+    let missing = 0
+    let existing = 0
+    let multipleKeys = false
+    const now = Date.now()
+    for (const key of keys) {
+      if (importing && !multipleKeys && !key.equals(keys[0])) {
+        multipleKeys = true
+      }
+      if (options.pubsubShard) {
+        continue
+      }
+      if (options.db.peekExists(key, now)) {
+        existing++
+      } else {
+        missing++
+      }
+    }
+
+    if (migratingTo && missing > 0) {
+      if (existing > 0 && options.mixedKeysTryAgain) {
+        throw new RedisTryAgainError()
+      }
+      throw new RedisAskError(slot, migratingTo.host, migratingTo.port)
+    }
+
+    if (importing && options.asking) {
+      if (multipleKeys && missing > 0) {
+        throw new RedisTryAgainError()
+      }
+      return slot
+    }
+  }
+
+  if (owner.id === localNodeId) {
     return slot
   }
 
@@ -208,11 +385,6 @@ function validateClusterSlot(
     topology.nodeCanServeReadonlySlot(localNodeId, slot)
   ) {
     return slot
-  }
-
-  const owner = topology.getSlotOwner(slot)
-  if (!owner) {
-    throw new RedisClusterDownError()
   }
 
   throw new RedisMovedError(slot, owner.host, owner.port)

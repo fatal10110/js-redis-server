@@ -583,6 +583,30 @@ export class RedisDatabase {
     }
   }
 
+  /**
+   * Whether `key` holds a value that has not expired, looked up the way
+   * cluster routing does (`LOOKUP_NOTOUCH | LOOKUP_NOSTATS |
+   * LOOKUP_NONOTIFY | LOOKUP_NOEXPIRE`): an expired key counts as missing
+   * but is left in place, and nothing is announced or counted.
+   */
+  peekExists(key: Buffer, now = Date.now()): boolean {
+    const entry = this.entries.get(keyId(key))
+    return (
+      entry !== undefined &&
+      (entry.expiresAt === undefined || entry.expiresAt > now)
+    )
+  }
+
+  /** Every key, after an active-expiry sweep, in insertion order. */
+  keys(): Buffer[] {
+    this.sweepExpired()
+    const keys: Buffer[] = []
+    for (const entry of this.entries.values()) {
+      keys.push(entry.key)
+    }
+    return keys
+  }
+
   entriesSnapshot(): KeyspaceEntry[] {
     this.sweepExpired()
     const entries: KeyspaceEntry[] = []

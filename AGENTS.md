@@ -277,6 +277,7 @@ When implementing commands that operate on keys:
 3. If the keys span ≥2 slots, it throws `RedisCrossSlotError` (`-CROSSSLOT`)
 4. If the slot is owned by another master, it throws `RedisMovedError` (`-MOVED (slot) (host):(port)`); if the slot is unassigned, `RedisClusterDownError` (`-CLUSTERDOWN`)
 5. Replicas never "own" a slot for routing — a keyed command sent directly to a replica is redirected to its master
+6. A slot open for resharding (`CLUSTER SETSLOT ... MIGRATING|IMPORTING`, per node in `RedisClusterTopology`) is decided by which keys the node holds: `RedisAskError` (`-ASK`) / `RedisTryAgainError` (`-TRYAGAIN`) on the source, served after `ASKING` (or for an `asking`-flagged command) on the target
 
 ## grepai - Semantic Code Search
 
