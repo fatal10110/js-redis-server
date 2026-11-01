@@ -222,6 +222,16 @@ so the PR body is not a durable home for a breaking-change note.
   refuses it at queue time); the `proto-max-bulk-len` note says reads
   (`GETBIT`, `BITFIELD GET` / `BITFIELD_RO`) are not capped; the cluster init
   script is described as waiting on `INFO cluster`, not `PING`.
+- The node-redis facade (`createNodeRedisMock`) has node-redis' own command
+  methods ([#490]): every command of the installed node-redis 5 or 6
+  (`@redis/client`'s command map: `mGet`, `hDel`, `xAdd`, `xRead`, `blPop`,
+  `bzmPop`, `geoSearch`, `configGet`, `info`, ...), on the client, the
+  cluster (routed by the command's first key) and inside `multi()`, with
+  node-redis' argument parsing and its `transformReply` for the configured
+  `RESP`, so replies have real node-redis' shapes. Also `select()`, kept
+  across a reconnect, `multi().select()`, `close()`, and `multi()` on the
+  cluster facade. Without `redis`, or on node-redis 4, the facade keeps only
+  its hand-written methods.
 
 ## [0.4.0] - 2026-10-30
 
