@@ -450,6 +450,11 @@ true, GET: true })`, `expire(key, seconds, 'NX')`, `zAdd(key, members, { XX,
 GT, CH })` and weighted `zUnionStore(dest, [{ key, weight }], { AGGREGATE })`.
 `unsubscribe(channel, listener)` removes just that listener, and unsubscribes
 the channel only once it has none left.
+Like node-redis, `mSet()` does not stringify numbers: a number key or value
+rejects with the encoder's `"arguments[N]" must be of type "string | Buffer",
+got number instead.` (`set()` and `hSet()` values do accept numbers). Inside
+`multi()`, such a command is left out, the rest and EXEC still run, and
+`exec()` rejects with that `TypeError`.
 
 `zRange()` and `zRangeWithScores()` take node-redis' `{ BY, REV, LIMIT }`
 options and send them the way node-redis does, so `zRange(key, 5, 2, { BY:
@@ -467,6 +472,7 @@ The **single client's** close path follows real node-redis v6:
 | `'end'` | emitted exactly **once** per close |
 | `'error'` | never emitted by a clean close |
 | any call on a closed client | throws `ClientClosedError` (`'The client is closed'`) — a rejection from `quit()`, but **synchronous** from `destroy()` *and* `disconnect()` |
+| pub/sub call on a closed client | `subscribe()` / `pSubscribe()` / `unsubscribe()` / `pUnsubscribe()` do **not** throw: they wait for the next `connect()` and run after the re-subscribe, as node-redis queues them; never re-opened, they stay pending (without holding the event loop). A listener added to an already-subscribed channel resolves at once |
 
 That last row matters for teardown code: because a redundant `disconnect()`
 throws before any promise exists, `client.disconnect().catch(...)` does **not**
@@ -533,7 +539,11 @@ listeners survive the close, whether `quit()`, `destroy()` or `disconnect()`,
 and the re-open subscribes every channel and pattern that still has one again
 (one `SUBSCRIBE`, one `PSUBSCRIBE`) before `'ready'`, as node-redis' reconnect
 does ([#600](https://github.com/fatal10110/js-redis-server/issues/600)); one
-unsubscribed before the close stays unsubscribed. `connect()` on an open client
+unsubscribed before the close stays unsubscribed. A pub/sub call made while
+closed runs after that re-subscribe. Real node-redis 6 never settles a bare
+`unsubscribe()` / `pUnsubscribe()` queued while closed when channels were
+subscribed before the close; the facade resolves it after `connect()`.
+`connect()` on an open client
 stays a no-op (real node-redis rejects `Socket already opened`).
 
 The **cluster** client closes on node-redis' own, quite different, cluster
