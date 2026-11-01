@@ -39,6 +39,7 @@ const blockingInvocations: ReadonlyArray<{
   { name: 'blpop', args: buf('blpop', 'nokey', '5') },
   { name: 'brpop', args: buf('brpop', 'nokey', '5') },
   { name: 'blmove', args: buf('blmove', 'src', 'dst', 'LEFT', 'RIGHT', '5') },
+  { name: 'brpoplpush', args: buf('brpoplpush', 'nokey', 'dst', '5') },
   { name: 'blmpop', args: buf('blmpop', '5', '1', 'nokey', 'LEFT') },
   { name: 'bzmpop', args: buf('bzmpop', '5', '1', 'nokey', 'MIN') },
   {

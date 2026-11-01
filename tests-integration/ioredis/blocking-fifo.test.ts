@@ -83,6 +83,12 @@ const cases: FifoCase[] = [
     expected: (_key, i) => `v${i}`,
   },
   {
+    name: 'BRPOPLPUSH',
+    block: (c, key) => c.brpoplpush(key, `${key}:dst`, 5),
+    feed: (c, key, i) => c.rpush(key, `v${i}`),
+    expected: (_key, i) => `v${i}`,
+  },
+  {
     name: 'BZPOPMIN',
     block: (c, key) => c.bzpopmin(key, '5'),
     feed: (c, key, i) => c.zadd(key, i, `m${i}`),
