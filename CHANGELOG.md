@@ -200,6 +200,10 @@ so the PR body is not a durable home for a breaking-change note.
   6 never settles a bare `unsubscribe()` (`pUnsubscribe()`) while patterns
   (channels) are still subscribed, open or closed, because it waits for a
   reply count of 0; the facade resolves it.
+- `GETRANGE` / `SUBSTR` with both indexes negative and start past end (`-1
+  -100`) answer an empty string before the indexes are resolved, as every
+  Redis and Valkey version does ([#650]); they used to clamp the range and
+  return the first byte. A missing key and WRONGTYPE still answer first.
 - `GEOPOS` answers a member it cannot find, and every member of a missing key,
   with a null array (`*-1`) at RESP2, as real Redis and Valkey do on every
   profile ([#635]); it used to send a null bulk string (`$-1`). RESP3 still
@@ -224,6 +228,17 @@ so the PR body is not a durable home for a breaking-change note.
   `proto-max-bulk-len` answers the transient-memory error. `COMMAND INFO` /
   `DOCS` / `GETKEYS` report each version's entry. `CommandDefinition` takes an
   optional `until` gate for a command a later version removed.
+- `DELIFEQ key value` on valkey 9.0 ([#645]), an unknown command on every
+  other profile: deletes a string key whose value equals `value` byte for byte
+  (an integer value compares by its string form) and answers `1`, else `0`;
+  WRONGTYPE for another type. A delete dirties `WATCH`, reaches replicas and
+  publishes `del`; a miss does neither. `COMMAND INFO` / `DOCS` / `GETKEYS`
+  report valkey 9.0's entry.
+- `BITCOUNT key start` (no end, which defaults to the last byte) on valkey
+  8.0+ ([#643]); redis keeps the syntax error. Valkey 8.0+ also reads the
+  `BYTE|BIT` unit before the end, so `BITCOUNT s 0 BIT x` is a syntax error
+  there, and on redis 6.2 (no unit) any four-argument form is a syntax error
+  before the indexes are read.
 - `ZSCAN key cursor ... NOSCORES` on Valkey 8.0+ profiles returns members
   without their scores ([#642]); the option may repeat and mixes with `MATCH`
   / `COUNT`. `SCAN`, `SSCAN` and `HSCAN` answer `NOSCORES option can only be
@@ -2383,6 +2398,9 @@ requests they contain.
 [#461]: https://github.com/fatal10110/js-redis-server/issues/461
 [#609]: https://github.com/fatal10110/js-redis-server/issues/609
 [#206]: https://github.com/fatal10110/js-redis-server/issues/206
+[#650]: https://github.com/fatal10110/js-redis-server/issues/650
+[#645]: https://github.com/fatal10110/js-redis-server/issues/645
+[#643]: https://github.com/fatal10110/js-redis-server/issues/643
 [#635]: https://github.com/fatal10110/js-redis-server/issues/635
 [#642]: https://github.com/fatal10110/js-redis-server/issues/642
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD

@@ -328,6 +328,35 @@ export const getdelCommand = defineCommand({
   },
 })
 
+export const delifeqCommand = defineCommand({
+  name: 'delifeq',
+  since: { valkey: '9.0.0' },
+  schema: t.object({ key: t.key(), value: t.bulk() }),
+  flags: ['write', 'fast'],
+  introspection: {
+    docs: commandDocs(
+      'Delete key if value matches string.',
+      'string',
+      [
+        { ...commandKeyArgument('key', 0), displayText: 'key' },
+        { name: 'value', type: 'string', displayText: 'value' },
+      ],
+      { since: '9.0.0', complexity: 'O(1)' },
+    ),
+  },
+  keys: args => [args.key],
+  // Valkey 9.0 t_string.c delifeqCommand: the delete is a plain one, so it
+  // signals the key (WATCH), replicates and announces `del` like DEL.
+  execute: (args, ctx) => {
+    const existing = ensureStringOrMissing(ctx.db, args.key)
+    if (existing === null || !existing.equals(args.value)) {
+      return integer(0)
+    }
+    ctx.db.delete(args.key)
+    return integer(1)
+  },
+})
+
 export const setnxCommand = defineCommand({
   name: 'setnx',
   schema: t.object({ key: t.key(), value: t.bulk() }),
@@ -438,6 +467,13 @@ export const getrangeCommand = defineCommand({
       return bulk(Buffer.alloc(0))
     }
 
+    // Both ends negative with start past end is empty before any index is
+    // resolved, so clamping cannot turn `-1 -100` into the first byte
+    // (t_string.c getrangeCommand, every version).
+    if (args.start < 0n && args.end < 0n && args.start > args.end) {
+      return bulk(Buffer.alloc(0))
+    }
+
     const length = BigInt(existing.length)
     let startIdx = args.start < 0n ? length + args.start : args.start
     let endIdx = args.end < 0n ? length + args.end : args.end
@@ -543,6 +579,7 @@ export const stringsCommands = [
   incrbyfloatCommand,
   getsetCommand,
   getdelCommand,
+  delifeqCommand,
   setnxCommand,
   setexCommand,
   psetexCommand,

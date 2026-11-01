@@ -120,6 +120,7 @@ const SAMPLES: Record<string, string[]> = {
   msetnx: ['k1', 'v1', 'k2', 'v2'],
   getrange: ['k1', '0', '1'],
   lcs: ['k1', 'k2'],
+  delifeq: ['k1', 'v'],
   substr: ['k1', '0', '1'],
   setrange: ['k1', '0', 'v'],
   getex: ['k1', 'EX', '10'],

@@ -273,7 +273,8 @@ export const getbitCommand = defineCommand({
 
 // --- BITCOUNT --------------------------------------------------------------
 
-type BitRange = { start: number; end: number; bit: boolean }
+// `end` is absent for Valkey 8's `BITCOUNT key start`: the last byte.
+type BitRange = { start: number; end?: number; bit: boolean }
 type BitCountArgs = { key: Buffer; range?: BitRange }
 
 export const bitcountCommand = defineCommand({
@@ -289,12 +290,31 @@ export const bitcountCommand = defineCommand({
       if (extra === 0) {
         return { value: { key }, nextIndex: input.length }
       }
+      const valkeyOrder = ctx.profile.has('bitcount.start-only')
+      if (extra === 1 && valkeyOrder) {
+        const start = parseRangeIndex(input[index + 1]!)
+        return {
+          value: { key, range: { start, bit: false } },
+          nextIndex: input.length,
+        }
+      }
       if (extra !== 2 && extra !== 3) {
         throw errors.syntax()
       }
+      // Without BYTE|BIT (Redis 6.2) a fourth argument is a syntax error
+      // before either index is read.
+      if (extra === 3 && !ctx.profile.has('bit.byte-bit-range')) {
+        throw errors.syntax()
+      }
       const start = parseRangeIndex(input[index + 1]!)
+      // Valkey 8 reads the unit before the end; Redis reads the end first.
+      let bit = valkeyOrder
+        ? parseRangeUnit(input[index + 3], extra === 3, ctx)
+        : false
       const end = parseRangeIndex(input[index + 2]!)
-      const bit = parseRangeUnit(input[index + 3], extra === 3, ctx)
+      if (!valkeyOrder) {
+        bit = parseRangeUnit(input[index + 3], extra === 3, ctx)
+      }
       return {
         value: { key, range: { start, end, bit } },
         nextIndex: input.length,
@@ -312,9 +332,9 @@ export const bitcountCommand = defineCommand({
       return integer(countBits(existing, 0, existing.length * 8 - 1))
     }
 
-    const { start, end, bit } = args.range
+    const { start, bit } = args.range
     const size = bit ? existing.length * 8 : existing.length
-    const resolved = resolveRange(start, end, size)
+    const resolved = resolveRange(start, args.range.end ?? size - 1, size)
     if (!resolved) {
       return integer(0)
     }
