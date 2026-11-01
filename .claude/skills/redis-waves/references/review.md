@@ -27,7 +27,8 @@ everything the issues ask, without breaking anything else". Every finding carrie
    `git checkout <base> -- <changed src files>`, run the test (it must fail), then
    `git checkout <head> -- <same files>`. Never use `git stash` (the stash is shared by every
    worktree). Run each new integration file against real servers of the profiles it covers
-   (`probe.py up` + `TEST_BACKEND=real REDIS_COMPAT=... REDIS_STANDALONE_PORT=...`). Expectations
+   (`probe.py up` + `TEST_BACKEND=real REDIS_COMPAT=... REDIS_STANDALONE_PORT=...`; remove any
+   one-off container you start with the `probe.py down` line it prints). Expectations
    that encode mock behavior rather than probed real behavior are a [blocker]. Check the tier
    (typed client method > raw-tcp > `.call`), key isolation (`randomKey()`), and that fixed
    entries left `socketless/known-gaps.ts`.

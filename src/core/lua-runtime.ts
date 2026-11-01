@@ -429,18 +429,34 @@ export function getLuaWasmLoadOptions(): LoadOptions {
   return luaWasmLoadOptions
 }
 
+/** Longest delay a timer accepts; this one only has to exist, never fire. */
+const KEEP_ALIVE_MS = 0x7fffffff
+
 export async function createRedisLuaRuntime(
   profile?: CompatibilityProfile,
 ): Promise<RedisLuaRuntime> {
-  const module = await load({
-    ...luaWasmLoadOptions,
-    ...(profile ? toLuaCompat(profile) : {}),
-    redisProps: {
-      ...luaRedisProps(profile),
-      ...luaWasmLoadOptions.redisProps,
-    },
-  })
-  return new RedisLuaRuntime(module)
+  // load() awaits WebAssembly compilation and instantiation, which V8 runs on
+  // its worker threads and which hold nothing in the event loop. A caller with
+  // no socket open (the in-memory client, the client mocks) then empties the
+  // loop, and Node drains its platform tasks with a blocking wait. When a
+  // concurrent Maglev compile is at that moment waiting for the main thread to
+  // run a GC, both sides wait forever (nodejs/node#54918; seen on Node 22.6,
+  // #541 and #454). A referenced timer keeps the loop alive, so Node keeps
+  // polling instead of entering that drain until the engine has loaded.
+  const keepAlive = setTimeout(() => {}, KEEP_ALIVE_MS)
+  try {
+    const module = await load({
+      ...luaWasmLoadOptions,
+      ...(profile ? toLuaCompat(profile) : {}),
+      redisProps: {
+        ...luaRedisProps(profile),
+        ...luaWasmLoadOptions.redisProps,
+      },
+    })
+    return new RedisLuaRuntime(module)
+  } finally {
+    clearTimeout(keepAlive)
+  }
 }
 
 /**

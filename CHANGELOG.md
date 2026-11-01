@@ -158,6 +158,13 @@ so the PR body is not a durable home for a breaking-change note.
   cluster node` with no error code. `redis.call` aborts the script with it and
   `redis.pcall` returns it, as for the other script cluster errors. New
   `FeatureId` member `script.cluster-crossslot-command-wording`.
+- The first EVAL on an in-memory client or client mock no longer stalls the
+  process for good on Node 22 ([#541], [#454]). Loading the Lua engine
+  waits on WebAssembly compilation, which holds nothing in the event loop;
+  with no socket open the loop emptied and Node's blocking platform-task
+  drain could deadlock with a concurrent optimizing compile waiting for a
+  GC (nodejs/node#54918). The engine load now keeps a referenced timer
+  until it settles.
 
 ### Changed
 
@@ -178,6 +185,15 @@ so the PR body is not a durable home for a breaking-change note.
   `MOVED`); a keyless one runs on `firstKey`'s owner. Replace
   `cluster.sendCommand(['GET', 'k'])` with
   `cluster.sendCommand(undefined, false, ['GET', 'k'])`.
+- Docs ([#459], [#609], [#461]): the in-process transport's three TCP-fidelity
+  gaps (event order when the client ends first, a bounded `Duplex` that can
+  stay parked, the experimental `readable.iterator({ destroyOnReturn })`) are
+  documented as known limits in `docs/ARCHITECTURE.md` and `docs/API.md`;
+  `CLIENT REPLY SKIP` / `OFF` inside `MULTI` is documented in `docs/COMMANDS.md`
+  as a divergence (real servers send a malformed `EXEC` reply, valkey 9.0
+  refuses it at queue time); the `proto-max-bulk-len` note says reads
+  (`GETBIT`, `BITFIELD GET` / `BITFIELD_RO`) are not capped; the cluster init
+  script is described as waiting on `INFO cluster`, not `PING`.
 
 ## [0.4.0] - 2026-10-30
 
@@ -319,7 +335,9 @@ so the PR body is not a durable home for a breaking-change note.
   half-closes as described above. One limit: the client's EOF is only seen
   while the read loop is reading. A bounded stream whose loop is blocked
   writing an ordinary reply to a client that stopped reading stays parked
-  until the stream closes. Neither shipped path hits this.
+  until the stream closes. This also happens over TCP, for a client that
+  half-closes without reading, and for a bounded Duplex a consumer passes to
+  `SocketConnectionTransport` ([#459]).
 
   ioredis and node-redis always read, so none of this changes what they see.
 
@@ -2285,7 +2303,12 @@ requests they contain.
 [#490]: https://github.com/fatal10110/js-redis-server/issues/490
 [#619]: https://github.com/fatal10110/js-redis-server/issues/619
 [#624]: https://github.com/fatal10110/js-redis-server/issues/624
+[#454]: https://github.com/fatal10110/js-redis-server/issues/454
+[#541]: https://github.com/fatal10110/js-redis-server/issues/541
 [#618]: https://github.com/fatal10110/js-redis-server/issues/618
+[#459]: https://github.com/fatal10110/js-redis-server/issues/459
+[#461]: https://github.com/fatal10110/js-redis-server/issues/461
+[#609]: https://github.com/fatal10110/js-redis-server/issues/609
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

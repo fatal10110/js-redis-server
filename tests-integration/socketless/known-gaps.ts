@@ -698,9 +698,8 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   skip('node-redis/string/bitmap.test.ts', SKIP.directConnectionInBefore),
   todo(
     'node-redis/string/core.test.ts',
-    missing('append', 'getSet', 'mGet', 'mSetNX', 'strLen'),
+    missing('getSet', 'mGet', 'mSetNX', 'strLen'),
     [
-      'APPEND command',
       'GETSET command',
       'MGET command',
       'MGET cross-slot error',
@@ -741,7 +740,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'node-redis/string/proto-max-bulk-len.test.ts',
     missing('append', 'configGet', 'configSet', 'getRange', 'setRange'),
     [
-      'APPEND on a missing key is not size-checked',
       'CONFIG GET reports the default proto-max-bulk-len',
       'CONFIG SET accepts every Redis memory-unit suffix',
       'CONFIG SET rejects a proto-max-bulk-len below the 1MB minimum',
