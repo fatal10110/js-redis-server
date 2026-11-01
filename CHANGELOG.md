@@ -24,6 +24,8 @@ so the PR body is not a durable home for a breaking-change note.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-01
+
 ### Fixed
 
 - `CLUSTER INFO` prints the line set of the profile's version ([#604]): no
@@ -2540,6 +2542,7 @@ requests they contain.
 [#252]: https://github.com/fatal10110/js-redis-server/issues/252
 [#85]: https://github.com/fatal10110/js-redis-server/issues/85
 [#616]: https://github.com/fatal10110/js-redis-server/issues/616
-[unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
