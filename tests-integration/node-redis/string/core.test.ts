@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
 import {
+  clusterAppend,
   connectToNodeRedisSlotOwner,
   errorWithMessage,
   randomKey,
@@ -26,10 +27,18 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
   })
 
   test('APPEND command', async () => {
-    const append1 = await redisClient.append(`appendkey:${RUN}`, 'hello')
+    const append1 = await clusterAppend(
+      redisClient,
+      `appendkey:${RUN}`,
+      'hello',
+    )
     assert.strictEqual(append1, 5)
 
-    const append2 = await redisClient.append(`appendkey:${RUN}`, ' world')
+    const append2 = await clusterAppend(
+      redisClient,
+      `appendkey:${RUN}`,
+      ' world',
+    )
     assert.strictEqual(append2, 11)
 
     const value = await redisClient.get(`appendkey:${RUN}`)
@@ -172,7 +181,7 @@ describe(`String Commands Integration (node-redis, ${testRunner.getBackendName()
     assert.strictEqual(sessions1, 1)
 
     // Add login timestamp
-    await redisClient.append(`{user1001:${RUN}}name`, ' (Online)')
+    await clusterAppend(redisClient, `{user1001:${RUN}}name`, ' (Online)')
     const nameWithStatus = await redisClient.get(`{user1001:${RUN}}name`)
     assert.strictEqual(nameWithStatus, 'Alice (Online)')
 

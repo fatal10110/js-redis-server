@@ -133,6 +133,13 @@ so the PR body is not a durable home for a breaking-change note.
   cluster node` with no error code. `redis.call` aborts the script with it and
   `redis.pcall` returns it, as for the other script cluster errors. New
   `FeatureId` member `script.cluster-crossslot-command-wording`.
+- The first EVAL on an in-memory client or client mock no longer stalls the
+  process for good on Node 22 ([#541], [#454]). Loading the Lua engine
+  waits on WebAssembly compilation, which holds nothing in the event loop;
+  with no socket open the loop emptied and Node's blocking platform-task
+  drain could deadlock with a concurrent optimizing compile waiting for a
+  GC (nodejs/node#54918). The engine load now keeps a referenced timer
+  until it settles.
 
 ### Changed
 
@@ -2262,6 +2269,8 @@ requests they contain.
 [#613]: https://github.com/fatal10110/js-redis-server/issues/613
 [#619]: https://github.com/fatal10110/js-redis-server/issues/619
 [#624]: https://github.com/fatal10110/js-redis-server/issues/624
+[#454]: https://github.com/fatal10110/js-redis-server/issues/454
+[#541]: https://github.com/fatal10110/js-redis-server/issues/541
 [#618]: https://github.com/fatal10110/js-redis-server/issues/618
 [#459]: https://github.com/fatal10110/js-redis-server/issues/459
 [#461]: https://github.com/fatal10110/js-redis-server/issues/461

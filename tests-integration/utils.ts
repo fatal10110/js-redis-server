@@ -455,3 +455,25 @@ export function scriptCallRejection(script: string, message: string): string {
     ? `ERR Error running script (call to f_${sha}): @user_script:1: @user_script: 1: ${message}`
     : `${message} script: ${sha}, on @user_script:1.`
 }
+
+/**
+ * APPEND through a node-redis cluster, routed by its key.
+ *
+ * node-redis 6.0's typed `append()` never registers its key (its parser uses
+ * `push` where every other keyed command uses `pushKey`; @redis/client 6.1.0
+ * fixed it), so the cluster client sends APPEND to a random master. Each MOVED
+ * makes it rediscover, which re-randomizes the pick, so with three masters a
+ * call gives up after 16 redirections about once in a thousand (#621). Naming
+ * the key sends it to the slot owner on the first try, on every backend.
+ */
+export async function clusterAppend(
+  cluster: RedisClusterType,
+  key: string,
+  value: string,
+): Promise<number> {
+  return (await cluster.sendCommand(key, false, [
+    'APPEND',
+    key,
+    value,
+  ])) as number
+}
