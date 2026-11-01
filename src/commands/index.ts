@@ -34,6 +34,7 @@ import { scriptsCommands } from './scripts'
 import { setsCommands } from './sets'
 import { streamsCommands } from './streams'
 import { stringsCommands } from './strings'
+import { lcsCommands } from './lcs'
 import { transactionCommands } from './transactions'
 import { zsetsCommands } from './zsets'
 
@@ -44,6 +45,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...transactionCommands,
   ...monitorCommands,
   ...stringsCommands,
+  ...lcsCommands,
   ...bitmapsCommands,
   ...hyperloglogCommands,
   ...keysCommands,
@@ -115,8 +117,10 @@ function filterCompatibleCommands(
 ): CommandDefinition[] {
   return definitions.filter(
     definition =>
-      definition.since === undefined ||
-      gateSatisfied(definition.since, profile),
+      (definition.since === undefined ||
+        gateSatisfied(definition.since, profile)) &&
+      (definition.until === undefined ||
+        !gateSatisfied(definition.until, profile)),
   )
 }
 

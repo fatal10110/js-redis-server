@@ -747,6 +747,10 @@ function formatDocsArgument(arg: CommandDocumentationArgument): RedisValue {
     [bulkString('type'), bulkString(arg.type)],
   ]
 
+  if (arg.displayText !== undefined) {
+    entries.push([bulkString('display_text'), bulkString(arg.displayText)])
+  }
+
   if (arg.keySpecIndex !== undefined) {
     entries.push([
       bulkString('key_spec_index'),
