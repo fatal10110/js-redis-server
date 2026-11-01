@@ -71,6 +71,7 @@ const INLINE_MAX_SIZE = 64 * 1024
 const CR = 0x0d
 const LF = 0x0a
 const NUL = 0x00
+const INVALID_CRLF = 'Protocol error: invalid CRLF in request'
 
 const EMPTY = Buffer.alloc(0)
 
@@ -139,6 +140,8 @@ export class Resp2CommandDecoder {
   private readonly maxMultibulkCount: bigint
   private readonly headerScanPastNul: boolean
   private readonly inlineAdjacentQuotes: boolean
+  /** Whether the byte after a header CR and a bulk's terminator are checked. */
+  private readonly strictCrlf: boolean
   private readonly authRequired: () => boolean
   /**
    * Set once a protocol error is raised. A RESP stream cannot be resynchronised
@@ -158,6 +161,7 @@ export class Resp2CommandDecoder {
       options.profile?.has('protocol.header-scan-past-nul') === true
     this.inlineAdjacentQuotes =
       options.profile?.has('protocol.inline-adjacent-quotes') === true
+    this.strictCrlf = options.profile?.has('protocol.strict-crlf') === true
     this.authRequired = options.authRequired ?? (() => false)
   }
 
@@ -274,6 +278,7 @@ export class Resp2CommandDecoder {
       }
       return 'incomplete'
     }
+    this.checkHeaderLf(lineEnd)
 
     // Redis bounds the element count as well as each bulk, but only from above:
     // `ll <= 0` (including `*-5`) is skipped like `*0`, never an error. The
@@ -292,7 +297,8 @@ export class Resp2CommandDecoder {
     }
 
     // The byte after the CR is skipped without being looked at, exactly as
-    // Redis does (`qb_pos = newline - querybuf + 2`): `*1\rX` reads as `*1\r\n`.
+    // Redis does (`qb_pos = newline - querybuf + 2`): `*1\rX` reads as `*1\r\n`
+    // (unless `strictCrlf`, see `checkHeaderLf`).
     this.advanceTo(lineEnd + 2)
     if (count <= 0n) {
       return 'skip'
@@ -327,6 +333,7 @@ export class Resp2CommandDecoder {
         if (prefix !== 0x24) {
           throw unexpectedBulkPrefix(prefix)
         }
+        this.checkHeaderLf(lineEnd)
 
         // Redis' primary `proto-max-bulk-len` enforcement point: the header is
         // judged before a single byte of the payload is read, so an oversized
@@ -354,14 +361,11 @@ export class Resp2CommandDecoder {
       // Redis reads exactly `length` bytes and then skips two *without looking
       // at them*: a wrong terminator is not a protocol error, so
       // `*1\r\n$3\r\nfooXX` dispatches `foo`. Verified on redis 6.2.24,
-      // 7.0.15, 7.2.4 and 8.0, and valkey 8.0.0 / 9.0.0.
-      //
-      // Known Valkey divergence, not modelled: Valkey patch releases on every
-      // current line (7.2.14, 8.0.11, 9.0.6) do check the terminator and refuse
-      // with `Protocol error: invalid CRLF in request`, then close. Only the
-      // `x.0.0` releases skip it, and a `VersionGate` has one minimum per flavor,
-      // so it cannot express a check backported across branches. The Valkey
-      // presets are 8.0.0 and 9.0.0, which match this path.
+      // 7.0.15, 7.2.4 and 8.0, and valkey 8.0.0 / 9.0.0. Valkey patch releases
+      // (`protocol.strict-crlf`: 7.2.14, 8.0.8, 8.1.8, 9.0.5, 9.1.0) check
+      // them once the whole bulk is buffered and refuse a wrong pair with
+      // `Protocol error: invalid CRLF in request` (valkey@9.0.5:src/
+      // networking.c:3842-3846), for the reserved large-bulk buffer too.
       if (this.end - this.start < pending.bulkLength + 2) {
         // A large bulk gets a buffer of exactly its own size, starting at the
         // payload (Redis' `sdsMakeRoomForNonGreedy`), instead of doubling.
@@ -374,13 +378,20 @@ export class Resp2CommandDecoder {
         return null
       }
 
+      const valueStart = this.start
+      const valueEnd = valueStart + pending.bulkLength
+      if (
+        this.strictCrlf &&
+        (this.storage[valueEnd] !== CR || this.storage[valueEnd + 1] !== LF)
+      ) {
+        throw new Resp2ParseError(INVALID_CRLF)
+      }
+
       if (this.holdsBulkReservation()) {
         this.takeReservedBulk(pending)
         continue
       }
 
-      const valueStart = this.start
-      const valueEnd = valueStart + pending.bulkLength
       pending.items.push(
         Buffer.from(this.storage.subarray(valueStart, valueEnd)),
       )
@@ -452,6 +463,17 @@ export class Resp2CommandDecoder {
       return -1
     }
     return cr
+  }
+
+  /**
+   * Valkey patch releases (`protocol.strict-crlf`) refuse a header line whose
+   * CR is not followed by an LF (valkey@9.0.5:src/networking.c:3698-3701,
+   * 3782-3785); Redis and Valkey x.0.0 skip that byte unread.
+   */
+  private checkHeaderLf(lineEnd: number): void {
+    if (this.strictCrlf && this.storage[lineEnd + 1] !== LF) {
+      throw new Resp2ParseError(INVALID_CRLF)
+    }
   }
 
   /**

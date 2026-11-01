@@ -124,6 +124,21 @@ Supported presets are `redis-6.2`, `redis-7.0`, `redis-7.2`, `redis-7.4`,
 Profiles gate implemented commands, subcommands, options, and known behavioral
 differences. Unsupported commands are still unsupported regardless of profile.
 
+A `{ flavor, version }` object instead of a preset pins any release, down to
+the patch: `{ flavor: 'valkey', version: '9.0.5' }`. The presets are pinned
+to the versions above, so behavior that only later patch releases have (the
+rows marked "patch" below) needs a custom version.
+
+Each gate is a `VersionGate` (exported, with `gateSatisfied` and
+`FEATURE_GATES`) naming, per flavor, the first version that has the behavior:
+`{ redis: '7.0.0', valkey: '7.2.0' }` means Redis 7.0.0 and later, and Valkey
+7.2.0 and later. A change backported to patch releases lists one minimum per
+`major.minor` branch: `{ redis: ['7.2.16', '7.4.11', '8.2.9'] }` is met by
+7.2.16+ on 7.2, 7.4.11+ on 7.4 and 8.2.9+ on 8.2, by every version of a branch
+newer than the last entry (8.4.0 and later), and by no version of an older
+branch that is not listed (7.0.x, 8.0.x). A flavor the gate does not name
+never has the behavior.
+
 Valkey profiles model the Redis 7.0-era gates as enabled:
 
 | Profile | Redis 7.0 command/subcommand/option gates | Valkey-only modeled gate |
@@ -144,6 +159,7 @@ Current profile gates:
 | `'+'` in XREAD's `Unbalanced` error (`an ID, '+', or '$' must be specified`; 7.4 accepts `+` but does not list it) | `redis-8.0+` | never |
 | `COMMAND DOCS` summaries in the 7.2 wording (`A container for stream introspection commands.`, with the period) | `redis-7.2+` | `valkey-8.0+` |
 | `COMMAND INFO` flags, ACL categories, tips and key specs: the real command table of the profile's version (captured from redis-server 6.2.24, 7.0.15, 7.2.4, 7.4.4, 8.0.6 and valkey 8.0.11 / 9.0.6; Valkey 7.2 reads Redis 7.2's), for example `variable_flags` on the `GEORADIUS` `STORE` / `STOREDIST` key specs. A preset versioned below its captured patch answers as that patch: `redis-6.2` (6.2.14) reports 6.2.24's `denyoom` on `SUBSCRIBE` / `PSUBSCRIBE`, which 6.2.14 lacks | per version | per version |
+| `incomplete` key specs, with `notes`, on `XREAD` / `XREADGROUP` (STREAMS) and `GEORADIUS` / `GEORADIUSBYMEMBER` (`STORE`, `STOREDIST`) in `COMMAND INFO`; `COMMAND GETKEYS` / `GETKEYSANDFLAGS` then use the getkeys procedure, so `XREAD STREAMS a b 0` answers `Invalid arguments specified for command` and the last of repeated `STORE` / `STOREDIST` options names the destination | patch: 7.2.16+, 7.4.11+, 8.2.9+, 8.4.6+, 8.6.6+, 8.8.2+, 8.10+ (never 7.0 or 8.0) | never |
 | `CLIENT KILL MAXAGE` | `redis-7.4+` | `valkey-8.0+` |
 | `CLIENT KILL ID` `client-id should be greater than 0` (6.2: any integer, `ID 0` is no filter) | `redis-7.0+` | all |
 | `CLIENT KILL TYPE primary` | never | `valkey-8.0+` |
@@ -182,6 +198,7 @@ Current profile gates:
 | Consumer group lag tracking: `XGROUP CREATE` / `SETID` `ENTRIESREAD`, `entries-read` / `lag` in `XINFO GROUPS` and `XINFO STREAM FULL`, and `max-deleted-entry-id` / `entries-added` / `recorded-first-entry-id` in `XINFO STREAM` (6.2's `XGROUP CREATE` takes exactly `MKSTREAM`, checked before the key, and `SETID` no option) | `redis-7.0+` | `valkey-8.0+` |
 | Consumer active time: `inactive` in `XINFO CONSUMERS`, and `XREADGROUP` / `XCLAIM` / `XAUTOCLAIM` creating the consumer before looking for anything to deliver or claim (6.2 / 7.0 create it only once something is, or on any `XREADGROUP` history read) | `redis-7.2+` | `valkey-8.0+` |
 | `BITCOUNT`/`BITPOS` `BYTE`\|`BIT` range modifier | `redis-7.0+` | `valkey-8.0+` |
+| `Protocol error: invalid CRLF in request` (then the connection closes) for a header-line CR not followed by LF, or a bulk not followed by CRLF (Redis and Valkey x.0.0 skip those bytes unread: `*1\r\n$4\r\nPINGXX` runs `PING`) | never | patch: 7.2.14+, 8.0.8+, 8.1.8+, 9.0.5+, 9.1+ |
 | RESP multibulk element count bounded at `INT_MAX` (6.2 refuses more than `1024*1024` with `Protocol error: invalid multibulk length`) | `redis-7.0+` | `valkey-8.0+` |
 | Unknown-subcommand error wording for every container command (`unknown subcommand '<name>'. Try <CMD> HELP.` with the echoed name cut at 128 bytes, vs. 6.2's untruncated `Unknown subcommand or wrong number of arguments for '<name>'.`) | `redis-7.0+` | `valkey-8.0+` |
 | Container-subcommand resolution at command-lookup time, before anything else sees the command: `MULTI` refuses to queue an unknown subcommand and `EXEC` answers `EXECABORT`, `XGROUP`/`XINFO` never look their key up first, a script's `redis.call`/`redis.pcall` gets `Unknown Redis command called from script`, and `COMMAND GETKEYS`/`GETKEYSANDFLAGS` answer `Invalid command specified` and `ACL DRYRUN` `Command '<name>' not found` (6.2 rejects the subcommand only when it runs, and `XGROUP`/`XINFO` check the key first) | `redis-7.0+` | `valkey-8.0+` |

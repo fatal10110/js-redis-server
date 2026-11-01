@@ -2,7 +2,19 @@ import { FEATURE_GATES } from './feature-gates'
 
 export type RedisFlavor = 'redis' | 'valkey'
 
-export type VersionGate = { redis?: string; valkey?: string }
+/**
+ * The first version of each flavor that has a behavior: one minimum (`'7.0.0'`:
+ * that version and every later one), or per-branch minimums for a change
+ * backported to patch releases (`['7.2.16', '7.4.11', '8.2.9']`: from that
+ * patch on within each listed `major.minor` branch, and every version of a
+ * branch newer than the last one listed). A version in a branch older than the
+ * last entry that is not listed (8.0.x above) does not have it. A missing
+ * flavor never does. See {@link gateSatisfied}.
+ */
+export type VersionGate = {
+  redis?: string | readonly string[]
+  valkey?: string | readonly string[]
+}
 
 export type FeatureId =
   | 'expire.conditions'
@@ -140,6 +152,8 @@ export type FeatureId =
   | 'rdb.version-12'
   | 'rdb.version-80'
   | 'list.large-element-plain-node'
+  | 'command.incomplete-stream-geo-key-specs'
+  | 'protocol.strict-crlf'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor
@@ -217,15 +231,32 @@ export function resolveCompatibilityProfile(
   }
 }
 
+/**
+ * Whether `profile` has the behavior `gate` describes. A single minimum is
+ * met by that version and every later one. Per-branch minimums are met from
+ * the listed patch within each listed `major.minor` branch and by every
+ * version of a branch newer than the last listed one; a branch older than
+ * that and not listed is not (a single minimum is a one-entry list).
+ */
 export function gateSatisfied(
   gate: VersionGate,
   profile: Pick<CompatibilityProfile, 'flavor' | 'versionNum'>,
 ): boolean {
-  const minimumVersion = gate[profile.flavor]
-  return (
-    minimumVersion !== undefined &&
-    profile.versionNum >= parseVersion(minimumVersion)
-  )
+  const minimums = gate[profile.flavor]
+  if (minimums === undefined) {
+    return false
+  }
+
+  const branch = Math.floor(profile.versionNum / 100)
+  let latest = -1
+  for (const minimum of typeof minimums === 'string' ? [minimums] : minimums) {
+    const minimumNum = parseVersion(minimum)
+    if (Math.floor(minimumNum / 100) === branch) {
+      return profile.versionNum >= minimumNum
+    }
+    latest = Math.max(latest, minimumNum)
+  }
+  return latest !== -1 && profile.versionNum >= latest
 }
 
 function parseVersionPart(raw: string | undefined, version: string): number {

@@ -13,9 +13,11 @@ import { expectReply } from './helpers'
  * Valkey 8.0.11 / 9.0.6 (#518). COMMAND GETKEYS / GETKEYSANDFLAGS, which look
  * the command up the same way, are in `command-getkeys-matrix.test.ts` and
  * `../compatibility/getkeys-gates.test.ts`. (Later patch releases - 7.2.16,
- * 7.4.11, 8.2.10, 8.4.7 - mark XREAD's and GEORADIUS's key specs
- * `incomplete`, so there GETKEYS answers from the getkeys procedures; the
- * profiles model the earlier releases.)
+ * 7.4.11, 8.2.9, 8.4.6 and on - mark XREAD's and GEORADIUS's key specs
+ * `incomplete`, so there GETKEYS answers from the getkeys procedures. The
+ * presets are below them; custom versions past them are pinned in
+ * `tests/compatibility/patch-gates.test.ts`, feature
+ * `command.incomplete-stream-geo-key-specs`.)
  */
 const testRunner = new TestRunner()
 

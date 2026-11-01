@@ -259,6 +259,29 @@ so the PR body is not a durable home for a breaking-change note.
   format`; a deadline already past creates nothing (and deletes the key with
   REPLACE, announced as `del`); otherwise the key is announced `restore`.
   HyperLogLogs still move as the mock's own string format ([#664]).
+- `VersionGate` (the gates of `FEATURE_GATES`, `gateSatisfied`, command
+  `since` / `until`, the command tables and subcommand gates) takes
+  per-branch minimums for a change backported to patch releases ([#521]):
+  `{ redis: ['7.2.16', '7.4.11', '8.2.9'] }` is met from that patch on within
+  each listed `major.minor` branch and by every version of a newer branch, not
+  by an older unlisted one (7.0.x, 8.0.x). A plain string keeps its meaning.
+  Custom `{ flavor, version }` profiles use it to answer as that exact patch;
+  the presets keep their pinned versions, which are below both new gates.
+  New `FeatureId` members `command.incomplete-stream-geo-key-specs` and
+  `protocol.strict-crlf`.
+- Redis 7.2.16+, 7.4.11+, 8.2.9+, 8.4.6+, 8.6.6+, 8.8.2+ and 8.10+ profiles
+  mark the key specs of `XREAD` / `XREADGROUP` (STREAMS) and `GEORADIUS` /
+  `GEORADIUSBYMEMBER` (`STORE`, `STOREDIST`) `incomplete`, with their `notes`,
+  in `COMMAND INFO`, and `COMMAND GETKEYS` / `GETKEYSANDFLAGS` fall back to the
+  getkeys procedure as those releases do ([#521]): `XREAD STREAMS a b 0`
+  answers `Invalid arguments specified for command`, and with repeated
+  `STORE` / `STOREDIST` options the last names the destination. Redis 7.0 and
+  8.0 never got the change.
+- Valkey 7.2.14+, 8.0.8+, 8.1.8+, 9.0.5+ and 9.1+ profiles refuse a header
+  line whose CR is not followed by LF, or a bulk not followed by CRLF, with
+  `Protocol error: invalid CRLF in request` and close the connection
+  ([#521]). Redis and the Valkey x.0.0 releases (the presets) still skip
+  those bytes unread.
 
 ### Changed
 
@@ -2421,6 +2444,7 @@ requests they contain.
 [#642]: https://github.com/fatal10110/js-redis-server/issues/642
 [#202]: https://github.com/fatal10110/js-redis-server/issues/202
 [#664]: https://github.com/fatal10110/js-redis-server/issues/664
+[#521]: https://github.com/fatal10110/js-redis-server/issues/521
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0
