@@ -785,4 +785,12 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // networking.c:3491-3507), so the name sticks. Probed on redis-server 6.2.14
   // and 7.0.15 with --requirepass (#522).
   'hello.setname-after-auth': { redis: '7.2.0', valkey: '7.2.0' },
+  // MIGRATE to a host that never answers the connect: from Redis 7.4 / Valkey
+  // 8.0 the blocking connect fails on its timeout (`return C_ERR`, redis@7.4.0:
+  // src/socket.c:343), so the reply is `-IOERR error or timeout connecting to
+  // the client`. Before, the timed-out connect counted as connected and the
+  // write timed out next: `... writing to target instance` (redis 7.2.x, Valkey
+  // 7.2.x socket.c:362). Probed on redis-server 6.2.14, 7.2.4, 7.4.4, 8.0.0 and
+  // Valkey 8.0.0 / 9.0.0 (#205).
+  'migrate.connect-timeout-error': { redis: '7.4.0', valkey: '8.0.0' },
 }

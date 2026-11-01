@@ -85,7 +85,7 @@ export function rawCommandKeys(
 ): Buffer[] {
   const argv = [Buffer.from(rawCommand), ...rawArgs]
   if (definition.rawKeys) {
-    return definition.rawKeys(argv).map(({ key }) => key)
+    return definition.rawKeys(argv, profile).map(({ key }) => key)
   }
 
   const subcommand = lookupSubcommandEntry(definition, rawArgs, profile)

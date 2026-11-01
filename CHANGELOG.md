@@ -327,6 +327,28 @@ so the PR body is not a durable home for a breaking-change note.
   `cluster.setslot-extra-args-ignored`,
   `cluster.migrating-mixed-keys-tryagain` and
   `script.cluster-tryagain-wording`.
+- `MIGRATE host port key|"" destination-db timeout [COPY] [REPLACE] [AUTH
+  password | AUTH2 username password] [KEYS key ...]` ([#205]) moves keys to
+  another server over TCP, as `migrateCommand` does: one write of `AUTH` /
+  `SELECT` / `RESTORE key ttl payload [REPLACE]` (`RESTORE-ASKING` from a
+  cluster node), the DUMP payload of the source's profile, one socket cached
+  per `host:port` for 10 s that skips `SELECT` for the database it last
+  selected, and one retry when the socket fails before the first reply. The
+  target can be a real server or another mock. Every key the target
+  acknowledges is deleted unless `COPY` (`del` event, WATCH); the first
+  target error answers `-ERR Target instance replied with error: ...`, with
+  the keys acknowledged before it still moved. `+NOKEY`, the option and
+  integer errors in `migrateCommand`'s order, `-IOERR error or timeout
+  connecting to the client` / `writing to target instance` / `reading to
+  target instance`, and a host that never answers the connect counted as a
+  write timeout before redis 7.4 / valkey 8.0. The source keeps its turn
+  while it waits, so its other clients wait as on a real server. From a
+  script MIGRATE answers `+NOKEY` and argument errors, but `MIGRATE cannot
+  run asynchronously from scripts` instead of contacting the target; the
+  socketless client mocks have no TCP listener to migrate to (`-IOERR`).
+  New `FeatureId` member `migrate.connect-timeout-error`,
+  `RedisServerState.onClose()`, and a `profile` argument to
+  `CommandDefinition.rawKeys`.
 
 ### Changed
 
@@ -2496,6 +2518,7 @@ requests they contain.
 [#635]: https://github.com/fatal10110/js-redis-server/issues/635
 [#642]: https://github.com/fatal10110/js-redis-server/issues/642
 [#202]: https://github.com/fatal10110/js-redis-server/issues/202
+[#205]: https://github.com/fatal10110/js-redis-server/issues/205
 [#664]: https://github.com/fatal10110/js-redis-server/issues/664
 [#521]: https://github.com/fatal10110/js-redis-server/issues/521
 [#511]: https://github.com/fatal10110/js-redis-server/issues/511

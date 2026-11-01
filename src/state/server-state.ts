@@ -62,6 +62,7 @@ export class RedisServerState {
    * Each cluster node has its own `RedisServerState`, hence its own queue.
    */
   readonly turnQueue = new SerialTurnQueue()
+  private readonly closeHooks = new Set<() => void>()
   /**
    * CLIENT PAUSE: server-wide, like real Redis. The client-pause execution
    * policy postpones commands while it is active.
@@ -226,6 +227,25 @@ export class RedisServerState {
     }
     this.luaRuntime = null
     this.luaRuntimePromise = null
+    // Outbound resources commands opened (MIGRATE's cached sockets).
+    const hooks = [...this.closeHooks]
+    this.closeHooks.clear()
+    for (const hook of hooks) {
+      hook()
+    }
+  }
+
+  /**
+   * Run `hook` once when the state is closed: how a command releases what it
+   * keeps open past its own call (MIGRATE's cached target connections), so a
+   * closed server leaves no socket or timer behind. Returns the function that
+   * drops the hook again.
+   */
+  onClose(hook: () => void): () => void {
+    this.closeHooks.add(hook)
+    return () => {
+      this.closeHooks.delete(hook)
+    }
   }
 
   /**

@@ -1126,6 +1126,26 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
       { flags: ['RO', 'access'], beginSearchIndex: 1, lastKey: -1, keyStep: 1 },
     ],
   },
+  migrate: {
+    flags: ['write', 'movablekeys'],
+    categories: ['@keyspace', '@write', '@slow', '@dangerous'],
+    tips: ['nondeterministic_output'],
+    keySpecs: [
+      {
+        flags: ['RW', 'access', 'delete'],
+        beginSearchIndex: 3,
+        lastKey: 0,
+        keyStep: 1,
+      },
+      {
+        flags: ['RW', 'access', 'delete', 'incomplete'],
+        beginSearchIndex: 0,
+        lastKey: -1,
+        keyStep: 1,
+        beginSearchKeyword: { keyword: 'KEYS', startFrom: -2 },
+      },
+    ],
+  },
   monitor: {
     flags: ['admin', 'noscript', 'loading', 'stale'],
     categories: ['@admin', '@slow', '@dangerous'],
@@ -2384,6 +2404,7 @@ export const REDIS_62: CommandTableDelta = {
   lastsave: { flags: ['random', 'loading', 'stale', 'fast'] },
   lcs: null,
   lmpop: null,
+  migrate: { flags: ['write', 'random', 'movablekeys'] },
   multi: { flags: ['noscript', 'loading', 'stale', 'fast'] },
   pexpiretime: null,
   pfcount: { flags: ['readonly', 'may_replicate'] },

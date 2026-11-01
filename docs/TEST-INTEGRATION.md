@@ -149,6 +149,7 @@ For the `real` backend, the standalone services are located via:
 
 - `REDIS_STANDALONE_PORT` — host port of `redis-standalone` (6399 in docker-compose)
 - `REDIS_STANDALONE_AUTH_PORT` — host port of `redis-standalone-auth` (6400 in docker-compose)
+- `MIGRATE_TARGET_ADDRESS` — `host:port` at which the `redis-standalone` server reaches the `REDIS_STANDALONE_AUTH_PORT` one, for `raw-tcp/migrate.test.ts` (default `redis-standalone-auth:6379`, the docker-compose service; with probe containers, the target's bridge IP and 6379). A source that cannot reach it skips the tests that need a target. The target must run the source's version or a newer one, or it refuses the payload.
 
 and the cluster via `REDIS_CLUSTER_PORTS` (comma-separated seed ports) or `REDIS_CLUSTER_PORT_RANGE` (`first-last`, the range a [private stack](#running-a-private-stack) was started on), defaulting to 30000-30005. docker-compose publishes its services on these same variables.
 

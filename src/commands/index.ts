@@ -38,6 +38,7 @@ import { lcsCommands } from './lcs'
 import { transactionCommands } from './transactions'
 import { zsetsCommands } from './zsets'
 import { dumpRestoreCommands } from './dump-restore'
+import { migrateCommands } from './migrate'
 
 export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...connectionCommands,
@@ -51,6 +52,7 @@ export const redisCommandDefinitions: readonly CommandDefinition[] = [
   ...hyperloglogCommands,
   ...keysCommands,
   ...dumpRestoreCommands,
+  ...migrateCommands,
   ...scanCommands,
   ...hashesCommands,
   ...listsCommands,
