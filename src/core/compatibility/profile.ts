@@ -65,6 +65,8 @@ export type FeatureId =
   | 'stream.consumer-active-time'
   | 'bit.byte-bit-range'
   | 'hscan.novalues'
+  | 'zscan.noscores'
+  | 'scan.type-unknown-error'
   | 'xread.plus-id'
   | 'stream.implicit-consumer-event'
   | 'stream.group-lag-tombstone-check'

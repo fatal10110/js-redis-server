@@ -538,7 +538,7 @@ with `GT` or `LT`.
 - [x] `BZMPOP timeout numkeys key [key ...] MIN|MAX [COUNT count]` - Blocking multi-key sorted-set pop; returns null on timeout
 - [x] `BZPOPMIN key [key ...] timeout` - Blocking pop of the lowest-score member from the first non-empty sorted set; returns `[key, member, score]` or null on timeout
 - [x] `BZPOPMAX key [key ...] timeout` - Blocking pop of the highest-score member from the first non-empty sorted set; returns `[key, member, score]` or null on timeout
-- [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Incrementally iterate members and scores (see [Scan Family](#10-scan-family))
+- [x] `ZSCAN key cursor [MATCH pattern] [COUNT count] [NOSCORES]` - Incrementally iterate members and scores (`NOSCORES`: Valkey 8.0+; see [Scan Family](#10-scan-family))
 - [x] `ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]` - Union of sorted sets (or plain sets, scored 1) into destination; empty result deletes destination
 - [x] `ZINTERSTORE destination numkeys key [key ...] [WEIGHTS weight [weight ...]] [AGGREGATE SUM|MIN|MAX]` - Intersection of sorted sets into destination; empty result deletes destination
 - [x] `ZDIFFSTORE destination numkeys key [key ...]` - Difference of sorted sets into destination; empty result deletes destination
@@ -586,7 +586,7 @@ with `GT` or `LT`.
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Iterate the keyspace
 - [x] `HSCAN key cursor [MATCH pattern] [COUNT count] [NOVALUES]` - Iterate hash fields/values
 - [x] `SSCAN key cursor [MATCH pattern] [COUNT count]` - Iterate set members
-- [x] `ZSCAN key cursor [MATCH pattern] [COUNT count]` - Iterate sorted set members/scores
+- [x] `ZSCAN key cursor [MATCH pattern] [COUNT count] [NOSCORES]` - Iterate sorted set members/scores
 - [x] `KEYS pattern` - Return all keys matching a glob pattern
 
 `TYPE` is only accepted by `SCAN` (matching real Redis); `HSCAN`/`SSCAN`/`ZSCAN`
@@ -598,6 +598,16 @@ and on older profiles every scan treats it as an unknown option (`syntax
 error`). `HSCAN`/`SSCAN`/`ZSCAN` parse their options only after the key lookup,
 as Redis does: a missing key returns the empty scan reply whatever the options,
 and a key of the wrong type returns `WRONGTYPE` first.
+
+`NOSCORES` is only accepted by `ZSCAN` for Valkey 8.0+ profiles, which then
+returns members without scores; there `SCAN`/`SSCAN`/`HSCAN` answer `NOSCORES
+option can only be used in ZSCAN`. Redis profiles treat it as an unknown option
+(`syntax error`).
+
+On Valkey 8.0+ profiles `SCAN ... TYPE <name>` answers `unknown type name
+'<name>'` for a name that is not `string`, `list`, `set`, `zset`, `hash` or
+`stream` (any case), checked where the TYPE appears. Redis profiles scan for it
+anyway and return an empty scan, the last `TYPE` winning.
 
 ## 11. Transaction Commands
 
