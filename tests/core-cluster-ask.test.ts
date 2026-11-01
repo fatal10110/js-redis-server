@@ -174,6 +174,43 @@ describe('cluster slot migration: the MIGRATING source (#85)', () => {
     assert.strictEqual(await onA('EXEC'), '[:1,nil]')
   })
 
+  test('EXEC routes its queue whatever the slot state: a slot that moved is MOVED', async () => {
+    const { a, onA, connect } = createCluster()
+    const other = connect(a)
+    assert.strictEqual(await onA('MULTI'), '+OK')
+    assert.strictEqual(await onA('SET', 'b', 'x'), '+QUEUED')
+    assert.strictEqual(
+      await other('CLUSTER', 'SETSLOT', '3300', 'NODE', 'master-1'),
+      '+OK',
+    )
+    assert.strictEqual(await onA('EXEC'), '-MOVED 3300 127.0.0.1:7001')
+    assert.strictEqual(await onA('EXEC'), '-ERR EXEC without MULTI')
+    assert.strictEqual(await other('EXISTS', 'b'), '-MOVED 3300 127.0.0.1:7001')
+  })
+
+  test("a READONLY replica's read-only queue is served at EXEC", async () => {
+    const { nodes } = buildClusterNodes({
+      masters: 2,
+      replicasPerMaster: 1,
+      basePort: 7200,
+    })
+    const replica = nodes.find(node => node.id === 'replica-0-master-0')!
+    const session = new ClientSession({
+      server: replica.state,
+      executor: replica.executor,
+      nodeRole: replica.role,
+    })
+    const run = async (...args: string[]) => {
+      const [name, ...rest] = args.map(arg => Buffer.from(arg))
+      return show((await session.execute(name, rest)).value)
+    }
+    assert.strictEqual(await run('READONLY'), '+OK')
+    assert.strictEqual(await run('MULTI'), '+OK')
+    assert.strictEqual(await run('GET', 'b'), '+QUEUED')
+    assert.strictEqual(await run('EXISTS', '{b}x'), '+QUEUED')
+    assert.strictEqual(await run('EXEC'), '[nil,:0]')
+  })
+
   test('before redis 7.0.3 any missing key is ASKed for', async () => {
     const { onA } = await createResharding('redis-6.2')
     assert.strictEqual(await onA('MGET', 'b', '{b}missing'), ask)
@@ -255,6 +292,26 @@ describe('cluster slot migration: the IMPORTING target and ASKING (#85, #616)', 
       await onA('RESTORE-ASKING', 'a', '0', dump),
       '-MOVED 15495 127.0.0.1:7001',
     )
+  })
+
+  test('a queued RESTORE-ASKING does not make EXEC asking', async () => {
+    const { a, onB } = await createResharding()
+    const dump = await dumpOn(a, 'b')
+    assert.strictEqual(await onB('MULTI'), '+OK')
+    assert.strictEqual(
+      await onB('RESTORE-ASKING', 'b', '0', dump, 'REPLACE'),
+      '+QUEUED',
+    )
+    assert.strictEqual(await onB('EXEC'), movedToA)
+    assert.strictEqual(await onB('EXEC'), '-ERR EXEC without MULTI')
+
+    assert.strictEqual(await onB('ASKING'), '+OK')
+    assert.strictEqual(await onB('MULTI'), '+OK')
+    assert.strictEqual(
+      await onB('RESTORE-ASKING', 'b', '0', dump, 'REPLACE'),
+      '+QUEUED',
+    )
+    assert.strictEqual(await onB('EXEC'), '[+OK]')
   })
 
   test('the flag holds through MULTI until EXEC', async () => {

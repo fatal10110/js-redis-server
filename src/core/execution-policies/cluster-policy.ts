@@ -27,8 +27,13 @@ const PUBSUB_SHARD_COMMANDS = new Set([
 /** What EXEC routes the whole queue by, as `getNodeByQuery` does for EXEC. */
 type QueuedRouting = {
   keys: Buffer[]
-  /** A queued command has the `asking` flag (RESTORE-ASKING). */
-  asking: boolean
+  /**
+   * A queued command is a write (`mstate.cmd_flags & CMD_WRITE`): a READONLY
+   * replica then redirects EXEC to its master.
+   */
+  write: boolean
+  /** A queued command is a shard pub/sub command: its channels are not keys. */
+  pubsubShard: boolean
 }
 
 export function createClusterPolicy(
@@ -118,9 +123,13 @@ export function createClusterPolicy(
         }
 
         // EXEC routes the queue as one command (getNodeByQuery treats EXEC
-        // as its queue): keys of a resharded slot that went missing since
-        // they were queued answer ASK or TRYAGAIN for EXEC itself, which
-        // discards the transaction. Valkey 9.0 counts the keys only here.
+        // as its queue), whatever the slot's state: a slot that moved since
+        // its commands were queued answers MOVED, and keys of a resharded
+        // slot that went missing answer ASK or TRYAGAIN, for EXEC itself,
+        // which discards the transaction. Valkey 9.0 counts the keys only
+        // here. Only the client's ASKING counts: EXEC's own flags are the
+        // command flags getNodeByQuery sees, so a queued RESTORE-ASKING does
+        // not make it asking (redis 7.2.4 cluster.c:7419).
         if (
           plan.definition.name === 'exec' &&
           queued &&
@@ -129,17 +138,18 @@ export function createClusterPolicy(
           !(
             ctx.session.isTransactionDirty() &&
             ctx.server.profile.has('transaction.refusal-empties-queue')
-          ) &&
-          slotIsOpen(topology, options.localNodeId, queuedSlot)
+          )
         ) {
           try {
             validateClusterSlot(topology, options.localNodeId, queued.keys, {
               db: ctx.db,
-              asking: ctx.session.clusterAsking || queued.asking,
+              asking: ctx.session.clusterAsking,
               migration: 'keys',
+              pubsubShard: queued.pubsubShard,
               mixedKeysTryAgain: ctx.server.profile.has(
                 'cluster.migrating-mixed-keys-tryagain',
               ),
+              allowReplicaRead: ctx.session.clusterReadOnly && !queued.write,
             })
           } catch (err) {
             ctx.session.discardTransaction()
@@ -228,11 +238,12 @@ export function createClusterPolicy(
 
       let queued = transactionKeys.get(ctx.session)
       if (!queued) {
-        queued = { keys: [], asking: false }
+        queued = { keys: [], write: false, pubsubShard: false }
         transactionKeys.set(ctx.session, queued)
       }
       queued.keys.push(...plan.keys)
-      queued.asking ||= plan.definition.flags.includes('asking')
+      queued.write ||= plan.definition.flags.includes('write')
+      queued.pubsubShard ||= PUBSUB_SHARD_COMMANDS.has(plan.definition.name)
     },
   }
 }
@@ -252,17 +263,6 @@ function pinScriptSlot(pin: ScriptSlotPin, slot: number): void {
       'Script attempted to access keys that do not hash to the same slot',
     )
   }
-}
-
-function slotIsOpen(
-  topology: RedisClusterTopology,
-  localNodeId: string,
-  slot: number,
-): boolean {
-  return (
-    topology.migratingTarget(localNodeId, slot) !== undefined ||
-    topology.importingSource(localNodeId, slot) !== undefined
-  )
 }
 
 type SlotRouting = {
