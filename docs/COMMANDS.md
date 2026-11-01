@@ -447,13 +447,14 @@ with `GT` or `LT`.
 - [x] `BLPOP key [key ...] timeout` - Blocking left pop
 - [x] `BRPOP key [key ...] timeout` - Blocking right pop
 - [x] `BLMOVE source destination LEFT | RIGHT LEFT | RIGHT timeout` - Blocking variant of `LMOVE`
+- [x] `BRPOPLPUSH source destination timeout` - Deprecated blocking variant of `RPOPLPUSH` (`BLMOVE source destination RIGHT LEFT timeout`)
 - [x] `LMPOP numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Pop from the first non-empty list
 - [x] `BLMPOP timeout numkeys key [key ...] LEFT | RIGHT [COUNT count]` - Blocking variant of `LMPOP`
 
 > From a Lua script the blocking pops never block. Redis 7.2+ (and every
-> Valkey profile) runs `BLPOP`, `BRPOP`, `BLMOVE`, `BZPOPMIN` and `BZPOPMAX`
-> like their non-blocking forms: with nothing to pop they answer the timeout
-> reply at once, even with timeout 0. `BLMPOP` and `BZMPOP` do so from 7.0.
+> Valkey profile) runs `BLPOP`, `BRPOP`, `BLMOVE`, `BRPOPLPUSH`, `BZPOPMIN`
+> and `BZPOPMAX` like their non-blocking forms: with nothing to pop they
+> answer the timeout reply at once, even with timeout 0. `BLMPOP` and `BZMPOP` do so from 7.0.
 > Redis 6.2 and 7.0 refuse the others as `noscript`.
 
 ## 7. Set Commands
@@ -756,7 +757,7 @@ Redis 7.0+, so the `redis-6.2` profile rejects it.
 - [x] Blocking, multi-key and move-style pops are named after the operation:
       `BLPOP`/`BRPOP`/`LMPOP`/`BLMPOP` → `lpop`/`rpop`,
       `BZPOPMIN`/`BZPOPMAX`/`ZMPOP`/`BZMPOP` → `zpopmin`/`zpopmax`,
-      `LMOVE`/`BLMOVE`/`RPOPLPUSH` → `lpush`/`rpush` on the destination then
+      `LMOVE`/`BLMOVE`/`RPOPLPUSH`/`BRPOPLPUSH` → `lpush`/`rpush` on the destination then
       `lpop`/`rpop` on the source, `SMOVE` → `srem` + `sadd`.
 - [x] Stream consumer groups: `xgroup-create`, `xgroup-createconsumer`,
       `xgroup-setid`, `xgroup-delconsumer`, `xgroup-destroy`, `xsetid` — without

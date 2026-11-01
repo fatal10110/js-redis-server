@@ -3,6 +3,7 @@ import { t } from '../../core/command-schema'
 import { WrongNumberOfArgumentsError } from '../../core/redis-error'
 import type { RedisExecutionContext } from '../../core/redis-context'
 import { RedisResult } from '../../core/redis-result'
+import { RedisValue } from '../../core/redis-value'
 import { bulk } from '../helpers'
 import { parseMoveDirection } from './helpers'
 import { tryListMove } from './move'
@@ -20,7 +21,12 @@ type BlmoveArgs = {
   timeout: number
 }
 
-function blockingListMove(
+// Blocks until an element can move from `source` to `destination`. Shared by
+// BLMOVE and BRPOPLPUSH. Real Redis answers an expired wait with a null array
+// (`*-1`, replyToBlockedClientTimedOut), but a call that may not block (queued
+// in MULTI, or from a script) with a null bulk string (`$-1`,
+// blmoveGenericCommand's CLIENT_DENY_BLOCKING branch).
+export function blockingListMove(
   source: Buffer,
   destination: Buffer,
   fromDirection: 'left' | 'right',
@@ -37,7 +43,10 @@ function blockingListMove(
       attempt: () =>
         tryListMove(source, destination, fromDirection, toDirection, ctx.db),
     },
-    () => bulk(null),
+    () =>
+      ctx.inScript || ctx.transactionReplay
+        ? bulk(null)
+        : RedisResult.create(RedisValue.nullArray()),
   )
 }
 

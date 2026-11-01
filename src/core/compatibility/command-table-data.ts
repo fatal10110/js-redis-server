@@ -115,6 +115,19 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
       },
     ],
   },
+  brpoplpush: {
+    flags: ['write', 'denyoom', 'blocking'],
+    categories: ['@write', '@list', '@slow', '@blocking'],
+    keySpecs: [
+      {
+        flags: ['RW', 'access', 'delete'],
+        beginSearchIndex: 1,
+        lastKey: 0,
+        keyStep: 1,
+      },
+      { flags: ['RW', 'insert'], beginSearchIndex: 2, lastKey: 0, keyStep: 1 },
+    ],
+  },
   bzmpop: {
     flags: ['write', 'blocking', 'movablekeys'],
     categories: ['@write', '@sortedset', '@slow', '@blocking'],
@@ -2219,6 +2232,7 @@ export const REDIS_70: CommandTableDelta = {
   blmove: { flags: ['write', 'denyoom', 'noscript', 'blocking'] },
   blpop: { flags: ['write', 'noscript', 'blocking'] },
   brpop: { flags: ['write', 'noscript', 'blocking'] },
+  brpoplpush: { flags: ['write', 'denyoom', 'noscript', 'blocking'] },
   bzpopmax: { flags: ['write', 'noscript', 'blocking', 'fast'] },
   bzpopmin: { flags: ['write', 'noscript', 'blocking', 'fast'] },
   'client|no-touch': null,
@@ -2246,6 +2260,7 @@ export const REDIS_62: CommandTableDelta = {
   blmpop: null,
   blpop: { flags: ['write', 'noscript'] },
   brpop: { flags: ['write', 'noscript'] },
+  brpoplpush: { flags: ['write', 'denyoom', 'noscript'] },
   bzmpop: null,
   bzpopmax: { flags: ['write', 'noscript', 'fast'] },
   bzpopmin: { flags: ['write', 'noscript', 'fast'] },

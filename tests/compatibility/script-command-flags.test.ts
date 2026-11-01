@@ -103,16 +103,18 @@ describe('command flags from scripts (#500)', () => {
     }
   })
 
-  // BLPOP, BRPOP, BLMOVE, BZPOPMIN and BZPOPMAX are `noscript` up to 7.0.
+  // BLPOP, BRPOP, BLMOVE, BRPOPLPUSH, BZPOPMIN and BZPOPMAX are `noscript`
+  // up to 7.0.
   const blockingRefusedUntil72: Array<[string, string[]]> = [
     ['BLPOP', ['KEYS[1]', "'0'"]],
     ['BRPOP', ['KEYS[1]', "'0'"]],
     ['BLMOVE', ['KEYS[1]', 'KEYS[2]', "'LEFT'", "'RIGHT'", "'0'"]],
+    ['BRPOPLPUSH', ['KEYS[1]', 'KEYS[2]', "'0'"]],
     ['BZPOPMIN', ['KEYS[1]', "'0'"]],
     ['BZPOPMAX', ['KEYS[1]', "'0'"]],
   ]
 
-  test('BLPOP / BRPOP / BLMOVE / BZPOPMIN / BZPOPMAX are refused from scripts before 7.2', async () => {
+  test('BLPOP / BRPOP / BLMOVE / BRPOPLPUSH / BZPOPMIN / BZPOPMAX are refused from scripts before 7.2', async () => {
     for (const profile of ['redis-6.2', 'redis-7.0'] as const) {
       const session = createSession(profile)
       await session.execute('rpush', buf('l', 'a'))
@@ -177,6 +179,16 @@ describe('command flags from scripts (#500)', () => {
           "return redis.call('BLMOVE', KEYS[1], KEYS[2], 'LEFT', 'RIGHT', '0')",
           'l',
           'dst',
+        ),
+        bulk('b'),
+        profile,
+      )
+      assert.deepStrictEqual(
+        await evalScript(
+          session,
+          "return redis.call('BRPOPLPUSH', KEYS[1], KEYS[2], '0')",
+          'dst',
+          'dst2',
         ),
         bulk('b'),
         profile,
