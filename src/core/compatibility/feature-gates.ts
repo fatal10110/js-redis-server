@@ -735,4 +735,11 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // Probed on valkey-server 8.1.0, 8.1.11, 9.0.0 - 9.0.7 and 9.1.3: `ECHO
   // \xe9\xff` answers `$1\r\n\xe9\r\n`; 8.0 and Redis keep the byte (#522).
   'protocol.inline-drops-0xff': { valkey: '8.1.0' },
+  // HELLO ... SETNAME <name> on a client not yet authenticated: 7.2 collects
+  // the name and sets it only after the NOAUTH check (redis@7.2.0:src/
+  // networking.c:3546-3600), so a refused HELLO leaves the name unset; 6.2 and
+  // 7.0 set it while parsing the options, before that check (redis@7.0.15:src/
+  // networking.c:3491-3507), so the name sticks. Probed on redis-server 6.2.14
+  // and 7.0.15 with --requirepass (#522).
+  'hello.setname-after-auth': { redis: '7.2.0', valkey: '7.2.0' },
 }

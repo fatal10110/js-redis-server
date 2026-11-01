@@ -154,6 +154,7 @@ export type FeatureId =
   | 'command.georadius-variable-flags'
   | 'client.info-multi-lazy-state'
   | 'protocol.inline-drops-0xff'
+  | 'hello.setname-after-auth'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

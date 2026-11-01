@@ -112,7 +112,8 @@ describe(`Raw TCP AUTH enforcement with requirepass (${testRunner.getBackendName
     // Bare HELLO is gated with the HELLO-specific NOAUTH.
     await expectReply(conn, ['HELLO', '2'], HELLO_NOAUTH)
 
-    // A rejected HELLO must not apply its SETNAME side effect.
+    // From 7.2 a rejected HELLO does not apply its SETNAME; 6.2 and 7.0 set
+    // the name while parsing the options, before the NOAUTH check.
     await expectReply(conn, ['HELLO', '2', 'SETNAME', 'leaked'], HELLO_NOAUTH)
 
     // Unlock.
@@ -122,14 +123,19 @@ describe(`Raw TCP AUTH enforcement with requirepass (${testRunner.getBackendName
       '+OK\r\n',
     )
 
-    // The failed SETNAME never stuck (empty/null name, never 'leaked').
     conn.write(commandFrame('CLIENT', 'GETNAME'))
     const name = (await conn.readRawFrame()).toString()
-    assert.ok(!name.includes('leaked'), `name leaked: ${name}`)
-    assert.ok(
-      name === '$-1\r\n' || name === '$0\r\n\r\n',
-      `unexpected name reply: ${name}`,
-    )
+    if (activeProfile === 'redis-6.2' || activeProfile === 'redis-7.0') {
+      assert.strictEqual(name, '$6\r\nleaked\r\n')
+      await expectReply(conn, ['CLIENT', 'SETNAME', ''], '+OK\r\n')
+    } else {
+      // The failed SETNAME never stuck (empty/null name, never 'leaked').
+      assert.ok(!name.includes('leaked'), `name leaked: ${name}`)
+      assert.ok(
+        name === '$-1\r\n' || name === '$0\r\n\r\n',
+        `unexpected name reply: ${name}`,
+      )
+    }
 
     // Previously gated command now succeeds.
     await expectReply(conn, ['GET', MISSING_KEY], '$-1\r\n')

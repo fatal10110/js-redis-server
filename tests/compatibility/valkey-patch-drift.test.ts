@@ -160,16 +160,16 @@ describe('CLIENT INFO multi= after a transaction', () => {
   ] as const) {
     test(`${JSON.stringify(spec)}: ${afterward}`, async () => {
       const watched = session(spec)
-      assert.strictEqual(watched.queuedCommandCount, -1)
+      assert.strictEqual(watched.clientInfoMultiCount, -1)
       await run(watched, 2, 'WATCH', 'k')
-      assert.strictEqual(watched.queuedCommandCount, afterward)
+      assert.strictEqual(watched.clientInfoMultiCount, afterward)
 
       const multi = session(spec)
       await run(multi, 2, 'MULTI')
       await run(multi, 2, 'PING')
-      assert.strictEqual(multi.queuedCommandCount, 1)
+      assert.strictEqual(multi.clientInfoMultiCount, 1)
       await run(multi, 2, 'EXEC')
-      assert.strictEqual(multi.queuedCommandCount, afterward)
+      assert.strictEqual(multi.clientInfoMultiCount, afterward)
     })
   }
 })

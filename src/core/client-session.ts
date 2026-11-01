@@ -294,17 +294,18 @@ export class ClientSession implements RedisClientSession {
   }
 
   get queuedCommandCount(): number {
-    if (this.sessionMode === 'transaction') {
-      return this.transactionPlans.length
-    }
-    if (
-      this.execQueuedCount === -1 &&
+    return this.sessionMode === 'transaction'
+      ? this.transactionPlans.length
+      : this.execQueuedCount
+  }
+
+  get clientInfoMultiCount(): number {
+    const count = this.queuedCommandCount
+    return count === -1 &&
       this.multiStateAllocated &&
       this.server.profile.has('client.info-multi-lazy-state')
-    ) {
-      return 0
-    }
-    return this.execQueuedCount
+      ? 0
+      : count
   }
 
   get watchedKeyCount(): number {
