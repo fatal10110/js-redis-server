@@ -200,6 +200,15 @@ so the PR body is not a durable home for a breaking-change note.
   6 never settles a bare `unsubscribe()` (`pUnsubscribe()`) while patterns
   (channels) are still subscribed, open or closed, because it waits for a
   reply count of 0; the facade resolves it.
+- `GEOPOS` answers a member it cannot find, and every member of a missing key,
+  with a null array (`*-1`) at RESP2, as real Redis and Valkey do on every
+  profile ([#635]); it used to send a null bulk string (`$-1`). RESP3 still
+  sends `_`, a script still sees `false`, and `GEODIST` / `GEOHASH` keep their
+  null bulk strings.
+- On Valkey 8.0+ profiles `SCAN ... TYPE <name>` with a name no type has
+  answers `ERR unknown type name '<name>'`, checked at that TYPE token, as
+  Valkey does ([#642]). Redis profiles keep the empty scan (the check is
+  commented out through redis 8.0), the last TYPE winning.
 
 ### Added
 
@@ -215,6 +224,10 @@ so the PR body is not a durable home for a breaking-change note.
   `proto-max-bulk-len` answers the transient-memory error. `COMMAND INFO` /
   `DOCS` / `GETKEYS` report each version's entry. `CommandDefinition` takes an
   optional `until` gate for a command a later version removed.
+- `ZSCAN key cursor ... NOSCORES` on Valkey 8.0+ profiles returns members
+  without their scores ([#642]); the option may repeat and mixes with `MATCH`
+  / `COUNT`. `SCAN`, `SSCAN` and `HSCAN` answer `NOSCORES option can only be
+  used in ZSCAN` there. Redis profiles keep `syntax error`.
 
 ### Changed
 
@@ -2370,6 +2383,8 @@ requests they contain.
 [#461]: https://github.com/fatal10110/js-redis-server/issues/461
 [#609]: https://github.com/fatal10110/js-redis-server/issues/609
 [#206]: https://github.com/fatal10110/js-redis-server/issues/206
+[#635]: https://github.com/fatal10110/js-redis-server/issues/635
+[#642]: https://github.com/fatal10110/js-redis-server/issues/642
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

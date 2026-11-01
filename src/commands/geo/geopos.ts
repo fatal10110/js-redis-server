@@ -14,7 +14,9 @@ export const geoposCommand = defineCommand({
     const zset = ctx.db.getSortedSet(args.key)
     const items = args.members.map(member => {
       const entry = zset?.members.get(member.toString('hex'))
-      if (!entry) return RedisValue.null()
+      // geoposCommand answers a member without a score with
+      // addReplyNullArray: `*-1` at RESP2, `_` at RESP3 (#635).
+      if (!entry) return RedisValue.nullArray()
       const { lon, lat } = decodeGeoScore(entry.score)
       return RedisValue.array([
         RedisValue.double(lon, formatGeoCoordinate(lon, ctx.server.profile)),

@@ -17,6 +17,7 @@ type ScanOptions = {
   count?: number
   type?: string
   noValues?: boolean
+  noScores?: boolean
 }
 
 /**
@@ -166,10 +167,9 @@ export const zscanCommand = defineCommand({
         : scoreBuffer(entry.score, ctx.server.profile)
       items.push({
         matchValue: entry.member,
-        values: [
-          RedisValue.bulkString(entry.member),
-          RedisValue.bulkString(score),
-        ],
+        values: options.noScores
+          ? [RedisValue.bulkString(entry.member)]
+          : [RedisValue.bulkString(entry.member), RedisValue.bulkString(score)],
       })
     }
 
@@ -215,6 +215,16 @@ function createKeyedScanSchema() {
 
 type ScanCommandName = 'scan' | 'hscan' | 'sscan' | 'zscan'
 
+/** valkey's obj_type_name[], matched case-insensitively. */
+const SCAN_TYPE_NAMES: ReadonlySet<string> = new Set([
+  'string',
+  'list',
+  'set',
+  'zset',
+  'hash',
+  'stream',
+])
+
 /**
  * The option loop of Redis's `scanGenericCommand`, left to right, stopping at
  * the first bad option. An option whose value is missing (`MATCH` as the last
@@ -247,7 +257,18 @@ function parseScanOptions(
     }
 
     if (option === 'type' && command === 'scan' && hasValue) {
-      options.type = asciiLowerCase(input[cursor + 1].toString())
+      const name = input[cursor + 1].toString()
+      const type = asciiLowerCase(name)
+      // Valkey 8.0 refuses a name it does not know, at the TYPE token;
+      // redis through 8.0 keeps the check commented out and scans for a
+      // type no key has.
+      if (
+        profile.has('scan.type-unknown-error') &&
+        !SCAN_TYPE_NAMES.has(type)
+      ) {
+        throw new RedisCommandError(`unknown type name '${name}'`)
+      }
+      options.type = type
       cursor += 2
       continue
     }
@@ -258,6 +279,16 @@ function parseScanOptions(
         throw new RedisCommandError('NOVALUES option can only be used in HSCAN')
       }
       options.noValues = true
+      cursor++
+      continue
+    }
+
+    // Valkey 8.0's ZSCAN NOSCORES, the NOVALUES rule for sorted sets.
+    if (option === 'noscores' && profile.has('zscan.noscores')) {
+      if (command !== 'zscan') {
+        throw new RedisCommandError('NOSCORES option can only be used in ZSCAN')
+      }
+      options.noScores = true
       cursor++
       continue
     }
