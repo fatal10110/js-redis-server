@@ -91,8 +91,12 @@ export type FeatureId =
   | 'cluster.info-links-buffer-line'
   | 'cluster.info-node-fail-counts'
   | 'cluster.crossslot-before-unserved'
+  | 'cluster.ask-at-exec'
+  | 'cluster.migrating-mixed-keys-tryagain'
+  | 'cluster.setslot-extra-args-ignored'
   | 'script.cluster-slot-not-served'
   | 'script.cluster-crossslot-command-wording'
+  | 'script.cluster-tryagain-wording'
   | 'sort.cluster-pattern-slot'
   | 'sort.cluster-get-hash'
   | 'reply.double-fpconv'
@@ -162,6 +166,7 @@ export type FeatureId =
   | 'hello.setname-after-auth'
   | 'client.tracking-sync-flush-push-first'
   | 'client.tracking-script-command-keys'
+  | 'migrate.connect-timeout-error'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

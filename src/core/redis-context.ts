@@ -50,10 +50,13 @@ export interface RedisClientSession {
   readonly protocolVersion: RespVersion
   readonly usesSubscribedReplyMode: boolean
   readonly clusterReadOnly: boolean
+  /** Set by ASKING; cleared after the next command (see ClientSession). */
+  readonly clusterAsking: boolean
   readonly isAuthenticated: boolean
   setAuthenticated(value: boolean): void
   setProtocolVersion(version: RespVersion): void
   setClusterReadOnly(value: boolean): void
+  setClusterAsking(value: boolean): void
   selectDatabase(database: number): void
   beginTransaction(): void
   queueTransaction(plan: CommandPlan): void

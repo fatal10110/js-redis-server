@@ -876,8 +876,8 @@ function resp3TypedLuaReply(
 }
 
 /**
- * A command run from a script cannot redirect the client, so a MOVED,
- * unserved-slot (CLUSTERDOWN) or CROSSSLOT routing reply reaches the script
+ * A command run from a script cannot redirect the client, so a MOVED, ASK,
+ * TRYAGAIN, unserved-slot (CLUSTERDOWN) or CROSSSLOT routing reply reaches the script
  * as the scripting layer's own error (`scriptVerifyClusterState`): from redis
  * 7.4 / valkey 8.0 `Script attempted to access a slot not served` for an
  * unserved slot and `Command '<name>' in script attempted to access keys that
@@ -896,10 +896,23 @@ function scriptClusterRejection(
   if (
     value.kind !== 'error' ||
     (value.code !== 'MOVED' &&
+      value.code !== 'ASK' &&
+      value.code !== 'TRYAGAIN' &&
       value.code !== 'CLUSTERDOWN' &&
       value.code !== 'CROSSSLOT')
   ) {
     return undefined
+  }
+
+  if (
+    value.code === 'TRYAGAIN' &&
+    profile.has('script.cluster-tryagain-wording')
+  ) {
+    return redisErrorToLuaReply(
+      new RedisCommandError(
+        `Unable to execute command '${name}' in script because undeclared keys were accessed during rehashing of the slot`,
+      ),
+    )
   }
 
   if (

@@ -53,7 +53,7 @@ describe('containerSubcommandIsAdmin', () => {
     for (const name of [
       'cluster|meet',
       'cluster|count-failure-reports',
-      'cluster|setslot',
+      'cluster|addslots',
       'acl|setuser',
       'client|unblock',
     ]) {

@@ -315,6 +315,55 @@ so the PR body is not a durable home for a breaking-change note.
   declared on redis 6.2 and 7.0, its own keys on 7.2+ and Valkey (new
   `FeatureId` `client.tracking-script-command-keys`).
 
+- Slot migration in cluster mode ([#85], [#616]): `CLUSTER SETSLOT slot
+  IMPORTING | MIGRATING | NODE | STABLE`, `CLUSTER KEYSLOT`,
+  `COUNTKEYSINSLOT` and `GETKEYSINSLOT`, `ASKING` and `RESTORE-ASKING`, with
+  the replies of real redis 6.2 - 8.0 and valkey 8.0 / 9.0 2-node clusters.
+  While a slot is open, keyed commands follow `getNodeByQuery`: the
+  MIGRATING source answers `-ASK slot host:port` when none of the keys is
+  there and `-TRYAGAIN Multiple keys request during rehashing of slot` when
+  some are (redis 7.0.3+; any missing key is ASK before), the IMPORTING
+  target serves a client that sent `ASKING` (one command, or until EXEC) or
+  `RESTORE-ASKING` and answers `-MOVED` to the owner otherwise. Inside MULTI
+  the check runs when a command is queued and again over the queue at EXEC;
+  valkey 9.0 runs it only at EXEC, so EXEC itself answers ASK / TRYAGAIN.
+  `CLUSTER NODES` marks open slots on the node's own line (`[3300->-id]`,
+  `[3300-<-id]`), `SETSLOT NODE` moves the slot (`CLUSTER SLOTS` lists runs
+  in slot order), and a script's call that would be ASK or TRYAGAIN is the
+  scripting layer's own error (redis 7.4+ / valkey 8.0+: `Unable to execute
+  command '<name>' in script because undeclared keys were accessed during
+  rehashing of the slot` for TRYAGAIN). A standalone server answers `ASKING`
+  with `This instance has cluster support disabled`. The ioredis cluster mock
+  and the node-redis facade follow `-ASK` as the real clients do (ASKING,
+  then the command, on the target). New `RedisAskError` and
+  `RedisTryAgainError` exports, `CommandFlag` member `asking`, and
+  `FeatureId` members `cluster.ask-at-exec`,
+  `cluster.setslot-extra-args-ignored`,
+  `cluster.migrating-mixed-keys-tryagain` and
+  `script.cluster-tryagain-wording`.
+- `MIGRATE host port key|"" destination-db timeout [COPY] [REPLACE] [AUTH
+  password | AUTH2 username password] [KEYS key ...]` ([#205]) moves keys to
+  another server over TCP, as `migrateCommand` does: one write of `AUTH` /
+  `SELECT` / `RESTORE key ttl payload [REPLACE]` (`RESTORE-ASKING` from a
+  cluster node), the DUMP payload of the source's profile, one socket cached
+  per `host:port` for 10 s that skips `SELECT` for the database it last
+  selected, and one retry when the socket fails before the first reply. The
+  target can be a real server or another mock. Every key the target
+  acknowledges is deleted unless `COPY` (`del` event, WATCH); the first
+  target error answers `-ERR Target instance replied with error: ...`, with
+  the keys acknowledged before it still moved. `+NOKEY`, the option and
+  integer errors in `migrateCommand`'s order, `-IOERR error or timeout
+  connecting to the client` / `writing to target instance` / `reading to
+  target instance`, and a host that never answers the connect counted as a
+  write timeout before redis 7.4 / valkey 8.0. The source keeps its turn
+  while it waits, so its other clients wait as on a real server. From a
+  script MIGRATE answers `+NOKEY` and argument errors, but `MIGRATE cannot
+  run asynchronously from scripts` instead of contacting the target; the
+  socketless client mocks have no TCP listener to migrate to (`-IOERR`).
+  New `FeatureId` member `migrate.connect-timeout-error`,
+  `RedisServerState.onClose()`, and a `profile` argument to
+  `CommandDefinition.rawKeys`.
+
 ### Changed
 
 - **BREAKING (`/core`)** `RedisMutationEvent` has a new `propagate` variant
@@ -2483,11 +2532,14 @@ requests they contain.
 [#635]: https://github.com/fatal10110/js-redis-server/issues/635
 [#642]: https://github.com/fatal10110/js-redis-server/issues/642
 [#202]: https://github.com/fatal10110/js-redis-server/issues/202
+[#205]: https://github.com/fatal10110/js-redis-server/issues/205
 [#664]: https://github.com/fatal10110/js-redis-server/issues/664
 [#521]: https://github.com/fatal10110/js-redis-server/issues/521
 [#511]: https://github.com/fatal10110/js-redis-server/issues/511
 [#522]: https://github.com/fatal10110/js-redis-server/issues/522
 [#252]: https://github.com/fatal10110/js-redis-server/issues/252
+[#85]: https://github.com/fatal10110/js-redis-server/issues/85
+[#616]: https://github.com/fatal10110/js-redis-server/issues/616
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

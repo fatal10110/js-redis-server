@@ -186,6 +186,7 @@ export class ClientSession implements RedisClientSession {
   private authenticated = false
   /** Set by READONLY, cleared by READWRITE/RESET; lets a replica serve reads. */
   private clusterReadOnlyMode = false
+  private clusterAskingMode = false
   /** Commands buffered between MULTI and EXEC, in submission order. */
   private transactionPlans: CommandPlan[] = []
   /** True once a queued command errored — forces EXEC to abort with EXECABORT. */
@@ -285,6 +286,10 @@ export class ClientSession implements RedisClientSession {
     return this.clusterReadOnlyMode
   }
 
+  get clusterAsking(): boolean {
+    return this.clusterAskingMode
+  }
+
   get lastCommand(): string | null {
     return this.lastCommandName
   }
@@ -353,6 +358,11 @@ export class ClientSession implements RedisClientSession {
   /** Toggle replica read mode for this connection (READONLY / READWRITE). */
   setClusterReadOnly(value: boolean): void {
     this.clusterReadOnlyMode = value
+  }
+
+  /** ASKING: the next command may use a slot this node is importing. */
+  setClusterAsking(value: boolean): void {
+    this.clusterAskingMode = value
   }
 
   selectDatabase(database: number): void {
@@ -970,10 +980,8 @@ export class ClientSession implements RedisClientSession {
       // Redis records the command as the client's last one (`cmd=` in CLIENT
       // LIST) at lookup, before any check can refuse it, and stamps the
       // interaction when the command is read and again when it is answered.
-      this.lastCommandName = this.executor.lookupCommandName(
-        rawCommand,
-        rawArgs,
-      )
+      const commandName = this.executor.lookupCommandName(rawCommand, rawArgs)
+      this.lastCommandName = commandName
       this.lastInteraction = Date.now()
       const ctx = this.createExecutionContext(turnAccess)
       // CLIENT REPLY OFF / SKIP drop the reply of every command processed,
@@ -982,6 +990,12 @@ export class ClientSession implements RedisClientSession {
         this,
         await this.executor.executeRaw(rawCommand, rawArgs, ctx),
       )
+      // ASKING lasts one command (`resetClient`): any other command clears
+      // it once processed, refused or not, unless it leaves the client in
+      // MULTI, where the flag holds until EXEC or DISCARD is done.
+      if (commandName !== 'asking' && this.sessionMode !== 'transaction') {
+        this.clusterAskingMode = false
+      }
     } finally {
       this.lastInteraction = Date.now()
       this.ownMonitorLines = null
@@ -1203,6 +1217,7 @@ export class ClientSession implements RedisClientSession {
     this.transactionDirty = false
     this.sessionMode = 'normal'
     this.clusterReadOnlyMode = false
+    this.clusterAskingMode = false
   }
 
   disconnect(reason = 'client disconnected'): void {

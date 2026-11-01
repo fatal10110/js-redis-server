@@ -84,6 +84,23 @@ export class RedisMovedError extends RedisCommandError {
   }
 }
 
+/** A key of a MIGRATING slot is not here: ask the target node (`-ASK`). */
+export class RedisAskError extends RedisCommandError {
+  constructor(slot: number, host: string, port: number) {
+    super(`${slot} ${host}:${port}`, 'ASK')
+  }
+}
+
+/**
+ * A multi-key command in a slot being resharded finds some of its keys on
+ * this node and some not (`-TRYAGAIN`).
+ */
+export class RedisTryAgainError extends RedisCommandError {
+  constructor() {
+    super('Multiple keys request during rehashing of slot', 'TRYAGAIN')
+  }
+}
+
 export class RedisClusterDownError extends RedisCommandError {
   constructor() {
     super('Hash slot not served', 'CLUSTERDOWN')
@@ -654,6 +671,10 @@ export const errors = Object.freeze({
   dumpPayloadInvalid: () =>
     new RedisCommandError('DUMP payload version or checksum are wrong'),
   badDataFormat: () => new RedisCommandError('Bad data format'),
+  migrateKeysNeedEmptyKey: () =>
+    new RedisCommandError(
+      'When using MIGRATE KEYS option, the key argument must be set to the empty string',
+    ),
   busyStreamGroup: () =>
     new RedisCommandError('Consumer Group name already exists', 'BUSYGROUP'),
   noSuchStreamGroup: (key: Buffer, group: Buffer, commandName?: string) =>

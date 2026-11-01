@@ -154,6 +154,8 @@ const SAMPLES: Record<string, string[]> = {
   copy: ['k1', 'k2'],
   dump: ['k1'],
   restore: ['k1', '0', 'payload'],
+  'restore-asking': ['k1', '0', 'payload'],
+  migrate: ['h', '6379', 'k1', '0', '1000'],
   sort: ['k1'],
   sort_ro: ['k1'],
   hscan: ['k1', '0'],

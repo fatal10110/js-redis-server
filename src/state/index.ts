@@ -58,8 +58,13 @@ export {
   type RedisPubSubPatternMessage,
   type RedisPubSubPatternMessageListener,
 } from './pubsub-broker'
-export type { RedisClusterNode, RedisClusterNodeRole } from './cluster-topology'
+export type {
+  RedisClusterNode,
+  RedisClusterNodeRole,
+  RedisClusterOpenSlot,
+} from './cluster-topology'
 export {
+  keyHashSlot,
   REDIS_CLUSTER_SLOT_COUNT,
   RedisClusterTopology,
 } from './cluster-topology'

@@ -322,6 +322,8 @@ real Redis does not have) reports what its `introspection` declares.
 - [x] `COPY source destination [DB destination-db] [REPLACE]` - Copy a key's value (and TTL) to a destination, optionally into another database; returns `0` if the destination exists without `REPLACE`
 - [x] `DUMP key` - Serialize a key's value as a real RDB payload: the object type, the body each profile's `rdb.c` writes (ziplists on 6.2, listpacks from 7.0, listpack sets / lists from 7.2, hash field TTL types on redis 7.4+ / valkey 9.0), the RDB version (9 / 10 / 11 / 12, 80 on valkey 9.0) and a CRC-64. Byte-identical to the real server for keys built by plain writes; encodings a real key got from its history (a hash that once outgrew its listpack, a list trimmed below a node, stream XDEL tombstones) are derived from the current content instead, and hashtable sets / hashes list members in insertion order where a real server's order is per-process random
 - [x] `RESTORE key ttl serialized-value [REPLACE] [ABSTTL] [IDLETIME seconds] [FREQ frequency]` - Recreate a key from any payload the profile's real server accepts (its own and older RDB versions; valkey 9.0 takes 1-11 and 80), including the ziplist / zipmap / linked-list encodings old servers wrote. `BUSYKEY`, ttl / IDLETIME / FREQ validation, `DUMP payload version or checksum are wrong` and `Bad data format` as `restoreCommand()` orders them; a deadline already past creates nothing (REPLACE deletes the old key, announced `del`). IDLETIME / FREQ are validated but not kept (no `OBJECT`, #117). A truncated payload with a valid checksum is refused with `Bad data format` where real servers keep whatever parsed
+- [x] `RESTORE-ASKING key ttl serialized-value [REPLACE] [ABSTTL] [IDLETIME seconds] [FREQ frequency]` - `RESTORE` that a cluster node importing the key's slot serves without `ASKING` (what `MIGRATE` sends to the target)
+- [x] `MIGRATE host port key|"" destination-db timeout [COPY] [REPLACE] [AUTH password | AUTH2 username password] [KEYS key ...]` - Move keys to another server (real or mock) over TCP: `AUTH` / `SELECT` / `RESTORE` (`RESTORE-ASKING` from a cluster node) in one write, a socket cached per `host:port` for 10 s that skips `SELECT` for the database it last selected, one retry on a socket that fails before the first reply. Acknowledged keys are deleted unless `COPY` (`del`, WATCH); `+NOKEY`, `-ERR Target instance replied with error: ...` (keys acknowledged before the error still move), `-IOERR error or timeout connecting to the client` / `writing to target instance` / `reading to target instance` (a connect timeout is a write timeout before redis 7.4 / valkey 8.0). The source holds its turn while it waits, like a real server blocks. From a script only `+NOKEY` and the argument errors are real: a migration that would contact the target answers `MIGRATE cannot run asynchronously from scripts`. The socketless client mocks (`createIoredisMock`, `createNodeRedisMock`) listen on no TCP port, so nothing can migrate to them (`-IOERR`)
 - [x] `MOVE key db` - Move a key to another database, preserving TTL; returns `0` if the source is missing or the destination already exists; rejected in cluster mode
 - [x] `KEYS pattern` - Find all keys matching a glob pattern
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Incrementally iterate the keyspace (see [Scan Family](#10-scan-family))
@@ -370,7 +372,6 @@ with `GT` or `LT`.
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
 - [ ] `WAIT`
-- [ ] `MIGRATE`
 
 ## 4. String Commands
 
@@ -700,22 +701,36 @@ functions: ...`) is not reproduced. Function flags `no-writes` and
 - [x] `CLUSTER MYID` - Return the node's own ID
 - [x] `READONLY` - Allow read-only commands against a direct replica connection for slots served by its master
 - [x] `READWRITE` - Disable replica read mode on the current connection
+- [x] `CLUSTER KEYSLOT key` / `COUNTKEYSINSLOT slot` / `GETKEYSINSLOT slot count` - The slot of a key; the node's own keys in a slot (any node answers, owner or not)
+- [x] `CLUSTER SETSLOT slot IMPORTING node-id | MIGRATING node-id | NODE node-id | STABLE` - Reshard a slot by hand, as `redis-cli --cluster reshard` does. IMPORTING / MIGRATING are the node's own state, shown on its own `CLUSTER NODES` line (`[slot-<-id]`, `[slot->-id]`); NODE moves the slot for every node at once (the mock has no gossip), refused while the old owner still holds keys of the slot. Valkey 8.0+ ignores arguments after the action; its `TIMEOUT` is not modeled (#652). A master that gives away its last slot stays a master, where a real one becomes a replica of the new owner
+- [x] `ASKING` - The next command may use a slot this node is importing (one command; inside MULTI until EXEC)
 
-A standalone server registers `CLUSTER`, `READONLY` and `READWRITE` too, as a
-real `cluster-enabled no` server does. `COMMAND` lists them. They answer
-`ERR This instance has cluster support disabled`, with these exceptions:
+While a slot is open, keyed commands follow `getNodeByQuery`: the
+MIGRATING source serves the keys it still holds and answers `-ASK slot
+host:port` when none of them is here (`-TRYAGAIN` when some are, from redis
+7.0.3); the IMPORTING target answers `-MOVED` to the owner unless the client
+sent `ASKING` (or the command is `RESTORE-ASKING`), and then `-TRYAGAIN` for
+several distinct keys with some missing. Inside MULTI the check runs when a
+command is queued, and again over the whole queue at EXEC; Valkey 9.0 looks
+the keys up only at EXEC. The ioredis cluster mock and the node-redis
+facade follow `-ASK` like the real clients.
+
+A standalone server registers `CLUSTER`, `READONLY`, `READWRITE` and `ASKING`
+too, as a real `cluster-enabled no` server does. `COMMAND` lists them. They
+answer `ERR This instance has cluster support disabled`, with these
+exceptions:
 
 - From Redis 7.0 / Valkey 7.2, an unknown `CLUSTER` subcommand gets the
   unknown-subcommand error.
 - `READWRITE` answers `+OK` on Redis 6.2.
 - `READONLY` and `READWRITE` answer `+OK` from Valkey 8.0.
 
-> Cluster topology is fixed at startup (config-driven), so dynamic
-> reconfiguration commands are out of scope by design:
+> The nodes of a cluster are fixed at startup (config-driven); slots move
+> only through `CLUSTER SETSLOT`. The other reconfiguration commands are out
+> of scope by design:
 
 - [ ] `CLUSTER MEET` / `FORGET` / `REPLICATE` / `SAVECONFIG`
-- [ ] `CLUSTER ADDSLOTS` / `DELSLOTS` / `FLUSHSLOTS` / `SETSLOT`
-- [ ] `CLUSTER KEYSLOT` / `COUNTKEYSINSLOT` / `GETKEYSINSLOT`
+- [ ] `CLUSTER ADDSLOTS` / `DELSLOTS` / `FLUSHSLOTS`
 - [ ] `CLUSTER BUMPEPOCH` / `RESET` / `FAILOVER`
 - [ ] `CLUSTER LINKS` / `REPLICAS` / `SLAVES` / `COUNT-FAILURE-REPORTS` / `SET-CONFIG-EPOCH`
 
