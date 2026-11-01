@@ -3,7 +3,7 @@
  * `COMMANDS` map, generated from it), which the node-redis facade takes from
  * the installed `redis` at runtime (see `node-redis-commands.ts`). This list
  * only types them: what exists at runtime is whatever the installed version
- * defines. `tests/client-mocks/node-redis-commands.test.ts` keeps it equal to
+ * defines. `tests/client-mocks/node-redis-mock-commands.test.ts` keeps it equal to
  * the installed dev dependency.
  */
 export const NODE_REDIS_COMMAND_NAMES = [

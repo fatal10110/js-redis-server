@@ -351,5 +351,24 @@ for (const RESP of [2, 3] as const) {
       // `multi(routing)` picks the node of a keyless transaction.
       assert.deepStrictEqual(await c.multi('{t}').ping().exec(), ['PONG'])
     })
+
+    test('a cluster multi() holds its node: a concurrent command on that node runs after EXEC', async () => {
+      cluster = (await createNodeRedisMock({
+        cluster: { masters: 3 },
+        RESP,
+      })) as NodeRedisMockCluster
+      const c = cluster
+      await c.set('{t}a', 'x')
+      // Real node-redis writes MULTI..EXEC as one batch on the node's
+      // connection, so a command issued alongside never lands inside it.
+      const [tx, got, after] = await Promise.all([
+        c.multi().set('{t}k', '1').get('{t}k').exec(),
+        c.get('{t}a'),
+        c.multi().incr('{t}n').exec(),
+      ])
+      assert.deepStrictEqual(tx, ['OK', '1'])
+      assert.strictEqual(got, 'x')
+      assert.deepStrictEqual(after, [1])
+    })
   })
 }

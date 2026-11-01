@@ -1326,6 +1326,14 @@ export class NodeRedisMockClient extends CommandRunner {
   }
 
   /**
+   * node-redis 5+'s graceful close: `quit()`'s draining, resolving
+   * `undefined` rather than `'OK'`.
+   */
+  async close(): Promise<void> {
+    await this.quit()
+  }
+
+  /**
    * Graceful close. Real node-redis' `quit()` appends `QUIT` to the command
    * queue, so every command already issued runs to completion first — 2000
    * pending commands all resolve. Queueing the teardown through the same
@@ -1335,14 +1343,6 @@ export class NodeRedisMockClient extends CommandRunner {
    * While it drains the client is *closing*: new work is refused, but a forced
    * {@link destroy}/{@link disconnect} can still escalate and reject this.
    */
-  /**
-   * node-redis 5+'s graceful close: `quit()`'s draining, resolving
-   * `undefined` rather than `'OK'`.
-   */
-  async close(): Promise<void> {
-    await this.quit()
-  }
-
   async quit(): Promise<string> {
     this.assertOpen()
     // Claim the closed flag synchronously so commands issued *after* this point
@@ -1934,6 +1934,12 @@ export class NodeRedisMockCluster extends CommandRunner {
   /** node-redis' node objects, one per node id, kept so they compare by identity. */
   private readonly nodeObjects = new Map<string, NodeRedisMockClusterNode>()
   private readonly sessions = new Map<string, ClientSession>()
+  /**
+   * One FIFO lock per node session — {@link runOnNode}. Keyed by the session,
+   * so the fresh sessions a later command opens never inherit a torn-down
+   * one's queue.
+   */
+  private readonly nodeLocks = new WeakMap<ClientSession, Promise<void>>()
   private readonly replicationLinks: { close(): void }[]
   /**
    * RESP version for the client as a whole, not for one node. Real node-redis
@@ -2130,8 +2136,10 @@ export class NodeRedisMockCluster extends CommandRunner {
             ? this.sessionForCommand([])
             : this.sessionForCommand(queued[index], firstKeys[index])
       }
-      await this.syncProtocol(session)
-      return runTransactionSpan(session, queued, this.closed)
+      return this.runOnNode(session, async () => {
+        await this.syncProtocol(session)
+        return runTransactionSpan(session, queued, this.closed)
+      })
     }, this.resp)
   }
 
@@ -2159,6 +2167,13 @@ export class NodeRedisMockCluster extends CommandRunner {
     // callers to catch a TypeError. Everything else about the cluster close
     // path follows real node-redis exactly; see the note above quit().
     const session = this.sessionForCommand(args, firstKey)
+    return this.runOnNode(session, () => this.runOnSessionSynced(session, args))
+  }
+
+  private async runOnSessionSynced(
+    session: ClientSession,
+    args: NodeRedisCommandArgument[],
+  ): Promise<RedisValue> {
     await this.syncProtocol(session)
     // Captured *after* syncProtocol, which moves the session itself: reading
     // it earlier would make the first command on a newly-synced node look like
@@ -2177,6 +2192,32 @@ export class NodeRedisMockCluster extends CommandRunner {
       this.clientRespVersion = session.protocolVersion
     }
     return value
+  }
+
+  /**
+   * Run `fn` on `session` after every unit of work issued earlier on that node
+   * settles. Real node-redis has one connection per node and writes a whole
+   * `MULTI … EXEC` as one batch on it, so nothing issued alongside a
+   * transaction lands inside it; the facade's span is several awaited steps,
+   * so the commands routed to that node (and the protocol sync before them)
+   * queue behind it here instead. Like that connection, a parked blocking
+   * command holds the node for this client until it is answered; a
+   * {@link duplicate} has its own sessions, so it is not held.
+   */
+  private runOnNode<T>(
+    session: ClientSession,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.nodeLocks.get(session) ?? Promise.resolve()
+    const result = previous.then(fn, fn)
+    this.nodeLocks.set(
+      session,
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    )
+    return result
   }
 
   /**
