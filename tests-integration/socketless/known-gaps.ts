@@ -182,6 +182,9 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'LPOS error and edge paths match Redis',
     'LPOS finds matches with RANK, COUNT and MAXLEN',
   ]),
+  todo('node-redis/dump-restore.test.ts', missing('withTypeMapping'), [
+    'DUMP then RESTORE with REPLACE and a ttl',
+  ]),
   todo('node-redis/move-integration.test.ts', CAUSE.directNodeConnection, [
     'rejects MOVE in cluster mode',
   ]),

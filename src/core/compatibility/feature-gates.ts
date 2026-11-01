@@ -671,6 +671,26 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // 1247-1251) and scan for a type no key has: an empty scan. Checked against
   // the same servers as above (#642).
   'scan.type-unknown-error': { valkey: '8.0.0' },
+  // DUMP / RESTORE payloads end with the server's RDB_VERSION (rdb.h): 9 on
+  // redis 6.2, 10 from 7.0 (listpack hashes, sorted sets and list nodes
+  // replace ziplists), 11 from 7.2 (listpack sets and lists, stream type
+  // 21; Valkey 7.2 / 8.0 keep 11), 12 from Redis 7.4 (hash field TTL types
+  // 24 / 25) and 80 on Valkey 9.0 (hash field expiry type 22; it accepts
+  // payload versions 1-11 and 80 only, valkey@9.0.0 rdb.c:84-93). Checked
+  // with DUMP against redis-server 6.2.14, 7.0.15, 7.2.4, 7.4.4, 8.0.0 and
+  // valkey-server 8.0.0, 9.0.0 (#202).
+  'rdb.version-10': { redis: '7.0.0', valkey: '7.2.0' },
+  'rdb.version-11': { redis: '7.2.0', valkey: '7.2.0' },
+  'rdb.version-12': { redis: '7.4.0' },
+  'rdb.version-80': { valkey: '9.0.0' },
+  // A list element larger than the node size limit (8 KB at the default
+  // list-max-listpack-size -2) goes into a quicklist node of its own, a
+  // PLAIN node holding the bare element (`isLargeElement()`, redis@7.4.4
+  // quicklist.c:508-514); before, only elements of 1 GB and more did, and a
+  // large element got a one-entry listpack node. DUMP shows the node
+  // container. Checked against redis-server 7.2.4, 7.4.4 and valkey-server
+  // 8.0.0 (#202).
+  'list.large-element-plain-node': { redis: '7.4.0', valkey: '8.0.0' },
   // Patch releases mark the key specs of XREAD / XREADGROUP (the STREAMS
   // keyword) and GEORADIUS / GEORADIUSBYMEMBER (STORE, STOREDIST) `incomplete`
   // with a `notes` entry (redis@7.4.11:src/commands/xread.json): COMMAND INFO

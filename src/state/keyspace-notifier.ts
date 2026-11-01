@@ -143,7 +143,13 @@ const DELETE_EVENT_OVERRIDES: Readonly<Record<string, string>> = {
 }
 
 // Write events whose class is generic (g) rather than the value's data type.
-const GENERIC_WRITE_COMMANDS = new Set(['rename', 'renamenx', 'copy', 'move'])
+const GENERIC_WRITE_COMMANDS = new Set([
+  'rename',
+  'renamenx',
+  'copy',
+  'move',
+  'restore',
+])
 
 const CLASS_FOR_TYPE: Readonly<Record<RedisDataValue['type'], NotifyClass>> = {
   string: '$',
