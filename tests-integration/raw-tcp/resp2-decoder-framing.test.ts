@@ -17,8 +17,10 @@ import { RawRedisConnection } from './raw-connection'
  * exceptions:
  *  - "bytes after a bulk payload" holds on every Redis version and on the
  *    Valkey `x.0.0` releases, which the Valkey presets model. Valkey patch
- *    releases (7.2.14, 8.0.11, 9.0.6) refuse a bad terminator with `Protocol
- *    error: invalid CRLF in request` instead.
+ *    releases (7.2.14, 8.0.8, 8.1.8, 9.0.5, 9.1.0 and later) refuse a bad
+ *    terminator with `Protocol error: invalid CRLF in request` instead
+ *    (feature `protocol.strict-crlf`, pinned on custom versions in
+ *    `tests/compatibility/patch-gates.test.ts`).
  *  - The unknown-command reply is matched on its prefix only, because 6.2
  *    quotes the name with backticks (`foo`) where 7.0+ uses single quotes.
  *  - The multibulk count bound is version-specific: 6.2 refuses more than
