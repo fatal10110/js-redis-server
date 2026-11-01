@@ -1,4 +1,5 @@
 import { blmoveCommand } from './blmove'
+import { brpoplpushCommand } from './brpoplpush'
 import { blmpopCommand, lmpopCommand } from './lmpop'
 import { blpopCommand, brpopCommand } from './blpop'
 import {
@@ -42,6 +43,7 @@ export const listsCommands = [
   blmpopCommand,
   blpopCommand,
   brpopCommand,
+  brpoplpushCommand,
 ]
 
 export {
@@ -49,6 +51,7 @@ export {
   blmpopCommand,
   blpopCommand,
   brpopCommand,
+  brpoplpushCommand,
   lindexCommand,
   linsertCommand,
   llenCommand,

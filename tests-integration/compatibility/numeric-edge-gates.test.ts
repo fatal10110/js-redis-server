@@ -61,6 +61,11 @@ const BLOCKING: BlockingCommand[] = [
     args: (k, t) => ['BLMOVE', k, `${k}:dst`, 'LEFT', 'RIGHT', t],
   },
   {
+    name: 'BRPOPLPUSH',
+    type: 'list',
+    args: (k, t) => ['BRPOPLPUSH', k, `${k}:dst`, t],
+  },
+  {
     name: 'BLMPOP',
     type: 'list',
     since70: true,

@@ -82,6 +82,8 @@ describe(`Keyspace notification names (${testRunner.getBackendName()})`, () => {
       assert.strictEqual(await actor.lmove(src, dst, 'LEFT', 'RIGHT'), 'a')
       assert.strictEqual(await actor.rpoplpush(src, dst), 'c')
       assert.strictEqual(await actor.blmove(src, dst, 'RIGHT', 'LEFT', 1), 'b')
+      await actor.rpush(src, 'd')
+      assert.strictEqual(await actor.brpoplpush(src, dst, 1), 'd')
       // Same key: a rotation — never emptied, so never deleted.
       await actor.rpush(same, 'a')
       assert.strictEqual(await actor.lmove(same, same, 'LEFT', 'RIGHT'), 'a')
@@ -93,6 +95,10 @@ describe(`Keyspace notification names (${testRunner.getBackendName()})`, () => {
       'src:lpop',
       'dst:lpush',
       'src:rpop',
+      'dst:lpush',
+      'src:rpop',
+      'src:del',
+      'src:rpush',
       'dst:lpush',
       'src:rpop',
       'src:del',

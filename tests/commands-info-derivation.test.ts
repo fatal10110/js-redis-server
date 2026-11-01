@@ -197,6 +197,7 @@ const SAMPLES: Record<string, string[]> = {
   lpos: ['k1', 'e'],
   lmove: ['k1', 'k2', 'LEFT', 'RIGHT'],
   blmove: ['k1', 'k2', 'LEFT', 'RIGHT', '0'],
+  brpoplpush: ['k1', 'k2', '0'],
   blpop: ['k1', 'k2', '0'],
   brpop: ['k1', 'k2', '0'],
   sadd: ['k1', 'm'],

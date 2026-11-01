@@ -1037,10 +1037,10 @@ describe(
 
     // Which commands a script may call follows the real command table of
     // each version (#500). SPOP / SRANDMEMBER / HRANDFIELD run everywhere.
-    // BLPOP / BRPOP / BLMOVE / BZPOPMIN / BZPOPMAX are `noscript` up to 7.0;
-    // from 7.2 they run, and BLMPOP / BZMPOP (7.0+) always do, answering at
-    // once with the timeout reply (a Lua false, nil on the wire) when there
-    // is nothing to pop. Against real redis-server 7.0.15 and the 6.2.14,
+    // BLPOP / BRPOP / BLMOVE / BRPOPLPUSH / BZPOPMIN / BZPOPMAX are
+    // `noscript` up to 7.0; from 7.2 they run, and BLMPOP / BZMPOP (7.0+)
+    // always do, answering at once with the timeout reply (a Lua false, nil
+    // on the wire) when there is nothing to pop. Against real redis-server 7.0.15 and the 6.2.14,
     // 7.2.4, 8.0.6 and valkey 9.0.0 sources (CLIENT_DENY_BLOCKING).
     test('blocking and random commands from scripts follow the profile', async () => {
       const key = `{script-flags:${randomKey()}}`
@@ -1073,6 +1073,7 @@ describe(
         "redis.pcall('BLPOP', KEYS[1], '0')",
         "redis.pcall('BRPOP', KEYS[1], '0')",
         "redis.pcall('BLMOVE', KEYS[1], KEYS[1], 'LEFT', 'LEFT', '0')",
+        "redis.pcall('BRPOPLPUSH', KEYS[1], KEYS[1], '0')",
         "redis.pcall('BZPOPMIN', KEYS[1], '0')",
         "redis.pcall('BZPOPMAX', KEYS[1], '0')",
       ]) {

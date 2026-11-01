@@ -228,6 +228,7 @@ export {
   blmoveCommand,
   blpopCommand,
   brpopCommand,
+  brpoplpushCommand,
   lindexCommand,
   linsertCommand,
   llenCommand,

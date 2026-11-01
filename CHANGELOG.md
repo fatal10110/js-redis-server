@@ -165,6 +165,19 @@ so the PR body is not a durable home for a breaking-change note.
   drain could deadlock with a concurrent optimizing compile waiting for a
   GC (nodejs/node#54918). The engine load now keeps a referenced timer
   until it settles.
+- BRPOPLPUSH is implemented on every profile ([#495]); it used to answer
+  `unknown command`. It is the deprecated form of `BLMOVE source destination
+  RIGHT LEFT timeout` and answers like it: the moved element, a null array
+  (`*-1`, RESP3 `_`) on timeout, `WRONGTYPE` on either key, the same keyspace
+  events, wake order and blocked-client flag, and no blocking inside MULTI.
+  The timeout follows each version's grammar and range rows (`timeout is
+  out of range` on redis 7.2+ and valkey, `timeout is negative` on 6.2 /
+  7.0). From a script it is refused as `noscript` on redis 6.2 and 7.0, and
+  runs without blocking from 7.2 and on valkey. `COMMAND INFO` reports each
+  version's flags and key specs.
+- BLMOVE answers a null array (`*-1`) when its timeout expires, as every
+  Redis and Valkey version does; it used to answer a null bulk string
+  (`$-1`). Queued in MULTI or called from a script it still answers `$-1`.
 
 ### Changed
 
