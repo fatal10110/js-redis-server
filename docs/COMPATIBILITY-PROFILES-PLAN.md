@@ -87,7 +87,9 @@ reading the same profile via one evaluation primitive (`gateSatisfied(gate, prof
 
 Two declarative primitives feed all four sites:
 
-- **Command existence** → `since` (a `VersionGate`) on the `CommandDefinition`.
+- **Command existence** → `since` (a `VersionGate`) on the `CommandDefinition`, and
+  `until` (the first version without it) for a command a later version removed
+  (STRALGO, replaced by LCS in Redis 7.0).
 - **Everything else** (subcommands, options, policy behavior, semantics) → named
   **feature flags** in a central table, checked via `profile.has('feature')`.
 
@@ -385,6 +387,7 @@ redis-cli -p <port> INFO server    # server_name:valkey, valkey_version:9.0.0
 ## Extensibility (designed-in, not built now)
 
 - New version-introduced command → add `since` to its definition. Done.
+- Version-removed command → add `until` (the first `VersionGate` without it).
 - New version-introduced subcommand → add a `FeatureId` + `FEATURE_GATES` row, gate
   subcommand dispatch, and filter subcommand introspection.
 - New optional/behavioral divergence (option, **policy rule, routing, reply shape, default RESP version**) → add a `FeatureId` + a `FEATURE_GATES` row, branch on `ctx.server.profile.has(...)` (policy/execute) or `ctx.profile.has(...)` (parser). No constructor/wiring changes.

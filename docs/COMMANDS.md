@@ -387,15 +387,13 @@ with `GT` or `LT`.
 - [x] `APPEND key value` - Append a value to a key (on an existing key, rejects a result larger than `proto-max-bulk-len`, like Redis)
 - [x] `STRLEN key` - Get the length of the value stored at key
 - [x] `GETRANGE key start end` - Get a substring of the value
+- [x] `LCS key1 key2 [LEN] [IDX] [MINMATCHLEN len] [WITHMATCHLEN]` - Longest common subsequence of two strings (redis 7.0+ / valkey; `IDX` lists the match ranges in Redis' order, a map on RESP3; a table over `proto-max-bulk-len` is refused like Redis)
+- [x] `STRALGO LCS [IDX] [LEN] [MINMATCHLEN len] [WITHMATCHLEN] STRINGS a b | KEYS k1 k2` - Redis 6.2 only (removed in 7.0 in favor of `LCS`); an unknown command on every other profile
 - [x] `SUBSTR key start end` - Alias for `GETRANGE` (deprecated)
 - [x] `SETRANGE key offset value` - Overwrite part of a string at the given offset (rejects an `offset + length` beyond `proto-max-bulk-len`, like Redis)
 - [x] `INCR key` / `DECR key` - Increment/decrement the integer value of a key by one
 - [x] `INCRBY key increment` / `DECRBY key decrement` - Increment/decrement by the given integer
 - [x] `INCRBYFLOAT key increment` - Increment the float value of a key
-
-#### Not implemented
-
-- [ ] `LCS` (longest common subsequence)
 
 ## 5. Hash Commands
 

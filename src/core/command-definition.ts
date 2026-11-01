@@ -85,6 +85,8 @@ export type CommandDocumentation = {
 export type CommandDocumentationArgument = {
   name: string
   type: string
+  /** Redis 7.2+ / Valkey: the argument's display name in COMMAND DOCS. */
+  displayText?: string
   keySpecIndex?: number
   token?: string
   flags?: readonly string[]
@@ -165,6 +167,11 @@ export type KeyWithFlags = { key: Buffer; flags: readonly string[] }
 export interface CommandDefinition<TArgs = unknown> {
   readonly name: string
   readonly since?: VersionGate
+  /**
+   * The first version that no longer has the command (STRALGO, which Redis
+   * 7.0 replaced with LCS): registered only where this gate is not met.
+   */
+  readonly until?: VersionGate
   readonly schema: CommandSchema<TArgs>
   readonly flags: readonly CommandFlag[]
   readonly capabilities?: CommandCapabilities
