@@ -259,12 +259,16 @@ export class ClientTrackingTable {
       case 'persist':
       case 'evict':
         // BCAST NOLOOP compares the client handed to `signalModifiedKey`:
-        // the script's own client for a script write, none for an expiry
-        // (redis@7.2.4:src/db.c:1687). Default mode compares the caller.
+        // the script's own client for a script write, none for a key that
+        // expired (redis@7.2.4:src/db.c:1687), the command's for a deadline
+        // it gave in the past (valkey@9.0.0:src/db.c:1928-1936). Default mode
+        // compares the caller.
         this.invalidateKey(
           event.key,
           event.client,
-          event.viaScript || event.type === 'evict' ? undefined : event.client,
+          event.viaScript || (event.type === 'evict' && !event.pastDeadline)
+            ? undefined
+            : event.client,
         )
         return
       case 'flush':

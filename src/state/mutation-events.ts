@@ -57,6 +57,10 @@ export type RedisMutationEvent = (
       type: 'evict'
       database: number
       key: Buffer
+      // Set when a command deleted the key for a deadline it just gave it
+      // (Valkey 8.1+'s `deleteExpiredKeyFromOverwriteAndPropagate`), rather
+      // than the key expiring on its own.
+      pastDeadline?: boolean
     }
   | {
       type: 'flush'

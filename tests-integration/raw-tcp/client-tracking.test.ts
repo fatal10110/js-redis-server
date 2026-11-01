@@ -383,6 +383,14 @@ describe(`CLIENT TRACKING (${testRunner.getBackendName()}, ${profile})`, () => {
     assert.deepStrictEqual(await quiet.pending(), [
       invalidate(key('nlb:script')),
     ])
+    // A deadline the client gives in the past deletes on its own behalf
+    // (an `expired` event on valkey 8.1+, a `del` elsewhere).
+    assert.strictEqual(
+      await quiet.call('EXPIRE', key('nlb:own'), '0'),
+      ':1\r\n',
+    )
+    await delay(20)
+    assert.deepStrictEqual(await quiet.pending(), [])
   })
 
   test('FLUSHDB sends every tracking client a null', async () => {

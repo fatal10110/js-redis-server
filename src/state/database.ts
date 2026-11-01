@@ -207,7 +207,7 @@ export class RedisDatabase {
       return false
     }
 
-    this.removeEntry(existing, 'evict')
+    this.removeEntry(existing, 'evict', true)
     return true
   }
 
@@ -690,10 +690,21 @@ export class RedisDatabase {
     return true
   }
 
-  /** Remove a key: `delete` publishes `del`, `evict` publishes `expired`. */
-  private removeEntry(entry: KeyspaceEntry, type: 'delete' | 'evict'): void {
+  /**
+   * Remove a key: `delete` publishes `del`, `evict` publishes `expired`.
+   * `pastDeadline` marks an `evict` a command made ({@link expireNow}).
+   */
+  private removeEntry(
+    entry: KeyspaceEntry,
+    type: 'delete' | 'evict',
+    pastDeadline = false,
+  ): void {
     this.entries.delete(keyId(entry.key))
-    this.emit({ type, database: this.id, key: entry.key })
+    this.emit(
+      type === 'evict' && pastDeadline
+        ? { type, database: this.id, key: entry.key, pastDeadline }
+        : { type, database: this.id, key: entry.key },
+    )
   }
 
   private emitWrite(entry: KeyspaceEntry): void {
