@@ -1,5 +1,5 @@
 import { after, before, describe, test } from 'node:test'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, keyInAnotherSlot, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import { connectToRawSlotOwner, expectReply, rawSlotOwner } from './helpers'
@@ -13,7 +13,8 @@ const testRunner = new TestRunner()
 
 const CROSSSLOT = "-CROSSSLOT Keys in request don't hash to the same slot\r\n"
 
-describe(`Raw TCP cluster LCS across slots (${testRunner.getBackendName()}, ${activeProfile})`, () => {
+const clusterSuite = `Raw TCP cluster LCS across slots (${testRunner.getBackendName()}, ${activeProfile})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

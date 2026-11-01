@@ -163,8 +163,14 @@ Suites that pin version-dependent wording follow `REDIS_COMPAT` through
 `tests-integration/profile-wording.ts` (script error decoration, `NOSCRIPT`,
 unknown-subcommand and arity errors). `npm run test:integration:profiles:mock`
 runs the script, `COMMAND`, subcommand-error and MONITOR suites once per preset
-(the `profile-suites-mock` CI job); each profile's expectations are checked
-against a real server of that version (`scripts/agent-tools/probe.py`).
+(the `profile-suites-mock` CI job), the GEO error suites included. The
+`compatibility-real` CI job runs `tests-integration/compatibility/**` and
+`tests-integration/raw-tcp/**` against a real standalone server of every
+profile's pinned version with the matching `REDIS_COMPAT`
+(`npm run test:integration:compatibility:real`, see
+[TEST-INTEGRATION.md](TEST-INTEGRATION.md#environment-variable-control)); a
+row that needs a cluster takes `needsCluster` from `test-config.ts`, and a row
+that only exists on some versions skips the others.
 `npm test` also type-checks `scripts/` and `tests/` with `tsconfig.check.json`.
 
 Valkey profiles model the Redis 7.0-era gates as enabled:

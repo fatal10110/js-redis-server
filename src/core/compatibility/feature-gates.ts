@@ -693,4 +693,17 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   'protocol.strict-crlf': {
     valkey: ['7.2.14', '8.0.8', '8.1.8', '9.0.5', '9.1.0'],
   },
+  // ZUNION / ZINTER / ZDIFF (and their STORE forms) with numkeys <= 0: 7.0
+  // quotes the full command name, `at least 1 input key is needed for
+  // 'zunionstore' command` (redis@7.0.0 t_zset.c:2550, valkey@8.0.0
+  // t_zset.c:2563); 6.2 says `... needed for zunionstore` (redis@6.2.14
+  // t_zset.c:2595). Probed on redis-server 6.2.14 (#522).
+  'zset.numkeys-quoted-wording': { redis: '7.0.0', valkey: '7.2.0' },
+  // HELLO before AUTH on a password-protected server: 7.2 names the protocol
+  // argument, `... otherwise the HELLO <proto> AUTH <user> <pass> option ...`
+  // (redis@7.2.0 networking.c:3589, valkey@8.0.0 networking.c:4086); 6.2 and
+  // 7.0 say `HELLO AUTH <user> <pass>` (redis@6.2.14 networking.c:3081,
+  // redis@7.0.15 networking.c:3503). Probed on redis-server 6.2.14 and 7.0.15
+  // (#522).
+  'hello.noauth-proto-wording': { redis: '7.2.0', valkey: '7.2.0' },
 }

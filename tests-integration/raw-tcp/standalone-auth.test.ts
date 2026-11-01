@@ -1,7 +1,8 @@
 import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
 import { STANDALONE_AUTH_PASSWORD, TestRunner } from '../test-config'
-import { commandFrame, randomKey } from '../utils'
+import { activeProfile, commandFrame, randomKey } from '../utils'
+import { isValkey } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -25,8 +26,12 @@ const WRONGPASS =
   '-WRONGPASS invalid username-password pair or user is disabled.\r\n'
 const NOPASS_CONFIGURED =
   '-ERR AUTH <password> called without any password configured for the default user. Are you sure your configuration is correct?\r\n'
-const HELLO_NOAUTH =
-  '-NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n'
+// 6.2 and 7.0 leave `<proto>` out (`hello.noauth-proto-wording`).
+const HELLO_NOAUTH = `-NOAUTH HELLO must be called with the client already authenticated, otherwise the ${
+  activeProfile === 'redis-6.2' || activeProfile === 'redis-7.0'
+    ? 'HELLO AUTH'
+    : 'HELLO <proto> AUTH'
+} <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time\r\n`
 
 async function helloFlat(
   conn: RawRedisConnection,
@@ -77,7 +82,7 @@ describe(`Raw TCP AUTH with no password configured (${testRunner.getBackendName(
     const conn = await connect()
     const flat = await helloFlat(conn, ['HELLO', '2', 'AUTH', 'default', ''])
     assert.ok(flat.includes('server'))
-    assert.ok(flat.includes('redis'))
+    assert.ok(flat.includes(isValkey ? 'valkey' : 'redis'))
   })
 })
 

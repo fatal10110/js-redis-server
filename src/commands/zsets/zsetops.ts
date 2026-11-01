@@ -211,7 +211,8 @@ function parseSetOp(
   cursor++
 
   const numkeys = parseIntegerToken(numkeysToken)
-  if (numkeys <= 0) throw errors.atLeastOneInputKey(ctx.commandName)
+  if (numkeys <= 0)
+    throw errors.atLeastOneInputKey(ctx.commandName, ctx.profile)
   if (cursor + numkeys > input.length) throw errors.syntax()
 
   const keys = input.slice(cursor, cursor + numkeys)
@@ -363,7 +364,8 @@ const zintercardSchema = t.custom<ZintercardArgs>((input, index, ctx) => {
   cursor++
 
   const numkeys = parseIntegerToken(numkeysToken)
-  if (numkeys <= 0) throw errors.atLeastOneInputKey(ctx.commandName)
+  if (numkeys <= 0)
+    throw errors.atLeastOneInputKey(ctx.commandName, ctx.profile)
   if (cursor + numkeys > input.length) throw errors.syntax()
 
   const keys = input.slice(cursor, cursor + numkeys)

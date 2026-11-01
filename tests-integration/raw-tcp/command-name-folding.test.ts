@@ -1,6 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { randomKey } from '../utils'
+import { legacy, SCRIPT_LIB, unknownSubcommand } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply, expectReplyPrefix } from './helpers'
 
@@ -42,12 +43,13 @@ const testRunner = new TestRunner()
 // backend.
 const KELVIN = String.fromCodePoint(0x212a)
 const LONG_S = String.fromCodePoint(0x017f)
-const UNKNOWN_COMMAND = "-ERR unknown command '"
+// 6.2 quotes the name with backticks (`error.unknown-command-wording`).
+const UNKNOWN_COMMAND = legacy
+  ? '-ERR unknown command `'
+  : "-ERR unknown command '"
 
-function unknownSubcommand(container: string, echoed: string): Buffer {
-  return Buffer.from(
-    `-ERR unknown subcommand '${echoed}'. Try ${container} HELP.\r\n`,
-  )
+function unknownSubcommandReply(container: string, echoed: string): Buffer {
+  return Buffer.from(`-${unknownSubcommand(container, echoed)}\r\n`)
 }
 
 describe(`Raw TCP ASCII-only command-name folding (${testRunner.getBackendName()})`, () => {
@@ -102,7 +104,10 @@ describe(`Raw TCP ASCII-only command-name folding (${testRunner.getBackendName()
       ['COMMAND', 'INFO', `h${KELVIN}eys`],
       '*1\r\n$-1\r\n',
     )
-    await expectReply(conn, ['COMMAND', 'DOCS', `h${KELVIN}eys`], '*0\r\n')
+    // COMMAND DOCS arrived in 7.0.
+    if (!legacy) {
+      await expectReply(conn, ['COMMAND', 'DOCS', `h${KELVIN}eys`], '*0\r\n')
+    }
     await expectReply(
       conn,
       ['COMMAND', 'GETKEYS', `h${KELVIN}eys`, 'h'],
@@ -118,18 +123,22 @@ describe(`Raw TCP ASCII-only command-name folding (${testRunner.getBackendName()
     await expectReply(
       conn,
       ['COMMAND', `GET${KELVIN}EYS`, 'SET', key, 'v'],
-      unknownSubcommand('COMMAND', `GET${KELVIN}EYS`),
+      unknownSubcommandReply('COMMAND', `GET${KELVIN}EYS`),
     )
     // Uppercasing dispatch (XINFO STREAM / XGROUP DESTROY via the long s).
+    // 6.2 looks the key up before the subcommand, so it needs a stream.
+    if (legacy) {
+      await expectReplyPrefix(conn, ['XADD', key, '*', 'f', 'v'], '$')
+    }
     await expectReply(
       conn,
       ['XINFO', `${LONG_S}TREAM`, key],
-      unknownSubcommand('XINFO', `${LONG_S}TREAM`),
+      unknownSubcommandReply('XINFO', `${LONG_S}TREAM`),
     )
     await expectReply(
       conn,
       ['XGROUP', `DE${LONG_S}TROY`, key, 'g'],
-      unknownSubcommand('XGROUP', `DE${LONG_S}TROY`),
+      unknownSubcommandReply('XGROUP', `DE${LONG_S}TROY`),
     )
   })
 
@@ -140,7 +149,9 @@ describe(`Raw TCP ASCII-only command-name folding (${testRunner.getBackendName()
     await expectReply(
       conn,
       ['EVAL', `return redis.pcall('h${KELVIN}eys', KEYS[1])`, '1', key],
-      '-ERR Unknown Redis command called from script\r\n',
+      legacy
+        ? `-@user_script: 1: ${SCRIPT_LIB.unknownCommand}\r\n`
+        : `-ERR ${SCRIPT_LIB.unknownCommand}\r\n`,
     )
   })
 

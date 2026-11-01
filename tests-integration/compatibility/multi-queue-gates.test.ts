@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, randomKey } from '../utils'
 import { RawRedisConnection } from '../raw-tcp/raw-connection'
 import {
@@ -143,7 +143,8 @@ describe(`MULTI profile rows (${testRunner.getBackendName()}, ${profile})`, () =
   })
 })
 
-describe(`MULTI profile rows in a cluster (${testRunner.getBackendName()}, ${profile})`, () => {
+const clusterSuite = `MULTI profile rows in a cluster (${testRunner.getBackendName()}, ${profile})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

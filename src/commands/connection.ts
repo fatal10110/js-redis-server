@@ -627,8 +627,13 @@ function matchesClientKillFilter(
   return true
 }
 
-const HELLO_NOAUTH_MESSAGE =
-  'HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time'
+/** `hello.noauth-proto-wording`: 6.2 and 7.0 leave `<proto>` out. */
+function helloNoAuthMessage(profile: CompatibilityProfile): string {
+  const form = profile.has('hello.noauth-proto-wording')
+    ? 'HELLO <proto> AUTH'
+    : 'HELLO AUTH'
+  return `HELLO must be called with the client already authenticated, otherwise the ${form} <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time`
+}
 
 /**
  * The only user this server knows about. Redis' `requirepass` is the password of
@@ -1150,7 +1155,7 @@ export const helloCommand = defineCommand({
     // runs before any SETNAME side effect is applied, so a failed HELLO leaves
     // connection state untouched.
     if (ctx.server.requirepass && !ctx.session.isAuthenticated) {
-      throw new NoAuthError(HELLO_NOAUTH_MESSAGE)
+      throw new NoAuthError(helloNoAuthMessage(ctx.server.profile))
     }
 
     if (pendingName !== undefined) {

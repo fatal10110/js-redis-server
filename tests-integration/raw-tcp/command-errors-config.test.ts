@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { commandFrame } from '../utils'
+import { legacy, unknownSubcommand } from '../profile-wording'
 import { RawRedisConnection, respText } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -56,6 +57,12 @@ import { expectReply } from './helpers'
  */
 const testRunner = new TestRunner()
 
+const unknownConfigSub = (sub: string): string =>
+  `-${unknownSubcommand('CONFIG', sub)}\r\n`
+
+// Several pairs per CONFIG SET arrived in 7.0; 6.2 takes exactly one.
+const multiPair = { skip: legacy && 'CONFIG SET takes several pairs from 7.0' }
+
 describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
   let port: number
   const connections: RawRedisConnection[] = []
@@ -81,26 +88,14 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
   test('an unknown subcommand replies with the CONFIG HELP hint', async () => {
     const conn = await connect()
 
-    await expectReply(
-      conn,
-      ['CONFIG', 'BOGUS'],
-      "-ERR unknown subcommand 'BOGUS'. Try CONFIG HELP.\r\n",
-    )
+    await expectReply(conn, ['CONFIG', 'BOGUS'], unknownConfigSub('BOGUS'))
   })
 
   test('the unknown subcommand is echoed with its original casing', async () => {
     const conn = await connect()
 
-    await expectReply(
-      conn,
-      ['CONFIG', 'bogus'],
-      "-ERR unknown subcommand 'bogus'. Try CONFIG HELP.\r\n",
-    )
-    await expectReply(
-      conn,
-      ['CONFIG', 'BoGuS'],
-      "-ERR unknown subcommand 'BoGuS'. Try CONFIG HELP.\r\n",
-    )
+    await expectReply(conn, ['CONFIG', 'bogus'], unknownConfigSub('bogus'))
+    await expectReply(conn, ['CONFIG', 'BoGuS'], unknownConfigSub('BoGuS'))
   })
 
   test('trailing arguments do not change the unknown-subcommand reply', async () => {
@@ -109,7 +104,7 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
     await expectReply(
       conn,
       ['CONFIG', 'BOGUS', 'maxmemory', '100'],
-      "-ERR unknown subcommand 'BOGUS'. Try CONFIG HELP.\r\n",
+      unknownConfigSub('BOGUS'),
     )
   })
 
@@ -121,18 +116,14 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
 
     for (const length of [1, 127, 128]) {
       const name = 'X'.repeat(length)
-      await expectReply(
-        conn,
-        ['CONFIG', name],
-        `-ERR unknown subcommand '${name}'. Try CONFIG HELP.\r\n`,
-      )
+      await expectReply(conn, ['CONFIG', name], unknownConfigSub(name))
     }
 
     for (const length of [129, 300]) {
       await expectReply(
         conn,
         ['CONFIG', 'X'.repeat(length)],
-        `-ERR unknown subcommand '${'X'.repeat(128)}'. Try CONFIG HELP.\r\n`,
+        unknownConfigSub('X'.repeat(legacy ? length : 128)),
       )
     }
   })
@@ -144,39 +135,19 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
   test('CR and LF in the echoed subcommand are mapped 1:1, not collapsed', async () => {
     const conn = await connect()
 
-    await expectReply(
-      conn,
-      ['CONFIG', 'a\r\nbc'],
-      "-ERR unknown subcommand 'a  bc'. Try CONFIG HELP.\r\n",
-    )
-    await expectReply(
-      conn,
-      ['CONFIG', 'x\ny'],
-      "-ERR unknown subcommand 'x y'. Try CONFIG HELP.\r\n",
-    )
+    await expectReply(conn, ['CONFIG', 'a\r\nbc'], unknownConfigSub('a  bc'))
+    await expectReply(conn, ['CONFIG', 'x\ny'], unknownConfigSub('x y'))
 
     // A LONE `\r` is the case with protocol consequence: left unmapped it ends
     // the error line early and the client resynchronizes mid-frame. An
     // implementation that special-cases the `\r\n` pair and maps `\n` alone
     // still passes the two assertions above, so this one is what actually pins
     // the 1:1 map. Captured from real 8.0.6.
-    await expectReply(
-      conn,
-      ['CONFIG', 'a\rb'],
-      "-ERR unknown subcommand 'a b'. Try CONFIG HELP.\r\n",
-    )
+    await expectReply(conn, ['CONFIG', 'a\rb'], unknownConfigSub('a b'))
 
     // Repeated runs of either byte stay 1:1 rather than collapsing.
-    await expectReply(
-      conn,
-      ['CONFIG', 'p\r\rq'],
-      "-ERR unknown subcommand 'p  q'. Try CONFIG HELP.\r\n",
-    )
-    await expectReply(
-      conn,
-      ['CONFIG', 'm\n\nn'],
-      "-ERR unknown subcommand 'm  n'. Try CONFIG HELP.\r\n",
-    )
+    await expectReply(conn, ['CONFIG', 'p\r\rq'], unknownConfigSub('p  q'))
+    await expectReply(conn, ['CONFIG', 'm\n\nn'], unknownConfigSub('m  n'))
   })
 
   // CONFIG SET failure wording (#416). These two tests pin the 7.0+ bytes as
@@ -187,18 +158,21 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
   // sweep in profile-gates.test.ts.
   test('an invalid notify-keyspace-events class fails with the CONFIG SET template', async () => {
     const conn = await connect()
-    const expected =
-      "-ERR CONFIG SET failed (possibly related to argument 'notify-keyspace-events') - Invalid event class character. Use 'Ag$lshzxeKEtmdn'.\r\n"
+    // 6.2: `Invalid argument '<value>' for CONFIG SET '<name as sent>'`.
+    const expected = (name: string, value: string): string =>
+      legacy
+        ? `-ERR Invalid argument '${value}' for CONFIG SET '${name}'\r\n`
+        : "-ERR CONFIG SET failed (possibly related to argument 'notify-keyspace-events') - Invalid event class character. Use 'Ag$lshzxeKEtmdn'.\r\n"
 
     await expectReply(
       conn,
       ['CONFIG', 'SET', 'notify-keyspace-events', 'Xz'],
-      expected,
+      expected('notify-keyspace-events', 'Xz'),
     )
     await expectReply(
       conn,
       ['CONFIG', 'SET', 'Notify-Keyspace-Events', 'KE A'],
-      expected,
+      expected('Notify-Keyspace-Events', 'KE A'),
     )
   })
 
@@ -208,7 +182,9 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
     await expectReply(
       conn,
       ['CONFIG', 'SET', 'Bogus-Param', '1'],
-      "-ERR Unknown option or number of arguments for CONFIG SET - 'Bogus-Param'\r\n",
+      legacy
+        ? '-ERR Unsupported CONFIG parameter: Bogus-Param\r\n'
+        : "-ERR Unknown option or number of arguments for CONFIG SET - 'Bogus-Param'\r\n",
     )
   })
 
@@ -222,7 +198,7 @@ describe(`Raw TCP CONFIG errors (${testRunner.getBackendName()})`, () => {
     )
   })
 
-  describe('CONFIG SET pair parsing (#419)', () => {
+  describe('CONFIG SET pair parsing (#419)', multiPair, () => {
     async function configGet(
       conn: RawRedisConnection,
       name: string,

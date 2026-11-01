@@ -314,7 +314,9 @@ describe(`Raw TCP CLIENT INFO / LIST and INFO (${testRunner.getBackendName()}, $
           ? ',keys_with_volatile_items=\\d+'
           : ''
     const match = new RegExp(
-      `^db0:keys=(\\d+),expires=(\\d+),avg_ttl=(\\d+)${extra}$`,
+      // avg_ttl goes negative on a real server holding keys whose expiry
+      // passed but which the active cycle has not reclaimed yet.
+      `^db0:keys=(\\d+),expires=(\\d+),avg_ttl=(-?\\d+)${extra}$`,
       'm',
     ).exec(info)
     assert.ok(match, info)

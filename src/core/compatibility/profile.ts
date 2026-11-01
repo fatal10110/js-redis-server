@@ -149,6 +149,8 @@ export type FeatureId =
   | 'geo.missing-member-wording'
   | 'command.incomplete-stream-geo-key-specs'
   | 'protocol.strict-crlf'
+  | 'zset.numkeys-quoted-wording'
+  | 'hello.noauth-proto-wording'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

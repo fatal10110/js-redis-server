@@ -3,6 +3,11 @@ import assert from 'node:assert'
 import { GEO_REPLY_WITH, RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
 import { errorWithMessage, randomKey } from '../../utils'
+import {
+  GEO_UNIT_ERROR,
+  geoMissingMember,
+  geoStoreWithError,
+} from '../../profile-wording'
 
 const testRunner = new TestRunner()
 
@@ -153,7 +158,7 @@ describe(`Geo Search Commands Integration (node-redis, ${testRunner.getBackendNa
             radius: 200,
             unit: 'km',
           }),
-        errorWithMessage('ERR could not decode requested zset member'),
+        errorWithMessage(geoMissingMember('NoSuchMember')),
       )
       await assert.rejects(
         () =>
@@ -184,9 +189,7 @@ describe(`Geo Search Commands Integration (node-redis, ${testRunner.getBackendNa
             { longitude: 15, latitude: 37 },
             { radius: 1, unit: 'parsec' as never },
           ),
-        errorWithMessage(
-          'ERR unsupported unit provided. please use M, KM, FT, MI',
-        ),
+        errorWithMessage(GEO_UNIT_ERROR),
       )
       await assert.rejects(
         () =>
@@ -342,9 +345,7 @@ describe(`Geo Search Commands Integration (node-redis, ${testRunner.getBackendNa
             'km',
             'WITHCOORD',
           ]),
-        errorWithMessage(
-          'ERR GEOSEARCHSTORE is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
-        ),
+        errorWithMessage(geoStoreWithError('GEOSEARCHSTORE')),
       )
     } finally {
       await redisClient.del([key, dest])
@@ -409,9 +410,7 @@ describe(`Geo Search Commands Integration (node-redis, ${testRunner.getBackendNa
             dest,
             'WITHCOORD',
           ]),
-        errorWithMessage(
-          'ERR STORE option in GEORADIUS is not compatible with WITHDIST, WITHHASH and WITHCOORD options',
-        ),
+        errorWithMessage(geoStoreWithError('GEORADIUS')),
       )
     } finally {
       await redisClient.del([key, dest])
@@ -448,7 +447,7 @@ describe(`Geo Search Commands Integration (node-redis, ${testRunner.getBackendNa
 
       await assert.rejects(
         () => redisClient.geoRadiusByMember(key, 'NoSuchMember', 200, 'km'),
-        errorWithMessage('ERR could not decode requested zset member'),
+        errorWithMessage(geoMissingMember('NoSuchMember')),
       )
     } finally {
       await redisClient.del(key)

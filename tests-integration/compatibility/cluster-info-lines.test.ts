@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from '../raw-tcp/raw-connection'
 import { connectToRawSlotOwner } from '../raw-tcp/helpers'
@@ -44,7 +44,8 @@ function expectedFields(): string[] {
   return [...fields, 'total_cluster_links_buffer_limit_exceeded']
 }
 
-describe(`CLUSTER INFO lines (${testRunner.getBackendName()}, ${activeProfile})`, () => {
+const clusterSuite = `CLUSTER INFO lines (${testRunner.getBackendName()}, ${activeProfile})`
+describe(clusterSuite, needsCluster, () => {
   let conn: RawRedisConnection
 
   before(async () => {

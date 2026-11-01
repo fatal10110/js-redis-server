@@ -172,6 +172,23 @@ export function realStandalonePort(): number | undefined {
   return optionalPort('REDIS_STANDALONE_PORT')
 }
 
+/**
+ * `REDIS_STANDALONE_ONLY=1`: the real run has standalone servers and no
+ * cluster (the per-profile `compatibility-real` CI matrix, one throwaway
+ * server per profile). Tests marked `needsCluster` skip, and any attempt to
+ * reach the cluster throws instead of hanging on its default ports.
+ */
+export function realStandaloneOnly(): boolean {
+  const raw = process.env.REDIS_STANDALONE_ONLY?.trim() ?? ''
+  if (raw === '' || raw === '0') {
+    return false
+  }
+  if (raw === '1') {
+    return true
+  }
+  throw new Error(`REDIS_STANDALONE_ONLY="${raw}" must be 0 or 1`)
+}
+
 /** Port of the requirepass standalone server, if the run is pointed at one. */
 export function realStandaloneAuthPort(): number | undefined {
   return optionalPort('REDIS_STANDALONE_AUTH_PORT')

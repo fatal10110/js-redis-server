@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import { Cluster } from 'ioredis'
 import { TestRunner } from '../../test-config'
 import { errorWithMessage, randomKey } from '../../utils'
+import { GEO_UNIT_ERROR } from '../../profile-wording'
 
 const testRunner = new TestRunner()
 
@@ -181,9 +182,7 @@ describe(`Geo Commands Integration (${testRunner.getBackendName()})`, () => {
       )
       await assert.rejects(
         () => redisClient?.geodist(key, 'a', 'b', 'xyz'),
-        errorWithMessage(
-          'ERR unsupported unit provided. please use M, KM, FT, MI',
-        ),
+        errorWithMessage(GEO_UNIT_ERROR),
       )
     } finally {
       await redisClient?.del(key)

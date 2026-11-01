@@ -1,7 +1,7 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
 import clusterKeySlot from 'cluster-key-slot'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, commandFrame, randomKey } from '../utils'
 import { RawRedisConnection } from './raw-connection'
 import {
@@ -21,7 +21,8 @@ import {
 const testRunner = new TestRunner()
 const notInteger = '-ERR value is not an integer or out of range\r\n'
 
-describe(`Raw TCP cluster routes before argument checks (${testRunner.getBackendName()}, ${activeProfile})`, () => {
+const clusterSuite = `Raw TCP cluster routes before argument checks (${testRunner.getBackendName()}, ${activeProfile})`
+describe(clusterSuite, needsCluster, () => {
   let ports: number[]
   const connections: RawRedisConnection[] = []
 

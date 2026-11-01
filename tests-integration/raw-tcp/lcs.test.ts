@@ -2,6 +2,7 @@ import assert from 'node:assert'
 import { after, before, describe, test } from 'node:test'
 import { TestRunner } from '../test-config'
 import { commandFrame, randomKey } from '../utils'
+import { legacy } from '../profile-wording'
 import { RawRedisConnection } from './raw-connection'
 import { expectReply } from './helpers'
 
@@ -26,7 +27,10 @@ const IDX_REPLY_BODY =
   '$7\r\nmatches\r\n*2\r\n*2\r\n*2\r\n:4\r\n:7\r\n*2\r\n:5\r\n:8\r\n' +
   '*2\r\n*2\r\n:2\r\n:3\r\n*2\r\n:0\r\n:1\r\n$3\r\nlen\r\n:6\r\n'
 
-describe(`Raw TCP LCS (${testRunner.getBackendName()})`, () => {
+// LCS arrived in 7.0; 6.2 has STRALGO LCS (compatibility/lcs-gates.test.ts).
+const since70 = { skip: legacy && 'LCS arrived in 7.0' }
+
+describe(`Raw TCP LCS (${testRunner.getBackendName()})`, since70, () => {
   let port: number
   const connections: RawRedisConnection[] = []
 

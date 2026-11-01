@@ -1,6 +1,6 @@
 import { after, before, describe, test } from 'node:test'
 import assert from 'node:assert'
-import { TestRunner } from '../test-config'
+import { needsCluster, TestRunner } from '../test-config'
 import { activeProfile, commandFrame } from '../utils'
 import { RawRedisConnection, respText } from './raw-connection'
 
@@ -164,7 +164,8 @@ describe(`Raw TCP MONITOR of CLUSTER and CONFIG subcommands (${testRunner.getBac
     )
   })
 
-  test('shows CLUSTER INFO on a cluster node from 7.0', async () => {
+  test('shows CLUSTER INFO on a cluster node from 7.0', async t => {
+    if (needsCluster.skip) return t.skip(needsCluster.skip)
     await testRunner.setupIoredisCluster('monitor-cluster-info')
     const directPort = testRunner.getClusterPorts()[0]
     assert.notStrictEqual(directPort, undefined)
