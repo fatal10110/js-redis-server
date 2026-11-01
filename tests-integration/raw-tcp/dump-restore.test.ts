@@ -176,6 +176,25 @@ describe(`Raw TCP DUMP / RESTORE (${testRunner.getBackendName()})`, () => {
     await expectReply(conn, ['EXISTS', key], ':0\r\n')
   })
 
+  test('a relative ttl whose deadline overflows int64 counts as already expired', async () => {
+    const conn = await connect()
+    const { payload } = await source(conn)
+    const key = fresh()
+    const max = '9223372036854775807'
+    await expectReply(conn, ['RESTORE', key, max, payload], '+OK\r\n')
+    await expectReply(conn, ['EXISTS', key], ':0\r\n')
+    await expectReply(conn, ['SET', key, 'old'], '+OK\r\n')
+    await expectReply(
+      conn,
+      ['RESTORE', key, max, payload, 'REPLACE'],
+      '+OK\r\n',
+    )
+    await expectReply(conn, ['EXISTS', key], ':0\r\n')
+    // The same ttl as an absolute deadline lies far in the future.
+    await expectReply(conn, ['RESTORE', key, max, payload, 'ABSTTL'], '+OK\r\n')
+    await expectReply(conn, ['EXISTS', key], ':1\r\n')
+  })
+
   test('IDLETIME and FREQ: ranges, exclusivity and argument consumption', async () => {
     const conn = await connect()
     const { payload } = await source(conn)

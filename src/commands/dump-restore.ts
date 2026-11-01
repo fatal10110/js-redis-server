@@ -116,8 +116,13 @@ export const restoreCommand = defineCommand({
     }
 
     const now = Date.now()
+    // A relative deadline is `ttl + now` in int64, as real servers compute it
+    // (`ttl += commandTimeSnapshot()`): one past INT64_MAX wraps negative and
+    // so counts as already expired.
     const expiresAt =
-      ttl === 0n ? undefined : Number(options.absttl ? ttl : ttl + BigInt(now))
+      ttl === 0n
+        ? undefined
+        : Number(options.absttl ? ttl : BigInt.asIntN(64, ttl + BigInt(now)))
     if (expiresAt !== undefined && expiresAt <= now) {
       // Already expired: nothing is created; REPLACE still deletes the old
       // key, announced as a plain `del`.
