@@ -5,6 +5,7 @@ import { ClientSession, type RedisValue } from '../src/internal'
 import { buildClusterNodes } from '../src/cluster'
 import { createRedisCommandExecutor } from '../src/commands'
 import { RedisServerState } from '../src/state'
+import { MigrateSocketCache } from '../src/commands/migrate-socket'
 import type { CompatibilitySpec } from '../src/core/compatibility/profile'
 
 // #205: MIGRATE's wire traffic to the target, as migrateCommand (redis 7.2.4
@@ -31,11 +32,15 @@ function show(value: RedisValue): string {
   }
 }
 
-type Reply = (command: string[], connection: number) => string | null
+type Reply = (
+  command: string[],
+  connection: number,
+) => string | null | { answer: string; afterMs: number }
 
 /**
  * A target that parses each command and answers what `reply` returns (no
- * answer for null; `close` drops the connection), recording the commands per
+ * answer for null; `close` drops the connection; `afterMs` delays the
+ * answer), recording the commands per
  * connection.
  */
 async function fakeTarget(reply: Reply) {
@@ -60,7 +65,9 @@ async function fakeTarget(reply: Reply) {
           socket.destroy()
           return
         }
-        if (answer !== null) socket.write(answer)
+        if (answer === null) continue
+        if (typeof answer === 'string') socket.write(answer)
+        else setTimeout(() => socket.write(answer.answer), answer.afterMs)
       }
     })
     socket.on('error', () => {})
@@ -354,6 +361,39 @@ describe('MIGRATE wire traffic (#205)', () => {
     )
     assert.strictEqual(target.connections.length, 0)
     assert.strictEqual(await run('EXISTS', 'a'), ':1')
+  })
+
+  test('a reply slower than the idle period arrives on the same socket', async () => {
+    const { target, run } = await setup(() => ({
+      answer: '+OK\r\n',
+      afterMs: 300,
+    }))
+    const idleMs = MigrateSocketCache.idleMs
+    MigrateSocketCache.idleMs = 50
+    try {
+      await run('SET', 'a', '1')
+      assert.strictEqual(
+        await run('MIGRATE', '127.0.0.1', target.port, 'a', '0', '2000'),
+        '+OK',
+      )
+      assert.strictEqual(target.connections.length, 1)
+      assert.deepStrictEqual(
+        target.connections[0].map(command => command[0]),
+        ['SELECT', 'RESTORE'],
+      )
+      assert.strictEqual(await run('EXISTS', 'a'), ':0')
+      // Used longer than the idle period: closed once released.
+      await new Promise<void>(resolve => {
+        const check = setInterval(() => {
+          if (target.closed() === 1) {
+            clearInterval(check)
+            resolve()
+          }
+        }, 5)
+      })
+    } finally {
+      MigrateSocketCache.idleMs = idleMs
+    }
   })
 
   test('closing the server closes its cached sockets', async () => {

@@ -206,22 +206,36 @@ export class MigrateConnection {
 
 type CachedSocket = {
   connection: MigrateConnection
-  idleTimer: ReturnType<typeof setTimeout>
+  /** When a MIGRATE last took it (`last_use_time`). */
+  lastUse: number
+  /** Armed only while no MIGRATE is using the socket. */
+  idleTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 /**
  * `server.migrate_cached_sockets` of one server: at most
  * {@link MIGRATE_SOCKET_CACHE_ITEMS} entries keyed `host:port` exactly as
  * given (so `localhost:6379` and `127.0.0.1:6379` are two sockets).
+ *
+ * A socket taken by {@link get} or {@link add} is in use until
+ * {@link release}: nothing closes it meanwhile, as real servers'
+ * `migrateCloseTimedoutSockets` only runs from serverCron, which cannot run
+ * while MIGRATE blocks on the target, so a reply slower than the idle period
+ * still arrives on the same socket. The idle period counts from when the
+ * socket was taken (`last_use_time`), so one used longer than that closes as
+ * soon as it is released, as the next cron run would close it.
  */
 export class MigrateSocketCache {
+  /** The idle period; tests shorten it. */
+  static idleMs = MIGRATE_SOCKET_IDLE_MS
+
   private readonly sockets = new Map<string, CachedSocket>()
 
   /**
-   * The cached socket for `name`, its idle clock restarted, or undefined.
-   * A socket whose peer has since closed is dropped instead: the real one
-   * would fail its next read and be replaced by the retry, which comes to the
-   * same reconnect.
+   * The cached socket for `name`, now in use, or undefined. A socket whose
+   * peer has since closed is dropped instead: the real one would fail its
+   * next read and be replaced by the retry, which comes to the same
+   * reconnect.
    */
   get(name: string): MigrateConnection | undefined {
     const cached = this.sockets.get(name)
@@ -230,19 +244,35 @@ export class MigrateSocketCache {
       this.close(name)
       return undefined
     }
-    cached.idleTimer.refresh()
+    clearTimeout(cached.idleTimer)
+    cached.idleTimer = undefined
+    cached.lastUse = Date.now()
     return cached.connection
   }
 
+  /** Caches a new socket for `name`, in use until {@link release}. */
   add(name: string, connection: MigrateConnection): void {
     if (this.sockets.size >= MIGRATE_SOCKET_CACHE_ITEMS) {
       // Real servers drop a random entry; the oldest is as good.
       const oldest = this.sockets.keys().next().value
       if (oldest !== undefined) this.close(oldest)
     }
-    const idleTimer = setTimeout(() => this.close(name), MIGRATE_SOCKET_IDLE_MS)
+    this.sockets.set(name, {
+      connection,
+      lastUse: Date.now(),
+      idleTimer: undefined,
+    })
+  }
+
+  /** Ends the use of `name`'s socket: its idle clock starts again. */
+  release(name: string): void {
+    const cached = this.sockets.get(name)
+    if (!cached) return
+    clearTimeout(cached.idleTimer)
+    const left = MigrateSocketCache.idleMs - (Date.now() - cached.lastUse)
+    const idleTimer = setTimeout(() => this.close(name), Math.max(0, left))
     idleTimer.unref()
-    this.sockets.set(name, { connection, idleTimer })
+    cached.idleTimer = idleTimer
   }
 
   /** `migrateCloseSocket`. */

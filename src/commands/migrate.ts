@@ -242,8 +242,26 @@ async function migrateKeys(
   now: number,
 ): Promise<RedisResult> {
   const cache = migrateSocketCache(ctx.server)
+  const name = `${args.host.toString('latin1')}:${args.port.toString('latin1')}`
+  try {
+    return await migrateWithRetry(args, ctx, keys, timeout, dbid, now, name)
+  } finally {
+    cache.release(name)
+  }
+}
+
+/** One attempt on the cached or a new socket, and one retry on a new one. */
+async function migrateWithRetry(
+  args: MigrateArgs,
+  ctx: RedisExecutionContext,
+  keys: readonly MigrateKey[],
+  timeout: number,
+  dbid: bigint,
+  now: number,
+  name: string,
+): Promise<RedisResult> {
+  const cache = migrateSocketCache(ctx.server)
   const host = args.host.toString('latin1')
-  const name = `${host}:${args.port.toString('latin1')}`
   let mayRetry = true
   for (;;) {
     let connection = cache.get(name)
