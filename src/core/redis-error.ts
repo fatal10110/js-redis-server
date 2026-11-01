@@ -641,6 +641,17 @@ export const errors = Object.freeze({
     new RedisCommandError(
       'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.',
     ),
+  busyKey: () =>
+    new RedisCommandError('Target key name already exists.', 'BUSYKEY'),
+  restoreInvalidTtl: () =>
+    new RedisCommandError('Invalid TTL value, must be >= 0'),
+  restoreInvalidIdleTime: () =>
+    new RedisCommandError('Invalid IDLETIME value, must be >= 0'),
+  restoreInvalidFreq: () =>
+    new RedisCommandError('Invalid FREQ value, must be >= 0 and <= 255'),
+  dumpPayloadInvalid: () =>
+    new RedisCommandError('DUMP payload version or checksum are wrong'),
+  badDataFormat: () => new RedisCommandError('Bad data format'),
   busyStreamGroup: () =>
     new RedisCommandError('Consumer Group name already exists', 'BUSYGROUP'),
   noSuchStreamGroup: (key: Buffer, group: Buffer, commandName?: string) =>

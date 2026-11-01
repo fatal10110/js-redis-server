@@ -152,6 +152,8 @@ const SAMPLES: Record<string, string[]> = {
   renamenx: ['k1', 'k2'],
   move: ['k1', '1'],
   copy: ['k1', 'k2'],
+  dump: ['k1'],
+  restore: ['k1', '0', 'payload'],
   sort: ['k1'],
   sort_ro: ['k1'],
   hscan: ['k1', '0'],

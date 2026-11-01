@@ -314,6 +314,14 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     categories: ['@keyspace', '@read', '@fast'],
     tips: ['request_policy:all_shards', 'response_policy:agg_sum'],
   },
+  dump: {
+    flags: ['readonly'],
+    categories: ['@keyspace', '@read', '@slow'],
+    tips: ['nondeterministic_output'],
+    keySpecs: [
+      { flags: ['RO', 'access'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
+    ],
+  },
   decr: {
     flags: ['write', 'denyoom', 'fast'],
     categories: ['@write', '@string', '@fast'],
@@ -1307,6 +1315,13 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
   reset: {
     flags: ['noscript', 'loading', 'stale', 'fast', 'no_auth', 'allow_busy'],
     categories: ['@fast', '@connection'],
+  },
+  restore: {
+    flags: ['write', 'denyoom'],
+    categories: ['@keyspace', '@write', '@slow', '@dangerous'],
+    keySpecs: [
+      { flags: ['OW', 'update'], beginSearchIndex: 1, lastKey: 0, keyStep: 1 },
+    ],
   },
   rpop: {
     flags: ['write', 'fast'],
@@ -2312,6 +2327,7 @@ export const REDIS_62: CommandTableDelta = {
   'config|resetstat': null,
   'config|rewrite': null,
   'config|set': null,
+  dump: { flags: ['readonly', 'random'] },
   discard: { flags: ['noscript', 'loading', 'stale', 'fast'] },
   echo: { flags: ['fast'] },
   eval: { flags: ['noscript', 'skip_monitor', 'may_replicate', 'movablekeys'] },

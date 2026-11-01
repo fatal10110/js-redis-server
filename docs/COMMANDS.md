@@ -319,6 +319,8 @@ real Redis does not have) reports what its `introspection` declares.
 - [x] `RENAME key newkey` - Rename a key
 - [x] `RENAMENX key newkey` - Rename a key only if the new key does not exist
 - [x] `COPY source destination [DB destination-db] [REPLACE]` - Copy a key's value (and TTL) to a destination, optionally into another database; returns `0` if the destination exists without `REPLACE`
+- [x] `DUMP key` - Serialize a key's value as a real RDB payload: the object type, the body each profile's `rdb.c` writes (ziplists on 6.2, listpacks from 7.0, listpack sets / lists from 7.2, hash field TTL types on redis 7.4+ / valkey 9.0), the RDB version (9 / 10 / 11 / 12, 80 on valkey 9.0) and a CRC-64. Byte-identical to the real server for keys built by plain writes; encodings a real key got from its history (a hash that once outgrew its listpack, a list trimmed below a node, stream XDEL tombstones) are derived from the current content instead, and hashtable sets / hashes list members in insertion order where a real server's order is per-process random
+- [x] `RESTORE key ttl serialized-value [REPLACE] [ABSTTL] [IDLETIME seconds] [FREQ frequency]` - Recreate a key from any payload the profile's real server accepts (its own and older RDB versions; valkey 9.0 takes 1-11 and 80), including the ziplist / zipmap / linked-list encodings old servers wrote. `BUSYKEY`, ttl / IDLETIME / FREQ validation, `DUMP payload version or checksum are wrong` and `Bad data format` as `restoreCommand()` orders them; a deadline already past creates nothing (REPLACE deletes the old key, announced `del`). IDLETIME / FREQ are validated but not kept (no `OBJECT`, #117). A truncated payload with a valid checksum is refused with `Bad data format` where real servers keep whatever parsed
 - [x] `MOVE key db` - Move a key to another database, preserving TTL; returns `0` if the source is missing or the destination already exists; rejected in cluster mode
 - [x] `KEYS pattern` - Find all keys matching a glob pattern
 - [x] `SCAN cursor [MATCH pattern] [COUNT count] [TYPE type]` - Incrementally iterate the keyspace (see [Scan Family](#10-scan-family))
@@ -366,7 +368,6 @@ with `GT` or `LT`.
 #### Not implemented
 
 - [ ] `OBJECT ENCODING|REFCOUNT|IDLETIME|FREQ|HELP`
-- [ ] `DUMP` / `RESTORE`
 - [ ] `WAIT`
 - [ ] `MIGRATE`
 
@@ -849,8 +850,9 @@ key.
 
 HyperLogLogs are stored in the String type. Cardinality is approximate, same
 as real Redis, but the on-disk encoding is a dense 16384-byte register array
-rather than Redis's sparse/dense HLL format — not byte-compatible, no
-`DUMP`/`RESTORE` parity for this type.
+rather than Redis's sparse/dense HLL format — not byte-compatible, so
+`DUMP`/`RESTORE` move it as a plain string that real servers cannot PFCOUNT
+(and vice versa) until the real format lands ([#664](https://github.com/fatal10110/js-redis-server/issues/664)).
 
 - [x] `PFADD key [element ...]` - Add elements to the HyperLogLog
 - [x] `PFCOUNT key [key ...]` - Return the approximated cardinality

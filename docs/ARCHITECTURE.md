@@ -480,6 +480,14 @@ way, as its own `xgroup-createconsumer` notification: up front from Redis 7.2,
 and on 6.2 / 7.0 only once there is something to deliver or claim, or on
 any `XREADGROUP` history read (the `stream.consumer-active-time` gate).
 
+[`src/state/rdb/`](../src/state/rdb/payload.ts) turns a `RedisDataValue` into
+the RDB object DUMP returns and back (RESTORE, and MIGRATE after it): CRC-64,
+LZF, listpack / ziplist / intset codecs and `createDumpPayload` /
+`verifyDumpPayload` / `deserializeValue`, parameterized by an `RdbFormat`
+derived from the profile's `rdb.version-*` gates. Encodings the data model
+does not keep (list nodes, listpack vs hashtable hashes and sets) are derived
+from the content and the CONFIG encoding limits.
+
 ## Concurrency model
 
 Each `RedisServerState` owns one [`SerialTurnQueue`](../src/core/turn-queue.ts#L12)
