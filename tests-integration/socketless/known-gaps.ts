@@ -745,6 +745,10 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'incrByFloat replies and stores %.17Lf trimmed (#543)',
     ],
   ),
+  todo('node-redis/string/lcs.test.ts', missing('lcs', 'lcsLen'), [
+    'LCS answers the subsequence, its length and its ranges',
+    'missing keys are empty strings; other types are refused',
+  ]),
   todo(
     'node-redis/string/proto-max-bulk-len.test.ts',
     missing('append', 'configGet', 'configSet', 'getRange', 'setRange'),

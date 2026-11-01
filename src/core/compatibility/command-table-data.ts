@@ -985,6 +985,13 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     categories: ['@admin', '@fast', '@dangerous'],
     tips: ['nondeterministic_output'],
   },
+  lcs: {
+    flags: ['readonly'],
+    categories: ['@read', '@string', '@slow'],
+    keySpecs: [
+      { flags: ['RO', 'access'], beginSearchIndex: 1, lastKey: 1, keyStep: 1 },
+    ],
+  },
   lindex: {
     flags: ['readonly'],
     categories: ['@read', '@list', '@slow'],
@@ -2335,6 +2342,7 @@ export const REDIS_62: CommandTableDelta = {
   info: { flags: ['random', 'loading', 'stale'] },
   keys: { flags: ['readonly', 'sort_for_script'] },
   lastsave: { flags: ['random', 'loading', 'stale', 'fast'] },
+  lcs: null,
   lmpop: null,
   multi: { flags: ['noscript', 'loading', 'stale', 'fast'] },
   pexpiretime: null,
@@ -2389,6 +2397,10 @@ export const REDIS_62: CommandTableDelta = {
   srandmember: { flags: ['readonly', 'random'] },
   sscan: { flags: ['readonly', 'random'] },
   ssubscribe: null,
+  stralgo: {
+    flags: ['readonly', 'movablekeys'],
+    categories: ['@read', '@string', '@slow'],
+  },
   subscribe: { flags: ['denyoom', 'pubsub', 'noscript', 'loading', 'stale'] },
   sunion: { flags: ['readonly', 'sort_for_script'] },
   sunsubscribe: null,

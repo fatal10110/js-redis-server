@@ -179,6 +179,21 @@ so the PR body is not a durable home for a breaking-change note.
   Redis and Valkey version does; it used to answer a null bulk string
   (`$-1`). Queued in MULTI or called from a script it still answers `$-1`.
 
+### Added
+
+- `LCS key1 key2 [LEN] [IDX] [MINMATCHLEN len] [WITHMATCHLEN]` on redis 7.0+
+  and valkey ([#206]), and its redis 6.2 predecessor `STRALGO LCS [IDX] [LEN]
+  [MINMATCHLEN len] [WITHMATCHLEN] STRINGS a b | KEYS k1 k2`, which exists
+  only on 6.2 (each is an unknown command where the real version lacks it).
+  Both run Redis' own table and traceback, so `IDX` lists the same ranges in
+  the same order (ties included); `IDX` is a map on RESP3. Replies and errors
+  match byte for byte: missing keys are empty strings, a key of another type
+  answers `The specified keys must contain string values` before any option
+  error, `LEN` with `IDX` is refused, and on 7.0+ a table over
+  `proto-max-bulk-len` answers the transient-memory error. `COMMAND INFO` /
+  `DOCS` / `GETKEYS` report each version's entry. `CommandDefinition` takes an
+  optional `until` gate for a command a later version removed.
+
 ### Changed
 
 - **BREAKING (`/core`)** `RedisMutationEvent` has a new `propagate` variant
@@ -2322,6 +2337,7 @@ requests they contain.
 [#459]: https://github.com/fatal10110/js-redis-server/issues/459
 [#461]: https://github.com/fatal10110/js-redis-server/issues/461
 [#609]: https://github.com/fatal10110/js-redis-server/issues/609
+[#206]: https://github.com/fatal10110/js-redis-server/issues/206
 [unreleased]: https://github.com/fatal10110/js-redis-server/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/fatal10110/js-redis-server/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/fatal10110/js-redis-server/releases/tag/v0.3.0

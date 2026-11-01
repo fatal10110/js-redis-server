@@ -661,6 +661,30 @@ export const errors = Object.freeze({
     new RedisCommandError(
       'The stream has exhausted the last possible ID, unable to add more items',
     ),
+  /** LCS / STRALGO LCS KEYS naming a key of another type (not WRONGTYPE). */
+  lcsKeysNotStrings: () =>
+    new RedisCommandError('The specified keys must contain string values'),
+  lcsLenWithIdx: () =>
+    new RedisCommandError(
+      'If you want both the length and indexes, please just use IDX.',
+    ),
+  /** LCS (7.0+): the (len1+1)*(len2+1) uint32 table is over the limit. */
+  lcsExceedsProtoMaxBulkLen: () =>
+    new RedisCommandError(
+      'Insufficient memory, transient memory for LCS exceeds proto-max-bulk-len',
+    ),
+  lcsAllocationFailed: () =>
+    new RedisCommandError(
+      'Insufficient memory, failed allocating transient memory for LCS',
+    ),
+  /** STRALGO LCS (6.2) failing to allocate its table. */
+  lcsOutOfMemory: () => new RedisCommandError('Insufficient memory'),
+  stralgoStringsOrKeys: () =>
+    new RedisCommandError('Either use STRINGS or KEYS'),
+  stralgoNoStrings: () =>
+    new RedisCommandError(
+      'Please specify two strings: STRINGS or KEYS options are mandatory',
+    ),
 })
 
 /**
