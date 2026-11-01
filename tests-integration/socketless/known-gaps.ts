@@ -69,7 +69,7 @@ const CAUSE = {
     reason:
       "calls node-redis' cluster `sendCommand(firstKey, isReadonly, args)`; `NodeRedisMockCluster.sendCommand` only takes `(args)`, so the key is read as the argument list (`undefined` has no length; a key string is spread into characters)",
     error:
-      /Cannot read properties of undefined \(reading 'length'\)|ERR unknown command '\{', with args beginning with/,
+      /Cannot read properties of undefined \(reading 'length'\)|ERR unknown command '[^']', with args beginning with/,
   },
   clusterTopology: {
     reason:
@@ -149,6 +149,9 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'XREADGROUP BLOCK: XGROUP DESTROY unblocks it with NOGROUP',
     'XREADGROUP BLOCK: overwriting the stream (MULTI; DEL; SET; EXEC) unblocks it with WRONGTYPE',
     'XREADGROUP BLOCK: overwriting the stream (SET) unblocks it with WRONGTYPE',
+  ]),
+  todo('node-redis/cluster-append-routing.test.ts', CAUSE.clusterSendCommand, [
+    'clusterAppend reaches the slot owner without a MOVED',
   ]),
   todo('node-redis/cluster-integration.test.ts', CAUSE.clusterSendCommand, [
     'HELLO reports master and replica roles for direct node connections',
@@ -678,18 +681,20 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   skip('node-redis/string/bitmap.test.ts', SKIP.topologyInBefore),
   todo(
     'node-redis/string/core.test.ts',
-    missing('append', 'getSet', 'mGet', 'mSetNX', 'strLen'),
+    missing('getSet', 'mGet', 'mSetNX', 'strLen'),
     [
-      'APPEND command',
       'GETSET command',
       'MGET command',
       'MGET cross-slot error',
       'MGET returns null for keys holding non-string values',
       'MSETNX command',
       'STRLEN command',
-      'String commands workflow',
     ],
   ),
+  todo('node-redis/string/core.test.ts', CAUSE.clusterSendCommand, [
+    'APPEND command',
+    'String commands workflow',
+  ]),
   todo('node-redis/string/core.test.ts', CAUSE.clusterTopology, [
     'SUBSTR aliases GETRANGE',
     'String numeric and expiration errors match Redis',
@@ -721,7 +726,6 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
     'node-redis/string/proto-max-bulk-len.test.ts',
     missing('append', 'configGet', 'configSet', 'getRange', 'setRange'),
     [
-      'APPEND on a missing key is not size-checked',
       'CONFIG GET reports the default proto-max-bulk-len',
       'CONFIG SET accepts every Redis memory-unit suffix',
       'CONFIG SET rejects a proto-max-bulk-len below the 1MB minimum',
@@ -736,6 +740,11 @@ export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
       'SETRANGE reports WRONGTYPE before the size check',
       'SETRANGE with an empty value skips the limit check and creates no key',
     ],
+  ),
+  todo(
+    'node-redis/string/proto-max-bulk-len.test.ts',
+    CAUSE.clusterSendCommand,
+    ['APPEND on a missing key is not size-checked'],
   ),
   todo('node-redis/string/set.test.ts', CAUSE.argumentShapes, [
     'SET with EX option',

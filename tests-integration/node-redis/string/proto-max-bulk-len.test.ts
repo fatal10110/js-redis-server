@@ -2,7 +2,12 @@ import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert'
 import { RedisClientType, RedisClusterType } from 'redis'
 import { TestRunner } from '../../test-config'
-import { errorWithMessage, errorWithMessageIn, randomKey } from '../../utils'
+import {
+  clusterAppend,
+  errorWithMessage,
+  errorWithMessageIn,
+  randomKey,
+} from '../../utils'
 
 const testRunner = new TestRunner()
 
@@ -160,7 +165,7 @@ describe(`proto-max-bulk-len enforcement (node-redis, ${testRunner.getBackendNam
   test('APPEND on a missing key is not size-checked', async () => {
     const key = `append:${randomKey()}`
 
-    assert.strictEqual(await redisClient.append(key, 'hello'), 5)
+    assert.strictEqual(await clusterAppend(redisClient, key, 'hello'), 5)
     assert.strictEqual(await redisClient.get(key), 'hello')
   })
 
