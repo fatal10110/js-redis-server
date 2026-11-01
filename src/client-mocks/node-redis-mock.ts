@@ -22,6 +22,15 @@ import {
   RedisServerState,
   RedisClusterTopology,
 } from '../state'
+import type { NodeRedisCommandName } from './node-redis-command-names'
+import {
+  nodeRedisCommandSet,
+  parseNodeRedisCommand,
+  transformReplyFor,
+  type NodeRedisCommandDefinition,
+  type NodeRedisCommandSet,
+  type NodeRedisTransformReply,
+} from './node-redis-commands'
 
 /**
  * In-memory drop-in for the `node-redis` (`redis` package) client.
@@ -413,6 +422,52 @@ abstract class CommandRunner extends EventEmitter {
     // First need of node-redis' error classes: resolve them before this client
     // can run, decode or close anything. Not at import — see redisErrors().
     redisErrors()
+    CommandRunner.installNodeRedisCommands()
+  }
+
+  private static nodeRedisCommandsInstalled = false
+
+  /**
+   * Give both facades and their `multi()` node-redis' own command methods —
+   * every `COMMANDS` entry of the installed node-redis (5 or 6) a curated or
+   * client method does not already define, in both spellings (`hDel`,
+   * `HDEL`). Each runs `parseCommand` on node-redis' parser and the reply
+   * through that command's `transformReply` for the client's configured
+   * `RESP`, as `RedisClient#createCommand` does, so arguments and reply
+   * shapes are node-redis' own.
+   */
+  private static installNodeRedisCommands(): void {
+    if (CommandRunner.nodeRedisCommandsInstalled) {
+      return
+    }
+    CommandRunner.nodeRedisCommandsInstalled = true
+    const set = nodeRedisCommandSet(requireRedis())
+    if (!set) {
+      return
+    }
+    for (const [name, command] of Object.entries(set.commands)) {
+      if (name in CommandRunner.prototype) {
+        continue
+      }
+      Object.defineProperty(CommandRunner.prototype, name, {
+        configurable: true,
+        writable: true,
+        value: async function (this: CommandRunner, ...args: unknown[]) {
+          return this.runNodeRedisCommand(set, command, args)
+        },
+      })
+    }
+  }
+
+  private async runNodeRedisCommand(
+    set: NodeRedisCommandSet,
+    command: NodeRedisCommandDefinition,
+    args: unknown[],
+  ): Promise<unknown> {
+    const parser = parseNodeRedisCommand(set, command, args)
+    const transform = transformReplyFor(command, this.nodeRedisResp)
+    const reply = this.decode(await this.run(parser.redisArgs, parser.firstKey))
+    return transform ? transform(reply, parser.preserve, undefined) : reply
   }
 
   /**
@@ -420,7 +475,17 @@ abstract class CommandRunner extends EventEmitter {
    * Implementations pick the session (standalone: the only one; cluster: the
    * slot owner for the command's keys).
    */
-  protected abstract run(args: NodeRedisCommandArgument[]): Promise<RedisValue>
+  protected abstract run(
+    args: NodeRedisCommandArgument[],
+    firstKey?: NodeRedisCommandArgument,
+  ): Promise<RedisValue>
+
+  /**
+   * The `RESP` the client was configured with, which picks each command's
+   * `transformReply` — node-redis binds it when it builds the client, so a
+   * later `HELLO` changes how replies decode, not which transform runs.
+   */
+  protected abstract get nodeRedisResp(): NodeRedisRespVersion
 
   /**
    * RESP version this client's replies decode under — what every
@@ -700,6 +765,42 @@ abstract class CommandRunner extends EventEmitter {
   }
 }
 
+/**
+ * The node-redis command methods a facade takes from the installed node-redis
+ * (see `CommandRunner.installNodeRedisCommands`), minus the `Own` names it
+ * defines itself. Typed loosely, since node-redis' own per-command signatures
+ * live in `redis`, an optional peer: cast the facade to `RedisClientType` /
+ * `RedisClusterType` for those, as the integration tests do. At runtime a
+ * method exists only when the installed node-redis (5 or 6) defines it.
+ */
+export type NodeRedisCommandMethods<Own extends PropertyKey, R> = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- node-redis' signatures, see above
+  [K in Exclude<NodeRedisCommandName, Own>]: (...args: any[]) => R
+}
+
+/** The curated command methods both facades define themselves. */
+type CuratedCommandName = keyof CommandRunner
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- node-redis' replies, see NodeRedisCommandMethods
+type NodeRedisReplyPromise = Promise<any>
+
+// The generated methods, merged into each facade class (declaration merging
+// is how a class types members it installs at runtime).
+/* eslint-disable @typescript-eslint/no-unsafe-declaration-merging, @typescript-eslint/no-empty-object-type */
+export interface NodeRedisMockClient extends NodeRedisCommandMethods<
+  CuratedCommandName | 'publish',
+  NodeRedisReplyPromise
+> {}
+export interface NodeRedisMockCluster extends NodeRedisCommandMethods<
+  CuratedCommandName,
+  NodeRedisReplyPromise
+> {}
+export interface NodeRedisMockMulti extends NodeRedisCommandMethods<
+  'get' | 'set' | 'del' | 'incr' | 'hSet' | 'hGet',
+  NodeRedisMockMulti
+> {}
+/* eslint-enable @typescript-eslint/no-unsafe-declaration-merging, @typescript-eslint/no-empty-object-type */
+
 export type NodeRedisMockClientInit = FacadeBackend &
   NodeRedisMockClientOptions & {
     database?: number
@@ -713,9 +814,17 @@ export type NodeRedisMockClientInit = FacadeBackend &
  * pushes off {@link ClientSession.readPushes}, mirroring node-redis' rule that a
  * subscribed connection is reserved for pub/sub.
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- see NodeRedisCommandMethods
 export class NodeRedisMockClient extends CommandRunner {
   private readonly backend: FacadeBackend
+  /** The configured `database` — what `duplicate()` copies. */
   private readonly database?: number
+  /**
+   * node-redis' `#selectedDB`: the configured database until `select()` (or a
+   * transaction's `select()`) moves it, and what a re-opened connection
+   * selects again.
+   */
+  private selectedDatabase?: number
   private readonly ownsState: boolean
   /** The `RESP` this client was configured with — what `duplicate()` copies. */
   private readonly resp: NodeRedisRespVersion
@@ -786,6 +895,7 @@ export class NodeRedisMockClient extends CommandRunner {
     super()
     this.backend = { state: init.state, executor: init.executor }
     this.database = init.database
+    this.selectedDatabase = init.database
     this.ownsState = init.ownsState ?? false
     this.resp = init.RESP ?? nodeRedisDefaultResp()
     this.session = this.openSession()
@@ -884,7 +994,7 @@ export class NodeRedisMockClient extends CommandRunner {
     const session = new ClientSession({
       server: this.backend.state,
       executor: this.backend.executor,
-      database: this.database,
+      database: this.selectedDatabase,
     })
     // node-redis opens a RESP3 client with `HELLO 3` before anything else, and
     // a RESP2 one with no HELLO at all.
@@ -924,6 +1034,21 @@ export class NodeRedisMockClient extends CommandRunner {
 
   protected get respVersion(): RespVersion {
     return this.session.protocolVersion
+  }
+
+  protected get nodeRedisResp(): NodeRedisRespVersion {
+    return this.resp
+  }
+
+  /**
+   * node-redis' `select(db)`, a client method rather than a `COMMANDS` entry:
+   * it resolves `undefined` (not `'OK'`) and remembers the database, so a
+   * re-opened connection selects it again (`client/index.js` `SELECT`). A
+   * `duplicate()` still takes the configured `database`, as node-redis'.
+   */
+  async select(db: number): Promise<void> {
+    await this.run(['SELECT', String(db)])
+    this.selectedDatabase = db
   }
 
   protected get profile(): CompatibilityProfile {
@@ -1156,7 +1281,7 @@ export class NodeRedisMockClient extends CommandRunner {
 
   /** Begin a MULTI transaction. Commands are queued, then replayed on exec(). */
   multi(): NodeRedisMockMulti {
-    return new NodeRedisMockMulti(queued => {
+    return new NodeRedisMockMulti((queued, selectedDatabase) => {
       // node-redis' `_executeMulti`: a transaction consumes the WATCH, and one
       // set before a reconnect cannot hold — the server dropped it.
       const watchEpoch = this.watchEpoch
@@ -1169,37 +1294,21 @@ export class NodeRedisMockClient extends CommandRunner {
       }
       return this.runExclusive(() =>
         this.flushable(() =>
-          this.followingProtocol(() => this.runTransactionSpan(queued)),
+          this.followingProtocol(async () => {
+            const span = await runTransactionSpan(this.session, queued, false)
+            // node-redis' `_executeMulti` adopts a queued `select()` once
+            // EXEC has answered with the replies.
+            if (
+              selectedDatabase !== undefined &&
+              (span.value.kind === 'array' || span.value.kind === 'set')
+            ) {
+              this.selectedDatabase = selectedDatabase
+            }
+            return span
+          }),
         ),
       )
-    })
-  }
-
-  /**
-   * Replay MULTI → queued commands → EXEC on the shared session as one span.
-   * EXEC is sent even after a command failed to queue, so the session leaves
-   * MULTI (it answers `EXECABORT`), exactly as node-redis pipelines it.
-   */
-  private async runTransactionSpan(
-    queued: NodeRedisCommandArgument[][],
-  ): Promise<TransactionSpan> {
-    await runOnSession(this.session, ['MULTI'], false)
-    let queueError: RedisErrorValue | undefined
-    for (const args of queued) {
-      const reply = await runOnSession(this.session, args, false)
-      if (reply.kind === 'error') {
-        queueError ??= reply
-      }
-    }
-    const before = this.session.protocolVersion
-    const value = await runOnSession(this.session, ['EXEC'], false)
-    return {
-      value,
-      queueError,
-      respVersion: this.session.protocolVersion,
-      profile: this.backend.state.profile,
-      replyVersions: replayProtocolSwitches(queued, before, value),
-    }
+    }, this.resp)
   }
 
   // --- lifecycle -----------------------------------------------------------
@@ -1226,6 +1335,14 @@ export class NodeRedisMockClient extends CommandRunner {
    * While it drains the client is *closing*: new work is refused, but a forced
    * {@link destroy}/{@link disconnect} can still escalate and reject this.
    */
+  /**
+   * node-redis 5+'s graceful close: `quit()`'s draining, resolving
+   * `undefined` rather than `'OK'`.
+   */
+  async close(): Promise<void> {
+    await this.quit()
+  }
+
   async quit(): Promise<string> {
     this.assertOpen()
     // Claim the closed flag synchronously so commands issued *after* this point
@@ -1378,7 +1495,7 @@ export class NodeRedisMockClient extends CommandRunner {
     const session = new ClientSession({
       server: this.backend.state,
       executor: this.backend.executor,
-      database: this.database,
+      database: this.selectedDatabase,
     })
     session.setProtocolVersion(this.session.protocolVersion)
     // Drain pushes for the lifetime of the subscription; route each delivered
@@ -1577,15 +1694,80 @@ function doubleArgument(
  * server's transaction + WATCH semantics drive the result (EXEC returns an array
  * of replies, or `null` when a watched key changed).
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- see NodeRedisCommandMethods
 export class NodeRedisMockMulti {
   private readonly queued: NodeRedisCommandArgument[][] = []
+  /** Per queued command: its `transformReply` and the parser's `preserve`. */
+  private readonly transforms: (
+    { transform: NodeRedisTransformReply; preserve: unknown } | undefined
+  )[] = []
+  /** Per queued command: node-redis' `parser.firstKey`, for cluster routing. */
+  private readonly firstKeys: (NodeRedisCommandArgument | undefined)[] = []
+  /** A queued `select()`'s database, adopted by the client once EXEC answers. */
+  private selectedDatabase?: number
   private settled = false
 
+  /**
+   * @param runTransaction replays the queue as MULTI … EXEC.
+   * @param resp the client's configured `RESP`, which picks each node-redis
+   *   command's `transformReply`.
+   */
   constructor(
     private readonly runTransaction: (
       queued: NodeRedisCommandArgument[][],
+      selectedDatabase: number | undefined,
+      firstKeys: readonly (NodeRedisCommandArgument | undefined)[],
     ) => Promise<TransactionSpan>,
-  ) {}
+    private readonly resp: NodeRedisRespVersion = nodeRedisDefaultResp(),
+  ) {
+    NodeRedisMockMulti.installNodeRedisCommands()
+  }
+
+  private static nodeRedisCommandsInstalled = false
+
+  /**
+   * node-redis' command methods on `multi()`, as `RedisClientMultiCommand`
+   * builds them: parse with node-redis' parser, queue `parser.redisArgs`, and
+   * keep the command's `transformReply` for {@link exec}. See
+   * `CommandRunner.installNodeRedisCommands`.
+   */
+  private static installNodeRedisCommands(): void {
+    if (NodeRedisMockMulti.nodeRedisCommandsInstalled) {
+      return
+    }
+    NodeRedisMockMulti.nodeRedisCommandsInstalled = true
+    const set = nodeRedisCommandSet(requireRedis())
+    if (!set) {
+      return
+    }
+    for (const [name, command] of Object.entries(set.commands)) {
+      if (name in NodeRedisMockMulti.prototype) {
+        continue
+      }
+      Object.defineProperty(NodeRedisMockMulti.prototype, name, {
+        configurable: true,
+        writable: true,
+        value: function (this: NodeRedisMockMulti, ...args: unknown[]) {
+          const parser = parseNodeRedisCommand(set, command, args)
+          const transform = transformReplyFor(command, this.resp)
+          return this.queue(
+            parser.redisArgs,
+            transform && { transform, preserve: parser.preserve },
+            parser.firstKey,
+          )
+        },
+      })
+    }
+  }
+
+  /**
+   * node-redis' `multi().select(db)`: queues SELECT, and the client keeps
+   * `db` as its selected database once the transaction ran.
+   */
+  select(db: number): this {
+    this.selectedDatabase = db
+    return this.queue(['SELECT', String(db)])
+  }
 
   set(
     key: NodeRedisCommandArgument,
@@ -1630,8 +1812,14 @@ export class NodeRedisMockMulti {
     return this.queue(args)
   }
 
-  private queue(args: NodeRedisCommandArgument[]): this {
+  private queue(
+    args: NodeRedisCommandArgument[],
+    transform?: { transform: NodeRedisTransformReply; preserve: unknown },
+    firstKey?: NodeRedisCommandArgument,
+  ): this {
     this.queued.push(args)
+    this.transforms.push(transform)
+    this.firstKeys.push(firstKey)
     return this
   }
 
@@ -1652,7 +1840,11 @@ export class NodeRedisMockMulti {
       respVersion,
       profile,
       replyVersions,
-    } = await this.runTransaction(this.queued)
+    } = await this.runTransaction(
+      this.queued,
+      this.selectedDatabase,
+      this.firstKeys,
+    )
     const errors = redisErrors()
 
     if (queueError) {
@@ -1678,8 +1870,18 @@ export class NodeRedisMockMulti {
         errorIndexes.push(index)
         return
       }
+      const reply = decodeReply(
+        item,
+        replyVersions[index] ?? respVersion,
+        profile,
+      )
+      // node-redis' `transformReplies`: each successful reply through its
+      // command's `transformReply`; errors stay as they are.
+      const transform = this.transforms[index]
       replies.push(
-        decodeReply(item, replyVersions[index] ?? respVersion, profile),
+        transform
+          ? transform.transform(reply, transform.preserve, undefined)
+          : reply,
       )
     })
 
@@ -1698,6 +1900,8 @@ export class NodeRedisMockMulti {
     // No MULTI was opened on the session yet (we only open it in exec()), so
     // discarding is purely client-side: drop the queue.
     this.queued.length = 0
+    this.transforms.length = 0
+    this.firstKeys.length = 0
   }
 
   private assertOpen(): void {
@@ -1716,6 +1920,7 @@ const CLUSTER_BASE_PORT = 7000
  * (computed via {@link RedisClusterTopology.calculateSlotForKeys}). The curated
  * method surface is inherited unchanged from {@link CommandRunner}.
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- see NodeRedisCommandMethods
 export class NodeRedisMockCluster extends CommandRunner {
   private readonly topology: RedisClusterTopology
   /** The master pipelines: what this facade routes to. */
@@ -1899,13 +2104,47 @@ export class NodeRedisMockCluster extends CommandRunner {
     return this.clientRespVersion
   }
 
+  protected get nodeRedisResp(): NodeRedisRespVersion {
+    return this.resp
+  }
+
+  /**
+   * node-redis' `cluster.multi(routing?)`: the transaction runs on one node,
+   * the slot owner of `routing` or else of the first queued command with a
+   * key (`RedisClusterMultiCommand`'s `firstKey`); a keyless one goes to the
+   * first master. Keys of other slots answer `CROSSSLOT` (or `MOVED`) there,
+   * as on a real cluster.
+   */
+  multi(routing?: NodeRedisCommandArgument): NodeRedisMockMulti {
+    return new NodeRedisMockMulti(async (queued, _selected, firstKeys) => {
+      let session: ClientSession
+      if (routing !== undefined) {
+        session = this.sessionForCommand([], routing)
+      } else {
+        const index = queued.findIndex(
+          (args, i) =>
+            this.routingKeys(args).length > 0 || firstKeys[i] !== undefined,
+        )
+        session =
+          index === -1
+            ? this.sessionForCommand([])
+            : this.sessionForCommand(queued[index], firstKeys[index])
+      }
+      await this.syncProtocol(session)
+      return runTransactionSpan(session, queued, this.closed)
+    }, this.resp)
+  }
+
   protected get profile(): CompatibilityProfile {
     // Every node shares one hoisted profile (see buildClusterNodes).
     return this.masterPipelines[0].state.profile
   }
 
-  protected run(args: NodeRedisCommandArgument[]): Promise<RedisValue> {
-    return this.runRouted(args, undefined)
+  protected run(
+    args: NodeRedisCommandArgument[],
+    firstKey?: NodeRedisCommandArgument,
+  ): Promise<RedisValue> {
+    return this.runRouted(args, firstKey)
   }
 
   private async runRouted(
@@ -1977,6 +2216,11 @@ export class NodeRedisMockCluster extends CommandRunner {
   // standalone client, whose teardown awaits its pub/sub drain.
 
   async quit(): Promise<void> {
+    await this.closeAsync()
+  }
+
+  /** node-redis 5+'s `close()`: the same close as {@link quit}. */
+  async close(): Promise<void> {
     await this.closeAsync()
   }
 
@@ -2135,6 +2379,35 @@ export class NodeRedisMockCluster extends CommandRunner {
 }
 
 // --- shared helpers --------------------------------------------------------
+
+/**
+ * Replay MULTI → queued commands → EXEC on `session` as one span. EXEC is sent
+ * even after a command failed to queue, so the session leaves MULTI (it
+ * answers `EXECABORT`), exactly as node-redis pipelines it.
+ */
+async function runTransactionSpan(
+  session: ClientSession,
+  queued: readonly NodeRedisCommandArgument[][],
+  closed: boolean,
+): Promise<TransactionSpan> {
+  await runOnSession(session, ['MULTI'], closed)
+  let queueError: RedisErrorValue | undefined
+  for (const args of queued) {
+    const reply = await runOnSession(session, args, closed)
+    if (reply.kind === 'error') {
+      queueError ??= reply
+    }
+  }
+  const before = session.protocolVersion
+  const value = await runOnSession(session, ['EXEC'], closed)
+  return {
+    value,
+    queueError,
+    respVersion: session.protocolVersion,
+    profile: session.server.profile,
+    replyVersions: replayProtocolSwitches(queued, before, value),
+  }
+}
 
 /**
  * Execute a tokenised command on a session and return its raw {@link RedisValue}

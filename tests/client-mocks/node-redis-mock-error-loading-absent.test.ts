@@ -175,3 +175,16 @@ test('with no redis at all, a default client negotiates RESP3', async () => {
     await client.quit()
   }
 })
+
+test('without redis, no node-redis command methods, the curated ones and sendCommand remain', async () => {
+  // They come from the installed node-redis 5+'s own command definitions (#490).
+  const client = newClient()
+  try {
+    assert.strictEqual('hDel' in client, false)
+    assert.strictEqual('hDel' in client.multi(), false)
+    await client.hSet('h', 'f', 'v')
+    assert.strictEqual(await client.sendCommand(['HDEL', 'h', 'f']), 1)
+  } finally {
+    await client.quit()
+  }
+})
