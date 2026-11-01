@@ -762,4 +762,10 @@ export const FEATURE_GATES: Record<FeatureId, VersionGate> = {
   // networking.c:3491-3507), so the name sticks. Probed on redis-server 6.2.14
   // and 7.0.15 with --requirepass (#522).
   'hello.setname-after-auth': { redis: '7.2.0', valkey: '7.2.0' },
+  // A sync FLUSHDB / FLUSHALL (no ASYNC, outside MULTI and scripts) runs as a
+  // blocking async flush on Redis 7.4+, replying `+OK` only once the
+  // background job is done (redis@7.4.0:src/db.c:730-763; absent in 7.2.4 and
+  // Valkey), so a tracking client's own flush invalidation is written before
+  // the `+OK` instead of after. Probed on redis-server 7.4.4 and 8.0.0 (#252).
+  'client.tracking-sync-flush-push-first': { redis: '7.4.0' },
 }

@@ -44,6 +44,11 @@ export class RedisDatabase {
    * itself; set only on a {@link withOrigin} view.
    */
   readonly origin: string | undefined = undefined
+  /**
+   * The connection this handle mutates for, stamped on every event as
+   * {@link RedisMutationEvent.client}; set only on a {@link withOrigin} view.
+   */
+  readonly originClient: object | undefined = undefined
   private readonly entries = new Map<string, KeyspaceEntry>()
   /**
    * For each hash key that may hold a field with a TTL: a lower bound on its
@@ -74,9 +79,10 @@ export class RedisDatabase {
    * `origin` is its own. RedisDatabase methods therefore must never assign a
    * field on `this` — the write would land on the view.
    */
-  withOrigin(command: string): RedisDatabase {
+  withOrigin(command: string, client?: object): RedisDatabase {
     return Object.create(this, {
       origin: { value: command, enumerable: true },
+      originClient: { value: client ?? this.originClient, enumerable: true },
     }) as RedisDatabase
   }
 
@@ -689,7 +695,9 @@ export class RedisDatabase {
 
   private emit(event: RedisMutationEvent): void {
     this.mutations.emit(
-      this.origin === undefined ? event : { ...event, command: this.origin },
+      this.origin === undefined
+        ? event
+        : { ...event, command: this.origin, client: this.originClient },
     )
   }
 

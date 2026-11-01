@@ -8,6 +8,7 @@ import { RedisScriptCache } from './script-cache'
 import { RedisFunctionRegistry } from './function-registry'
 import { SerialTurnQueue } from '../core/turn-queue'
 import { ClientPauseState } from './client-pause'
+import { ClientTrackingTable } from './client-tracking'
 import type { RedisClientSession } from '../core/redis-context'
 import {
   createRedisLuaRuntime,
@@ -67,6 +68,10 @@ export class RedisServerState {
    * policy postpones commands while it is active.
    */
   readonly clientPause = new ClientPauseState()
+  /** CLIENT TRACKING: the keys tracking clients read, and their modes. */
+  readonly clientTracking = new ClientTrackingTable(() =>
+    this.getConnectedClients(),
+  )
   /**
    * Parsed `notify-keyspace-events` flags; empty disables keyspace
    * notifications. Parsed once by CONFIG SET (and rendered back to Redis'
@@ -116,6 +121,11 @@ export class RedisServerState {
       database.subscribe(event =>
         notifier.handle(event, this.notifyKeyspaceEvents),
       )
+    }
+    // Client-side caching invalidations (CLIENT TRACKING) follow the same
+    // modified-key signals.
+    for (const database of this.databases) {
+      database.subscribe(event => this.clientTracking.handle(event))
     }
 
     this.activeExpiryIntervalMs = options?.activeExpiryIntervalMs
@@ -196,9 +206,12 @@ export class RedisServerState {
    * remains intact until SCRIPT FLUSH.
    */
   flushAllDatabases(): void {
-    for (const database of this.databases) {
-      database.flush()
-    }
+    // One flush signal for the whole server, as real Redis gives FLUSHALL.
+    this.clientTracking.coalesceFlush(undefined, false, () => {
+      for (const database of this.databases) {
+        database.flush()
+      }
+    })
   }
 
   sweepExpired(now = Date.now()): number {

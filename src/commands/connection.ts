@@ -1,6 +1,10 @@
 import { asciiLowerCase, equalsAscii } from '../core/ascii-case'
 import { defineCommand } from '../core/command-definition'
-import { isIntegerToken, t } from '../core/command-schema'
+import {
+  isIntegerToken,
+  parseClampedLongToken,
+  t,
+} from '../core/command-schema'
 import type {
   RedisClientSession,
   RedisExecutionContext,
@@ -34,7 +38,9 @@ import {
 } from './container-help'
 import { isClientBlocked } from './blocking'
 import { resetClientReplyMode, setClientReplyMode } from '../core/client-reply'
+import { findClientById, getClientId } from '../core/client-id'
 import type { ClientPauseMode } from '../state/client-pause'
+import type { ClientTrackingTable } from '../state/client-tracking'
 import {
   VALKEY_REDIS_COMPAT_VERSION,
   type CompatibilityProfile,
@@ -46,26 +52,13 @@ const MASTER_REPLID = '0000000000000000000000000000000000000000'
 // There is no persistence, so LASTSAVE reports the process/server start time.
 const serverStartTimeSeconds = Math.floor(Date.now() / 1000)
 
-const clientIds = new WeakMap<RedisClientSession, number>()
 const clientNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryNames = new WeakMap<RedisClientSession, Buffer>()
 const clientLibraryVersions = new WeakMap<RedisClientSession, Buffer>()
 const noEvictClients = new WeakSet<RedisClientSession>()
 const noTouchClients = new WeakSet<RedisClientSession>()
-let nextClientId = 1
 const INVALID_CLIENT_NAME_MESSAGE =
   'Client names cannot contain spaces, newlines or special characters.'
-
-function getClientId(session: RedisClientSession): number {
-  const existing = clientIds.get(session)
-  if (existing !== undefined) {
-    return existing
-  }
-
-  const id = nextClientId++
-  clientIds.set(session, id)
-  return id
-}
 
 function assertValidClientName(name: Buffer): void {
   for (const byte of name) {
@@ -270,6 +263,7 @@ function buildInfo(
 function formatClientLine(
   session: RedisClientSession,
   profile: CompatibilityProfile,
+  tracking: ClientTrackingTable,
 ): string {
   const name = clientNames.get(session)?.toString() ?? ''
   const redis7 = profile.has('client.list.redis7-fields')
@@ -281,7 +275,7 @@ function formatClientLine(
     `name=${name}`,
     `age=${clientAgeSeconds(session)}`,
     `idle=${clientIdleSeconds(session)}`,
-    `flags=${clientFlags(session)}`,
+    `flags=${clientFlags(session, tracking)}`,
   ]
   if (profile.has('client.list.capa')) {
     fields.push('capa=')
@@ -310,7 +304,7 @@ function formatClientLine(
     'events=r',
     `cmd=${session.lastCommand ?? 'NULL'}`,
     'user=default',
-    'redir=-1',
+    `redir=${clientTrackingRedirect(session, tracking)}`,
   )
   if (redis7) {
     fields.push(`resp=${session.protocolVersion}`)
@@ -337,17 +331,140 @@ function formatClientLine(
  * has run), `b` blocked, `d` a WATCHed key changed, `r` READONLY (cluster),
  * `e` CLIENT NO-EVICT, `T` CLIENT NO-TOUCH; `N` for none.
  */
-function clientFlags(session: RedisClientSession): string {
+function clientFlags(
+  session: RedisClientSession,
+  trackingTable: ClientTrackingTable,
+): string {
   let flags = ''
   if (session.monitoring) flags += 'O'
   if (session.pubsubSubscriptionCount > 0) flags += 'P'
   if (session.queuedCommandCount >= 0) flags += 'x'
   if (isClientBlocked(session)) flags += 'b'
+  const tracking = trackingTable.info(session)
+  if (tracking.on) flags += 't'
+  if (tracking.brokenRedirect) flags += 'R'
+  if (tracking.bcast) flags += 'B'
   if (session.isWatchDirty()) flags += 'd'
   if (session.clusterReadOnly) flags += 'r'
   if (noEvictClients.has(session)) flags += 'e'
   if (noTouchClients.has(session)) flags += 'T'
   return flags === '' ? 'N' : flags
+}
+
+/** `redir=` / CLIENT GETREDIR: the REDIRECT id while tracking, else -1. */
+function clientTrackingRedirect(
+  session: RedisClientSession,
+  trackingTable: ClientTrackingTable,
+): number {
+  const tracking = trackingTable.info(session)
+  return tracking.on ? tracking.redirect : -1
+}
+
+/**
+ * CLIENT TRACKING ON | OFF [REDIRECT id] [BCAST] [PREFIX p ...] [OPTIN]
+ * [OPTOUT] [NOLOOP]: every option is parsed first, so a syntax error or a bad
+ * REDIRECT wins over the mode checks (redis@7.2.4:src/networking.c:3291-3414).
+ */
+function clientTracking(
+  subcommand: Buffer,
+  args: readonly Buffer[],
+  ctx: RedisExecutionContext,
+): RedisResult {
+  if (args.length === 0) {
+    throw unknownSubcommandError('CLIENT', subcommand, ctx.server.profile)
+  }
+  let redirect = 0
+  const options = {
+    bcast: false,
+    optin: false,
+    optout: false,
+    noloop: false,
+  }
+  const prefixes: Buffer[] = []
+  for (let index = 1; index < args.length; index++) {
+    const option = asciiLowerCase(args[index].toString('latin1'))
+    const moreArgs = index < args.length - 1
+    if (option === 'redirect' && moreArgs) {
+      index++
+      if (redirect !== 0) {
+        throw new RedisCommandError(
+          'A client can only redirect to a single other client',
+        )
+      }
+      const id = parseClampedLongToken(args[index].toString('latin1'))
+      if (id === undefined) {
+        throw errors.expectedInteger()
+      }
+      redirect = id
+      if (findClientById(ctx.server.getConnectedClients(), id) === undefined) {
+        throw new RedisCommandError(
+          'The client ID you want redirect to does not exist',
+        )
+      }
+    } else if (option === 'bcast') {
+      options.bcast = true
+    } else if (option === 'optin') {
+      options.optin = true
+    } else if (option === 'optout') {
+      options.optout = true
+    } else if (option === 'noloop') {
+      options.noloop = true
+    } else if (option === 'prefix' && moreArgs) {
+      index++
+      prefixes.push(args[index])
+    } else {
+      throw errors.syntax()
+    }
+  }
+
+  const mode = asciiLowerCase(args[0].toString('latin1'))
+  if (mode === 'on') {
+    ctx.server.clientTracking.enable(ctx.session, {
+      redirect,
+      ...options,
+      prefixes,
+    })
+  } else if (mode === 'off') {
+    ctx.server.clientTracking.disable(ctx.session)
+  } else {
+    throw errors.syntax()
+  }
+  return ok()
+}
+
+/** CLIENT TRACKINGINFO: flags (a set), redirect and prefixes. */
+function clientTrackingInfo(
+  session: RedisClientSession,
+  trackingTable: ClientTrackingTable,
+): RedisResult {
+  const tracking = trackingTable.info(session)
+  const flags = [tracking.on ? 'on' : 'off']
+  if (tracking.bcast) flags.push('bcast')
+  if (tracking.optin) {
+    flags.push('optin')
+    if (tracking.caching) flags.push('caching-yes')
+  }
+  if (tracking.optout) {
+    flags.push('optout')
+    if (tracking.caching) flags.push('caching-no')
+  }
+  if (tracking.noloop) flags.push('noloop')
+  if (tracking.brokenRedirect) flags.push('broken_redirect')
+  return RedisResult.create(
+    RedisValue.map([
+      [value('flags'), RedisValue.set(flags.map(flag => value(flag)))],
+      [
+        value('redirect'),
+        RedisValue.integer(clientTrackingRedirect(session, trackingTable)),
+      ],
+      [
+        value('prefixes'),
+        RedisValue.array(
+          tracking.prefixes.map(prefix => RedisValue.bulkString(prefix)),
+        ),
+      ],
+    ]),
+  )
 }
 
 /** The CLIENT KILL filter; an unset field matches every client. */
@@ -878,6 +995,10 @@ export const clientCommand = defineCommand({
       commandSubcommandInfo('client|reply', 3),
       commandSubcommandInfo('client|setinfo', 4),
       commandSubcommandInfo('client|help', 2),
+      commandSubcommandInfo('client|tracking', -3),
+      commandSubcommandInfo('client|caching', 3),
+      commandSubcommandInfo('client|getredir', 2),
+      commandSubcommandInfo('client|trackinginfo', 2),
     ],
   },
   keys: () => [],
@@ -1087,15 +1208,70 @@ export const clientCommand = defineCommand({
         0,
         ctx.server.profile,
       )
-      return verbatimText(formatClientLine(ctx.session, ctx.server.profile))
+      return verbatimText(
+        formatClientLine(
+          ctx.session,
+          ctx.server.profile,
+          ctx.server.clientTracking,
+        ),
+      )
     }
 
     if (subcommand === 'list') {
       expectArgCount('client|list', args.args, 0)
       const lines = ctx.server
         .getConnectedClients()
-        .map(session => formatClientLine(session, ctx.server.profile))
+        .map(session =>
+          formatClientLine(
+            session,
+            ctx.server.profile,
+            ctx.server.clientTracking,
+          ),
+        )
       return verbatimText(lines.join(''))
+    }
+
+    if (subcommand === 'tracking') {
+      return clientTracking(args.subcommand, args.args, ctx)
+    }
+
+    if (subcommand === 'caching') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        1,
+        ctx.server.profile,
+      )
+      ctx.server.clientTracking.setCaching(
+        ctx.session,
+        asciiLowerCase(args.args[0].toString('latin1')),
+      )
+      return ok()
+    }
+
+    if (subcommand === 'getredir') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return integer(
+        clientTrackingRedirect(ctx.session, ctx.server.clientTracking),
+      )
+    }
+
+    if (subcommand === 'trackinginfo') {
+      expectSubcommandArgCount(
+        'CLIENT',
+        args.subcommand,
+        args.args,
+        0,
+        ctx.server.profile,
+      )
+      return clientTrackingInfo(ctx.session, ctx.server.clientTracking)
     }
 
     if (subcommand === 'help') {

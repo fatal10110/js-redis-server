@@ -15,6 +15,11 @@ import { cloneRedisDataValue, type RedisDataValue } from './data-types'
  * than a command's handle — active expiry and replication. A command that
  * writes into a database other than its own (MOVE, COPY ... DB) tags that one
  * itself with `withOrigin`.
+ *
+ * `client` is the connection whose command made the change (the caller of a
+ * script, the client running EXEC), compared by identity only: client-side
+ * caching skips a NOLOOP client's own writes and holds its own invalidations
+ * until its reply. Absent wherever `command` is, and for FLUSHALL.
  */
 export type RedisMutationEvent = (
   | {
@@ -93,7 +98,7 @@ export type RedisMutationEvent = (
       database: number
       key: Buffer
     }
-) & { command?: string }
+) & { command?: string; client?: object }
 
 export type RedisMutationListener = (event: RedisMutationEvent) => void
 

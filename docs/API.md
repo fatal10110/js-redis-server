@@ -190,6 +190,7 @@ Current profile gates:
 | `io-thread` in `CLIENT LIST` / `CLIENT INFO` | `redis-8.0+` | never |
 | `tot-net-in`, `tot-net-out`, `tot-cmds` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-8.0+` |
 | `capa` in `CLIENT LIST` / `CLIENT INFO` | never | `valkey-9.0+` |
+| A CLIENT TRACKING client's own sync `FLUSHDB` / `FLUSHALL` (no `ASYNC`, outside MULTI and scripts) writes its null invalidation before the `+OK` (a blocking async flush); before: after it | `redis-7.4+` | never |
 | `subexpiry` (hashes with field TTLs) on the `INFO keyspace` line | `redis-7.4+` | never |
 | `keys_with_volatile_items` (the same count) on the `INFO keyspace` line | never | `valkey-9.0+` |
 | Sharded Pub/Sub: `SSUBSCRIBE`, `SUNSUBSCRIBE`, `SPUBLISH`, `PUBSUB SHARDCHANNELS`, `PUBSUB SHARDNUMSUB` | `redis-7.0+` | `valkey-8.0+` |

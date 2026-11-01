@@ -48,7 +48,7 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
   socket's descriptor (`-1` on the in-process transport), `cmd` the last
   command by its command-table name (`client|info` from 7.0, `NULL` after an
   unknown command), and `flags`, `multi`, `watch`, `idle` follow the
-  connection (`P`, `x`, `b`, `d`, `r`, `e`, `T`). Buffer, memory and network
+  connection (`P`, `x`, `b`, `t`, `R`, `B`, `d`, `r`, `e`, `T`), `redir` CLIENT TRACKING's redirect. Buffer, memory and network
   counters read 0. On RESP3 both replies are `txt` verbatim strings.
 - [x] `CLIENT KILL ip:port | [ID client-id] [ADDR ip:port] [LADDR ip:port] [USER username] [TYPE type] [MAXAGE seconds] [SKIPME YES|NO]` - Close matching client connections; `MAXAGE` is accepted for Redis 7.4+ / Valkey 8.0+ profiles, `TYPE primary` and Valkey 9.0's id list (`ID id [id ...]`) on Valkey only. Valkey 9.0's `NOT-*`, `FLAGS`, `NAME`, `IDLE`, `LIB-NAME`, `LIB-VER`, `DB`, `CAPA` and `IP` filters are not modelled
 - [x] `CLIENT NO-EVICT ON|OFF` - Toggle the current connection's no-eviction flag
@@ -56,9 +56,10 @@ shapes; see the gate matrix in [Compatibility Profiles](API.md#compatibility-pro
 - [x] `CLIENT PAUSE timeout [WRITE|ALL]` / `CLIENT UNPAUSE` - Server-wide pause: commands of every client but a MONITOR connection are postponed (not refused) until the timeout or UNPAUSE; `WRITE` holds back write and may-replicate commands (and an `EXEC` that queued one), `ALL` (the default) every command, `CLIENT UNPAUSE` included. A new pause keeps the later end time and the stricter mode
 - [x] `CLIENT REPLY ON|OFF|SKIP` - `OFF` drops every reply until `ON`, `SKIP` drops the next command's reply; pushes (pub/sub messages, MONITOR lines) are still delivered. Divergence inside `MULTI`, see the note below the `CLIENT` list
 - [x] `CLIENT HELP` - Return subcommand help
-- [ ] `CLIENT TRACKING` - not implemented
-- [ ] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID
-- [ ] `CLIENT TRACKINGINFO` - Return client-tracking status details
+- [x] `CLIENT TRACKING ON|OFF [REDIRECT client-id] [PREFIX prefix ...] [BCAST] [OPTIN] [OPTOUT] [NOLOOP]` - Server-assisted client-side caching. Default mode remembers the keys the client reads with readonly commands (in MULTI/EXEC and scripts too) and sends one `invalidate` push per key on its next change, expiry or eviction; `BCAST` sends the changed keys under each prefix once per event-loop turn; `FLUSHDB` / `FLUSHALL` send a null. A RESP3 connection gets `>2 invalidate` pushes; `REDIRECT` sends them to another client, as `__redis__:invalidate` messages on a subscribed RESP2 one, and a vanished target gives `tracking-redir-broken`. The `tracking-table-max-keys` bound is not modelled
+- [x] `CLIENT CACHING YES|NO` - In `OPTIN` / `OPTOUT` mode, track (or skip) the keys of the next command, or of a whole MULTI/EXEC
+- [x] `CLIENT GETREDIR` - Return the client-tracking redirect target client ID (`0` without one, `-1` when tracking is off)
+- [x] `CLIENT TRACKINGINFO` - Return client-tracking status details
 
 > **`CLIENT REPLY SKIP` / `OFF` inside `MULTI` (documented divergence).** Every
 > profile but valkey 9.0 queues the command (`+QUEUED`); the difference is at

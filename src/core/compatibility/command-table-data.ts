@@ -166,7 +166,15 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     ],
   },
   client: { flags: [], categories: ['@slow'] },
+  'client|caching': {
+    flags: ['noscript', 'loading', 'stale'],
+    categories: ['@slow', '@connection'],
+  },
   'client|getname': {
+    flags: ['noscript', 'loading', 'stale'],
+    categories: ['@slow', '@connection'],
+  },
+  'client|getredir': {
     flags: ['noscript', 'loading', 'stale'],
     categories: ['@slow', '@connection'],
   },
@@ -217,6 +225,14 @@ export const REDIS_80: Readonly<Record<string, CommandTableEntry>> = {
     flags: ['noscript', 'loading', 'stale'],
     categories: ['@slow', '@connection'],
     tips: ['request_policy:all_nodes', 'response_policy:all_succeeded'],
+  },
+  'client|tracking': {
+    flags: ['noscript', 'loading', 'stale'],
+    categories: ['@slow', '@connection'],
+  },
+  'client|trackinginfo': {
+    flags: ['noscript', 'loading', 'stale'],
+    categories: ['@slow', '@connection'],
   },
   'client|unpause': {
     flags: ['admin', 'noscript', 'loading', 'stale'],
@@ -2290,7 +2306,9 @@ export const REDIS_62: CommandTableDelta = {
     flags: ['admin', 'noscript', 'random', 'loading', 'stale'],
     categories: ['@admin', '@slow', '@dangerous', '@connection'],
   },
+  'client|caching': null,
   'client|getname': null,
+  'client|getredir': null,
   'client|help': null,
   'client|id': null,
   'client|info': null,
@@ -2300,6 +2318,8 @@ export const REDIS_62: CommandTableDelta = {
   'client|pause': null,
   'client|reply': null,
   'client|setname': null,
+  'client|tracking': null,
+  'client|trackinginfo': null,
   'client|unpause': null,
   cluster: {
     flags: ['admin', 'random', 'stale'],

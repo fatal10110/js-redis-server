@@ -160,6 +160,7 @@ export type FeatureId =
   | 'client.info-multi-lazy-state'
   | 'protocol.inline-drops-0xff'
   | 'hello.setname-after-auth'
+  | 'client.tracking-sync-flush-push-first'
 
 export interface CompatibilityProfile {
   readonly flavor: RedisFlavor

@@ -73,7 +73,12 @@ export interface RedisClientSession {
   pubsubUnsubscribe(kind: PubSubKind, targets: readonly Buffer[]): RedisResult[]
   resetPubSub(): void
   deferPushesUntilAfterReply(): () => void
-  enqueuePush(result: RedisResult): void
+  /**
+   * Queue a push for this connection. `beforeReply` skips every hold, so a
+   * push made while this connection's own command runs goes out before its
+   * reply.
+   */
+  enqueuePush(result: RedisResult, beforeReply?: boolean): void
   onReset(cleanup: () => void): () => void
   resetPushProducers(): void
   readonly monitoring: boolean

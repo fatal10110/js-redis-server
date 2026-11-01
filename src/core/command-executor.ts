@@ -360,10 +360,14 @@ export class CommandExecutor {
       }
 
       announceKeyMisses(plan, ctx)
-      return await plan.definition.execute(
-        plan.args,
-        withMutationOrigin(plan, ctx),
-      )
+      try {
+        return await plan.definition.execute(
+          plan.args,
+          withMutationOrigin(plan, ctx),
+        )
+      } finally {
+        rememberTrackedKeys(plan, ctx)
+      }
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
     }
@@ -419,10 +423,14 @@ export class CommandExecutor {
       assertSyncCommandDefinition(plan)
       announceKeyMisses(plan, ctx)
 
-      return assertSyncCommandResult(
-        plan,
-        plan.definition.execute(plan.args, withMutationOrigin(plan, ctx)),
-      )
+      try {
+        return assertSyncCommandResult(
+          plan,
+          plan.definition.execute(plan.args, withMutationOrigin(plan, ctx)),
+        )
+      } finally {
+        rememberTrackedKeys(plan, ctx)
+      }
     } catch (err) {
       return executionErrorResult(plan, ctx, err)
     }
@@ -708,6 +716,31 @@ function applyPolicyShortCircuit(
  * access (#94). The view is cached per underlying database so `ctx.db` keeps a
  * stable identity within one command.
  */
+/**
+ * CLIENT TRACKING: once a readonly command has run, the client that sent it
+ * (a script's caller, the client running EXEC) remembers its keys, missing
+ * ones included (redis@7.2.4:src/server.c:3651-3666). EVAL_RO, EVALSHA_RO and
+ * FCALL_RO are skipped, only the commands they run count, and so are Pub/Sub
+ * commands, whose shard channels are keys.
+ */
+function rememberTrackedKeys(
+  plan: CommandPlan,
+  ctx: RedisExecutionContext,
+): void {
+  const { definition } = plan
+  if (
+    plan.keys.length === 0 ||
+    !definition.flags.includes('readonly') ||
+    definition.flags.includes('pubsub') ||
+    READONLY_SCRIPT_COMMANDS.has(definition.name)
+  ) {
+    return
+  }
+  ctx.server.clientTracking.rememberKeys(ctx.session, plan.keys)
+}
+
+const READONLY_SCRIPT_COMMANDS = new Set(['eval_ro', 'evalsha_ro', 'fcall_ro'])
+
 function withMutationOrigin(
   plan: CommandPlan,
   ctx: RedisExecutionContext,
@@ -721,7 +754,7 @@ function withMutationOrigin(
         const db = ctx.db
         if (db !== base || !view) {
           base = db
-          view = db.withOrigin(command)
+          view = db.withOrigin(command, ctx.session)
         }
         return view
       },

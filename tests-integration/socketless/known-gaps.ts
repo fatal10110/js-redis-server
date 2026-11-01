@@ -87,6 +87,7 @@ function skip(file: string, reason: string): KnownGap {
 
 export const SOCKETLESS_KNOWN_GAPS: readonly KnownGap[] = [
   skip('node-redis/blocking-fifo.test.ts', SKIP.nodeClientWithWaiters),
+  skip('node-redis/client-side-cache.test.ts', SKIP.tcpClients),
   todo('node-redis/cluster-integration.test.ts', CAUSE.directNodeConnection, [
     'CLUSTER NODES reports bus port as client port + 10000',
     'CLUSTER SHARDS returns structured shard metadata',
