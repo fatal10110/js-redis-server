@@ -44,18 +44,29 @@ function createCluster(compatibility: CompatibilitySpec = 'redis-8.0') {
       executor: node.executor,
       nodeRole: node.role,
     })
-    return async (...args: Array<string | Buffer>) => {
+    return async (...args: Array<string | Buffer>): Promise<string> => {
       const [name, ...rest] = args.map(arg => Buffer.from(arg))
-      const { value } = await session.execute(name, rest)
-      // DUMP's payload is binary: hand it back as is.
-      return value.kind === 'bulk-string' &&
-        value.value &&
-        name.toString() === 'DUMP'
-        ? value.value
-        : show(value)
+      return show((await session.execute(name, rest)).value)
     }
   }
   return { topology, a, b, onA: connect(a), onB: connect(b), connect }
+}
+
+/** DUMP's binary payload of `key` on `node`. */
+async function dumpOn(
+  node: ReturnType<typeof buildClusterNodes>['nodes'][number],
+  key: string,
+): Promise<Buffer> {
+  const session = new ClientSession({
+    server: node.state,
+    executor: node.executor,
+    nodeRole: node.role,
+  })
+  const { value } = await session.execute(Buffer.from('DUMP'), [
+    Buffer.from(key),
+  ])
+  assert.ok(value.kind === 'bulk-string' && value.value)
+  return value.value
 }
 
 /** A migrating 3300 to B, B importing it from A, `b` and `{b}k2` on A. */
@@ -227,9 +238,8 @@ describe('cluster slot migration: the IMPORTING target and ASKING (#85, #616)', 
   })
 
   test('RESTORE-ASKING is served without ASKING', async () => {
-    const { onA, onB } = await createResharding()
-    const dump = await onA('DUMP', 'b')
-    assert.ok(Buffer.isBuffer(dump))
+    const { a, onA, onB } = await createResharding()
+    const dump = await dumpOn(a, 'b')
     assert.strictEqual(await onB('RESTORE', 'b', '0', dump), movedToA)
     assert.strictEqual(await onB('RESTORE-ASKING', 'b', '0', dump), '+OK')
     assert.strictEqual(
@@ -431,7 +441,7 @@ describe('CLUSTER SETSLOT / KEYSLOT / COUNTKEYSINSLOT / GETKEYSINSLOT (#85)', ()
   })
 
   test('SETSLOT NODE moves the slot once its keys are gone', async () => {
-    const { onA, onB } = await createResharding()
+    const { a, onA, onB } = await createResharding()
     assert.strictEqual(
       await onA('CLUSTER', 'SETSLOT', '3300', 'NODE', 'master-1'),
       "-ERR Can't assign hashslot 3300 to a different node while I still hold keys for this hash slot.",
@@ -440,7 +450,7 @@ describe('CLUSTER SETSLOT / KEYSLOT / COUNTKEYSINSLOT / GETKEYSINSLOT (#85)', ()
     // DUMP on the source, RESTORE-ASKING on the target, DEL on the source.
     assert.strictEqual(await onA('SET', 'b', 'moved'), '+OK')
     for (const key of ['b', '{b}k2']) {
-      const dump = await onA('DUMP', key)
+      const dump = await dumpOn(a, key)
       assert.strictEqual(await onB('RESTORE-ASKING', key, '0', dump), '+OK')
       assert.strictEqual(await onA('DEL', key), ':1')
     }
